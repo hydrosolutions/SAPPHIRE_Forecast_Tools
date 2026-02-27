@@ -393,7 +393,7 @@ class TestCRUDEdgeCases:
         """Create a forecast with all optional fields set to None."""
         item = make_forecast(
             target=None, flag=None, composition=None,
-            q05=None, q25=None, q50=None, q75=None, q95=None,
+            q05=None, q25=None, q75=None, q95=None,
             forecasted_discharge=None,
         )
         results = crud.create_forecast(
@@ -777,14 +777,14 @@ class TestLargeBatch:
         """Upsert updates specified fields without corrupting others."""
         item = make_forecast(
             code="15013", forecasted_discharge=100.0,
-            q05=80.0, q25=90.0, q50=95.0, q75=110.0, q95=120.0,
+            q05=80.0, q25=90.0, q75=110.0, q95=120.0,
         )
         crud.create_forecast(db_session, ForecastBulkCreate(data=[item]))
 
         # Update only forecasted_discharge — other quantiles should persist
         item_v2 = make_forecast(
             code="15013", forecasted_discharge=999.0,
-            q05=80.0, q25=90.0, q50=95.0, q75=110.0, q95=120.0,
+            q05=80.0, q25=90.0, q75=110.0, q95=120.0,
         )
         results = crud.create_forecast(
             db_session, ForecastBulkCreate(data=[item_v2])
@@ -794,6 +794,5 @@ class TestLargeBatch:
         assert r.forecasted_discharge == 999.0
         assert r.q05 == 80.0
         assert r.q25 == 90.0
-        assert r.q50 == 95.0
         assert r.q75 == 110.0
         assert r.q95 == 120.0

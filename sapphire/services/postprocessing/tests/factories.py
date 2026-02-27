@@ -28,7 +28,6 @@ def make_forecast(**overrides):
         "horizon_in_year": 33,
         "q05": 80.0,
         "q25": 90.0,
-        "q50": 95.0,
         "q75": 110.0,
         "q95": 120.0,
         "forecasted_discharge": 100.0,
