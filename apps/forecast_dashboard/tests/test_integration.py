@@ -30,14 +30,15 @@ Requirements for TEST_LOCAL=true:
     - Data connection available (ieasyhydroforecast_data_dir environment variable set)
 """
 
-import os
-import time
 import csv
-import re
-import pandas as pd
-from playwright.sync_api import Page, expect
-import tag_library as tl
 import datetime as dt
+import os
+import re
+import time
+
+import pandas as pd
+import tag_library as tl
+from playwright.sync_api import Page, expect
 
 
 def get_test_flag(env_var: str, default: bool) -> bool:
@@ -49,6 +50,7 @@ def get_test_flag(env_var: str, default: bool) -> bool:
         return False
     return default
 
+
 TEST_PENTAD = get_test_flag("TEST_PENTAD", False)
 TEST_DECAD = get_test_flag("TEST_DECAD", False)
 TEST_LOCAL = get_test_flag("TEST_LOCAL", False)
@@ -56,8 +58,8 @@ LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
-# Needs full, absolute path with "/" at the end 
-sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+# Needs full, absolute path with "/" at the end
+sensitive_data_forecast_tools = os.getenv("ieasyhydroforecast_data_dir")
 horizon = "pentad"  # pentad or decad
 
 today = dt.datetime.now()
@@ -82,8 +84,9 @@ else:
 if len(str(horizon_value)) == 1:
     horizon_value = "0" + str(horizon_value)
 
+
 def normalize_spaces(s):
-    return re.sub(r'\s+', ' ', s).strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def normalize_comma(s):
@@ -105,7 +108,7 @@ def test_pentad(page: Page):
 
     # Testing Pentad.png being loaded
     content = page.content()
-    assert 'DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==' in content
+    assert "DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==" in content
     print("#### Pentad.png is shown.")
     time.sleep(SLEEP)
 
@@ -133,17 +136,19 @@ def test_decad(page: Page):
 
     # Testing Decad.png being loaded
     content = page.content()
-    assert '8tYYd0q55fCZAgMBYAv8DTUYpzxgsaeEAAAAASUVORK5CYII=' in content
+    assert "8tYYd0q55fCZAgMBYAv8DTUYpzxgsaeEAAAAASUVORK5CYII=" in content
     print("#### Decad.png is shown.")
     time.sleep(SLEEP)
 
-    # # Testing the page is in Russian
-    # expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами"))
-    # expect(page.get_by_text("Войти")).to_be_visible()
-    # expect(page.get_by_text("Имя пользователя")).to_be_visible()
-    # expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
-    # print("#### Page is in Russian.")
-    # time.sleep(SLEEP)
+    # Testing the page is in Russian
+    expect(page).to_have_title(
+        re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами")
+    )
+    expect(page.get_by_text("Войти")).to_be_visible()
+    expect(page.get_by_text("Имя пользователя")).to_be_visible()
+    expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
+    print("#### Page is in Russian.")
+    time.sleep(SLEEP)
 
 
 def test_local(page: Page):
@@ -168,6 +173,8 @@ def test_local(page: Page):
     page.get_by_label("Password").fill("user111")
     assert page.get_by_label("Username").input_value() == "user1"
     assert page.get_by_label("Password").input_value() == "user111"
+    password_input = page.get_by_label("Password")
+    password_input.press("Tab")
     page.get_by_role("button", name="Login").click()
 
     expect(page.get_by_text("Invalid username or password")).to_be_visible()
@@ -178,7 +185,7 @@ def test_local(page: Page):
 
     # Testing login success with correct credentials
     password_input = page.get_by_label("Password")
-    password_input.fill("user1")
+    password_input.fill("user1user1")
     password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
 
@@ -198,7 +205,7 @@ def test_local(page: Page):
     # Testing login after logout
     page.get_by_label("Username").fill("user1")
     password_input = page.get_by_label("Password")
-    password_input.fill("user1")
+    password_input.fill("user1user1")
     password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
 
@@ -209,11 +216,11 @@ def test_local(page: Page):
 
     # Testing language switching
     page.get_by_role("link", name="Русский").click()
-    page.get_by_label("Имя пользователя").fill("user1")
-    password_input = page.get_by_label("Пароль")
-    password_input.fill("user1")
-    password_input.press("Tab")  # Moves focus away from input
-    page.get_by_role("button", name="Войти").click()
+    # page.get_by_label("Имя пользователя").fill("user1")
+    # password_input = page.get_by_label("Пароль")
+    # password_input.fill("user1user1")
+    # password_input.press("Tab")  # Moves focus away from input
+    # page.get_by_role("button", name="Войти").click()
 
     expect(page.get_by_text("Предикторы")).to_be_visible()
     expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
@@ -224,7 +231,9 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
+    page.select_option(
+        "select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000
+    )
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
 
@@ -237,7 +246,16 @@ def test_local(page: Page):
         """Find selected models in Summary table"""
         selected_div = page.locator("div.tabulator-selected")
         model_values = []
-        for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
+        for div in [
+            "Модель",
+            "Прогн. расх. воды",
+            "Прогн. нижн. гран.",
+            "Прогн. верхн. гран.",
+            "δ",
+            "s/σ",
+            "Средняя абсолютная ошибка",
+            "Оправдываемость",
+        ]:
             model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
             model_values.append(model_div.inner_text())
         return model_values
@@ -259,7 +277,7 @@ def test_local(page: Page):
     stations = [
         "15013 - Джыргалан-с.Советское",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
-        #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        # "15194 - р.Ала-Арча-у.р.Кашка-Суу",
         "15212 - Ак-Суу - с.Чон-Арык",
         "15256 - Талас -  с.Ак-Таш",
     ]
@@ -318,7 +336,7 @@ def test_local(page: Page):
 
     # Extract CSV values
     csv_file_path = f"{sensitive_data_forecast_tools}config/linreg_point_selection/bulletin_{horizon}_{year}_{horizon_value}.csv"
-    with open(csv_file_path, mode='r', newline='') as file:
+    with open(csv_file_path, newline="") as file:
         reader = csv.reader(file)
         next(reader)  # Skip header
         csv_data = [row for row in reader]
@@ -333,8 +351,8 @@ def test_local(page: Page):
     count = 0
     for row in csv_data:
         for i, r in enumerate(row):
-            if r == '':
-                row[i] = '-'
+            if r == "":
+                row[i] = "-"
         row[-1] = normalize_spaces(row[-1])  # basin_ru
         row[-2] = normalize_spaces(row[-2])  # station_label
         for f_value in forecast_bulletin_values:
@@ -360,7 +378,9 @@ def test_local(page: Page):
             basins.add(basin)
             path = f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
             excel_file_paths.append(path)
-    excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
+    excel_file_paths.append(
+        f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx"
+    )
 
     print("#### Excel file paths:")
     for path in excel_file_paths:
@@ -383,7 +403,7 @@ def test_local(page: Page):
             assert excel_value == csv_value
             # assert abs(excel_value - csv_value) <= tolerance * abs(excel_value)
         elif pd.isna(excel):
-            assert "nan" == csv_value
+            assert csv_value == "nan"
         else:
             # assert excel == csv_value
             assert abs(excel - csv_value) <= tolerance * abs(excel)
@@ -402,11 +422,12 @@ def test_local(page: Page):
                 if df.iloc[row_index, 0] in row[-2] and df.iloc[row_index, 1] in row[-2]:
                     count += 1
                     assert df.iloc[row_index, 2] == row[0]  # model_short
-                    #compare(df.iloc[row_index, 4], row[1])  # forecasted_discharge
-                    #compare(df.iloc[row_index, 15], row[2])  # fc_lower
-                    #compare(df.iloc[row_index, 17], row[3])  # fc_upper
-                    assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
-                    #compare(df.iloc[row_index, 10], row[5]) 
+                    # compare(df.iloc[row_index, 4], row[1])  # forecasted_discharge
+                    # compare(df.iloc[row_index, 15], row[2])  # fc_lower
+                    # compare(df.iloc[row_index, 17], row[3])  # fc_upper
+                    if not (pd.isna(df.iloc[row_index, 5]) and row[4] == "-"):
+                        assert df.iloc[row_index, 5].replace(",", ".") == row[4]  # delta
+                    # compare(df.iloc[row_index, 10], row[5])
         print("#### CSV values are EQUAL to Excel values")
     assert count == len(csv_data) * 2
 

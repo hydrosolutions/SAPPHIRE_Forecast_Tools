@@ -4,31 +4,32 @@ Migrates CSV files (day, pentad, decade horizons) to PostgreSQL database
 with performance statistics and batch processing
 """
 
-import os
+import argparse
 import json
+import os
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+
 import pandas as pd
 import requests
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import time
-import argparse
-from dataclasses import dataclass
-from abc import ABC, abstractmethod
 
-from app.logger import logger
 from app.config import settings
-
+from app.logger import logger
 
 # Long-term forecast configuration
 # Base paths (relative to intermediate_data or config root)
-LT_PREDICTIONS_PATH = "long_term_predictions"  # {intermediate_data}/long_term_predictions/{mode}/{model}/
+LT_PREDICTIONS_PATH = (
+    "long_term_predictions"  # {intermediate_data}/long_term_predictions/{mode}/{model}/
+)
 LT_CONFIG_PATH = "long_term_configs"  # {config_path}/long_term_configs/{mode}.json (note: plural)
 
 
 @dataclass
 class MigrationStats:
     """Statistics for data migration"""
+
     horizon_type: str
     total_records: int
     successful: int
@@ -55,7 +56,14 @@ class MigrationStats:
 
 class DataMigrator(ABC):
     """Abstract base class for data migration"""
-    def __init__(self, api_base_url: str = "http://localhost:8000", batch_size: int = 1000, horizons: dict = None, sub_url: str = ""):
+
+    def __init__(
+        self,
+        api_base_url: str = "http://localhost:8000",
+        batch_size: int = 1000,
+        horizons: dict = None,
+        sub_url: str = "",
+    ):
         self.api_base_url = api_base_url
         self.batch_size = batch_size
         self.horizons = horizons
@@ -63,23 +71,21 @@ class DataMigrator(ABC):
         self.session = requests.Session()
 
     @abstractmethod
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare pentad (5-day) data for API"""
         pass
 
     @abstractmethod
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare decade (10-day) data for API"""
         pass
 
-    def send_batch(self, batch: List[Dict], sub_url: str) -> Tuple[bool, int]:
+    def send_batch(self, batch: list[dict], sub_url: str) -> tuple[bool, int]:
         """Send a batch of records to the API"""
         try:
             payload = {"data": batch}
             response = self.session.post(
-                f"{self.api_base_url}/{sub_url}/",
-                json=payload,
-                timeout=30
+                f"{self.api_base_url}/{sub_url}/", json=payload, timeout=30
             )
             response.raise_for_status()
             return True, len(batch)
@@ -116,7 +122,7 @@ class DataMigrator(ABC):
         batch_count = 0
 
         for i in range(0, len(records), self.batch_size):
-            batch = records[i:i + self.batch_size]
+            batch = records[i : i + self.batch_size]
             batch_count += 1
 
             success, count = self.send_batch(batch, self.sub_url)
@@ -138,13 +144,13 @@ class DataMigrator(ABC):
             failed=failed,
             duration_seconds=duration,
             records_per_second=rps,
-            batch_count=batch_count
+            batch_count=batch_count,
         )
 
         print(str(stats))
         return stats
 
-    def migrate_all_horizons(self, csv_folder: str) -> List[MigrationStats]:
+    def migrate_all_horizons(self, csv_folder: str) -> list[MigrationStats]:
         """Migrate all horizon types (pentad, decade) for this data type"""
         all_stats = []
 
@@ -167,60 +173,68 @@ class DataMigrator(ABC):
 class CombinedForecastDataMigrator(DataMigrator):
     """Handles migration of forecast data from CSV to API"""
 
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare pentad (5-day) runoff data for API"""
         records = []
         skip = 0
         for _, row in df.iterrows():
-            if not pd.notna(row['pentad_in_year']):
+            if not pd.notna(row["pentad_in_year"]):
                 skip += 1
                 continue
-            if row['model_short'] != 'LR':
+            if row["model_short"] != "LR":
                 record = {
                     "horizon_type": "pentad",
-                    "code": str(row['code']),
-                    "model_type": str(row['model_short']),
-                    "date": row['date'],
-                    "target": None,
-                    "flag": int(row['flag']) if pd.notna(row['flag']) else None,
-                    "horizon_value": int(row['pentad_in_month']),
-                    "horizon_in_year": int(row['pentad_in_year']),
-                    "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                    "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                    "q50": None,
-                    "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                    "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                    "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
+                    "code": str(row["code"]),
+                    "model_type": str(row["model_short"]),
+                    "date": row["date"],
+                    "target": (pd.to_datetime(row["date"]) + pd.Timedelta(days=1)).strftime(
+                        "%Y-%m-%d"
+                    ),
+                    "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
+                    "horizon_value": int(row["pentad_in_month"]),
+                    "horizon_in_year": int(row["pentad_in_year"]),
+                    "q05": float(row["q05"]) if pd.notna(row["q05"]) else None,
+                    "q25": float(row["q25"]) if pd.notna(row["q25"]) else None,
+                    # "q50": None,
+                    "q75": float(row["q75"]) if pd.notna(row["q75"]) else None,
+                    "q95": float(row["q95"]) if pd.notna(row["q95"]) else None,
+                    "forecasted_discharge": float(row["forecasted_discharge"])
+                    if pd.notna(row["forecasted_discharge"])
+                    else None,
                 }
                 records.append(record)
             if skip > 0:
                 logger.debug(f"Skipped {skip} records due to missing pentad_in_year")
         return records
 
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare decade (10-day) runoff data for API"""
         records = []
         skip = 0
         for _, row in df.iterrows():
-            if not pd.notna(row['decad_in_year']):
+            if not pd.notna(row["decad_in_year"]):
                 skip += 1
                 continue
-            if row['model_short'] != 'LR':
+            if row["model_short"] != "LR":
                 record = {
                     "horizon_type": "decade",
-                    "code": str(row['code']),
-                    "model_type": str(row['model_short']),
-                    "date": row['date'],
-                    "target": None,
-                    "flag": int(row['flag']) if pd.notna(row['flag']) else None,
-                    "horizon_value": int(row['decad']),
-                    "horizon_in_year": int(row['decad_in_year']),
-                    "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                    "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                    "q50": None,
-                    "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                    "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                    "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
+                    "code": str(row["code"]),
+                    "model_type": str(row["model_short"]),
+                    "date": row["date"],
+                    "target": (pd.to_datetime(row["date"]) + pd.Timedelta(days=1)).strftime(
+                        "%Y-%m-%d"
+                    ),
+                    "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
+                    "horizon_value": int(row["decad"]),
+                    "horizon_in_year": int(row["decad_in_year"]),
+                    "q05": float(row["q05"]) if pd.notna(row["q05"]) else None,
+                    "q25": float(row["q25"]) if pd.notna(row["q25"]) else None,
+                    # "q50": None,
+                    "q75": float(row["q75"]) if pd.notna(row["q75"]) else None,
+                    "q95": float(row["q95"]) if pd.notna(row["q95"]) else None,
+                    "forecasted_discharge": float(row["forecasted_discharge"])
+                    if pd.notna(row["forecasted_discharge"])
+                    else None,
                 }
                 records.append(record)
             if skip > 0:
@@ -231,49 +245,57 @@ class CombinedForecastDataMigrator(DataMigrator):
 class LRForecastDataMigrator(DataMigrator):
     """Handles migration of lr-forecast data from CSV to API"""
 
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare pentad (5-day) runoff data for API"""
         records = []
         for _, row in df.iterrows():
             record = {
-                    "horizon_type": "pentad",
-                    "code": str(row['code']),
-                    "date": row['date'],
-                    "horizon_value": int(row['pentad_in_month']),
-                    "horizon_in_year": int(row['pentad_in_year']),
-                    "discharge_avg": float(row['discharge_avg']) if pd.notna(row['discharge_avg']) else None,
-                    "predictor": float(row['predictor']) if pd.notna(row['predictor']) else None,
-                    "slope": float(row['slope']) if pd.notna(row['slope']) else None,
-                    "intercept": float(row['intercept']) if pd.notna(row['intercept']) else None,
-                    "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None,
-                    "q_mean": float(row['q_mean']) if pd.notna(row['q_mean']) else None,
-                    "q_std_sigma": float(row['q_std_sigma']) if pd.notna(row['q_std_sigma']) else None,
-                    "delta": float(row['delta']) if pd.notna(row['delta']) else None,
-                    "rsquared": float(row['rsquared']) if pd.notna(row['rsquared']) else None
-                }
+                "horizon_type": "pentad",
+                "code": str(row["code"]),
+                "date": row["date"],
+                "horizon_value": int(row["pentad_in_month"]),
+                "horizon_in_year": int(row["pentad_in_year"]),
+                "discharge_avg": float(row["discharge_avg"])
+                if pd.notna(row["discharge_avg"])
+                else None,
+                "predictor": float(row["predictor"]) if pd.notna(row["predictor"]) else None,
+                "slope": float(row["slope"]) if pd.notna(row["slope"]) else None,
+                "intercept": float(row["intercept"]) if pd.notna(row["intercept"]) else None,
+                "forecasted_discharge": float(row["forecasted_discharge"])
+                if pd.notna(row["forecasted_discharge"])
+                else None,
+                "q_mean": float(row["q_mean"]) if pd.notna(row["q_mean"]) else None,
+                "q_std_sigma": float(row["q_std_sigma"]) if pd.notna(row["q_std_sigma"]) else None,
+                "delta": float(row["delta"]) if pd.notna(row["delta"]) else None,
+                "rsquared": float(row["rsquared"]) if pd.notna(row["rsquared"]) else None,
+            }
             records.append(record)
         return records
 
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare decade (10-day) runoff data for API"""
         records = []
         for _, row in df.iterrows():
             record = {
-                    "horizon_type": "decade",
-                    "code": str(row['code']),
-                    "date": row['date'],
-                    "horizon_value": int(row['decad_in_month']),
-                    "horizon_in_year": int(row['decad_in_year']),
-                    "discharge_avg": float(row['discharge_avg']) if pd.notna(row['discharge_avg']) else None,
-                    "predictor": float(row['predictor']) if pd.notna(row['predictor']) else None,
-                    "slope": float(row['slope']) if pd.notna(row['slope']) else None,
-                    "intercept": float(row['intercept']) if pd.notna(row['intercept']) else None,
-                    "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None,
-                    "q_mean": float(row['q_mean']) if pd.notna(row['q_mean']) else None,
-                    "q_std_sigma": float(row['q_std_sigma']) if pd.notna(row['q_std_sigma']) else None,
-                    "delta": float(row['delta']) if pd.notna(row['delta']) else None,
-                    "rsquared": float(row['rsquared']) if pd.notna(row['rsquared']) else None
-                }
+                "horizon_type": "decade",
+                "code": str(row["code"]),
+                "date": row["date"],
+                "horizon_value": int(row["decad_in_month"]),
+                "horizon_in_year": int(row["decad_in_year"]),
+                "discharge_avg": float(row["discharge_avg"])
+                if pd.notna(row["discharge_avg"])
+                else None,
+                "predictor": float(row["predictor"]) if pd.notna(row["predictor"]) else None,
+                "slope": float(row["slope"]) if pd.notna(row["slope"]) else None,
+                "intercept": float(row["intercept"]) if pd.notna(row["intercept"]) else None,
+                "forecasted_discharge": float(row["forecasted_discharge"])
+                if pd.notna(row["forecasted_discharge"])
+                else None,
+                "q_mean": float(row["q_mean"]) if pd.notna(row["q_mean"]) else None,
+                "q_std_sigma": float(row["q_std_sigma"]) if pd.notna(row["q_std_sigma"]) else None,
+                "delta": float(row["delta"]) if pd.notna(row["delta"]) else None,
+                "rsquared": float(row["rsquared"]) if pd.notna(row["rsquared"]) else None,
+            }
             records.append(record)
         return records
 
@@ -281,58 +303,55 @@ class LRForecastDataMigrator(DataMigrator):
 class ForecastDataMigrator(DataMigrator):
     """Handles migration of prediction data from CSV to API"""
 
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
+        # it won't run since we are only migrating decade forecasts for now
         records = []
         for _, row in df.iterrows():
             record = {
                 "horizon_type": "pentad",
-                "code": str(row['code']),
+                "code": str(row["code"]),
                 "model_type": self.model_type,
-                "date": row['forecast_date'],
-                "target": row['date'],
-                "flag": int(row['flag']) if pd.notna(row['flag']) else None,
+                "date": row["forecast_date"],
+                "target": row["date"],
+                "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
                 "horizon_value": 0,
                 "horizon_in_year": 0,
-                "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                "q50": float(row['Q50']) if pd.notna(row['Q50']) else None,
-                "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                "forecasted_discharge": None
+                "q05": float(row["Q5"]) if pd.notna(row["Q5"]) else None,
+                "q25": float(row["Q25"]) if pd.notna(row["Q25"]) else None,
+                "q75": float(row["Q75"]) if pd.notna(row["Q75"]) else None,
+                "q95": float(row["Q95"]) if pd.notna(row["Q95"]) else None,
+                "forecasted_discharge": float(row["Q50"]) if pd.notna(row["Q50"]) else None,
             }
             records.append(record)
         return records
 
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         records = []
         for _, row in df.iterrows():
             record = {
-                "horizon_type": "decade",
-                "code": str(row['code']),
+                "horizon_type": "day",
+                "code": str(row["code"]),
                 "model_type": self.model_type,
-                "date": row['forecast_date'],
-                "target": row['date'],
-                "flag": int(row['flag']) if pd.notna(row['flag']) else None,
+                "date": row["forecast_date"],
+                "target": row["date"],
+                "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
                 "horizon_value": 0,
                 "horizon_in_year": 0,
-                "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                "q50": float(row['Q50']) if pd.notna(row['Q50']) else None,
-                "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                "forecasted_discharge": None
+                "q05": float(row["Q5"]) if pd.notna(row["Q5"]) else None,
+                "q25": float(row["Q25"]) if pd.notna(row["Q25"]) else None,
+                "q75": float(row["Q75"]) if pd.notna(row["Q75"]) else None,
+                "q95": float(row["Q95"]) if pd.notna(row["Q95"]) else None,
+                "forecasted_discharge": float(row["Q50"]) if pd.notna(row["Q50"]) else None,
             }
             records.append(record)
         return records
 
-    def migrate_all_horizons(self, csv_folder: str) -> List[MigrationStats]:
+    def migrate_all_horizons(self, csv_folder: str) -> list[MigrationStats]:
         """Migrate all horizon types (pentad, decade) for this data type"""
         all_stats = []
 
         for horizon_type, model_filename in self.horizons.items():
-
             for model_type, filename in model_filename.items():
-
                 self.model_type = model_type
 
                 csv_path = Path(csv_folder) / filename
@@ -353,7 +372,7 @@ class ForecastDataMigrator(DataMigrator):
 class SkillMetricDataMigrator(DataMigrator):
     """Handles migration of skill-metric data from CSV to API"""
 
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare pentad (5-day) runoff data for API"""
         pentad_to_date = {
             1: "2025-12-31",
@@ -431,23 +450,25 @@ class SkillMetricDataMigrator(DataMigrator):
         }
         records = []
         for _, row in df.iterrows():
-            horizon = int(row['pentad_in_year'])
+            horizon = int(row["pentad_in_year"])
             record = {
                 "horizon_type": "pentad",
-                "code": str(row['code']),
-                "model_type": str(row['model_short']),
+                "code": str(row["code"]),
+                "model_type": str(row["model_short"]),
                 "date": pentad_to_date[horizon],
                 "horizon_in_year": horizon,
-                "sdivsigma": float(row['sdivsigma']) if pd.notna(row['sdivsigma']) else None,
-                "nse": float(row['nse']) if pd.notna(row['nse']) else None,
-                "delta": float(row['delta']) if pd.notna(row['delta']) else None,
-                "accuracy": float(row['accuracy']) if pd.notna(row['accuracy']) else None,
-                "mae": float(row['mae']) if pd.notna(row['mae']) else None,
-                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None,
-                "crps": float(row['crps']) if 'crps' in row and pd.notna(row['crps']) else None,
-                "pbias": float(row['pbias']) if 'pbias' in row and pd.notna(row['pbias']) else None,
-                "kgelf": float(row['kgelf']) if 'kgelf' in row and pd.notna(row['kgelf']) else None,
-                "nse_log": float(row['nse_log']) if 'nse_log' in row and pd.notna(row['nse_log']) else None
+                "sdivsigma": float(row["sdivsigma"]) if pd.notna(row["sdivsigma"]) else None,
+                "nse": float(row["nse"]) if pd.notna(row["nse"]) else None,
+                "delta": float(row["delta"]) if pd.notna(row["delta"]) else None,
+                "accuracy": float(row["accuracy"]) if pd.notna(row["accuracy"]) else None,
+                "mae": float(row["mae"]) if pd.notna(row["mae"]) else None,
+                "n_pairs": float(row["n_pairs"]) if pd.notna(row["n_pairs"]) else None,
+                "crps": float(row["crps"]) if "crps" in row and pd.notna(row["crps"]) else None,
+                "pbias": float(row["pbias"]) if "pbias" in row and pd.notna(row["pbias"]) else None,
+                "kgelf": float(row["kgelf"]) if "kgelf" in row and pd.notna(row["kgelf"]) else None,
+                "nse_log": float(row["nse_log"])
+                if "nse_log" in row and pd.notna(row["nse_log"])
+                else None,
             }
             records.append(record)
 
@@ -455,18 +476,25 @@ class SkillMetricDataMigrator(DataMigrator):
         seen = set()
         unique_records = []
         for record in records:
-            key = (record['horizon_type'], record['code'], record['model_type'],
-                   record['date'], record['horizon_in_year'])
+            key = (
+                record["horizon_type"],
+                record["code"],
+                record["model_type"],
+                record["date"],
+                record["horizon_in_year"],
+            )
             if key not in seen:
                 seen.add(key)
                 unique_records.append(record)
 
         if len(unique_records) < len(records):
-            logger.info(f"Deduplicated {len(records) - len(unique_records)} duplicate pentad skill metrics")
+            logger.info(
+                f"Deduplicated {len(records) - len(unique_records)} duplicate pentad skill metrics"
+            )
 
         return unique_records
 
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         """Prepare decade (10-day) runoff data for API"""
         decade_to_date = {
             1: "2025-12-31",
@@ -508,23 +536,25 @@ class SkillMetricDataMigrator(DataMigrator):
         }
         records = []
         for _, row in df.iterrows():
-            horizon = int(row['decad_in_year'])
+            horizon = int(row["decad_in_year"])
             record = {
                 "horizon_type": "decade",
-                "code": str(row['code']),
-                "model_type": str(row['model_short']),
+                "code": str(row["code"]),
+                "model_type": str(row["model_short"]),
                 "date": decade_to_date[horizon],
                 "horizon_in_year": horizon,
-                "sdivsigma": float(row['sdivsigma']) if pd.notna(row['sdivsigma']) else None,
-                "nse": float(row['nse']) if pd.notna(row['nse']) else None,
-                "delta": float(row['delta']) if pd.notna(row['delta']) else None,
-                "accuracy": float(row['accuracy']) if pd.notna(row['accuracy']) else None,
-                "mae": float(row['mae']) if pd.notna(row['mae']) else None,
-                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None,
-                "crps": float(row['crps']) if 'crps' in row and pd.notna(row['crps']) else None,
-                "pbias": float(row['pbias']) if 'pbias' in row and pd.notna(row['pbias']) else None,
-                "kgelf": float(row['kgelf']) if 'kgelf' in row and pd.notna(row['kgelf']) else None,
-                "nse_log": float(row['nse_log']) if 'nse_log' in row and pd.notna(row['nse_log']) else None
+                "sdivsigma": float(row["sdivsigma"]) if pd.notna(row["sdivsigma"]) else None,
+                "nse": float(row["nse"]) if pd.notna(row["nse"]) else None,
+                "delta": float(row["delta"]) if pd.notna(row["delta"]) else None,
+                "accuracy": float(row["accuracy"]) if pd.notna(row["accuracy"]) else None,
+                "mae": float(row["mae"]) if pd.notna(row["mae"]) else None,
+                "n_pairs": float(row["n_pairs"]) if pd.notna(row["n_pairs"]) else None,
+                "crps": float(row["crps"]) if "crps" in row and pd.notna(row["crps"]) else None,
+                "pbias": float(row["pbias"]) if "pbias" in row and pd.notna(row["pbias"]) else None,
+                "kgelf": float(row["kgelf"]) if "kgelf" in row and pd.notna(row["kgelf"]) else None,
+                "nse_log": float(row["nse_log"])
+                if "nse_log" in row and pd.notna(row["nse_log"])
+                else None,
             }
             records.append(record)
 
@@ -532,14 +562,21 @@ class SkillMetricDataMigrator(DataMigrator):
         seen = set()
         unique_records = []
         for record in records:
-            key = (record['horizon_type'], record['code'], record['model_type'],
-                   record['date'], record['horizon_in_year'])
+            key = (
+                record["horizon_type"],
+                record["code"],
+                record["model_type"],
+                record["date"],
+                record["horizon_in_year"],
+            )
             if key not in seen:
                 seen.add(key)
                 unique_records.append(record)
 
         if len(unique_records) < len(records):
-            logger.info(f"Deduplicated {len(records) - len(unique_records)} duplicate decade skill metrics")
+            logger.info(
+                f"Deduplicated {len(records) - len(unique_records)} duplicate decade skill metrics"
+            )
 
         return unique_records
 
@@ -566,7 +603,7 @@ class LongForecastDataMigrator(DataMigrator):
         sub_url: str = "long-forecast",
         horizon_type: str = "month",
         horizon_value: int = 1,
-        forecast_mode: str = None
+        forecast_mode: str = None,
     ):
         super().__init__(api_base_url, batch_size, horizons, sub_url)
         self.horizon_type = horizon_type
@@ -589,7 +626,7 @@ class LongForecastDataMigrator(DataMigrator):
         if not config_file.exists():
             raise FileNotFoundError(f"Config file not found: {config_file}")
 
-        with open(config_file, 'r') as f:
+        with open(config_file) as f:
             config = json.load(f)
 
         # Extract all models from models_to_use dict
@@ -600,14 +637,10 @@ class LongForecastDataMigrator(DataMigrator):
 
         horizon_value = config["operational_month_lead_time"]
 
-        return {
-            "models": models,
-            "horizon_value": horizon_value,
-            "raw_config": config
-        }
+        return {"models": models, "horizon_value": horizon_value, "raw_config": config}
 
     @staticmethod
-    def discover_forecast_modes(config_path: str) -> List[str]:
+    def discover_forecast_modes(config_path: str) -> list[str]:
         """Discover available forecast modes from config directory
 
         Args:
@@ -630,11 +663,7 @@ class LongForecastDataMigrator(DataMigrator):
         return sorted(modes)
 
     @staticmethod
-    def build_horizons_dict(
-        data_path: str,
-        forecast_mode: str,
-        models: List[str]
-    ) -> dict:
+    def build_horizons_dict(data_path: str, forecast_mode: str, models: list[str]) -> dict:
         """Build horizons dict with file paths for each model
 
         Args:
@@ -648,21 +677,25 @@ class LongForecastDataMigrator(DataMigrator):
         return {
             "month": {
                 model: str(
-                    Path(data_path) / LT_PREDICTIONS_PATH / forecast_mode / model / f"{model}_hindcast.csv"
+                    Path(data_path)
+                    / LT_PREDICTIONS_PATH
+                    / forecast_mode
+                    / model
+                    / f"{model}_hindcast.csv"
                 )
                 for model in models
             }
         }
 
-    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_pentad_data(self, df: pd.DataFrame) -> list[dict]:
         """Not used for long-term forecasts"""
         raise NotImplementedError("Long-term forecasts use prepare_month_data")
 
-    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+    def prepare_decade_data(self, df: pd.DataFrame) -> list[dict]:
         """Not used for long-term forecasts"""
         raise NotImplementedError("Long-term forecasts use prepare_month_data")
 
-    def prepare_month_data(self, df: pd.DataFrame, model_name: str) -> List[Dict]:
+    def prepare_month_data(self, df: pd.DataFrame, model_name: str) -> list[dict]:
         """Prepare monthly long-term forecast data for API
 
         Args:
@@ -677,8 +710,13 @@ class LongForecastDataMigrator(DataMigrator):
 
         # Identify quantile columns if present
         quantile_mapping = {
-            "Q5": "q05", "Q10": "q10", "Q25": "q25", "Q50": "q50",
-            "Q75": "q75", "Q90": "q90", "Q95": "q95"
+            "Q5": "q05",
+            "Q10": "q10",
+            "Q25": "q25",
+            "Q50": "q50",
+            "Q75": "q75",
+            "Q90": "q90",
+            "Q95": "q95",
         }
 
         # Identify ensemble columns if present
@@ -686,24 +724,24 @@ class LongForecastDataMigrator(DataMigrator):
             "_xgb": "q_xgb",
             "_lgbm": "q_lgbm",
             "_catboost": "q_catboost",
-            "_loc" : "q_loc"
+            "_loc": "q_loc",
         }
 
         for _, row in df.iterrows():
             # Skip rows with missing required dates
-            required_cols = ['date', 'valid_from', 'valid_to']
+            required_cols = ["date", "valid_from", "valid_to"]
             if not all(pd.notna(row.get(c)) for c in required_cols):
                 continue
 
             record = {
                 "horizon_type": self.horizon_type,
                 "horizon_value": self.horizon_value,
-                "code": str(int(row['code'])) if pd.notna(row.get('code')) else None,
-                "date": pd.to_datetime(row['date']).strftime('%Y-%m-%d'),
+                "code": str(int(row["code"])) if pd.notna(row.get("code")) else None,
+                "date": pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
                 "model_type": model_name,
-                "valid_from": pd.to_datetime(row['valid_from']).strftime('%Y-%m-%d'),
-                "valid_to": pd.to_datetime(row['valid_to']).strftime('%Y-%m-%d'),
-                "flag": int(row['flag']) if pd.notna(row.get('flag')) else None,
+                "valid_from": pd.to_datetime(row["valid_from"]).strftime("%Y-%m-%d"),
+                "valid_to": pd.to_datetime(row["valid_to"]).strftime("%Y-%m-%d"),
+                "flag": int(row["flag"]) if pd.notna(row.get("flag")) else None,
             }
 
             # Skip rows with invalid code
@@ -713,7 +751,6 @@ class LongForecastDataMigrator(DataMigrator):
             # Main model output column (Q_{model_name})
             if q_model_col in df.columns and pd.notna(row.get(q_model_col)):
                 record["q"] = float(row[q_model_col])
-
 
             # Quantile columns (Q5, Q10, ..., Q95)
             for csv_col, api_col in quantile_mapping.items():
@@ -734,9 +771,7 @@ class LongForecastDataMigrator(DataMigrator):
 
         return records
 
-    def migrate_long_forecast_csv(
-        self, csv_path: Path, model_name: str
-    ) -> MigrationStats:
+    def migrate_long_forecast_csv(self, csv_path: Path, model_name: str) -> MigrationStats:
         """Migrate a single long-term forecast CSV file
 
         Args:
@@ -767,7 +802,7 @@ class LongForecastDataMigrator(DataMigrator):
         print(f"Now uploading in batches of {self.batch_size} records...")
 
         for i in range(0, len(records), self.batch_size):
-            batch = records[i:i + self.batch_size]
+            batch = records[i : i + self.batch_size]
             batch_count += 1
 
             success, count = self.send_batch(batch, self.sub_url)
@@ -789,13 +824,13 @@ class LongForecastDataMigrator(DataMigrator):
             failed=failed,
             duration_seconds=duration,
             records_per_second=rps,
-            batch_count=batch_count
+            batch_count=batch_count,
         )
 
         print(str(stats))
         return stats
 
-    def migrate_all_horizons(self, csv_folder: str) -> List[MigrationStats]:
+    def migrate_all_horizons(self, csv_folder: str) -> list[MigrationStats]:
         """Migrate long-term forecasts for all specified models
 
         Args:
@@ -823,10 +858,7 @@ class LongForecastDataMigrator(DataMigrator):
                     stats = self.migrate_long_forecast_csv(csv_path, model_name)
                     all_stats.append(stats)
                 except Exception as e:
-                    logger.error(
-                        f"Migration failed for {model_name}: {str(e)}",
-                        exc_info=True
-                    )
+                    logger.error(f"Migration failed for {model_name}: {str(e)}", exc_info=True)
 
         return all_stats
 
@@ -834,7 +866,7 @@ class LongForecastDataMigrator(DataMigrator):
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='Migrate runoff, hydrograph and meteo data from CSV to database',
+        description="Migrate runoff, hydrograph and meteo data from CSV to database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -864,40 +896,44 @@ Examples:
 
   # Use custom batch size
   python data_migrator.py --type all --batch-size 2000
-        """
+        """,
     )
 
     parser.add_argument(
-        '--type',
+        "--type",
         choices=[
-            'combinedforecast', 'lrforecast', 'forecast',
-            'skillmetric', 'longforecast', 'all'
+            "combinedforecast",
+            "lrforecast",
+            "forecast",
+            "skillmetric",
+            "longforecast",
+            "all",
         ],
-        default='all',
-        help='Type of data to migrate (default: all)'
+        default="all",
+        help="Type of data to migrate (default: all)",
     )
 
     parser.add_argument(
-        '--batch-size',
+        "--batch-size",
         type=int,
         default=None,
-        help='Batch size for migration (default: from settings)'
+        help="Batch size for migration (default: from settings)",
     )
 
     parser.add_argument(
-        '--modes',
+        "--modes",
         type=str,
         default=None,
-        help='Comma-separated forecast modes for longforecast (e.g., monthly,seasonal). '
-             'If not specified, uses all supported modes from config.'
+        help="Comma-separated forecast modes for longforecast (e.g., monthly,seasonal). "
+        "If not specified, uses all supported modes from config.",
     )
 
     parser.add_argument(
-        '--model-filter',
+        "--model-filter",
         type=str,
         default=None,
-        help='Filter to specific models within a mode (e.g., LR_Base,GBT). '
-             'If not specified, migrates all models in the config.'
+        help="Filter to specific models within a mode (e.g., LR_Base,GBT). "
+        "If not specified, migrates all models in the config.",
     )
 
     return parser.parse_args()
@@ -910,7 +946,9 @@ def main():
 
     # Configuration - use command line args if provided, otherwise use settings
     API_URL = settings.api_base_url
-    BATCH_SIZE = args.batch_size if args.batch_size else settings.batch_size  # Adjust based on your API performance
+    BATCH_SIZE = (
+        args.batch_size if args.batch_size else settings.batch_size
+    )  # Adjust based on your API performance
     CSV_FOLDER = settings.csv_folder
 
     print("=" * 70)
@@ -929,43 +967,50 @@ def main():
     # Determine which migrators to run
     migrators_to_run = []
 
-    if args.type in ['combinedforecast', 'all']:
+    if args.type in ["combinedforecast", "all"]:
         horizons = {
             "pentad": "combined_forecasts_pentad_latest.csv",
-            "decade": "combined_forecasts_decad_latest.csv"
+            "decade": "combined_forecasts_decad_latest.csv",
         }
-        migrators_to_run.append(CombinedForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast"))
+        migrators_to_run.append(
+            CombinedForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast")
+        )
 
-    if args.type in ['lrforecast', 'all']:
+    if args.type in ["lrforecast", "all"]:
         horizons = {
             "pentad": "forecast_pentad_linreg_latest.csv",
-            "decade": "forecast_decad_linreg_latest.csv"
+            "decade": "forecast_decad_linreg_latest.csv",
         }
-        migrators_to_run.append(LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecast"))
+        migrators_to_run.append(
+            LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecast")
+        )
 
-    if args.type in ['forecast', 'all']:
+    if args.type in ["forecast", "all"]:
         horizons = {
-            "pentad": {
-                "TFT": "predictions/TFT/pentad_TFT_forecast_latest.csv",
-                "TiDE": "predictions/TIDE/pentad_TIDE_forecast_latest.csv",
-                "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast_latest.csv"
-            },
+            # since it is subset of decade, we will only migrate decade forecasts for now to avoid duplicates and confusion
+            # "pentad": {
+            #     "TFT": "predictions/TFT/pentad_TFT_forecast_latest.csv",
+            #     "TiDE": "predictions/TIDE/pentad_TIDE_forecast_latest.csv",
+            #     "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast_latest.csv"
+            # },
+            # the horizon would be 'day', 'pentad' and 'decade' values come from combined forecast csv files
             "decade": {
                 "TFT": "predictions/TFT/decad_TFT_forecast_latest.csv",
                 "TiDE": "predictions/TIDE/decad_TIDE_forecast_latest.csv",
-                "TSMixer": "predictions/TSMIXER/decad_TSMIXER_forecast_latest.csv"
+                "TSMixer": "predictions/TSMIXER/decad_TSMIXER_forecast_latest.csv",
             }
         }
-        migrators_to_run.append(ForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast"))
+        migrators_to_run.append(
+            ForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast")
+        )
 
-    if args.type in ['skillmetric', 'all']:
-        horizons = {
-            "pentad": "skill_metrics_pentad.csv",
-            "decade": "skill_metrics_decad.csv"
-        }
-        migrators_to_run.append(SkillMetricDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="skill-metric"))
+    if args.type in ["skillmetric", "all"]:
+        horizons = {"pentad": "skill_metrics_pentad.csv", "decade": "skill_metrics_decad.csv"}
+        migrators_to_run.append(
+            SkillMetricDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="skill-metric")
+        )
 
-    if args.type in ['longforecast', 'all']:
+    if args.type in ["longforecast", "all"]:
         # Long-term forecast migration using hardcoded paths
         # Structure: {csv_folder}/long_term_predictions/{mode}/{model}/{model}_hindcast.csv
         # Config: {config_folder}/long_term_config/{mode}.json
@@ -973,7 +1018,7 @@ def main():
 
         # Discover or use specified forecast modes
         if args.modes:
-            forecast_modes = [m.strip() for m in args.modes.split(',')]
+            forecast_modes = [m.strip() for m in args.modes.split(",")]
         else:
             # Auto-discover available modes from config directory
             forecast_modes = LongForecastDataMigrator.discover_forecast_modes(CONFIG_FOLDER)
@@ -996,7 +1041,7 @@ def main():
 
                 # Filter by --model-filter argument if provided
                 if args.model_filter:
-                    filter_models = [m.strip() for m in args.model_filter.split(',')]
+                    filter_models = [m.strip() for m in args.model_filter.split(",")]
                     models = [m for m in models if m in filter_models]
 
                 if not models:
@@ -1016,7 +1061,7 @@ def main():
                         sub_url="long-forecast",
                         horizon_type="month",
                         horizon_value=horizon_value,
-                        forecast_mode=forecast_mode
+                        forecast_mode=forecast_mode,
                     )
                 )
 
@@ -1052,7 +1097,9 @@ def main():
         print(f"Success Rate:             {(total_successful / total_records * 100):.2f}%")
     else:
         print("Success Rate:             N/A")
-    print(f"Total Duration:           {overall_duration:.2f} seconds ({overall_duration / 60:.2f} minutes)")
+    print(
+        f"Total Duration:           {overall_duration:.2f} seconds ({overall_duration / 60:.2f} minutes)"
+    )
     if overall_duration > 0:
         print(f"Overall Throughput:       {total_successful / overall_duration:.2f} records/sec")
     else:

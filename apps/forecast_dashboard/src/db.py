@@ -1,389 +1,61 @@
-import requests
-import pandas as pd
-import numpy as np
-import time
 import os
+import time
+from functools import wraps
+
+import numpy as np
+import pandas as pd
+import requests
+
 from src import processing
 from src.gettext_config import _
-# from cachetools import TTLCache # pip install cachetools
-# from typing import Optional, Dict, Any, Tuple
+from dashboard.logger import setup_logger
+
+logger = setup_logger()
+
+API_BASE = "http://localhost:8000/api"
+API_TIMEOUT = 30
+CURRENT_YEAR = 2026
+PREVIOUS_YEAR = CURRENT_YEAR - 1
+
+SNOW_VALUE_COLS = [f"value{i}" for i in range(1, 15)]
+
+# Neural Ensemble config
+NE_BASE_MODELS = ["TFT", "TiDE", "TSMixer"]
+NE_QUANTILE_COLS = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
 
 horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 if horizon == "decad":
     horizon = "decade"
 
-# # cache up to 512 unique requests, each valid for 5 minutes
-# _api_cache = TTLCache(maxsize=512, ttl=300)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-# def _freeze_params(params: Optional[Dict[str, Any]]) -> Tuple[Tuple[str, str], ...]:
-#     """
-#     Turn params dict into a stable, hashable key.
-#     - Sort keys
-#     - Convert values to strings (handles dates, numpy types, etc.)
-#     - Supports list/tuple values by repeating keys in sorted order
-#     """
-#     if not params:
-#         return ()
-#     items = []
-#     for k in sorted(params.keys()):
-#         v = params[k]
-#         if isinstance(v, (list, tuple)):
-#             for vv in v:
-#                 items.append((k, str(vv)))
-#         else:
-#             items.append((k, str(v)))
-#     return tuple(items)
+def _get_horizon() -> str:
+    h = os.getenv("sapphire_forecast_horizon", "pentad")
+    return "decade" if h == "decad" else h
 
 
-def get_data(station, all_stations):
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
-
-    data = {}
-
-    data["hydrograph_day_all"] = get_hydrograph_day_all(station)
-    data["hydrograph_pentad_all"] = get_hydrograph_pentad_all(station)
-    data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
-    data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
-
-    data["rain"] = get_rain(station)
-    data["temp"] = get_temp(station)
-    data["snow_data"] = get_snow_data(station)
-
-    data["ml_forecast"] = get_ml_forecast(station)
-    data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
-
-    data["linreg_predictor"] = get_linreg_predictor(station)
-    data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
-
-    data["forecasts_all"] = get_forecasts_all(station)
-    data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
-    data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
-
-    data["forecast_stats"] = get_forecast_stats(station)
-    data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
-
-    data["forecasts_all"] = data["forecasts_all"].merge(
-        data["forecast_stats"],
-        on=['code', horizon_in_year, 'model_short', 'model_long'],
-        how='left',
-        suffixes=('', '_stats'))
-    return data
+def _horizon_in_year_col(horizon: str) -> str:
+    return "decad_in_year" if horizon == "decade" else "pentad_in_year"
 
 
-def read_data(service_type:str, data_type: str, params: dict = None):
-    """Read data from the API
-    
-    Args:
-        service_type: 'preprocessing' or 'postprocessing'
-        data_type: 'runoff', 'hydrograph', 'meteo', 'forecast', 'lr-forecast', 'skill-metric'
-        params: Query parameters (filters like horizon, code, model, start_date, end_date)
-    """
-    # key = (service_type, data_type, _freeze_params(params))
-
-    # if key in _api_cache:
-    #     # return a copy so callers don't accidentally mutate cached df
-    #     return _api_cache[key].copy()
-
-    response = requests.get(
-        f"http://localhost:8000/api/{service_type}/{data_type}/",
-        params=params,
-        timeout=30
-    )
-    response.raise_for_status()
-
-    # response_data = response.json()
-    df = pd.DataFrame(response.json())
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.convert_dtypes()
-
-    # _api_cache[key] = df
-    return df.copy()
+def _resolve_station(station) -> str:
+    return station if isinstance(station, str) else station.value.split()[0]
 
 
-def get_hydrograph_day_all(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": "day", 
-        "code": station, 
-        "start_date": "2026-01-01",
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    hydrograph_day_all = read_data("preprocessing", "hydrograph", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read hydrograph_day_all data:", round(end_time - start_time, 3))
-    # hydrograph_day_all.rename(columns={"q05": "5th percentile", "q25": "25th percentile", "q75": "75th percentile", "q95": "95th percentile"}, inplace=True)
-    hydrograph_day_all.rename(columns={"q05": "5%", "q25": "25%", "q50": "50%", "q75": "75%", "q95": "95%"}, inplace=True)
-    hydrograph_day_all.rename(columns={"previous": "2025", "current": "2026"}, inplace=True)
-    hydrograph_day_all = hydrograph_day_all.drop(['horizon_type', 'horizon_value', 'horizon_in_year', 'norm', 'id'], axis=1)
-    # print("??????????????????????: hydrograph_day_all", hydrograph_day_all)
-    # print("??????????????????????: hydrograph_day_all.columns", hydrograph_day_all.columns)
-    return convert_na_to_nan(hydrograph_day_all)
+def _timed(func):
+    """Log execution time of decorated function."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        t0 = time.time()
+        result = func(*args, **kwargs)
+        logger.debug("%s completed in %.3fs", func.__name__, time.time() - t0)
+        return result
+    return wrapper
 
 
-def get_hydrograph_pentad_all(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": horizon, 
-        "code": station, 
-        "start_date": "2025-12-25",
-        "end_date": "2026-12-25",
-        "limit": 1000
-    }
-    start_time = time.time()
-    hydrograph_pentad_all = read_data("preprocessing", "hydrograph", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read hydrograph_pentad_all data:", round(end_time - start_time, 3))
-    if horizon == "decade":
-        hydrograph_pentad_all.rename(columns={"previous": "2025", "current": "2026", "horizon_in_year": "decad_in_year"}, inplace=True)
-    else:
-        hydrograph_pentad_all.rename(columns={"previous": "2025", "current": "2026", "horizon_in_year": "pentad_in_year"}, inplace=True)
-    hydrograph_pentad_all = hydrograph_pentad_all.drop(['horizon_type', 'horizon_value', 'count', 'std', 'q50', 'id'], axis=1)
-    # print("??????????????????????: hydrograph_pentad_all", hydrograph_pentad_all)
-    # print("??????????????????????: hydrograph_pentad_all.columns", hydrograph_pentad_all.columns)
-    return convert_na_to_nan(hydrograph_pentad_all)
-
-def get_rain(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "meteo_type": "P",
-        "code": station, 
-        "start_date": "2026-01-01",
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    rain = read_data("preprocessing", "meteo", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read rain data:", round(end_time - start_time, 3))
-    rain.rename(columns={"P": "Precipitation"}, inplace=True)
-    rain.rename(columns={"value": "P", "norm": "P_norm"}, inplace=True)
-    rain["P"] = rain["P"].astype(float)
-    rain["P_norm"] = rain["P_norm"].astype(float)
-    rain = rain.drop(['meteo_type', 'day_of_year', 'id'], axis=1)
-    # print("??????????????????????: rain", rain)
-    return convert_na_to_nan(rain)
-
-def get_temp(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "meteo_type": "T",
-        "code": station, 
-        "start_date": "2026-01-01",
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    temp = read_data("preprocessing", "meteo", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read temp data:", round(end_time - start_time, 3))
-    temp.rename(columns={"T": "Temperature"}, inplace=True)
-    temp.rename(columns={"value": "T", "norm": "T_norm"}, inplace=True)
-    temp["T"] = temp["T"].astype(float)
-    temp["T_norm"] = temp["T_norm"].astype(float)
-    temp = temp.drop(['meteo_type', 'day_of_year', 'id'], axis=1)
-    # print("??????????????????????: temp", temp)
-    return convert_na_to_nan(temp)
-
-def get_snow_data(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-
-    snow_data = {}
-    columns = [f"value{i}" for i in range(1, 15)]
-
-    params = {
-        "snow_type": "HS",
-        "code": station, 
-        "start_date": "2026-01-01",
-        "end_date": "2026-12-31",
-        "limit": 10000
-    }
-    start_time = time.time()
-    snow_data_hs = read_data("preprocessing", "snow", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read snow data (HS):", round(end_time - start_time, 3))
-    snow_data_hs.rename(columns={"value": "HS"}, inplace=True)
-    snow_data_hs = snow_data_hs.drop(['snow_type', *columns, 'id'], axis=1)
-    # print("??????????????????????: snow_data_hs", snow_data_hs)
-
-    params["snow_type"] = "ROF"
-    start_time = time.time()
-    snow_data_rof = read_data("preprocessing", "snow", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read snow data (ROF):", round(end_time - start_time, 3))
-    snow_data_rof.rename(columns={"value": "RoF"}, inplace=True)
-    snow_data_rof = snow_data_rof.drop(['snow_type', *columns, 'id'], axis=1)
-    # print("??????????????????????: snow_data_rof", snow_data_rof)
-
-    params["snow_type"] = "SWE"
-    start_time = time.time()
-    snow_data_swe = read_data("preprocessing", "snow", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read snow data (SWE):", round(end_time - start_time, 3))
-    snow_data_swe.rename(columns={"value": "SWE"}, inplace=True)
-    snow_data_swe = snow_data_swe.drop(['snow_type', *columns, 'id'], axis=1)
-    # print("??????????????????????: snow_data_swe", snow_data_swe)
-
-    snow_data['HS'] = convert_na_to_nan(snow_data_hs)
-    snow_data['RoF'] = convert_na_to_nan(snow_data_rof)
-    snow_data['SWE'] = convert_na_to_nan(snow_data_swe)
-
-    return snow_data
-
-def get_ml_forecast(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": horizon, 
-        "code": station, 
-        # "model_type": "TSMixer",
-        "start_date": "2025-12-01", 
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    ml_forecast = read_data("postprocessing", "forecast", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read ml_forecast data:", round(end_time - start_time, 3))
-    ml_forecast.rename(columns={"date": "forecast_date"}, inplace=True)
-    ml_forecast.rename(columns={"target": "date", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    ml_forecast.rename(columns={"q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95", 'forecasted_discharge': 'E[Q]'}, inplace=True)
-    ml_forecast = ml_forecast.drop(['horizon_type', 'horizon_value', 'horizon_in_year', 'q50', 'id'], axis=1)
-    
-    # Only keep the rows where forecast_date is equal to the most recent forecast date for each station
-    latest_forecast_date = ml_forecast['forecast_date'].max()
-    ml_forecast = ml_forecast[ml_forecast['forecast_date'] == latest_forecast_date]
-
-    # Calculate the Neural Ensemble (NE) forecast as the average of the TFT, TIDE, and TSMIXER forecasts
-    models_for_ne = ["TFT", "TiDE", "TSMixer"]
-    quant_cols = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
-    group_cols = ["code", "date", "forecast_date"]
-
-    # keep only the 3 base models
-    base = ml_forecast[ml_forecast["model_short"].isin(models_for_ne)].copy()
-
-    # compute NE as the average of the quantiles across the 3 models
-    ne = base.groupby(group_cols, as_index=False)[quant_cols].mean()
-
-    # add model metadata
-    ne["model_short"] = "NE"
-    ne["model_long"]  = "Neural Ensemble (NE)"
-    ne["flag"] = 0
-    ne["composition"] = "TFT,TiDE,TSMixer"
-
-    # match column order and append
-    ne = ne[ml_forecast.columns]
-    ml_forecast = pd.concat([ml_forecast, ne], ignore_index=True)
-
-    # print("??????????????????????: ml_forecast", ml_forecast)
-    # print("??????????????????????: ml_forecast columns", ml_forecast.columns)
-    return convert_na_to_nan(ml_forecast)
-
-def get_linreg_predictor(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": horizon, 
-        "code": station, 
-        "start_date": "2000-01-01", 
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    linreg_predictor = read_data("postprocessing", "lr-forecast", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read linreg_predictor data:", round(end_time - start_time, 3))
-    if horizon == "decade":
-        linreg_predictor.rename(columns={"horizon_in_year": "decad_in_year"}, inplace=True)
-    else:
-        linreg_predictor.rename(columns={"horizon_in_year": "pentad_in_year"}, inplace=True)
-    linreg_predictor = linreg_predictor.drop(['horizon_type', 'horizon_value', 'id'], axis=1)
-    linreg_predictor['Date'] = linreg_predictor['date'] + pd.Timedelta(days=1)
-    # print("??????????????????????: linreg_predictor", linreg_predictor)
-    # print("??????????????????????: linreg_predictor columns", linreg_predictor.columns)
-    return convert_na_to_nan(linreg_predictor)
-
-def get_forecasts_all(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": horizon, 
-        "code": station, 
-        "start_date": "2025-12-20",
-        "end_date": "2026-12-31",
-        "target": "null",
-        "limit": 1000
-    }
-    start_time = time.time()
-    forecasts_all = read_data("postprocessing", "forecast", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read forecasts_all data:", round(end_time - start_time, 3))
-    if horizon == "decade":
-        forecasts_all.rename(columns={"horizon_value": "decad", "horizon_in_year": "decad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    else:
-        forecasts_all.rename(columns={"horizon_value": "pentad_in_month", "horizon_in_year": "pentad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    forecasts_all.rename(columns={"q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95"}, inplace=True)
-    forecasts_all = forecasts_all.drop(['horizon_type', 'target', 'id'], axis=1)
-    forecasts_all['Date'] = forecasts_all['date'] + pd.Timedelta(days=1)
-    forecasts_all['year'] = forecasts_all['Date'].dt.year
-    # print("??????????????????????: forecasts_all", forecasts_all)
-
-    del params["target"]
-    start_time = time.time()
-    forecasts_lr = read_data("postprocessing", "lr-forecast", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read forecasts_lr data:", round(end_time - start_time, 3))
-    if horizon == "decade":
-        forecasts_lr.rename(columns={"horizon_value": "decad", "horizon_in_year": "decad_in_year"}, inplace=True)
-    else:
-        forecasts_lr.rename(columns={"horizon_value": "pentad", "horizon_in_year": "pentad_in_year"}, inplace=True)
-    forecasts_lr = forecasts_lr.drop(['horizon_type', 'discharge_avg', 'q_mean', 'q_std_sigma', 'delta', 'id'], axis=1)
-    forecasts_lr['model_short'] = 'LR'
-    forecasts_lr['model_long'] = 'Linear regression (LR)'
-    forecasts_lr['flag'] = None
-    forecasts_lr['Date'] = forecasts_lr['date'] + pd.Timedelta(days=1)
-    forecasts_lr['year'] = forecasts_lr['Date'].dt.year
-    # print("??????????????????????: forecasts_lr", forecasts_lr)
-
-    # Union of columns, missing columns will become NaN
-    forecasts_combined = pd.concat([forecasts_all, forecasts_lr], ignore_index=True, sort=False)
-    forecasts_combined = forecasts_combined.sort_values('Date')
-    # print("??????????????????????: forecasts_combined", forecasts_combined)
-    # print("??????????????????????: forecasts_combined.columns", forecasts_combined.columns)
-    return convert_na_to_nan(forecasts_combined)
-
-def get_forecast_stats(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
-    params = {
-        "horizon": horizon, 
-        "code": station, 
-        "start_date": "2025-12-31",
-        "end_date": "2026-12-31",
-        "limit": 1000
-    }
-    start_time = time.time()
-    forecast_stats = read_data("postprocessing", "skill-metric", params)
-    end_time = time.time()
-    print("??????????????????????: Time taken to read forecast_stats data:", round(end_time - start_time, 3))
-    if horizon == "decade":
-        forecast_stats.rename(columns={"horizon_in_year": "decad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    else:
-        forecast_stats.rename(columns={"horizon_in_year": "pentad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    forecast_stats = forecast_stats.drop(['horizon_type', 'date', 'id'], axis=1)
-    # print("??????????????????????: forecast_stats", forecast_stats)
-    # print("??????????????????????: forecast_stats columns", forecast_stats.columns)
-    return convert_na_to_nan(forecast_stats)
-
-
-def convert_na_to_nan(df):
+def _convert_na_to_nan(df: pd.DataFrame) -> pd.DataFrame:
     """Convert pd.NA to np.nan and revert to numpy dtypes."""
     result = df.copy()
     for col in result.columns:
@@ -391,3 +63,273 @@ def convert_na_to_nan(df):
         result[col] = result[col].astype(object)
         result.loc[mask, col] = np.nan
     return result.infer_objects()
+
+# ---------------------------------------------------------------------------
+# API layer
+# ---------------------------------------------------------------------------
+
+def _read_data(service_type: str, data_type: str, params: dict = None) -> pd.DataFrame:
+    """Fetch data from the backend API and return a DataFrame.
+
+    Args:
+        service_type: 'preprocessing' or 'postprocessing'
+        data_type: 'runoff', 'hydrograph', 'meteo', 'forecast',
+                   'lr-forecast', 'skill-metric', 'snow'
+        params: Query parameters forwarded to the API.
+    """
+    url = f"{API_BASE}/{service_type}/{data_type}/"
+    response = requests.get(url, params=params, timeout=API_TIMEOUT)
+    response.raise_for_status()
+
+    df = pd.DataFrame(response.json())
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+    return df.convert_dtypes()
+
+# ---------------------------------------------------------------------------
+# Individual data fetchers
+# ---------------------------------------------------------------------------
+
+@_timed
+def get_hydrograph_day_all(station) -> pd.DataFrame:
+    code = _resolve_station(station)
+    df = _read_data("preprocessing", "hydrograph", {
+        "horizon": "day",
+        "code": code,
+        "start_date": f"{CURRENT_YEAR}-01-01",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    })
+    df.rename(columns={
+        "q05": "5%", "q25": "25%", "q50": "50%", "q75": "75%", "q95": "95%",
+        "previous": str(PREVIOUS_YEAR), "current": str(CURRENT_YEAR),
+    }, inplace=True)
+    df.drop(columns=["horizon_type", "horizon_value", "horizon_in_year", "norm", "id"],
+            inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
+
+@_timed
+def get_hydrograph_pentad_all(station) -> pd.DataFrame:
+    horizon = _get_horizon()
+    code = _resolve_station(station)
+    df = _read_data("preprocessing", "hydrograph", {
+        "horizon": horizon,
+        "code": code,
+        "start_date": f"{PREVIOUS_YEAR}-12-25",
+        "end_date": f"{CURRENT_YEAR}-12-25",
+        "limit": 1000,
+    })
+    renames = {
+        "previous": str(PREVIOUS_YEAR),
+        "current": str(CURRENT_YEAR),
+        "horizon_in_year": _horizon_in_year_col(horizon),
+    }
+    df.rename(columns=renames, inplace=True)
+    df.drop(columns=["horizon_type", "horizon_value", "count", "std", "q50", "id"],
+            inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
+
+def _get_meteo(station, meteo_type: str) -> pd.DataFrame:
+    code = _resolve_station(station)
+    df = _read_data("preprocessing", "meteo", {
+        "meteo_type": meteo_type,
+        "code": code,
+        "start_date": f"{CURRENT_YEAR}-01-01",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    })
+    df.rename(columns={"value": meteo_type, "norm": f"{meteo_type}_norm"}, inplace=True)
+    df[meteo_type] = df[meteo_type].astype(float)
+    df[f"{meteo_type}_norm"] = df[f"{meteo_type}_norm"].astype(float)
+    df.drop(columns=["meteo_type", "day_of_year", "id"], inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
+
+@_timed
+def get_rain(station) -> pd.DataFrame:
+    return _get_meteo(station, "P")
+
+
+@_timed
+def get_temp(station) -> pd.DataFrame:
+    return _get_meteo(station, "T")
+
+
+def _get_snow_single(station_code: str, snow_type: str, col_name: str) -> pd.DataFrame:
+    df = _read_data("preprocessing", "snow", {
+        "snow_type": snow_type,
+        "code": station_code,
+        "start_date": f"{CURRENT_YEAR}-01-01",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 10000,
+    })
+    df.rename(columns={"value": col_name}, inplace=True)
+    df.drop(columns=["snow_type", *SNOW_VALUE_COLS, "id"], inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
+
+@_timed
+def get_snow_data(station) -> dict[str, pd.DataFrame]:
+    code = _resolve_station(station)
+    return {
+        "HS":  _get_snow_single(code, "HS",  "HS"),
+        "RoF": _get_snow_single(code, "ROF", "RoF"),
+        "SWE": _get_snow_single(code, "SWE", "SWE"),
+    }
+
+
+@_timed
+def get_ml_forecast(station) -> pd.DataFrame:
+    horizon = _get_horizon()
+    code = _resolve_station(station)
+    df = _read_data("postprocessing", "forecast", {
+        "horizon": horizon,
+        "code": code,
+        "start_date": f"{PREVIOUS_YEAR}-12-01",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    })
+    df.rename(columns={
+        "date": "forecast_date", "target": "date",
+        "model_type": "model_short", "model_type_description": "model_long",
+        "q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95",
+        "forecasted_discharge": "E[Q]",
+    }, inplace=True)
+    df.drop(columns=["horizon_type", "horizon_value", "horizon_in_year", "q50", "id"],
+            inplace=True, errors="ignore")
+
+    # Keep only the latest forecast date
+    df = df[df["forecast_date"] == df["forecast_date"].max()]
+
+    # Build Neural Ensemble as mean of base models (TFT, TIDE, and TSMIXER)
+    # keep only the 3 base models
+    base = df[df["model_short"].isin(NE_BASE_MODELS)]
+    # compute NE as the average of the quantiles across the 3 models
+    ne = base.groupby(["code", "date", "forecast_date"], as_index=False)[NE_QUANTILE_COLS].mean()
+    # add model metadata
+    ne["model_short"] = "NE"
+    ne["model_long"] = "Neural Ensemble (NE)"
+    ne["flag"] = 0
+    ne["composition"] = ",".join(NE_BASE_MODELS)
+    ne = ne.reindex(columns=df.columns)
+
+    return _convert_na_to_nan(pd.concat([df, ne], ignore_index=True))
+
+
+@_timed
+def get_linreg_predictor(station) -> pd.DataFrame:
+    horizon = _get_horizon()
+    code = _resolve_station(station)
+    df = _read_data("postprocessing", "lr-forecast", {
+        "horizon": horizon,
+        "code": code,
+        "start_date": "2000-01-01",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    })
+    df.rename(columns={"horizon_in_year": _horizon_in_year_col(horizon)}, inplace=True)
+    df.drop(columns=["horizon_type", "horizon_value", "id"], inplace=True, errors="ignore")
+    df["Date"] = df["date"] + pd.Timedelta(days=1)
+    return _convert_na_to_nan(df)
+
+@_timed
+def get_forecasts_all(station=None) -> pd.DataFrame:
+    horizon = _get_horizon()
+    hin = _horizon_in_year_col(horizon)
+    hv_col = "decad" if horizon == "decade" else "pentad_in_month"
+
+    code = None
+    if station is not None:
+        code = _resolve_station(station)
+
+    # --- ML / deep-learning forecasts ---
+    ml_params = {
+        "horizon": horizon,
+        "start_date": f"{PREVIOUS_YEAR}-12-20",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "target": "null",
+        "limit": 1000,
+    }
+    if code:
+        ml_params["code"] = code
+
+    df_ml = _read_data("postprocessing", "forecast", ml_params)
+    df_ml.rename(columns={
+        "horizon_value": hv_col, "horizon_in_year": hin,
+        "model_type": "model_short", "model_type_description": "model_long",
+        "q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95",
+    }, inplace=True)
+    df_ml.drop(columns=["horizon_type", "target", "id"], inplace=True, errors="ignore")
+    df_ml["Date"] = df_ml["date"] + pd.Timedelta(days=1)
+    df_ml["year"] = df_ml["Date"].dt.year
+
+    # --- Linear regression forecasts ---
+    lr_params = {k: v for k, v in ml_params.items() if k != "target"}
+    df_lr = _read_data("postprocessing", "lr-forecast", lr_params)
+    lr_hv = "decad" if horizon == "decade" else "pentad"
+    df_lr.rename(columns={
+        "horizon_value": lr_hv, "horizon_in_year": hin,
+    }, inplace=True)
+    df_lr.drop(columns=["horizon_type", "discharge_avg", "q_mean", "q_std_sigma", "delta", "id"],
+               inplace=True, errors="ignore")
+    df_lr["model_short"] = "LR"
+    df_lr["model_long"] = "Linear regression (LR)"
+    df_lr["flag"] = None
+    df_lr["Date"] = df_lr["date"] + pd.Timedelta(days=1)
+    df_lr["year"] = df_lr["Date"].dt.year
+
+    # Union of columns, missing columns will become NaN
+    combined = pd.concat([df_ml, df_lr], ignore_index=True, sort=False)
+    return _convert_na_to_nan(combined.sort_values("Date"))
+
+@_timed
+def get_forecast_stats(station) -> pd.DataFrame:
+    horizon = _get_horizon()
+    code = _resolve_station(station)
+    df = _read_data("postprocessing", "skill-metric", {
+        "horizon": horizon,
+        "code": code,
+        "start_date": f"{PREVIOUS_YEAR}-12-31",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    })
+    df.rename(columns={
+        "horizon_in_year": _horizon_in_year_col(horizon),
+        "model_type": "model_short",
+        "model_type_description": "model_long",
+    }, inplace=True)
+    df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
+# ---------------------------------------------------------------------------
+# Top-level orchestrator
+# ---------------------------------------------------------------------------
+
+def get_data(station, all_stations) -> dict:
+    horizon = _get_horizon()
+    hin = _horizon_in_year_col(horizon)
+
+    add_labels = lambda df: processing.add_labels_to_hydrograph(df, all_stations)
+    i18n_models = lambda df: processing.internationalize_forecast_model_names(_, df)
+
+    data = {
+        "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
+        "hydrograph_pentad_all": add_labels(get_hydrograph_pentad_all(station)),
+        "rain":                 get_rain(station),
+        "temp":                 get_temp(station),
+        "snow_data":            get_snow_data(station),
+        "ml_forecast":          add_labels(get_ml_forecast(station)),
+        "linreg_predictor":     add_labels(get_linreg_predictor(station)),
+        "forecasts_all":        i18n_models(add_labels(get_forecasts_all(station))),
+        "forecast_stats":       i18n_models(get_forecast_stats(station)),
+    }
+
+    data["forecasts_all"] = data["forecasts_all"].merge(
+        data["forecast_stats"],
+        on=["code", hin, "model_short", "model_long"],
+        how="left",
+        suffixes=("", "_stats"),
+    )
+    return data
