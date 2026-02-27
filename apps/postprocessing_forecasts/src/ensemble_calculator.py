@@ -5,13 +5,10 @@ Extracted from forecast_library.py calculate_skill_metrics_pentad() lines
 WITHOUT recalculating skill metrics from scratch.
 """
 
-import os
 import logging
-import datetime as dt
 
 import numpy as np
 import pandas as pd
-
 from src.postprocessing_tools import forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -21,13 +18,14 @@ logger = logging.getLogger(__name__)
 # Helper functions
 # ---------------------------------------------------------------------------
 
+
 def composition_agg(model_shorts: pd.Series) -> str:
     """Build composition string from model_short values.
 
     >>> composition_agg(pd.Series(["LR", "TFT", "TiDE"]))
     'LR, TFT, TiDE'
     """
-    return ', '.join(sorted(model_shorts.unique()))
+    return ", ".join(sorted(model_shorts.unique()))
 
 
 def is_multi_model_composition(composition: str) -> bool:
@@ -38,12 +36,13 @@ def is_multi_model_composition(composition: str) -> bool:
     >>> is_multi_model_composition('TFT')
     False
     """
-    return bool(composition) and ',' in composition
+    return bool(composition) and "," in composition
 
 
 # ---------------------------------------------------------------------------
 # Main public functions
 # ---------------------------------------------------------------------------
+
 
 def filter_for_highly_skilled_forecasts(
     skill_stats: pd.DataFrame,
@@ -58,41 +57,40 @@ def filter_for_highly_skilled_forecasts(
     from src.skill_metrics import (
         filter_for_highly_skilled_forecasts as _canonical,
     )
+
     overrides = {}
     if threshold_sdivsigma is not None:
-        overrides['sdivsigma'] = threshold_sdivsigma
+        overrides["sdivsigma"] = threshold_sdivsigma
     if threshold_accuracy is not None:
-        overrides['accuracy'] = threshold_accuracy
+        overrides["accuracy"] = threshold_accuracy
     if threshold_nse is not None:
-        overrides['nse'] = threshold_nse
+        overrides["nse"] = threshold_nse
     return _canonical(skill_stats, **overrides)
 
 
 def create_ensemble_forecasts(
     forecasts: pd.DataFrame,
     skill_stats: pd.DataFrame,
-    observed: pd.DataFrame,
     period_col: str,
     period_in_month_col: str,
     get_period_in_month_func,
-    calculate_all_metrics_func,
-    # Deprecated params kept for backward compatibility
-    sdivsigma_nse_func=None,
-    mae_func=None,
-    forecast_accuracy_hydromet_func=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Create ensemble mean (EM) forecasts using pre-calculated skill metrics.
 
-    Steps (extracted from forecast_library.py:2067-2176):
+    EM skill metrics are NOT calculated here — they are produced by the
+    annual recalculation script (recalculate_skill_metrics.py). This
+    function only creates the EM forecast rows and passes skill_stats
+    through unchanged.
+
+    Steps:
     1. Filter skill_stats for highly skilled models
     2. Use merge to get qualifying forecast rows
     3. Exclude NE (neural ensemble) from candidates
     4. Group by [date, code], mean(forecasted_discharge)
-    5. Build composition string: "Ens. Mean with LR, TFT (EM)"
+    5. Build composition string: "LR, TFT"
     6. Discard single-model or empty ensembles
     7. Calculate period_in_month for ensemble rows
     8. Merge ensemble rows into forecasts (outer join)
-    9. Recalculate skill metrics for ensemble
 
     Args:
         forecasts: Simulated/modelled forecasts with columns
@@ -101,119 +99,96 @@ def create_ensemble_forecasts(
         skill_stats: Pre-calculated skill metrics with columns
             [<period_col>, code, model_short, sdivsigma,
              nse, delta, accuracy, mae, n_pairs].
-        observed: Observed data with columns
-            [code, date, discharge_avg, delta].
         period_col: 'pentad_in_year' or 'decad_in_year'.
         period_in_month_col: 'pentad_in_month' or 'decad_in_month'.
         get_period_in_month_func: Function to compute period in month
             from a date (e.g. tl.get_pentad or tl.get_decad_in_month).
-        calculate_all_metrics_func: forecast_library.calculate_all_skill_metrics
-        sdivsigma_nse_func: Deprecated, ignored.
-        mae_func: Deprecated, ignored.
-        forecast_accuracy_hydromet_func: Deprecated, ignored.
 
     Returns:
         joint_forecasts: forecasts with ensemble rows appended.
-        skill_stats_with_ensemble: skill_stats with ensemble metrics
-            appended.
+        skill_stats: passed through unchanged.
     """
     # Step 1: filter for highly skilled models
     skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
-    logger.debug(
-        "Highly skilled models: %d rows", len(skill_stats_ensemble)
-    )
+    logger.debug("Highly skilled models: %d rows", len(skill_stats_ensemble))
 
     # Normalize merge key types to avoid object/int64 mismatches.
     # period_col values are integers (1-72 for pentad, 1-36 for decad).
     for df in (forecasts, skill_stats_ensemble):
         if period_col in df.columns:
-            df[period_col] = pd.to_numeric(df[period_col], errors='coerce')
-        if 'code' in df.columns:
-            df['code'] = df['code'].astype(str)
+            df[period_col] = pd.to_numeric(df[period_col], errors="coerce")
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str)
 
     # Step 2: use merge to get qualifying forecast rows
-    merge_keys = [period_col, 'code', 'model_short']
+    merge_keys = [period_col, "code", "model_short"]
     qualifying = forecasts.merge(
         skill_stats_ensemble[merge_keys].drop_duplicates(),
         on=merge_keys,
-        how='inner',
+        how="inner",
     )
     # Drop NaN forecasts
-    qualifying = qualifying.dropna(subset=['forecasted_discharge']).copy()
+    qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
     # Step 3: exclude NE (neural ensemble) from ensemble candidates
-    qualifying = qualifying[qualifying['model_short'] != 'NE'].copy()
+    qualifying = qualifying[qualifying["model_short"] != "NE"].copy()
 
     if qualifying.empty:
         logger.info("No qualifying forecasts for ensemble creation")
         return forecasts.copy(), skill_stats.copy()
 
     # Step 4: group by [period, date, code], compute mean forecasted_discharge
-    ensemble_avg = qualifying.groupby(
-        [period_col, 'date', 'code']
-    ).agg({
-        'forecasted_discharge': 'mean',
-        'model_short': composition_agg,
-    }).reset_index()
-    # model_short now holds the composition string (e.g. "LR, TFT")
-    ensemble_avg = ensemble_avg.rename(
-        columns={'model_short': 'composition'}
+    ensemble_avg = (
+        qualifying.groupby([period_col, "date", "code"])
+        .agg(
+            {
+                "forecasted_discharge": "mean",
+                "model_short": composition_agg,
+            }
+        )
+        .reset_index()
     )
-    ensemble_avg['model_short'] = 'EM'
+    # model_short now holds the composition string (e.g. "LR, TFT")
+    ensemble_avg = ensemble_avg.rename(columns={"model_short": "composition"})
+    ensemble_avg["model_short"] = "EM"
 
     # Step 5+6: discard single-model or empty ensembles
     ensemble_avg = ensemble_avg[
-        ensemble_avg['composition'].apply(is_multi_model_composition)
+        ensemble_avg["composition"].apply(is_multi_model_composition)
     ].copy()
 
     if ensemble_avg.empty:
         logger.info("No multi-model ensembles after filtering")
         return forecasts.copy(), skill_stats.copy()
 
-    # Step 9: recalculate skill metrics for the ensemble
-    ensemble_merged = pd.merge(
-        ensemble_avg,
-        observed[['code', 'date', 'discharge_avg', 'delta']],
-        on=['code', 'date'],
+    # Step 7: calculate period_in_month for ensemble rows
+    # (production date -> target period start)
+    ensemble_avg[period_in_month_col] = forecast_target_date(ensemble_avg["date"]).apply(
+        get_period_in_month_func
     )
 
-    number_of_models = forecasts['model_short'].nunique()
-    if number_of_models > 1 and not ensemble_merged.empty:
-        ensemble_skill_stats = _calculate_ensemble_skill(
-            ensemble_merged,
-            period_col,
-            calculate_all_metrics_func,
-        )
-        skill_stats_out = pd.concat(
-            [skill_stats, ensemble_skill_stats], ignore_index=True
-        )
+    # Step 8: outer join ensemble rows into forecasts
+    # Ensure forecasts has composition column for the outer merge
+    if "composition" not in forecasts.columns:
+        forecasts = forecasts.copy()
+        forecasts["composition"] = ""
+    join_cols = [
+        "code",
+        "date",
+        period_in_month_col,
+        period_col,
+        "forecasted_discharge",
+        "model_short",
+        "composition",
+    ]
+    joint_forecasts = pd.merge(
+        forecasts,
+        ensemble_avg[join_cols],
+        on=join_cols,
+        how="outer",
+    )
 
-        # Step 7: calculate period_in_month for ensemble rows
-        # (production date -> target period start)
-        ensemble_merged[period_in_month_col] = forecast_target_date(
-            ensemble_merged['date']
-        ).apply(get_period_in_month_func)
-
-        # Step 8: outer join ensemble rows into forecasts
-        # Ensure forecasts has composition column for the outer merge
-        if 'composition' not in forecasts.columns:
-            forecasts = forecasts.copy()
-            forecasts['composition'] = ''
-        join_cols = [
-            'code', 'date', period_in_month_col, period_col,
-            'forecasted_discharge', 'model_short', 'composition',
-        ]
-        joint_forecasts = pd.merge(
-            forecasts,
-            ensemble_merged[join_cols],
-            on=join_cols,
-            how='outer',
-        )
-    else:
-        joint_forecasts = forecasts.copy()
-        skill_stats_out = skill_stats.copy()
-
-    return joint_forecasts, skill_stats_out
+    return joint_forecasts, skill_stats.copy()
 
 
 def create_monthly_ensemble_forecasts(
@@ -246,8 +221,8 @@ def create_monthly_ensemble_forecasts(
         'Naive Mean'} and a 'composition' column.
     """
     from src.skill_metrics import (
-        _append_to_joint,
         _QUANTILE_COLS,
+        _append_to_joint,
         filter_for_highly_skilled_forecasts,
     )
 
@@ -255,92 +230,80 @@ def create_monthly_ensemble_forecasts(
         return pd.DataFrame()
 
     if skill_stats.empty:
-        logger.warning(
-            "Empty skill metrics — returning forecasts without ensembles"
-        )
+        logger.warning("Empty skill metrics — returning forecasts without ensembles")
         return forecasts.copy()
 
     # Ensure month_in_year exists
-    if 'month_in_year' not in forecasts.columns:
-        if 'month' in forecasts.columns:
-            forecasts = forecasts.copy()
-            forecasts['month_in_year'] = forecasts['month']
+    if "month_in_year" not in forecasts.columns and "month" in forecasts.columns:
+        forecasts = forecasts.copy()
+        forecasts["month_in_year"] = forecasts["month"]
 
     # Ensure forecasted_discharge exists (may be q50 from API)
-    if 'forecasted_discharge' not in forecasts.columns:
-        if 'q50' in forecasts.columns:
-            forecasts = forecasts.copy()
-            forecasts['forecasted_discharge'] = (
-                forecasts['q50'].astype(float)
-            )
+    if "forecasted_discharge" not in forecasts.columns and "q50" in forecasts.columns:
+        forecasts = forecasts.copy()
+        forecasts["forecasted_discharge"] = forecasts["q50"].astype(float)
 
     joint = forecasts.copy()
-    baselines = {'EM', 'Naive Mean', 'Skilled Mean'}
+    baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
     # --- EM (threshold-filtered average) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
-    merge_keys = ['month_in_year', 'code', 'model_short']
+    merge_keys = ["month_in_year", "code", "model_short"]
 
     # Normalize types for merge
     for df in (joint, skill_filtered):
-        if 'month_in_year' in df.columns:
-            df['month_in_year'] = pd.to_numeric(
-                df['month_in_year'], errors='coerce'
-            )
-        if 'code' in df.columns:
-            df['code'] = df['code'].astype(str)
+        if "month_in_year" in df.columns:
+            df["month_in_year"] = pd.to_numeric(df["month_in_year"], errors="coerce")
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str)
 
     qualifying = joint.merge(
         skill_filtered[merge_keys].drop_duplicates(),
-        on=merge_keys, how='inner',
+        on=merge_keys,
+        how="inner",
     )
-    qualifying = qualifying[
-        ~qualifying['model_short'].isin(baselines)
-    ].copy()
-    qualifying = qualifying.dropna(
-        subset=['forecasted_discharge']
-    ).copy()
+    qualifying = qualifying[~qualifying["model_short"].isin(baselines)].copy()
+    qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
-    n_models = joint[
-        ~joint['model_short'].isin(baselines)
-    ]['model_short'].nunique()
+    n_models = joint[~joint["model_short"].isin(baselines)]["model_short"].nunique()
 
     if n_models > 1 and not qualifying.empty:
         em_agg = {
-            'month_in_year': 'first',
-            'forecasted_discharge': 'mean',
-            'model_short': composition_agg,
+            "month_in_year": "first",
+            "forecasted_discharge": "mean",
+            "model_short": composition_agg,
         }
         for qcol in _QUANTILE_COLS:
             if qcol in qualifying.columns:
-                em_agg[qcol] = 'mean'
-        for dcol in ('valid_from', 'valid_to', 'date'):
+                em_agg[qcol] = "mean"
+        for dcol in ("valid_from", "valid_to", "date"):
             if dcol in qualifying.columns:
-                em_agg[dcol] = 'first'
+                em_agg[dcol] = "first"
 
-        em_avg = qualifying.groupby(
-            ['year', 'month', 'code']
-        ).agg(em_agg).reset_index()
-        em_avg = em_avg.rename(columns={'model_short': 'composition'})
-        em_avg['model_short'] = 'EM'
+        em_avg = qualifying.groupby(["year", "month", "code"]).agg(em_agg).reset_index()
+        em_avg = em_avg.rename(columns={"model_short": "composition"})
+        em_avg["model_short"] = "EM"
 
         # Discard single-model ensembles
-        em_avg = em_avg[
-            em_avg['composition'].apply(is_multi_model_composition)
-        ].copy()
+        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
 
         if not em_avg.empty:
-            em_avg['flag'] = 0
+            em_avg["flag"] = 0
             joint = _append_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted average) ---
     joint = _add_skilled_mean_monthly(
-        joint, skill_filtered, baselines, _QUANTILE_COLS,
+        joint,
+        skill_filtered,
+        baselines,
+        _QUANTILE_COLS,
     )
 
     # --- Naive Mean (unweighted all-model average) ---
     joint = _add_naive_mean_monthly(
-        joint, baselines, _QUANTILE_COLS,
+        joint,
+        baselines,
+        _QUANTILE_COLS,
     )
 
     return joint
@@ -358,57 +321,52 @@ def _add_skilled_mean_monthly(
     """
     from src.skill_metrics import _append_to_joint
 
-    filtered = skill_filtered[
-        ~skill_filtered['model_short'].isin(baselines)
-    ].copy()
+    filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
         return joint
 
-    mae_df = filtered[
-        ['month_in_year', 'code', 'model_short', 'mae']
-    ].copy()
-    mae_df = mae_df.dropna(subset=['mae'])
+    mae_df = filtered[["month_in_year", "code", "model_short", "mae"]].copy()
+    mae_df = mae_df.dropna(subset=["mae"])
     if mae_df.empty:
         return joint
 
     # Compute weights: w_i = 1 / (MAE_i + eps)
-    mean_mae = mae_df['mae'].mean()
+    mean_mae = mae_df["mae"].mean()
     eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
-    mae_df['weight'] = 1.0 / (mae_df['mae'] + eps)
+    mae_df["weight"] = 1.0 / (mae_df["mae"] + eps)
 
-    qualifying_keys = mae_df[
-        ['month_in_year', 'code', 'model_short']
-    ].drop_duplicates()
+    qualifying_keys = mae_df[["month_in_year", "code", "model_short"]].drop_duplicates()
 
     # Filter joint (non-baseline) to qualifying models
-    pool = joint[~joint['model_short'].isin(baselines)].copy()
+    pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.merge(
-        qualifying_keys, on=['month_in_year', 'code', 'model_short'],
-        how='inner',
+        qualifying_keys,
+        on=["month_in_year", "code", "model_short"],
+        how="inner",
     )
-    pool = pool.dropna(subset=['forecasted_discharge']).copy()
+    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
     if pool.empty:
         return joint
 
     # Attach weights
     pool = pool.merge(
-        mae_df[['month_in_year', 'code', 'model_short', 'weight']],
-        on=['month_in_year', 'code', 'model_short'],
-        how='left',
+        mae_df[["month_in_year", "code", "model_short", "weight"]],
+        on=["month_in_year", "code", "model_short"],
+        how="left",
     )
 
     def _weighted_mean(group, col):
-        w = pool.loc[group.index, 'weight'].to_numpy()
+        w = pool.loc[group.index, "weight"].to_numpy()
         d = group.to_numpy()
         return np.average(d, weights=w)
 
     sm_agg = {
-        'month_in_year': ('month_in_year', 'first'),
-        'forecasted_discharge': (
-            'forecasted_discharge',
-            lambda x: _weighted_mean(x, 'forecasted_discharge'),
+        "month_in_year": ("month_in_year", "first"),
+        "forecasted_discharge": (
+            "forecasted_discharge",
+            lambda x: _weighted_mean(x, "forecasted_discharge"),
         ),
-        'composition': ('model_short', composition_agg),
+        "composition": ("model_short", composition_agg),
     }
     for qcol in quantile_cols:
         if qcol in pool.columns:
@@ -416,22 +374,24 @@ def _add_skilled_mean_monthly(
                 qcol,
                 lambda x, _c=qcol: _weighted_mean(x, _c),
             )
-    for dcol in ('valid_from', 'valid_to', 'date'):
+    for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns:
-            sm_agg[dcol] = (dcol, 'first')
+            sm_agg[dcol] = (dcol, "first")
 
-    sm_avg = pool.groupby(['year', 'month', 'code']).agg(
-        **sm_agg,
-    ).reset_index()
-    sm_avg['model_short'] = 'Skilled Mean'
+    sm_avg = (
+        pool.groupby(["year", "month", "code"])
+        .agg(
+            **sm_agg,
+        )
+        .reset_index()
+    )
+    sm_avg["model_short"] = "Skilled Mean"
 
     # Discard single-model groups
-    sm_avg = sm_avg[
-        sm_avg['composition'].apply(is_multi_model_composition)
-    ].copy()
+    sm_avg = sm_avg[sm_avg["composition"].apply(is_multi_model_composition)].copy()
 
     if not sm_avg.empty:
-        sm_avg['flag'] = 0
+        sm_avg["flag"] = 0
         joint = _append_to_joint(joint, sm_avg)
 
     return joint
@@ -445,59 +405,32 @@ def _add_naive_mean_monthly(
     """Add Naive Mean rows (unweighted all-model average) to joint."""
     from src.skill_metrics import _append_to_joint
 
-    pool = joint[~joint['model_short'].isin(baselines)].copy()
-    pool = pool.dropna(subset=['forecasted_discharge']).copy()
+    pool = joint[~joint["model_short"].isin(baselines)].copy()
+    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
     if pool.empty:
         return joint
 
     naive_agg = {
-        'month_in_year': 'first',
-        'forecasted_discharge': 'mean',
-        'model_short': composition_agg,
+        "month_in_year": "first",
+        "forecasted_discharge": "mean",
+        "model_short": composition_agg,
     }
     for qcol in quantile_cols:
         if qcol in pool.columns:
-            naive_agg[qcol] = 'mean'
-    for dcol in ('valid_from', 'valid_to', 'date'):
+            naive_agg[qcol] = "mean"
+    for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns:
-            naive_agg[dcol] = 'first'
+            naive_agg[dcol] = "first"
 
-    naive_avg = pool.groupby(
-        ['year', 'month', 'code']
-    ).agg(naive_agg).reset_index()
-    naive_avg = naive_avg.rename(columns={'model_short': 'composition'})
-    naive_avg['model_short'] = 'Naive Mean'
+    naive_avg = pool.groupby(["year", "month", "code"]).agg(naive_agg).reset_index()
+    naive_avg = naive_avg.rename(columns={"model_short": "composition"})
+    naive_avg["model_short"] = "Naive Mean"
 
     # Discard single-model groups
-    naive_avg = naive_avg[
-        naive_avg['composition'].apply(is_multi_model_composition)
-    ].copy()
+    naive_avg = naive_avg[naive_avg["composition"].apply(is_multi_model_composition)].copy()
 
     if not naive_avg.empty:
-        naive_avg['flag'] = 0
+        naive_avg["flag"] = 0
         joint = _append_to_joint(joint, naive_avg)
 
     return joint
-
-
-def _calculate_ensemble_skill(
-    ensemble_df: pd.DataFrame,
-    period_col: str,
-    calculate_all_metrics_func,
-) -> pd.DataFrame:
-    """Calculate skill metrics for ensemble forecasts in a single pass.
-
-    Uses calculate_all_skill_metrics to compute all 6 metrics
-    (sdivsigma, nse, mae, n_pairs, delta, accuracy) in one groupby.
-    """
-    group_cols = [period_col, 'code', 'model_short', 'composition']
-    needed_cols = ['discharge_avg', 'forecasted_discharge', 'delta']
-
-    skill = ensemble_df.groupby(group_cols)[needed_cols].apply(
-        calculate_all_metrics_func,
-        observed_col='discharge_avg',
-        simulated_col='forecasted_discharge',
-        delta_col='delta',
-    ).reset_index()
-
-    return skill
