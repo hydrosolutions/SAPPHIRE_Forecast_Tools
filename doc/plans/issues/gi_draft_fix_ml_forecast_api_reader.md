@@ -1,6 +1,6 @@
 # Fix ML Forecast API Reader & Align Write/Read Architecture
 
-**Status**: DRAFT
+**Status**: Review (Phases 1, 2, 2b, 2c done; Phase 3 pending production deployment)
 **Modules**: `iEasyHydroForecast/setup_library.py`, `machine_learning/scr/utils_ml_forecast.py`,
 `postprocessing_forecasts/src/api_writer.py`, `sapphire/services/postprocessing/app/data_migrator.py`
 **Impact**: All ML models (TFT, TiDE, TSMixer, ARIMA), long-term models, postprocessing pipeline,
@@ -951,22 +951,25 @@ quantiles       ──map──►      q05..q95                   kept for MC_A
 - [x] New aggregation tests added (9 tests in TestMLAggregation)
 - [x] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
 
-### Phase 2b (data_migrator.py — REQUIRES COORDINATION)
+### Phase 2b — MOSTLY DONE (colleague's commit cd4dc81, merged in 3838429)
 
-> **DO NOT implement Phase 2b changes in this branch.** The data migration script
-> lives in `sapphire/services/postprocessing/` and any changes to the database
-> services must be coordinated with the team to avoid data integrity issues on
-> production. Discuss the proposed changes with your colleague before proceeding.
-> This section documents the required fixes for future implementation.
+Colleague implemented most Phase 2b changes independently on `maxat_sapphire_2`.
 
-- [ ] Discussed with colleague and agreed on migration approach
-- [ ] `ForecastDataMigrator` pentad CSVs removed from horizons config
-- [ ] `prepare_decade_data` uses `horizon_type="day"`
-- [ ] `horizon_value` and `horizon_in_year` set to day-of-year from target date
-- [ ] `forecasted_discharge` set to Q50 (not None)
-- [ ] `prepare_pentad_data` raises NotImplementedError or is removed
-- [ ] Tested on staging database before production
-- [ ] Verified: no duplicate records from pentad/decad CSV overlap
+- [x] Discussed with colleague and agreed on migration approach
+- [x] `ForecastDataMigrator` pentad CSVs removed from horizons config (commented out with explanation)
+- [x] `prepare_decade_data` uses `horizon_type="day"`
+- [ ] `horizon_value` and `horizon_in_year` set to day-of-year from target date — **still hardcoded to 0**
+- [x] `forecasted_discharge` set to Q50 (not None)
+- [~] `prepare_pentad_data` — comment added ("it won't run") but code left in place; acceptable since pentad is removed from config
+- [ ] Tested on staging database before production — confirm with colleague
+- [x] Verified: no duplicate records from pentad/decad CSV overlap (only decade migrated)
+
+Also in the same commit, `CombinedForecastDataMigrator` was updated:
+- `target` now computed as `date + 1 day` (aligned with our Phase 2c)
+- Column names changed from `Q5/Q25/Q75/Q95` to `q05/q25/q75/q95`
+- `q50` dropped from both pentad and decade prepare methods
+- `Forecast.q50` column commented out in model; `forecasted_discharge` is canonical Q50
+- `SkillMetric` model: added `fhv`, `flv` columns (FDC-based metrics)
 
 ### Phase 2 — DONE (commit 1cb3495)
 - [x] ML writer uses `horizon_type="day"` for all daily forecasts
@@ -976,14 +979,14 @@ quantiles       ──map──►      q05..q95                   kept for MC_A
 - [x] ML module tests updated (horizon_type assertions, day-of-year horizon values)
 - [ ] Integration test: write daily → read daily → aggregate to pentad → verify values (deferred — requires live API)
 
-### Phase 2c
-- [ ] `_write_combined_forecast_to_api` computes `target = date + 1 day` (first day of forecast period)
-- [ ] Simple `pd.Timedelta(days=1)` arithmetic — no dependency on `pentad_in_year` correctness
-- [ ] `target` is always 1 day after `date` for all pentad and decade records
-- [ ] Existing tests updated with correct expected target values
-- [ ] Integration test `test_api_records_contain_target_date` updated
-- [ ] New tests: pentad target, decade target, month-boundary crossing
-- [ ] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
+### Phase 2c — DONE (commit fb7c0cb)
+- [x] `_write_combined_forecast_to_api` computes `target = date + 1 day` (first day of forecast period)
+- [x] Simple `pd.Timedelta(days=1)` arithmetic — no dependency on `pentad_in_year` correctness
+- [x] `target` is always 1 day after `date` for all pentad and decade records
+- [x] Existing tests updated with correct expected target values
+- [x] Integration test `test_api_records_contain_target_date` updated
+- [x] New tests: pentad target, decade target, month-boundary crossing
+- [x] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
 
 ### Phase 3
 - [ ] Cleanup SQL tested on staging database
