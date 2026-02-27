@@ -1,9 +1,9 @@
 # Yearly Snow Norm Recalculation
 
-**Status**: Implemented (pending PR)
+**Status**: Draft
 **Module**: preprocessing_gateway
 **Priority**: Medium
-**Labels**: `enhancement`, `cron`, `snow-data`, `maintenance`
+**Labels**: `enhancement`, `cron`, `snow-data`, `maintenance`, `pipeline`
 
 ---
 
@@ -44,8 +44,9 @@ with historical data from 2000 to present.
 ## Desired Outcome
 
 - A standalone script calculates snow norms from all historical data
-- A shell script (`bin/yearly_snow_norm_recalculation.sh`) runs the
-  calculation in Docker, scheduled for end of August each year
+- The Luigi pipeline module runs the calculation via
+  `RunPeriodicMaintenanceWorkflow(task_type="snow_norms")`, invoked by
+  `bin/run_periodic_maintenance.sh snow_norms` (cron: August 25, 02:00)
 - Norms are written to the API for the full current year
 - The daily operational script preserves norms when writing new records
 - The dashboard displays snow norm reference lines (no dashboard changes
@@ -179,7 +180,6 @@ The shared function unifies these via a `reference_date` parameter:
 | File | Purpose |
 |------|---------|
 | `apps/preprocessing_gateway/recalculate_snow_norms.py` | Standalone Python script for yearly norm calculation |
-| `bin/yearly_snow_norm_recalculation.sh` | Shell script to run in Docker via cron |
 
 ### Files to Modify
 
@@ -188,6 +188,7 @@ The shared function unifies these via a `reference_date` parameter:
 | `apps/preprocessing_gateway/dg_utils.py` | Add `calculate_snow_norms()` and `write_snow_to_api()` |
 | `apps/preprocessing_gateway/snow_data_operational.py` | Remove `_write_snow_to_api()`, call `dg_utils.write_snow_to_api()` |
 | `apps/preprocessing_gateway/snow_data_renalysis.py` | Remove `_write_snow_to_api()`, call `dg_utils.write_snow_to_api()` |
+| `apps/pipeline/pipeline_docker.py` | Change `YearlySnowNormRecalculation` image to `sapphire-prepgateway` |
 
 ### Implementation Steps
 
@@ -761,113 +762,16 @@ The reanalysis script passes `mode="maintenance"` and
 `reference_date=data max` so the 30-day window is relative to the
 data's own timeframe (historical), not today.
 
-#### Step 4: Create `bin/yearly_snow_norm_recalculation.sh`
+#### Step 4: Fix `YearlySnowNormRecalculation` Docker image
 
-Follow the pattern from `yearly_skill_metrics_recalculation.sh`:
+In `apps/pipeline/pipeline_docker.py:2066`, change `image_name` from
+`"sapphire-pipeline"` to `"sapphire-prepgateway"` for consistency with
+`GatewayMaintenance` (line 1684) and because the script lives in the
+prepgateway module (WORKDIR `/app/apps/preprocessing_gateway`).
 
-```bash
-#!/bin/bash
-# Yearly Snow Norm Recalculation Script
-#
-# Calculates climatological norms for snow data (SWE, HS, RoF) using
-# all historical reanalysis data. Run once per year in late August.
-#
-# Usage:
-#   bash bin/yearly_snow_norm_recalculation.sh <env_file_path>
-#
-# Recommended crontab entry (runs August 25 at 02:00):
-#   0 2 25 8 * /path/to/bin/yearly_snow_norm_recalculation.sh /path/to/.env
-#
-# Author: Beatrice Marti
-
-source "$(dirname "$0")/utils/common_functions.sh"
-
-print_banner
-echo "| Running Yearly Snow Norm Recalculation"
-
-read_configuration $1
-
-# Validate required environment variables
-if [ -z "$ieasyhydroforecast_data_root_dir" ] || \
-   [ -z "$ieasyhydroforecast_env_file_path" ] || \
-   [ -z "$ieasyhydroforecast_data_ref_dir" ] || \
-   [ -z "$ieasyhydroforecast_container_data_ref_dir" ]; then
-    echo "| Error: Required environment variables are not set."
-    exit 1
-fi
-
-# Create log directory
-LOG_DIR="${ieasyhydroforecast_data_root_dir}/logs/snow_norm_recalc"
-mkdir -p ${LOG_DIR}
-
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-log_file="${LOG_DIR}/run_${TIMESTAMP}.log"
-
-log_message() {
-    echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1" | tee -a "$log_file"
-}
-
-log_message "Starting Yearly Snow Norm Recalculation"
-
-# Verify Docker is running
-if ! docker info > /dev/null 2>&1; then
-    log_message "ERROR: Docker is not running."
-    exit 1
-fi
-
-IMAGE_ID="mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
-if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
-    log_message "Image $IMAGE_ID not found locally, pulling..."
-    docker pull $IMAGE_ID
-    if [ $? -ne 0 ]; then
-        log_message "ERROR: Failed to pull Docker image $IMAGE_ID"
-        exit 1
-    fi
-fi
-
-establish_ssh_tunnel
-trap cleanup EXIT
-
-CONTAINER_NAME="snow-norm-recalc"
-SERVICE_LOG="${LOG_DIR}/${CONTAINER_NAME}_${TIMESTAMP}.log"
-
-log_message "Container: $CONTAINER_NAME"
-log_message "Service log: $SERVICE_LOG"
-
-# Remove existing container if any
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    docker rm -f $CONTAINER_NAME
-fi
-
-# Run recalculation
-docker run \
-    --name $CONTAINER_NAME \
-    --network host \
-    -e ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir} \
-    -e ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path} \
-    -e SAPPHIRE_OPDEV_ENV=True \
-    -e IN_DOCKER=True \
-    -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
-    -v ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data \
-    ${IMAGE_ID} \
-    uv run python preprocessing_gateway/recalculate_snow_norms.py \
-    2>&1 | tee "$SERVICE_LOG"
-
-CONTAINER_EXIT_CODE=$(docker inspect $CONTAINER_NAME --format='{{.State.ExitCode}}' 2>/dev/null || echo "1")
-
-if [ "$CONTAINER_EXIT_CODE" -eq 0 ]; then
-    log_message "Snow norm recalculation completed successfully"
-else
-    log_message "WARNING: Completed with exit code: $CONTAINER_EXIT_CODE"
-fi
-
-docker rm -f $CONTAINER_NAME 2>/dev/null
-
-# Keep logs for 2 years (runs once/year, want history)
-find $LOG_DIR -type f -mtime +730 -delete
-
-log_message "Done"
-```
+Also verify the command `["uv", "run", "recalculate_snow_norms.py"]`
+works from that WORKDIR (it should, since the Dockerfile copies the
+preprocessing_gateway source and `uv sync` installs dependencies).
 
 #### Step 5: Write tests
 
@@ -927,6 +831,7 @@ Behavioral tests for calling scripts (verify shared function integration):
 
 ```
 YEARLY (August)
+run_periodic_maintenance.sh snow_norms → Luigi → YearlySnowNormRecalculation
                                        recalculate_snow_norms.py
 Historical Snow CSVs                           │
 {OUTPUT_PATH_SNOW}/                            │
@@ -980,14 +885,14 @@ Preprocessing API ──> db.py:get_snow_data()
   HRU codes and snow variables
 - **Dashboard changes**: The dashboard already reads the `norm` column.
   No visualization code changes needed.
-- **Cron deployment**: The shell script is created but crontab setup on
-  the production server is a manual sysadmin task.
+- **Cron deployment**: The pipeline integration is done (`bin/run_periodic_maintenance.sh snow_norms`);
+  crontab entry on production server is a manual sysadmin task.
 
 ## Dependencies
 
 - Historical snow CSVs must exist (populated by `snow_data_renalysis.py`)
 - The preprocessing API snow endpoints must be operational (they are)
-- Docker image `mabesa/sapphire-pipeline` must include the new script
+- Docker image `sapphire-prepgateway` must include the new script
 
 ## Acceptance Criteria
 
@@ -1006,7 +911,9 @@ Preprocessing API ──> db.py:get_snow_data()
 - [ ] Existing API records (value, elevation bands) are preserved when
       norms are written
 - [ ] API records for current year have non-null `norm` after yearly run
-- [ ] `bin/yearly_snow_norm_recalculation.sh` runs successfully in Docker
+- [ ] `YearlySnowNormRecalculation` Luigi task uses `sapphire-prepgateway` image
+- [ ] `bin/run_periodic_maintenance.sh snow_norms` triggers the task successfully
+- [ ] Pipeline tests pass (`SAPPHIRE_TEST_ENV=True bash run_tests.sh pipeline`)
 - [ ] Dashboard snow plots display norm reference line
 - [ ] All existing tests pass (`SAPPHIRE_TEST_ENV=True bash run_tests.sh`)
 - [ ] New tests cover norm calculation, shared write function, and norm
@@ -1026,5 +933,8 @@ Preprocessing API ──> db.py:get_snow_data()
 - Snow DB model: `sapphire/services/preprocessing/app/models.py:117-148`
 - Snow CRUD upsert: `sapphire/services/preprocessing/app/crud.py:205-267`
 - Dashboard snow viz: `apps/forecast_dashboard/src/vizualization.py:2170-2300`
-- Yearly script pattern: `bin/yearly_skill_metrics_recalculation.sh`
-- Shell utilities: `bin/utils/common_functions.sh`
+- Pipeline periodic task: `apps/pipeline/pipeline_docker.py:2047-2076`
+- Pipeline routing: `apps/pipeline/pipeline_docker.py:2079-2108`
+- Pipeline tests: `apps/pipeline/tests/test_maintenance_tasks.py:303-381`
+- Shell wrapper: `bin/run_periodic_maintenance.sh`
+- Docker Compose: `bin/docker-compose-luigi.yml:113-128`
