@@ -1396,15 +1396,17 @@ def perform_linear_regression(
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[horizon_col] == float(forecast_horizon_int)]
 
-    # Initialize result DataFrame
+    # Initialize result DataFrame with NaN defaults.
+    # When regression is skipped (insufficient data), NaN correctly
+    # signals "no computation performed" and propagates as NULL in the API.
     data_dfp = data_dfp.assign(
-        slope=1.0,
-        intercept=0.0,
-        forecasted_discharge=-1.0,
-        q_mean=0.0,
-        q_std_sigma=0.0,
-        delta=0.0,
-        rsquared=0.0
+        slope=np.nan,
+        intercept=np.nan,
+        forecasted_discharge=np.nan,
+        q_mean=np.nan,
+        q_std_sigma=np.nan,
+        delta=np.nan,
+        rsquared=np.nan
     )
 
     # Create empty DataFrame with expected columns for fallback
@@ -1442,7 +1444,9 @@ def perform_linear_regression(
         # Drop NaN values, i.e. keep only the time steps where both
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
-        station_data = station_data.dropna()
+        station_data = station_data.dropna(
+            subset=[predictor_col, discharge_avg_col]
+        )
         if station_data.empty:
             logger.info(f"No data for station {station} in {horizon_flag} {forecast_horizon_int}")
             continue

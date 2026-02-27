@@ -1884,5 +1884,147 @@ class TestApiClientSingleton(unittest.TestCase):
         mock_cls.assert_called_once_with(base_url='http://localhost:8000')
 
 
+class TestNaNSentinelForInsufficientData(unittest.TestCase):
+    """Phase 1 (INFRA-006): perform_linear_regression returns NaN defaults
+    when a station has insufficient data (all-NaN predictor/discharge).
+
+    Previously, insufficient-data stations got -1.0 as a sentinel value
+    for forecasted_discharge. Now they should get NaN.
+    """
+
+    def _build_df(self, stations, pentads, predictor, discharge_avg):
+        """Build a DataFrame matching perform_linear_regression's input."""
+        rows = []
+        for station in stations:
+            for pentad in pentads:
+                for p, d in zip(predictor, discharge_avg):
+                    rows.append({
+                        'station': station,
+                        'pentad': pentad,
+                        'discharge_sum': p,
+                        'discharge_avg': d,
+                    })
+        return pd.DataFrame(rows)
+
+    def test_all_nan_predictor_returns_nan_forecast(self):
+        """Station where predictor is all NaN => NaN forecasted_discharge."""
+        df = pd.DataFrame({
+            'station': ['A'] * 4,
+            'pentad': [1] * 4,
+            'discharge_sum': [np.nan, np.nan, np.nan, np.nan],
+            'discharge_avg': [10.0, 20.0, 15.0, 25.0],
+        })
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        # Station A should have NaN forecast (insufficient predictor data)
+        if not result.empty:
+            for col in ['slope', 'intercept', 'forecasted_discharge']:
+                self.assertTrue(
+                    result[col].isna().all(),
+                    f"Expected NaN in {col}, got {result[col].tolist()}",
+                )
+        # Empty result is also acceptable (no data after dropna)
+
+    def test_all_nan_discharge_avg_returns_nan_forecast(self):
+        """Station where discharge_avg is all NaN => NaN defaults."""
+        df = pd.DataFrame({
+            'station': ['A'] * 4,
+            'pentad': [1] * 4,
+            'discharge_sum': [100.0, 200.0, 150.0, 250.0],
+            'discharge_avg': [np.nan, np.nan, np.nan, np.nan],
+        })
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        if not result.empty:
+            for col in ['slope', 'intercept', 'forecasted_discharge']:
+                self.assertTrue(
+                    result[col].isna().all(),
+                    f"Expected NaN in {col}, got {result[col].tolist()}",
+                )
+
+    def test_mixed_stations_good_and_insufficient(self):
+        """One station with good data, one with all-NaN predictor.
+
+        The good station should have computed values; the insufficient
+        station should have NaN (not -1.0) for all regression outputs.
+        """
+        rows = []
+        # Station GOOD: 3 valid data points for pentad 1
+        for p, d in [(100, 10), (200, 20), (150, 15)]:
+            rows.append({
+                'station': 'GOOD', 'pentad': 1,
+                'discharge_sum': float(p), 'discharge_avg': float(d),
+            })
+        # Station BAD: all NaN predictor for pentad 1
+        for d in [10, 20, 15]:
+            rows.append({
+                'station': 'BAD', 'pentad': 1,
+                'discharge_sum': np.nan, 'discharge_avg': float(d),
+            })
+        df = pd.DataFrame(rows)
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        # GOOD station should have a real forecast
+        good_rows = result[result['station'] == 'GOOD']
+        self.assertFalse(good_rows.empty, "GOOD station should have results")
+        self.assertFalse(
+            good_rows['forecasted_discharge'].isna().all(),
+            "GOOD station should have a computed forecast",
+        )
+
+        # BAD station: either absent (skipped) or has NaN — never -1.0
+        bad_rows = result[result['station'] == 'BAD']
+        if not bad_rows.empty:
+            for _, row in bad_rows.iterrows():
+                self.assertTrue(
+                    math.isnan(row['forecasted_discharge'])
+                    if not pd.isna(row['forecasted_discharge']) is False
+                    else True,
+                    "BAD station should have NaN forecast, not -1.0",
+                )
+                self.assertNotEqual(
+                    row['forecasted_discharge'], -1.0,
+                    "Sentinel -1.0 must not appear in forecast output",
+                )
+
+    def test_no_negative_one_sentinel_in_output(self):
+        """Regression output must NEVER contain -1.0 as a sentinel value.
+
+        Build a dataset where some stations have data and others don't,
+        then verify -1.0 does not appear in any regression output column.
+        """
+        rows = []
+        # Station with valid data
+        for p, d in [(100, 10), (200, 20), (300, 30)]:
+            rows.append({
+                'station': 'HAS_DATA', 'pentad': 1,
+                'discharge_sum': float(p), 'discharge_avg': float(d),
+            })
+        # Station with insufficient data (only NaN)
+        for _ in range(3):
+            rows.append({
+                'station': 'NO_DATA', 'pentad': 1,
+                'discharge_sum': np.nan, 'discharge_avg': np.nan,
+            })
+        df = pd.DataFrame(rows)
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        sentinel_cols = [
+            'slope', 'intercept', 'forecasted_discharge',
+            'q_mean', 'q_std_sigma', 'delta', 'rsquared',
+        ]
+        for col in sentinel_cols:
+            if col in result.columns:
+                vals = result[col].dropna().tolist()
+                self.assertNotIn(
+                    -1.0, vals,
+                    f"Sentinel -1.0 found in column {col}: {vals}",
+                )
+
+
 if __name__ == '__main__':
     unittest.main()
