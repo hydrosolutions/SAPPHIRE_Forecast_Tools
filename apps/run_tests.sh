@@ -138,6 +138,7 @@ MODULES=(
     "postprocessing_forecasts"
     "pipeline"
     "long_term_forecasting"
+    "validate_pipeline"
     "forecast_dashboard"
 )
 

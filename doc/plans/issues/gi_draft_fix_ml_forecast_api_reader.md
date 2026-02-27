@@ -16,9 +16,10 @@ data migration
 3. [Phase 1: Fix the Postprocessing Reader](#phase-1-fix-the-postprocessing-reader)
 4. [Phase 2: Migrate ML Writer to horizon_type=day](#phase-2-migrate-ml-writer-to-horizon_typeday)
 5. [Phase 2b: Fix the Data Migration Script](#phase-2b-fix-the-data-migration-script)
-6. [Phase 3: Clean up Duplicate Records](#phase-3-clean-up-duplicate-records)
-7. [Long-term Forecasts: Current State](#long-term-forecasts-current-state)
-8. [Verification Checklist](#verification-checklist)
+6. [Phase 2c: Fix Postprocessing Writer Target Dates](#phase-2c-fix-postprocessing-writer-target-dates)
+7. [Phase 3: Clean up Duplicate Records](#phase-3-clean-up-duplicate-records)
+8. [Long-term Forecasts: Current State](#long-term-forecasts-current-state)
+9. [Verification Checklist](#verification-checklist)
 
 ---
 
@@ -40,6 +41,8 @@ The intended data flow separates **producers** (raw forecasts) from **consumers/
   Postprocessing ─────────►│  horizon_type = "pentad"      │
   Module                   │  1 aggregated row per         │
                            │  (code, pentad_boundary)      │
+                           │  date = boundary,             │
+                           │  target = date + 1 day        │
                            │  for ALL models + EM + NE     │
                            │                               │
                            ├───────────────────────────────┤
@@ -47,6 +50,8 @@ The intended data flow separates **producers** (raw forecasts) from **consumers/
   Postprocessing ─────────►│  horizon_type = "decade"      │
   Module                   │  1 aggregated row per         │
                            │  (code, decad_boundary)       │
+                           │  date = boundary,             │
+                           │  target = date + 1 day        │
                            │  for ALL models + EM + NE     │
                            │                               │
                            └───────────────────────────────┘
@@ -110,7 +115,7 @@ Currently, the ML writer writes 5 daily records for a pentad:
 (horizon_type=pentad, code=12345, model=TFT, date=2024-01-05, target=2024-01-05) ← this one
 ```
 
-Then postprocessing writes the aggregated record:
+Then postprocessing writes the aggregated record (old behavior, target=date):
 ```
 (horizon_type=pentad, code=12345, model=TFT, date=2024-01-05, target=2024-01-05) ← upserts over ML row
 ```
@@ -118,6 +123,14 @@ Then postprocessing writes the aggregated record:
 The unique constraint `(horizon_type, code, model_type, date, target)` means the
 postprocessing record upserts OVER the ML daily row where `target=2024-01-05` (last
 day of pentad = boundary date). The other 4 ML daily rows remain orphaned.
+
+**After Phase 2c**, postprocessing writes with `target = date + 1` (first day of
+forecast period):
+```
+(horizon_type=pentad, code=12345, model=TFT, date=2024-01-05, target=2024-01-06) ← correct target
+```
+This creates a NEW record (different target from any ML row), avoiding the overwrite
+problem entirely. Old orphaned records are cleaned up in Phase 3.
 
 **Result**: 5 rows exist where there should be 1 aggregated row. When the reader runs
 `drop_duplicates(subset=['code', 'date'])`, it keeps one arbitrary row — which might
@@ -661,6 +674,124 @@ WHERE horizon_type = 'day' AND model_type IN ('TFT', 'TiDE', 'TSMixer');
 
 ---
 
+## Phase 2c: Fix Postprocessing Writer Target Dates
+
+**Goal**: When the postprocessing module writes aggregated pentad/decade records to the API,
+set `target` to the **first day of the period** instead of `target = date` (boundary date).
+
+**Scope**: `postprocessing_forecasts/src/api_writer.py`, `postprocessing_forecasts/tests/test_api_integration.py`
+
+**Prerequisite**: Phase 1 and Phase 2 (reader/writer already working). This phase fixes a
+semantic issue in the postprocessing writer output — the `target` field currently equals
+`date` (the pentad/decade boundary), but it should represent the first day of the forecast
+target period.
+
+### Data Semantics
+
+The `date` column in the combined forecast data is the **pentad/decade boundary** — the
+last day of the observation/current period. The forecast is for the **next** period.
+Therefore `target` = first day of the forecast period = `date + 1 day`.
+
+Examples:
+- `date = 2026-01-05` (end of pentad 1, Jan 1–5) → forecast is for pentad 2 (Jan 6–10)
+  → `target = 2026-01-06`
+- `date = 2026-01-10` (end of pentad 2, Jan 6–10) → forecast is for pentad 3 (Jan 11–15)
+  → `target = 2026-01-11`
+- `date = 2026-02-20` (end of decade 2, Feb 11–20) → forecast is for decade 3 (Feb 21–28)
+  → `target = 2026-02-21`
+- `date = 2024-02-29` (end of last pentad/decade of Feb, leap year) → forecast for Mar 1
+  → `target = 2024-03-01`
+
+This matches how the ML module produces daily target dates: the ML module writes daily
+forecasts for the days AFTER the boundary, starting with `date + 1`.
+
+### Problem
+
+Currently in `_write_combined_forecast_to_api` (line 261):
+```python
+'target': df_rec['date_str'],  # target == date (boundary date)
+```
+
+This sets `target = date` which is wrong — the target should be the first day of the
+forecast period, not the boundary.
+
+### Step 1: Compute target as date + 1
+
+In `_write_combined_forecast_to_api`, after the horizon repair block and before building
+`records_df`, compute the target date:
+
+```python
+# Target = first day of forecast period = day after the boundary
+df_rec['target_str'] = (
+    pd.to_datetime(df_rec['date']) + pd.Timedelta(days=1)
+).dt.strftime('%Y-%m-%d')
+```
+
+Then in the `records_df` construction, change:
+```python
+'target': df_rec['target_str'],    # first day of forecast period (was: df_rec['date_str'])
+```
+
+This is simpler and more robust than computing from `pentad_in_year` because:
+- It doesn't depend on `pentad_in_year` being correctly set
+- It works identically for pentad and decade (no if/elif needed)
+- It directly captures the domain semantics: forecast starts on `date + 1`
+
+### Step 2: Update tests
+
+**Existing tests to update** (`test_api_integration.py`):
+
+1. `test_pentad_forecast_correct_fields`: Uses `date=2024-01-06` → `target` should be
+   `'2024-01-07'` (date + 1). Currently asserts `'2024-01-06'` — needs update.
+
+2. All tests that assert `record['target']`: search for `['target']` in test file and
+   update expected values to `date + 1`.
+
+**Existing integration test** (`test_integration_postprocessing.py`):
+
+3. `test_api_records_contain_target_date`: Currently asserts `r['target'] == r['date']`.
+   Must change to assert `r['target'] == (date + 1 day)`:
+   - `date=2026-01-05` → `target='2026-01-06'`
+   - `date=2026-01-10` → `target='2026-01-11'`
+
+**New tests to add**:
+
+```python
+class TestCombinedForecastTarget:
+    """Tests that target = first day of forecast period (date + 1)."""
+
+    def test_pentad_target_is_day_after_boundary(self, ...):
+        """date=2024-01-20 (end of pentad 4) → target=2024-01-21."""
+
+    def test_decade_target_is_day_after_boundary(self, ...):
+        """date=2024-01-20 (end of decade 2) → target=2024-01-21."""
+
+    def test_pentad_target_crosses_month_boundary(self, ...):
+        """date=2024-02-29 (end of Feb, leap year) → target=2024-03-01."""
+
+    def test_decade_target_crosses_month_boundary(self, ...):
+        """date=2024-01-31 (end of Jan) → target=2024-02-01."""
+```
+
+### Step 3: Verify
+
+```bash
+cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh
+```
+
+### Impact Assessment
+
+This is a **non-breaking change** for the reader side:
+- The postprocessing reader (`_read_ml_forecasts_from_api`) groups by `['code', 'date']`
+  and ignores the `target` column. Changing `target` from `date` to the first day of the
+  forecast period does not affect read behavior.
+- The unique constraint `(horizon_type, code, model_type, date, target)` means the new
+  records will have a different `target` value than old records. Old records (where
+  `target = date`) will be superseded by the new records on the next pipeline run.
+  Both can coexist until Phase 3 cleanup.
+
+---
+
 ## Phase 3: Clean up Duplicate Records
 
 **Goal**: Remove orphaned ML daily records that were written with `horizon_type="pentad"/"decade"`.
@@ -742,7 +873,7 @@ flag             ──map──►    flag                         flag ──g
                                                           ──add──► pentad_in_month/pentad_in_year
 ```
 
-### Short-term: Target (after Phase 2)
+### Short-term: Target (after Phase 2 + 2c)
 
 ```
 ML Writer                    Forecast table               Postprocessing Reader
@@ -759,6 +890,17 @@ flag             ──map──►    flag                         flag ──g
                              id                           ──drop──►
                                                           ──add──► model_short
                                                           ──add──► pentad_in_month/pentad_in_year
+
+Postprocessing Writer        Forecast table
+─────────────────────        ──────────────
+date (boundary)  ──map──►    date
+date + 1 day     ──compute►  target (= first day of forecast period)
+forecasted_discharge ──map►  forecasted_discharge
+model_short      ──map──►    model_type (via MODEL_TYPE_MAP)
+pentad_in_month  ──map──►    horizon_value
+pentad_in_year   ──map──►    horizon_in_year
+composition      ──map──►    composition
+                 ──set──►    horizon_type = "pentad" / "decade"
 ```
 
 ### Long-term (already correct)
@@ -786,6 +928,7 @@ quantiles       ──map──►      q05..q95                   kept for MC_A
 | `read_short_term_forecasts` not on installed client | 1 | Low | Fall back to `read_forecasts` with try/except |
 | Server-side `model` param not supported | 1 | Low | Client-side filter remains as fallback |
 | Phase 2 writer change breaks existing data consumers | 2 | Medium | Dual-read strategy during transition |
+| Phase 2c target change creates new records alongside old ones | 2c | Low | Old records (target=date) remain until Phase 3 cleanup; reader ignores target column |
 | Cleanup SQL deletes valid records | 3 | Low | WHERE clause is conservative (only target != date for ML models) |
 | Decad daily count varies (10 or 11 days) | 1-2 | None | groupby averaging is count-agnostic |
 
@@ -825,13 +968,22 @@ quantiles       ──map──►      q05..q95                   kept for MC_A
 - [ ] Tested on staging database before production
 - [ ] Verified: no duplicate records from pentad/decad CSV overlap
 
-### Phase 2
-- [ ] ML writer uses `horizon_type="day"` for all daily forecasts
-- [ ] `_write_ml_daily_forecast_to_api` is the sole ML writer (or the pentad/decade writer delegates to it)
-- [ ] Postprocessing reader queries `horizon_type="day"` (with fallback to pentad/decade during transition)
-- [ ] make_forecast.py, fill_ml_gaps.py, recalculate_nan_forecasts.py updated
-- [ ] ML module tests updated
-- [ ] Integration test: write daily → read daily → aggregate to pentad → verify values
+### Phase 2 — DONE (commit 1cb3495)
+- [x] ML writer uses `horizon_type="day"` for all daily forecasts
+- [x] `_write_ml_forecast_to_api` always writes "day"; redundant `_write_ml_daily_forecast_to_api` call removed from `write_decad_forecast`
+- [x] Postprocessing reader queries `horizon_type="day"` (with fallback to pentad/decade during transition)
+- [x] make_forecast.py updated (removed redundant daily writer call and import). fill_ml_gaps.py and recalculate_nan_forecasts.py need no changes — they call `_write_ml_forecast_to_api` which now always writes "day"
+- [x] ML module tests updated (horizon_type assertions, day-of-year horizon values)
+- [ ] Integration test: write daily → read daily → aggregate to pentad → verify values (deferred — requires live API)
+
+### Phase 2c
+- [ ] `_write_combined_forecast_to_api` computes `target = date + 1 day` (first day of forecast period)
+- [ ] Simple `pd.Timedelta(days=1)` arithmetic — no dependency on `pentad_in_year` correctness
+- [ ] `target` is always 1 day after `date` for all pentad and decade records
+- [ ] Existing tests updated with correct expected target values
+- [ ] Integration test `test_api_records_contain_target_date` updated
+- [ ] New tests: pentad target, decade target, month-boundary crossing
+- [ ] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
 
 ### Phase 3
 - [ ] Cleanup SQL tested on staging database

@@ -43,7 +43,7 @@
 #   short-term                          Short-term forecast pipeline
 #   long-term                           Long-term forecast pipeline (months 0-9)
 #   all                                 Both pipelines
-#   <module>                            Single module by name
+#   <module>                            Single module by name (with per-module validation)
 #
 # Maintenance targets:
 #   maintenance                              All maintenance tasks
@@ -62,6 +62,12 @@
 #   --continue-on-error   Don't abort on first module failure
 #   --dry-run             Validate environment and venvs without running
 #   --help                Show full help message
+#
+# Per-module validation:
+#   When running a single module (e.g. run_locally.sh linear_regression),
+#   API data validation runs automatically after the module finishes.
+#   Only that module's data is checked (Tier 1 + Tier 2).
+#   For standalone use: validate_pipeline.py --module <module_name>
 #
 # Prerequisites:
 #   - Each module needs a .venv: cd apps/<module> && uv sync --all-extras
@@ -88,11 +94,17 @@ ERROR_TAIL_LINES=30
 ERROR_DIR="$(mktemp -d)"
 trap 'rm -rf "$ERROR_DIR"' EXIT
 
-# Tracking arrays
+# Tracking arrays (pipeline modules)
 declare -a RESULTS_MODULE=()
 declare -a RESULTS_STATUS=()
 declare -a RESULTS_TIME=()
 declare -a RESULTS_ERROR_LOG=()
+
+# Tracking arrays (API validation — reported separately in summary)
+declare -a VALIDATION_MODULE=()
+declare -a VALIDATION_STATUS=()
+declare -a VALIDATION_TIME=()
+declare -a VALIDATION_ERROR_LOG=()
 
 # Short-term pipeline modules (in dependency order)
 SHORT_TERM_MODULES=(
@@ -203,6 +215,17 @@ record_result() {
     RESULTS_STATUS+=("$status")
     RESULTS_TIME+=("$elapsed")
     RESULTS_ERROR_LOG+=("$error_log")
+}
+
+record_validation() {
+    local module="$1"
+    local status="$2"
+    local elapsed="$3"
+    local error_log="${4:-}"
+    VALIDATION_MODULE+=("$module")
+    VALIDATION_STATUS+=("$status")
+    VALIDATION_TIME+=("$elapsed")
+    VALIDATION_ERROR_LOG+=("$error_log")
 }
 
 check_venv() {
@@ -674,6 +697,56 @@ run_maintenance_postprocessing_long_term() {
 }
 
 # ---------------------------------------------------------------------------
+# API validation
+# ---------------------------------------------------------------------------
+
+run_api_validation() {
+    local target="${1:-short-term}"
+    banner "API Data Validation"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/api_validation.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
+        -- --target "$target"
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "api_validation completed in $(format_duration $elapsed)"
+        record_validation "api_validation (${target})" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log WARN "api_validation reported failures after $(format_duration $elapsed)"
+        record_validation "api_validation (${target})" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return 0  # don't abort pipeline mid-run; failures surface in summary
+}
+
+run_module_validation() {
+    local module="$1"
+    banner "API Data Validation (${module})"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/api_validation_${module}.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
+        -- --module "$module"
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "api_validation (${module}) completed in $(format_duration $elapsed)"
+        record_validation "api_validation (${module})" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log WARN "api_validation (${module}) reported failures after $(format_duration $elapsed)"
+        record_validation "api_validation (${module})" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return 0  # don't abort pipeline mid-run; failures surface in summary
+}
+
+# ---------------------------------------------------------------------------
 # Pipeline orchestrators
 # ---------------------------------------------------------------------------
 
@@ -711,12 +784,16 @@ run_short_term_pipeline() {
 
     # Restore original mode
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
+
+    run_api_validation "short-term"
 }
 
 run_long_term_pipeline() {
     banner "LONG-TERM FORECAST PIPELINE"
     run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    run_api_validation "long-term"
 }
 
 run_all() {
@@ -725,6 +802,8 @@ run_all() {
     local st_rc=$?
     run_long_term_pipeline
     local lt_rc=$?
+
+    run_api_validation "all"
 
     if [ $st_rc -ne 0 ] || [ $lt_rc -ne 0 ]; then
         return 1
@@ -806,6 +885,8 @@ run_daily_pipeline() {
 
     # Restore original mode
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
+
+    run_api_validation "daily"
 }
 
 run_yearly_pipeline() {
@@ -893,11 +974,62 @@ validate_env() {
 # Summary
 # ---------------------------------------------------------------------------
 
+print_error_details() {
+    # Print last N lines of log for each failed entry in the given arrays.
+    # Usage: print_error_details <label> MODULE_ARRAY STATUS_ARRAY ERROR_LOG_ARRAY
+    local label="$1"
+    shift
+    local -n _modules=$1
+    local -n _statuses=$2
+    local -n _error_logs=$3
+
+    local has_failures=false
+    for i in "${!_statuses[@]}"; do
+        if [ "${_statuses[$i]}" = "FAIL" ]; then
+            has_failures=true
+            break
+        fi
+    done
+    [ "$has_failures" = false ] && return 0
+
+    echo ""
+    echo "" >> "$LOG_FILE"
+    local sep="$(printf '=%.0s' {1..60})"
+    echo -e "${RED}${sep}${NC}"
+    echo "$sep" >> "$LOG_FILE"
+    echo -e "${RED}${label} (last ${ERROR_TAIL_LINES} lines per failure)${NC}"
+    echo "${label} (last ${ERROR_TAIL_LINES} lines per failure)" >> "$LOG_FILE"
+    echo -e "${RED}${sep}${NC}"
+    echo "$sep" >> "$LOG_FILE"
+
+    for i in "${!_modules[@]}"; do
+        if [ "${_statuses[$i]}" = "FAIL" ]; then
+            local err_log="${_error_logs[$i]:-}"
+            echo ""
+            echo "" >> "$LOG_FILE"
+            echo -e "${BOLD}--- ${_modules[$i]} ---${NC}"
+            echo "--- ${_modules[$i]} ---" >> "$LOG_FILE"
+            if [ -n "$err_log" ] && [ -s "$err_log" ]; then
+                tail -"${ERROR_TAIL_LINES}" "$err_log" | while IFS= read -r line; do
+                    echo "  $line"
+                    echo "  $line" >> "$LOG_FILE"
+                done
+            else
+                echo "  (no output captured)"
+                echo "  (no output captured)" >> "$LOG_FILE"
+            fi
+        fi
+    done
+    echo ""
+    echo "" >> "$LOG_FILE"
+}
+
 print_summary() {
     local total_time=$1
     echo "" | tee -a "$LOG_FILE"
     banner "PIPELINE SUMMARY"
 
+    # --- Module results ---
     local pass_count=0
     local fail_count=0
 
@@ -917,43 +1049,52 @@ print_summary() {
         fi
     done
 
-    echo "" | tee -a "$LOG_FILE"
-    log INFO "Total: ${pass_count} passed, ${fail_count} failed, $(format_duration "$total_time") elapsed"
-    log INFO "Log file: ${LOG_FILE}"
+    # --- Validation results ---
+    local val_pass=0
+    local val_fail=0
 
-    # Show error snippets for failed modules
-    if [ $fail_count -gt 0 ]; then
-        echo ""
-        echo "" >> "$LOG_FILE"
-        local sep="$(printf '=%.0s' {1..60})"
-        echo -e "${RED}${sep}${NC}"
-        echo "$sep" >> "$LOG_FILE"
-        echo -e "${RED}ERROR DETAILS (last ${ERROR_TAIL_LINES} lines per failed module)${NC}"
-        echo "ERROR DETAILS (last ${ERROR_TAIL_LINES} lines per failed module)" >> "$LOG_FILE"
-        echo -e "${RED}${sep}${NC}"
-        echo "$sep" >> "$LOG_FILE"
+    if [ ${#VALIDATION_MODULE[@]} -gt 0 ]; then
+        echo "" | tee -a "$LOG_FILE"
+        banner "API VALIDATION SUMMARY"
 
-        for i in "${!RESULTS_MODULE[@]}"; do
-            if [ "${RESULTS_STATUS[$i]}" = "FAIL" ]; then
-                local err_log="${RESULTS_ERROR_LOG[$i]:-}"
-                echo ""
-                echo "" >> "$LOG_FILE"
-                echo -e "${BOLD}--- ${RESULTS_MODULE[$i]} ---${NC}"
-                echo "--- ${RESULTS_MODULE[$i]} ---" >> "$LOG_FILE"
-                if [ -n "$err_log" ] && [ -s "$err_log" ]; then
-                    tail -"${ERROR_TAIL_LINES}" "$err_log" | while IFS= read -r line; do
-                        echo "  $line"
-                        echo "  $line" >> "$LOG_FILE"
-                    done
-                else
-                    echo "  (no output captured)"
-                    echo "  (no output captured)" >> "$LOG_FILE"
-                fi
+        for i in "${!VALIDATION_MODULE[@]}"; do
+            local mod="${VALIDATION_MODULE[$i]}"
+            local status="${VALIDATION_STATUS[$i]}"
+            local elapsed="${VALIDATION_TIME[$i]}"
+            local duration
+            duration="$(format_duration "$elapsed")"
+
+            if [ "$status" = "PASS" ]; then
+                log OK "  ${mod}: PASS (${duration})"
+                val_pass=$((val_pass + 1))
+            else
+                log ERROR "  ${mod}: FAIL (${duration})"
+                val_fail=$((val_fail + 1))
             fi
         done
+    fi
 
-        echo ""
-        echo "" >> "$LOG_FILE"
+    # --- Totals ---
+    echo "" | tee -a "$LOG_FILE"
+    local summary="Modules: ${pass_count} passed, ${fail_count} failed"
+    if [ ${#VALIDATION_MODULE[@]} -gt 0 ]; then
+        summary="${summary} | Validation: ${val_pass} passed, ${val_fail} failed"
+    fi
+    log INFO "${summary} | $(format_duration "$total_time") elapsed"
+    log INFO "Log file: ${LOG_FILE}"
+
+    # --- Error details ---
+    if [ $fail_count -gt 0 ]; then
+        print_error_details "MODULE ERROR DETAILS" \
+            RESULTS_MODULE RESULTS_STATUS RESULTS_ERROR_LOG
+    fi
+
+    if [ $val_fail -gt 0 ]; then
+        print_error_details "VALIDATION ERROR DETAILS" \
+            VALIDATION_MODULE VALIDATION_STATUS VALIDATION_ERROR_LOG
+    fi
+
+    if [ $fail_count -gt 0 ] || [ $val_fail -gt 0 ]; then
         return 1
     fi
     return 0
@@ -1193,24 +1334,30 @@ main() {
         calibrate_long_term)
             run_calibrate_long_term || exit_code=$?
             ;;
-        # Single operational module targets
+        # Single operational module targets (with per-module validation)
         preprocessing_runoff)
             run_preprocessing_runoff || exit_code=$?
+            run_module_validation "preprocessing_runoff"
             ;;
         preprocessing_gateway)
             run_preprocessing_gateway || exit_code=$?
+            run_module_validation "preprocessing_gateway"
             ;;
         linear_regression)
             run_linear_regression || exit_code=$?
+            run_module_validation "linear_regression"
             ;;
         machine_learning)
             run_machine_learning || exit_code=$?
+            run_module_validation "machine_learning"
             ;;
         postprocessing_forecasts)
             run_postprocessing_forecasts || exit_code=$?
+            run_module_validation "postprocessing_forecasts"
             ;;
         long_term_forecasting)
             run_long_term_forecasting || exit_code=$?
+            run_module_validation "long_term_forecasting"
             ;;
     esac
 

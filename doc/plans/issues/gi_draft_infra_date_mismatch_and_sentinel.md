@@ -1,6 +1,6 @@
 # Fix Postprocessing Boundary Day Guard, LR Sentinel, and Validation Queries
 
-**Status**: Draft
+**Status**: Review
 **Module**: `infra` (cross-module: `iEasyHydroForecast`, `postprocessing_forecasts`, `validate_pipeline`)
 **Priority**: High
 **Labels**: `bug`, `data-integrity`, `api`
@@ -188,7 +188,7 @@ All forecast queries use `start_date=fd, end_date=fd` where `fd = today`.
 
 **File to modify**: `apps/iEasyHydroForecast/forecast_library.py`
 
-- [ ] **Step 1.1**: Change all defaults to `np.nan` at line 1399-1408:
+- [x] **Step 1.1**: Change all defaults to `np.nan` at line 1399-1408:
 
 ```python
 data_dfp = data_dfp.assign(
@@ -206,7 +206,7 @@ Rationale: All seven values are computed together. When regression is
 skipped, none of them are valid. `slope=1.0` and `intercept=0.0` are as
 misleading as `forecasted_discharge=-1.0`.
 
-- [ ] **Step 1.2**: Search codebase for `== -1.0` or `== -1` checks on
+- [x] **Step 1.2**: Search codebase for `== -1.0` or `== -1` checks on
 forecasted_discharge that might need updating.
 
 ### Phase 2: Add boundary day guard to postprocessing
@@ -217,7 +217,7 @@ horizon-agnostic).
 
 **File to modify**: `apps/postprocessing_forecasts/postprocessing_operational.py`
 
-- [ ] **Step 2.1**: Import `calendar` and add boundary day check functions
+- [x] **Step 2.1**: Import `calendar` and add boundary day check functions
 (or import from `tag_library` if equivalent functions exist):
 
 ```python
@@ -234,7 +234,7 @@ def is_decad_boundary(d: dt.date) -> bool:
     return d.day in (10, 20, last_day)
 ```
 
-- [ ] **Step 2.2**: Add boundary day guard before pentad processing
+- [x] **Step 2.2**: Add boundary day guard before pentad processing
 (around line 85):
 
 ```python
@@ -250,7 +250,7 @@ if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
         # ... existing pentad processing block (lines 86-142) ...
 ```
 
-- [ ] **Step 2.3**: Add boundary day guard before decad processing
+- [x] **Step 2.3**: Add boundary day guard before decad processing
 (around line 144):
 
 ```python
@@ -264,10 +264,10 @@ if prediction_mode in ['DECAD', 'BOTH', 'ALL']:
         # ... existing decad processing block (lines 145-201) ...
 ```
 
-- [ ] **Step 2.4**: Ensure the exit code remains 0 when skipping (this is
+- [x] **Step 2.4**: Ensure the exit code remains 0 when skipping (this is
 normal operation, not an error).
 
-- [ ] **Step 2.5**: Check whether `postprocessing_maintenance.py` also
+- [x] **Step 2.5**: Check whether `postprocessing_maintenance.py` also
 needs a guard. Maintenance is for gap-filling, so it should process
 pending periods regardless of today's date. Verify it doesn't create the
 same spurious records.
@@ -276,7 +276,7 @@ same spurious records.
 
 **File to modify**: `apps/postprocessing_forecasts/src/ensemble_calculator.py`
 
-- [ ] **Step 3.1**: Change the EM groupby from `['date', 'code']` to
+- [x] **Step 3.1**: Change the EM groupby from `['date', 'code']` to
 `[period_col, 'date', 'code']` (line 152):
 
 ```python
@@ -301,12 +301,12 @@ Note: `period_col` moves from the agg dict to the groupby key. After
 `'first'` aggregation is no longer needed since the period is constant
 within each group.
 
-- [ ] **Step 3.2**: Verify the downstream observed merge (line 173) and
+- [x] **Step 3.2**: Verify the downstream observed merge (line 173) and
 outer join (line 201-210) still work. The merge uses `on=['code', 'date']`
 — adding `period_col` to the groupby doesn't change the `date` or `code`
 columns, so these joins are unaffected.
 
-- [ ] **Step 3.3**: Verify `period_in_month_col` computation (line 192)
+- [x] **Step 3.3**: Verify `period_in_month_col` computation (line 192)
 still works. It uses `forecast_target_date(ensemble_merged['date'])` which
 doesn't depend on the groupby keys.
 
@@ -314,9 +314,9 @@ doesn't depend on the groupby keys.
 
 **File to modify**: `apps/validate_pipeline/validate_pipeline.py`
 
-- [ ] **Step 4.1**: Add `from datetime import timedelta` to imports.
+- [x] **Step 4.1**: Add `from datetime import timedelta` to imports.
 
-- [ ] **Step 4.2**: Add boundary date helper functions (after line 98):
+- [x] **Step 4.2**: Add boundary date helper functions (after line 98):
 
 ```python
 def most_recent_pentad_boundary(d: date) -> date:
@@ -343,7 +343,7 @@ def most_recent_decad_boundary(d: date) -> date:
     return prev_month_last
 ```
 
-- [ ] **Step 4.3**: Modify `run_tier1_short_term` to query from boundary
+- [x] **Step 4.3**: Modify `run_tier1_short_term` to query from boundary
 date to today for forecast checks (not preprocessing — those use daily
 data and keep `date=today`):
 
@@ -380,7 +380,7 @@ results.append(
 )
 ```
 
-- [ ] **Step 4.4**: Fix `check_expected_models` to exclude SKIP'd models
+- [x] **Step 4.4**: Fix `check_expected_models` to exclude SKIP'd models
 from the expected set:
 
 ```python
@@ -410,38 +410,48 @@ def check_expected_models(results, horizon):
 
 ### Phase 1 Tests (in `iEasyHydroForecast/tests/`)
 
-- [ ] Test `perform_linear_regression` returns NaN (not -1.0) for stations
-      with empty data after filtering
-- [ ] Test `perform_linear_regression` returns NaN for stations where
-      `dropna()` yields empty
-- [ ] Test that valid stations still get correct forecast values (regression)
-- [ ] Search codebase for `== -1.0` sentinel checks
+- [x] Test that valid stations still get correct forecast values (regression)
+      — covered by existing `test_perform_linear_regression_with_simple_data`
+      and `test_perform_linear_regression_with_complex_data` (166 tests pass)
+- [x] Search codebase for `== -1.0` sentinel checks — none found
+- [x] Test `perform_linear_regression` returns NaN (not -1.0) for stations
+      with empty data after filtering — `TestNaNSentinelForInsufficientData`
+- [x] Test `perform_linear_regression` returns NaN for stations where
+      `dropna()` yields empty — 4 tests in `TestNaNSentinelForInsufficientData`
 
 ### Phase 2 Tests (in `postprocessing_forecasts/tests/`)
 
-- [ ] Test that operational entry point skips pentad processing on non-pentad
-      day (mock `dt.date.today()`, verify no write calls)
-- [ ] Test that operational entry point runs pentad on pentad boundary day
-- [ ] Test that operational entry point skips decad on non-decad day
-- [ ] Test that operational entry point runs decad on decad boundary day
-- [ ] Test combined boundaries: Feb 20 → both; Feb 25 → pentad only;
-      Feb 21 → neither
+- [x] Test that operational entry point runs pentad on pentad boundary day
+      — existing tests with `module.is_pentad_boundary = lambda d: True`
+- [x] Test that operational entry point runs decad on decad boundary day
+      — existing tests with `module.is_decad_boundary = lambda d: True`
+- [x] Test that operational entry point skips pentad processing on non-pentad
+      day — `TestBoundaryDaySkipBehavior` (5 tests in test_operational_workflow.py)
+- [x] Test that operational entry point skips decad on non-decad day
+      — `test_decad_skips_on_non_decad_day`
+- [x] Test combined boundaries: pentad only, decad only, neither
+      — `test_both_mode_pentad_only_on_pentad_boundary`,
+      `test_both_mode_decad_only_on_decad_boundary`,
+      `test_both_mode_skips_both_on_non_boundary_day`
 
 ### Phase 3 Tests (in `postprocessing_forecasts/tests/`)
 
-- [ ] Test EM groupby includes period_col (existing tests should still pass)
-- [ ] Test that forecasts with same (date, code) but different period_col
-      values are NOT averaged together
-- [ ] Regression test: normal single-period case works as before
+- [x] Test EM groupby includes period_col (existing tests pass — 871 tests)
+- [x] Regression test: normal single-period case works as before
+- [x] Test that forecasts with same (date, code) but different period_col
+      values are NOT averaged together — `TestPeriodAwareEnsemble` (2 tests)
 
 ### Phase 4 Tests (in `validate_pipeline/test/`)
 
-- [ ] Test `most_recent_pentad_boundary`:
-      Feb 25 → Feb 25; Feb 26 → Feb 25; Mar 1 → Feb 28; Jan 4 → Dec 31
-- [ ] Test `most_recent_decad_boundary`:
-      Feb 25 → Feb 20; Feb 10 → Feb 10; Mar 1 → Feb 28; Jan 9 → Dec 31
-- [ ] Test validation uses boundary-to-today range for forecast queries
-- [ ] Test `check_expected_models` excludes SKIP'd models
+- [x] Test `most_recent_pentad_boundary`:
+      13 parametrized cases + 4 edge case tests in `TestMostRecentPentadBoundary`
+- [x] Test `most_recent_decad_boundary`:
+      10 parametrized cases + 2 edge case tests in `TestMostRecentDecadBoundary`
+- [x] Test validation uses boundary-to-today range for forecast queries
+      — existing `test_tier1_short_term_returns_expected_check_count` verifies
+      the query parameters via mock assertions
+- [x] Test `check_expected_models` excludes SKIP'd models
+      — 3 tests in `TestCheckExpectedModelsSkipExclusion`
 
 ### Testing Commands
 
@@ -474,8 +484,22 @@ Expected:
   boundary day by upsert)
 - Removing CSV fallback paths (separate issue, API-003)
 - Changing the API schema
-- Boundary day guard in `postprocessing_maintenance.py` (to be evaluated
-  in Step 2.5, may become a follow-up issue)
+- Boundary day guard in `postprocessing_maintenance.py` — evaluated in
+  Step 2.5, NOT needed (gap detection implicitly scopes to boundary dates)
+- Boundary date filtering in ML API reader (`_read_ml_forecasts_from_api`)
+  — daily ML forecasts are stored as-is; aggregation is controlled by
+  the boundary guard at the entry point level
+
+## Additional Changes (beyond original plan)
+
+- **`forecast_library.py:1447`**: Fixed `dropna()` to use
+  `subset=[predictor_col, discharge_avg_col]` — the NaN sentinel change
+  would have caused the blanket `dropna()` to drop ALL rows (including
+  valid data) since the newly-assigned output columns are all NaN.
+- **`skill_metrics.py:1652, 1819`**: Applied the same Phase 3 groupby fix
+  to `calculate_skill_metrics_pentad()` and `calculate_skill_metrics_decade()`
+  — these had the same `groupby(['date', 'code'])` pattern as
+  `ensemble_calculator.py`.
 
 ## Dependencies
 
@@ -486,14 +510,15 @@ Expected:
 
 ## Acceptance Criteria
 
-- [ ] No forecast records with `forecasted_discharge < 0` in the API
-- [ ] Postprocessing skips non-boundary horizons with clear log message
-- [ ] Ensemble calculator groups by `[period_col, 'date', 'code']`
-- [ ] On boundary days, all models share the same `date`, EM is created
-- [ ] Validation produces 0 FAILs on `run_locally.sh daily`
-- [ ] All existing tests pass (`run_tests.sh`)
-- [ ] New tests cover sentinel fix, boundary guard, ensemble groupby,
-      and validation helpers
+- [x] No forecast records with `forecasted_discharge < 0` in the API
+- [x] Postprocessing skips non-boundary horizons with clear log message
+- [x] Ensemble calculator groups by `[period_col, 'date', 'code']`
+- [x] On boundary days, all models share the same `date`, EM is created
+- [ ] Validation produces 0 FAILs on `run_locally.sh daily` (pending
+      manual verification on next pipeline run)
+- [x] All existing tests pass (`run_tests.sh`) — 11/11 modules, 0 failures
+- [x] New tests cover sentinel fix, boundary guard, ensemble groupby,
+      and validation helpers — all TODOs resolved
 
 ---
 
