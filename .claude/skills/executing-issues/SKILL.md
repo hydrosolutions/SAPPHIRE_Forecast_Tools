@@ -78,18 +78,85 @@ After all implementation steps complete:
 - Stop and report the failure
 - Ask user how to proceed
 
-### Step 6: Verify Acceptance Criteria
+### Step 6: Verify Test Completeness
+
+Cross-reference what was written against the CLAUDE.md test categories.
+For each category, check whether it applies and whether tests exist:
+
+| Category | Required when | Check |
+|----------|---------------|-------|
+| **Unit tests** | Always | Every new/modified public function has happy-path + error-path tests |
+| **Edge case tests** | Code touches DataFrames, dates, or numerics | Empty data, NaN, date boundaries, value boundaries covered |
+| **Integration tests** | Multi-step workflows or pipelines | Real logic tested end-to-end, only external boundaries mocked |
+| **API failure tests** | Code uses `sapphire_api_client` | API unavailable, disabled, not ready, CSV fallback all tested |
+
+**Report to user:**
+```
+Test completeness check:
+- Unit tests: [covered / gap: ...]
+- Edge cases: [covered / not applicable / gap: ...]
+- Integration: [covered / not applicable / gap: ...]
+- API failure: [covered / not applicable / gap: ...]
+```
+
+**If gaps exist:** Write the missing tests before proceeding. Follow TDD — write the failing test first, then fix if needed.
+
+### Step 7: Verify Acceptance Criteria
 
 Go through each acceptance criterion:
 1. Check if it's met
 2. Mark checkbox in issue file: `- [ ]` → `- [x]`
 3. If any criterion not met: Stop and report
 
-### Step 7: Complete Issue
+### Step 8: Update Documentation
 
-When all acceptance criteria pass:
+Before moving to review, check for documentation impact:
 
-1. Update issue file status: `**Status**: In Progress` → `**Status**: Complete`
+1. **Check the issue plan** for a "Documentation Impact" section — update listed docs
+2. **If no section exists**, assess impact yourself:
+   - Did inputs/outputs change? → Update module README
+   - Did configuration change? → Update `doc/configuration.md` or `.env` examples
+   - Did pipeline behavior change? → Update `doc/data_flow_*.md`
+   - Did user-facing behavior change? → Update `doc/user_guide.md`
+   - Is this fixing a known issue? → Update `doc/plans/module_issues.md`
+3. **Update documentation in the same working tree** — docs ship with code, not after
+
+**If no docs need updating:** State "No documentation impact" with brief rationale.
+
+### Step 9: Submit for Review
+
+**Do NOT mark the issue as Complete. The user reviews first.**
+
+1. Update issue file status: `**Status**: In Progress` → `**Status**: Review`
+2. Update `doc/plans/module_issues.md`: Change status to `Review`
+3. Present a review summary:
+
+   ```
+   Issue [name] ready for review.
+
+   Summary of changes:
+   - [list of files modified/created]
+
+   Tests:
+   - [pass/fail status]
+   - Test completeness: [unit/edge/integration/API — which apply, all covered]
+
+   Documentation updated:
+   - [list of docs changed, or "No documentation impact"]
+
+   Acceptance criteria: All met
+   - [list each criterion with status]
+   ```
+
+4. **STOP and wait for user review.**
+   - The user may request changes, ask questions, or approve.
+   - If changes requested: implement them, re-run tests, and re-submit for review.
+
+### Step 10: Complete Issue
+
+**Only after user approves the review:**
+
+1. Update issue file status: `**Status**: Review` → `**Status**: Complete`
 
 2. Update `doc/plans/module_issues.md`:
    - Change status to `Complete`
@@ -98,13 +165,6 @@ When all acceptance criteria pass:
 3. Report completion:
    ```
    Issue [name] complete.
-
-   Summary of changes:
-   - [list of files modified/created]
-
-   Tests: [pass/fail status]
-
-   Acceptance criteria: All met
 
    Next steps:
    - [ ] Create PR (if not already done)
@@ -150,10 +210,17 @@ During execution:
 - [ ] Status updated to In Progress
 - [ ] Each step followed exactly
 - [ ] Checkboxes marked as completed
-- [ ] Tests run after implementation
+- [ ] Tests run after each batch
 
-After completion:
-- [ ] All acceptance criteria met
+Before review:
+- [ ] All tests pass (zero skips unless dependency-gated)
+- [ ] Test completeness verified against CLAUDE.md categories
+- [ ] All acceptance criteria met and checked off
+- [ ] Documentation updated (or "No impact" stated with rationale)
+- [ ] Status updated to Review
+- [ ] Review summary presented to user
+
+After user approval:
 - [ ] Status updated to Complete
 - [ ] module_issues.md updated
 - [ ] User reminded about GitHub publication (if draft)
@@ -185,6 +252,39 @@ Batch complete. Files created:
 - apps/preprocessing_runoff/src/config.py
 
 Ready for feedback."
+
+[... more batches, tests pass ...]
+
+Claude: "Test completeness check:
+- Unit tests: covered (8 tests for 3 new functions)
+- Edge cases: covered (empty config, missing keys)
+- Integration: covered (config → mode selection → execution)
+- API failure: not applicable (no API calls in this change)
+
+Documentation updated:
+- apps/preprocessing_runoff/README.md — added mode parameter docs
+
+Issue PREPQ-001 ready for review.
+
+Summary of changes:
+- apps/preprocessing_runoff/config.yaml (new)
+- apps/preprocessing_runoff/src/config.py (new)
+- apps/preprocessing_runoff/main.py (modified)
+
+Tests: 8 passed, 0 failed, 0 skipped
+Acceptance criteria: All 7 met
+
+[Status → Review. Waiting for your approval.]"
+
+User: "Looks good, one thing — add a note about default mode to the README"
+
+Claude: [makes change, re-runs tests]
+"Updated. Ready for review again."
+
+User: "Approved"
+
+Claude: "Status → Complete. Issue PREPQ-001 done.
+This is still a draft — ready to publish to GitHub."
 ```
 
 ---
@@ -192,5 +292,8 @@ Ready for feedback."
 ## Related Skills
 
 - **issue-planning**: Use to create the detailed plan before executing
+- **test-driven-development**: Follow during Step 4 (implementation) and Step 6 (filling test gaps)
+- **documentation**: Reference for doc writing conventions during Step 8
+- **requesting-code-review**: Use after user approval for additional peer review if needed
 - **pre-deploy-validation**: Use after completion to validate before deployment
 - **software-architecture**: Reference for code conventions

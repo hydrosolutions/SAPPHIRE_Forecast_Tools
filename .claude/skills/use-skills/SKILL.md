@@ -137,10 +137,44 @@ When starting work that involves creating or changing functionality, follow this
                      │              │
                      ▼              ▼
          ┌─────────────────┐  ┌─────────────────┐
-         │/executing-issues│  │ /executing-plans│
+         │/executing-issues│  │ /executing-plans │
+         │                 │  │                  │
+         │ Uses /TDD for   │  │                  │
+         │ implementation  │  │                  │
          └─────────────────┘  └─────────────────┘
                      │              │
                      └──────┬───────┘
+                            ▼
+         ┌─────────────────────────────────────┐
+         │  Tests pass + test completeness     │
+         │  verified against CLAUDE.md?        │
+         └─────────────────────────────────────┘
+                     │              │
+                    NO             YES
+                     │              │
+                     ▼              ▼
+         ┌─────────────────┐  ┌─────────────────┐
+         │ Fill test gaps  │  │ Update docs     │
+         │ (TDD: write     │  │ (/documentation)│
+         │ failing test    │  │                 │
+         │ first)          │  └─────────────────┘
+         └────────┬────────┘          │
+                  └───────────────────┘
+                            ▼
+         ┌─────────────────────────────────────┐
+         │     Status → Review                 │
+         │                                     │
+         │ STOP: Present summary to user       │
+         │ Wait for approval or change requests│
+         └─────────────────────────────────────┘
+                            │
+                     User approves
+                            │
+                            ▼
+         ┌─────────────────────────────────────┐
+         │     Status → Complete               │
+         └─────────────────────────────────────┘
+                            │
                             ▼
          ┌─────────────────────────────────────┐
          │       /pre-deploy-validation        │
@@ -157,6 +191,7 @@ When starting work that involves creating or changing functionality, follow this
 | Need to create detailed implementation plan | `/issue-planning` |
 | Implementing a discrete issue with `gi_*.md` file | `/executing-issues` |
 | Executing a larger architecture plan | `/executing-plans` |
+| Implementation done, user needs to review | Status → `Review` (built into `/executing-issues`) |
 | Ready to deploy | `/pre-deploy-validation` |
 
 ### Workflow Tips
@@ -165,6 +200,7 @@ When starting work that involves creating or changing functionality, follow this
 - **Skip to `/issue-planning`** if you already know what to build
 - **Skip to `/executing-issues`** if a plan file already exists
 - **Use `/executing-plans`** for multi-issue architecture work (e.g., migrations, refactors)
+- **Never skip Review** — implementation goes to `Review` status for user approval before `Complete`
 
 ---
 
@@ -232,16 +268,22 @@ These skills activate **read-only reviewers** who provide feedback without makin
 
 ## Skill Combinations
 
-Common skill sequences for different work types:
+Common skill sequences for different work types. Every sequence that produces
+code changes goes through **Review → user approval → Complete** before deployment.
 
 **New Feature:**
 ```
-/brainstorming → /issue-planning → /test-driven-development → /executing-issues → /requesting-code-review → /pre-deploy-validation
+/brainstorming → /issue-planning → /executing-issues (uses /TDD internally)
+    → test completeness check → /documentation → Status: Review
+    → user approval → Status: Complete
+    → /requesting-code-review (optional peer review) → /pre-deploy-validation
 ```
 
 **Bug Fix:**
 ```
-/test-driven-development → /requesting-code-review → /pre-deploy-validation
+/issue-planning → /executing-issues (uses /TDD internally)
+    → test completeness check → /documentation → Status: Review
+    → user approval → Status: Complete → /pre-deploy-validation
 ```
 
 **Documentation:**
@@ -251,12 +293,17 @@ Common skill sequences for different work types:
 
 **Model Changes:**
 ```
-/brainstorming → /issue-planning → /test-driven-development → /hydrological-modeller (review) → /pre-deploy-validation
+/brainstorming → /issue-planning → /executing-issues (uses /TDD internally)
+    → test completeness check → /documentation → /hydrological-modeller (review)
+    → Status: Review → user approval → Status: Complete → /pre-deploy-validation
 ```
 
 **UI/Frontend Changes (dashboard, visualizations):**
 ```
-/brainstorming → /issue-planning → /test-driven-development → /operational-hydrologist (REQUIRED) → /pre-deploy-validation
+/brainstorming → /issue-planning → /executing-issues (uses /TDD internally)
+    → test completeness check → /documentation
+    → /operational-hydrologist (REQUIRED) → Status: Review
+    → user approval → Status: Complete → /pre-deploy-validation
 ```
 
 **Deployment/CI Changes:**

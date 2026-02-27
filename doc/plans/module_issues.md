@@ -27,7 +27,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | Draft | Detailed plan in `issues/` directory |
 | Ready | Plan reviewed, ready for implementation |
 | In Progress | Being implemented |
-| Complete | Resolved and verified |
+| Review | Implementation done, tests pass, docs updated — awaiting user review |
+| Complete | User approved, resolved and verified |
 | Blocked | Cannot proceed (see notes) |
 
 ---
@@ -105,7 +106,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-011** | Skill metrics API unique key should include date | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-011 | API schema (colleague) |
 | **PP-012** | Daily ensemble creation | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-012 | — |
 | **PP-013** | Monthly maintenance uses CSV-first gap detection | **High** | Open | See `postprocessing_forecasts/README.md` PP-013 | — |
-| **PP-014** | Skill metrics read priority inverted (CSV-first, should be API-first) | **High** | Draft | [`gi_draft_pp_skill_metrics_read_priority.md`](issues/gi_draft_pp_skill_metrics_read_priority.md) | — |
+| **PP-014** | Skill metrics read priority inverted (CSV-first, should be API-first) | **High** | Complete | [`gi_draft_pp_skill_metrics_read_priority.md`](issues/gi_draft_pp_skill_metrics_read_priority.md) | — |
 | **PP-015** | Move NE creation from setup_library to postprocessing | **Low** | Open | See `postprocessing_forecasts/README.md` PP-015 | — |
 | **PP-016** | Recalculation bootstrap for new sites (auto-detect) | **Low** | Open | See `postprocessing_forecasts/README.md` PP-016 | — |
 
@@ -183,6 +184,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-003 | Implement batch upsert in postprocessing CRUD | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-004 | Replace iterrows() with vectorized operations | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-005 | Create operational/maintenance entry point split | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 2 |
+| PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`gi_draft_pp_skill_metrics_read_priority.md`](issues/gi_draft_pp_skill_metrics_read_priority.md) |
 
 ### Pipeline (`p`)
 

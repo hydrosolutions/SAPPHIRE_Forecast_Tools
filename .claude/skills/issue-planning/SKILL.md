@@ -134,7 +134,7 @@ The issue file must be **standalone** — a junior developer should be able to i
 ```markdown
 # <Title>
 
-**Status**: Draft | Ready for Review | Published (GitHub #XX) | In Progress | Complete
+**Status**: Draft | Ready for Review | Published (GitHub #XX) | In Progress | Review | Complete
 **Module**: <module name>
 **Priority**: Critical | High | Medium | Low
 **Labels**: `<label1>`, `<label2>`
@@ -242,6 +242,19 @@ uv run pytest tests/ -v -k "test_name"
 
 ---
 
+## Documentation Impact
+
+[List documentation that must be updated as part of this issue. Check each category:]
+
+- [ ] Module README (`apps/<module>/README.md`) — if inputs, outputs, or usage changed
+- [ ] Configuration docs (`doc/configuration.md`) — if env vars or config changed
+- [ ] Data flow docs (`doc/data_flow_*.md`) — if pipeline behavior changed
+- [ ] User guide (`doc/user_guide.md`) — if user-facing behavior changed
+- [ ] Other: [specify]
+- [ ] No documentation impact — [brief rationale]
+
+---
+
 ## Out of Scope
 
 [What this issue explicitly does NOT address — important for preventing scope creep]
@@ -292,7 +305,8 @@ After creating the issue file, add an entry to `doc/plans/module_issues.md`:
 - [ ] Technical analysis includes specific file paths and line numbers
 - [ ] Implementation steps are small and testable
 - [ ] Code examples show expected patterns
-- [ ] Test cases are defined
+- [ ] Test cases are defined (covering all applicable CLAUDE.md categories)
+- [ ] Documentation Impact section completed (docs listed or "no impact" justified)
 - [ ] Acceptance criteria are specific and measurable
 - [ ] A junior developer could implement this without asking questions
 - [ ] Entry added to `doc/plans/module_issues.md`
