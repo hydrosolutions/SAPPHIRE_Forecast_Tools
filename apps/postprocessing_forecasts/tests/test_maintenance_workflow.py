@@ -66,9 +66,9 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     if gaps is None:
         gaps = pd.DataFrame(columns=['date', 'code', 'model_short'])
 
-    mock_gap_detector.read_combined_forecasts.return_value = combined
     mock_gap_detector.detect_missing_ensembles.return_value = gaps
 
+    mock_data_reader.read_combined_forecasts.return_value = combined
     mock_data_reader.read_skill_metrics.return_value = mock_skill
     # Ensemble result must include EM rows so the merge logic proceeds
     ensemble_result = pd.concat([
@@ -242,7 +242,7 @@ class TestMaintenanceWorkflow:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 1
-                mocks['gap_detector'].read_combined_forecasts.assert_not_called()
+                mocks['data_reader'].read_combined_forecasts.assert_not_called()
 
     def test_both_mode_processes_both(self, mock_data, mock_skill):
         """BOTH mode processes pentad and decad gap detection."""
@@ -265,7 +265,7 @@ class TestMaintenanceWorkflow:
 
                 assert exc_info.value.code == 0
                 # Both pentad and decad combined forecasts should be read
-                calls = mocks['gap_detector'].read_combined_forecasts.call_args_list
+                calls = mocks['data_reader'].read_combined_forecasts.call_args_list
                 horizons = [c[0][0] for c in calls]
                 assert 'pentad' in horizons
                 assert 'decad' in horizons
@@ -290,7 +290,7 @@ class TestMaintenanceWorkflow:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                calls = mocks['gap_detector'].read_combined_forecasts.call_args_list
+                calls = mocks['data_reader'].read_combined_forecasts.call_args_list
                 horizons = [c[0][0] for c in calls]
                 assert 'decad' in horizons
                 assert 'pentad' not in horizons

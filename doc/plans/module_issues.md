@@ -37,7 +37,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Module | Priority | Status | File |
 |----|-------|--------|----------|--------|------|
-| **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | In Progress | [`gi_draft_infra_date_mismatch_and_sentinel.md`](issues/gi_draft_infra_date_mismatch_and_sentinel.md) |
+| **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | Review | [`gi_draft_infra_date_mismatch_and_sentinel.md`](issues/gi_draft_infra_date_mismatch_and_sentinel.md) |
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
@@ -99,13 +99,13 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-004**~~ | ~~Replace iterrows() with vectorized operations~~ | | Complete | See `postprocessing_unified_plan.md` Phase 3 | — |
 | ~~**PP-005**~~ | ~~Create operational/maintenance entry point split~~ | | Complete | See `postprocessing_unified_plan.md` Phase 2 | — |
 | **PP-006** | Add config.yaml to postprocessing_forecasts (deduplicate defaults) | **Low** | Draft | [`gi_draft_pp_config_yaml.md`](issues/gi_draft_pp_config_yaml.md) | — |
-| **PP-007** | Maintenance should read from API, not CSV | **High** | Open | See `postprocessing_forecasts/README.md` PP-007 | — |
+| **PP-007** | Maintenance should read from API, not CSV | **High** | Review | See `postprocessing_forecasts/README.md` PP-007 | — |
 | **PP-008** | No audit trail for gap-filled rows | **Low** | Open | See `postprocessing_forecasts/README.md` PP-008 | API schema (colleague) |
 | **PP-009** | Stop calculating EM skill metrics on the fly in operational mode | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-009 | — |
 | **PP-010** | Pentad/decad reads should use API (operational + recalculation) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-010 | INFRA-007 |
 | **PP-011** | Skill metrics API unique key should include date | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-011 | API schema (colleague) |
 | **PP-012** | Daily ensemble creation | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-012 | — |
-| **PP-013** | Monthly maintenance uses CSV-first gap detection | **High** | Open | See `postprocessing_forecasts/README.md` PP-013 | — |
+| **PP-013** | Monthly maintenance uses CSV-first gap detection | **High** | Review | See `postprocessing_forecasts/README.md` PP-013 | — |
 | ~~**PP-014**~~ | ~~Skill metrics read priority inverted (CSV-first, should be API-first)~~ | | Complete | Moved to Completed Issues |
 | **PP-015** | Move NE creation from setup_library to postprocessing | **Low** | Open | See `postprocessing_forecasts/README.md` PP-015 | — |
 | **PP-016** | Recalculation bootstrap for new sites (auto-detect) | **Low** | Open | See `postprocessing_forecasts/README.md` PP-016 | — |
@@ -240,4 +240,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-26 (registered INFRA-007, LR-002, PREPG-002 from untracked plan files; fixed PP-010 scope)*
+*Last updated: 2026-02-27 (PP-007, PP-013 → Review: combined forecast reads migrated to API-first)*

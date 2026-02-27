@@ -1,4 +1,4 @@
-"""Tests for src/data_reader.py — reading pre-calculated skill metrics."""
+"""Tests for src/data_reader.py — skill metrics and combined forecasts."""
 
 import os
 import sys
@@ -20,11 +20,18 @@ from src.data_reader import (
     read_monthly_skill_metrics,
     read_latest_monthly_forecasts,
     read_monthly_combined_forecasts,
+    read_combined_forecasts,
     _read_skill_metrics_csv,
     _read_skill_metrics_api,
     _read_monthly_skill_metrics_csv,
     _normalize_api_skill_metrics,
     _normalize_api_monthly_skill_metrics,
+    _normalize_api_combined_forecasts,
+    _normalize_monthly_combined_forecasts,
+    _read_combined_forecasts_api,
+    _read_combined_forecasts_csv,
+    _read_monthly_combined_forecasts_api,
+    _read_monthly_combined_forecasts_csv,
     _aggregate_daily_to_monthly,
     _normalize_monthly_forecasts,
     read_monthly_observations,
@@ -1124,7 +1131,218 @@ class TestReadLatestMonthlyForecasts:
 # ===================================================================
 
 class TestReadMonthlyCombinedForecasts:
-    """Tests for read_monthly_combined_forecasts."""
+    """Tests for read_monthly_combined_forecasts (API-first)."""
+
+    def test_api_returns_data(self):
+        """API data is returned when available."""
+        api_df = pd.DataFrame({
+            'year': [2024],
+            'month': [6],
+            'month_in_year': [6],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'forecasted_discharge': [100.0],
+        })
+        with patch(
+            'src.data_reader._read_monthly_combined_forecasts_api',
+            return_value=api_df,
+        ):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 1
+            assert result['code'].iloc[0] == '10001'
+
+    def test_api_fallback_to_csv(self, tmp_path):
+        """When API returns None, CSV is used."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024, 2024],
+            'month': [6, 6],
+            'code': [10001, 10001],
+            'model_short': ['LR', 'TFT'],
+            'forecasted_discharge': [100.0, 105.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch(
+            'src.data_reader._read_monthly_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch.dict(os.environ, {
+                'ieasyforecast_intermediate_data_path': str(tmp_path),
+                'ieasyforecast_monthly_combined_forecast_file':
+                    'combined_monthly.csv',
+            }):
+                result = read_monthly_combined_forecasts()
+                assert len(result) == 2
+                assert result['code'].iloc[0] == '10001'
+
+    def test_csv_only_when_api_unavailable(self, tmp_path):
+        """API unavailable (returns None) → CSV fallback works."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024],
+            'month': [6],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch(
+            'src.data_reader._read_monthly_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch.dict(os.environ, {
+                'ieasyforecast_intermediate_data_path': str(tmp_path),
+                'ieasyforecast_monthly_combined_forecast_file':
+                    'combined_monthly.csv',
+            }):
+                result = read_monthly_combined_forecasts()
+                assert len(result) == 1
+
+    def test_empty_when_both_fail(self):
+        """Returns empty DataFrame when API and CSV both fail."""
+        with patch(
+            'src.data_reader._read_monthly_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch(
+                'src.data_reader._read_monthly_combined_forecasts_csv',
+                return_value=None,
+            ):
+                result = read_monthly_combined_forecasts()
+                assert isinstance(result, pd.DataFrame)
+                assert result.empty
+
+    def test_forecasted_discharge_from_q50(self):
+        """API data derives forecasted_discharge from q50."""
+        api_df = pd.DataFrame({
+            'valid_from': ['2024-06-01'],
+            'model_type': ['LR'],
+            'code': ['10001'],
+            'q50': [55.0],
+        })
+        result = _normalize_monthly_combined_forecasts(api_df)
+        assert 'forecasted_discharge' in result.columns
+        assert result['forecasted_discharge'].iloc[0] == 55.0
+
+    def test_month_in_year_added(self):
+        """API data adds month_in_year from month."""
+        api_df = pd.DataFrame({
+            'valid_from': ['2024-06-01'],
+            'model_type': ['LR'],
+            'code': ['10001'],
+            'q50': [55.0],
+        })
+        result = _normalize_monthly_combined_forecasts(api_df)
+        assert 'month_in_year' in result.columns
+        assert result['month_in_year'].iloc[0] == 6
+
+
+class TestReadMonthlyCombinedForecastsApiFailure:
+    """API failure modes for monthly combined forecasts."""
+
+    def test_csv_when_api_unavailable(self, tmp_path):
+        """API client not installed → CSV fallback."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024], 'month': [6], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', False), \
+             patch.dict(os.environ, {
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_monthly_combined_forecast_file':
+                     'combined_monthly.csv',
+             }):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 1
+
+    def test_csv_when_api_disabled(self, tmp_path):
+        """SAPPHIRE_API_ENABLED=false → CSV fallback."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024], 'month': [6], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'false',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_monthly_combined_forecast_file':
+                     'combined_monthly.csv',
+             }):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 1
+
+    def test_csv_when_api_not_ready(self, tmp_path):
+        """API readiness check fails → CSV fallback."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024], 'month': [6], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = False
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_monthly_combined_forecast_file':
+                     'combined_monthly.csv',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 1
+
+    def test_csv_when_api_raises(self, tmp_path):
+        """API raises exception → CSV fallback."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024], 'month': [6], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.side_effect = (
+            ConnectionError("down")
+        )
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_monthly_combined_forecast_file':
+                     'combined_monthly.csv',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 1
+
+    def test_empty_when_both_fail(self):
+        """Both API and CSV unavailable → empty DataFrame."""
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', False), \
+             patch.dict(os.environ, {}, clear=True):
+            for key in ['ieasyforecast_intermediate_data_path',
+                        'ieasyforecast_monthly_combined_forecast_file']:
+                os.environ.pop(key, None)
+            result = read_monthly_combined_forecasts()
+            assert isinstance(result, pd.DataFrame)
+            assert result.empty
+
+
+class TestReadMonthlyCombinedForecastsCsv:
+    """Tests for _read_monthly_combined_forecasts_csv."""
 
     def test_reads_csv_file(self, tmp_path):
         """Reads monthly combined forecasts CSV."""
@@ -1142,25 +1360,480 @@ class TestReadMonthlyCombinedForecasts:
             'ieasyforecast_monthly_combined_forecast_file':
                 'combined_monthly.csv',
         }):
-            result = read_monthly_combined_forecasts()
+            result = _read_monthly_combined_forecasts_csv()
+            assert result is not None
             assert len(result) == 2
             assert result['code'].iloc[0] == '10001'
 
-    def test_missing_file_returns_empty(self, tmp_path):
-        """Missing file returns empty DataFrame."""
+    def test_missing_file_returns_none(self, tmp_path):
+        """Missing file returns None."""
         with patch.dict(os.environ, {
             'ieasyforecast_intermediate_data_path': str(tmp_path),
             'ieasyforecast_monthly_combined_forecast_file':
                 'nonexistent.csv',
         }):
-            result = read_monthly_combined_forecasts()
-            assert result.empty
+            result = _read_monthly_combined_forecasts_csv()
+            assert result is None
 
-    def test_missing_env_vars_returns_empty(self):
-        """Unset env vars returns empty DataFrame."""
+    def test_missing_env_vars_returns_none(self):
+        """Unset env vars returns None."""
         with patch.dict(os.environ, {}, clear=True):
             for key in ['ieasyforecast_intermediate_data_path',
                         'ieasyforecast_monthly_combined_forecast_file']:
                 os.environ.pop(key, None)
-            result = read_monthly_combined_forecasts()
+            result = _read_monthly_combined_forecasts_csv()
+            assert result is None
+
+
+# -------------------------------------------------------------------
+# Short-term combined forecasts (pentad / decad) — PP-007
+# -------------------------------------------------------------------
+
+
+class TestNormalizeApiCombinedForecasts:
+    """Tests for _normalize_api_combined_forecasts."""
+
+    def test_pentad_column_mapping(self):
+        """Pentad horizon maps columns correctly."""
+        df = pd.DataFrame({
+            'id': [1],
+            'horizon_type': ['pentad'],
+            'model_type': ['LR'],
+            'model_type_description': ['Linear Regression'],
+            'horizon_in_year': [5],
+            'horizon_value': [2],
+            'code': ['10001'],
+            'date': ['2024-01-25'],
+            'forecasted_discharge': [100.0],
+            'q50': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(df, 'pentad')
+        assert 'pentad_in_year' in result.columns
+        assert 'pentad_in_month' in result.columns
+        assert 'model_short' in result.columns
+        assert result['pentad_in_year'].iloc[0] == 5
+        assert result['pentad_in_month'].iloc[0] == 2
+        assert result['model_short'].iloc[0] == 'LR'
+
+    def test_decad_column_mapping(self):
+        """Decad horizon maps columns correctly."""
+        df = pd.DataFrame({
+            'id': [1],
+            'horizon_type': ['decade'],
+            'model_type': ['TFT'],
+            'model_type_description': ['Temporal Fusion Transformer'],
+            'horizon_in_year': [3],
+            'horizon_value': [3],
+            'code': ['10002'],
+            'date': ['2024-01-30'],
+            'forecasted_discharge': [200.0],
+        })
+        result = _normalize_api_combined_forecasts(df, 'decad')
+        assert 'decad_in_year' in result.columns
+        assert 'decad_in_month' in result.columns
+        assert result['decad_in_year'].iloc[0] == 3
+        assert result['decad_in_month'].iloc[0] == 3
+        assert result['model_short'].iloc[0] == 'TFT'
+
+    def test_date_to_datetime(self):
+        """Date column is converted to datetime."""
+        df = pd.DataFrame({
+            'model_type': ['LR'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(df, 'pentad')
+        assert pd.api.types.is_datetime64_any_dtype(result['date'])
+
+    def test_code_cleaned(self):
+        """Code with trailing .0 is cleaned."""
+        df = pd.DataFrame({
+            'model_type': ['LR'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001.0'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(df, 'pentad')
+        assert result['code'].iloc[0] == '10001'
+
+    def test_api_columns_dropped(self):
+        """API-only columns are dropped."""
+        df = pd.DataFrame({
+            'id': [1],
+            'horizon_type': ['pentad'],
+            'model_type': ['LR'],
+            'model_type_description': ['Linear Regression'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(df, 'pentad')
+        assert 'id' not in result.columns
+        assert 'horizon_type' not in result.columns
+        assert 'model_type_description' not in result.columns
+
+    def test_forecasted_discharge_preserved(self):
+        """forecasted_discharge column passes through unchanged."""
+        df = pd.DataFrame({
+            'model_type': ['LR'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [42.5],
+        })
+        result = _normalize_api_combined_forecasts(df, 'pentad')
+        assert result['forecasted_discharge'].iloc[0] == 42.5
+
+
+class TestReadCombinedForecasts:
+    """Integration tests for read_combined_forecasts (API-first)."""
+
+    def test_api_returns_normalized_data(self):
+        """API data is normalized and returned."""
+        api_df = pd.DataFrame({
+            'pentad_in_year': [5],
+            'pentad_in_month': [2],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'date': pd.to_datetime(['2024-01-25']),
+            'forecasted_discharge': [100.0],
+        })
+        with patch(
+            'src.data_reader._read_combined_forecasts_api',
+            return_value=api_df,
+        ):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+            assert result['model_short'].iloc[0] == 'LR'
+            assert result['pentad_in_year'].iloc[0] == 5
+
+    def test_decad_horizon_mapping(self):
+        """'decad' is sent as 'decade' to the API client."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.return_value = (
+            pd.DataFrame()
+        )
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            _read_combined_forecasts_api('decad')
+
+        mock_client.read_short_term_forecasts.assert_called_once_with(
+            horizon='decade', skip=0, limit=1000
+        )
+
+    def test_api_fallback_to_csv(self, tmp_path):
+        """API returns None → CSV fallback used."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'],
+            'code': [10001],
+            'model_short': ['LR'],
+            'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch(
+            'src.data_reader._read_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch.dict(os.environ, {
+                'ieasyforecast_intermediate_data_path': str(tmp_path),
+                'ieasyforecast_combined_forecast_pentad_file':
+                    'combined_pentad.csv',
+            }):
+                result = read_combined_forecasts('pentad')
+                assert len(result) == 1
+                assert result['code'].iloc[0] == '10001'
+
+    def test_csv_only_when_api_unavailable(self, tmp_path):
+        """SAPPHIRE_API_AVAILABLE=False → CSV used."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', False), \
+             patch.dict(os.environ, {
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_combined_forecast_pentad_file':
+                     'combined_pentad.csv',
+             }):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+
+    def test_invalid_horizon_raises(self):
+        """Invalid horizon_type raises ValueError."""
+        with pytest.raises(ValueError, match="'pentad' or 'decad'"):
+            read_combined_forecasts('weekly')
+
+    def test_empty_api_and_csv_returns_empty(self):
+        """Both API and CSV fail → empty DataFrame."""
+        with patch(
+            'src.data_reader._read_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch(
+                'src.data_reader._read_combined_forecasts_csv',
+                return_value=None,
+            ):
+                result = read_combined_forecasts('pentad')
+                assert isinstance(result, pd.DataFrame)
+                assert result.empty
+
+    def test_pagination(self):
+        """Multiple pages of API results are concatenated."""
+        batch1 = pd.DataFrame({
+            'model_type': ['LR'] * 1000,
+            'horizon_in_year': [1] * 1000,
+            'horizon_value': [1] * 1000,
+            'code': ['10001'] * 1000,
+            'date': ['2024-01-05'] * 1000,
+            'forecasted_discharge': range(1000),
+        })
+        batch2 = pd.DataFrame({
+            'model_type': ['LR'] * 500,
+            'horizon_in_year': [1] * 500,
+            'horizon_value': [1] * 500,
+            'code': ['10001'] * 500,
+            'date': ['2024-01-05'] * 500,
+            'forecasted_discharge': range(500),
+        })
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.side_effect = [
+            batch1, batch2
+        ]
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            result = _read_combined_forecasts_api('pentad')
+
+        assert result is not None
+        assert len(result) == 1500
+
+    def test_code_normalization(self):
+        """Code '10001.0' → '10001' in API response."""
+        api_df = pd.DataFrame({
+            'model_type': ['LR'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001.0'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(api_df, 'pentad')
+        assert result['code'].iloc[0] == '10001'
+
+    def test_api_columns_dropped(self):
+        """id, horizon_type, model_type_description not in result."""
+        api_df = pd.DataFrame({
+            'id': [1],
+            'horizon_type': ['pentad'],
+            'model_type': ['LR'],
+            'model_type_description': ['Linear Regression'],
+            'horizon_in_year': [1],
+            'horizon_value': [1],
+            'code': ['10001'],
+            'date': ['2024-01-05'],
+            'forecasted_discharge': [100.0],
+        })
+        result = _normalize_api_combined_forecasts(api_df, 'pentad')
+        for col in ['id', 'horizon_type', 'model_type_description']:
+            assert col not in result.columns
+
+
+class TestReadCombinedForecastsApiFailure:
+    """API failure modes for short-term combined forecasts."""
+
+    def test_csv_when_api_unavailable(self, tmp_path):
+        """API client not installed → CSV fallback."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', False), \
+             patch.dict(os.environ, {
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_combined_forecast_pentad_file':
+                     'combined_pentad.csv',
+             }):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+
+    def test_csv_when_api_disabled(self, tmp_path):
+        """SAPPHIRE_API_ENABLED=false → CSV fallback."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'false',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_combined_forecast_pentad_file':
+                     'combined_pentad.csv',
+             }):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+
+    def test_csv_when_api_not_ready(self, tmp_path):
+        """API readiness check fails → CSV fallback."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = False
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_combined_forecast_pentad_file':
+                     'combined_pentad.csv',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+
+    def test_csv_when_api_raises(self, tmp_path):
+        """API raises exception → CSV fallback."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'], 'code': ['10001'],
+            'model_short': ['LR'], 'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.side_effect = (
+            ConnectionError("connection refused")
+        )
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_ENABLED': 'true',
+                 'ieasyforecast_intermediate_data_path': str(tmp_path),
+                 'ieasyforecast_combined_forecast_pentad_file':
+                     'combined_pentad.csv',
+             }), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            result = read_combined_forecasts('pentad')
+            assert len(result) == 1
+
+    def test_empty_when_both_fail(self):
+        """Both API and CSV unavailable → empty DataFrame."""
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', False), \
+             patch.dict(os.environ, {}, clear=True):
+            for key in ['ieasyforecast_intermediate_data_path',
+                        'ieasyforecast_combined_forecast_pentad_file']:
+                os.environ.pop(key, None)
+            result = read_combined_forecasts('pentad')
+            assert isinstance(result, pd.DataFrame)
             assert result.empty
+
+
+class TestReadCombinedForecastsCsv:
+    """Tests for _read_combined_forecasts_csv."""
+
+    def test_reads_pentad_csv(self, tmp_path):
+        """Reads pentad combined forecasts CSV."""
+        csv_file = tmp_path / "combined_pentad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-05'],
+            'code': [10001],
+            'model_short': ['LR'],
+            'forecasted_discharge': [100.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file':
+                'combined_pentad.csv',
+        }):
+            result = _read_combined_forecasts_csv('pentad')
+            assert result is not None
+            assert len(result) == 1
+            assert result['code'].iloc[0] == '10001'
+            assert pd.api.types.is_datetime64_any_dtype(
+                result['date']
+            )
+
+    def test_reads_decad_csv(self, tmp_path):
+        """Reads decad combined forecasts CSV."""
+        csv_file = tmp_path / "combined_decad.csv"
+        pd.DataFrame({
+            'date': ['2024-01-10'],
+            'code': ['10002'],
+            'model_short': ['TFT'],
+            'forecasted_discharge': [200.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_decad_file':
+                'combined_decad.csv',
+        }):
+            result = _read_combined_forecasts_csv('decad')
+            assert result is not None
+            assert len(result) == 1
+            assert result['code'].iloc[0] == '10002'
+
+    def test_missing_file_returns_none(self, tmp_path):
+        """Missing file returns None."""
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file':
+                'nonexistent.csv',
+        }):
+            result = _read_combined_forecasts_csv('pentad')
+            assert result is None
+
+    def test_missing_env_vars_returns_none(self):
+        """Unset env vars returns None."""
+        with patch.dict(os.environ, {}, clear=True):
+            for key in ['ieasyforecast_intermediate_data_path',
+                        'ieasyforecast_combined_forecast_pentad_file']:
+                os.environ.pop(key, None)
+            result = _read_combined_forecasts_csv('pentad')
+            assert result is None

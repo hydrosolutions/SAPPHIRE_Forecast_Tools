@@ -37,6 +37,167 @@ This document describes the testing workflow for validating changes before they 
 
 ---
 
+## Test Writing Guide
+
+This section defines the test categories, quality standards, and patterns required
+for all new code in the SAPPHIRE project. See also the Testing Philosophy and
+Golden Rules in [CLAUDE.md](../../CLAUDE.md).
+
+### Test Categories
+
+Every new feature or bug fix must include tests. The required categories depend on what changed:
+
+#### 1. Unit Tests (always required)
+
+Isolated tests for individual functions with all external dependencies mocked. Each new or modified public function needs at least:
+- A happy-path test with typical input
+- An error-path test (invalid input, exception handling)
+
+For error-path tests, always assert both **exception type** and **message fragment**:
+
+```python
+with pytest.raises(ValueError, match="horizon must be positive"):
+    calculate_forecast(data, horizon=-1)
+```
+
+#### 2. Edge Case Tests (required for DataFrame, date, or numeric code)
+
+Any code that processes DataFrames, dates, or numeric values must have edge case tests covering these scenarios:
+
+| Category | Scenarios to test |
+|----------|-------------------|
+| **Empty data** | Empty DataFrame, single-row DataFrame, all-NaN columns |
+| **NaN handling** | All NaN values, mixed NaN/valid, NaN-to-None conversion for API |
+| **Date boundaries** | Year transitions (Dec 31 → Jan 1), leap year Feb 29, month boundaries |
+| **Value boundaries** | Zero values, very small positives (0.001), very large values (10000+) |
+| **Duplicates** | Duplicate date-station combinations |
+| **Multi-entity** | Single station many dates, many stations single date |
+| **Data preservation** | Non-transformed columns, schema, and row order remain intact after processing |
+
+See `preprocessing_runoff/test/test_edge_cases.py` as the reference implementation.
+
+**File naming**: `test_edge_cases.py` or edge case classes within the relevant test file.
+
+#### 3. Integration Tests (required for multi-step workflows)
+
+Tests that exercise the real logic across multiple internal functions, only mocking external boundaries (API clients, file I/O). Required when:
+- A function calls multiple internal modules in sequence
+- Data flows through a pipeline (read → transform → write)
+- Entry points orchestrate multiple steps
+
+Integration tests should:
+- Use real logic for everything inside the boundary
+- Only mock the external API client and filesystem — prefer fakes (e.g., a temp directory with real CSVs) over `MagicMock` chains for file I/O
+- Validate the full data flow, not just final output — check intermediate state at each pipeline stage
+- Verify data preservation: columns not touched by the pipeline must survive unchanged
+- Include at least one test that exercises the CSV-fallback path (API disabled) and one that exercises the API path (API enabled with mocked client)
+
+See `postprocessing_forecasts/tests/test_integration_postprocessing.py` as the reference.
+
+**File naming**: `test_integration_<topic>.py`
+
+#### 4. API Failure Tests (required for any code using `sapphire_api_client`)
+
+Any function that reads from or writes to the SAPPHIRE API must have tests for all failure modes:
+
+```python
+class TestWriteToApi:
+    def test_returns_false_when_api_unavailable(self, data):
+        """When sapphire_api_client is not installed."""
+        with patch.object(module, "SAPPHIRE_API_AVAILABLE", False):
+            assert module._write_to_api(data) is False
+
+    def test_returns_false_when_api_disabled(self, data):
+        """When SAPPHIRE_API_ENABLED=false."""
+        with patch.object(module, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}):
+            assert module._write_to_api(data) is False
+
+    def test_returns_false_when_api_not_ready(self, data):
+        """When readiness_check fails."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = False
+        # ... assert returns False, no exception
+
+    def test_csv_still_written_on_api_failure(self, data, tmp_path):
+        """CSV fallback works when API fails."""
+        # ... verify CSV written even when API raises
+```
+
+The full pattern is documented in `preprocessing_runoff/test/test_api_write.py`.
+
+#### 5. Performance Benchmarks (optional, for optimization work)
+
+Mark with `@pytest.mark.benchmark`. Skipped by default, run explicitly:
+```bash
+pytest <module>/tests/test_performance.py -v -k bench
+```
+
+See `postprocessing_forecasts/tests/test_performance.py` for the pattern.
+
+### Assertion Quality
+
+**Tests must verify correctness, not just existence.** A test that checks "an EM row exists" is not sufficient — it must also check that the EM row has the correct discharge value, station code, date, and row count. Weak assertions let bugs pass silently.
+
+Rules:
+- Use **exact counts** (`assert len(em_rows) == 2`) not vague checks (`assert len(em_rows) > 0`)
+- **Spot-check at least one record's values** (e.g., `assert record['forecasted_discharge'] == 105.0`)
+- For DataFrames, prefer `pd.testing.assert_frame_equal` over row-count comparisons
+- For API records, verify field values (not just key existence) for at least one representative record
+- Avoid ambiguous `or` in assertions (`assert x.empty or 'EM' not in x` can mask bugs — be explicit about which condition you expect)
+
+### Required conftest.py Pattern
+
+Any module that imports `forecast_library` or `setup_library` (directly or transitively) **must** have a `conftest.py` with the API singleton reset fixture:
+
+```python
+"""Shared fixtures for <module> tests."""
+import os, sys
+import pytest
+
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
+)
+import forecast_library as fl
+
+@pytest.fixture(autouse=True)
+def _reset_api_singletons():
+    """Reset forecast_library API client singletons between tests.
+
+    Without this, a mock injected by one test leaks into subsequent tests
+    because the singleton caches the first client instance it creates.
+    """
+    fl._reset_api_clients()
+    yield
+    fl._reset_api_clients()
+```
+
+This fixture is already present in `iEasyHydroForecast`, `postprocessing_forecasts`, and `linear_regression`. Any new module using the API must add it.
+
+### Test File Naming Conventions
+
+| File name pattern | Contents |
+|-------------------|----------|
+| `test_<topic>.py` | Unit tests for a specific topic or module |
+| `test_edge_cases.py` | Edge case and boundary condition tests |
+| `test_api_write.py` / `test_api_read.py` | API integration tests (write/read paths) |
+| `test_api_integration.py` | Combined API read/write tests |
+| `test_integration_<topic>.py` | Multi-step workflow integration tests |
+| `test_performance.py` | Performance benchmarks (`@pytest.mark.benchmark`) |
+
+### Test Anti-Patterns (avoid these)
+
+- **Asserting on private attributes** (`._steps`, `._internal_cache`) — test public behavior instead
+- **Giant integration tests covering all cases** — push variation into unit tests; integration tests cover the happy-path pipeline and one or two failure modes
+- **Hiding critical setup in deeply nested fixtures** — if a test is hard to understand without reading three conftest files, flatten the setup
+- **Bare `except:` in test helpers** — let unexpected exceptions propagate so they surface as test failures
+- **`MagicMock` chains for internal modules** — if you're mocking three internal functions to test a fourth, the test is too coupled to implementation; restructure or test at a higher level
+- **Tests that pass regardless of correctness** — e.g., `assert len(result) > 0` when the function could return garbage rows. Always verify values, not just shapes (see Assertion Quality above)
+- **Non-deterministic time dependence** — tests that break on Jan 1 or Feb 29 because they call `date.today()` instead of receiving the forecast date as a parameter
+- **`datetime.now()` in default arguments** — `def f(year=datetime.now().year)` is evaluated once at import time and goes stale at year boundaries; always require explicit arguments
+
+---
+
 ## Testing Workflow Overview
 
 ```

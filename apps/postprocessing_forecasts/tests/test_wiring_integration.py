@@ -279,6 +279,7 @@ class TestOperationalWiringIntegration:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -327,6 +328,7 @@ class TestOperationalWiringIntegration:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -369,6 +371,9 @@ class TestOperationalWiringIntegration:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                # Override boundary checks so both horizons process
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -422,6 +427,7 @@ class TestOperationalWiringIntegration:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -680,8 +686,8 @@ class TestExceptionPropagation:
                 module, spec = _import_maintenance()
                 spec.loader.exec_module(module)
 
-                # Patch gap_detector.read_combined_forecasts after exec
-                target = 'src.gap_detector.read_combined_forecasts'
+                # Patch data_reader.read_combined_forecasts after exec
+                target = 'src.data_reader.read_combined_forecasts'
                 with patch(
                     target,
                     side_effect=RuntimeError("corrupt CSV"),
@@ -706,6 +712,7 @@ class TestExceptionPropagation:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 target = 'src.data_reader.read_skill_metrics'
                 with patch(
@@ -746,6 +753,7 @@ class TestMismatchedInputShapes:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -774,6 +782,7 @@ class TestMismatchedInputShapes:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -1244,6 +1253,7 @@ class TestNEExclusionIntegration:
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()

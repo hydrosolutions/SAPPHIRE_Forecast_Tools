@@ -42,7 +42,32 @@ Based on feedback:
 - Execute next batch
 - Repeat until complete
 
-### Step 5: Complete Development
+### Step 5: Verify Test Completeness
+
+Cross-reference what was written against the CLAUDE.md test categories:
+
+| Category | Required when | Check |
+|----------|---------------|-------|
+| **Unit tests** | Always | Every new/modified public function has happy-path + error-path tests |
+| **Edge case tests** | Code touches DataFrames, dates, or numerics | Empty data, NaN, date boundaries, value boundaries covered |
+| **Integration tests** | Multi-step workflows or pipelines | Real logic tested end-to-end, only external boundaries mocked |
+| **API failure tests** | Code uses `sapphire_api_client` | API unavailable, disabled, not ready, CSV fallback all tested |
+
+**If gaps exist:** Write the missing tests before proceeding. Follow TDD — write the failing test first.
+
+### Step 6: Update Documentation
+
+Before moving to completion, check for documentation impact:
+
+1. Did inputs/outputs change? → Update module README
+2. Did configuration change? → Update `doc/configuration.md` or `.env` examples
+3. Did pipeline behavior change? → Update `doc/data_flow_*.md`
+4. Did user-facing behavior change? → Update `doc/user_guide.md`
+5. Is this fixing a known issue? → Update `doc/plans/module_issues.md`
+
+**If no docs need updating:** State "No documentation impact" with brief rationale.
+
+### Step 7: Complete Development
 
 After all tasks complete and verified:
 - Announce: "All tasks complete. Running pre-deployment validation."

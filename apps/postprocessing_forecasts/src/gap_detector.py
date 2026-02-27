@@ -5,7 +5,6 @@ individual model forecasts exist but the ensemble (model_short='EM') is
 missing within a lookback window.
 """
 
-import os
 import logging
 
 import pandas as pd
@@ -86,7 +85,11 @@ def detect_missing_ensembles(
 
 
 def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
-    """Read combined forecasts CSV for gap detection.
+    """Read combined forecasts for gap detection.
+
+    .. deprecated::
+        Delegates to ``data_reader.read_combined_forecasts()``.
+        Callers should import from ``data_reader`` directly.
 
     Args:
         horizon_type: 'pentad' or 'decad'.
@@ -97,47 +100,8 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
     Raises:
         ValueError: If horizon_type is invalid.
     """
-    if horizon_type not in ("pentad", "decad"):
-        raise ValueError(
-            f"horizon_type must be 'pentad' or 'decad', got: {horizon_type}"
-        )
-
-    intermediate_path = os.getenv("ieasyforecast_intermediate_data_path", "")
-
-    if horizon_type == "pentad":
-        filename = os.getenv(
-            "ieasyforecast_combined_forecast_pentad_file", ""
-        )
-    else:
-        filename = os.getenv(
-            "ieasyforecast_combined_forecast_decad_file", ""
-        )
-
-    if not intermediate_path or not filename:
-        logger.debug(
-            "Combined forecast env vars not set for %s", horizon_type
-        )
-        return pd.DataFrame()
-
-    filepath = os.path.join(intermediate_path, filename)
-    if not os.path.exists(filepath):
-        logger.debug("Combined forecasts CSV not found: %s", filepath)
-        return pd.DataFrame()
-
-    try:
-        df = pd.read_csv(filepath)
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-        if 'code' in df.columns:
-            df['code'] = df['code'].astype(str).str.replace(
-                r'\.0$', '', regex=True
-            )
-        return df
-    except Exception as e:
-        logger.error(
-            "Failed to read combined forecasts CSV %s: %s", filepath, e
-        )
-        return pd.DataFrame()
+    from src import data_reader
+    return data_reader.read_combined_forecasts(horizon_type)
 
 
 def detect_missing_monthly_ensembles(

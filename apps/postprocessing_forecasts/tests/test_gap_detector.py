@@ -2,6 +2,7 @@
 
 import os
 import sys
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -132,43 +133,43 @@ class TestDetectMissingEnsembles:
 # ---------------------------------------------------------------------------
 
 class TestReadCombinedForecasts:
-    def test_invalid_horizon_type_raises(self):
+    """Verify gap_detector.read_combined_forecasts delegates to data_reader."""
+
+    def test_delegates_to_data_reader(self):
+        """Calls data_reader.read_combined_forecasts with same args."""
+        expected = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+            'model_short': ['LR'],
+        })
+        with patch(
+            'src.data_reader.read_combined_forecasts',
+            return_value=expected,
+        ) as mock_dr:
+            result = read_combined_forecasts('pentad')
+            mock_dr.assert_called_once_with('pentad')
+            assert len(result) == 1
+            assert result['code'].iloc[0] == '10001'
+
+    def test_invalid_horizon_delegates_error(self):
+        """ValueError from data_reader propagates through."""
         with pytest.raises(ValueError, match="'pentad' or 'decad'"):
             read_combined_forecasts('weekly')
 
-    def test_reads_pentad_csv(self, tmp_path):
-        csv_file = tmp_path / "combined_pentad.csv"
-        pd.DataFrame({
-            'date': ['2024-01-05'],
-            'code': [10001],
-            'model_short': ['LR'],
-            'forecasted_discharge': [100.0],
-        }).to_csv(csv_file, index=False)
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv(
-                'ieasyforecast_intermediate_data_path', str(tmp_path)
-            )
-            mp.setenv(
-                'ieasyforecast_combined_forecast_pentad_file',
-                'combined_pentad.csv',
-            )
-            result = read_combined_forecasts('pentad')
+    def test_delegates_decad(self):
+        """Decad horizon type is passed through."""
+        expected = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-10']),
+            'code': ['10002'],
+            'model_short': ['TFT'],
+        })
+        with patch(
+            'src.data_reader.read_combined_forecasts',
+            return_value=expected,
+        ) as mock_dr:
+            result = read_combined_forecasts('decad')
+            mock_dr.assert_called_once_with('decad')
             assert len(result) == 1
-            assert result['code'].iloc[0] == '10001'
-            assert pd.api.types.is_datetime64_any_dtype(result['date'])
-
-    def test_missing_file_returns_empty(self, tmp_path):
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv(
-                'ieasyforecast_intermediate_data_path', str(tmp_path)
-            )
-            mp.setenv(
-                'ieasyforecast_combined_forecast_pentad_file',
-                'nonexistent.csv',
-            )
-            result = read_combined_forecasts('pentad')
-            assert result.empty
 
 
 # ---------------------------------------------------------------------------

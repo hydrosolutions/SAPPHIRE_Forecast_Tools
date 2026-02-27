@@ -79,7 +79,7 @@ def postprocessing_maintenance():
             )
             sl.load_environment()
 
-        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
         if prediction_mode not in ['PENTAD', 'DECAD', 'BOTH']:
             logger.error(
                 f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "
@@ -167,7 +167,7 @@ def _fill_gaps_for_horizon(
             f"\n\n------ Reading {label} combined forecasts for gap "
             f"detection ----"
         )
-        combined = gap_detector.read_combined_forecasts(horizon_type)
+        combined = data_reader.read_combined_forecasts(horizon_type)
 
     if combined.empty:
         logger.info(

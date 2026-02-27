@@ -119,10 +119,12 @@ doc/plans/issues/gi_<github_id>_<short_description>.md
 | preprocessing_station_forcing | `prepf` |
 | linear_regression | `lr` |
 | machine_learning | `ml` |
+| long_term_forecasting | `ltf` |
 | postprocessing_forecasts | `pp` |
 | forecast_dashboard | `fd` |
 | configuration_dashboard | `cd` |
 | pipeline | `p` |
+| validate_pipeline | `vp` |
 | iEasyHydroForecast | `iEHF` |
 | reset_forecast_run_date | `r` |
 | cross-module/infrastructure | `infra` |
@@ -269,7 +271,7 @@ uv run pytest tests/ -v -k "test_name"
 - [ ] Criterion 2: [Specific, measurable]
 - [ ] All existing tests pass
 - [ ] New tests cover the changes
-- [ ] Code follows project conventions (see `.serena/memories/code_style_conventions.md`)
+- [ ] Code follows project conventions (see `CLAUDE.md`)
 
 ---
 

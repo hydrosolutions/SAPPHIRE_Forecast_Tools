@@ -32,7 +32,7 @@ Before running modules locally, set the path to your organization-specific confi
 export ieasyhydroforecast_env_file_path=/path/to/config/.env_develop
 ```
 
-See `apps/config/` for available configuration files. For detailed environment documentation, Claude can read the Serena memory `suggested_commands`.
+See `apps/config/` for available configuration files.
 
 ---
 
@@ -272,10 +272,7 @@ docker compose logs --tail=100 linear-regression
 
 ### 5.4 Known Issues Check
 
-After deployment, verify known issues are resolved:
-
-- [ ] **P-001**: Marker files cleaned up (if fix deployed)
-- [ ] **PR-001**: Preprocessing runoff updates data (if fix deployed)
+After deployment, verify any known issues tracked in `doc/plans/module_issues.md` are resolved if a fix was deployed.
 
 ### 5.5 Post-Deploy Checklist
 

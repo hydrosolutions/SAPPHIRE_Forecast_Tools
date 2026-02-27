@@ -996,7 +996,7 @@ class TestCodeNormalization:
 
     def test_numeric_code_dot_zero_stripped(self, tmp_path):
         """code=10001.0 (float in CSV) becomes '10001' after reading."""
-        from src.gap_detector import read_combined_forecasts
+        from src.data_reader import read_combined_forecasts
 
         csv_file = tmp_path / "combined_pentad.csv"
         pd.DataFrame({
@@ -1006,19 +1006,23 @@ class TestCodeNormalization:
             'forecasted_discharge': [100.0],
         }).to_csv(csv_file, index=False)
 
-        with patch.dict(os.environ, {
-            'ieasyforecast_intermediate_data_path': str(tmp_path),
-            'ieasyforecast_combined_forecast_pentad_file':
-                'combined_pentad.csv',
-        }):
-            result = read_combined_forecasts('pentad')
+        with patch(
+            'src.data_reader._read_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch.dict(os.environ, {
+                'ieasyforecast_intermediate_data_path': str(tmp_path),
+                'ieasyforecast_combined_forecast_pentad_file':
+                    'combined_pentad.csv',
+            }):
+                result = read_combined_forecasts('pentad')
         assert result.iloc[0]['code'] == '10001', (
             "Float code 10001.0 should be normalized to '10001'"
         )
 
     def test_code_roundtrip_consistency(self, tmp_path):
         """Write code='10001' to CSV, read back, verify match."""
-        from src.gap_detector import read_combined_forecasts
+        from src.data_reader import read_combined_forecasts
 
         csv_file = tmp_path / "combined_pentad.csv"
         pd.DataFrame({
@@ -1028,12 +1032,16 @@ class TestCodeNormalization:
             'forecasted_discharge': [100.0],
         }).to_csv(csv_file, index=False)
 
-        with patch.dict(os.environ, {
-            'ieasyforecast_intermediate_data_path': str(tmp_path),
-            'ieasyforecast_combined_forecast_pentad_file':
-                'combined_pentad.csv',
-        }):
-            result = read_combined_forecasts('pentad')
+        with patch(
+            'src.data_reader._read_combined_forecasts_api',
+            return_value=None,
+        ):
+            with patch.dict(os.environ, {
+                'ieasyforecast_intermediate_data_path': str(tmp_path),
+                'ieasyforecast_combined_forecast_pentad_file':
+                    'combined_pentad.csv',
+            }):
+                result = read_combined_forecasts('pentad')
         assert result.iloc[0]['code'] == '10001'
 
 

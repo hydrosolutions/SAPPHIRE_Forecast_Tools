@@ -10,7 +10,8 @@ API-first I/O via the SAPPHIRE postprocessing API. The target state is:
 - **Writes:** API as primary destination, CSV as deprecated backup only.
 
 CSV I/O will be removed once API integration is fully validated. See open
-issues PP-007, PP-010, PP-013 for remaining migration gaps.
+issue PP-010 for the remaining read migration gap (pentad/decad operational
+reads). PP-007 and PP-013 have been resolved.
 
 ## Forecast Horizons
 
@@ -123,8 +124,8 @@ annual recalculation. NE is explicitly excluded from EM candidates to avoid
 
 **Pipeline stages:**
 
-1. **Read existing combined forecasts** -- Currently from CSV only
-   (`gap_detector.read_combined_forecasts`). See PP-007.
+1. **Read existing combined forecasts** -- API-first with CSV fallback
+   (`data_reader.read_combined_forecasts`).
 2. **Detect gaps** -- Find (date, code) pairs missing EM rows within lookback
    window (`POSTPROCESSING_GAPFILL_WINDOW_DAYS`, default 7 days, configurable
    up to e.g. 30 days for longer server outages). See PP-006 for moving this
@@ -389,15 +390,14 @@ controlled.
 **Affects:** All entry points, `gap_detector.py`, `ensemble_calculator.py`,
 `file_writer.py`
 
-### PP-007: Maintenance should read from API, not CSV
+### PP-007: Maintenance should read from API, not CSV — **Review**
 
-**Current:** `gap_detector.py` reads combined forecasts from CSV only. No API
-fallback.
+**Resolved:** `data_reader.read_combined_forecasts()` now reads from the
+postprocessing API (via `read_short_term_forecasts`) with CSV fallback.
+`gap_detector.read_combined_forecasts()` is deprecated and delegates to
+`data_reader`. `postprocessing_maintenance.py` calls `data_reader` directly.
 
-**Target:** Read from API as primary source, CSV as fallback. Consistent with
-the pattern in `data_reader.py`.
-
-**Affects:** `postprocessing_maintenance.py`, `postprocessing_maintenance_long_term.py`, `gap_detector.py`
+**Affects:** `data_reader.py`, `gap_detector.py`, `postprocessing_maintenance.py`
 
 **Related:** PP-013 is the monthly-specific variant of this issue.
 
@@ -475,15 +475,14 @@ consumes these.
 **Affects:** `ensemble_calculator.py`, `recalculate_skill_metrics.py`,
 potentially new `postprocessing_operational_daily.py`
 
-### PP-013: Monthly maintenance uses CSV-first gap detection
+### PP-013: Monthly maintenance uses CSV-first gap detection — **Review**
 
-**Current:** `postprocessing_maintenance_long_term.py` uses `gap_detector` which
-reads from CSV, even though the monthly operational and recalculation paths are
-already API-integrated.
+**Resolved:** `data_reader.read_monthly_combined_forecasts()` now reads from
+the postprocessing API (via `read_long_term_forecasts`) with CSV fallback.
+Normalization adds `month_in_year` and `forecasted_discharge` (from `q50`)
+for compatibility with the gap detector and merge-back logic.
 
-**Target:** Same as PP-007 -- migrate gap detection to API-first reads.
-
-**Affects:** `gap_detector.py`, `postprocessing_maintenance_long_term.py`
+**Affects:** `data_reader.py`
 
 ### PP-015: Move NE creation from setup_library to postprocessing_forecasts
 

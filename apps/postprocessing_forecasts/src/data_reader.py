@@ -1,8 +1,9 @@
-"""Read pre-calculated skill metrics and monthly data from API or CSV
-(deprecated fallback).
+"""Read pre-calculated skill metrics, combined forecasts, and monthly
+data from API or CSV (deprecated fallback).
 
 Used by the operational and maintenance entry points to avoid
-recalculating skill metrics from scratch, and by the yearly
+recalculating skill metrics from scratch, by the maintenance entry
+point to read combined forecasts for gap detection, and by the yearly
 recalculation entry point to read monthly observations and forecasts.
 """
 
@@ -351,6 +352,227 @@ def _normalize_api_monthly_skill_metrics(
         )
 
     return df
+
+
+# ===================================================================
+# Short-term combined forecasts (pentad / decad)
+# ===================================================================
+
+
+def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
+    """Read combined forecasts from API (primary) or CSV (fallback).
+
+    Used by the maintenance entry point for gap detection and
+    merge-back after filling missing ensembles.
+
+    Args:
+        horizon_type: 'pentad' or 'decad'.
+
+    Returns:
+        DataFrame with combined forecasts (all models + ensembles),
+        or empty DataFrame if no data available.
+
+    Raises:
+        ValueError: If horizon_type is invalid.
+    """
+    if horizon_type not in ("pentad", "decad"):
+        raise ValueError(
+            f"horizon_type must be 'pentad' or 'decad', "
+            f"got: {horizon_type}"
+        )
+
+    # API-first: try the authoritative source
+    df = _read_combined_forecasts_api(horizon_type)
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d combined forecast rows from API (%s)",
+            len(df), horizon_type,
+        )
+        return df
+
+    # CSV fallback (deprecated)
+    logger.info(
+        "API combined forecasts unavailable for %s, "
+        "falling back to CSV",
+        horizon_type,
+    )
+    df = _read_combined_forecasts_csv(horizon_type)
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d combined forecast rows from CSV (%s)",
+            len(df), horizon_type,
+        )
+        return df
+
+    logger.warning(
+        "No combined forecasts available for %s", horizon_type
+    )
+    return pd.DataFrame()
+
+
+def _read_combined_forecasts_api(
+    horizon_type: str,
+) -> pd.DataFrame | None:
+    """Read combined forecasts from SAPPHIRE postprocessing API.
+
+    Returns None if the API is unavailable or returns no data.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug(
+            "sapphire-api-client not installed, skipping API read"
+        )
+        return None
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        return None
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.readiness_check():
+            logger.warning(
+                "Postprocessing API not ready at %s", api_url
+            )
+            return None
+
+        # Map internal horizon names to API horizon names
+        api_horizon = (
+            "decade" if horizon_type == "decad" else horizon_type
+        )
+
+        all_records = []
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_short_term_forecasts(
+                horizon=api_horizon, skip=skip, limit=batch_size
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+        if not all_records:
+            return None
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_api_combined_forecasts(df, horizon_type)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read combined forecasts from API: %s", e
+        )
+        return None
+
+
+def _normalize_api_combined_forecasts(
+    df: pd.DataFrame, horizon_type: str
+) -> pd.DataFrame:
+    """Convert API response columns to internal column names.
+
+    API returns: id, horizon_type, code, model_type,
+        model_type_description, date, target, flag,
+        horizon_value, horizon_in_year, composition,
+        q05, q25, q50, q75, q95, forecasted_discharge
+
+    Internal expects: code, model_short, date, target, flag,
+        pentad_in_year|decad_in_year, pentad_in_month|decad_in_month,
+        composition, q05-q95, forecasted_discharge
+    """
+    df = df.copy()
+
+    period_col = (
+        "pentad_in_year"
+        if horizon_type == "pentad"
+        else "decad_in_year"
+    )
+    period_in_month_col = (
+        "pentad_in_month"
+        if horizon_type == "pentad"
+        else "decad_in_month"
+    )
+
+    rename_map = {
+        "model_type": "model_short",
+        "horizon_in_year": period_col,
+        "horizon_value": period_in_month_col,
+    }
+    df = df.rename(columns=rename_map)
+
+    # Ensure date is datetime
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+
+    # Ensure code is string without trailing .0
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(
+            r"\.0$", "", regex=True
+        )
+
+    # Drop API-only columns not needed internally
+    drop_cols = ["id", "horizon_type", "model_type_description"]
+    df = df.drop(
+        columns=[c for c in drop_cols if c in df.columns],
+        errors="ignore",
+    )
+
+    return df
+
+
+def _read_combined_forecasts_csv(
+    horizon_type: str,
+) -> pd.DataFrame | None:
+    """Read combined forecasts from CSV file.
+
+    Returns None if the file doesn't exist or can't be read.
+    """
+    intermediate_path = os.getenv(
+        "ieasyforecast_intermediate_data_path", ""
+    )
+
+    if horizon_type == "pentad":
+        filename = os.getenv(
+            "ieasyforecast_combined_forecast_pentad_file", ""
+        )
+    else:
+        filename = os.getenv(
+            "ieasyforecast_combined_forecast_decad_file", ""
+        )
+
+    if not intermediate_path or not filename:
+        logger.debug(
+            "Combined forecast env vars not set for %s",
+            horizon_type,
+        )
+        return None
+
+    filepath = os.path.join(intermediate_path, filename)
+    if not os.path.exists(filepath):
+        logger.debug(
+            "Combined forecasts CSV not found: %s", filepath
+        )
+        return None
+
+    try:
+        df = pd.read_csv(filepath)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str).str.replace(
+                r"\.0$", "", regex=True
+            )
+        return df
+    except Exception as e:
+        logger.error(
+            "Failed to read combined forecasts CSV %s: %s",
+            filepath, e,
+        )
+        return None
 
 
 # ===================================================================
@@ -876,11 +1098,133 @@ def read_latest_monthly_forecasts(
 
 
 def read_monthly_combined_forecasts() -> pd.DataFrame:
-    """Read monthly combined forecasts CSV for gap detection.
+    """Read monthly combined forecasts from API (primary) or CSV
+    (fallback).
+
+    Used by the maintenance entry point for gap detection and
+    merge-back after filling missing ensembles.
 
     Returns:
         DataFrame with combined forecasts (all models + ensembles),
-        or empty DataFrame if file not found.
+        or empty DataFrame if no data available.
+    """
+    # API-first: try the authoritative source
+    df = _read_monthly_combined_forecasts_api()
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d monthly combined forecast rows from API",
+            len(df),
+        )
+        return df
+
+    # CSV fallback (deprecated)
+    logger.info(
+        "API monthly combined forecasts unavailable, "
+        "falling back to CSV"
+    )
+    df = _read_monthly_combined_forecasts_csv()
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d monthly combined forecast rows from CSV",
+            len(df),
+        )
+        return df
+
+    logger.warning("No monthly combined forecasts available")
+    return pd.DataFrame()
+
+
+def _read_monthly_combined_forecasts_api() -> pd.DataFrame | None:
+    """Read monthly combined forecasts from SAPPHIRE postprocessing API.
+
+    Returns None if the API is unavailable or returns no data.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug(
+            "sapphire-api-client not installed, skipping API read"
+        )
+        return None
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        return None
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.readiness_check():
+            logger.warning(
+                "Postprocessing API not ready at %s", api_url
+            )
+            return None
+
+        all_records = []
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_long_term_forecasts(
+                horizon_type="month", skip=skip, limit=batch_size
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+        if not all_records:
+            return None
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_monthly_combined_forecasts(df)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read monthly combined forecasts from API: %s",
+            e,
+        )
+        return None
+
+
+def _normalize_monthly_combined_forecasts(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Normalize API monthly forecast response for gap detection.
+
+    Delegates to _normalize_monthly_forecasts() for base
+    normalization, then adds month_in_year and
+    forecasted_discharge if absent.
+    """
+    df = _normalize_monthly_forecasts(df)
+
+    # Add month_in_year (needed by gap detector)
+    if "month_in_year" not in df.columns and "month" in df.columns:
+        df["month_in_year"] = df["month"]
+
+    # Add forecasted_discharge from q50 (needed for merge-back)
+    if (
+        "forecasted_discharge" not in df.columns
+        and "q50" in df.columns
+    ):
+        df["forecasted_discharge"] = df["q50"].astype(float)
+
+    # Drop API-only columns not needed internally
+    drop_cols = ["id", "horizon_type", "horizon_value",
+                 "model_type_description"]
+    df = df.drop(
+        columns=[c for c in drop_cols if c in df.columns],
+        errors="ignore",
+    )
+
+    return df
+
+
+def _read_monthly_combined_forecasts_csv() -> pd.DataFrame | None:
+    """Read monthly combined forecasts from CSV file.
+
+    Returns None if the file doesn't exist or can't be read.
     """
     intermediate_path = os.getenv(
         "ieasyforecast_intermediate_data_path", ""
@@ -893,14 +1237,14 @@ def read_monthly_combined_forecasts() -> pd.DataFrame:
         logger.debug(
             "Monthly combined forecast env vars not set"
         )
-        return pd.DataFrame()
+        return None
 
     filepath = os.path.join(intermediate_path, filename)
     if not os.path.exists(filepath):
         logger.debug(
             "Monthly combined forecasts CSV not found: %s", filepath
         )
-        return pd.DataFrame()
+        return None
 
     try:
         df = pd.read_csv(filepath)
@@ -914,4 +1258,4 @@ def read_monthly_combined_forecasts() -> pd.DataFrame:
             "Failed to read monthly combined forecasts CSV %s: %s",
             filepath, e,
         )
-        return pd.DataFrame()
+        return None

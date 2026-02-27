@@ -2,6 +2,20 @@
 
 This file provides guidance for AI assistants working on this codebase.
 
+## Critical Constraints
+
+### Sensitive Data
+
+No passwords, no sensitive data like station codes or runoff data can ever be committed to GitHub. Before every commit, review all changed files for accidental inclusion of credentials, station codes, discharge values, or other operationally sensitive data.
+
+### Ownership Boundaries
+
+**`sapphire/services/` is managed by a colleague and must not be edited without coordination.** This includes all FastAPI service code, database models, migrations, and service tests. If a change requires modifying the API contract (new endpoints, changed request/response schemas), open a discussion first — do not edit the service code directly.
+
+The `apps/` modules and everything else in the repository are fair game.
+
+---
+
 ## Project Architecture
 
 SAPPHIRE has two main component layers that interact with each other:
@@ -16,18 +30,22 @@ Active Python modules that perform hydrological forecasting operations:
 | `preprocessing_gateway` | Gateway for preprocessing data from external APIs |
 | `preprocessing_station_forcing` | Process station forcing data |
 | `linear_regression` | Linear regression forecasting models |
-| `machine_learning` | ML-based forecasting models |
+| `machine_learning` | ML-based forecasting models (short-term) |
+| `long_term_forecasting` | Long-term (monthly) forecasting models |
 | `postprocessing_forecasts` | Post-process forecast outputs |
 | `configuration_dashboard` | Dashboard for system configuration |
 | `forecast_dashboard` | Dashboard displaying forecast results |
 | `reset_forecast_run_date` | Utility for resetting forecast dates |
+| `validate_pipeline` | Pipeline validation utilities |
 | `iEasyHydroForecast` | Core forecasting library |
 
-**Legacy module**: Only `backend/` is legacy and being phased out.
+**Legacy/deprecated modules:**
+- `backend/` — legacy, being phased out
+- `machine_learning_monthly/` — deprecated, replaced by `long_term_forecasting`
 
 ### 2. SAPPHIRE Services (`sapphire/services/`)
 
-FastAPI microservices with PostgreSQL backends:
+FastAPI microservices with PostgreSQL backends (managed by colleague — see Ownership Boundaries above):
 
 | Service | Port | Description |
 |---------|------|-------------|
@@ -52,17 +70,15 @@ For detailed data flow diagrams (Mermaid) showing how data moves through the
 operational, maintenance, and annual recalculation pipelines, see:
 
 - **Short-term** (pentad/decade): [`doc/data_flow_short_term.md`](doc/data_flow_short_term.md)
+- **Long-term** (monthly): [`doc/data_flow_long_term.md`](doc/data_flow_long_term.md)
 
 ---
 
 ## Code Style Conventions
 
-### Sensitive Data
-No passwords, no sensitive data like station codes or runoff data can ever be committed to GitHub. Before every commit, the changed files must be checked to make sure they don't contain any sensitive data.  
-
 ### Python Style
 
-- **Line length**: 79-100 characters (prefer 79 for docstrings)
+- **Line length**: 79 for docstrings, 100 for code
 - **Imports**: Group by standard library, third-party, local; alphabetize within groups
 - **Type hints**: Use for function signatures, especially public APIs
 - **Docstrings**: Google-style with Args, Returns, Raises sections
@@ -140,7 +156,7 @@ def get_db():
 
 ### Upsert Pattern
 
-For idempotent data operations, use the upsert pattern:
+For idempotent data operations, use the upsert pattern. Note: this uses PostgreSQL-specific syntax (`ON CONFLICT`) — service tests use SQLite in-memory databases which handle this differently via SQLAlchemy's `insert().on_conflict_do_update()`.
 
 ```python
 from sqlalchemy.dialects.postgresql import insert
@@ -158,6 +174,28 @@ def upsert_record(db: Session, model: Type[Base], data: dict, unique_keys: list[
 
 ---
 
+## Git Conventions
+
+### Branch Naming
+
+Use descriptive branch names with a prefix indicating the type of work:
+
+- `develop_<module>_<description>` — feature development branches
+- `fix_<module>_<description>` — bug fix branches
+- `infra_<description>` — infrastructure/cross-module changes
+
+### Commit Messages
+
+Write concise commit messages that focus on the "why" rather than the "what". Use imperative mood for the subject line (e.g., "Fix boundary day guard" not "Fixed boundary day guard").
+
+### Pull Requests
+
+- Keep PRs focused on a single issue or feature
+- Target `main` for production-ready changes
+- Include a summary of changes and test results in the PR description
+
+---
+
 ## Testing Requirements
 
 ### Testing Philosophy
@@ -171,21 +209,13 @@ Good tests describe contracts — what must stay true even if the implementation
 3. **Use fakes over mocks where practical** — a fake implementation (e.g., an in-memory store) is easier to read and more resilient than a chain of `MagicMock` assertions. Reserve `MagicMock` for external boundaries (API clients, file I/O, external services).
 4. **Structure tests as Arrange → Act → Assert** — setup the data, call the function, check the result. Name fixtures descriptively (`pentad_skill_csv`, `df_with_missing_values`), not generically (`data`, `fixture1`).
 
-#### The Forecast Date Rule
+### The Forecast Date Rule
 
 The forecast date is a **domain concept** — the date a forecast is being produced for. It must be captured once at the pipeline entry point and passed as a parameter to all functions that need it. Do not scatter `date.today()` calls through business logic.
 
-**Why this matters operationally:**
-
-1. **Clock-tick bug**: If a pipeline runs across midnight, modules that independently call `date.today()` disagree on what "today" is.
-2. **Year/month boundary bugs**: Default arguments like `year=datetime.now().year` are evaluated at import time — if the module is imported on Dec 31 and the function is called on Jan 1, the year is wrong.
-3. **Hindcast/backtest support**: When re-running forecasts for historical dates, scattered `date.today()` calls return the current date instead of the target forecast date.
-
-**Pattern — capture once, pass everywhere:**
-
 ```python
-# Entry point (main.py, pipeline orchestrator):
-forecast_date = date.today()  # single source of truth
+# Entry point captures once:
+forecast_date = date.today()
 
 # All downstream functions receive it as a parameter:
 def process_pentad(data: pd.DataFrame, forecast_date: date) -> pd.DataFrame:
@@ -201,31 +231,19 @@ def get_date_for_pentad(pentad, year=datetime.now().year): ...
 def get_date_for_pentad(pentad: int, year: int) -> date: ...
 ```
 
-**Acceptable uses of `datetime.now()`**: Logging timestamps, file naming, and performance timers — these should reflect actual wall-clock time.
+**Acceptable uses of `datetime.now()`**: Logging timestamps, file naming, and performance timers.
 
-**Reference implementation**: `long_term_forecasting/__init__.py` already follows this pattern with `initialize_today()` / `get_today()`.
-
-**Testing benefit**: Boundary-date testing becomes trivial — no datetime mocking or `freezegun` needed:
-
-```python
-def test_pentad_at_year_boundary():
-    result = process_forecast(forecast_date=date(2025, 12, 31), ...)
-    assert result.pentad_in_year == 73
-
-def test_leap_year_feb29():
-    result = process_forecast(forecast_date=date(2024, 2, 29), ...)
-    assert result.pentad_in_year == 12
-```
+**Reference implementation**: `long_term_forecasting/__init__.py` with `initialize_today()` / `get_today()`.
 
 ### Before Committing or Moving to New Topic
 
 **All tests must pass with zero skips before committing or moving to a new topic.** The full pre-commit validation has three stages:
 
 1. **Unit/integration tests** (always): `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh`
-2. **Local pipeline run** (after major changes): `bash apps/run_locally.sh all` — runs the full forecast pipeline against real data using local venvs, confirming nothing is broken end-to-end
-3. **Docker smoke tests** (after major changes): `bash apps/run_docker_tests.sh --skip-ml` — builds all Docker images and verifies critical imports, catching dependency and packaging regressions
+2. **Local pipeline run** (after major changes): `bash apps/run_locally.sh all`
+3. **Docker smoke tests** (after major changes): `bash apps/run_docker_tests.sh --skip-ml`
 
-Stage 1 is required before every commit. Stages 2 and 3 are required after changes that affect module dependencies, entry points, Docker configuration, or cross-module data flow. See [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md) for full details on all stages.
+Stage 1 is required before every commit. Stages 2 and 3 are required after changes that affect module dependencies, entry points, Docker configuration, or cross-module data flow.
 
 ### Zero Skips Policy
 
@@ -233,224 +251,22 @@ Stage 1 is required before every commit. Stages 2 and 3 are required after chang
 
 **One exception**: dependency-gated skips are acceptable when `sapphire-api-client` is not installed. These tests guard on `SAPPHIRE_API_AVAILABLE` and skip with an explicit message like `pytest.skip("sapphire-api-client not installed")`. This is the only valid skip pattern — all other skips indicate hidden bugs.
 
-### Test Categories
+### Test Categories and Writing Guide
 
-Every new feature or bug fix must include tests. The required categories depend on what changed:
-
-#### 1. Unit Tests (always required)
-
-Isolated tests for individual functions with all external dependencies mocked. Each new or modified public function needs at least:
-- A happy-path test with typical input
-- An error-path test (invalid input, exception handling)
-
-For error-path tests, always assert both **exception type** and **message fragment**:
-
-```python
-with pytest.raises(ValueError, match="horizon must be positive"):
-    calculate_forecast(data, horizon=-1)
-```
-
-#### Assertion Quality
-
-**Tests must verify correctness, not just existence.** A test that checks "an EM row exists" is not sufficient — it must also check that the EM row has the correct discharge value, station code, date, and row count. Weak assertions let bugs pass silently.
-
-Rules:
-- Use **exact counts** (`assert len(em_rows) == 2`) not vague checks (`assert len(em_rows) > 0`)
-- **Spot-check at least one record's values** (e.g., `assert record['forecasted_discharge'] == 105.0`)
-- For DataFrames, prefer `pd.testing.assert_frame_equal` over row-count comparisons
-- For API records, verify field values (not just key existence) for at least one representative record
-- Avoid ambiguous `or` in assertions (`assert x.empty or 'EM' not in x` can mask bugs — be explicit about which condition you expect)
-
-**File naming**: `test_<module_or_topic>.py`
-
-#### 2. Edge Case Tests (required for DataFrame, date, or numeric code)
-
-Any code that processes DataFrames, dates, or numeric values must have edge case tests covering these scenarios:
-
-| Category | Scenarios to test |
-|----------|-------------------|
-| **Empty data** | Empty DataFrame, single-row DataFrame, all-NaN columns |
-| **NaN handling** | All NaN values, mixed NaN/valid, NaN-to-None conversion for API |
-| **Date boundaries** | Year transitions (Dec 31 → Jan 1), leap year Feb 29, month boundaries |
-| **Value boundaries** | Zero values, very small positives (0.001), very large values (10000+) |
-| **Duplicates** | Duplicate date-station combinations |
-| **Multi-entity** | Single station many dates, many stations single date |
-| **Data preservation** | Non-transformed columns, schema, and row order remain intact after processing |
-
-See `preprocessing_runoff/test/test_edge_cases.py` as the reference implementation — it covers all of these categories in dedicated test classes.
-
-**File naming**: `test_edge_cases.py` or edge case classes within the relevant test file.
-
-#### 3. Integration Tests (required for multi-step workflows)
-
-Tests that exercise the real logic across multiple internal functions, only mocking external boundaries (API clients, file I/O). Required when:
-- A function calls multiple internal modules in sequence
-- Data flows through a pipeline (read → transform → write)
-- Entry points orchestrate multiple steps
-
-Integration tests should:
-- Use real logic for everything inside the boundary
-- Only mock the external API client and filesystem — prefer fakes (e.g., a temp directory with real CSVs) over `MagicMock` chains for file I/O
-- Validate the full data flow, not just final output — check intermediate state at each pipeline stage
-- Verify data preservation: columns not touched by the pipeline must survive unchanged
-- Include at least one test that exercises the CSV-fallback path (API disabled) and one that exercises the API path (API enabled with mocked client)
-
-See `postprocessing_forecasts/tests/test_integration_postprocessing.py` as the reference — it tests the full pipeline: skill CSV read → threshold filter → ensemble create → CSV + API write.
-
-**File naming**: `test_integration_<topic>.py`
-
-#### 4. API Failure Tests (required for any code using `sapphire_api_client`)
-
-Any function that reads from or writes to the SAPPHIRE API must have tests for all failure modes:
-
-```python
-class TestWriteToApi:
-    def test_returns_false_when_api_unavailable(self, data):
-        """When sapphire_api_client is not installed."""
-        with patch.object(module, "SAPPHIRE_API_AVAILABLE", False):
-            assert module._write_to_api(data) is False
-
-    def test_returns_false_when_api_disabled(self, data):
-        """When SAPPHIRE_API_ENABLED=false."""
-        with patch.object(module, "SAPPHIRE_API_AVAILABLE", True), \
-             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}):
-            assert module._write_to_api(data) is False
-
-    def test_returns_false_when_api_not_ready(self, data):
-        """When readiness_check fails."""
-        mock_client = MagicMock()
-        mock_client.readiness_check.return_value = False
-        # ... assert returns False, no exception
-
-    def test_csv_still_written_on_api_failure(self, data, tmp_path):
-        """CSV fallback works when API fails."""
-        # ... verify CSV written even when API raises
-```
-
-The full pattern is documented in `preprocessing_runoff/test/test_api_write.py`.
-
-#### 5. Performance Benchmarks (optional, for optimization work)
-
-Mark with `@pytest.mark.benchmark`. Skipped by default, run explicitly:
-```bash
-pytest <module>/tests/test_performance.py -v -k bench
-```
-
-See `postprocessing_forecasts/tests/test_performance.py` for the pattern.
-
-### Required conftest.py Pattern
-
-Any module that imports `forecast_library` or `setup_library` (directly or transitively) **must** have a `conftest.py` with the API singleton reset fixture:
-
-```python
-"""Shared fixtures for <module> tests."""
-import os, sys
-import pytest
-
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
-)
-import forecast_library as fl
-
-@pytest.fixture(autouse=True)
-def _reset_api_singletons():
-    """Reset forecast_library API client singletons between tests.
-
-    Without this, a mock injected by one test leaks into subsequent tests
-    because the singleton caches the first client instance it creates.
-    """
-    fl._reset_api_clients()
-    yield
-    fl._reset_api_clients()
-```
-
-This fixture is already present in `iEasyHydroForecast`, `postprocessing_forecasts`, and `linear_regression`. Any new module using the API must add it.
-
-### Test File Naming Conventions
-
-| File name pattern | Contents |
-|-------------------|----------|
-| `test_<topic>.py` | Unit tests for a specific topic or module |
-| `test_edge_cases.py` | Edge case and boundary condition tests |
-| `test_api_write.py` / `test_api_read.py` | API integration tests (write/read paths) |
-| `test_api_integration.py` | Combined API read/write tests |
-| `test_integration_<topic>.py` | Multi-step workflow integration tests |
-| `test_performance.py` | Performance benchmarks (`@pytest.mark.benchmark`) |
+Every new feature or bug fix must include tests. For the full specification of required test categories (unit, edge case, integration, API failure, performance), assertion quality rules, the conftest.py pattern, file naming conventions, and test anti-patterns, see [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md).
 
 ### Running Tests
 
-Follow the full testing workflow in [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md). The recommended way to run all tests (app modules + sapphire services) is:
+Always use `run_tests.sh` rather than running pytest manually:
 
 ```bash
 cd apps
-SAPPHIRE_TEST_ENV=True bash run_tests.sh
+SAPPHIRE_TEST_ENV=True bash run_tests.sh              # all tests
+SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>      # single app module
+bash run_tests.sh service:<service>                     # single service
 ```
 
-To run a single app module:
-
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True bash run_tests.sh <module_name>
-```
-
-To run a single sapphire service (use the `service:` prefix):
-
-```bash
-cd apps
-bash run_tests.sh service:<service_name>
-```
-
-Always use `run_tests.sh` rather than running pytest manually — it handles test directory inconsistencies (`test/` vs `tests/`), path resolution for services, and ensures nothing is forgotten.
-
-#### Application Module Tests
-
-Tests are run from the `apps/` directory:
-
-```bash
-cd apps
-
-# Run tests for a specific module
-SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
-SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
-SAPPHIRE_TEST_ENV=True pytest linear_regression/test
-
-# Run iEasyHydroForecast tests
-SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
-```
-
-#### SAPPHIRE Service Tests
-
-Services are integrated into `run_tests.sh` and run automatically. They can also be run individually via the `service:` prefix or directly from the service directory:
-
-```bash
-# Via run_tests.sh (preferred)
-cd apps
-bash run_tests.sh service:postprocessing
-
-# Directly from the service directory
-cd sapphire/services/postprocessing
-.venv/bin/python -m pytest tests/ -v
-```
-
-Service tests use SQLite in-memory databases and do not require `SAPPHIRE_TEST_ENV`. Each service needs its own `.venv` created with `uv sync --all-extras`.
-
-### Environment Variables for Testing
-
-```bash
-SAPPHIRE_TEST_ENV=True      # Use test database / test mode
-SAPPHIRE_OPDEV_ENV=True     # Development/testing mode for apps/
-```
-
-### Test Anti-Patterns (avoid these)
-
-- **Asserting on private attributes** (`._steps`, `._internal_cache`) — test public behavior instead
-- **Giant integration tests covering all cases** — push variation into unit tests; integration tests cover the happy-path pipeline and one or two failure modes
-- **Hiding critical setup in deeply nested fixtures** — if a test is hard to understand without reading three conftest files, flatten the setup
-- **Bare `except:` in test helpers** — let unexpected exceptions propagate so they surface as test failures
-- **`MagicMock` chains for internal modules** — if you're mocking three internal functions to test a fourth, the test is too coupled to implementation; restructure or test at a higher level
-- **Tests that pass regardless of correctness** — e.g., `assert len(result) > 0` when the function could return garbage rows. Always verify values, not just shapes (see Assertion Quality above)
-- **Non-deterministic time dependence** — tests that break on Jan 1 or Feb 29 because they call `date.today()` instead of receiving the forecast date as a parameter (see "The Forecast Date Rule" above)
-- **`datetime.now()` in default arguments** — `def f(year=datetime.now().year)` is evaluated once at import time and goes stale at year boundaries; always require explicit arguments
+For the full testing workflow (local pipeline, Docker smoke tests, CI/CD, server validation), see [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md).
 
 ---
 
@@ -523,11 +339,13 @@ SAPPHIRE_forecast_tools/
 │   ├── preprocessing_gateway/
 │   ├── linear_regression/
 │   ├── machine_learning/
+│   ├── long_term_forecasting/
 │   ├── postprocessing_forecasts/
 │   ├── iEasyHydroForecast/
+│   ├── validate_pipeline/
 │   └── ...
 ├── sapphire/
-│   └── services/               # FastAPI microservices
+│   └── services/               # FastAPI microservices (colleague-managed)
 │       ├── preprocessing/
 │       │   ├── app/
 │       │   └── tests/
