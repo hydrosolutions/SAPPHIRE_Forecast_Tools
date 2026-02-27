@@ -18,16 +18,17 @@ Usage:
 """
 
 import os
-import sys
-import shutil
 import random
+import shutil
+import sys
 from datetime import datetime, timedelta
+
 import pandas as pd
 
 
 def backup_file(filepath):
     """Create a backup of a file with .bak extension."""
-    backup_path = filepath + '.bak'
+    backup_path = filepath + ".bak"
     if os.path.exists(filepath):
         shutil.copy2(filepath, backup_path)
         print(f"  Backed up: {backup_path}")
@@ -46,17 +47,17 @@ def generate_fake_value(last_value, variation_pct=5):
 def add_fake_runoff_data(data_path, target_date=None):
     """Add fake data to runoff_day.csv from last known date to target_date."""
 
-    runoff_file = os.path.join(data_path, 'runoff_day.csv')
+    runoff_file = os.path.join(data_path, "runoff_day.csv")
 
     if not os.path.exists(runoff_file):
         print(f"ERROR: {runoff_file} not found")
         return None
 
-    print(f"\n--- Processing runoff_day.csv ---")
+    print("\n--- Processing runoff_day.csv ---")
 
     # Read current data
     df = pd.read_csv(runoff_file)
-    df['date'] = pd.to_datetime(df['date'])
+    df["date"] = pd.to_datetime(df["date"])
 
     print(f"  Current rows: {len(df)}")
     print(f"  Stations: {df['code'].nunique()}")
@@ -66,14 +67,14 @@ def add_fake_runoff_data(data_path, target_date=None):
     if target_date is None:
         target_date = datetime.now().date()
     elif isinstance(target_date, str):
-        target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
 
     # Get last date and corresponding discharge for each station
-    last_idx = df.groupby('code')['date'].idxmax()
-    last_data = df.loc[last_idx, ['code', 'date', 'discharge']].reset_index(drop=True)
+    last_idx = df.groupby("code")["date"].idxmax()
+    last_data = df.loc[last_idx, ["code", "date", "discharge"]].reset_index(drop=True)
 
     # Find global last date
-    global_last_date = df['date'].max().date()
+    global_last_date = df["date"].max().date()
 
     print(f"  Last data date: {global_last_date}")
     print(f"  Target date: {target_date}")
@@ -88,16 +89,12 @@ def add_fake_runoff_data(data_path, target_date=None):
 
     while current_date <= target_date:
         for _, row in last_data.iterrows():
-            code = row['code']
-            last_value = row['discharge']
+            code = row["code"]
+            last_value = row["discharge"]
 
             fake_value = generate_fake_value(last_value)
 
-            new_rows.append({
-                'code': code,
-                'date': current_date,
-                'discharge': fake_value
-            })
+            new_rows.append({"code": code, "date": current_date, "discharge": fake_value})
 
         current_date += timedelta(days=1)
 
@@ -108,7 +105,7 @@ def add_fake_runoff_data(data_path, target_date=None):
 
     new_df = pd.DataFrame(new_rows)
     combined_df = pd.concat([df, new_df], ignore_index=True)
-    combined_df['date'] = pd.to_datetime(combined_df['date']).dt.strftime('%Y-%m-%d')
+    combined_df["date"] = pd.to_datetime(combined_df["date"]).dt.strftime("%Y-%m-%d")
     combined_df.to_csv(runoff_file, index=False)
 
     print(f"  New total rows: {len(combined_df)}")
@@ -120,13 +117,13 @@ def add_fake_runoff_data(data_path, target_date=None):
 def add_fake_hydrograph_data(data_path, runoff_df, target_date=None):
     """Update hydrograph_day.csv with fake 2026 values."""
 
-    hydrograph_file = os.path.join(data_path, 'hydrograph_day.csv')
+    hydrograph_file = os.path.join(data_path, "hydrograph_day.csv")
 
     if not os.path.exists(hydrograph_file):
         print(f"ERROR: {hydrograph_file} not found")
         return None
 
-    print(f"\n--- Processing hydrograph_day.csv ---")
+    print("\n--- Processing hydrograph_day.csv ---")
 
     # Read current data
     df = pd.read_csv(hydrograph_file)
@@ -137,14 +134,14 @@ def add_fake_hydrograph_data(data_path, runoff_df, target_date=None):
     if target_date is None:
         target_date = datetime.now().date()
     elif isinstance(target_date, str):
-        target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
 
     # Get the fake data we just added for 2026
     if runoff_df is not None:
         runoff_df = runoff_df.copy()
-        runoff_df['date'] = pd.to_datetime(runoff_df['date'])
-        fake_2026 = runoff_df[runoff_df['date'].dt.year == 2026].copy()
-        fake_2026['day_of_year'] = fake_2026['date'].dt.dayofyear
+        runoff_df["date"] = pd.to_datetime(runoff_df["date"])
+        fake_2026 = runoff_df[runoff_df["date"].dt.year == 2026].copy()
+        fake_2026["day_of_year"] = fake_2026["date"].dt.dayofyear
 
         print(f"  Fake 2026 data rows: {len(fake_2026)}")
 
@@ -158,13 +155,13 @@ def add_fake_hydrograph_data(data_path, runoff_df, target_date=None):
         # Update the 2026 column for matching (code, day_of_year)
         updates = 0
         for _, fake_row in fake_2026.iterrows():
-            code = fake_row['code']
-            doy = fake_row['day_of_year']
-            value = fake_row['discharge']
+            code = fake_row["code"]
+            doy = fake_row["day_of_year"]
+            value = fake_row["discharge"]
 
-            mask = (df['code'] == code) & (df['day_of_year'] == doy)
+            mask = (df["code"] == code) & (df["day_of_year"] == doy)
             if mask.any():
-                df.loc[mask, '2026'] = value
+                df.loc[mask, "2026"] = value
                 updates += 1
 
         print(f"  Updated {updates} rows in 2026 column")
@@ -178,11 +175,11 @@ def add_fake_hydrograph_data(data_path, runoff_df, target_date=None):
 
 def restore_backups(data_path):
     """Restore original files from backups."""
-    print(f"\n--- Restoring backups ---")
+    print("\n--- Restoring backups ---")
 
-    for filename in ['runoff_day.csv', 'hydrograph_day.csv']:
+    for filename in ["runoff_day.csv", "hydrograph_day.csv"]:
         filepath = os.path.join(data_path, filename)
-        backup_path = filepath + '.bak'
+        backup_path = filepath + ".bak"
 
         if os.path.exists(backup_path):
             shutil.copy2(backup_path, filepath)
@@ -201,8 +198,12 @@ def main():
     if len(sys.argv) < 2:
         print("\nUsage: python add_fake_recent_data.py <intermediate_data_path> [--restore]")
         print("\nExample:")
-        print("  python add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data")
-        print("  python add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data --restore")
+        print(
+            "  python add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data"
+        )
+        print(
+            "  python add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data --restore"
+        )
         sys.exit(1)
 
     data_path = os.path.expanduser(sys.argv[1])
@@ -214,7 +215,7 @@ def main():
     print(f"\nData path: {data_path}")
 
     # Check for restore flag
-    if '--restore' in sys.argv:
+    if "--restore" in sys.argv:
         restore_backups(data_path)
         print("\nDone!")
         return 0

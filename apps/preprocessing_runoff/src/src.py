@@ -1,22 +1,23 @@
-import os
-import sys
-import io
-import pandas as pd
-import numpy as np
-import datetime as dt
-from datetime import timedelta
-import time
-import pytz
-import json
 import concurrent.futures
-from typing import List, Tuple
-from contextlib import contextmanager
+import datetime as dt
 
 # Profiling utilities for performance analysis
 # Handle different import contexts (package vs direct module import)
 import importlib.util
+import io
+import json
+import os
 import os as _os
-_profiling_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'profiling.py')
+import sys
+import time
+from contextlib import contextmanager
+from datetime import timedelta
+
+import numpy as np
+import pandas as pd
+import pytz
+
+_profiling_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "profiling.py")
 _spec = importlib.util.spec_from_file_location("profiling", _profiling_path)
 _profiling_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_profiling_module)
@@ -32,9 +33,10 @@ from ieasyhydro_sdk.filters import BasicDataValueFilters
 
 try:
     from sapphire_api_client import (
-        SapphirePreprocessingClient,
         SapphireAPIError,
+        SapphirePreprocessingClient,
     )
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -42,16 +44,17 @@ except ImportError:
     SapphireAPIError = Exception
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 # Set the logging level for iEasyHydro SDK specifically
-logging.getLogger('ieasyhydro_sdk').setLevel(logging.WARNING)
+logging.getLogger("ieasyhydro_sdk").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # Also set any potential sub-loggers
 for name in logging.root.manager.loggerDict:
-    if name.startswith('ieasyhydro_sdk'):
+    if name.startswith("ieasyhydro_sdk"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
@@ -65,10 +68,11 @@ def suppress_stdout():
     finally:
         sys.stdout = save_stdout
 
-def standardize_date_column(df, date_col='date'):
+
+def standardize_date_column(df, date_col="date"):
     """
     Standardize a date column to normalized pandas Timestamps.
-    
+
     This function converts the specified column to pandas Timestamp objects
     with time components set to midnight (00:00:00). Using normalized Timestamps
     ensures consistent behavior when:
@@ -76,15 +80,15 @@ def standardize_date_column(df, date_col='date'):
     - Comparing dates
     - Calculating date ranges
     - Filtering by date
-    
+
     Args:
         df (pd.DataFrame): The dataframe containing the date column
         date_col (str): The name of the date column to standardize
-        
-    Note: 
+
+    Note:
         - The function modifies the dataframe in place, converting the specified
           date column to pandas Timestamps with time set to midnight.
-        - Timezone information is removed to ensure uniformity across different 
+        - Timezone information is removed to ensure uniformity across different
           time zones.
 
     Returns:
@@ -94,10 +98,11 @@ def standardize_date_column(df, date_col='date'):
     df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None).dt.normalize()
     return df
 
+
 def get_local_time_range_for_daily_average_runoff_request(target_timezone, window_size=50):
     """
     Calculates UTC datetime objects for the data request that represent local times.
-    
+
     According to the SDK documentation, we should use UTC timezone but the backend
     will interpret these as local times for filtering.
 
@@ -118,18 +123,21 @@ def get_local_time_range_for_daily_average_runoff_request(target_timezone, windo
     today = now_local.date()
 
     # Calculate the end time (today at 20:00 as UTC but interpreted as local time)
-    end_time_utc = dt.datetime(today.year, today.month, today.day, 20, 0, tzinfo=dt.timezone.utc)
+    end_time_utc = dt.datetime(today.year, today.month, today.day, 20, 0, tzinfo=dt.UTC)
 
     # Calculate the start time (window_size days prior at 20:00 as UTC but interpreted as local time)
     start_date = today - timedelta(days=window_size)
-    start_time_utc = dt.datetime(start_date.year, start_date.month, start_date.day, 20, 0, tzinfo=dt.timezone.utc)
+    start_time_utc = dt.datetime(
+        start_date.year, start_date.month, start_date.day, 20, 0, tzinfo=dt.UTC
+    )
 
     return start_time_utc, end_time_utc
+
 
 def get_local_time_range_for_todays_morning_runoff_request(target_timezone):
     """
     Calculates UTC datetime objects for morning data request that represent local times.
-    
+
     According to the SDK documentation, we should use UTC timezone but the backend
     will interpret these as local times for filtering. For morning data, we filter
     between 8:00 and the current hour.
@@ -149,46 +157,53 @@ def get_local_time_range_for_todays_morning_runoff_request(target_timezone):
     today = now_local.date()
 
     # Calculate the start time (today at 8:00 as UTC but interpreted as local time)
-    start_time_utc = dt.datetime(today.year, today.month, today.day, 8, 0, tzinfo=dt.timezone.utc)
+    start_time_utc = dt.datetime(today.year, today.month, today.day, 8, 0, tzinfo=dt.UTC)
 
     # Calculate the end time (current hour as UTC but interpreted as local time)
     # Use current hour to get data up to now
-    end_time_utc = dt.datetime(today.year, today.month, today.day, now_local.hour, now_local.minute, tzinfo=dt.timezone.utc)
+    end_time_utc = dt.datetime(
+        today.year, today.month, today.day, now_local.hour, now_local.minute, tzinfo=dt.UTC
+    )
 
     return start_time_utc, end_time_utc
+
 
 def should_reprocess_input_files():
     """Check if any input files have been modified since the last run."""
     # Get the path to the daily_discharge directory
-    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
-    
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
+
     # Get the path to the output file
-    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
     output_file_path = os.path.join(
-        intermediate_data_path,
-        os.getenv("ieasyforecast_daily_discharge_file"))
-    
+        intermediate_data_path, os.getenv("ieasyforecast_daily_discharge_file")
+    )
+
     # Get last modification time of output file
     if not os.path.exists(output_file_path):
         return True  # Output file doesn't exist, need to process input files
-        
+
     output_mod_time = os.path.getmtime(output_file_path)
-    
+
     # Check if any input file was modified after the output file
     for file in os.listdir(daily_discharge_dir):
         full_path = os.path.join(daily_discharge_dir, file)
-        if (os.path.isfile(full_path) and 
-            (file.endswith('.xlsx') or file.endswith('.csv')) and
-            not file.startswith('~')):
-            if os.path.getmtime(full_path) > output_mod_time:
-                logger.info(f"File {file} was modified since last processing")
-                return True
-                
+        if (
+            os.path.isfile(full_path)
+            and (file.endswith(".xlsx") or file.endswith(".csv"))
+            and not file.startswith("~")
+            and os.path.getmtime(full_path) > output_mod_time
+        ):
+            logger.info(f"File {file} was modified since last processing")
+            return True
+
     # No input files were modified after the output was generated
     return False
 
-def filter_roughly_for_outliers(combined_data, group_by='Code',
-                                filter_col='Q_m3s', date_col='date'):
+
+def filter_roughly_for_outliers(
+    combined_data, group_by="Code", filter_col="Q_m3s", date_col="date"
+):
     """
     Filters outliers in the filter_col column of the input DataFrame.
 
@@ -211,6 +226,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
+
     def apply_iqr_filter(group, filter_col, group_name):
         """Apply IQR-based outlier detection to a seasonal group.
 
@@ -233,7 +249,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
             group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
 
             num_outliers = group[filter_col].isna().sum()
-            logger.debug(f"IQR filter: {num_outliers} outliers marked in seasonal group '{group_name}'")
+            logger.debug(
+                f"IQR filter: {num_outliers} outliers marked in seasonal group '{group_name}'"
+            )
 
         return group
 
@@ -249,10 +267,10 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group.set_index(date_col, inplace=True)
 
         # Drop duplicates from the index, keeping first (which has real data)
-        group = group.loc[~group.index.duplicated(keep='first')]
+        group = group.loc[~group.index.duplicated(keep="first")]
 
         # Reindex the data frame to include all dates in the range
-        all_dates = pd.date_range(start=group.index.min(), end=group.index.max(), freq='D')
+        all_dates = pd.date_range(start=group.index.min(), end=group.index.max(), freq="D")
         group = group.reindex(all_dates)
         group.index.name = date_col
 
@@ -260,19 +278,21 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group[group_by] = group[group_by].ffill()
 
         # Interpolate gaps of length of max 2 days linearly
-        group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
+        group[filter_col] = group[filter_col].interpolate(method="time", limit=2)
 
         # Infer object types to address the FutureWarning
         group = group.infer_objects(copy=False)
 
         # Filter out suspicious data characterized by changes of more than 300% from one time step to the next
-        group['prev_value'] = group[filter_col].shift(1)
-        group['change'] = (group[filter_col] - group['prev_value']).abs() / group['prev_value'].abs()
-        group.loc[group['change'] > 3, filter_col] = np.nan
-        group.drop(columns=['prev_value', 'change'], inplace=True)
+        group["prev_value"] = group[filter_col].shift(1)
+        group["change"] = (group[filter_col] - group["prev_value"]).abs() / group[
+            "prev_value"
+        ].abs()
+        group.loc[group["change"] > 3, filter_col] = np.nan
+        group.drop(columns=["prev_value", "change"], inplace=True)
 
         # Interpolate gaps of length of max 2 days linearly (again, after anomaly removal)
-        group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
+        group[filter_col] = group[filter_col].interpolate(method="time", limit=2)
 
         # Reset the index
         group.reset_index(inplace=True)
@@ -280,7 +300,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Print statistics of how many values were set to NaN
         num_outliers = group[filter_col].isna().sum()
         num_total = group[filter_col].notna().sum() + num_outliers
-        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} NaN values in station '{group_name}'.")
+        logger.info(
+            f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} NaN values in station '{group_name}'."
+        )
 
         return group
 
@@ -301,21 +323,32 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         return combined_data
 
     # Replace empty places in the filter_col column with NaN
-    combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
+    combined_data[filter_col] = combined_data[filter_col].replace("", np.nan)
 
     # Extract month from the date_col
     combined_data[date_col] = pd.to_datetime(combined_data[date_col])
-    combined_data['month'] = combined_data[date_col].dt.month
+    combined_data["month"] = combined_data[date_col].dt.month
 
     # To use individual months for filtering is too narrow a criteria. Combine
     # spring months (March, April, May) and autumn months (September, October,
     # November) to get a better estimate of the Q1, Q3, and similarly for the
     # other seasons.
-    combined_data['month'] = combined_data['month'].replace({1: 'winter', 2: 'winter',
-                                                             3: 'spring', 4: 'spring', 5: 'spring',
-                                                             6: 'summer', 7: 'summer', 8: 'summer',
-                                                             9: 'autumn', 10: 'autumn', 11: 'autumn',
-                                                             12: 'winter'})
+    combined_data["month"] = combined_data["month"].replace(
+        {
+            1: "winter",
+            2: "winter",
+            3: "spring",
+            4: "spring",
+            5: "spring",
+            6: "summer",
+            7: "summer",
+            8: "summer",
+            9: "autumn",
+            10: "autumn",
+            11: "autumn",
+            12: "winter",
+        }
+    )
 
     # Ensure the DataFrame is properly structured
     combined_data = combined_data.reset_index(drop=True)
@@ -323,24 +356,26 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # STEP 1: Apply IQR filtering per (station, season) group
     # This uses seasonal statistics for better outlier detection
     result_frames = []
-    for (group_key, month), group_df in combined_data.groupby([group_by, 'month']):
+    for (group_key, month), group_df in combined_data.groupby([group_by, "month"]):
         processed = apply_iqr_filter(group_df.copy(), filter_col, group_name=f"{group_key}_{month}")
         result_frames.append(processed)
     combined_data = pd.concat(result_frames, ignore_index=True)
 
     # Drop the temporary month column - no longer needed after IQR filtering
-    combined_data.drop(columns=['month'], inplace=True)
+    combined_data.drop(columns=["month"], inplace=True)
 
     # Drop rows with duplicate code and dates BEFORE reindexing
     # Use keep='first' to preserve original data over any duplicates
-    combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='first')
+    combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep="first")
 
     # STEP 2: Reindex and interpolate per STATION (not per season)
     # This is critical: reindexing per season caused the bug where winter group's
     # NaN values (from reindexing Jan-Dec) overwrote valid spring/summer/autumn data
     result_frames = []
     for group_key, group_df in combined_data.groupby(group_by):
-        processed = reindex_and_interpolate(group_df.copy(), filter_col, date_col, group_name=group_key)
+        processed = reindex_and_interpolate(
+            group_df.copy(), filter_col, date_col, group_name=group_key
+        )
         result_frames.append(processed)
     combined_data = pd.concat(result_frames, ignore_index=True)
 
@@ -353,19 +388,27 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Print the latest date available in combined_data
     if not combined_data.empty:
         latest_date = combined_data[date_col].max()
-        logger.info(f"filter_roughly_for_outliers: Latest date available in combined_data: {latest_date}")
+        logger.info(
+            f"filter_roughly_for_outliers: Latest date available in combined_data: {latest_date}"
+        )
 
     return combined_data
 
-def read_runoff_data_from_csv_files(filename, code_list, date_col='date', 
-                                    discharge_col='discharge', name_col='name', 
-                                    code_col='code'):
+
+def read_runoff_data_from_csv_files(
+    filename,
+    code_list,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
     """
     Read daily average river runoff data from a csv file.
-    
-    The function reads dates from the first column, station code from the second 
-    column, river runoff in m3/s from the third column and the name of the river 
-    from the third column. 
+
+    The function reads dates from the first column, station code from the second
+    column, river runoff in m3/s from the third column and the name of the river
+    from the third column.
 
     Parameters
     ----------
@@ -394,26 +437,30 @@ def read_runoff_data_from_csv_files(filename, code_list, date_col='date',
 
     # Test if csv file is available
     try:
-        df = pd.read_csv(filename, header=0, usecols=[0, 1, 2, 3],
-                         names=[date_col, code_col, discharge_col, name_col])
+        df = pd.read_csv(
+            filename,
+            header=0,
+            usecols=[0, 1, 2, 3],
+            names=[date_col, code_col, discharge_col, name_col],
+        )
         logger.debug(f"[DATA] read_runoff_data_from_csv_files: raw df.head():\n{df.head()}")
-    except FileNotFoundError:
-        raise FileNotFoundError(f"File '{filename}' not found.")
-    except pd.errors.ParserError:
-        raise ValueError(f"Error parsing file '{filename}'. Please check the file format.")
+    except FileNotFoundError as err:
+        raise FileNotFoundError(f"File '{filename}' not found.") from err
+    except pd.errors.ParserError as err:
+        raise ValueError(f"Error parsing file '{filename}'. Please check the file format.") from err
     except Exception as e:
-        raise Exception(f"An error occurred while reading the file '{filename}': {e}")
-    
+        raise Exception(f"An error occurred while reading the file '{filename}': {e}") from e
+
     # Test if the file is empty
     if df.empty:
         logger.warning(f"File '{filename}' is empty. No data to read.")
         return pd.DataFrame()
-    
+
     # Convert the date column to nomralized pandas Timestamps
-    df[date_col] = pd.to_datetime(df[date_col], format='%Y-%m-%d').dt.normalize()
+    df[date_col] = pd.to_datetime(df[date_col], format="%Y-%m-%d").dt.normalize()
 
     # Convert discharge column to numeric format
-    df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+    df[discharge_col] = pd.to_numeric(df[discharge_col], errors="coerce")
 
     # Make sure code_col is integer
     df[code_col] = df[code_col].astype(int)
@@ -426,9 +473,15 @@ def read_runoff_data_from_csv_files(filename, code_list, date_col='date',
 
     return df
 
-def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='date',
-                                               discharge_col='discharge',
-                                               name_col='name', code_col='code'):
+
+def read_runoff_data_from_multiple_rivers_xlsx(
+    filename,
+    code_list,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
     """
     Read daily average river runoff data from an excel sheet.
 
@@ -475,13 +528,13 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
     # Test if excel file is available
     try:
         xls = pd.ExcelFile(filename)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"File '{filename}' not found.")
+    except FileNotFoundError as err:
+        raise FileNotFoundError(f"File '{filename}' not found.") from err
 
     # Extract all sheet names
     # Sheet names can be anything, they are only used to iterate through the
     # document.
-    xls.sheet_names
+    _ = xls.sheet_names
 
     # load data from all sheets into a single dataframe
     df = pd.DataFrame()
@@ -490,13 +543,15 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
     # some of the daily time series data are missing and the corresponding cells contain '-'. There might be a type mismatch.
     # We want to have all data in a single dataframe df with the following columns: date, river runoff, river.
     for sheet_name in xls.sheet_names:
-        df_sheet = pd.read_excel(xls, sheet_name, header=1, usecols=[0, 1], names=[date_col, discharge_col])
+        df_sheet = pd.read_excel(
+            xls, sheet_name, header=1, usecols=[0, 1], names=[date_col, discharge_col]
+        )
         logger.debug(f"Reading sheet {sheet_name} \n {df_sheet.head()}")
         # read cell A1 and extract the river name
         # Read the river name from cell A1
         river_name_df = pd.read_excel(xls, sheet_name, nrows=1, usecols="A", header=None)
         full_river_name = river_name_df.iloc[0, 0]
-        logger.debug(f"full_river_name: %s", full_river_name)
+        logger.debug("full_river_name: %s", full_river_name)
         # Check if the first 5 characters are digits
         try:
             int(full_river_name[:5])
@@ -507,28 +562,43 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
         if is_numeric:
             code = int(full_river_name[:5])
             if str(code) not in code_list:
-                logger.debug(f"Code {code} not in code_list. Skipping data for river {full_river_name}.")
+                logger.debug(
+                    f"Code {code} not in code_list. Skipping data for river {full_river_name}."
+                )
                 continue
             river_name = full_river_name[5:].lstrip()
         else:
-            code = 'NA'
+            code = "NA"
             # Test if the river name is equal to 'date', 'Date' or 'Дата' in any of
             # the typical languages used in Central Asia or Switzerland. Print a
             # warning if it is.
             river_name = full_river_name
-            if river_name.lower() in ['date', 'дата', 'datum', 'sana', 'сана',
-                                  'senesi', 'sene', 'күні', 'күн']:
+            if river_name.lower() in [
+                "date",
+                "дата",
+                "datum",
+                "sana",
+                "сана",
+                "senesi",
+                "sene",
+                "күні",
+                "күн",
+            ]:
                 logger.error(
-                    f'The river name in file {filename}, sheet {sheet_name} was '
-                    f'found to be {river_name}.\nPlease verify that a 5-digit code '
-                    f'is present in cell A1 and rerun the preprocessing runoff module.')
+                    f"The river name in file {filename}, sheet {sheet_name} was "
+                    f"found to be {river_name}.\nPlease verify that a 5-digit code "
+                    f"is present in cell A1 and rerun the preprocessing runoff module."
+                )
                 raise ValueError(
-                    f'The river name in file {filename}, sheet {sheet_name} was '
-                    f'found to be {river_name}.\nPlease verify that a 5-digit code '
-                    f'is present in cell A1 and rerun the preprocessing runoff module.')
+                    f"The river name in file {filename}, sheet {sheet_name} was "
+                    f"found to be {river_name}.\nPlease verify that a 5-digit code "
+                    f"is present in cell A1 and rerun the preprocessing runoff module."
+                )
 
-            logger.warning(f"No code could be read from file {filename} sheet {sheet_name}.\n"
-                           f"Skipping data for river {full_river_name}.")
+            logger.warning(
+                f"No code could be read from file {filename} sheet {sheet_name}.\n"
+                f"Skipping data for river {full_river_name}."
+            )
             continue
 
         logger.debug("Code read from header cell: %s", code)
@@ -539,23 +609,29 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
         df = pd.concat([df, df_sheet], axis=0)
 
     # Convert date column to normalized Timestamp format
-    # This ensures that the time component is set to midnight (00:00:00) for 
-    # consistency when merging dataframes on date columns, comparing dates, 
+    # This ensures that the time component is set to midnight (00:00:00) for
+    # consistency when merging dataframes on date columns, comparing dates,
     # calculating date ranges, etc.
-    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.normalize()
+    df[date_col] = pd.to_datetime(df[date_col], format="%d.%m.%Y").dt.normalize()
 
     # Convert discharge column to numeric format
-    df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+    df[discharge_col] = pd.to_numeric(df[discharge_col], errors="coerce")
 
-    # Replace data in rows with missing values (indicated in excel with `-`), 
+    # Replace data in rows with missing values (indicated in excel with `-`),
     # with NaN
-    df[discharge_col] = df[discharge_col].replace('-', float('nan'))
+    df[discharge_col] = df[discharge_col].replace("-", float("nan"))
 
     return df
 
-def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date',
-                                            discharge_col='discharge',
-                                            name_col='name', code_col='code'):
+
+def read_runoff_data_from_single_river_xlsx(
+    filename,
+    code_list,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
     """
     Read daily average river runoff data from an excel sheet.
 
@@ -595,8 +671,8 @@ def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date'
     # Test if excel file is available
     try:
         xls = pd.ExcelFile(filename)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"File '{filename}' not found.")
+    except FileNotFoundError as err:
+        raise FileNotFoundError(f"File '{filename}' not found.") from err
 
     # Extract the name of the file from the path filename
     filename = os.path.basename(filename)
@@ -611,7 +687,7 @@ def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date'
         return pd.DataFrame()
 
     # Extract all sheet names
-    xls.sheet_names
+    _ = xls.sheet_names
 
     # load data from all sheets into a single dataframe
     df = pd.DataFrame()
@@ -619,34 +695,39 @@ def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date'
     # some of the daily time series data are missing and the corresponding cells contain '-'. There might be a type mismatch.
     # We want to have all data in a single dataframe df with the following columns: date, river runoff, river.
     for sheet_name in xls.sheet_names:
-        df_sheet = pd.read_excel(xls, sheet_name, header=0, usecols=[0, 1], names=[date_col, discharge_col])
-        #print(f"Reading sheet '{sheet_name}' \n '{df_sheet.head()}'")
+        df_sheet = pd.read_excel(
+            xls, sheet_name, header=0, usecols=[0, 1], names=[date_col, discharge_col]
+        )
+        # print(f"Reading sheet '{sheet_name}' \n '{df_sheet.head()}'")
         # read cell A1 and extract the river name
         df_sheet[name_col] = river_name
         df_sheet[code_col] = river_code
         df = pd.concat([df, df_sheet], axis=0)
 
     # Convert date column to normalized Timestamp format
-    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.normalize()
+    df[date_col] = pd.to_datetime(df[date_col], format="%d.%m.%Y").dt.normalize()
 
     # Convert discharge column to numeric format
-    df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+    df[discharge_col] = pd.to_numeric(df[discharge_col], errors="coerce")
 
     # Replace data in rows with missing values with NaN
-    df[discharge_col] = df[discharge_col].replace('-', float('nan'))
+    df[discharge_col] = df[discharge_col].replace("-", float("nan"))
 
     # Make sure code_col is integer
     df[code_col] = df[code_col].astype(int)
 
     return df
 
-def parallel_read_excel_files(file_paths: List[str],
-                            read_function,
-                            code_list,
-                            date_col='date',
-                            discharge_col='discharge',
-                            name_col='name',
-                            code_col='code') -> pd.DataFrame:
+
+def parallel_read_excel_files(
+    file_paths: list[str],
+    read_function,
+    code_list,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+) -> pd.DataFrame:
     """
     Reads multiple Excel files in parallel using ThreadPoolExecutor.
 
@@ -667,7 +748,7 @@ def parallel_read_excel_files(file_paths: List[str],
     if code_list is None:
         logger.warning("parallel_read_excel_files: No code list provided.")
 
-    def read_file(file_path: str) -> Tuple[pd.DataFrame, str]:
+    def read_file(file_path: str) -> tuple[pd.DataFrame, str]:
         try:
             logger.info(f"Reading daily runoff from file {os.path.basename(file_path)}")
             df = read_function(
@@ -717,11 +798,10 @@ def parallel_read_excel_files(file_paths: List[str],
 
     return pd.concat(results, ignore_index=True)
 
-def read_all_runoff_data_from_csv(date_col='date', 
-                                  discharge_col='discharge', 
-                                  name_col='name', 
-                                  code_col='code',
-                                  code_list=None):
+
+def read_all_runoff_data_from_csv(
+    date_col="date", discharge_col="discharge", name_col="name", code_col="code", code_list=None
+):
     """
     Reads daily river runoff data from all csv files in the daily_discharge
     directory.
@@ -731,7 +811,7 @@ def read_all_runoff_data_from_csv(date_col='date',
         logger.error("read_all_runoff_data_from_excel: No code list provided.")
 
     # Get the path to the daily_discharge directory
-    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
 
     # Test if the directory is available
     if not os.path.exists(daily_discharge_dir):
@@ -741,8 +821,7 @@ def read_all_runoff_data_from_csv(date_col='date',
     files = [
         os.path.join(daily_discharge_dir, f)
         for f in os.listdir(daily_discharge_dir)
-        if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.csv')
+        if os.path.isfile(os.path.join(daily_discharge_dir, f)) and f.endswith(".csv")
     ]
 
     # Read the data from all files
@@ -756,30 +835,35 @@ def read_all_runoff_data_from_csv(date_col='date',
                 date_col=date_col,
                 discharge_col=discharge_col,
                 name_col=name_col,
-                code_col=code_col
+                code_col=code_col,
             )
         else:
-            df = pd.concat([df, read_runoff_data_from_csv_files(
-                filename=file,
-                code_list=code_list,
-                date_col=date_col,
-                discharge_col=discharge_col,
-                name_col=name_col,
-                code_col=code_col
-            )], axis=0)
+            df = pd.concat(
+                [
+                    df,
+                    read_runoff_data_from_csv_files(
+                        filename=file,
+                        code_list=code_list,
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                    ),
+                ],
+                axis=0,
+            )
 
     # Test if the file is empty
     if df.empty:
-        logger.warning(f"No data found in the daily discharge directory")
+        logger.warning("No data found in the daily discharge directory")
         return None
-    
+
     return df
 
-def read_all_runoff_data_from_excel(date_col='date',
-                                  discharge_col='discharge',
-                                  name_col='name',
-                                  code_col='code',
-                                  code_list=None):
+
+def read_all_runoff_data_from_excel(
+    date_col="date", discharge_col="discharge", name_col="name", code_col="code", code_list=None
+):
     """
     Reads daily river runoff data from all excel sheets in the daily_discharge
     directory using parallel processing.
@@ -789,7 +873,7 @@ def read_all_runoff_data_from_excel(date_col='date',
         logger.error("read_all_runoff_data_from_excel: No code list provided.")
 
     # Get the path to the daily_discharge directory
-    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
 
     # Test if the directory is available
     if not os.path.exists(daily_discharge_dir):
@@ -800,18 +884,18 @@ def read_all_runoff_data_from_excel(date_col='date',
         os.path.join(daily_discharge_dir, f)
         for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx')
+        and f.endswith(".xlsx")
         and not f[0].isdigit()
-        and not f.startswith('~')
+        and not f.startswith("~")
     ]
 
     files_single_rivers = [
         os.path.join(daily_discharge_dir, f)
         for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx')
+        and f.endswith(".xlsx")
         and f[0].isdigit()
-        and not f.startswith('~')
+        and not f.startswith("~")
     ]
 
     # Read multiple rivers files in parallel
@@ -828,7 +912,9 @@ def read_all_runoff_data_from_excel(date_col='date',
             code_col=code_col,
         )
     else:
-        logger.warning(f"No excel files with multiple rivers data found in '{daily_discharge_dir}'.")
+        logger.warning(
+            f"No excel files with multiple rivers data found in '{daily_discharge_dir}'."
+        )
 
     # Read single river files in parallel
     df_single = pd.DataFrame()
@@ -857,7 +943,10 @@ def read_all_runoff_data_from_excel(date_col='date',
     else:
         return pd.concat([df_multiple, df_single], ignore_index=True)
 
-def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+
+def original_read_all_runoff_data_from_excel(
+    date_col="date", discharge_col="discharge", name_col="name", code_col="code"
+):
     """
     Reads daily river runoff data from all excel sheets in the daily_discharge
     directory.
@@ -881,7 +970,7 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
         None
     """
     # Get the path to the daily_discharge directory
-    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
 
     # Test if the directory is available
     if not os.path.exists(daily_discharge_dir):
@@ -891,15 +980,20 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
     # The names of excel files with daily runoff data from multiple rivers do
     # not start with a digit.
     files_multiple_rivers = [
-        f for f in os.listdir(daily_discharge_dir)
+        f
+        for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx') and not f[0].isdigit() and not f.startswith('~')
+        and f.endswith(".xlsx")
+        and not f[0].isdigit()
+        and not f.startswith("~")
     ]
     # Initiate empty dataframe
     df = None
 
     if len(files_multiple_rivers) == 0:
-        logger.warning(f"No excel files with multiple rivers data found in '{daily_discharge_dir}'.")
+        logger.warning(
+            f"No excel files with multiple rivers data found in '{daily_discharge_dir}'."
+        )
     else:
         # Read the data from all files
         for file in files_multiple_rivers:
@@ -907,20 +1001,26 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
             logger.info(f"Reading daily runoff from file {file}")
             if df is None:
                 df = read_runoff_data_from_multiple_rivers_xlsx(
-                            filename=file_path,
-                            date_col=date_col,
-                            discharge_col=discharge_col,
-                            name_col=name_col,
-                            code_col=code_col)
+                    filename=file_path,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                )
             else:
-                df = pd.concat([df,
+                df = pd.concat(
+                    [
+                        df,
                         read_runoff_data_from_multiple_rivers_xlsx(
                             filename=file_path,
                             date_col=date_col,
                             discharge_col=discharge_col,
                             name_col=name_col,
-                            code_col=code_col)],
-                        axis=0)
+                            code_col=code_col,
+                        ),
+                    ],
+                    axis=0,
+                )
 
     # Do the same for files with single rivers
     # Names of files with daily river runoff of individual rivers start with a
@@ -928,9 +1028,12 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
     df_single = None
 
     files_single_rivers = [
-        f for f in os.listdir(daily_discharge_dir)
+        f
+        for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx') and f[0].isdigit() and not f.startswith('~')
+        and f.endswith(".xlsx")
+        and f[0].isdigit()
+        and not f.startswith("~")
     ]
     if len(files_single_rivers) == 0:
         logger.warning(f"No excel files with single river data found in '{daily_discharge_dir}'.")
@@ -941,20 +1044,26 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
             logger.info(f"Reading daily runoff from file {file}")
             if df_single is None:
                 df_single = read_runoff_data_from_single_river_xlsx(
-                            filename=file_path,
-                            date_col=date_col,
-                            discharge_col=discharge_col,
-                            name_col=name_col,
-                            code_col=code_col)
+                    filename=file_path,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                )
             else:
-                df_single = pd.concat([df_single,
+                df_single = pd.concat(
+                    [
+                        df_single,
                         read_runoff_data_from_single_river_xlsx(
                             filename=file_path,
                             date_col=date_col,
                             discharge_col=discharge_col,
                             name_col=name_col,
-                            code_col=code_col)],
-                        axis=0)
+                            code_col=code_col,
+                        ),
+                    ],
+                    axis=0,
+                )
 
     # Combine the data from multiple and single rivers
     if df is None and df_single is not None:
@@ -966,6 +1075,7 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
         logger.warning("No data found in the daily discharge directory")
 
     return df
+
 
 def process_hydro_HF_data(data):
     """
@@ -980,92 +1090,99 @@ def process_hydro_HF_data(data):
     Note:
         Records with null/None values are filtered out as they represent
         dates without actual measurements.
-        
+
         IMPORTANT: This function should receive ALL API results aggregated
         from all pages. Sites are classified based on their station_type
         across all results:
         - Hydro-only: Sites that only appear with station_type='hydro'
         - Dual-type: Sites that appear with BOTH 'hydro' and 'meteo' types
         - Meteo-only: Sites that ONLY appear with station_type='meteo'
-        
+
         Only hydro records are kept. Meteo-only sites are logged for awareness.
     """
-    results = data.get('results', [])
+    results = data.get("results", [])
 
     # Categorize results by station_type and collect site codes
     hydro_sites = set()
     meteo_sites = set()
 
     for site_data in results:
-        st = site_data.get('station_type', 'unknown')
-        code = site_data.get('station_code', '?')
-        if st == 'hydro':
+        st = site_data.get("station_type", "unknown")
+        code = site_data.get("station_code", "?")
+        if st == "hydro":
             hydro_sites.add(code)
-        elif st == 'meteo':
+        elif st == "meteo":
             meteo_sites.add(code)
 
     # Calculate site categories
     dual_type_sites = hydro_sites & meteo_sites  # Sites with BOTH hydro and meteo
     hydro_only_sites = hydro_sites - meteo_sites  # Sites with ONLY hydro
     meteo_only_sites = meteo_sites - hydro_sites  # Sites with ONLY meteo (no discharge data)
-    
+
     total_unique_sites = len(hydro_sites | meteo_sites)
 
     logger.debug(f"[DATA] process_hydro_HF_data: Total site-records: {len(results)}")
-    logger.info(f"[DATA] Site classification across ALL pages: "
-                f"{total_unique_sites} unique sites = "
-                f"{len(hydro_only_sites)} hydro-only + "
-                f"{len(dual_type_sites)} dual-type + "
-                f"{len(meteo_only_sites)} meteo-only")
-    
+    logger.info(
+        f"[DATA] Site classification across ALL pages: "
+        f"{total_unique_sites} unique sites = "
+        f"{len(hydro_only_sites)} hydro-only + "
+        f"{len(dual_type_sites)} dual-type + "
+        f"{len(meteo_only_sites)} meteo-only"
+    )
+
     # Log dual-type sites at debug level (for awareness that these sites have both)
     if dual_type_sites:
-        logger.debug(f"[DATA] Dual-type sites (have both hydro & meteo data): {sorted(dual_type_sites)}")
+        logger.debug(
+            f"[DATA] Dual-type sites (have both hydro & meteo data): {sorted(dual_type_sites)}"
+        )
 
     # Log meteo-only sites (these are sites that truly have NO discharge data)
     if meteo_only_sites:
         logger.info(f"[DATA] Meteo-only sites (no discharge data): {sorted(meteo_only_sites)}")
 
-    hydro_data = [
-        site_data for site_data in results
-        if site_data.get('station_type') == 'hydro'
-    ]
+    hydro_data = [site_data for site_data in results if site_data.get("station_type") == "hydro"]
 
     processed_data = []
     skipped_null_count = 0
 
     for site in hydro_data:
-        station_code = site['station_code']
-        station_id = site['station_id']
-        station_name = site['station_name']
+        station_code = site["station_code"]
+        station_id = site["station_id"]
+        station_name = site["station_name"]
 
-        for data_item in site['data']:
-            variable_code = data_item['variable_code']
-            unit = data_item['unit']
+        for data_item in site["data"]:
+            variable_code = data_item["variable_code"]
+            unit = data_item["unit"]
 
-            for value_item in data_item['values']:
+            for value_item in data_item["values"]:
                 # Skip records with null values (no actual measurement)
-                if value_item['value'] is None:
+                if value_item["value"] is None:
                     skipped_null_count += 1
                     continue
 
-                processed_data.append({
-                    'station_code': station_code,
-                    'station_id': station_id,
-                    'station_name': station_name,
-                    'variable_code': variable_code,
-                    'unit': unit,
-                    'local_datetime': value_item['timestamp_local'],
-                    'utc_datetime': value_item['timestamp_utc'],
-                    'value': value_item['value'],
-                    'value_code': value_item['value_code'],
-                    'value_type': value_item['value_type']
-                })
+                processed_data.append(
+                    {
+                        "station_code": station_code,
+                        "station_id": station_id,
+                        "station_name": station_name,
+                        "variable_code": variable_code,
+                        "unit": unit,
+                        "local_datetime": value_item["timestamp_local"],
+                        "utc_datetime": value_item["timestamp_utc"],
+                        "value": value_item["value"],
+                        "value_code": value_item["value_code"],
+                        "value_type": value_item["value_type"],
+                    }
+                )
 
     if skipped_null_count > 0:
-        logger.debug(f"[DATA] process_hydro_HF_data: Skipped {skipped_null_count} records with null values")
+        logger.debug(
+            f"[DATA] process_hydro_HF_data: Skipped {skipped_null_count} records with null values"
+        )
 
-    logger.debug(f"[DATA] process_hydro_HF_data: Final processed records: {len(processed_data)} from {len(hydro_sites)} hydro sites")
+    logger.debug(
+        f"[DATA] process_hydro_HF_data: Final processed records: {len(processed_data)} from {len(hydro_sites)} hydro sites"
+    )
 
     return pd.DataFrame(processed_data)
 
@@ -1075,7 +1192,7 @@ def log_data_retrieval_summary(
     requested_sites: list,
     sites_with_data: set,
     total_records: int,
-    date_range: tuple = None
+    date_range: tuple = None,
 ):
     """
     Log a summary of data retrieval results with appropriate log levels.
@@ -1154,7 +1271,7 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     -------
     pandas.DataFrame
         Combined DataFrame with all fetched data
-        
+
     Raises:
     -------
     RuntimeError: If API returns 422 or other error (DEBUG MODE - fail loudly)
@@ -1173,27 +1290,29 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     # Check if site_codes contains strings
     non_string_codes = [c for c in site_codes if not isinstance(c, str)]
     if non_string_codes:
-        logger.warning(f"site_codes contains non-string values: {non_string_codes[:5]}... Converting to strings.")
+        logger.warning(
+            f"site_codes contains non-string values: {non_string_codes[:5]}... Converting to strings."
+        )
         site_codes = [str(c) for c in site_codes]
 
     # Extract request details for logging
-    variable_names = filters.get('variable_names', ['unknown'])
-    var_str = variable_names[0] if variable_names else 'unknown'
-    date_start = filters.get('local_date_time__gte', 'N/A')
-    date_end = filters.get('local_date_time__lte', 'N/A')
+    variable_names = filters.get("variable_names", ["unknown"])
+    var_str = variable_names[0] if variable_names else "unknown"
+    date_start = filters.get("local_date_time__gte", "N/A")
+    date_end = filters.get("local_date_time__lte", "N/A")
 
     logger.info(f"[API] Request: {len(site_codes)} sites, {var_str}, {date_start} to {date_end}")
     logger.debug(f"[API] Site codes: {site_codes[:10]}{'...' if len(site_codes) > 10 else ''}")
 
     # Remove page_size from filters - let API use its default
-    safe_filters = {k: v for k, v in filters.items() if k != 'page_size'}
+    safe_filters = {k: v for k, v in filters.items() if k != "page_size"}
 
     all_dataframes = []
 
     def fetch_single_site(site_code):
         """Fetch data for a single site."""
         single_filters = safe_filters.copy()
-        single_filters['site_codes'] = [site_code]
+        single_filters["site_codes"] = [site_code]
         try:
             return fetch_and_format_hydro_HF_data(sdk, single_filters)
         except Exception as e:
@@ -1203,43 +1322,49 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     def fetch_batch(batch_codes):
         """Fetch data for a batch of sites."""
         batch_filters = safe_filters.copy()
-        batch_filters['site_codes'] = batch_codes  # Use site_codes (canonical filter parameter)
+        batch_filters["site_codes"] = batch_codes  # Use site_codes (canonical filter parameter)
         return fetch_and_format_hydro_HF_data(sdk, batch_filters)
 
     # Strategy 1: Try bulk request with all site codes
     logger.debug(f"[API] Attempting bulk request for {len(site_codes)} sites...")
     bulk_filters = safe_filters.copy()
-    bulk_filters['site_codes'] = site_codes
+    bulk_filters["site_codes"] = site_codes
 
     response = sdk.get_data_values_for_site(filters=bulk_filters)
 
     # Log the response type and key info for debugging
     if isinstance(response, dict):
-        if 'status_code' in response:
-            status_code = response.get('status_code')
-            error_text = response.get('text', 'No text')[:500]
+        if "status_code" in response:
+            status_code = response.get("status_code")
+            error_text = response.get("text", "No text")[:500]
             logger.error(f"[API] Bulk request failed with status {status_code}: {error_text}")
             raise RuntimeError(f"Bulk request failed with status {status_code}: {error_text}")
         else:
-            total_count = response.get('count', 'N/A')
-            results_count = len(response.get('results', []))
-            logger.debug(f"[API] Bulk response: count={total_count}, first_page={results_count} records")
+            total_count = response.get("count", "N/A")
+            results_count = len(response.get("results", []))
+            logger.debug(
+                f"[API] Bulk response: count={total_count}, first_page={results_count} records"
+            )
     else:
         logger.warning(f"[API] Unexpected response type: {type(response)}")
 
-    if not (isinstance(response, dict) and 'status_code' in response):
+    if not (isinstance(response, dict) and "status_code" in response):
         # Bulk request succeeded - use the standard fetch function
         logger.debug("[API] Bulk request succeeded, fetching all pages...")
         result_df = fetch_and_format_hydro_HF_data(sdk, bulk_filters)
 
         # Extract info for summary report
-        variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
-        date_start = filters.get('local_date_time__gte', 'N/A')
-        date_end = filters.get('local_date_time__lte', 'N/A')
+        variable_name = (
+            filters.get("variable_names", ["unknown"])[0]
+            if filters.get("variable_names")
+            else "unknown"
+        )
+        date_start = filters.get("local_date_time__gte", "N/A")
+        date_end = filters.get("local_date_time__lte", "N/A")
 
         # Get sites with data
-        if not result_df.empty and 'station_code' in result_df.columns:
-            sites_with_data = set(result_df['station_code'].unique())
+        if not result_df.empty and "station_code" in result_df.columns:
+            sites_with_data = set(result_df["station_code"].unique())
         else:
             sites_with_data = set()
 
@@ -1249,7 +1374,7 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
             requested_sites=site_codes,
             sites_with_data=sites_with_data,
             total_records=len(result_df) if not result_df.empty else 0,
-            date_range=(date_start, date_end)
+            date_range=(date_start, date_end),
         )
 
         return result_df
@@ -1257,48 +1382,58 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     # Strategy 2: Bulk failed - try batching (should not reach here in debug mode)
     logger.info(f"[API] Bulk failed, trying batched requests (batch_size={batch_size})...")
 
-    batches = [site_codes[i:i + batch_size] for i in range(0, len(site_codes), batch_size)]
+    batches = [site_codes[i : i + batch_size] for i in range(0, len(site_codes), batch_size)]
     batch_failed = False
 
     for i, batch in enumerate(batches):
-        logger.debug(f"[API] Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
+        logger.debug(f"[API] Fetching batch {i + 1}/{len(batches)} ({len(batch)} sites)...")
         try:
             batch_df = fetch_batch(batch)
             if not batch_df.empty:
                 all_dataframes.append(batch_df)
-                logger.debug(f"[API] Batch {i+1}: {len(batch_df)} records")
+                logger.debug(f"[API] Batch {i + 1}: {len(batch_df)} records")
         except Exception as e:
-            logger.error(f"[API] Batch {i+1} failed: {e}")
+            logger.error(f"[API] Batch {i + 1} failed: {e}")
             raise  # Re-raise for debugging
 
     if not batch_failed and all_dataframes:
-        result_df = pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
+        result_df = (
+            pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
+        )
         logger.debug(f"[API] Batched requests succeeded: {len(result_df)} total records")
 
         # Print summary report
-        variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
-        date_start = filters.get('local_date_time__gte', 'N/A')
-        date_end = filters.get('local_date_time__lte', 'N/A')
-        sites_with_data = set(result_df['station_code'].unique()) if not result_df.empty and 'station_code' in result_df.columns else set()
+        variable_name = (
+            filters.get("variable_names", ["unknown"])[0]
+            if filters.get("variable_names")
+            else "unknown"
+        )
+        date_start = filters.get("local_date_time__gte", "N/A")
+        date_end = filters.get("local_date_time__lte", "N/A")
+        sites_with_data = (
+            set(result_df["station_code"].unique())
+            if not result_df.empty and "station_code" in result_df.columns
+            else set()
+        )
         print_data_retrieval_summary(
             variable_name=variable_name,
             requested_sites=site_codes,
             sites_with_data=sites_with_data,
             total_records=len(result_df) if not result_df.empty else 0,
-            date_range=(date_start, date_end)
+            date_range=(date_start, date_end),
         )
 
         return result_df
 
     # Strategy 3: Batches failed - fall back to parallel individual requests
-    logger.info(f"[API] Batches failed, falling back to individual requests ({max_workers} workers)...")
+    logger.info(
+        f"[API] Batches failed, falling back to individual requests ({max_workers} workers)..."
+    )
     all_dataframes = []  # Reset
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(fetch_single_site, code): code for code in site_codes}
-        completed = 0
-        for future in as_completed(futures):
-            completed += 1
+        for completed, future in enumerate(as_completed(futures), 1):
             if completed % 20 == 0:
                 logger.info(f"[API] Progress: {completed}/{len(site_codes)} sites...")
             try:
@@ -1317,16 +1452,24 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         result_df = pd.DataFrame()
 
     # Print summary report
-    variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
-    date_start = filters.get('local_date_time__gte', 'N/A')
-    date_end = filters.get('local_date_time__lte', 'N/A')
-    sites_with_data = set(result_df['station_code'].unique()) if not result_df.empty and 'station_code' in result_df.columns else set()
+    variable_name = (
+        filters.get("variable_names", ["unknown"])[0]
+        if filters.get("variable_names")
+        else "unknown"
+    )
+    date_start = filters.get("local_date_time__gte", "N/A")
+    date_end = filters.get("local_date_time__lte", "N/A")
+    sites_with_data = (
+        set(result_df["station_code"].unique())
+        if not result_df.empty and "station_code" in result_df.columns
+        else set()
+    )
     print_data_retrieval_summary(
         variable_name=variable_name,
         requested_sites=site_codes,
         sites_with_data=sites_with_data,
         total_records=len(result_df) if not result_df.empty else 0,
-        date_range=(date_start, date_end)
+        date_range=(date_start, date_end),
     )
 
     return result_df
@@ -1335,30 +1478,30 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
 def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     """
     Fetch all pages of data from the API and format into a DataFrame.
-    
+
     Uses parallel fetching for improved performance:
     1. Fetch page 1 to get total count
     2. Calculate total pages (page_size=1000 is API limit)
     3. Fetch remaining pages in parallel
     4. Aggregate ALL results before processing (fixes meteo-only misclassification)
-    
+
     Parameters:
     ----------
     sdk : IEasyHydroHFSDK
         The SDK HF client instance for making API requests
     initial_filters : dict
         The initial filters to use for the request
-        
+
     Returns:
     -------
     pandas.DataFrame
         DataFrame with all hydro data in a long format with columns:
         station_code, timestamp_local, timestamp_utc, value
-        
+
     Raises:
     -------
     RuntimeError: If API returns 422 or other error status codes
-    
+
     Note:
     -----
     The API can return the same site with different station_type values across pages
@@ -1366,75 +1509,77 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     results before classification to ensure accurate meteo-only detection.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    
+
     PAGE_SIZE = 1000  # API hard limit is 1000
-    
+
     # Copy filters and set page size
     filters = initial_filters.copy()
-    filters['page_size'] = PAGE_SIZE
-    
+    filters["page_size"] = PAGE_SIZE
+
     all_raw_results = []  # Collect raw API results from all pages
     failed_pages = []
-    
+
     def fetch_page_raw(page_num):
         """Fetch a single page and return raw results (not processed)."""
         page_filters = filters.copy()
-        page_filters['page'] = page_num
-        
+        page_filters["page"] = page_num
+
         with ProfileTimer(f"sdk_api_call_page_{page_num}", log_immediately=False):
             response = sdk.get_data_values_for_site(filters=page_filters)
-        
+
         # Check for error - raise exception instead of silently continuing
-        if isinstance(response, dict) and 'status_code' in response:
-            status_code = response.get('status_code')
-            error_text = response.get('text', 'No error text')[:500]
+        if isinstance(response, dict) and "status_code" in response:
+            status_code = response.get("status_code")
+            error_text = response.get("text", "No error text")[:500]
             error_msg = f"Page {page_num} failed with status {status_code}: {error_text}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
-        
+
         # Return raw results list (not processed yet)
-        if isinstance(response, dict) and 'results' in response:
-            return response.get('results', [])
+        if isinstance(response, dict) and "results" in response:
+            return response.get("results", [])
         return []
-    
+
     # Step 1: Fetch first page to get total count
-    logger.debug(f"[API] COUNT VALIDATION: Fetching page 1 to determine total count...")
+    logger.debug("[API] COUNT VALIDATION: Fetching page 1 to determine total count...")
     logger.debug(f"[API] COUNT VALIDATION: Filters: {filters}")
-    filters['page'] = 1
-    
+    filters["page"] = 1
+
     with ProfileTimer("sdk_api_call_page_1", log_immediately=True):
         first_response = sdk.get_data_values_for_site(filters=filters)
-    
+
     # Check for error on first page - RAISE EXCEPTION
-    if isinstance(first_response, dict) and 'status_code' in first_response:
-        status_code = first_response.get('status_code')
-        error_text = first_response.get('text', 'No error text')[:500]
+    if isinstance(first_response, dict) and "status_code" in first_response:
+        status_code = first_response.get("status_code")
+        error_text = first_response.get("text", "No error text")[:500]
         error_msg = f"First page request failed with status {status_code}: {error_text}"
         logger.error(f"[API] COUNT VALIDATION ERROR: {error_msg}")
         raise RuntimeError(error_msg)
-    
+
     # Get total count and calculate pages
-    total_count = first_response.get('count', 0) if isinstance(first_response, dict) else 0
+    total_count = first_response.get("count", 0) if isinstance(first_response, dict) else 0
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
-    
-    logger.debug(f"[API] COUNT VALIDATION: API reports total_count={total_count}, total_pages={total_pages}")
+
+    logger.debug(
+        f"[API] COUNT VALIDATION: API reports total_count={total_count}, total_pages={total_pages}"
+    )
     logger.info(f"[API] Total records: {total_count}, Total pages: {total_pages}")
-    
+
     # Collect raw results from first page
-    if isinstance(first_response, dict) and 'results' in first_response:
-        page1_results = first_response.get('results', [])
+    if isinstance(first_response, dict) and "results" in first_response:
+        page1_results = first_response.get("results", [])
         all_raw_results.extend(page1_results)
         logger.debug(f"[API] COUNT VALIDATION: Page 1: {len(page1_results)} site-records collected")
-    
+
     # Step 2: Fetch remaining pages in parallel (collect raw results)
     if total_pages > 1:
         pages_to_fetch = list(range(2, total_pages + 1))
         logger.debug(f"[API] COUNT VALIDATION: Fetching pages 2-{total_pages} in parallel...")
-        
+
         with ProfileTimer(f"parallel_fetch_pages_2_to_{total_pages}", log_immediately=True):
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = {executor.submit(fetch_page_raw, p): p for p in pages_to_fetch}
-                
+
                 for future in as_completed(futures):
                     page_num = futures[future]
                     try:
@@ -1446,58 +1591,80 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
                         logger.error(f"Error fetching page {page_num}: {e}")
                         # Re-raise to stop execution
                         raise
-        
-        logger.debug(f"[API] COUNT VALIDATION: Parallel fetch complete: {len(all_raw_results)} total site-records collected")
+
+        logger.debug(
+            f"[API] COUNT VALIDATION: Parallel fetch complete: {len(all_raw_results)} total site-records collected"
+        )
 
     if failed_pages:
         logger.error(f"[API] COUNT VALIDATION ERROR: Failed pages: {failed_pages}")
         raise RuntimeError(f"Failed to fetch pages: {failed_pages}")
-    
+
     # Step 3: Process ALL results together (fixes meteo-only misclassification)
     # This ensures a site is only classified as "meteo-only" if it has NO hydro
     # records across ALL pages, not just a single page
     if all_raw_results:
-        combined_response = {'results': all_raw_results}
+        combined_response = {"results": all_raw_results}
         combined_df = process_hydro_HF_data(combined_response)
-        
+
         # Convert timestamps to datetime if they're strings
-        for col in ['local_datetime', 'utc_datetime']:
-            if col in combined_df.columns and combined_df[col].dtype == 'object':
+        for col in ["local_datetime", "utc_datetime"]:
+            if col in combined_df.columns and combined_df[col].dtype == "object":
                 combined_df[col] = pd.to_datetime(combined_df[col])
-        
+
         if combined_df.empty:
-            return pd.DataFrame(columns=['station_code', 'local_datetime', 'utc_datetime', 'value'])
-        
+            return pd.DataFrame(columns=["station_code", "local_datetime", "utc_datetime", "value"])
+
         # Drop columns that are not in the expected structure
         combined_df.drop(
-            columns=['station_uuid', 'station_type', 'station_id', 
-                     'variable_code', 'unit', 'value_type', 'value_code', 
-                     'station_name'], 
-            inplace=True, errors='ignore')
-        
+            columns=[
+                "station_uuid",
+                "station_type",
+                "station_id",
+                "variable_code",
+                "unit",
+                "value_type",
+                "value_code",
+                "station_name",
+            ],
+            inplace=True,
+            errors="ignore",
+        )
+
         # Final count validation
-        unique_sites = combined_df['station_code'].nunique() if 'station_code' in combined_df.columns else 0
-        logger.debug(f"[API] COUNT VALIDATION: Final DataFrame: {len(combined_df)} records from {unique_sites} unique sites")
+        unique_sites = (
+            combined_df["station_code"].nunique() if "station_code" in combined_df.columns else 0
+        )
+        logger.debug(
+            f"[API] COUNT VALIDATION: Final DataFrame: {len(combined_df)} records from {unique_sites} unique sites"
+        )
         logger.info(f"[API] Total records fetched: {len(combined_df)} from {unique_sites} sites")
         return combined_df
     else:
-        logger.debug(f"[API] COUNT VALIDATION: No results to process - returning empty DataFrame")
-        return pd.DataFrame(columns=['station_code', 'local_datetime', 'utc_datetime', 'value'])
+        logger.debug("[API] COUNT VALIDATION: No results to process - returning empty DataFrame")
+        return pd.DataFrame(columns=["station_code", "local_datetime", "utc_datetime", "value"])
+
 
 def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
-        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
-        target_timezone=None,  
-        date_col='date', discharge_col='discharge', code_col='code'):
+    ieh_hf_sdk,
+    id_list,
+    start_datetime=None,
+    end_datetime=None,
+    target_timezone=None,
+    date_col="date",
+    discharge_col="discharge",
+    code_col="code",
+):
     """
     Reads todays morning discharge data from the iEasyHydro database for multiple sites.
-    
+
     Uses UTC datetime objects that represent local times (8:00 to current hour) for filtering.
     According to SDK documentation, the backend ignores timezone and searches for local times.
 
     Args:
         ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
         id_list (list): A list of strings denoting site ids.
-        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None. 
+        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None.
         end_datetime (datetime, optional): The end datetime as UTC (interpreted as local time). Defaults to None.
         target_timezone (str, optional): The timezone used for calculating current time. Defaults to None.
         date_col (str, optional): The name of the column containing the date data. Default is 'date'.
@@ -1524,10 +1691,12 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
         # Get the local timezone
         target_timezone = pytz.timezone(time.tzname[0])
         logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
-        
+
     # If start_datetime is None, get it from get_local_time_range_for_todays_morning_runoff_request
     if start_datetime is None or end_datetime is None:
-        start_datetime, end_datetime = get_local_time_range_for_todays_morning_runoff_request(target_timezone)
+        start_datetime, end_datetime = get_local_time_range_for_todays_morning_runoff_request(
+            target_timezone
+        )
 
     # Raise an error if the date format is not a datetime with timezone info
     if not isinstance(start_datetime, dt.datetime):
@@ -1535,7 +1704,9 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
     if not isinstance(end_datetime, dt.datetime):
         raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading morning discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
+    logger.debug(
+        f"Reading morning discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time)."
+    )
 
     # Build base filters (without site_codes - those are passed separately to robust function)
     filters = {
@@ -1553,15 +1724,12 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
         # Drop the local datetime column as we will be working with utc datetime
-        db_df.drop(columns=['local_datetime'], inplace=True)
+        db_df.drop(columns=["local_datetime"], inplace=True)
 
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
-            columns={
-                'utc_datetime': date_col,
-                'station_code': code_col,
-                'value': discharge_col},
-            inplace=True
+            columns={"utc_datetime": date_col, "station_code": code_col, "value": discharge_col},
+            inplace=True,
         )
 
         # If there are multiple measurements for the current day, take the average
@@ -1570,26 +1738,33 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
 
     except Exception as e:
         logger.info(f"Error reading morning discharge data: {e}")
-        logger.info(f"Returning empty data frame.")
+        logger.info("Returning empty data frame.")
         # Return an empty dataframe with columns 'date', 'discharge', 'code'
         db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
     return db_df
 
+
 def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
-        target_timezone=None,  
-        date_col='date', discharge_col='discharge', code_col='code'):
+    ieh_hf_sdk,
+    id_list,
+    start_datetime=None,
+    end_datetime=None,
+    target_timezone=None,
+    date_col="date",
+    discharge_col="discharge",
+    code_col="code",
+):
     """
     Reads daily average discharge data from the iEasyHydro database for multiple sites.
-    
+
     Uses UTC datetime objects that represent local times (20:00 evening) for filtering.
     According to SDK documentation, the backend ignores timezone and searches for local times.
 
     Args:
         ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
         id_list (list): A list of strings denoting site ids.
-        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None. 
+        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None.
         end_datetime (datetime, optional): The end datetime as UTC (interpreted as local time). Defaults to None.
         target_timezone (str, optional): The timezone used for calculating current time. Defaults to None.
         date_col (str, optional): The name of the column containing the date data. Default is 'date'.
@@ -1615,10 +1790,12 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         # Get the local timezone
         target_timezone = pytz.timezone(time.tzname[0])
         logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
-        
+
     # If start_datetime is None, get it from get_local_time_range_for_daily_average_runoff_request
     if start_datetime is None or end_datetime is None:
-        start_datetime, end_datetime = get_local_time_range_for_daily_average_runoff_request(target_timezone)
+        start_datetime, end_datetime = get_local_time_range_for_daily_average_runoff_request(
+            target_timezone
+        )
 
     # Raise an error if the date format is not a datetime with timezone info
     if not isinstance(start_datetime, dt.datetime):
@@ -1626,7 +1803,9 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
     if not isinstance(end_datetime, dt.datetime):
         raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading daily average discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
+    logger.debug(
+        f"Reading daily average discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time)."
+    )
 
     # Build base filters (without site_codes - those are passed separately to robust function)
     filters = {
@@ -1636,8 +1815,10 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
     }
 
     # Debug: Log what we're about to fetch
-    logger.debug(f"[API] get_daily_average_discharge_from_iEH_HF_for_multiple_sites:")
-    logger.debug(f"[API]   id_list type: {type(id_list)}, length: {len(id_list) if id_list else 'None'}")
+    logger.debug("[API] get_daily_average_discharge_from_iEH_HF_for_multiple_sites:")
+    logger.debug(
+        f"[API]   id_list type: {type(id_list)}, length: {len(id_list) if id_list else 'None'}"
+    )
     logger.debug(f"[API]   id_list first 5: {id_list[:5] if id_list else 'None'}")
     logger.debug(f"[API]   date range: {start_datetime} to {end_datetime}")
 
@@ -1652,24 +1833,21 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
             logger.debug(f"[API]   db_df head:\n{db_df.head()}")
 
         if db_df.empty:
-            logger.info(f"No daily average data found for the given date range.")
+            logger.info("No daily average data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
         # Drop the local datetime column as we will be working with utc datetime
-        db_df.drop(columns=['local_datetime'], inplace=True)
+        db_df.drop(columns=["local_datetime"], inplace=True)
 
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
-            columns={
-                'utc_datetime': date_col,
-                'station_code': code_col,
-                'value': discharge_col},
-            inplace=True
+            columns={"utc_datetime": date_col, "station_code": code_col, "value": discharge_col},
+            inplace=True,
         )
 
     except Exception as e:
         logger.info(f"Error reading daily average discharge data: {e}")
-        logger.info(f"Returning empty data frame.")
+        logger.info("Returning empty data frame.")
         # Return an empty dataframe with columns 'date', 'discharge', 'code'
         db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
@@ -1677,8 +1855,16 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
 
 
 def get_daily_average_discharge_from_iEH_per_site(
-        ieh_sdk, site, name, start_date, end_date=dt.date.today(),
-        date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+    ieh_sdk,
+    site,
+    name,
+    start_date,
+    end_date=None,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
     """
     Reads daily average discharge data from the iEasyHydro database for a given site.
 
@@ -1702,6 +1888,9 @@ def get_daily_average_discharge_from_iEH_per_site(
         ValueError: If the site code is not a string or an integer.
         ValueError: If the site name is not a string.
     """
+    if end_date is None:
+        end_date = dt.date.today()
+
     # Convert site to string if necessary
     if isinstance(site, int):
         site = str(site)
@@ -1711,13 +1900,13 @@ def get_daily_average_discharge_from_iEH_per_site(
 
     # Convert start_date to dt.datetime
     if isinstance(start_date, str):
-        start_date = dt.datetime.strptime(start_date, '%Y-%m-%d')
+        start_date = dt.datetime.strptime(start_date, "%Y-%m-%d")
     if isinstance(start_date, dt.date):
         start_date = dt.datetime.combine(start_date, dt.datetime.min.time())
 
     # Convert end_date to dt.datetime
     if isinstance(end_date, str):
-        end_date = dt.datetime.strptime(end_date, '%Y-%m-%d')
+        end_date = dt.datetime.strptime(end_date, "%Y-%m-%d")
     if isinstance(end_date, dt.date):
         end_date = dt.datetime.combine(end_date, dt.datetime.min.time())
 
@@ -1725,34 +1914,29 @@ def get_daily_average_discharge_from_iEH_per_site(
     if not isinstance(name, str):
         raise ValueError("The site name must be a string.")
 
-    logger.debug(f"Reading daily average discharge data for site {site} from {start_date} to {end_date}.")
-
-    filter = BasicDataValueFilters(
-        local_date_time__gte=start_date,
-        local_date_time__lt=end_date
+    logger.debug(
+        f"Reading daily average discharge data for site {site} from {start_date} to {end_date}."
     )
+
+    filter = BasicDataValueFilters(local_date_time__gte=start_date, local_date_time__lt=end_date)
 
     try:
         # Get data for current site from the database
-        db_raw = ieh_sdk.get_data_values_for_site(
-            site,
-            'discharge_daily_average',
-            filters=filter
-        )
+        db_raw = ieh_sdk.get_data_values_for_site(site, "discharge_daily_average", filters=filter)
 
-        db_raw = db_raw['data_values']
+        db_raw = db_raw["data_values"]
 
         # Create a DataFrame
         db_df = pd.DataFrame(db_raw)
 
         # Rename the columns of df to match the columns of combined_data
-        db_df = db_df.rename(columns={'local_date_time': date_col, 'data_value': discharge_col})
+        db_df = db_df.rename(columns={"local_date_time": date_col, "data_value": discharge_col})
 
         # Drop the columns we don't need
-        db_df.drop(columns=['utc_date_time'], inplace=True)
+        db_df.drop(columns=["utc_date_time"], inplace=True)
 
         # Convert the Date column to datetime
-        db_df[date_col] = pd.to_datetime(db_df['date'], format='%Y-%m-%d %H:%M:%S').dt.date
+        db_df[date_col] = pd.to_datetime(db_df["date"], format="%Y-%m-%d %H:%M:%S").dt.date
 
         # Add the name and code columns
         db_df[name_col] = name
@@ -1766,9 +1950,16 @@ def get_daily_average_discharge_from_iEH_per_site(
 
     return db_df
 
+
 def get_todays_morning_discharge_from_iEH_per_site(
-        ieh_sdk, site, name,
-        date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+    ieh_sdk,
+    site,
+    name,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
     """
     Reads river discharge data from the iEasyHydro database for a given site that
     was measured today.
@@ -1811,42 +2002,38 @@ def get_todays_morning_discharge_from_iEH_per_site(
     logger.debug(f"Reading daily average discharge data for site {site}")
 
     filter = BasicDataValueFilters(
-        local_date_time__gte=today_startday,
-        local_date_time__lte=today_noon
+        local_date_time__gte=today_startday, local_date_time__lte=today_noon
     )
 
     try:
         # Get data for current site from the database
-        db_raw = ieh_sdk.get_data_values_for_site(
-            site,
-            'discharge_daily',
-            filters=filter
-        )
+        db_raw = ieh_sdk.get_data_values_for_site(site, "discharge_daily", filters=filter)
 
-        db_raw = db_raw['data_values']
+        db_raw = db_raw["data_values"]
 
         # Create a DataFrame
         db_df = pd.DataFrame(db_raw)
 
         # Rename the columns of df to match the columns of combined_data
-        db_df = db_df.rename(columns={'local_date_time': date_col, 'data_value': discharge_col})
+        db_df = db_df.rename(columns={"local_date_time": date_col, "data_value": discharge_col})
 
         # Drop the columns we don't need
-        db_df.drop(columns=['utc_date_time'], inplace=True)
+        db_df.drop(columns=["utc_date_time"], inplace=True)
 
         # Convert the Date column to datetime
-        db_df[date_col] = pd.to_datetime(db_df[date_col], format='%Y-%m-%d %H:%M:%S').dt.date
+        db_df[date_col] = pd.to_datetime(db_df[date_col], format="%Y-%m-%d %H:%M:%S").dt.date
 
         # Add the name and code columns
         db_df[name_col] = name
         db_df[code_col] = site
 
-    except Exception as e:
+    except Exception:
         logger.info(f"Skip reading morning measurement of discharge data for site {site}")
         # Return an empty dataframe with columns 'date', 'discharge', 'name', 'code'
         db_df = pd.DataFrame(columns=[date_col, discharge_col, name_col, code_col])
 
     return db_df
+
 
 def add_hydroposts(combined_data, check_hydroposts):
     """
@@ -1867,40 +2054,45 @@ def add_hydroposts(combined_data, check_hydroposts):
     """
     # Make a copy to avoid modifying the original
     data_df = combined_data.copy()
-    
+
     # First remove any timezone information, then normalize
-    data_df['date'] = pd.to_datetime(data_df['date']).dt.tz_localize(None).dt.normalize()
-    
+    data_df["date"] = pd.to_datetime(data_df["date"]).dt.tz_localize(None).dt.normalize()
+
     # Get the earliest date
-    earliest_date = pd.to_datetime(combined_data['date'].min())
+    earliest_date = pd.to_datetime(combined_data["date"].min())
 
     # Check if the virtual hydroposts are in the combined_data
     for hydropost in check_hydroposts:
-        if hydropost not in combined_data['code'].values:
+        if hydropost not in combined_data["code"].values:
             logger.debug(f"Virtual hydropost {hydropost} is not in the list of stations.")
             # Add the virtual hydropost to the combined_data
-            new_row = pd.DataFrame({
-                'code': [hydropost],
-                'date': [earliest_date],
-                'discharge': [np.nan],
-                'name': [f'Virtual hydropost {hydropost}']
-            })
+            new_row = pd.DataFrame(
+                {
+                    "code": [hydropost],
+                    "date": [earliest_date],
+                    "discharge": [np.nan],
+                    "name": [f"Virtual hydropost {hydropost}"],
+                }
+            )
             combined_data = pd.concat([combined_data, new_row], ignore_index=True)
 
     return combined_data
 
-def calculate_virtual_stations_data(data_df: pd.DataFrame,
-                                    code_col='code', discharge_col='discharge',
-                                    date_col='date'):
-    """
 
-    """
+def calculate_virtual_stations_data(
+    data_df: pd.DataFrame, code_col="code", discharge_col="discharge", date_col="date"
+):
+    """ """
     # Get configuration for virtual stations
-    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
-                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+    with open(
+        os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_virtual_stations"),
+        )
+    ) as f:
         json_data = json.load(f)
-        virtual_stations = json_data['virtualStations'].keys()
-        instructions = json_data['virtualStations']
+        virtual_stations = json_data["virtualStations"].keys()
+        instructions = json_data["virtualStations"]
 
     # Add the virtual stations to the data if they are not already there
     data_df = add_hydroposts(data_df, virtual_stations)
@@ -1909,14 +2101,16 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
     for station in virtual_stations:
         # Get the instructions for the station
         instruction = instructions[station]
-        #print(instruction)
-        weigth_by_station = instruction['weightByStation']
-        #print(weigth_by_station)
+        # print(instruction)
+        weigth_by_station = instruction["weightByStation"]
+        # print(weigth_by_station)
 
         # Currently, we only implement the combination function 'sum'. Throw an error if the function is not 'sum'
-        if instruction['combinationFunction'] != 'sum':
+        if instruction["combinationFunction"] != "sum":
             logger.error(f"Combination function for station {station} is not 'sum'.")
-            logger.error(f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}.")
+            logger.error(
+                f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}."
+            )
             exit()
 
         # Get the data for the stations that contribute to the virtual station and multiply them with the weight
@@ -1926,28 +2120,41 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
                 logger.error(f"Virtual station {station} cannot contribute to itself.")
                 exit()
 
-            #print(contributing_station, weight)
+            # print(contributing_station, weight)
             # Get the data for the contributing station
             data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
 
             # Multiply the discharge data with the weight
-            data_contributing_station[discharge_col] = data_contributing_station[discharge_col] * weight
+            data_contributing_station[discharge_col] = (
+                data_contributing_station[discharge_col] * weight
+            )
 
             # Add the data to the virtual station if data_virtual_station exists
-            if 'data_virtual_station' not in locals():
+            if "data_virtual_station" not in locals():
                 data_virtual_station = data_contributing_station
                 # Change code to the code of the virtual station
                 data_virtual_station[code_col] = station
                 # Change the name to the name of the virtual station
-                data_virtual_station['name'] = f'Virtual hydropost {station}'
+                data_virtual_station["name"] = f"Virtual hydropost {station}"
             else:
                 # Merge the data for the contributing station with the data_virtual_station
-                data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
+                data_virtual_station = pd.merge(
+                    data_virtual_station,
+                    data_contributing_station,
+                    on=date_col,
+                    how="outer",
+                    suffixes=("", "_y"),
+                )
                 # Add discharge_y to discharge and discard all _y columns
-                data_virtual_station[discharge_col] = data_virtual_station[discharge_col] + data_virtual_station[discharge_col + '_y']
-                data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
+                data_virtual_station[discharge_col] = (
+                    data_virtual_station[discharge_col] + data_virtual_station[discharge_col + "_y"]
+                )
+                data_virtual_station.drop(
+                    columns=[col for col in data_virtual_station.columns if "_y" in col],
+                    inplace=True,
+                )
 
-            #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
+            # print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
 
         # Check if we already have data for the virtual station in the data_df dataframe and fill gaps with data_virtual_station
         if station in data_df[code_col].values:
@@ -1958,7 +2165,9 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
             last_date_station = data_station[date_col].max()
 
             # Get the data for the date from the other stations
-            data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
+            data_virtual_station = data_virtual_station[
+                data_virtual_station[date_col] >= last_date_station
+            ].copy()
 
             # Merge the data for the virtual station with the data_df
             data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
@@ -1968,7 +2177,10 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
 
     return data_df
 
-def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+
+def get_runoff_data(
+    ieh_sdk=None, date_col="date", discharge_col="discharge", name_col="name", code_col="code"
+):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
 
@@ -1989,34 +2201,35 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     """
     # Read data from excel files
     read_data = read_all_runoff_data_from_excel(
-        date_col=date_col,
-        discharge_col=discharge_col,
-        name_col=name_col,
-        code_col=code_col)
+        date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+    )
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
     # Get virtual station codes from json (if file exists) print a warning if file
     # does not exist.
-    if os.getenv('ieasyforecast_virtual_stations') is None:
-        logger.info(f"No calculation rules for virtual stations found.\n"
-                    f"Environment variable ieasyforecast_virtual_stations is not set.")
+    if os.getenv("ieasyforecast_virtual_stations") is None:
+        logger.info(
+            "No calculation rules for virtual stations found.\n"
+            "Environment variable ieasyforecast_virtual_stations is not set."
+        )
     else:
         virtual_stations_config_file_path = os.path.join(
-            os.getenv('ieasyforecast_configuration_path'),
-            os.getenv('ieasyforecast_virtual_stations'))
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_virtual_stations"),
+        )
         if not os.path.exists(virtual_stations_config_file_path):
             raise FileNotFoundError(
                 f"File {virtual_stations_config_file_path} not found.\n",
-                f"Filename for calculateion rules for virtual stations in environment\n"
-                f"but file not found.\n"
-                f"Please provide a configuraion file ieasyforecast_virtual_stations\n"
-                f"or, if you don't have any virtual stations to predict, remove the\n"
-                f"variable ieasyforecast_virtual_stations from your configuration file."
+                "Filename for calculateion rules for virtual stations in environment\n"
+                "but file not found.\n"
+                "Please provide a configuraion file ieasyforecast_virtual_stations\n"
+                "or, if you don't have any virtual stations to predict, remove the\n"
+                "variable ieasyforecast_virtual_stations from your configuration file.",
             )
         else:
-            with open(virtual_stations_config_file_path, 'r') as f:
-                virtual_stations = json.load(f)['virtualStations'].keys()
+            with open(virtual_stations_config_file_path) as f:
+                virtual_stations = json.load(f)["virtualStations"].keys()
             virtual_stations_present = True
 
             read_data = add_hydroposts(read_data, virtual_stations)
@@ -2030,20 +2243,32 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     else:
         # Get the last row for each code in runoff_data
         last_row = read_data.groupby(code_col).tail(1)
-        #print("DEBUG: last_row: \n", last_row)
+        # print("DEBUG: last_row: \n", last_row)
 
         # For each code in last_row, get the daily average discharge data from the
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
-        for index, row in last_row.iterrows():
-            with suppress_stdout(): 
+        for _index, row in last_row.iterrows():
+            with suppress_stdout():
                 db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                    ieh_sdk, row[code_col], row[name_col], row[date_col],
-                    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+                    ieh_sdk,
+                    row[code_col],
+                    row[name_col],
+                    row[date_col],
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
                 )
             with suppress_stdout():
                 db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                    ieh_sdk, row[code_col], row[name_col],
-                    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+                    ieh_sdk,
+                    row[code_col],
+                    row[name_col],
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                )
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
                 read_data = pd.concat([read_data, db_average_data], ignore_index=True)
@@ -2052,27 +2277,34 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
 
         # Drop rows where 'code' is "NA"
         # Use .copy() to avoid SettingWithCopyWarning when modifying columns
-        read_data = read_data[read_data[code_col] != 'NA'].copy()
+        read_data = read_data[read_data[code_col] != "NA"].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
 
-        #print(read_data[read_data['code'] == "16936"].tail(10))
-        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # print(read_data[read_data['code'] == "16936"].tail(10))
+        # print(read_data[read_data['code'] == "16059"].tail(10))
         # Calculate virtual hydropost data where necessary
         if virtual_stations_present:
             read_data = calculate_virtual_stations_data(read_data)
-        #print(read_data[read_data['code'] == "16936"].tail(10))
-        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # print(read_data[read_data['code'] == "16936"].tail(10))
+        # print(read_data[read_data['code'] == "16059"].tail(10))
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
 
         return read_data
 
-def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
-                              discharge_col='discharge', name_col='name',
-                              code_col='code', site_list=None, code_list=None):
+
+def get_runoff_data_for_sites(
+    ieh_sdk=None,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+    site_list=None,
+    code_list=None,
+):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
 
@@ -2092,125 +2324,140 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
             Default is 'code'.
     """
     # Test if there have been any changes in the daily_discharge directory
-    if should_reprocess_input_files(): 
+    if should_reprocess_input_files():
         logger.info("Regime data has changed, reprocessing input files.")
-    
-        # Get organization from environment variable
-        organization = os.getenv('ieasyhydroforecast_organization')
 
-        if organization=='kghm': 
+        # Get organization from environment variable
+        organization = os.getenv("ieasyhydroforecast_organization")
+
+        if organization == "kghm":
             # Read data from excel files
             read_data = read_all_runoff_data_from_excel(
                 date_col=date_col,
                 discharge_col=discharge_col,
                 name_col=name_col,
                 code_col=code_col,
-                code_list=code_list)
-        elif organization=='tjhm':
+                code_list=code_list,
+            )
+        elif organization == "tjhm":
             # Read data from csv files
             read_data = read_all_runoff_data_from_csv(
                 date_col=date_col,
                 discharge_col=discharge_col,
                 name_col=name_col,
                 code_col=code_col,
-                code_list=code_list)
+                code_list=code_list,
+            )
         else:
             # Raise an error if the organization is not recognized
-            raise ValueError(f"Organization '{organization}' not recognized. "
-                             f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+            raise ValueError(
+                f"Organization '{organization}' not recognized. "
+                f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+            )
     else:
         logger.info("No changes in the daily_discharge directory, using previous data.")
-        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+        intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
         output_file_path = os.path.join(
-            intermediate_data_path,
-            os.getenv("ieasyforecast_daily_discharge_file"))
+            intermediate_data_path, os.getenv("ieasyforecast_daily_discharge_file")
+        )
         try:
             read_data = pd.read_csv(output_file_path)
-            read_data['date'] = pd.to_datetime(read_data['date']).dt.date
-            read_data['code'] = read_data['code'].astype(str)
-            read_data['discharge'] = read_data['discharge'].astype(float)
-            # Get a dummy name column 
-            read_data['name'] = read_data['code']
-            # Check the latest date. If it is before today minus 51 days, go to 
-            # the fallback and read in all regime data. 
-            # This is to avoid shortening of the regime data in case operational 
-            # data is not available. 
-            if read_data['date'].max() < dt.date.today() - dt.timedelta(days=51):
+            read_data["date"] = pd.to_datetime(read_data["date"]).dt.date
+            read_data["code"] = read_data["code"].astype(str)
+            read_data["discharge"] = read_data["discharge"].astype(float)
+            # Get a dummy name column
+            read_data["name"] = read_data["code"]
+            # Check the latest date. If it is before today minus 51 days, go to
+            # the fallback and read in all regime data.
+            # This is to avoid shortening of the regime data in case operational
+            # data is not available.
+            if read_data["date"].max() < dt.date.today() - dt.timedelta(days=51):
                 logger.info("Cached data is older than 50 days, reprocessing input files.")
                 # Reprocess input files
-                organization = os.getenv('ieasyhydroforecast_organization')
-                if organization=='kghm': 
+                organization = os.getenv("ieasyhydroforecast_organization")
+                if organization == "kghm":
                     # Read data from excel files
                     read_data = read_all_runoff_data_from_excel(
                         date_col=date_col,
                         discharge_col=discharge_col,
                         name_col=name_col,
                         code_col=code_col,
-                        code_list=code_list)
-                elif organization=='tjhm':
+                        code_list=code_list,
+                    )
+                elif organization == "tjhm":
                     # Read data from csv files
                     read_data = read_all_runoff_data_from_csv(
                         date_col=date_col,
                         discharge_col=discharge_col,
                         name_col=name_col,
                         code_col=code_col,
-                        code_list=code_list)
+                        code_list=code_list,
+                    )
                 else:
                     # Raise an error if the organization is not recognized
-                    raise ValueError(f"Organization '{organization}' not recognized. "
-                                     f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
-            else: 
+                    raise ValueError(
+                        f"Organization '{organization}' not recognized. "
+                        f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+                    )
+            else:
                 logger.info("Cached data is newer than 50 days, using cached data.")
-                # Discard the last 50 days of previous operational data and update 
-                # these with the new data in the next code section. 
-                read_data = read_data[read_data['date'] < dt.date.today() - dt.timedelta(days=50)]
+                # Discard the last 50 days of previous operational data and update
+                # these with the new data in the next code section.
+                read_data = read_data[read_data["date"] < dt.date.today() - dt.timedelta(days=50)]
         except Exception as e:
             logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
             # Fall back to processing logic
-            if organization=='kghm': 
+            if organization == "kghm":
                 # Read data from excel files
                 read_data = read_all_runoff_data_from_excel(
                     date_col=date_col,
                     discharge_col=discharge_col,
                     name_col=name_col,
                     code_col=code_col,
-                    code_list=code_list)
-            elif organization=='tjhm':
+                    code_list=code_list,
+                )
+            elif organization == "tjhm":
                 # Read data from csv files
                 read_data = read_all_runoff_data_from_csv(
                     date_col=date_col,
                     discharge_col=discharge_col,
                     name_col=name_col,
                     code_col=code_col,
-                    code_list=code_list)
+                    code_list=code_list,
+                )
             else:
                 # Raise an error if the organization is not recognized
-                raise ValueError(f"Organization '{organization}' not recognized. "
-                                 f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+                raise ValueError(
+                    f"Organization '{organization}' not recognized. "
+                    f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+                ) from e
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
     # Get virtual station codes from json (if file exists) print a warning if file
     # does not exist.
-    if os.getenv('ieasyforecast_virtual_stations') is None:
-        logger.info(f"No calculation rules for virtual stations found.\n"
-                    f"Environment variable ieasyforecast_virtual_stations is not set.")
+    if os.getenv("ieasyforecast_virtual_stations") is None:
+        logger.info(
+            "No calculation rules for virtual stations found.\n"
+            "Environment variable ieasyforecast_virtual_stations is not set."
+        )
     else:
         virtual_stations_config_file_path = os.path.join(
-            os.getenv('ieasyforecast_configuration_path'),
-            os.getenv('ieasyforecast_virtual_stations'))
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_virtual_stations"),
+        )
         if not os.path.exists(virtual_stations_config_file_path):
             raise FileNotFoundError(
                 f"File {virtual_stations_config_file_path} not found.\n",
-                f"Filename for calculateion rules for virtual stations in environment\n"
-                f"but file not found.\n"
-                f"Please provide a configuraion file ieasyforecast_virtual_stations\n"
-                f"or, if you don't have any virtual stations to predict, remove the\n"
-                f"variable ieasyforecast_virtual_stations from your configuration file."
+                "Filename for calculateion rules for virtual stations in environment\n"
+                "but file not found.\n"
+                "Please provide a configuraion file ieasyforecast_virtual_stations\n"
+                "or, if you don't have any virtual stations to predict, remove the\n"
+                "variable ieasyforecast_virtual_stations from your configuration file.",
             )
         else:
-            with open(virtual_stations_config_file_path, 'r') as f:
-                virtual_stations = json.load(f)['virtualStations'].keys()
+            with open(virtual_stations_config_file_path) as f:
+                virtual_stations = json.load(f)["virtualStations"].keys()
             virtual_stations_present = True
 
             read_data = add_hydroposts(read_data, virtual_stations)
@@ -2224,19 +2471,30 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
     else:
         # Get the last row for each code in runoff_data
         last_row = read_data.groupby(code_col).tail(1)
-        #print("DEBUG: last_row: \n", last_row)
+        # print("DEBUG: last_row: \n", last_row)
 
         # For each code in last_row, get the daily average discharge data from the
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
-        for index, row in last_row.iterrows():
+        for _index, row in last_row.iterrows():
             db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                ieh_sdk=ieh_sdk, site=row[code_col], name=row[name_col], 
+                ieh_sdk=ieh_sdk,
+                site=row[code_col],
+                name=row[name_col],
                 start_date=row[date_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
             )
             db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+                ieh_sdk,
+                row[code_col],
+                row[name_col],
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+            )
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
                 read_data = pd.concat([read_data, db_average_data], ignore_index=True)
@@ -2245,18 +2503,18 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
         # Drop rows where 'code' is "NA"
         # Use .copy() to avoid SettingWithCopyWarning when modifying columns
-        read_data = read_data[read_data[code_col] != 'NA'].copy()
+        read_data = read_data[read_data[code_col] != "NA"].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
 
-        #print(read_data[read_data['code'] == "16936"].tail(10))
-        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # print(read_data[read_data['code'] == "16936"].tail(10))
+        # print(read_data[read_data['code'] == "16059"].tail(10))
         # Calculate virtual hydropost data where necessary
         if virtual_stations_present:
             read_data = calculate_virtual_stations_data(read_data)
-        #print(read_data[read_data['code'] == "16936"].tail(10))
-        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # print(read_data[read_data['code'] == "16936"].tail(10))
+        # print(read_data[read_data['code'] == "16059"].tail(10))
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
@@ -2264,77 +2522,83 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
         return read_data
 
 
-def _load_cached_data(date_col: str, discharge_col: str, name_col: str, 
-                      code_col: str, code_list: list) -> pd.DataFrame:
+def _load_cached_data(
+    date_col: str, discharge_col: str, name_col: str, code_col: str, code_list: list
+) -> pd.DataFrame:
     """
     Load cached discharge data from the intermediate output file.
-    
+
     Falls back to reading from organization-specific input files if cached data
     is unavailable or empty.
-    
+
     Args:
         date_col: Name of the date column.
         discharge_col: Name of the discharge column.
         name_col: Name of the name column.
         code_col: Name of the code column.
         code_list: List of site codes to read data for.
-        
+
     Returns:
         pd.DataFrame: Cached discharge data.
     """
-    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
     output_file_path = os.path.join(
-        intermediate_data_path,
-        os.getenv("ieasyforecast_daily_discharge_file"))
+        intermediate_data_path, os.getenv("ieasyforecast_daily_discharge_file")
+    )
     try:
         read_data = pd.read_csv(output_file_path)
         read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
         read_data[code_col] = read_data[code_col].astype(str)
         read_data[discharge_col] = read_data[discharge_col].astype(float)
-        # Get a dummy name column 
+        # Get a dummy name column
         read_data[name_col] = read_data[code_col]
-        
+
         # Check if data is valid
         if read_data.empty:
             logger.info("Cached data is empty, reprocessing input files.")
-            organization = os.getenv('ieasyhydroforecast_organization')
+            organization = os.getenv("ieasyhydroforecast_organization")
             read_data = _read_runoff_data_by_organization(
                 organization=organization,
                 date_col=date_col,
                 discharge_col=discharge_col,
                 name_col=name_col,
                 code_col=code_col,
-                code_list=code_list
+                code_list=code_list,
             )
         return read_data
     except Exception as e:
         logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
-        organization = os.getenv('ieasyhydroforecast_organization')
+        organization = os.getenv("ieasyhydroforecast_organization")
         return _read_runoff_data_by_organization(
             organization=organization,
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
             code_col=code_col,
-            code_list=code_list
+            code_list=code_list,
         )
 
 
-def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
-                       code_col: str, date_col: str, discharge_col: str) -> pd.DataFrame:
+def _merge_with_update(
+    existing_data: pd.DataFrame,
+    new_data: pd.DataFrame,
+    code_col: str,
+    date_col: str,
+    discharge_col: str,
+) -> pd.DataFrame:
     """
     Merge new data into existing data, updating values where they differ.
-    
+
     This is used in maintenance mode to update/correct historical values from
     the database while preserving data that hasn't changed.
-    
+
     Args:
         existing_data: The existing cached data.
         new_data: New data from the database.
         code_col: Name of the site code column.
         date_col: Name of the date column.
         discharge_col: Name of the discharge column.
-        
+
     Returns:
         pd.DataFrame: Merged data with updates applied.
     """
@@ -2366,7 +2630,9 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
     new_sites = set(new_data[code_col].unique())
     sites_in_both = existing_sites & new_sites
     sites_only_in_new = new_sites - existing_sites
-    logger.debug(f"[MERGE] Sites in existing: {len(existing_sites)}, in new: {len(new_sites)}, in both: {len(sites_in_both)}, only in new: {len(sites_only_in_new)}")
+    logger.debug(
+        f"[MERGE] Sites in existing: {len(existing_sites)}, in new: {len(new_sites)}, in both: {len(sites_in_both)}, only in new: {len(sites_only_in_new)}"
+    )
 
     # Count overlapping keys (potential updates)
     overlapping_keys = result_indexed.index.intersection(new_indexed.index)
@@ -2388,17 +2654,16 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
     # Reset index and return
     result = result_indexed.reset_index()
 
-    logger.info(f"[MERGE] Complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total")
+    logger.info(
+        f"[MERGE] Complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total"
+    )
 
     return result
 
 
 def _detect_gaps_in_data(
-    data: pd.DataFrame,
-    code_col: str,
-    date_col: str,
-    max_gap_age_days: int = 730
-) -> List[Tuple[str, pd.Timestamp, pd.Timestamp]]:
+    data: pd.DataFrame, code_col: str, date_col: str, max_gap_age_days: int = 730
+) -> list[tuple[str, pd.Timestamp, pd.Timestamp]]:
     """
     Detect gaps (missing dates) in the data for each site.
 
@@ -2427,7 +2692,9 @@ def _detect_gaps_in_data(
 
     # Debug: log date types to verify consistency
     sample_date = data[date_col].iloc[0] if len(data) > 0 else None
-    logger.debug(f"[GAPS] Date column type after normalize: {type(sample_date)}, dtype: {data[date_col].dtype}")
+    logger.debug(
+        f"[GAPS] Date column type after normalize: {type(sample_date)}, dtype: {data[date_col].dtype}"
+    )
 
     # Calculate the cutoff date for gap detection
     cutoff_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=max_gap_age_days)
@@ -2453,7 +2720,7 @@ def _detect_gaps_in_data(
             continue
 
         # Create a complete date range
-        all_dates = pd.date_range(start=effective_min_date, end=max_date, freq='D')
+        all_dates = pd.date_range(start=effective_min_date, end=max_date, freq="D")
 
         # Find missing dates
         existing_dates = set(site_dates)
@@ -2462,8 +2729,12 @@ def _detect_gaps_in_data(
         if site_code == data[code_col].unique()[0]:
             sample_existing = next(iter(existing_dates)) if existing_dates else None
             sample_all = all_dates[0] if len(all_dates) > 0 else None
-            logger.debug(f"[GAPS] Type check - existing_dates sample: {type(sample_existing)}, all_dates sample: {type(sample_all)}")
-            logger.debug(f"[GAPS] Site {site_code}: {len(existing_dates)} existing dates, {len(all_dates)} expected dates")
+            logger.debug(
+                f"[GAPS] Type check - existing_dates sample: {type(sample_existing)}, all_dates sample: {type(sample_all)}"
+            )
+            logger.debug(
+                f"[GAPS] Site {site_code}: {len(existing_dates)} existing dates, {len(all_dates)} expected dates"
+            )
 
         missing_dates = [d for d in all_dates if d not in existing_dates]
 
@@ -2476,7 +2747,7 @@ def _detect_gaps_in_data(
         gap_end = missing_dates[0]
 
         for i in range(1, len(missing_dates)):
-            if (missing_dates[i] - missing_dates[i-1]).days == 1:
+            if (missing_dates[i] - missing_dates[i - 1]).days == 1:
                 # Consecutive missing date, extend the gap
                 gap_end = missing_dates[i]
             else:
@@ -2492,7 +2763,9 @@ def _detect_gaps_in_data(
     if gaps:
         total_gap_days = sum((g[2] - g[1]).days + 1 for g in gaps)
         sites_with_gaps = len(set(g[0] for g in gaps))
-        logger.info(f"[GAPS] Detected {len(gaps)} gaps ({total_gap_days} total days) across {sites_with_gaps} sites")
+        logger.info(
+            f"[GAPS] Detected {len(gaps)} gaps ({total_gap_days} total days) across {sites_with_gaps} sites"
+        )
 
         # Log details for debugging
         for site_code, start, end in gaps[:10]:  # Only log first 10
@@ -2507,9 +2780,8 @@ def _detect_gaps_in_data(
 
 
 def _group_gaps_for_api(
-    gaps: List[Tuple[str, pd.Timestamp, pd.Timestamp]],
-    max_batch_size: int = 30
-) -> List[Tuple[pd.Timestamp, pd.Timestamp, List[str]]]:
+    gaps: list[tuple[str, pd.Timestamp, pd.Timestamp]], max_batch_size: int = 30
+) -> list[tuple[pd.Timestamp, pd.Timestamp, list[str]]]:
     """
     Group gaps into efficient API request batches.
 
@@ -2564,12 +2836,12 @@ def _group_gaps_for_api(
 
 def _fill_gaps_from_api(
     ieh_hf_sdk,
-    gaps: List[Tuple[str, pd.Timestamp, pd.Timestamp]],
+    gaps: list[tuple[str, pd.Timestamp, pd.Timestamp]],
     target_timezone,
     date_col: str,
     discharge_col: str,
     code_col: str,
-    manual_site_codes: List[str] = None
+    manual_site_codes: list[str] = None,
 ) -> pd.DataFrame:
     """
     Request data from the API for detected gaps.
@@ -2596,7 +2868,9 @@ def _fill_gaps_from_api(
         original_count = len(gaps)
         gaps = [(site, start, end) for site, start, end in gaps if str(site) in manual_set]
         if len(gaps) < original_count:
-            logger.debug(f"[GAPS] Filtered gaps: {original_count} -> {len(gaps)} (manual sites only)")
+            logger.debug(
+                f"[GAPS] Filtered gaps: {original_count} -> {len(gaps)} (manual sites only)"
+            )
         if not gaps:
             logger.info("[GAPS] No gaps remaining after filtering for manual sites")
             return pd.DataFrame()
@@ -2616,7 +2890,9 @@ def _fill_gaps_from_api(
         end_datetime = pd.Timestamp(batch_end).replace(hour=23, minute=59)
         end_datetime = end_datetime.tz_localize(target_timezone)
 
-        logger.debug(f"[GAPS] Fetching gap data: {batch_start.date()} to {batch_end.date()} for {len(batch_sites)} sites")
+        logger.debug(
+            f"[GAPS] Fetching gap data: {batch_start.date()} to {batch_end.date()} for {len(batch_sites)} sites"
+        )
 
         try:
             batch_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
@@ -2627,7 +2903,7 @@ def _fill_gaps_from_api(
                 target_timezone=target_timezone,
                 date_col=date_col,
                 discharge_col=discharge_col,
-                code_col=code_col
+                code_col=code_col,
             )
 
             if not batch_data.empty:
@@ -2635,7 +2911,9 @@ def _fill_gaps_from_api(
                 logger.debug(f"[GAPS] Retrieved {len(batch_data)} records for gap period")
             else:
                 # Empty response is okay - this might be a legitimate gap
-                logger.debug(f"[GAPS] No data in API for gap period {batch_start.date()} to {batch_end.date()}")
+                logger.debug(
+                    f"[GAPS] No data in API for gap period {batch_start.date()} to {batch_end.date()}"
+                )
 
         except Exception as e:
             # Log but don't fail - we'll just have the gap remain
@@ -2645,7 +2923,7 @@ def _fill_gaps_from_api(
         result = pd.concat(all_gap_data, ignore_index=True)
         # Deduplicate: Multiple batches may overlap and return the same (code, date) pair
         before_dedup = len(result)
-        result = result.drop_duplicates(subset=[code_col, date_col], keep='first')
+        result = result.drop_duplicates(subset=[code_col, date_col], keep="first")
         if len(result) < before_dedup:
             logger.debug(f"[GAPS] Removed {before_dedup - len(result)} duplicate records")
         logger.info(f"[GAPS] Gap filling complete: retrieved {len(result)} records")
@@ -2655,40 +2933,44 @@ def _fill_gaps_from_api(
         return pd.DataFrame()
 
 
-def _read_runoff_data_by_organization(organization, date_col, discharge_col, name_col, code_col, code_list):
+def _read_runoff_data_by_organization(
+    organization, date_col, discharge_col, name_col, code_col, code_list
+):
     """Reads runoff data based on the organization."""
-    if organization == 'kghm':
+    if organization == "kghm":
         read_data = read_all_runoff_data_from_excel(
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
             code_col=code_col,
-            code_list=code_list)
-    elif organization == 'tjhm':
+            code_list=code_list,
+        )
+    elif organization == "tjhm":
         read_data = read_all_runoff_data_from_csv(
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
             code_col=code_col,
-            code_list=code_list)
-    elif organization == 'demo': 
+            code_list=code_list,
+        )
+    elif organization == "demo":
         read_data = read_all_runoff_data_from_excel(
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
             code_col=code_col,
-            code_list=code_list
+            code_list=code_list,
         )
     else:
-        raise ValueError(f"Organization '{organization}' not recognized. "
-                         f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+        raise ValueError(
+            f"Organization '{organization}' not recognized. "
+            f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+        )
     return read_data
 
 
 def get_latest_date_per_site(
-    df: pd.DataFrame,
-    date_col: str,
-    code_col: str
+    df: pd.DataFrame, date_col: str, code_col: str
 ) -> dict[str, pd.Timestamp]:
     """
     Extract the latest date per site from a DataFrame.
@@ -2715,7 +2997,7 @@ def calculate_fetch_ranges(
     code_list: list,
     coverage_per_site: dict[str, pd.Timestamp],
     default_lookback_days: int,
-    end_date: pd.Timestamp = None
+    end_date: pd.Timestamp = None,
 ) -> list[tuple[pd.Timestamp, list[str]]]:
     """
     Group sites by their required fetch start date for efficient API calls.
@@ -2753,16 +3035,16 @@ def calculate_fetch_ranges(
     # Group by month (YYYY-MM) to batch similar date ranges
     groups = {}
     for site, start_date in fetch_start_per_site.items():
-        month_key = start_date.replace(day=1).strftime('%Y-%m')
+        month_key = start_date.replace(day=1).strftime("%Y-%m")
         if month_key not in groups:
-            groups[month_key] = {'start_date': start_date, 'sites': []}
-        groups[month_key]['sites'].append(site)
+            groups[month_key] = {"start_date": start_date, "sites": []}
+        groups[month_key]["sites"].append(site)
         # Use the earliest start date in the group
-        if start_date < groups[month_key]['start_date']:
-            groups[month_key]['start_date'] = start_date
+        if start_date < groups[month_key]["start_date"]:
+            groups[month_key]["start_date"] = start_date
 
     # Convert to list of tuples, sorted by start date (oldest first)
-    result = [(g['start_date'], g['sites']) for g in groups.values()]
+    result = [(g["start_date"], g["sites"]) for g in groups.values()]
     result.sort(key=lambda x: x[0])
 
     return result
@@ -2771,7 +3053,7 @@ def calculate_fetch_ranges(
 def print_smart_lookback_summary(
     code_list: list,
     coverage_per_site: dict[str, pd.Timestamp],
-    fetch_groups: list[tuple[pd.Timestamp, list[str]]]
+    fetch_groups: list[tuple[pd.Timestamp, list[str]]],
 ):
     """Log a summary of the smart lookback analysis."""
     now = pd.Timestamp.now().normalize()
@@ -2794,10 +3076,12 @@ def print_smart_lookback_summary(
     logger.debug("[DATA] " + "-" * 70)
     for start_date, sites in fetch_groups:
         days = (now - start_date).days
-        logger.debug(f"[DATA]   From {start_date.date()} ({days:>4} days to fetch): {len(sites):>3} sites")
+        logger.debug(
+            f"[DATA]   From {start_date.date()} ({days:>4} days to fetch): {len(sites):>3} sites"
+        )
 
     if older:
-        logger.debug(f"[DATA] Sites with oldest coverage (top 5):")
+        logger.debug("[DATA] Sites with oldest coverage (top 5):")
         oldest = sorted([(s, coverage_per_site[s]) for s in older], key=lambda x: x[1])[:5]
         for site, date in oldest:
             logger.debug(f"[DATA]   {site}: last data {date.date()} ({(now - date).days} days ago)")
@@ -2982,12 +3266,19 @@ def print_smart_lookback_summary(
 
         return read_data'''
 
-def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
-                              discharge_col='discharge',
-                              code_col='code', 
-                              site_list=None, code_list=None, id_list=None, 
-                              target_timezone=None,
-                              mode: str = 'operational'):
+
+def get_runoff_data_for_sites_HF(
+    ieh_hf_sdk=None,
+    date_col="date",
+    name_col="name",
+    discharge_col="discharge",
+    code_col="code",
+    site_list=None,
+    code_list=None,
+    id_list=None,
+    target_timezone=None,
+    mode: str = "operational",
+):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
 
@@ -3015,21 +3306,23 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         mode (str, optional): Operating mode - 'operational' or 'maintenance'. Default is 'operational'.
     """
     from .config import get_maintenance_lookback_days
-    
+
     # Test if id_list is None or empty. Return error if it is.
     if id_list is None or len(id_list) == 0:
-        raise ValueError("id_list is None or empty. Please provide a list of site IDs to read data for.")
+        raise ValueError(
+            "id_list is None or empty. Please provide a list of site IDs to read data for."
+        )
 
     # Validate mode parameter
     mode = mode.lower()
-    if mode not in ('operational', 'maintenance'):
+    if mode not in ("operational", "maintenance"):
         logger.warning(f"Unknown mode '{mode}', defaulting to 'operational'")
-        mode = 'operational'
-    
+        mode = "operational"
+
     logger.info(f"Running in {mode.upper()} mode")
-    
+
     # Determine whether to reprocess input files based on mode
-    if mode == 'maintenance':
+    if mode == "maintenance":
         # In maintenance mode, ALWAYS reread input files to ensure data completeness.
         # This is necessary to fill gaps that may exist in the cached output file
         # (e.g., if rows were deleted or data was corrupted).
@@ -3041,7 +3334,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             logger.info("Note: Input files have also changed since last processing.")
 
         # Get organization from environment variable
-        organization = os.getenv('ieasyhydroforecast_organization')
+        organization = os.getenv("ieasyhydroforecast_organization")
 
         read_data = _read_runoff_data_by_organization(
             organization=organization,
@@ -3049,7 +3342,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             discharge_col=discharge_col,
             name_col=name_col,
             code_col=code_col,
-            code_list=code_list
+            code_list=code_list,
         )
     else:
         # In operational mode, always use cached data (skip file checks)
@@ -3063,18 +3356,21 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
     # Initialize a flag for virtual stations
     virtual_stations_present = False
     # Get virtual station codes from json (if file exists)
-    if os.getenv('ieasyforecast_virtual_stations') is not None:
+    if os.getenv("ieasyforecast_virtual_stations") is not None:
         virtual_stations_config_file_path = os.path.join(
-            os.getenv('ieasyforecast_configuration_path'),
-            os.getenv('ieasyforecast_virtual_stations'))
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_virtual_stations"),
+        )
         if os.path.exists(virtual_stations_config_file_path):
-            with open(virtual_stations_config_file_path, 'r') as f:
-                virtual_stations = json.load(f)['virtualStations'].keys()
+            with open(virtual_stations_config_file_path) as f:
+                virtual_stations = json.load(f)["virtualStations"].keys()
             virtual_stations_present = True
             read_data = add_hydroposts(read_data, virtual_stations)
             read_data = standardize_date_column(read_data, date_col=date_col)
         else:
-            logger.warning(f"Virtual stations configuration file {virtual_stations_config_file_path} not found.")
+            logger.warning(
+                f"Virtual stations configuration file {virtual_stations_config_file_path} not found."
+            )
 
     if ieh_hf_sdk is None:
         # We do not have access to an iEasyHydro database
@@ -3086,12 +3382,12 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         if target_timezone is None:
             target_timezone = pytz.timezone(time.tzname[0])
             logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
-        
+
         # Set end datetime to current time
         end_datetime = pd.Timestamp.now().tz_localize(target_timezone)
-        
+
         # Determine the date range based on mode
-        if mode == 'operational':
+        if mode == "operational":
             # Operational mode: fetch only yesterday's data for all sites
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
             logger.info(f"Operational mode: fetching data from {start_date.date()} onwards.")
@@ -3110,7 +3406,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                 target_timezone=target_timezone,
                 date_col=date_col,
                 discharge_col=discharge_col,
-                code_col=code_col
+                code_col=code_col,
             )
         else:
             # Maintenance mode: use smart lookback per site
@@ -3124,7 +3420,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                 code_list=code_list,
                 coverage_per_site=coverage_per_site,
                 default_lookback_days=lookback_days,
-                end_date=pd.Timestamp.now().normalize()
+                end_date=pd.Timestamp.now().normalize(),
             )
 
             # Print summary
@@ -3146,7 +3442,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                     target_timezone=target_timezone,
                     date_col=date_col,
                     discharge_col=discharge_col,
-                    code_col=code_col
+                    code_col=code_col,
                 )
                 if not batch_data.empty:
                     all_batch_data.append(batch_data)
@@ -3156,15 +3452,19 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                 db_average_data = pd.concat(all_batch_data, ignore_index=True)
             else:
                 db_average_data = pd.DataFrame()
-        
+
         # We are dealing with daily data, so we convert date_col to date
         if not db_average_data.empty:
             db_average_data = standardize_date_column(db_average_data, date_col=date_col)
-            logger.info(f"Retrieved {len(db_average_data)} new records from {db_average_data[date_col].min()} to {db_average_data[date_col].max()}")
-            
-            if mode == 'maintenance':
+            logger.info(
+                f"Retrieved {len(db_average_data)} new records from {db_average_data[date_col].min()} to {db_average_data[date_col].max()}"
+            )
+
+            if mode == "maintenance":
                 # In maintenance mode, update existing values if they differ
-                read_data = _merge_with_update(read_data, db_average_data, code_col, date_col, discharge_col)
+                read_data = _merge_with_update(
+                    read_data, db_average_data, code_col, date_col, discharge_col
+                )
             else:
                 # In operational mode, simply append new data
                 read_data = pd.concat([read_data, db_average_data], ignore_index=True)
@@ -3172,10 +3472,16 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         # PREPQ-005 fix: In maintenance mode, detect and fill gaps in the data
         # This handles the case where cached/Excel data has gaps that the regular
         # smart-lookback fetch doesn't cover (gaps in historical periods)
-        if mode == 'maintenance' and not read_data.empty:
-            logger.info(f"[GAPS] Starting gap detection for {len(read_data)} records across {read_data[code_col].nunique()} sites")
-            logger.info(f"[GAPS] Date range in read_data: {read_data[date_col].min()} to {read_data[date_col].max()}")
-            logger.info(f"[GAPS] code_list has {len(code_list) if code_list else 0} manual sites: {code_list[:5] if code_list else 'None'}...")
+        if mode == "maintenance" and not read_data.empty:
+            logger.info(
+                f"[GAPS] Starting gap detection for {len(read_data)} records across {read_data[code_col].nunique()} sites"
+            )
+            logger.info(
+                f"[GAPS] Date range in read_data: {read_data[date_col].min()} to {read_data[date_col].max()}"
+            )
+            logger.info(
+                f"[GAPS] code_list has {len(code_list) if code_list else 0} manual sites: {code_list[:5] if code_list else 'None'}..."
+            )
 
             gaps = _detect_gaps_in_data(read_data, code_col, date_col)
 
@@ -3188,7 +3494,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                     date_col=date_col,
                     discharge_col=discharge_col,
                     code_col=code_col,
-                    manual_site_codes=code_list  # Only fill gaps for manual sites
+                    manual_site_codes=code_list,  # Only fill gaps for manual sites
                 )
                 logger.info(f"[GAPS] API returned {len(gap_data)} records for gap filling")
                 if not gap_data.empty:
@@ -3197,19 +3503,31 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                     # Diagnostic: Check how many API records are for actual gap dates
                     gap_dates_set = set()
                     for site_code, gap_start, gap_end in gaps:
-                        for d in pd.date_range(gap_start, gap_end, freq='D'):
+                        for d in pd.date_range(gap_start, gap_end, freq="D"):
                             gap_dates_set.add((str(site_code), d.normalize()))
 
-                    gap_data_dates = set(zip(gap_data[code_col].astype(str), pd.to_datetime(gap_data[date_col]).dt.normalize()))
+                    gap_data_dates = set(
+                        zip(
+                            gap_data[code_col].astype(str),
+                            pd.to_datetime(gap_data[date_col]).dt.normalize(),
+                            strict=False,
+                        )
+                    )
                     records_for_gaps = gap_data_dates & gap_dates_set
-                    logger.info(f"[GAPS] Of {len(gap_data)} API records, {len(records_for_gaps)} are for actual gap dates (out of {len(gap_dates_set)} gap dates)")
+                    logger.info(
+                        f"[GAPS] Of {len(gap_data)} API records, {len(records_for_gaps)} are for actual gap dates (out of {len(gap_dates_set)} gap dates)"
+                    )
 
                     before_merge = len(read_data)
                     # Merge the gap data into the existing data
-                    read_data = _merge_with_update(read_data, gap_data, code_col, date_col, discharge_col)
+                    read_data = _merge_with_update(
+                        read_data, gap_data, code_col, date_col, discharge_col
+                    )
                     logger.info(f"[GAPS] After merge: {before_merge} -> {len(read_data)} records")
                 else:
-                    logger.warning("[GAPS] No gap data returned from API - gaps will remain unfilled")
+                    logger.warning(
+                        "[GAPS] No gap data returned from API - gaps will remain unfilled"
+                    )
             else:
                 logger.info("[GAPS] No gaps detected in the data")
 
@@ -3220,17 +3538,19 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             target_timezone=target_timezone,
             date_col=date_col,
             discharge_col=discharge_col,
-            code_col=code_col
+            code_col=code_col,
         )
-        
+
         if not db_morning_data.empty:
             db_morning_data = standardize_date_column(db_morning_data, date_col=date_col)
-            logger.info(f"Retrieved {len(db_morning_data)} morning records for {db_morning_data[date_col].min()}")
+            logger.info(
+                f"Retrieved {len(db_morning_data)} morning records for {db_morning_data[date_col].min()}"
+            )
             read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
 
         # Drop rows where 'code' is "NA"
         # Use .copy() to avoid SettingWithCopyWarning when modifying columns
-        read_data = read_data[read_data[code_col] != 'NA'].copy()
+        read_data = read_data[read_data[code_col] != "NA"].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
@@ -3244,9 +3564,9 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
 
         # Make sure the date column is in datetime format
         read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
-        
+
         # Remove duplicate data (in case DB had overlapping data)
-        read_data = read_data.drop_duplicates(subset=[code_col, date_col], keep='last')
+        read_data = read_data.drop_duplicates(subset=[code_col, date_col], keep="last")
 
         # Sort data by code and date
         read_data = read_data.sort_values([code_col, date_col])
@@ -3262,11 +3582,10 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
 
         return read_data
 
+
 def is_leap_year(year):
-    if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
-        return True
-    else:
-        return False
+    return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+
 
 '''def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
                                          date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
@@ -3351,30 +3670,32 @@ def is_leap_year(year):
 
     return hydrograph_data'''
 
-def inspect_site_data(hydrograph_data, site_code='15189'):
+
+def inspect_site_data(hydrograph_data, site_code="15189"):
     """Show data for specific site at beginning, around Feb 28, and end of year."""
     # Filter for the specific site
-    site_data = hydrograph_data[hydrograph_data['code'] == site_code].sort_values('date')
+    site_data = hydrograph_data[hydrograph_data["code"] == site_code].sort_values("date")
 
     # First 5 days of the year
     logger.debug(f"[DATA] FIRST 5 DAYS:\n{site_data.head(5)}")
 
     # Feb 28 and surrounding days (10 days before and after)
     # Create a mask for February 28th
-    feb_28_mask = (site_data['date'].dt.month == 2) & (site_data['date'].dt.day == 28)
+    feb_28_mask = (site_data["date"].dt.month == 2) & (site_data["date"].dt.day == 28)
 
     # Check if February 28th exists in the data
     if feb_28_mask.any():
         # Get the date of February 28th
-        feb_28_date = site_data[feb_28_mask]['date'].iloc[0]
+        feb_28_date = site_data[feb_28_mask]["date"].iloc[0]
 
         # Find the dates 10 days before and 10 days after
         start_date = feb_28_date - pd.Timedelta(days=10)
         end_date = feb_28_date + pd.Timedelta(days=10)
 
         # Filter the data for the date range
-        date_range_data = site_data[(site_data['date'] >= start_date) &
-                                    (site_data['date'] <= end_date)]
+        date_range_data = site_data[
+            (site_data["date"] >= start_date) & (site_data["date"] <= end_date)
+        ]
 
         logger.debug(f"[DATA] DAYS AROUND FEB 28:\n{date_range_data}")
     else:
@@ -3383,8 +3704,14 @@ def inspect_site_data(hydrograph_data, site_code='15189'):
     # Last 5 days of the year
     logger.debug(f"[DATA] LAST 5 DAYS:\n{site_data.tail(5)}")
 
-def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
-                                        date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
+
+def from_daily_time_series_to_hydrograph(
+    data_df: pd.DataFrame,
+    date_col="date",
+    discharge_col="discharge",
+    code_col="code",
+    name_col="name",
+):
     """
     Calculates daily runoff statistics and writes it to hydrograph format.
     Properly handles leap years by creating a normalized day-of-year.
@@ -3396,121 +3723,137 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     data_df[code_col] = data_df[code_col].astype(str)
 
     # Ensure the discharge column is numeric
-    data_df[discharge_col] = pd.to_numeric(data_df[discharge_col], errors='coerce')
+    data_df[discharge_col] = pd.to_numeric(data_df[discharge_col], errors="coerce")
 
     # Create a copy of the dataframe to avoid modifying the original
     working_df = data_df.copy()
-    
+
     # Create a normalized day-of-year column that works for both leap and non-leap years
     # First, add the regular day of year
-    working_df['day_of_year'] = working_df[date_col].dt.dayofyear
-    
+    working_df["day_of_year"] = working_df[date_col].dt.dayofyear
+
     # Create a normalized day that maps Feb 29 to Feb 28 in leap years
     # and adjusts all subsequent days to maintain 365 days
-    working_df['normalized_day'] = working_df['day_of_year']
-    
+    working_df["normalized_day"] = working_df["day_of_year"]
+
     # For leap years, adjust days after Feb 29 (day 60)
     leap_year_mask = working_df[date_col].dt.is_leap_year
-    after_feb29_mask = (leap_year_mask) & (working_df['day_of_year'] > 60)
-    
+    after_feb29_mask = (leap_year_mask) & (working_df["day_of_year"] > 60)
+
     # Reduce normalized_day by 1 for days after Feb 29 in leap years
-    working_df.loc[after_feb29_mask, 'normalized_day'] -= 1
-    
+    working_df.loc[after_feb29_mask, "normalized_day"] -= 1
+
     # Map Feb 29 to the same normalized_day as Feb 28 in leap years
     feb29_mask = (working_df[date_col].dt.month == 2) & (working_df[date_col].dt.day == 29)
-    working_df.loc[feb29_mask, 'normalized_day'] = 59  # Feb 28's normalized day number
-    
+    working_df.loc[feb29_mask, "normalized_day"] = 59  # Feb 28's normalized day number
+
     # Get the current year
     current_year = dt.date.today().year
-    
+
     # Calculate statistics based on the normalized day column
-    hydrograph_data = working_df.groupby([code_col, 'normalized_day'])[discharge_col].describe(
-        percentiles=[0.05, 0.25, 0.5, 0.75, 0.95])
-    
+    hydrograph_data = working_df.groupby([code_col, "normalized_day"])[discharge_col].describe(
+        percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]
+    )
+
     # Get current year's data
     current_year_data = working_df[working_df[date_col].dt.year == current_year]
     current_year_data = current_year_data.drop(columns=[date_col, name_col])
     current_year_data = current_year_data.rename(columns={discharge_col: f"{current_year}"})
-    
+
     # Get last year's data
     last_year = current_year - 1
     last_year_data = working_df[working_df[date_col].dt.year == last_year]
     last_year_data = last_year_data.drop(columns=[name_col])
     last_year_data = last_year_data.rename(columns={discharge_col: f"{last_year}"})
-    
+
     # Add current and last year's discharge to the hydrograph data
     hydrograph_data = hydrograph_data.merge(
-        current_year_data.groupby([code_col, 'normalized_day'])[str(current_year)].mean().reset_index(),
-        on=[code_col, 'normalized_day'], how='left', suffixes=('', '_current'))
-    
+        current_year_data.groupby([code_col, "normalized_day"])[str(current_year)]
+        .mean()
+        .reset_index(),
+        on=[code_col, "normalized_day"],
+        how="left",
+        suffixes=("", "_current"),
+    )
+
     hydrograph_data = hydrograph_data.merge(
-        last_year_data.groupby([code_col, 'normalized_day'])[str(last_year)].mean().reset_index(),
-        on=[code_col, 'normalized_day'], how='left', suffixes=('', '_last_year'))
-    
+        last_year_data.groupby([code_col, "normalized_day"])[str(last_year)].mean().reset_index(),
+        on=[code_col, "normalized_day"],
+        how="left",
+        suffixes=("", "_last_year"),
+    )
+
     # Create date based on normalized day and current year
     # But ensure we're creating valid dates (365 days for non-leap years, 366 for leap years)
     if is_leap_year(current_year):
         # Create regular mapping for days 1-59 (Jan 1 to Feb 28)
-        days_before_leap = pd.DataFrame({
-            'normalized_day': range(1, 60),  # Days 1-59
-            'actual_day': range(1, 60)       # Days 1-59
-        })
-    
+        days_before_leap = pd.DataFrame(
+            {
+                "normalized_day": range(1, 60),  # Days 1-59
+                "actual_day": range(1, 60),  # Days 1-59
+            }
+        )
+
         # Create Feb 29 entry (maps from normalized day 59)
-        leap_day = pd.DataFrame({
-            'normalized_day': [59],  # Feb 28's normalized day
-            'actual_day': [60]       # Feb 29's actual day
-        })
-    
+        leap_day = pd.DataFrame(
+            {
+                "normalized_day": [59],  # Feb 28's normalized day
+                "actual_day": [60],  # Feb 29's actual day
+            }
+        )
+
         # Create mapping for days after Feb 29 with shifted actual_day
-        days_after_leap = pd.DataFrame({
-            'normalized_day': range(60, 366),  # Days 60-365
-            'actual_day': range(61, 367)       # Days 61-366 (shifted by 1)
-        })
-        
+        days_after_leap = pd.DataFrame(
+            {
+                "normalized_day": range(60, 366),  # Days 60-365
+                "actual_day": range(61, 367),  # Days 61-366 (shifted by 1)
+            }
+        )
+
         # Add extra entry for normalized_day 366 if it exists
-        if 366 in hydrograph_data['normalized_day'].values:
-            extra_day = pd.DataFrame({
-                'normalized_day': [366],
-                'actual_day': [367]
-            })
+        if 366 in hydrograph_data["normalized_day"].values:
+            extra_day = pd.DataFrame({"normalized_day": [366], "actual_day": [367]})
             day_mapping = pd.concat([days_before_leap, leap_day, days_after_leap, extra_day])
         else:
             day_mapping = pd.concat([days_before_leap, leap_day, days_after_leap])
     else:
         # For non-leap years, normalized_day maps directly to actual_day
-        max_normalized_day = int(hydrograph_data['normalized_day'].max())
-        day_mapping = pd.DataFrame({
-            'normalized_day': range(1, max_normalized_day + 1),
-            'actual_day': range(1, max_normalized_day + 1)
-        })
+        max_normalized_day = int(hydrograph_data["normalized_day"].max())
+        day_mapping = pd.DataFrame(
+            {
+                "normalized_day": range(1, max_normalized_day + 1),
+                "actual_day": range(1, max_normalized_day + 1),
+            }
+        )
 
     # Print all_days for debugging
     logger.debug(f"day_mapping:\n{day_mapping}")
-    
+
     # Merge the hydrograph data with the day mapping
     hydrograph_data = hydrograph_data.reset_index()
-    hydrograph_data = hydrograph_data.merge(day_mapping, on='normalized_day', how='left')
+    hydrograph_data = hydrograph_data.merge(day_mapping, on="normalized_day", how="left")
 
     logger.debug(f"hydrograph_data after merge:\n{hydrograph_data.head(5)}")
     logger.debug(hydrograph_data.head(70).tail(20))
     logger.debug(hydrograph_data.tail(5))
-    
+
     # Create date based on the actual day and current year
-    hydrograph_data['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(hydrograph_data['actual_day'] - 1, unit='D')
-    
+    hydrograph_data["date"] = pd.Timestamp(str(current_year)) + pd.to_timedelta(
+        hydrograph_data["actual_day"] - 1, unit="D"
+    )
+
     # Set day_of_year to actual_day
-    hydrograph_data['day_of_year'] = hydrograph_data['actual_day'].astype(int)
-    
+    hydrograph_data["day_of_year"] = hydrograph_data["actual_day"].astype(int)
+
     # Drop the temporary columns
-    hydrograph_data = hydrograph_data.drop(columns=['normalized_day', 'actual_day'])
-    
+    hydrograph_data = hydrograph_data.drop(columns=["normalized_day", "actual_day"])
+
     return hydrograph_data
 
-def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
-                                       code_col='code',
-                                       site_list=None,
-                                       site_code_list=None):
+
+def add_dangerous_discharge_from_sites(
+    hydrograph_data: pd.DataFrame, code_col="code", site_list=None, site_code_list=None
+):
     """
     For each site, add the dangerous discharge value to the hydrograph data.
     """
@@ -3519,7 +3862,7 @@ def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
         raise ValueError("hydrograph_data, site_list and site_code_list must be provided.")
 
     # Initialize a column in hydrograph data for dangerous discharge
-    hydrograph_data['dangerous_discharge'] = np.nan
+    hydrograph_data["dangerous_discharge"] = np.nan
 
     # For each unique code, get the dangerous discharge value from the iEasyHydro database
     for site in site_list:
@@ -3528,7 +3871,9 @@ def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
             dangerous_discharge = site.qdanger
 
             # Add the dangerous discharge value to the hydrograph_data
-            hydrograph_data.loc[hydrograph_data[code_col] == site.code, 'dangerous_discharge'] = dangerous_discharge
+            hydrograph_data.loc[hydrograph_data[code_col] == site.code, "dangerous_discharge"] = (
+                dangerous_discharge
+            )
         except Exception as e:
             logger.warning(f"Error while adding dangerous discharge for site {site.code}.")
             logger.warning(f"Error: {e}")
@@ -3536,7 +3881,8 @@ def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
 
     return hydrograph_data
 
-def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code'):
+
+def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col="code"):
     """
     For each unique code in hydrograph_data, add the dangerous discharge value.
 
@@ -3553,16 +3899,19 @@ def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code')
     unique_codes = hydrograph_data[code_col].unique()
 
     # Initialize a column in hydrograph data for dangerous discharge
-    hydrograph_data['dangerous_discharge'] = np.nan
+    hydrograph_data["dangerous_discharge"] = np.nan
 
     # For each unique code, get the dangerous discharge value from the iEasyHydro database
     for code in unique_codes:
         try:
-            dangerous_discharge = sdk.get_data_values_for_site(
-                    code, 'dangerous_discharge')['data_values'][0]['data_value']
+            dangerous_discharge = sdk.get_data_values_for_site(code, "dangerous_discharge")[
+                "data_values"
+            ][0]["data_value"]
 
             # Add the dangerous discharge value to the hydrograph_data
-            hydrograph_data.loc[hydrograph_data[code_col] == code, 'dangerous_discharge'] = dangerous_discharge
+            hydrograph_data.loc[hydrograph_data[code_col] == code, "dangerous_discharge"] = (
+                dangerous_discharge
+            )
         except Exception:
             continue
 
@@ -3572,6 +3921,7 @@ def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code')
 # =============================================================================
 # API Write Functions
 # =============================================================================
+
 
 def _write_runoff_to_api(
     data: pd.DataFrame,
@@ -3593,27 +3943,19 @@ def _write_runoff_to_api(
         True if successful, False otherwise
     """
     if not SAPPHIRE_API_AVAILABLE:
-        logger.debug(
-            "sapphire-api-client not installed, skipping runoff API write"
-        )
+        logger.debug("sapphire-api-client not installed, skipping runoff API write")
         return False
 
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
-        )
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return False
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
     if not client.readiness_check():
-        logger.warning(
-            f"SAPPHIRE API at {api_url} is not ready, skipping runoff write"
-        )
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping runoff write")
         return False
 
     if data.empty:
@@ -3621,7 +3963,7 @@ def _write_runoff_to_api(
         return False
 
     data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
+    data["date"] = pd.to_datetime(data["date"])
 
     # Filter data based on sync mode (parameter > env var > default)
     if mode is not None:
@@ -3632,53 +3974,45 @@ def _write_runoff_to_api(
 
     today = pd.Timestamp.today().normalize()
     if sync_mode == "operational":
-        data_to_write = data[data['date'] == today]
+        data_to_write = data[data["date"] == today]
     elif sync_mode == "maintenance":
         cutoff = today - pd.Timedelta(days=30)
-        data_to_write = data[data['date'] >= cutoff]
+        data_to_write = data[data["date"] >= cutoff]
     elif sync_mode == "initial":
         data_to_write = data
     else:
-        logger.warning(
-            f"Unknown sync mode '{sync_mode}', defaulting to operational"
-        )
-        data_to_write = data[data['date'] == today]
+        logger.warning(f"Unknown sync mode '{sync_mode}', defaulting to operational")
+        data_to_write = data[data["date"] == today]
 
     if data_to_write.empty:
         logger.info("No runoff data to write after sync-mode filtering")
         return False
 
-    logger.info(
-        f"{sync_mode} mode: writing {len(data_to_write)} runoff records"
-    )
+    logger.info(f"{sync_mode} mode: writing {len(data_to_write)} runoff records")
 
     # Build records for the API
     records = []
     for _, row in data_to_write.iterrows():
-        date_obj = row['date']
+        date_obj = row["date"]
         if pd.isna(date_obj):
             continue
-        records.append({
-            "horizon_type": "day",
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "discharge": (
-                float(row['discharge'])
-                if pd.notna(row.get('discharge')) else None
-            ),
-            "horizon_value": date_obj.day,
-            "horizon_in_year": date_obj.dayofyear,
-        })
+        records.append(
+            {
+                "horizon_type": "day",
+                "code": str(row["code"]),
+                "date": date_obj.strftime("%Y-%m-%d"),
+                "discharge": (float(row["discharge"]) if pd.notna(row.get("discharge")) else None),
+                "horizon_value": date_obj.day,
+                "horizon_in_year": date_obj.dayofyear,
+            }
+        )
 
     if not records:
         logger.info("No runoff records to write to API")
         return False
 
     count = client.write_runoff(records)
-    logger.info(
-        f"Successfully wrote {count} runoff records to SAPPHIRE API "
-        f"({sync_mode} mode)"
-    )
+    logger.info(f"Successfully wrote {count} runoff records to SAPPHIRE API ({sync_mode} mode)")
     return True
 
 
@@ -3704,29 +4038,19 @@ def _write_hydrograph_to_api(
         True if successful, False otherwise
     """
     if not SAPPHIRE_API_AVAILABLE:
-        logger.debug(
-            "sapphire-api-client not installed, "
-            "skipping hydrograph API write"
-        )
+        logger.debug("sapphire-api-client not installed, skipping hydrograph API write")
         return False
 
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
-        )
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return False
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
     if not client.readiness_check():
-        logger.warning(
-            f"SAPPHIRE API at {api_url} is not ready, "
-            "skipping hydrograph write"
-        )
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping hydrograph write")
         return False
 
     if data.empty:
@@ -3734,7 +4058,7 @@ def _write_hydrograph_to_api(
         return False
 
     data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
+    data["date"] = pd.to_datetime(data["date"])
 
     # Filter data based on sync mode (parameter > env var > default)
     if mode is not None:
@@ -3745,30 +4069,29 @@ def _write_hydrograph_to_api(
 
     today = pd.Timestamp.today().normalize()
     if sync_mode == "operational":
-        data_to_write = data[data['date'] == today]
+        data_to_write = data[data["date"] == today]
     elif sync_mode == "maintenance":
         cutoff = today - pd.Timedelta(days=30)
-        data_to_write = data[data['date'] >= cutoff]
+        data_to_write = data[data["date"] >= cutoff]
     elif sync_mode == "initial":
         data_to_write = data
     else:
-        logger.warning(
-            f"Unknown sync mode '{sync_mode}', defaulting to operational"
-        )
-        data_to_write = data[data['date'] == today]
+        logger.warning(f"Unknown sync mode '{sync_mode}', defaulting to operational")
+        data_to_write = data[data["date"] == today]
 
     if data_to_write.empty:
         logger.info("No hydrograph data to write after sync-mode filtering")
         return False
 
-    logger.info(
-        f"{sync_mode} mode: writing {len(data_to_write)} hydrograph records"
-    )
+    logger.info(f"{sync_mode} mode: writing {len(data_to_write)} hydrograph records")
 
     # Map percentile columns to API field names
     pct_map = {
-        '5%': 'q05', '25%': 'q25', '50%': 'q50',
-        '75%': 'q75', '95%': 'q95',
+        "5%": "q05",
+        "25%": "q25",
+        "50%": "q50",
+        "75%": "q75",
+        "95%": "q95",
     }
 
     # Detect year columns for current/previous mapping
@@ -3779,62 +4102,52 @@ def _write_hydrograph_to_api(
 
     records = []
     for _, row in data_to_write.iterrows():
-        date_obj = row['date']
+        date_obj = row["date"]
         if pd.isna(date_obj):
             continue
 
         doy = (
-            int(row['day_of_year'])
-            if 'day_of_year' in row.index and pd.notna(row.get('day_of_year'))
+            int(row["day_of_year"])
+            if "day_of_year" in row.index and pd.notna(row.get("day_of_year"))
             else date_obj.dayofyear
         )
 
         record = {
             "horizon_type": "day",
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
+            "code": str(row["code"]),
+            "date": date_obj.strftime("%Y-%m-%d"),
             "day_of_year": doy,
             "horizon_value": date_obj.day,
             "horizon_in_year": doy,
         }
 
         # Count must be int (not float)
-        record['count'] = (
-            int(row['count'])
-            if 'count' in row.index and pd.notna(row.get('count'))
-            else None
+        record["count"] = (
+            int(row["count"]) if "count" in row.index and pd.notna(row.get("count")) else None
         )
 
         # Statistical columns (float)
-        for col in ('mean', 'std', 'min', 'max'):
-            record[col] = (
-                float(row[col])
-                if col in row.index and pd.notna(row.get(col))
-                else None
-            )
+        for col in ("mean", "std", "min", "max"):
+            record[col] = float(row[col]) if col in row.index and pd.notna(row.get(col)) else None
 
         # Percentile columns
         for src_col, api_col in pct_map.items():
             record[api_col] = (
-                float(row[src_col])
-                if src_col in row.index and pd.notna(row.get(src_col))
-                else None
+                float(row[src_col]) if src_col in row.index and pd.notna(row.get(src_col)) else None
             )
 
         # Norm (50th percentile)
-        record['norm'] = record.get('q50')
+        record["norm"] = record.get("q50")
 
         # Current and previous year
-        record['current'] = (
+        record["current"] = (
             float(row[current_year_col])
-            if current_year_col in row.index
-            and pd.notna(row.get(current_year_col))
+            if current_year_col in row.index and pd.notna(row.get(current_year_col))
             else None
         )
-        record['previous'] = (
+        record["previous"] = (
             float(row[previous_year_col])
-            if previous_year_col in row.index
-            and pd.notna(row.get(previous_year_col))
+            if previous_year_col in row.index and pd.notna(row.get(previous_year_col))
             else None
         )
 
@@ -3845,16 +4158,13 @@ def _write_hydrograph_to_api(
         return False
 
     count = client.write_hydrograph(records)
-    logger.info(
-        f"Successfully wrote {count} hydrograph records to SAPPHIRE API "
-        f"({sync_mode} mode)"
-    )
+    logger.info(f"Successfully wrote {count} hydrograph records to SAPPHIRE API ({sync_mode} mode)")
     return True
 
 
 def write_daily_time_series_data_to_csv(
     data: pd.DataFrame,
-    column_list=["code", "date", "discharge"],
+    column_list: list[str] | None = None,
     mode: str | None = None,
 ):
     """
@@ -3875,13 +4185,15 @@ def write_daily_time_series_data_to_csv(
     Raises:
     Exception: If the data cannot be written to the csv file.
     """
+    if column_list is None:
+        column_list = ["code", "date", "discharge"]
     data = data.copy()
 
     # Get intermediate data path from environment variable
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
     if intermediate_data_path is None:
         raise ValueError("Environment variable ieasyforecast_intermediate_data_path is not set.")
-    
+
     # Test if the intermediate data path exists. If not, create it.
     if not os.path.exists(intermediate_data_path):
         os.makedirs(intermediate_data_path)
@@ -3891,13 +4203,15 @@ def write_daily_time_series_data_to_csv(
     # variables and the name of the ieasyforecast_analysis_daily_file.
     # Concatenate them to the output file path.
     try:
-       output_file_path = os.path.join(
-            intermediate_data_path,
-            os.getenv("ieasyforecast_daily_discharge_file"))
+        output_file_path = os.path.join(
+            intermediate_data_path, os.getenv("ieasyforecast_daily_discharge_file")
+        )
     except Exception as e:
         logger.error("[OUTPUT] Could not get the output file path.")
         logger.error(f"[OUTPUT] intermediate_data_path: {intermediate_data_path}")
-        logger.error(f"[OUTPUT] ieasyforecast_daily_discharge_file: {os.getenv('ieasyforecast_daily_discharge_file')}")
+        logger.error(
+            f"[OUTPUT] ieasyforecast_daily_discharge_file: {os.getenv('ieasyforecast_daily_discharge_file')}"
+        )
         raise e
 
     # Test if the columns in column list are available in the dataframe
@@ -3906,17 +4220,17 @@ def write_daily_time_series_data_to_csv(
             raise ValueError(f"Column '{col}' not found in the DataFrame.")
 
     # Print head of data
-    logger.debug(f'write_daily_time_series_data_to_csv: data.head(10)\n{data.head(10)}')
+    logger.debug(f"write_daily_time_series_data_to_csv: data.head(10)\n{data.head(10)}")
 
     # Round all values to 3 decimal places
     data = data.round(3)
 
     # Convert code to string without .0 suffixes from float-to-string conversion
-    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    
+    data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
     # Ensure date is in %Y-%m-%d format
-    if 'date' in data.columns:
-        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in data.columns:
+        data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
     # Attempt API write (non-blocking — CSV always written regardless)
     try:
@@ -3938,9 +4252,10 @@ def write_daily_time_series_data_to_csv(
         logger.error(f"[OUTPUT] Failed to write time series: {output_file_path} - {e}")
         raise e
 
+
 def write_daily_hydrograph_data_to_csv(
     data: pd.DataFrame,
-    column_list=["code", "date", "discharge"],
+    column_list: list[str] | None = None,
     mode: str | None = None,
 ):
     """
@@ -3961,19 +4276,26 @@ def write_daily_hydrograph_data_to_csv(
     Raises:
     Exception: If the data cannot be written to the csv file.
     """
+    if column_list is None:
+        column_list = ["code", "date", "discharge"]
     data = data.copy()
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_analysis_daily_file.
     # Concatenate them to the output file path.
     try:
-       output_file_path = os.path.join(
+        output_file_path = os.path.join(
             os.getenv("ieasyforecast_intermediate_data_path"),
-            os.getenv("ieasyforecast_hydrograph_day_file"))
+            os.getenv("ieasyforecast_hydrograph_day_file"),
+        )
     except Exception as e:
         logger.error("[OUTPUT] Could not get the output file path.")
-        logger.error(f"[OUTPUT] ieasyforecast_intermediate_data_path: {os.getenv('ieasyforecast_intermediate_data_path')}")
-        logger.error(f"[OUTPUT] ieasyforecast_hydrograph_day_file: {os.getenv('ieasyforecast_hydrograph_day_file')}")
+        logger.error(
+            f"[OUTPUT] ieasyforecast_intermediate_data_path: {os.getenv('ieasyforecast_intermediate_data_path')}"
+        )
+        logger.error(
+            f"[OUTPUT] ieasyforecast_hydrograph_day_file: {os.getenv('ieasyforecast_hydrograph_day_file')}"
+        )
         raise e
 
     # Test if the columns in column list are available in the dataframe
@@ -3985,14 +4307,14 @@ def write_daily_hydrograph_data_to_csv(
     data = data.round(3)
 
     # Convert code to string without .0 suffixes from float-to-string conversion
-    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    
+    data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
     # Ensure date is in %Y-%m-%d format
-    if 'date' in data.columns:
-        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in data.columns:
+        data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
     # Test if we have rows where count is 0. If so, drop these rows.
-    data = data[data['count'] != 0]
+    data = data[data["count"] != 0]
 
     # Attempt API write (non-blocking — CSV always written regardless)
     try:
@@ -4018,12 +4340,13 @@ def write_daily_hydrograph_data_to_csv(
 # Post-Write Validation Functions (Phase 3)
 # =============================================================================
 
+
 def validate_recent_data(
     output_df: pd.DataFrame,
     expected_sites: list,
-    date_col: str = 'date',
-    code_col: str = 'code',
-    max_age_days: int = 3
+    date_col: str = "date",
+    code_col: str = "code",
+    max_age_days: int = 3,
 ) -> dict:
     """
     Validate that each site has data within the specified number of days.
@@ -4048,11 +4371,11 @@ def validate_recent_data(
     """
     if output_df.empty:
         return {
-            'sites_with_recent_data': [],
-            'sites_missing_recent_data': list(expected_sites),
-            'latest_date_per_site': {},
-            'reference_date': pd.Timestamp.now().normalize().strftime('%Y-%m-%d'),
-            'max_age_days': max_age_days
+            "sites_with_recent_data": [],
+            "sites_missing_recent_data": list(expected_sites),
+            "latest_date_per_site": {},
+            "reference_date": pd.Timestamp.now().normalize().strftime("%Y-%m-%d"),
+            "max_age_days": max_age_days,
         }
 
     # Ensure date column is datetime
@@ -4086,16 +4409,16 @@ def validate_recent_data(
 
     # Convert dates to strings for JSON serialization
     latest_date_strings = {
-        site: date.strftime('%Y-%m-%d') if pd.notna(date) else None
+        site: date.strftime("%Y-%m-%d") if pd.notna(date) else None
         for site, date in latest_dates.items()
     }
 
     return {
-        'sites_with_recent_data': sites_with_recent,
-        'sites_missing_recent_data': sites_missing_recent,
-        'latest_date_per_site': latest_date_strings,
-        'reference_date': reference_date.strftime('%Y-%m-%d'),
-        'max_age_days': max_age_days
+        "sites_with_recent_data": sites_with_recent,
+        "sites_missing_recent_data": sites_missing_recent,
+        "latest_date_per_site": latest_date_strings,
+        "reference_date": reference_date.strftime("%Y-%m-%d"),
+        "max_age_days": max_age_days,
     }
 
 
@@ -4114,7 +4437,7 @@ def load_reliability_stats(stats_file: str) -> dict:
         return {}
 
     try:
-        with open(stats_file, 'r') as f:
+        with open(stats_file) as f:
             stats = json.load(f)
         logger.debug(f"[DATA] Loaded reliability stats for {len(stats)} sites")
         return stats
@@ -4138,7 +4461,7 @@ def save_reliability_stats(stats_file: str, stats: dict) -> bool:
         # Ensure directory exists
         os.makedirs(os.path.dirname(stats_file), exist_ok=True)
 
-        with open(stats_file, 'w') as f:
+        with open(stats_file, "w") as f:
             json.dump(stats, f, indent=2)
         logger.debug(f"[DATA] Saved reliability stats for {len(stats)} sites")
         return True
@@ -4147,11 +4470,7 @@ def save_reliability_stats(stats_file: str, stats: dict) -> bool:
         return False
 
 
-def update_reliability_stats(
-    stats: dict,
-    validation_result: dict,
-    reference_date: str
-) -> dict:
+def update_reliability_stats(stats: dict, validation_result: dict, reference_date: str) -> dict:
     """
     Update reliability statistics based on validation results.
 
@@ -4163,38 +4482,36 @@ def update_reliability_stats(
     Returns:
         Updated stats dict
     """
-    sites_with_data = set(validation_result['sites_with_recent_data'])
-    sites_missing_data = set(validation_result['sites_missing_recent_data'])
+    sites_with_data = set(validation_result["sites_with_recent_data"])
+    sites_missing_data = set(validation_result["sites_missing_recent_data"])
     all_sites = sites_with_data | sites_missing_data
 
     for site in all_sites:
         if site not in stats:
             stats[site] = {
-                'checks': 0,
-                'recent_data_present': 0,
-                'reliability_pct': 0.0,
-                'last_gap_date': None
+                "checks": 0,
+                "recent_data_present": 0,
+                "reliability_pct": 0.0,
+                "last_gap_date": None,
             }
 
-        stats[site]['checks'] += 1
+        stats[site]["checks"] += 1
 
         if site in sites_with_data:
-            stats[site]['recent_data_present'] += 1
+            stats[site]["recent_data_present"] += 1
         else:
-            stats[site]['last_gap_date'] = reference_date
+            stats[site]["last_gap_date"] = reference_date
 
         # Recalculate reliability percentage
-        checks = stats[site]['checks']
-        present = stats[site]['recent_data_present']
-        stats[site]['reliability_pct'] = round(100 * present / checks, 1) if checks > 0 else 0.0
+        checks = stats[site]["checks"]
+        present = stats[site]["recent_data_present"]
+        stats[site]["reliability_pct"] = round(100 * present / checks, 1) if checks > 0 else 0.0
 
     return stats
 
 
 def log_validation_summary(
-    validation_result: dict,
-    stats: dict,
-    reliability_threshold: float = 80.0
+    validation_result: dict, stats: dict, reliability_threshold: float = 80.0
 ) -> None:
     """
     Log a summary of the validation results.
@@ -4204,10 +4521,10 @@ def log_validation_summary(
         stats: Reliability stats dict
         reliability_threshold: Percentage below which sites are flagged (default: 80%)
     """
-    sites_with = validation_result['sites_with_recent_data']
-    sites_missing = validation_result['sites_missing_recent_data']
-    latest_dates = validation_result['latest_date_per_site']
-    max_age = validation_result['max_age_days']
+    sites_with = validation_result["sites_with_recent_data"]
+    sites_missing = validation_result["sites_missing_recent_data"]
+    latest_dates = validation_result["latest_date_per_site"]
+    max_age = validation_result["max_age_days"]
     total = len(sites_with) + len(sites_missing)
 
     if total == 0:
@@ -4216,29 +4533,33 @@ def log_validation_summary(
 
     pct_with_data = 100 * len(sites_with) / total
 
-    logger.info(f"[DATA] === Recent Data Validation ===")
+    logger.info("[DATA] === Recent Data Validation ===")
     logger.info(f"[DATA] Sites checked: {total}")
-    logger.info(f"[DATA] Sites with data in last {max_age} days: {len(sites_with)} ({pct_with_data:.1f}%)")
+    logger.info(
+        f"[DATA] Sites with data in last {max_age} days: {len(sites_with)} ({pct_with_data:.1f}%)"
+    )
     logger.info(f"[DATA] Sites missing recent data: {len(sites_missing)}")
 
     if sites_missing:
-        logger.warning(f"[DATA] MISSING RECENT DATA (forecast may fail):")
+        logger.warning("[DATA] MISSING RECENT DATA (forecast may fail):")
         for site in sorted(sites_missing):
-            latest = latest_dates.get(site, 'never')
-            reliability = stats.get(site, {}).get('reliability_pct', 'N/A')
+            latest = latest_dates.get(site, "never")
+            reliability = stats.get(site, {}).get("reliability_pct", "N/A")
             if isinstance(reliability, float):
                 reliability = f"{reliability:.0f}%"
             logger.warning(f"[DATA]   - {site}: Last data {latest} (reliability: {reliability})")
 
     # Find low reliability sites
     low_reliability = [
-        (site, s['reliability_pct'])
+        (site, s["reliability_pct"])
         for site, s in stats.items()
-        if s['checks'] >= 5 and s['reliability_pct'] < reliability_threshold
+        if s["checks"] >= 5 and s["reliability_pct"] < reliability_threshold
     ]
 
     if low_reliability:
-        logger.warning(f"[DATA] LOW RELIABILITY SITES (< {reliability_threshold:.0f}% over recent checks):")
+        logger.warning(
+            f"[DATA] LOW RELIABILITY SITES (< {reliability_threshold:.0f}% over recent checks):"
+        )
         for site, pct in sorted(low_reliability, key=lambda x: x[1]):
             logger.warning(f"[DATA]   - {site}: {pct:.0f}% reliability")
 
@@ -4247,10 +4568,10 @@ def run_post_write_validation(
     output_df: pd.DataFrame,
     expected_sites: list,
     stats_file: str,
-    date_col: str = 'date',
-    code_col: str = 'code',
+    date_col: str = "date",
+    code_col: str = "code",
     max_age_days: int = 3,
-    reliability_threshold: float = 80.0
+    reliability_threshold: float = 80.0,
 ) -> dict:
     """
     Run full post-write validation: check recent data and update reliability stats.
@@ -4278,9 +4599,7 @@ def run_post_write_validation(
     stats = load_reliability_stats(stats_file)
 
     # Update stats
-    stats = update_reliability_stats(
-        stats, validation_result, validation_result['reference_date']
-    )
+    stats = update_reliability_stats(stats, validation_result, validation_result["reference_date"])
 
     # Save updated stats
     save_reliability_stats(stats_file, stats)
@@ -4294,6 +4613,7 @@ def run_post_write_validation(
 # =============================================================================
 # API Data Consistency Verification (SAPPHIRE_DEBUG_VERIFY)
 # =============================================================================
+
 
 def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     """
@@ -4318,62 +4638,53 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     """
     import requests as _requests
 
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         return {
-            'status': 'skipped',
-            'message': 'API disabled, skipping verification',
+            "status": "skipped",
+            "message": "API disabled, skipping verification",
         }
 
     # Get virtual station codes from config (if available)
     virtual_station_codes: set[str] = set()
     try:
         config_path = os.path.join(
-            os.getenv('ieasyforecast_configuration_path', ''),
-            os.getenv('ieasyforecast_virtual_stations', ''),
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_virtual_stations", ""),
         )
         if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 json_data = json.load(f)
-                virtual_station_codes = set(
-                    json_data.get('virtualStations', {}).keys()
-                )
+                virtual_station_codes = set(json_data.get("virtualStations", {}).keys())
             logger.info(
-                f"Loaded {len(virtual_station_codes)} virtual station "
-                "codes for consistency check"
+                f"Loaded {len(virtual_station_codes)} virtual station codes for consistency check"
             )
     except Exception as e:
         logger.warning(f"Could not load virtual station config: {e}")
 
     # Resolve CSV path
     if csv_path is None:
-        intermediate_data_path = os.getenv(
-            "ieasyforecast_intermediate_data_path"
-        )
+        intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
         csv_file = os.getenv("ieasyforecast_daily_discharge_file")
         if not intermediate_data_path or not csv_file:
             return {
-                'status': 'error',
-                'message': 'Environment variables not set for CSV path',
+                "status": "error",
+                "message": "Environment variables not set for CSV path",
             }
         csv_path = os.path.join(intermediate_data_path, csv_file)
 
     # Read CSV
     try:
         csv_df = pd.read_csv(csv_path)
-        csv_df['date'] = (
-            pd.to_datetime(csv_df['date']).dt.strftime('%Y-%m-%d')
-        )
-        csv_df['code'] = csv_df['code'].astype(str)
+        csv_df["date"] = pd.to_datetime(csv_df["date"]).dt.strftime("%Y-%m-%d")
+        csv_df["code"] = csv_df["code"].astype(str)
     except Exception as e:
-        return {'status': 'error', 'message': f'Failed to read CSV: {e}'}
+        return {"status": "error", "message": f"Failed to read CSV: {e}"}
 
-    dates = pd.to_datetime(csv_df['date'])
-    start_date = dates.min().strftime('%Y-%m-%d')
-    end_date = dates.max().strftime('%Y-%m-%d')
-    codes = csv_df['code'].unique().tolist()
+    dates = pd.to_datetime(csv_df["date"])
+    start_date = dates.min().strftime("%Y-%m-%d")
+    end_date = dates.max().strftime("%Y-%m-%d")
+    codes = csv_df["code"].unique().tolist()
 
     # Query API for each station
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -4382,11 +4693,11 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     try:
         for code in codes:
             params = {
-                'horizon': 'day',
-                'code': code,
-                'start_date': start_date,
-                'end_date': end_date,
-                'limit': 100000,
+                "horizon": "day",
+                "code": code,
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": 100000,
             }
             response = _requests.get(
                 f"{api_url}/api/preprocessing/runoff/",
@@ -4396,38 +4707,31 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
             if response.status_code == 200:
                 all_api_records.extend(response.json())
             else:
-                logger.warning(
-                    f"API query failed for code {code}: "
-                    f"{response.status_code}"
-                )
+                logger.warning(f"API query failed for code {code}: {response.status_code}")
     except Exception as e:
-        return {'status': 'error', 'message': f'Failed to query API: {e}'}
+        return {"status": "error", "message": f"Failed to query API: {e}"}
 
     if not all_api_records:
         return {
-            'status': 'mismatch',
-            'csv_count': len(csv_df),
-            'api_count': 0,
-            'message': (
-                f'No data in API for date range {start_date} to {end_date}'
-            ),
+            "status": "mismatch",
+            "csv_count": len(csv_df),
+            "api_count": 0,
+            "message": (f"No data in API for date range {start_date} to {end_date}"),
         }
 
     api_df = pd.DataFrame(all_api_records)
-    api_df['date'] = (
-        pd.to_datetime(api_df['date']).dt.strftime('%Y-%m-%d')
-    )
-    api_df['code'] = api_df['code'].astype(str)
+    api_df["date"] = pd.to_datetime(api_df["date"]).dt.strftime("%Y-%m-%d")
+    api_df["code"] = api_df["code"].astype(str)
 
     csv_count = len(csv_df)
     api_count = len(api_df)
 
     # Create comparison keys (code + date)
-    csv_df['key'] = csv_df['code'] + '_' + csv_df['date']
-    api_df['key'] = api_df['code'] + '_' + api_df['date']
+    csv_df["key"] = csv_df["code"] + "_" + csv_df["date"]
+    api_df["key"] = api_df["code"] + "_" + api_df["date"]
 
-    csv_keys = set(csv_df['key'])
-    api_keys = set(api_df['key'])
+    csv_keys = set(csv_df["key"])
+    api_keys = set(api_df["key"])
 
     missing_in_api = csv_keys - api_keys
     extra_in_api = api_keys - csv_keys
@@ -4436,7 +4740,7 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     virtual_missing: set[str] = set()
     regular_missing: set[str] = set()
     for key in missing_in_api:
-        code = key.split('_')[0]
+        code = key.split("_")[0]
         if code in virtual_station_codes:
             virtual_missing.add(key)
         else:
@@ -4448,15 +4752,11 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     virtual_mismatches: list[dict] = []
 
     for key in list(common_keys)[:100]:
-        csv_row = csv_df[csv_df['key'] == key].iloc[0]
-        api_row = api_df[api_df['key'] == key].iloc[0]
+        csv_row = csv_df[csv_df["key"] == key].iloc[0]
+        api_row = api_df[api_df["key"] == key].iloc[0]
 
-        csv_discharge = (
-            csv_row['discharge'] if pd.notna(csv_row['discharge']) else None
-        )
-        api_discharge = (
-            api_row['discharge'] if pd.notna(api_row['discharge']) else None
-        )
+        csv_discharge = csv_row["discharge"] if pd.notna(csv_row["discharge"]) else None
+        api_discharge = api_row["discharge"] if pd.notna(api_row["discharge"]) else None
 
         is_mismatch = False
         if csv_discharge is not None and api_discharge is not None:
@@ -4467,11 +4767,11 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
 
         if is_mismatch:
             mismatch_info = {
-                'key': key,
-                'csv_discharge': csv_discharge,
-                'api_discharge': api_discharge,
+                "key": key,
+                "csv_discharge": csv_discharge,
+                "api_discharge": api_discharge,
             }
-            code = key.split('_')[0]
+            code = key.split("_")[0]
             if code in virtual_station_codes:
                 virtual_mismatches.append(mismatch_info)
             else:
@@ -4482,73 +4782,57 @@ def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
     has_virtual_issues = bool(virtual_missing or virtual_mismatches)
 
     if not has_regular_issues and not has_virtual_issues:
-        status = 'match'
-        message = (
-            f'Data consistent: {csv_count} CSV records match '
-            f'{api_count} API records'
-        )
+        status = "match"
+        message = f"Data consistent: {csv_count} CSV records match {api_count} API records"
     elif not has_regular_issues and has_virtual_issues:
-        status = 'match_with_virtual_lag'
+        status = "match_with_virtual_lag"
         parts = []
         if virtual_missing:
-            parts.append(
-                f'{len(virtual_missing)} virtual station records pending sync'
-            )
+            parts.append(f"{len(virtual_missing)} virtual station records pending sync")
         if virtual_mismatches:
-            parts.append(
-                f'{len(virtual_mismatches)} virtual station value differences'
-            )
-        message = (
-            f'Regular stations consistent. '
-            f'Virtual stations: {", ".join(parts)}'
-        )
+            parts.append(f"{len(virtual_mismatches)} virtual station value differences")
+        message = f"Regular stations consistent. Virtual stations: {', '.join(parts)}"
     else:
-        status = 'mismatch'
+        status = "mismatch"
         parts = []
         if regular_missing:
-            parts.append(
-                f'{len(regular_missing)} regular records missing in API'
-            )
+            parts.append(f"{len(regular_missing)} regular records missing in API")
         if virtual_missing:
-            parts.append(
-                f'{len(virtual_missing)} virtual records missing in API'
-            )
+            parts.append(f"{len(virtual_missing)} virtual records missing in API")
         if extra_in_api:
-            parts.append(f'{len(extra_in_api)} extra records in API')
+            parts.append(f"{len(extra_in_api)} extra records in API")
         if mismatches:
-            parts.append(f'{len(mismatches)} regular value mismatches')
+            parts.append(f"{len(mismatches)} regular value mismatches")
         if virtual_mismatches:
-            parts.append(
-                f'{len(virtual_mismatches)} virtual value mismatches'
-            )
-        message = f'Data inconsistent: {", ".join(parts)}'
+            parts.append(f"{len(virtual_mismatches)} virtual value mismatches")
+        message = f"Data inconsistent: {', '.join(parts)}"
 
     result: dict = {
-        'status': status,
-        'csv_count': csv_count,
-        'api_count': api_count,
-        'missing_in_api': len(missing_in_api),
-        'missing_regular': len(regular_missing),
-        'missing_virtual': len(virtual_missing),
-        'extra_in_api': len(extra_in_api),
-        'value_mismatches': len(mismatches),
-        'virtual_value_mismatches': len(virtual_mismatches),
-        'message': message,
-        'virtual_stations': {
-            'codes': list(virtual_station_codes),
-            'missing_count': len(virtual_missing),
-            'mismatch_count': len(virtual_mismatches),
+        "status": status,
+        "csv_count": csv_count,
+        "api_count": api_count,
+        "missing_in_api": len(missing_in_api),
+        "missing_regular": len(regular_missing),
+        "missing_virtual": len(virtual_missing),
+        "extra_in_api": len(extra_in_api),
+        "value_mismatches": len(mismatches),
+        "virtual_value_mismatches": len(virtual_mismatches),
+        "message": message,
+        "virtual_stations": {
+            "codes": list(virtual_station_codes),
+            "missing_count": len(virtual_missing),
+            "mismatch_count": len(virtual_mismatches),
         },
     }
 
     if mismatches:
-        result['sample_mismatches'] = mismatches[:5]
+        result["sample_mismatches"] = mismatches[:5]
     if virtual_mismatches:
-        result['sample_virtual_mismatches'] = virtual_mismatches[:5]
+        result["sample_virtual_mismatches"] = virtual_mismatches[:5]
     if regular_missing:
-        result['sample_missing_regular'] = list(regular_missing)[:5]
+        result["sample_missing_regular"] = list(regular_missing)[:5]
     if virtual_missing:
-        result['sample_missing_virtual'] = list(virtual_missing)[:5]
+        result["sample_missing_virtual"] = list(virtual_missing)[:5]
 
     return result
 
@@ -4574,41 +4858,37 @@ def verify_hydrograph_data_consistency(
     """
     import requests as _requests
 
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         return {
-            'status': 'skipped',
-            'message': 'API disabled, skipping verification',
+            "status": "skipped",
+            "message": "API disabled, skipping verification",
         }
 
     # Resolve CSV path
     if csv_path is None:
-        intermediate_data_path = os.getenv(
-            "ieasyforecast_intermediate_data_path"
-        )
+        intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
         csv_file = os.getenv("ieasyforecast_hydrograph_day_file")
         if not intermediate_data_path or not csv_file:
             return {
-                'status': 'error',
-                'message': 'Environment variables not set for CSV path',
+                "status": "error",
+                "message": "Environment variables not set for CSV path",
             }
         csv_path = os.path.join(intermediate_data_path, csv_file)
 
     # Read CSV
     try:
         csv_df = pd.read_csv(csv_path)
-        csv_df['code'] = csv_df['code'].astype(str)
-        if 'day_of_year' not in csv_df.columns:
+        csv_df["code"] = csv_df["code"].astype(str)
+        if "day_of_year" not in csv_df.columns:
             return {
-                'status': 'error',
-                'message': 'CSV missing day_of_year column',
+                "status": "error",
+                "message": "CSV missing day_of_year column",
             }
     except Exception as e:
-        return {'status': 'error', 'message': f'Failed to read CSV: {e}'}
+        return {"status": "error", "message": f"Failed to read CSV: {e}"}
 
-    codes = csv_df['code'].unique().tolist()
+    codes = csv_df["code"].unique().tolist()
 
     # Filter to current year to avoid false key collisions from
     # multi-year data (day_of_year repeats across years)
@@ -4623,11 +4903,11 @@ def verify_hydrograph_data_consistency(
     try:
         for code in codes:
             params = {
-                'horizon': 'day',
-                'code': code,
-                'start_date': start_date,
-                'end_date': end_date,
-                'limit': 100000,
+                "horizon": "day",
+                "code": code,
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": 100000,
             }
             response = _requests.get(
                 f"{api_url}/api/preprocessing/hydrograph/",
@@ -4638,42 +4918,37 @@ def verify_hydrograph_data_consistency(
                 all_api_records.extend(response.json())
             else:
                 logger.warning(
-                    f"Hydrograph API query failed for code {code}: "
-                    f"{response.status_code}"
+                    f"Hydrograph API query failed for code {code}: {response.status_code}"
                 )
     except Exception as e:
-        return {'status': 'error', 'message': f'Failed to query API: {e}'}
+        return {"status": "error", "message": f"Failed to query API: {e}"}
 
     if not all_api_records:
         return {
-            'status': 'mismatch',
-            'csv_count': len(csv_df),
-            'api_count': 0,
-            'message': 'No hydrograph data in API',
+            "status": "mismatch",
+            "csv_count": len(csv_df),
+            "api_count": 0,
+            "message": "No hydrograph data in API",
         }
 
     api_df = pd.DataFrame(all_api_records)
-    api_df['code'] = api_df['code'].astype(str)
+    api_df["code"] = api_df["code"].astype(str)
 
     # Create comparison keys (code + day_of_year/horizon_in_year)
-    csv_df['key'] = (
-        csv_df['code'] + '_' + csv_df['day_of_year'].astype(str)
-    )
-    if 'horizon_in_year' in api_df.columns:
-        api_df['key'] = (
-            api_df['code'] + '_' + api_df['horizon_in_year'].astype(str)
-        )
+    csv_df["key"] = csv_df["code"] + "_" + csv_df["day_of_year"].astype(str)
+    if "horizon_in_year" in api_df.columns:
+        api_df["key"] = api_df["code"] + "_" + api_df["horizon_in_year"].astype(str)
     else:
         return {
-            'status': 'error',
-            'message': 'API response missing horizon_in_year column',
+            "status": "error",
+            "message": "API response missing horizon_in_year column",
         }
 
     csv_count = len(csv_df)
     api_count = len(api_df)
 
-    csv_keys = set(csv_df['key'])
-    api_keys = set(api_df['key'])
+    csv_keys = set(csv_df["key"])
+    api_keys = set(api_df["key"])
 
     missing_in_api = csv_keys - api_keys
     extra_in_api = api_keys - csv_keys
@@ -4682,78 +4957,77 @@ def verify_hydrograph_data_consistency(
     # Note: CSV has no 'norm' column (API derives it from q50).
     # Year columns (e.g. "2026", "2025") map to current/previous.
     column_map = {
-        '5%': 'q05', '25%': 'q25', '50%': 'q50', '75%': 'q75',
-        '95%': 'q95', 'count': 'count', 'std': 'std',
-        'mean': 'mean', 'min': 'min', 'max': 'max',
+        "5%": "q05",
+        "25%": "q25",
+        "50%": "q50",
+        "75%": "q75",
+        "95%": "q95",
+        "count": "count",
+        "std": "std",
+        "mean": "mean",
+        "min": "min",
+        "max": "max",
     }
     # Add dynamic year column mapping
     current_year = dt.date.today().year
     current_year_col = str(current_year)
     previous_year_col = str(current_year - 1)
     if current_year_col in csv_df.columns:
-        column_map[current_year_col] = 'current'
+        column_map[current_year_col] = "current"
     if previous_year_col in csv_df.columns:
-        column_map[previous_year_col] = 'previous'
+        column_map[previous_year_col] = "previous"
 
     # Compare values for common keys (sample check)
     common_keys = csv_keys & api_keys
     mismatches: list[dict] = []
 
     for key in list(common_keys)[:50]:
-        csv_row = csv_df[csv_df['key'] == key].iloc[0]
-        api_row = api_df[api_df['key'] == key].iloc[0]
+        csv_row = csv_df[csv_df["key"] == key].iloc[0]
+        api_row = api_df[api_df["key"] == key].iloc[0]
 
         for csv_col, api_col in column_map.items():
             if csv_col in csv_row and api_col in api_row:
-                csv_val = (
-                    csv_row[csv_col]
-                    if pd.notna(csv_row[csv_col]) else None
-                )
-                api_val = (
-                    api_row[api_col]
-                    if pd.notna(api_row[api_col]) else None
-                )
-                if csv_val is not None and api_val is not None:
-                    if abs(csv_val - api_val) > 0.001:
-                        mismatches.append({
-                            'key': key,
-                            'column': csv_col,
-                            'csv_value': csv_val,
-                            'api_value': api_val,
-                        })
-                        break  # One mismatch per key is enough
+                csv_val = csv_row[csv_col] if pd.notna(csv_row[csv_col]) else None
+                api_val = api_row[api_col] if pd.notna(api_row[api_col]) else None
+                if csv_val is not None and api_val is not None and abs(csv_val - api_val) > 0.001:
+                    mismatches.append(
+                        {
+                            "key": key,
+                            "column": csv_col,
+                            "csv_value": csv_val,
+                            "api_value": api_val,
+                        }
+                    )
+                    break  # One mismatch per key is enough
 
     if not missing_in_api and not extra_in_api and not mismatches:
-        status = 'match'
-        message = (
-            f'Hydrograph data consistent: '
-            f'{csv_count} CSV records, {api_count} API records'
-        )
+        status = "match"
+        message = f"Hydrograph data consistent: {csv_count} CSV records, {api_count} API records"
     else:
-        status = 'mismatch'
+        status = "mismatch"
         parts = []
         if missing_in_api:
-            parts.append(f'{len(missing_in_api)} records missing in API')
+            parts.append(f"{len(missing_in_api)} records missing in API")
         if extra_in_api:
-            parts.append(f'{len(extra_in_api)} extra records in API')
+            parts.append(f"{len(extra_in_api)} extra records in API")
         if mismatches:
-            parts.append(f'{len(mismatches)} value mismatches')
-        message = f'Hydrograph data inconsistent: {", ".join(parts)}'
+            parts.append(f"{len(mismatches)} value mismatches")
+        message = f"Hydrograph data inconsistent: {', '.join(parts)}"
 
     result: dict = {
-        'status': status,
-        'csv_count': csv_count,
-        'api_count': api_count,
-        'missing_in_api': len(missing_in_api),
-        'extra_in_api': len(extra_in_api),
-        'value_mismatches': len(mismatches),
-        'message': message,
+        "status": status,
+        "csv_count": csv_count,
+        "api_count": api_count,
+        "missing_in_api": len(missing_in_api),
+        "extra_in_api": len(extra_in_api),
+        "value_mismatches": len(mismatches),
+        "message": message,
     }
 
     if mismatches:
-        result['sample_mismatches'] = mismatches[:5]
+        result["sample_mismatches"] = mismatches[:5]
     if missing_in_api:
-        result['sample_missing'] = list(missing_in_api)[:5]
+        result["sample_missing"] = list(missing_in_api)[:5]
 
     return result
 
@@ -4761,6 +5035,7 @@ def verify_hydrograph_data_consistency(
 # =============================================================================
 # Spot-Check Validation Functions (Phase 4)
 # =============================================================================
+
 
 def get_spot_check_sites() -> list:
     """
@@ -4772,9 +5047,9 @@ def get_spot_check_sites() -> list:
     Returns:
         list of site codes (strings), or empty list if not configured
     """
-    sites_str = os.getenv('IEASYHYDRO_SPOTCHECK_SITES')
+    sites_str = os.getenv("IEASYHYDRO_SPOTCHECK_SITES")
     if sites_str:
-        sites = [s.strip() for s in sites_str.split(',') if s.strip()]
+        sites = [s.strip() for s in sites_str.split(",") if s.strip()]
         if sites:
             logger.debug(f"[DATA] Spot-check sites from IEASYHYDRO_SPOTCHECK_SITES: {sites}")
             return sites
@@ -4787,11 +5062,11 @@ def spot_check_sites(
     sdk,
     site_codes: list,
     output_df: pd.DataFrame,
-    date_col: str = 'date',
-    code_col: str = 'code',
-    value_col: str = 'discharge',
+    date_col: str = "date",
+    code_col: str = "code",
+    value_col: str = "discharge",
     target_timezone=None,
-    variable_name: str = "WDDA"
+    variable_name: str = "WDDA",
 ) -> dict:
     """
     Verify data for spot-check sites by comparing output values against API.
@@ -4818,11 +5093,19 @@ def spot_check_sites(
         - variable: the variable name checked
     """
     if not site_codes:
-        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': variable_name}
+        return {
+            "results": {},
+            "summary": {"checked": 0, "matched": 0, "mismatched": 0, "errors": 0},
+            "variable": variable_name,
+        }
 
     if output_df.empty:
         logger.warning("[DATA] Spot-check: output DataFrame is empty")
-        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': variable_name}
+        return {
+            "results": {},
+            "summary": {"checked": 0, "matched": 0, "mismatched": 0, "errors": 0},
+            "variable": variable_name,
+        }
 
     # Ensure proper types
     df = output_df.copy()
@@ -4837,12 +5120,12 @@ def spot_check_sites(
     for site_code in site_codes:
         site_code_str = str(site_code)
         result = {
-            'output_date': None,
-            'output_value': None,
-            'api_date': None,
-            'api_value': None,
-            'match': None,
-            'error': None
+            "output_date": None,
+            "output_value": None,
+            "api_date": None,
+            "api_value": None,
+            "match": None,
+            "error": None,
         }
 
         # Fetch latest available data from API first (last 30 days to find most recent)
@@ -4853,110 +5136,123 @@ def spot_check_sites(
             filters = {
                 "site_codes": [site_code_str],  # Must be a list
                 "variable_names": [variable_name],
-                "local_date_time__gte": start_date.strftime('%Y-%m-%dT00:00:00'),
-                "local_date_time__lte": end_date.strftime('%Y-%m-%dT23:59:59'),
+                "local_date_time__gte": start_date.strftime("%Y-%m-%dT00:00:00"),
+                "local_date_time__lte": end_date.strftime("%Y-%m-%dT23:59:59"),
                 "page": 1,
                 "page_size": 1000,  # API limit
             }
 
-            logger.debug(f"[DATA] Spot-check {site_code_str} ({variable_name}): Querying API with filters: {filters}")
+            logger.debug(
+                f"[DATA] Spot-check {site_code_str} ({variable_name}): Querying API with filters: {filters}"
+            )
             response = sdk.get_data_values_for_site(filters=filters)
 
-            if isinstance(response, dict) and 'status_code' in response:
+            if isinstance(response, dict) and "status_code" in response:
                 # Log full response for debugging
-                logger.warning(f"[DATA] Spot-check {site_code_str}: Full API error response: {response}")
-                result['error'] = f"API error: {response.get('status_code')} - {response.get('detail', response.get('message', 'unknown'))}"
+                logger.warning(
+                    f"[DATA] Spot-check {site_code_str}: Full API error response: {response}"
+                )
+                result["error"] = (
+                    f"API error: {response.get('status_code')} - {response.get('detail', response.get('message', 'unknown'))}"
+                )
                 errors += 1
-            elif isinstance(response, dict) and 'results' in response:
-                api_results = response.get('results', [])
+            elif isinstance(response, dict) and "results" in response:
+                api_results = response.get("results", [])
 
                 # Extract all data points and find the latest
                 all_values = []
                 for item in api_results:
-                    if item.get('station_type') == 'hydro':
-                        data_list = item.get('data', [])
+                    if item.get("station_type") == "hydro":
+                        data_list = item.get("data", [])
                         for data_item in data_list:
-                            values = data_item.get('values', [])
+                            values = data_item.get("values", [])
                             for v in values:
-                                if v.get('value') is not None and v.get('timestamp_local'):
+                                if v.get("value") is not None and v.get("timestamp_local"):
                                     try:
                                         # Parse the date from API
-                                        date_str = v['timestamp_local']
+                                        date_str = v["timestamp_local"]
                                         # Handle various date formats
-                                        if 'T' in date_str:
-                                            api_dt = dt.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                                        if "T" in date_str:
+                                            api_dt = dt.datetime.fromisoformat(
+                                                date_str.replace("Z", "+00:00")
+                                            )
                                         else:
-                                            api_dt = dt.datetime.strptime(date_str, '%Y-%m-%d')
-                                        all_values.append({
-                                            'date': api_dt.date(),
-                                            'value': float(v['value'])
-                                        })
+                                            api_dt = dt.datetime.strptime(date_str, "%Y-%m-%d")
+                                        all_values.append(
+                                            {"date": api_dt.date(), "value": float(v["value"])}
+                                        )
                                     except (ValueError, KeyError) as e:
-                                        logger.debug(f"[DATA] Spot-check {site_code_str}: Could not parse date: {e}")
+                                        logger.debug(
+                                            f"[DATA] Spot-check {site_code_str}: Could not parse date: {e}"
+                                        )
 
                 if not all_values:
-                    result['error'] = f'No {variable_name} data from API in last 30 days'
+                    result["error"] = f"No {variable_name} data from API in last 30 days"
                     errors += 1
                 else:
                     # Find the latest value from API
-                    latest_api = max(all_values, key=lambda x: x['date'])
-                    result['api_date'] = latest_api['date'].strftime('%Y-%m-%d')
-                    result['api_value'] = latest_api['value']
+                    latest_api = max(all_values, key=lambda x: x["date"])
+                    result["api_date"] = latest_api["date"].strftime("%Y-%m-%d")
+                    result["api_value"] = latest_api["value"]
 
                     # Now get the corresponding date's value from output
                     site_data = df[df[code_col] == site_code_str]
                     if site_data.empty:
-                        result['error'] = 'Site not in output data'
+                        result["error"] = "Site not in output data"
                         errors += 1
                     else:
                         # Find the output value for the API's latest date
-                        api_date_ts = pd.Timestamp(latest_api['date'])
-                        matching_output = site_data[site_data[date_col].dt.date == latest_api['date']]
+                        matching_output = site_data[
+                            site_data[date_col].dt.date == latest_api["date"]
+                        ]
 
                         if matching_output.empty:
-                            result['error'] = f"No output data for API date {result['api_date']}"
+                            result["error"] = f"No output data for API date {result['api_date']}"
                             errors += 1
                         else:
                             output_row = matching_output.iloc[0]
                             output_value = output_row[value_col]
 
                             if pd.isna(output_value):
-                                result['error'] = f"Output value is null for {result['api_date']}"
+                                result["error"] = f"Output value is null for {result['api_date']}"
                                 errors += 1
                             else:
-                                result['output_date'] = result['api_date']  # Same date
-                                result['output_value'] = float(output_value)
+                                result["output_date"] = result["api_date"]  # Same date
+                                result["output_value"] = float(output_value)
 
                                 # Compare values
                                 tolerance = 0.01  # Allow small floating point differences
-                                diff = abs(result['output_value'] - result['api_value'])
-                                result['match'] = diff < tolerance
-                                if result['match']:
+                                diff = abs(result["output_value"] - result["api_value"])
+                                result["match"] = diff < tolerance
+                                if result["match"]:
                                     matched += 1
                                 else:
                                     mismatched += 1
             else:
-                result['error'] = 'Unexpected API response format'
+                result["error"] = "Unexpected API response format"
                 errors += 1
 
         except Exception as e:
             import traceback
+
             logger.error(f"[DATA] Spot-check {site_code_str}: Exception during API call: {e}")
-            logger.debug(f"[DATA] Spot-check {site_code_str}: Stack trace:\n{traceback.format_exc()}")
-            result['error'] = str(e)
+            logger.debug(
+                f"[DATA] Spot-check {site_code_str}: Stack trace:\n{traceback.format_exc()}"
+            )
+            result["error"] = str(e)
             errors += 1
 
         results[site_code_str] = result
 
     return {
-        'results': results,
-        'summary': {
-            'checked': len(site_codes),
-            'matched': matched,
-            'mismatched': mismatched,
-            'errors': errors
+        "results": results,
+        "summary": {
+            "checked": len(site_codes),
+            "matched": matched,
+            "mismatched": mismatched,
+            "errors": errors,
         },
-        'variable': variable_name
+        "variable": variable_name,
     }
 
 
@@ -4964,10 +5260,10 @@ def spot_check_sites_dual(
     sdk,
     site_codes: list,
     output_df: pd.DataFrame,
-    date_col: str = 'date',
-    code_col: str = 'code',
-    value_col: str = 'discharge',
-    target_timezone=None
+    date_col: str = "date",
+    code_col: str = "code",
+    value_col: str = "discharge",
+    target_timezone=None,
 ) -> dict:
     """
     Run spot-check validation for both WDDA (daily average) and WDD (morning) data.
@@ -4999,7 +5295,7 @@ def spot_check_sites_dual(
         code_col=code_col,
         value_col=value_col,
         target_timezone=target_timezone,
-        variable_name="WDDA"
+        variable_name="WDDA",
     )
 
     # Check WDD (morning discharge)
@@ -5011,7 +5307,7 @@ def spot_check_sites_dual(
         code_col=code_col,
         value_col=value_col,
         target_timezone=target_timezone,
-        variable_name="WDD"
+        variable_name="WDD",
     )
 
     # Combine summaries
@@ -5024,13 +5320,11 @@ def spot_check_sites_dual(
 
     for site_code in site_codes:
         site_str = str(site_code)
-        wdda_res = wdda_result['results'].get(site_str, {})
-        wdd_res = wdd_result['results'].get(site_str, {})
+        wdda_res = wdda_result["results"].get(site_str, {})
+        wdd_res = wdd_result["results"].get(site_str, {})
 
-        wdda_match = wdda_res.get('match')
-        wdd_match = wdd_res.get('match')
-        wdda_error = wdda_res.get('error')
-        wdd_error = wdd_res.get('error')
+        wdda_match = wdda_res.get("match")
+        wdd_match = wdd_res.get("match")
 
         # Site passes if either WDDA or WDD matches
         if wdda_match is True or wdd_match is True:
@@ -5043,14 +5337,14 @@ def spot_check_sites_dual(
             combined_errors += 1
 
     return {
-        'wdda': wdda_result,
-        'wdd': wdd_result,
-        'combined_summary': {
-            'checked': len(site_codes),
-            'matched': combined_matched,
-            'mismatched': combined_mismatched,
-            'errors': combined_errors
-        }
+        "wdda": wdda_result,
+        "wdd": wdd_result,
+        "combined_summary": {
+            "checked": len(site_codes),
+            "matched": combined_matched,
+            "mismatched": combined_mismatched,
+            "errors": combined_errors,
+        },
     }
 
 
@@ -5065,7 +5359,7 @@ def log_spot_check_summary(spot_check_result: dict) -> None:
         spot_check_result: Result from spot_check_sites() or spot_check_sites_dual()
     """
     # Check if this is a dual result (has 'wdda' and 'wdd' keys)
-    if 'wdda' in spot_check_result and 'wdd' in spot_check_result:
+    if "wdda" in spot_check_result and "wdd" in spot_check_result:
         _log_dual_spot_check_summary(spot_check_result)
     else:
         _log_single_spot_check_summary(spot_check_result)
@@ -5073,23 +5367,25 @@ def log_spot_check_summary(spot_check_result: dict) -> None:
 
 def _log_single_spot_check_summary(spot_check_result: dict) -> None:
     """Log summary for a single-variable spot-check result."""
-    results = spot_check_result.get('results', {})
-    summary = spot_check_result.get('summary', {})
-    variable = spot_check_result.get('variable', 'WDDA')
+    results = spot_check_result.get("results", {})
+    summary = spot_check_result.get("summary", {})
+    variable = spot_check_result.get("variable", "WDDA")
 
-    if summary.get('checked', 0) == 0:
+    if summary.get("checked", 0) == 0:
         logger.debug(f"[DATA] Spot-check ({variable}): No sites configured")
         return
 
     logger.info(f"[DATA] === Spot-Check Validation ({variable}) ===")
     logger.info(f"[DATA] Sites checked: {summary['checked']}")
-    logger.info(f"[DATA] Matched: {summary['matched']}, Mismatched: {summary['mismatched']}, Errors: {summary['errors']}")
+    logger.info(
+        f"[DATA] Matched: {summary['matched']}, Mismatched: {summary['mismatched']}, Errors: {summary['errors']}"
+    )
 
     # Report details for mismatches and errors
     for site, result in results.items():
-        if result.get('error'):
+        if result.get("error"):
             logger.warning(f"[DATA] Spot-check {site} ({variable}): ERROR - {result['error']}")
-        elif result.get('match') is False:
+        elif result.get("match") is False:
             logger.warning(
                 f"[DATA] Spot-check {site} ({variable}): MISMATCH - "
                 f"output={result['output_value']} ({result['output_date']}), "
@@ -5104,41 +5400,49 @@ def _log_single_spot_check_summary(spot_check_result: dict) -> None:
 
 def _log_dual_spot_check_summary(spot_check_result: dict) -> None:
     """Log summary for a dual-variable (WDDA + WDD) spot-check result."""
-    wdda = spot_check_result.get('wdda', {})
-    wdd = spot_check_result.get('wdd', {})
-    combined = spot_check_result.get('combined_summary', {})
+    wdda = spot_check_result.get("wdda", {})
+    wdd = spot_check_result.get("wdd", {})
+    combined = spot_check_result.get("combined_summary", {})
 
-    if combined.get('checked', 0) == 0:
+    if combined.get("checked", 0) == 0:
         logger.debug("[DATA] Spot-check: No sites configured")
         return
 
     logger.info("[DATA] === Spot-Check Validation ===")
     logger.info(f"[DATA] Sites checked: {combined['checked']}")
-    logger.info(f"[DATA] Result: {combined['matched']} OK, {combined['mismatched']} value mismatch, {combined['errors']} no data")
+    logger.info(
+        f"[DATA] Result: {combined['matched']} OK, {combined['mismatched']} value mismatch, {combined['errors']} no data"
+    )
 
-    wdda_summary = wdda.get('summary', {})
-    wdd_summary = wdd.get('summary', {})
-    logger.debug(f"[DATA]   WDDA (daily avg): {wdda_summary.get('matched', 0)} OK, {wdda_summary.get('mismatched', 0)} mismatch, {wdda_summary.get('errors', 0)} no data")
-    logger.debug(f"[DATA]   WDD (morning):    {wdd_summary.get('matched', 0)} OK, {wdd_summary.get('mismatched', 0)} mismatch, {wdd_summary.get('errors', 0)} no data")
+    wdda_summary = wdda.get("summary", {})
+    wdd_summary = wdd.get("summary", {})
+    logger.debug(
+        f"[DATA]   WDDA (daily avg): {wdda_summary.get('matched', 0)} OK, {wdda_summary.get('mismatched', 0)} mismatch, {wdda_summary.get('errors', 0)} no data"
+    )
+    logger.debug(
+        f"[DATA]   WDD (morning):    {wdd_summary.get('matched', 0)} OK, {wdd_summary.get('mismatched', 0)} mismatch, {wdd_summary.get('errors', 0)} no data"
+    )
 
     # Report per-site details
-    wdda_results = wdda.get('results', {})
-    wdd_results = wdd.get('results', {})
+    wdda_results = wdda.get("results", {})
+    wdd_results = wdd.get("results", {})
     all_sites = set(wdda_results.keys()) | set(wdd_results.keys())
 
     for site in sorted(all_sites):
         wdda_res = wdda_results.get(site, {})
         wdd_res = wdd_results.get(site, {})
 
-        wdda_match = wdda_res.get('match')
-        wdd_match = wdd_res.get('match')
+        wdda_match = wdda_res.get("match")
+        wdd_match = wdd_res.get("match")
 
         # Determine overall status for this site
         if wdda_match is True or wdd_match is True:
             # At least one matches - report success with details
             details = []
             if wdda_match is True:
-                details.append(f"WDDA={wdda_res.get('output_value')} ({wdda_res.get('output_date')})")
+                details.append(
+                    f"WDDA={wdda_res.get('output_value')} ({wdda_res.get('output_date')})"
+                )
             if wdd_match is True:
                 details.append(f"WDD={wdd_res.get('output_value')} ({wdd_res.get('output_date')})")
             logger.debug(f"[DATA] Spot-check {site}: OK - {', '.join(details)}")
@@ -5158,8 +5462,7 @@ def _log_dual_spot_check_summary(spot_check_result: dict) -> None:
                 )
         else:
             # Both have no data - report but this might be expected for some sites
-            wdda_error = wdda_res.get('error', 'Unknown')
-            wdd_error = wdd_res.get('error', 'Unknown')
+            wdda_error = wdda_res.get("error", "Unknown")
             logger.warning(f"[DATA] Spot-check {site}: NO DATA available - WDDA: {wdda_error}")
 
 
@@ -5167,9 +5470,9 @@ def run_spot_check_validation(
     sdk,
     output_df: pd.DataFrame,
     target_timezone=None,
-    date_col: str = 'date',
-    code_col: str = 'code',
-    value_col: str = 'discharge'
+    date_col: str = "date",
+    code_col: str = "code",
+    value_col: str = "discharge",
 ) -> dict:
     """
     Run spot-check validation if sites are configured.
@@ -5195,9 +5498,17 @@ def run_spot_check_validation(
     if not site_codes:
         logger.info("[DATA] Spot-check validation skipped (no sites configured)")
         return {
-            'wdda': {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': 'WDDA'},
-            'wdd': {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': 'WDD'},
-            'combined_summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}
+            "wdda": {
+                "results": {},
+                "summary": {"checked": 0, "matched": 0, "mismatched": 0, "errors": 0},
+                "variable": "WDDA",
+            },
+            "wdd": {
+                "results": {},
+                "summary": {"checked": 0, "matched": 0, "mismatched": 0, "errors": 0},
+                "variable": "WDD",
+            },
+            "combined_summary": {"checked": 0, "matched": 0, "mismatched": 0, "errors": 0},
         }
 
     logger.info(f"[DATA] Running spot-check validation for {len(site_codes)} sites...")
@@ -5209,7 +5520,7 @@ def run_spot_check_validation(
         date_col=date_col,
         code_col=code_col,
         value_col=value_col,
-        target_timezone=target_timezone
+        target_timezone=target_timezone,
     )
 
     log_spot_check_summary(result)
@@ -5220,6 +5531,7 @@ def run_spot_check_validation(
 # =============================================================================
 # SITE CACHING (Phase 6)
 # =============================================================================
+
 
 def load_site_cache(cache_file: str, max_age_days: int = 7) -> dict | None:
     """
@@ -5243,19 +5555,21 @@ def load_site_cache(cache_file: str, max_age_days: int = 7) -> dict | None:
         return None
 
     try:
-        with open(cache_file, 'r') as f:
+        with open(cache_file) as f:
             cache = json.load(f)
 
-        version = cache.get('cache_version', 0)
+        version = cache.get("cache_version", 0)
 
         # Check cache age
-        cached_at = cache.get('cached_at')
+        cached_at = cache.get("cached_at")
         is_stale = False
         if cached_at:
             cache_time = dt.datetime.fromisoformat(cached_at)
             age_days = (dt.datetime.now(cache_time.tzinfo) - cache_time).days
             if age_days > max_age_days:
-                logger.warning(f"[CONFIG] Site cache is {age_days} days old (max: {max_age_days}), cache is stale")
+                logger.warning(
+                    f"[CONFIG] Site cache is {age_days} days old (max: {max_age_days}), cache is stale"
+                )
                 is_stale = True
             else:
                 logger.debug(f"[CONFIG] Site cache loaded, {age_days} days old")
@@ -5264,32 +5578,30 @@ def load_site_cache(cache_file: str, max_age_days: int = 7) -> dict | None:
         if version == 2:
             # Version 2: unified format
             result = {
-                'site_codes': cache.get('site_codes', []),
-                'site_ids': cache.get('site_ids', []),
-                'is_stale': is_stale
+                "site_codes": cache.get("site_codes", []),
+                "site_ids": cache.get("site_ids", []),
+                "is_stale": is_stale,
             }
         elif version == 1:
             # Version 1: pentad/decad split - convert to unified format
-            pentad_codes = cache.get('pentad', {}).get('site_codes', [])
-            decad_codes = cache.get('decad', {}).get('site_codes', [])
-            pentad_ids = cache.get('pentad', {}).get('site_ids', [])
-            decad_ids = cache.get('decad', {}).get('site_ids', [])
+            pentad_codes = cache.get("pentad", {}).get("site_codes", [])
+            decad_codes = cache.get("decad", {}).get("site_codes", [])
+            pentad_ids = cache.get("pentad", {}).get("site_ids", [])
+            decad_ids = cache.get("decad", {}).get("site_ids", [])
 
             # Combine and deduplicate
             seen = set()
             site_codes = []
             site_ids = []
-            for code, site_id in zip(pentad_codes + decad_codes, pentad_ids + decad_ids):
+            for code, site_id in zip(
+                pentad_codes + decad_codes, pentad_ids + decad_ids, strict=False
+            ):
                 if code not in seen:
                     seen.add(code)
                     site_codes.append(code)
                     site_ids.append(site_id)
 
-            result = {
-                'site_codes': site_codes,
-                'site_ids': site_ids,
-                'is_stale': is_stale
-            }
+            result = {"site_codes": site_codes, "site_ids": site_ids, "is_stale": is_stale}
             logger.debug(f"[CONFIG] Converted v1 cache: {len(site_codes)} unique sites")
         else:
             logger.warning(f"[CONFIG] Unknown cache version {version}, ignoring cache")
@@ -5302,11 +5614,7 @@ def load_site_cache(cache_file: str, max_age_days: int = 7) -> dict | None:
         return None
 
 
-def save_site_cache(
-    cache_file: str,
-    site_codes: list,
-    site_ids: list = None
-) -> bool:
+def save_site_cache(cache_file: str, site_codes: list, site_ids: list = None) -> bool:
     """
     Save site codes to cache file with timestamp.
 
@@ -5325,7 +5633,7 @@ def save_site_cache(
         "cache_version": 2,  # Version 2 uses unified site list
         "site_codes": site_codes,
         "site_ids": site_ids or [],
-        "site_count": len(site_codes)
+        "site_count": len(site_codes),
     }
 
     try:
@@ -5334,7 +5642,7 @@ def save_site_cache(
         if cache_dir and not os.path.exists(cache_dir):
             os.makedirs(cache_dir, exist_ok=True)
 
-        with open(cache_file, 'w') as f:
+        with open(cache_file, "w") as f:
             json.dump(cache, f, indent=2)
 
         logger.info(f"[CONFIG] Site cache saved: {len(site_codes)} sites")
@@ -5358,10 +5666,11 @@ def get_unique_site_codes(pentad_codes: list, decad_codes: list) -> list:
     """
     # Use dict.fromkeys to preserve order while removing duplicates
     combined = list(dict.fromkeys(pentad_codes + decad_codes))
-    
+
     if len(pentad_codes) + len(decad_codes) != len(combined):
         duplicates = len(pentad_codes) + len(decad_codes) - len(combined)
-        logger.debug(f"[CONFIG] Deduplicated site codes: {len(pentad_codes)} + {len(decad_codes)} -> {len(combined)} unique ({duplicates} duplicates removed)")
-    
-    return combined
+        logger.debug(
+            f"[CONFIG] Deduplicated site codes: {len(pentad_codes)} + {len(decad_codes)} -> {len(combined)} unique ({duplicates} duplicates removed)"
+        )
 
+    return combined

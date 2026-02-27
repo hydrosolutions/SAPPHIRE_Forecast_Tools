@@ -18,12 +18,11 @@ Usage:
     print(get_profiling_report())
 """
 
+import logging
 import os
 import time
-import logging
-from contextlib import contextmanager
 from collections import defaultdict
-from typing import Optional
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ _call_counts = defaultdict(int)
 
 def profiling_enabled() -> bool:
     """Check if profiling is enabled via environment variable."""
-    return os.getenv('PREPROCESSING_PROFILING', '').lower() in ('true', '1', 'yes')
+    return os.getenv("PREPROCESSING_PROFILING", "").lower() in ("true", "1", "yes")
 
 
 def reset_profiling():
@@ -63,8 +62,8 @@ class ProfileTimer:
         """
         self.name = name
         self.log_immediately = log_immediately
-        self.start_time: Optional[float] = None
-        self.elapsed: Optional[float] = None
+        self.start_time: float | None = None
+        self.elapsed: float | None = None
 
     def __enter__(self):
         if profiling_enabled():
@@ -108,11 +107,11 @@ def get_profiling_summary() -> dict:
     for name, times in _timings.items():
         if times:
             summary[name] = {
-                'count': len(times),
-                'total': sum(times),
-                'mean': sum(times) / len(times),
-                'min': min(times),
-                'max': max(times),
+                "count": len(times),
+                "total": sum(times),
+                "mean": sum(times) / len(times),
+                "min": min(times),
+                "max": max(times),
             }
     return summary
 
@@ -143,21 +142,23 @@ def get_profiling_report() -> str:
     ]
 
     # Sort by total time descending
-    sorted_items = sorted(summary.items(), key=lambda x: x[1]['total'], reverse=True)
+    sorted_items = sorted(summary.items(), key=lambda x: x[1]["total"], reverse=True)
 
     total_time = 0
     for name, stats in sorted_items:
         lines.append(
             f"{name:<40} {stats['count']:>6} {stats['total']:>9.2f}s {stats['mean']:>9.2f}s {stats['min']:>9.2f}s {stats['max']:>9.2f}s"
         )
-        total_time += stats['total']
+        total_time += stats["total"]
 
-    lines.extend([
-        "-" * 70,
-        f"{'TOTAL':<40} {'':<6} {total_time:>9.2f}s",
-        "=" * 70,
-        "",
-    ])
+    lines.extend(
+        [
+            "-" * 70,
+            f"{'TOTAL':<40} {'':<6} {total_time:>9.2f}s",
+            "=" * 70,
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
