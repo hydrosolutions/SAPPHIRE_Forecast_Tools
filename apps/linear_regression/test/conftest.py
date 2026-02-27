@@ -5,9 +5,7 @@ import sys
 
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 
 import forecast_library as fl
 
