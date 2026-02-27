@@ -413,22 +413,12 @@ the API schema so consumers can distinguish operational from maintenance data.
 **Affects:** API schema in `sapphire/services/postprocessing/` (colleague's
 domain). Coordinate before implementing.
 
-### PP-009: Stop calculating EM skill metrics on the fly in operational mode
+### PP-009: Stop calculating EM skill metrics on the fly in operational mode — **Review**
 
-**Current:** Operational mode calculates skill metrics for each new EM row on
-the fly. But these metrics are based on very limited data (the current forecast
-vs. a single observation) and are not particularly meaningful. To properly
-calculate EM skill metrics, we would need to load all available observations and
-forecasts, which defeats the purpose of the fast operational path.
-
-**Decision:** Display the previous year's EM skill metrics (from the annual
-recalculation) even if the current EM composition differs from last year's.
-The per-model skill metrics (which ARE reused from recalculation) already
-control which models enter the EM — EM skill metrics are informational, not
-used for filtering.
-
-**Target:** Remove on-the-fly EM skill metric calculation from operational mode.
-Read EM skill metrics from the most recent recalculation instead.
+**Resolved:** On-the-fly EM skill metric calculation has been removed from
+operational mode. The ensemble calculator now creates EM forecast rows without
+calculating skill metrics for them. EM skill metrics come from the annual
+recalculation instead.
 
 **Affects:** `ensemble_calculator.create_ensemble_forecasts()`,
 `postprocessing_operational.py`
