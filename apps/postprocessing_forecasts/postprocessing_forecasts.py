@@ -89,7 +89,7 @@ def postprocessing_forecasts():
             sl.load_environment()
 
         # Get environment variable to determine which forecast horizon we process
-        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
 
         if prediction_mode not in ['PENTAD', 'DECAD', 'BOTH']:
             logger.error(f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "

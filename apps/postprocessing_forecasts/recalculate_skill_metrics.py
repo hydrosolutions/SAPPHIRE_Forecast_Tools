@@ -96,7 +96,7 @@ def recalculate_skill_metrics():
             )
             sl.load_environment()
 
-        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
         if prediction_mode not in VALID_MODES:
             logger.error(
                 f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "

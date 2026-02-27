@@ -1275,7 +1275,7 @@ def _read_ml_forecasts_from_api(
                 df_page = client.read_short_term_forecasts(
                     horizon=query_horizon,
                     code=code,
-                    model=model_upper,
+                    model=model_short,
                     start_date=start_date,
                     end_date=end_date,
                     skip=skip,

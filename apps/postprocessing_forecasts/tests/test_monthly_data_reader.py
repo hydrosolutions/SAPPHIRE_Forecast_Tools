@@ -277,7 +277,7 @@ class TestReadMonthlyObservationsApiFailure:
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
-        mock_client.is_ready.return_value = False
+        mock_client.readiness_check.return_value = False
 
         with patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True), \
              patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}), \
@@ -471,7 +471,7 @@ class TestReadMonthlyForecastsApiFailure:
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
-        mock_client.is_ready.return_value = False
+        mock_client.readiness_check.return_value = False
 
         with patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True), \
              patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}), \
