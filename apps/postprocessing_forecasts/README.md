@@ -10,7 +10,7 @@ API-first I/O via the SAPPHIRE postprocessing API. The target state is:
 - **Writes:** API as primary destination, CSV as deprecated backup only.
 
 CSV I/O will be removed once API integration is fully validated.
-PP-007, PP-010, PP-013, and PP-014 have been resolved.
+PP-007, PP-009, PP-010, PP-011, PP-013, and PP-014 are in review.
 
 ## Forecast Horizons
 
@@ -242,10 +242,11 @@ Setting a threshold to `'False'` disables that filter.
 
 Skill metrics CSVs are saved with a year tag (e.g.,
 `skill_metrics_pentad_2025.csv`). In the API, each skill metric record has a
-`date` attribute that stores the **forecast target date** (not a year). This
-means skill metrics are naturally versioned per forecast date. See PP-011 for
-ensuring the API unique key uses this `date` field correctly so that
-recalculations for different periods do not overwrite each other.
+`date` attribute that stores the **forecast target date** (not a year) and the
+unique key is `(horizon_type, code, model_type, date, horizon_in_year)`.
+This means skill metrics are naturally versioned per forecast date --
+recalculations for different periods do not overwrite each other (PP-011
+resolved).
 
 ## Source Modules
 
@@ -422,27 +423,23 @@ recalculation instead.
 **Affects:** `ensemble_calculator.create_ensemble_forecasts()`,
 `postprocessing_operational.py`
 
-### ~~PP-010: Pentad/decad reads should use API (operational + recalculation)~~
+### PP-010: Pentad/decad reads should use API (operational + recalculation) -- **Review**
 
-**Status: Complete.** Pentad/decad reads migrated to API-first via
+**Resolved:** Pentad/decad reads migrated to API-first via
 `data_reader.read_observed_and_modelled_data()`. All three entry points
 (operational, recalculation, maintenance) now use the new readers.
 NE and virtual station calculations remain in `setup_library`, called
 explicitly from entry points.
 
-### PP-011: Skill metrics API unique key should include date
+### PP-011: Skill metrics API unique key should include date -- **Review**
 
-**Current:** API upserts skill metrics by `(horizon_in_year, code, model_type)`.
-A new recalculation overwrites previous metrics.
-
-**Target:** The skill metrics table has a `date` attribute. Use the **forecast
-target date** (not a year) as the date value for each entry. Include `date` in
-the API unique key so that skill metrics are naturally versioned per forecast
-date. This means `(horizon_in_year, code, model_type, date)` becomes the
-upsert key.
-
-**Affects:** API schema in `sapphire/services/postprocessing/` (colleague's
-domain), `api_writer.py`. Coordinate before implementing.
+**Resolved:** The API schema uses `UniqueConstraint("horizon_type", "code",
+"model_type", "date", "horizon_in_year")` and the CRUD upsert matches.
+Client-side (`api_writer._write_skill_metrics_to_api`) computes a per-row
+`date` from `horizon_in_year` + target `year` via `tl.get_date_for_pentad()`,
+`tl.get_date_for_decad()`, or `date(year, month, 1)`. Different
+recalculation years produce different `date` values, so skill metrics are
+naturally versioned and do not overwrite across periods.
 
 ### PP-012: Daily ensemble creation
 

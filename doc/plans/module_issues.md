@@ -102,8 +102,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-007** | Maintenance should read from API, not CSV | **High** | Review | See `postprocessing_forecasts/README.md` PP-007 | — |
 | **PP-008** | No audit trail for gap-filled rows | **Low** | Open | See `postprocessing_forecasts/README.md` PP-008 | API schema (colleague) |
 | **PP-009** | Stop calculating EM skill metrics on the fly in operational mode | **Medium** | Review | See `postprocessing_forecasts/README.md` PP-009 | — |
-| ~~**PP-010**~~ | ~~Pentad/decad reads should use API (operational + recalculation)~~ | | Complete | Migrated to `data_reader.read_observed_and_modelled_data()` | — |
-| **PP-011** | Skill metrics API unique key should include date | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-011 | API schema (colleague) |
+| **PP-010** | Pentad/decad reads should use API (operational + recalculation) | | Review | Migrated to `data_reader.read_observed_and_modelled_data()` | — |
+| **PP-011** | Skill metrics API unique key should include date | **Medium** | Review | Unique constraint now includes `date` in API schema | — |
 | **PP-012** | Daily ensemble creation | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-012 | — |
 | **PP-013** | Monthly maintenance uses CSV-first gap detection | **High** | Review | See `postprocessing_forecasts/README.md` PP-013 | — |
 | ~~**PP-014**~~ | ~~Skill metrics read priority inverted (CSV-first, should be API-first)~~ | | Complete | Moved to Completed Issues |
@@ -184,7 +184,6 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-003 | Implement batch upsert in postprocessing CRUD | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-004 | Replace iterrows() with vectorized operations | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-005 | Create operational/maintenance entry point split | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 2 |
-| PP-010 | Pentad/decad reads should use API (operational + recalculation) | 2026-02-27 | Migrated to `data_reader.read_observed_and_modelled_data()` |
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
 
 ### Pipeline (`p`)
@@ -242,4 +241,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-27 (INFRA-004/INFRA-001 plans rewritten with verified line numbers; API-001/API-002 marked as external dependencies; PP-010 complete; P-003 complete; INFRA-007 → Review)*
+*Last updated: 2026-02-27 (PP-010 → Review; PP-011 → Review (API schema now includes date in unique key); PP-008 still blocked (no backfill flag in API schema))*
