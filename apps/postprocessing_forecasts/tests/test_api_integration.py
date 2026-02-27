@@ -114,7 +114,7 @@ class TestWriteCombinedForecastToApi:
         assert record['code'] == '12345'
         assert record['model_type'] == 'LR'
         assert record['date'] == '2024-01-06'
-        assert record['target'] == '2024-01-06'
+        assert record['target'] == '2024-01-07'  # date + 1 day
         assert record['horizon_value'] == 2
         assert record['horizon_in_year'] == 2
         assert record['forecasted_discharge'] == 100.0
@@ -364,6 +364,107 @@ class TestWriteCombinedForecastToApi:
 
         # write_forecasts should not be called for empty data
         mock_client.write_forecasts.assert_not_called()
+
+
+class TestCombinedForecastTarget:
+    """Tests that target = date + 1 (first day of forecast period)."""
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        """Enable API by default."""
+        monkeypatch.setenv('SAPPHIRE_API_ENABLED', 'true')
+
+    def _get_record(self, mock_client_class, data, horizon_type):
+        """Helper: write data and return the first record sent to API."""
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        _write_combined_forecast_to_api(data, horizon_type)
+
+        call_args = mock_client.write_forecasts.call_args[0][0]
+        return call_args[0]
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_pentad_target_is_day_after_boundary(self, mock_client_class):
+        """date=2024-01-20 (end of pentad 4) -> target=2024-01-21."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'date': pd.to_datetime(['2024-01-20']),
+            'pentad_in_month': [5],
+            'pentad_in_year': [5],
+            'forecasted_discharge': [100.0],
+            'model_short': ['TFT'],
+        })
+
+        record = self._get_record(mock_client_class, data, "pentad")
+
+        assert record['date'] == '2024-01-20'
+        assert record['target'] == '2024-01-21'
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_decade_target_is_day_after_boundary(self, mock_client_class):
+        """date=2024-01-20 (end of decade 2) -> target=2024-01-21."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'date': pd.to_datetime(['2024-01-20']),
+            'decad': [2],
+            'decad_in_year': [2],
+            'forecasted_discharge': [100.0],
+            'model_short': ['TFT'],
+        })
+
+        record = self._get_record(mock_client_class, data, "decad")
+
+        assert record['date'] == '2024-01-20'
+        assert record['target'] == '2024-01-21'
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_pentad_target_crosses_month_boundary(self, mock_client_class):
+        """date=2024-02-29 (end of Feb, leap year) -> target=2024-03-01."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'date': pd.to_datetime(['2024-02-29']),
+            'pentad_in_month': [6],
+            'pentad_in_year': [12],
+            'forecasted_discharge': [100.0],
+            'model_short': ['LR'],
+        })
+
+        record = self._get_record(mock_client_class, data, "pentad")
+
+        assert record['date'] == '2024-02-29'
+        assert record['target'] == '2024-03-01'
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_decade_target_crosses_month_boundary(self, mock_client_class):
+        """date=2024-01-31 (end of Jan) -> target=2024-02-01."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'date': pd.to_datetime(['2024-01-31']),
+            'decad': [3],
+            'decad_in_year': [3],
+            'forecasted_discharge': [100.0],
+            'model_short': ['LR'],
+        })
+
+        record = self._get_record(mock_client_class, data, "decad")
+
+        assert record['date'] == '2024-01-31'
+        assert record['target'] == '2024-02-01'
 
 
 class TestWriteSkillMetricsToApi:

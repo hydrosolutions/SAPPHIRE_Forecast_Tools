@@ -253,12 +253,17 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
                 missing_comp.sum(),
             )
 
+        # Target = first day of forecast period (day after the boundary)
+        df_rec['target_str'] = (
+            pd.to_datetime(df_rec['date']) + pd.Timedelta(days=1)
+        ).dt.strftime('%Y-%m-%d')
+
         records_df = pd.DataFrame({
             'horizon_type': api_horizon_type,
             'code': df_rec['code'].astype(str),
             'model_type': df_rec['model_type'],
             'date': df_rec['date_str'],
-            'target': df_rec['date_str'],
+            'target': df_rec['target_str'],
             'horizon_value': df_rec[horizon_value_col].astype(float).astype(int),
             'horizon_in_year': df_rec[horizon_in_year_col].astype(float).astype(int),
             'composition': df_rec['composition'],
@@ -266,6 +271,22 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
                 df_rec['forecasted_discharge'].notna()
             ),
         })
+
+        # Deduplicate on the unique constraint columns to prevent
+        # CardinalityViolation ("cannot affect row a second time").
+        unique_cols = ['horizon_type', 'code', 'model_type', 'date', 'target']
+        n_before_dedup = len(records_df)
+        records_df = records_df.drop_duplicates(
+            subset=unique_cols, keep='last'
+        )
+        n_dupes = n_before_dedup - len(records_df)
+        if n_dupes > 0:
+            logger.warning(
+                "Dropped %d duplicate forecast records on %s (%s) "
+                "before API write",
+                n_dupes, unique_cols, horizon_type,
+            )
+
         # Convert to records, replacing NaN/NaT with None
         records = [
             {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
