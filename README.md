@@ -181,6 +181,14 @@ The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment
 # Development
 If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file [doc/development.md](doc/development.md).
 
+## Code Quality
+This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting (configuration in `ruff.toml`). A pre-commit hook enforces this automatically on each commit. To set up:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
 # User guide
 Once the forecast tools are deployed with the appropriate **input data**, the user can configure the forecast tools and visualize and download the forecasts using the forecast configuration dashboard and the forecast dashboard. The user guide is available in English language in the file [doc/user_guide.md](doc/user_guide.md).
 

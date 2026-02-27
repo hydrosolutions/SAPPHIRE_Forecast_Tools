@@ -1,0 +1,52 @@
+# Ruff configuration for SAPPHIRE forecast tools
+# Applied repo-wide; adopt module-by-module by running:
+#   ruff check apps/<module>/
+#   ruff format apps/<module>/
+
+line-length = 100
+target-version = "py311"
+
+# Exclude legacy/deprecated modules and generated directories
+exclude = [
+    "backend/",
+    "apps/backend/",
+    "apps/machine_learning_monthly/",
+    "apps/conceptual_model/",
+    "apps/daily_runoff/",
+    ".venv",
+    "__pycache__",
+    "*.egg-info",
+]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports, undefined names, etc.)
+    "I",    # isort (import ordering)
+    "UP",   # pyupgrade (modernize syntax for target Python version)
+    "B",    # flake8-bugbear (common pitfalls, e.g. mutable defaults)
+    "SIM",  # flake8-simplify (simplifiable constructs)
+]
+
+# Ignore rules that conflict with the formatter or are too noisy
+ignore = [
+    "E501",   # line length — handled by formatter; don't double-flag
+    "SIM108", # ternary operator — not always clearer
+    "SIM112", # uncapitalized env vars — project uses lowercase env vars by convention
+    "SIM117", # multiple with statements — collapsed form often less readable
+]
+
+[lint.pycodestyle]
+max-doc-length = 79
+
+[lint.isort]
+known-first-party = ["iEasyHydroForecast"]
+
+[lint.per-file-ignores]
+# Most app modules and tests use sys.path manipulation before imports
+"apps/**/*.py" = ["E402"]
+
+[format]
+# Match existing project convention: double quotes, trailing commas
+quote-style = "double"
+indent-style = "space"

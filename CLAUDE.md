@@ -105,6 +105,24 @@ def calculate_forecast(
     """
 ```
 
+### Linting and Formatting (ruff)
+
+The project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting, configured in `ruff.toml` at the repo root. A pre-commit hook runs `ruff check --fix` and `ruff format` automatically on every commit.
+
+**When refactoring a module**, clean it up first in a dedicated commit:
+
+```bash
+ruff check --fix apps/<module>/
+ruff format apps/<module>/
+ruff check apps/<module>/          # review remaining manual fixes
+```
+
+**Key rules enabled**: `E` (pycodestyle), `F` (pyflakes), `I` (isort), `UP` (pyupgrade), `B` (bugbear), `SIM` (simplify). The full rule selection and per-path ignores are documented in `ruff.toml`.
+
+**Excluded from linting**: `backend/`, `machine_learning_monthly/`, `conceptual_model/`, `daily_runoff/` (legacy/deprecated).
+
+**Do not** add `# noqa` comments to silence warnings without understanding the underlying issue. Fix the code instead, or add the rule to `ruff.toml` ignores if it is genuinely too noisy project-wide.
+
 ### Naming Conventions
 
 - **Functions/methods**: `snake_case`
@@ -357,6 +375,7 @@ SAPPHIRE_forecast_tools/
 │   └── plans/                  # Implementation plans and issues
 │       └── issues/             # Detailed issue files
 ├── backend/                    # LEGACY - being phased out
+├── ruff.toml                   # Linting/formatting config (repo-wide)
 └── CLAUDE.md                   # This file
 ```
 
