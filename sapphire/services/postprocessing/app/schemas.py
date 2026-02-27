@@ -17,7 +17,7 @@ class ForecastBase(BaseModel):
 
     q05: Optional[float] = None
     q25: Optional[float] = None
-    q50: Optional[float] = None
+    # q50: Optional[float] = None
     q75: Optional[float] = None
     q95: Optional[float] = None
 
@@ -163,7 +163,7 @@ class SkillMetricBase(BaseModel):
     model_type: ModelType
     date: DateType
     horizon_in_year: int
-    composition: Optional[str] = None  # Tracks which models compose ensemble
+    composition: Optional[str] = None
 
     sdivsigma: Optional[float] = None
     nse: Optional[float] = None
@@ -171,6 +171,12 @@ class SkillMetricBase(BaseModel):
     accuracy: Optional[float] = None
     mae: Optional[float] = None
     n_pairs: Optional[float] = None
+    crps: Optional[float] = None
+    pbias: Optional[float] = None
+    kgelf: Optional[float] = None
+    nse_log: Optional[float] = None
+    fhv: Optional[float] = None
+    flv: Optional[float] = None
 
 
 class SkillMetricCreate(SkillMetricBase):

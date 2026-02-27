@@ -68,11 +68,11 @@ class Forecast(Base):
     # Quantile predictions (Q5 to Q95)
     q05 = Column(Float)
     q25 = Column(Float)
-    q50 = Column(Float)
+    # q50 = Column(Float)
     q75 = Column(Float)
     q95 = Column(Float)
 
-    # Results
+    # Results (q50)
     forecasted_discharge = Column(Float)
 
     # Composite index for filtering and ordering, plus unique constraint
@@ -176,6 +176,12 @@ class SkillMetric(Base):
     accuracy = Column(Float)
     mae = Column(Float)
     n_pairs = Column(Integer)
+    crps = Column(Float) # Continuous Ranked Probability Score
+    pbias = Column(Float) # Percent Bias
+    kgelf = Column(Float) # low flow Kling-Gupta Efficiency
+    nse_log = Column(Float) # NSE on log-transformed flows
+    fhv = Column(Float) # Peak flow bias (%), top 2% of flow duration curve
+    flv = Column(Float) # Low-flow volume bias (%), bottom 30% of FDC
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
