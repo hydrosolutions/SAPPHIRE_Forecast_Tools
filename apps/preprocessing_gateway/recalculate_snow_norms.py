@@ -21,18 +21,15 @@ Usage (from code / tests)::
         year=2024,
     )
 """
+
+import logging
 import os
 import sys
-import logging
 
 import pandas as pd
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__))
-)
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..', 'iEasyHydroForecast')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "iEasyHydroForecast"))
 
 import dg_utils
 
@@ -68,9 +65,7 @@ def recalculate_norms(
             os.environ[k] = v
 
     try:
-        return _recalculate_norms_impl(
-            snow_path, variables, hru_codes, year
-        )
+        return _recalculate_norms_impl(snow_path, variables, hru_codes, year)
     finally:
         # Restore env
         if env_overrides:
@@ -91,11 +86,11 @@ def _recalculate_norms_impl(
     # 1. Compute norms from historical CSVs
     logger.info(
         "Calculating snow norms from %s for variables %s, HRUs %s",
-        snow_path, variables, hru_codes,
+        snow_path,
+        variables,
+        hru_codes,
     )
-    norms_df = dg_utils.calculate_snow_norms(
-        snow_path, variables, hru_codes
-    )
+    norms_df = dg_utils.calculate_snow_norms(snow_path, variables, hru_codes)
 
     if norms_df.empty:
         logger.warning("No snow norms computed — no historical data found")
@@ -104,20 +99,16 @@ def _recalculate_norms_impl(
     logger.info(
         "Computed %d norm entries across %d variables and %d codes",
         len(norms_df),
-        norms_df['snow_type'].nunique(),
-        norms_df['code'].nunique(),
+        norms_df["snow_type"].nunique(),
+        norms_df["code"].nunique(),
     )
 
     # 2. Check API availability
     if not dg_utils.SAPPHIRE_API_AVAILABLE:
-        logger.warning(
-            "sapphire-api-client not installed, cannot write norms"
-        )
+        logger.warning("sapphire-api-client not installed, cannot write norms")
         return False
 
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         logger.info("API disabled via SAPPHIRE_API_ENABLED=false")
         return False
@@ -132,22 +123,18 @@ def _recalculate_norms_impl(
     # 3. Build date range for the target year
     is_leap = dg_utils.is_leap_year(year)
     n_days = 366 if is_leap else 365
-    date_range = pd.date_range(
-        start=f"{year}-01-01", periods=n_days, freq="D"
-    )
+    date_range = pd.date_range(start=f"{year}-01-01", periods=n_days, freq="D")
 
     # 4. For each variable+code, build records and write
     any_written = False
 
-    for snow_type in norms_df['snow_type'].unique():
-        type_norms = norms_df[norms_df['snow_type'] == snow_type]
+    for snow_type in norms_df["snow_type"].unique():
+        type_norms = norms_df[norms_df["snow_type"] == snow_type]
 
-        for code in type_norms['code'].unique():
-            code_norms = type_norms[type_norms['code'] == code]
+        for code in type_norms["code"].unique():
+            code_norms = type_norms[type_norms["code"] == code]
             # Build a dayofyear → norm lookup
-            norm_lookup = dict(
-                zip(code_norms['dayofyear'], code_norms['norm'])
-            )
+            norm_lookup = dict(zip(code_norms["dayofyear"], code_norms["norm"], strict=False))
 
             # Read existing records from API to preserve values
             start_str = f"{year}-01-01"
@@ -163,20 +150,20 @@ def _recalculate_norms_impl(
                 )
                 if not api_df.empty:
                     for _, row in api_df.iterrows():
-                        d = pd.to_datetime(
-                            row['date']
-                        ).strftime('%Y-%m-%d')
+                        d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
                         existing[d] = row
             except Exception as e:
                 logger.warning(
-                    "Could not read existing snow records for "
-                    "%s/%s: %s", snow_type, code, e,
+                    "Could not read existing snow records for %s/%s: %s",
+                    snow_type,
+                    code,
+                    e,
                 )
 
             # Build API records for each day of the year
             records = []
             for dt in date_range:
-                date_str = dt.strftime('%Y-%m-%d')
+                date_str = dt.strftime("%Y-%m-%d")
                 doy = dt.dayofyear
 
                 norm_val = norm_lookup.get(doy)
@@ -190,13 +177,13 @@ def _recalculate_norms_impl(
                 value = None
                 band_values = {}
                 if ex is not None:
-                    v = ex.get('value')
+                    v = ex.get("value")
                     if pd.notna(v):
                         value = float(v)
                     for i in range(1, 15):
-                        bv = ex.get(f'value{i}')
+                        bv = ex.get(f"value{i}")
                         if pd.notna(bv) if bv is not None else False:
-                            band_values[f'value{i}'] = float(bv)
+                            band_values[f"value{i}"] = float(bv)
 
                 record = {
                     "snow_type": snow_type.upper(),
@@ -214,13 +201,18 @@ def _recalculate_norms_impl(
                     count = client.write_snow(records)
                     logger.info(
                         "Wrote %d norm records for %s/%s (year %d)",
-                        count, snow_type, code, year,
+                        count,
+                        snow_type,
+                        code,
+                        year,
                     )
                     any_written = True
                 except Exception as e:
                     logger.error(
                         "Failed to write norms for %s/%s: %s",
-                        snow_type, code, e,
+                        snow_type,
+                        code,
+                        e,
                     )
 
     return any_written
@@ -229,6 +221,7 @@ def _recalculate_norms_impl(
 def main():
     """Entry point for standalone execution."""
     import setup_library as sl
+
     sl.load_environment()
 
     # Read configuration from environment
@@ -248,11 +241,10 @@ def main():
 
     # Use current year by default
     from datetime import date as date_type
+
     year = date_type.today().year
 
-    logger.info(
-        "Starting yearly snow norm recalculation for year %d", year
-    )
+    logger.info("Starting yearly snow norm recalculation for year %d", year)
     logger.info("Snow path: %s", snow_path)
     logger.info("Variables: %s", variables)
     logger.info("HRU codes: %s", hru_codes)

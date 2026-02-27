@@ -54,23 +54,20 @@
 # Author: Sandro Hunziker
 
 
-
 # --------------------------------------------------------------------
 # Import Libraries
 # --------------------------------------------------------------------
-import os
-import sys
 import json
-import pandas as pd
-import numpy as np
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
 import logging
-from logging.handlers import TimedRotatingFileHandler
-import traceback
+import os
 import shutil
+import sys
+import traceback
+from datetime import datetime, timedelta
+from logging.handlers import TimedRotatingFileHandler
 
 import dg_utils
+import pandas as pd
 
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
@@ -78,16 +75,14 @@ import dg_utils
 # client. The API key is stored in a .env file in the root directory of the project.
 # The forecast tools can be used without access to the sapphire data gateay but
 # the full power of the tools is only available with access to the data gateway.
-#pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
+# pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
 import sapphire_dg_client
 
 # SAPPHIRE API client for writing processed data to the API
 # Optional - if not installed, API writing is skipped
 try:
-    from sapphire_api_client import (
-        SapphirePreprocessingClient,
-        SapphireAPIError
-    )
+    from sapphire_api_client import SapphireAPIError, SapphirePreprocessingClient
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -100,9 +95,9 @@ except ImportError:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
-#print(script_dir)
-#print(forecast_dir)
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
+# print(script_dir)
+# print(forecast_dir)
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
@@ -110,19 +105,18 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
-
 # Set up logging
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # Create the logs directory if it doesn't exist
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 # Create a file handler to write logs to a file
 # A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
+file_handler = TimedRotatingFileHandler("logs/log", when="midnight", interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
 
 # Create a stream handler to print logs to the console
@@ -147,35 +141,35 @@ def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) 
     """
     data_file = data_file.copy()
     # rename the Station column to 'date'
-    data_file.rename(columns={'Unnamed: 0': 'date'}, inplace=True)
+    data_file.rename(columns={"Unnamed: 0": "date"}, inplace=True)
 
-    #get the type of data
+    # get the type of data
     value_type = data_file.iloc[0].values[1]
 
-    #than we need to drop the first 4 rows of the era5 data
+    # than we need to drop the first 4 rows of the era5 data
     data_file = data_file.iloc[4:]
 
     # now we need to convert the date column to a datetime object
-    data_file['date'] = pd.to_datetime(data_file['date'], dayfirst=True)
+    data_file["date"] = pd.to_datetime(data_file["date"], dayfirst=True)
 
-    data_file = data_file.sort_values('date')
+    data_file = data_file.sort_values("date")
 
     transformed_data_file = pd.DataFrame()
 
-    #unique names, here they are actually the names of the different HRU
+    # unique names, here they are actually the names of the different HRU
     names = data_file.columns[1:]
 
     for name in names:
         # get the data for the code
-        code_data = data_file[['date', name]].copy()
+        code_data = data_file[["date", name]].copy()
         # rename the columns
         code_data.rename(columns={name: value_type}, inplace=True)
         # Add the 'name' column
-        code_data['code'] = HRU_CODE
-        code_data['name'] = name
+        code_data["code"] = HRU_CODE
+        code_data["name"] = name
         # Convert 'Value' column to numeric, coercing errors
-        code_data[value_type] = pd.to_numeric(code_data[value_type], errors='coerce').astype(float)
-        transformed_data_file = pd.concat([transformed_data_file, code_data], axis = 0)
+        code_data[value_type] = pd.to_numeric(code_data[value_type], errors="coerce").astype(float)
+        transformed_data_file = pd.concat([transformed_data_file, code_data], axis=0)
 
     return transformed_data_file
 
@@ -196,26 +190,26 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
         logger.error("No files downloaded. Exiting program.")
         sys.exit(1)
 
-    #combine the data
+    # combine the data
     P_ensemble = pd.DataFrame()
     T_ensemble = pd.DataFrame()
     for file in files_downloaded:
         elements = file.split("_")
         # From the second last element, remove the first 3 characters ('HRU')
         HRU_CODE = elements[-2][3:]
-        #HRU_CODE = elements[-2][-5:]
+        # HRU_CODE = elements[-2][-5:]
         variable = elements[-1].split(".")[0]
         ensemble_member = elements[-3][3:]
-        #read the data file
+        # read the data file
         data_file = pd.read_csv(file)
-        #transform the data file
+        # transform the data file
         transformed_data_file = transform_data_file_ensemble_member(data_file, HRU_CODE)
-        transformed_data_file['ensemble_member'] = int(ensemble_member)
+        transformed_data_file["ensemble_member"] = int(ensemble_member)
 
         if variable == "tp":
-            P_ensemble = pd.concat([P_ensemble, transformed_data_file], axis = 0)
+            P_ensemble = pd.concat([P_ensemble, transformed_data_file], axis=0)
         elif variable == "2t":
-            T_ensemble = pd.concat([T_ensemble, transformed_data_file], axis = 0)
+            T_ensemble = pd.concat([T_ensemble, transformed_data_file], axis=0)
         else:
             logger.warning(f"Variable {variable} not recognized. Skipping file {file}.")
             continue
@@ -228,13 +222,15 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
         logger.error("No temperature data found in the ensemble forecast files.")
         sys.exit(1)
 
-    #combine the P and T data, on code, than name, than ensemble_member than date
-    P_ensemble = P_ensemble.sort_values(['code', 'name', 'ensemble_member', 'date'])
-    T_ensemble = T_ensemble.sort_values(['code','name', 'ensemble_member', 'date'])
+    # combine the P and T data, on code, than name, than ensemble_member than date
+    P_ensemble = P_ensemble.sort_values(["code", "name", "ensemble_member", "date"])
+    T_ensemble = T_ensemble.sort_values(["code", "name", "ensemble_member", "date"])
 
-    combined_df = pd.merge(P_ensemble, T_ensemble, on=['code', 'name','ensemble_member', 'date'], how='outer')
+    combined_df = pd.merge(
+        P_ensemble, T_ensemble, on=["code", "name", "ensemble_member", "date"], how="outer"
+    )
 
-    #clear the memory
+    # clear the memory
     del P_ensemble
     del T_ensemble
 
@@ -242,7 +238,9 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
 
 
 def _write_meteo_to_api(
-    data: pd.DataFrame, meteo_type: str, hru_code: str,
+    data: pd.DataFrame,
+    meteo_type: str,
+    hru_code: str,
     mode: str | None = None,
 ) -> bool:
     """
@@ -282,10 +280,7 @@ def _write_meteo_to_api(
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        logger.warning(
-            f"SAPPHIRE API at {api_url} is not ready, "
-            "skipping meteo write"
-        )
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping meteo write")
         return False
 
     if data.empty:
@@ -294,7 +289,7 @@ def _write_meteo_to_api(
 
     # Ensure date column is datetime
     data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
+    data["date"] = pd.to_datetime(data["date"])
 
     # Filter data based on sync mode (parameter > env var > default)
     if mode is not None:
@@ -303,18 +298,18 @@ def _write_meteo_to_api(
         sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
     logger.info(
         "QM meteo API sync mode: %s (%s, HRU %s)",
-        sync_mode, meteo_type, hru_code,
+        sync_mode,
+        meteo_type,
+        hru_code,
     )
 
     today = pd.Timestamp.today().normalize()
     yesterday = today - pd.Timedelta(days=1)
     if sync_mode == "operational":
-        data_to_write = data[
-            (data['date'] >= yesterday) & (data['date'] <= today)
-        ]
+        data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
     elif sync_mode == "maintenance":
         cutoff = today - pd.Timedelta(days=30)
-        data_to_write = data[data['date'] >= cutoff]
+        data_to_write = data[data["date"] >= cutoff]
     elif sync_mode == "initial":
         data_to_write = data
     else:
@@ -322,19 +317,22 @@ def _write_meteo_to_api(
             "Unknown sync mode '%s', defaulting to operational",
             sync_mode,
         )
-        data_to_write = data[
-            (data['date'] >= yesterday) & (data['date'] <= today)
-        ]
+        data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
 
     logger.info(
         "%s mode: %d meteo records to write (%s, HRU %s)",
-        sync_mode, len(data_to_write), meteo_type, hru_code,
+        sync_mode,
+        len(data_to_write),
+        meteo_type,
+        hru_code,
     )
 
     if data_to_write.empty:
         logger.info(
-            "No meteo data to write after %s filtering "
-            "(%s, HRU %s)", sync_mode, meteo_type, hru_code,
+            "No meteo data to write after %s filtering (%s, HRU %s)",
+            sync_mode,
+            meteo_type,
+            hru_code,
         )
         return False
 
@@ -345,16 +343,18 @@ def _write_meteo_to_api(
     records = []
     for _, row in data_to_write.iterrows():
         # Parse date
-        date_obj = pd.to_datetime(row['date']) if pd.notna(row.get('date')) else None
+        date_obj = pd.to_datetime(row["date"]) if pd.notna(row.get("date")) else None
         if date_obj is None:
             logger.warning(f"Skipping meteo row with missing date: {row.to_dict()}")
             continue
 
         record = {
             "meteo_type": meteo_type.upper(),  # API expects uppercase
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "value": round(float(row[value_col]), 3) if value_col in row and pd.notna(row.get(value_col)) else None,
+            "code": str(row["code"]),
+            "date": date_obj.strftime("%Y-%m-%d"),
+            "value": round(float(row[value_col]), 3)
+            if value_col in row and pd.notna(row.get(value_col))
+            else None,
             "norm": None,  # Control member data doesn't have norm values
             "day_of_year": date_obj.dayofyear,
         }
@@ -363,17 +363,19 @@ def _write_meteo_to_api(
     # Write to API
     if records:
         count = client.write_meteo(records)
-        logger.info(f"Successfully wrote {count} meteo records to SAPPHIRE API ({meteo_type}, HRU {hru_code})")
-        print(f"SAPPHIRE API: Successfully wrote {count} meteo records ({meteo_type}, HRU {hru_code})")
+        logger.info(
+            f"Successfully wrote {count} meteo records to SAPPHIRE API ({meteo_type}, HRU {hru_code})"
+        )
+        print(
+            f"SAPPHIRE API: Successfully wrote {count} meteo records ({meteo_type}, HRU {hru_code})"
+        )
         return True
     else:
         logger.info(f"No meteo records to write to API ({meteo_type}, HRU {hru_code})")
         return False
 
 
-def _check_meteo_consistency(
-    csv_data: pd.DataFrame, meteo_type: str, hru_code: str
-) -> bool:
+def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: str) -> bool:
     """
     Check consistency between CSV data and API data for meteo.
 
@@ -393,16 +395,12 @@ def _check_meteo_consistency(
     """
     tag = f"CONSISTENCY_CHECK [{meteo_type}, HRU {hru_code}]"
 
-    consistency_check = os.getenv(
-        "SAPPHIRE_CONSISTENCY_CHECK", "false"
-    ).lower() == "true"
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if not consistency_check:
         return True
 
     if not SAPPHIRE_API_AVAILABLE:
-        logger.warning(
-            "%s: sapphire-api-client not installed, skipping", tag
-        )
+        logger.warning("%s: sapphire-api-client not installed, skipping", tag)
         return True
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -410,41 +408,38 @@ def _check_meteo_consistency(
 
     # Get the date range from CSV data
     csv_data = csv_data.copy()
-    csv_data['date'] = pd.to_datetime(csv_data['date'])
+    csv_data["date"] = pd.to_datetime(csv_data["date"])
 
     # The write function filters to yesterday+today; use the same window
     today = pd.Timestamp.today().normalize()
     yesterday = today - pd.Timedelta(days=1)
-    csv_recent = csv_data[
-        (csv_data['date'] >= yesterday) & (csv_data['date'] <= today)
-    ].copy()
+    csv_recent = csv_data[(csv_data["date"] >= yesterday) & (csv_data["date"] <= today)].copy()
 
     if csv_recent.empty:
         logger.warning(
-            "%s: No CSV rows for %s to %s, nothing to verify. "
-            "CSV date range: %s to %s",
-            tag, yesterday.date(), today.date(),
-            csv_data['date'].min().date(),
-            csv_data['date'].max().date()
+            "%s: No CSV rows for %s to %s, nothing to verify. CSV date range: %s to %s",
+            tag,
+            yesterday.date(),
+            today.date(),
+            csv_data["date"].min().date(),
+            csv_data["date"].max().date(),
         )
         return True
 
-    codes = csv_recent['code'].unique()
+    codes = csv_recent["code"].unique()
     csv_val_col = meteo_type if meteo_type in csv_recent.columns else None
     logger.info(
-        "%s: Verifying API data for dates %s to %s, codes=%s, "
-        "api_url=%s",
-        tag, yesterday.date(), today.date(), list(codes), api_url
+        "%s: Verifying API data for dates %s to %s, codes=%s, api_url=%s",
+        tag,
+        yesterday.date(),
+        today.date(),
+        list(codes),
+        api_url,
     )
     if csv_val_col:
         for code in codes:
-            csv_vals = csv_recent.loc[
-                csv_recent['code'] == code, csv_val_col
-            ].tolist()
-            logger.info(
-                "%s: CSV values for code=%s: %s",
-                tag, code, csv_vals
-            )
+            csv_vals = csv_recent.loc[csv_recent["code"] == code, csv_val_col].tolist()
+            logger.info("%s: CSV values for code=%s: %s", tag, code, csv_vals)
 
     # Read from API for each code
     all_api_data = []
@@ -453,47 +448,43 @@ def _check_meteo_consistency(
             api_df = client.read_meteo(
                 meteo_type=meteo_type.upper(),
                 code=str(code),
-                start_date=yesterday.strftime('%Y-%m-%d'),
-                end_date=today.strftime('%Y-%m-%d'),
-                limit=1000
+                start_date=yesterday.strftime("%Y-%m-%d"),
+                end_date=today.strftime("%Y-%m-%d"),
+                limit=1000,
             )
             if api_df.empty:
                 logger.warning(
-                    "%s: API returned 0 rows for code=%s, date=%s",
-                    tag, code, today.date()
+                    "%s: API returned 0 rows for code=%s, date=%s", tag, code, today.date()
                 )
             else:
-                val_col = 'value' if 'value' in api_df.columns else None
+                val_col = "value" if "value" in api_df.columns else None
                 if val_col:
                     vals = api_df[val_col].tolist()
                     logger.info(
-                        "%s: API returned %d rows for code=%s, "
-                        "values=%s",
-                        tag, len(api_df), code, vals
+                        "%s: API returned %d rows for code=%s, values=%s",
+                        tag,
+                        len(api_df),
+                        code,
+                        vals,
                     )
                 else:
                     logger.info(
-                        "%s: API returned %d rows for code=%s, "
-                        "columns=%s",
-                        tag, len(api_df), code,
-                        list(api_df.columns)
+                        "%s: API returned %d rows for code=%s, columns=%s",
+                        tag,
+                        len(api_df),
+                        code,
+                        list(api_df.columns),
                     )
                 all_api_data.append(api_df)
         except Exception as e:
-            logger.error(
-                "%s: Error reading from API for code=%s: %s",
-                tag, code, e
-            )
+            logger.error("%s: Error reading from API for code=%s: %s", tag, code, e)
             return False
 
     if not all_api_data:
         # Diagnostic: try reading without date filter to see if ANY
         # data exists for this meteo_type
         try:
-            any_data = client.read_meteo(
-                meteo_type=meteo_type.upper(),
-                limit=5
-            )
+            any_data = client.read_meteo(meteo_type=meteo_type.upper(), limit=5)
             if any_data.empty:
                 logger.warning(
                     "%s: FAILED - No data returned from API. "
@@ -501,109 +492,87 @@ def _check_meteo_consistency(
                     "The write may have succeeded (count was returned) "
                     "but data may not be persisted. "
                     "Check the preprocessing API logs.",
-                    tag, meteo_type.upper()
+                    tag,
+                    meteo_type.upper(),
                 )
             else:
-                dates_in_api = sorted(
-                    pd.to_datetime(any_data['date']).dt.date.unique()
-                )
-                codes_in_api = list(any_data['code'].unique())
+                dates_in_api = sorted(pd.to_datetime(any_data["date"]).dt.date.unique())
+                codes_in_api = list(any_data["code"].unique())
                 logger.warning(
                     "%s: FAILED - No data for %s to %s but API "
                     "has %s data for other dates: %s, codes: %s. "
                     "Possible date mismatch or write did not persist "
                     "recent records.",
-                    tag, yesterday.date(), today.date(),
+                    tag,
+                    yesterday.date(),
+                    today.date(),
                     meteo_type.upper(),
-                    dates_in_api[:5], codes_in_api[:5]
+                    dates_in_api[:5],
+                    codes_in_api[:5],
                 )
         except Exception as e:
             logger.warning(
-                "%s: FAILED - No data returned and diagnostic "
-                "read also failed: %s",
-                tag, e
+                "%s: FAILED - No data returned and diagnostic read also failed: %s", tag, e
             )
         return False
 
     # Merge and compare
     api_data = pd.concat(all_api_data, ignore_index=True)
-    api_data['date'] = pd.to_datetime(api_data['date'])
-    api_data['code'] = api_data['code'].astype(str)
-    csv_recent['code'] = csv_recent['code'].astype(str)
+    api_data["date"] = pd.to_datetime(api_data["date"])
+    api_data["code"] = api_data["code"].astype(str)
+    csv_recent["code"] = csv_recent["code"].astype(str)
 
     is_consistent = True
 
     # Compare row counts
     if len(api_data) != len(csv_recent):
         logger.warning(
-            "%s: Row count mismatch - API: %d, CSV: %d",
-            tag, len(api_data), len(csv_recent)
+            "%s: Row count mismatch - API: %d, CSV: %d", tag, len(api_data), len(csv_recent)
         )
         is_consistent = False
 
     # Merge on code and date
     merged = csv_recent.merge(
-        api_data,
-        on=['code', 'date'],
-        how='outer',
-        suffixes=('_csv', '_api'),
-        indicator=True
+        api_data, on=["code", "date"], how="outer", suffixes=("_csv", "_api"), indicator=True
     )
 
-    only_csv = merged[merged['_merge'] == 'left_only']
-    only_api = merged[merged['_merge'] == 'right_only']
+    only_csv = merged[merged["_merge"] == "left_only"]
+    only_api = merged[merged["_merge"] == "right_only"]
 
     if len(only_csv) > 0:
-        logger.warning(
-            "%s: %d rows in CSV but not in API",
-            tag, len(only_csv)
-        )
+        logger.warning("%s: %d rows in CSV but not in API", tag, len(only_csv))
         is_consistent = False
 
     if len(only_api) > 0:
-        logger.warning(
-            "%s: %d rows in API but not in CSV",
-            tag, len(only_api)
-        )
+        logger.warning("%s: %d rows in API but not in CSV", tag, len(only_api))
         is_consistent = False
 
     # Compare value column
-    both = merged[merged['_merge'] == 'both']
+    both = merged[merged["_merge"] == "both"]
     if len(both) > 0:
-        csv_val_col = (
-            meteo_type if meteo_type in csv_recent.columns else None
-        )
-        if csv_val_col and 'value' in api_data.columns:
-            csv_values = both.get(
-                f'{csv_val_col}_csv', both.get(csv_val_col)
-            )
-            api_values = both.get('value_api', both.get('value'))
+        csv_val_col = meteo_type if meteo_type in csv_recent.columns else None
+        if csv_val_col and "value" in api_data.columns:
+            csv_values = both.get(f"{csv_val_col}_csv", both.get(csv_val_col))
+            api_values = both.get("value_api", both.get("value"))
 
             if csv_values is not None and api_values is not None:
-                csv_values = pd.to_numeric(csv_values, errors='coerce')
-                api_values = pd.to_numeric(api_values, errors='coerce')
+                csv_values = pd.to_numeric(csv_values, errors="coerce")
+                api_values = pd.to_numeric(api_values, errors="coerce")
                 diff = (csv_values - api_values).abs()
                 mismatches = diff[diff > 0.01]
 
                 if len(mismatches) > 0:
                     logger.warning(
-                        "%s: %d value mismatches (max diff: %.4f)",
-                        tag, len(mismatches), diff.max()
+                        "%s: %d value mismatches (max diff: %.4f)", tag, len(mismatches), diff.max()
                     )
                     is_consistent = False
 
     if is_consistent:
         logger.info("%s: PASSED - API matches CSV", tag)
-        print(
-            f"CONSISTENCY_CHECK: PASSED "
-            f"({meteo_type}, HRU {hru_code})"
-        )
+        print(f"CONSISTENCY_CHECK: PASSED ({meteo_type}, HRU {hru_code})")
     else:
         logger.error("%s: FAILED - inconsistencies found", tag)
-        print(
-            f"CONSISTENCY_CHECK: FAILED "
-            f"({meteo_type}, HRU {hru_code}) - see log for details"
-        )
+        print(f"CONSISTENCY_CHECK: FAILED ({meteo_type}, HRU {hru_code}) - see log for details")
 
     return is_consistent
 
@@ -612,39 +581,44 @@ def _check_meteo_consistency(
 # MAIN
 # --------------------------------------------------------------------
 def main():
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
     # SETUP ENVIRONMENT
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
 
     # Specify the path to the .env file
     # Loads the environment variables from the .env file
     sl.load_environment()
 
     # Test if an API key is available and exit the program if it isn't
-    if not os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY'):
-        logger.warning("No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run.")
+    if not os.getenv("ieasyhydroforecast_API_KEY_GATEAWAY"):
+        logger.warning(
+            "No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run."
+        )
         sys.exit(1)
     else:
-        API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
-    #output_path for control member and ensemble
+        API_KEY = os.getenv("ieasyhydroforecast_API_KEY_GATEAWAY")
+    # output_path for control member and ensemble
     OUTPUT_PATH_CM = os.path.join(
-        os.getenv('ieasyforecast_intermediate_data_path'),
-        os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyhydroforecast_OUTPUT_PATH_CM"),
+    )
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_CM):
         os.makedirs(OUTPUT_PATH_CM, exist_ok=True)
 
     OUTPUT_PATH_ENS = os.path.join(
-        os.getenv('ieasyforecast_intermediate_data_path'),
-        os.getenv('ieasyhydroforecast_OUTPUT_PATH_ENS'))
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyhydroforecast_OUTPUT_PATH_ENS"),
+    )
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_ENS):
         os.makedirs(OUTPUT_PATH_ENS, exist_ok=True)
 
-    #output_path for the data from the data gateaway
+    # output_path for the data from the data gateaway
     OUTPUT_PATH_DG = os.path.join(
-        os.getenv('ieasyforecast_intermediate_data_path'),
-        os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG'))
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyhydroforecast_OUTPUT_PATH_DG"),
+    )
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DG):
         os.makedirs(OUTPUT_PATH_DG, exist_ok=True)
@@ -670,17 +644,20 @@ def main():
     logger.debug(f"Path OUTPUT_PATH_DG is valid: {os.path.exists(OUTPUT_PATH_DG)}")
 
     Q_MAP_PARAM_PATH = os.path.join(
-        os.getenv('ieasyhydroforecast_models_and_scalers_path'),
-        os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH'))
+        os.getenv("ieasyhydroforecast_models_and_scalers_path"),
+        os.getenv("ieasyhydroforecast_Q_MAP_PARAM_PATH"),
+    )
     # Test if the output path exists. Raise an error if it doesn't
     if not os.path.exists(Q_MAP_PARAM_PATH):
-        logger.warning(f"Path {Q_MAP_PARAM_PATH} does not exist.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled.")
-        perform_qmapping=False
+        logger.warning(
+            f"Path {Q_MAP_PARAM_PATH} does not exist.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled."
+        )
+        perform_qmapping = False
     else:
-        perform_qmapping=True
+        perform_qmapping = True
 
-    CONTROL_MEMBER_HRUS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
-    ENSEMBLE_HRUS = os.getenv('ieasyhydroforecast_HRU_ENSEMBLE')
+    CONTROL_MEMBER_HRUS = os.getenv("ieasyhydroforecast_HRU_CONTROL_MEMBER")
+    ENSEMBLE_HRUS = os.getenv("ieasyhydroforecast_HRU_ENSEMBLE")
 
     logger.info("Meteo data configuration:")
     logger.info("  Q_MAP_PARAM_PATH: %s", Q_MAP_PARAM_PATH)
@@ -691,27 +668,24 @@ def main():
     # Initialize the client
     client = sapphire_dg_client.client.SapphireDGClient(api_key=API_KEY)
     # Get the codes for the HRU's
-    control_member_hrus = [str(x) for x in CONTROL_MEMBER_HRUS.split(',')]
-    hru_ensemble_forecast = [str(x) for x in ENSEMBLE_HRUS.split(',')]
+    control_member_hrus = [str(x) for x in CONTROL_MEMBER_HRUS.split(",")]
+    hru_ensemble_forecast = [str(x) for x in ENSEMBLE_HRUS.split(",")]
 
-    today = datetime.today().strftime('%Y-%m-%d')
+    today = datetime.today().strftime("%Y-%m-%d")
     start_date = datetime.today() - timedelta(days=365)
-    start_date = start_date.strftime('%Y-%m-%d')
+    start_date = start_date.strftime("%Y-%m-%d")
     yesterday = datetime.today() - timedelta(days=1)
-    yesterday = yesterday.strftime('%Y-%m-%d')
+    yesterday = yesterday.strftime("%Y-%m-%d")
 
-    logger.info(
-        "Date range: %s to %s (yesterday: %s)",
-        start_date, today, yesterday
-    )
-
+    logger.info("Date range: %s to %s (yesterday: %s)", start_date, today, yesterday)
 
     # Read configuration for mapping gateway station codes to hydromet station
     # codes, if file is available:
     # Path to the configuration file
     config_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyhydroforecast_config_file_data_gateway_name_twins'))
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyhydroforecast_config_file_data_gateway_name_twins"),
+    )
     logger.debug(f"Data gateway name mapping configuration file: {config_file}")
     # If the file is present, read the configuration
     if os.path.exists(config_file):
@@ -719,39 +693,32 @@ def main():
         with open(config_file) as f:
             config = json.load(f)
             # Get the mapping from the configuration
-            mapping = config['gateway_name_twins']
+            mapping = config["gateway_name_twins"]
             logger.debug(f"Mapping from configuration: {mapping}")
     else:
         logger.debug("No configuration for mapping station codes found.")
         mapping = {}
 
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
     # CONTROL MEMBER MAPPING
-    #--------------------------------------------------------------------
-    logger.info(
-        "=== Control member processing: %d HRUs ===",
-        len(control_member_hrus)
-    )
+    # --------------------------------------------------------------------
+    logger.info("=== Control member processing: %d HRUs ===", len(control_member_hrus))
     for cm_idx, c_m_hru in enumerate(control_member_hrus, 1):
         logger.info(
-            "--- [%d/%d] Control member HRU %s ---",
-            cm_idx, len(control_member_hrus), c_m_hru
+            "--- [%d/%d] Control member HRU %s ---", cm_idx, len(control_member_hrus), c_m_hru
         )
         print(f"Processing control member: HRU {c_m_hru}")
         # Initialize control_member_era5 to None
         control_member_era5 = None
         try:
             control_member_era5 = client.operational.get_control_spinup_and_forecast(
-                hru_code=c_m_hru,
-                date=start_date,
-                directory=OUTPUT_PATH_DG
-                )
+                hru_code=c_m_hru, date=start_date, directory=OUTPUT_PATH_DG
+            )
 
         except Exception as e:
             if "Operational data for HRU" in str(e):
                 logger.error(f"Exiting the program due to error: {e}")
                 sys.exit(1)
-
 
         # If control_member_era5 is empty, raise an error
         if not control_member_era5:
@@ -765,30 +732,32 @@ def main():
 
         df_c_m = pd.read_csv(control_member_era5)
 
-        #transform the data file
+        # transform the data file
         transformed_data_file = dg_utils.transform_data_file_control_member(df_c_m)
-        transformed_data_file['code'] = transformed_data_file['code'].astype(str)
+        transformed_data_file["code"] = transformed_data_file["code"].astype(str)
 
-        #get the parameters if available
+        # get the parameters if available
         if perform_qmapping:
             logger.info("Performing Quantile Mapping for Control Member")
-            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
-            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
+            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_P_params.csv"))
+            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_T_params.csv"))
 
-            #transform to string, as the other code is a string
-            P_params_hru['code'] = P_params_hru['code'].astype(str)
-            T_params_hru['code'] = T_params_hru['code'].astype(str)
+            # transform to string, as the other code is a string
+            P_params_hru["code"] = P_params_hru["code"].astype(str)
+            T_params_hru["code"] = T_params_hru["code"].astype(str)
 
-            #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
-            P_data, T_data = dg_utils.do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
+            # perform the quantile mapping for the control member for the HRU's without Eleavtion bands
+            P_data, T_data = dg_utils.do_quantile_mapping(
+                transformed_data_file, P_params_hru, T_params_hru, ensemble=False
+            )
             logger.info("Quantile Mapping for Control Member Done.")
         else:
-            P_data = transformed_data_file[['date', 'P', 'code']].copy()
-            T_data = transformed_data_file[['date', 'T', 'code']].copy()
+            P_data = transformed_data_file[["date", "P", "code"]].copy()
+            T_data = transformed_data_file[["date", "T", "code"]].copy()
 
-        #check if there are nan values
+        # check if there are nan values
 
-        #TODO: check with Nikola what to do with Nan values, or what the expected amount of Nan values is
+        # TODO: check with Nikola what to do with Nan values, or what the expected amount of Nan values is
         if P_data.isnull().values.any():
             print(f"Nan values in P data for HRU {c_m_hru}")
             print("Take Last Observation")
@@ -799,67 +768,60 @@ def main():
             print("Take Last Observation")
             T_data = T_data.ffill()
 
-        P_data.to_csv(os.path.join( OUTPUT_PATH_CM, f"{c_m_hru}_P_control_member.csv"), index=False)
-        T_data.to_csv(os.path.join( OUTPUT_PATH_CM, f"{c_m_hru}_T_control_member.csv"), index=False)
+        P_data.to_csv(os.path.join(OUTPUT_PATH_CM, f"{c_m_hru}_P_control_member.csv"), index=False)
+        T_data.to_csv(os.path.join(OUTPUT_PATH_CM, f"{c_m_hru}_T_control_member.csv"), index=False)
 
         # Write meteo data to SAPPHIRE API (operational mode - latest date only)
         try:
-            written = _write_meteo_to_api(P_data, 'P', c_m_hru)
+            written = _write_meteo_to_api(P_data, "P", c_m_hru)
             # Run consistency check only if data was actually written
             if written:
-                _check_meteo_consistency(P_data, 'P', c_m_hru)
+                _check_meteo_consistency(P_data, "P", c_m_hru)
         except Exception as e:
             logger.error(f"Failed to write P data to SAPPHIRE API for HRU {c_m_hru}: {e}")
             # Don't fail the entire process - CSV was already written
 
         try:
-            written = _write_meteo_to_api(T_data, 'T', c_m_hru)
+            written = _write_meteo_to_api(T_data, "T", c_m_hru)
             # Run consistency check only if data was actually written
             if written:
-                _check_meteo_consistency(T_data, 'T', c_m_hru)
+                _check_meteo_consistency(T_data, "T", c_m_hru)
         except Exception as e:
             logger.error(f"Failed to write T data to SAPPHIRE API for HRU {c_m_hru}: {e}")
             # Don't fail the entire process - CSV was already written
 
-        #clear memory
+        # clear memory
         del transformed_data_file
 
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
     # ENSEMBLE  MAPPING
-    #--------------------------------------------------------------------
-    logger.info(
-        "=== Ensemble processing: %d HRUs ===",
-        len(hru_ensemble_forecast)
-    )
+    # --------------------------------------------------------------------
+    logger.info("=== Ensemble processing: %d HRUs ===", len(hru_ensemble_forecast))
     for ens_idx, code_ens in enumerate(hru_ensemble_forecast, 1):
         logger.info(
-            "--- [%d/%d] Ensemble HRU %s ---",
-            ens_idx, len(hru_ensemble_forecast), code_ens
+            "--- [%d/%d] Ensemble HRU %s ---", ens_idx, len(hru_ensemble_forecast), code_ens
         )
         print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
         print(f"Storing files downloaded to {OUTPUT_PATH_DG}")
-        if ENSEMBLE_HRUS == 'None':
+        if ENSEMBLE_HRUS == "None":
             break
-        #download the ensemble forecast
+        # download the ensemble forecast
         try:
             files_downloaded = []
             for model in range(1, 51):
                 files = client.ecmwf_ens.get_ensemble_forecast(
-                    hru_code=code_ens,
-                    date=today,
-                    models=[str(model)],
-                    directory=OUTPUT_PATH_DG
+                    hru_code=code_ens, date=today, models=[str(model)], directory=OUTPUT_PATH_DG
                 )
                 files_downloaded.append(files)
             # Unnest the list of lists
             files_downloaded = [item for sublist in files_downloaded for item in sublist]
             # May cause timeout errors from gateway server side. Better to download one by one.
-            #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
+            # files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
             #    hru_code=code_ens,
             #    date=today,
             #    models=["pf"],
             #    directory=OUTPUT_PATH_DG
-            #)
+            # )
         except ValueError as e:
             if "Couldn't find any files for the given HRU code, date and models!" in str(e):
                 print(f"No data for {today}, trying {yesterday}")
@@ -870,18 +832,18 @@ def main():
                             hru_code=code_ens,
                             date=yesterday,
                             models=[str(model)],
-                            directory=OUTPUT_PATH_DG
+                            directory=OUTPUT_PATH_DG,
                         )
                         files_downloaded.append(files)
                     # Unnest the list of lists
                     files_downloaded = [item for sublist in files_downloaded for item in sublist]
                     # Attempt to download the ensemble forecast for yesterday
-                    #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
+                    # files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
                     #    hru_code=code_ens,
                     #    date=yesterday,
                     #    models=["pf"],
                     #    directory=OUTPUT_PATH_DG
-                    #)
+                    # )
                 except ValueError as e2:
                     print(f"Error for date {yesterday}: {e2}")
                     print(traceback.format_exc())
@@ -894,7 +856,7 @@ def main():
                 print(traceback.format_exc())
                 sys.exit(1)
 
-        #print(f"Files downloaded: {files_downloaded}")
+        # print(f"Files downloaded: {files_downloaded}")
 
         # A renaming of shapefiles sometimes is required in the data gateway.
         # The user can define name twins for the shapefiles in the data gateway
@@ -903,36 +865,38 @@ def main():
         # before the loops.
         # Test if code_ens is in left column of the mapping
         code_ens_data_gateway = code_ens
-        if code_ens in mapping.keys():
+        if code_ens in mapping:
             logger.debug(f"Mapping found for {code_ens}")
             # If it is, get the name from the right column
             code_ens_data_gateway = code_ens
             code_ens = mapping[code_ens]
             logger.debug(f"Old code: {code_ens_data_gateway}, new code: {code_ens}")
 
-        #merge the ensemble forecast
+        # merge the ensemble forecast
         combined_ensemble_forecast = merge_ensemble_forecast(files_downloaded)
         # Replace code with the actual code from the mapping (if applicable)
-        if code_ens_data_gateway in mapping.keys():
-            combined_ensemble_forecast['code'] = code_ens
+        if code_ens_data_gateway in mapping:
+            combined_ensemble_forecast["code"] = code_ens
 
-        combined_ensemble_forecast['code'] = combined_ensemble_forecast['code'].astype(str)
+        combined_ensemble_forecast["code"] = combined_ensemble_forecast["code"].astype(str)
 
-        #load the parameters
+        # load the parameters
         if perform_qmapping:
-            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
-            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
+            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_P_params.csv"))
+            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_T_params.csv"))
 
-            P_params_hru['code'] = P_params_hru['code'].astype(str)
-            T_params_hru['code'] = T_params_hru['code'].astype(str)
+            P_params_hru["code"] = P_params_hru["code"].astype(str)
+            T_params_hru["code"] = T_params_hru["code"].astype(str)
 
-            #Perform the quantile mapping for the ensemble members
-            P_ensemble, T_ensemble = dg_utils.do_quantile_mapping(combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True)
+            # Perform the quantile mapping for the ensemble members
+            P_ensemble, T_ensemble = dg_utils.do_quantile_mapping(
+                combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True
+            )
         else:
-            P_ensemble = combined_ensemble_forecast[['date', 'P', 'code', 'ensemble_member']].copy()
-            T_ensemble = combined_ensemble_forecast[['date', 'T', 'code', 'ensemble_member']].copy()
+            P_ensemble = combined_ensemble_forecast[["date", "P", "code", "ensemble_member"]].copy()
+            T_ensemble = combined_ensemble_forecast[["date", "T", "code", "ensemble_member"]].copy()
 
-        #check if there are nan values
+        # check if there are nan values
         if P_ensemble.isnull().values.any():
             print(f"Nan values in P data (ensemble) for HRU {code_ens}")
             print("Take Last Observation")
@@ -943,17 +907,25 @@ def main():
             print("Take Last Observation")
             T_ensemble = T_ensemble.ffill()
 
-        #save the data
-        P_ensemble.to_csv(os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"), index=False)
-        T_ensemble.to_csv(os.path.join(OUTPUT_PATH_ENS,   f"{code_ens}_T_ensemble_forecast.csv"), index=False)
+        # save the data
+        P_ensemble.to_csv(
+            os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"), index=False
+        )
+        T_ensemble.to_csv(
+            os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_T_ensemble_forecast.csv"), index=False
+        )
 
     if perform_qmapping:
-        logger.info("PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE. DOWNSCALING WITH QUANTILE MAPPING DONE.")
+        logger.info(
+            "PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE. DOWNSCALING WITH QUANTILE MAPPING DONE."
+        )
     else:
-        logger.info("PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE BUT NO DOWNSCALING DONE.\nERA5-LAND and ECMWF IFS FORECASTS WRITTEN WITHOUT DOWNSCALING.")
+        logger.info(
+            "PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE BUT NO DOWNSCALING DONE.\nERA5-LAND and ECMWF IFS FORECASTS WRITTEN WITHOUT DOWNSCALING."
+        )
 
     sys.exit(0)
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == "__main__":
+    main()

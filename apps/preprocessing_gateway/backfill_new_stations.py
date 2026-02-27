@@ -23,7 +23,7 @@ import requests
 
 # Local libraries
 script_dir = os.path.dirname(os.path.abspath(__file__))
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 sys.path.append(forecast_dir)
 
 import setup_library as sl  # noqa: E402
@@ -31,9 +31,10 @@ import setup_library as sl  # noqa: E402
 # SAPPHIRE API client
 try:
     from sapphire_api_client import (
-        SapphirePreprocessingClient,
         SapphireAPIError,
+        SapphirePreprocessingClient,
     )
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Coverage helpers
 # ------------------------------------------------------------------
 
+
 def get_meteo_coverage(api_url: str) -> dict[tuple[str, str], date]:
     """Query /meteo/coverage and return {(meteo_type, code): max_date}.
 
@@ -57,8 +59,7 @@ def get_meteo_coverage(api_url: str) -> dict[tuple[str, str], date]:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         return {
-            (r["meteo_type"], r["code"]): date.fromisoformat(r["max_date"])
-            for r in resp.json()
+            (r["meteo_type"], r["code"]): date.fromisoformat(r["max_date"]) for r in resp.json()
         }
     except Exception as exc:
         logger.warning("Could not query meteo coverage: %s", exc)
@@ -74,10 +75,7 @@ def get_snow_coverage(api_url: str) -> dict[tuple[str, str], date]:
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
-        return {
-            (r["snow_type"], r["code"]): date.fromisoformat(r["max_date"])
-            for r in resp.json()
-        }
+        return {(r["snow_type"], r["code"]): date.fromisoformat(r["max_date"]) for r in resp.json()}
     except Exception as exc:
         logger.warning("Could not query snow coverage: %s", exc)
         return {}
@@ -86,6 +84,7 @@ def get_snow_coverage(api_url: str) -> dict[tuple[str, str], date]:
 # ------------------------------------------------------------------
 # CSV station code extraction
 # ------------------------------------------------------------------
+
 
 def extract_meteo_codes_from_csv(csv_path: str) -> set[str]:
     """Read a reanalysis CSV and return unique station codes."""
@@ -114,6 +113,7 @@ def extract_snow_codes_from_csv(csv_path: str) -> set[str]:
 # ------------------------------------------------------------------
 # Backfill writers
 # ------------------------------------------------------------------
+
 
 def backfill_meteo_from_csv(
     csv_path: str,
@@ -153,9 +153,7 @@ def backfill_meteo_from_csv(
         code_df = df[df["code"] == code]
         existing_max = max_date_by_code.get(code)
         if existing_max is not None:
-            code_df = code_df[
-                code_df["date"] > pd.Timestamp(existing_max)
-            ]
+            code_df = code_df[code_df["date"] > pd.Timestamp(existing_max)]
         frames.append(code_df)
 
     data_to_write = pd.concat(frames, ignore_index=True)
@@ -168,18 +166,20 @@ def backfill_meteo_from_csv(
         d = row["date"]
         if pd.isna(d):
             continue
-        records.append({
-            "meteo_type": meteo_type.upper(),
-            "code": str(row["code"]),
-            "date": d.strftime("%Y-%m-%d"),
-            "value": (
-                float(row[value_col])
-                if value_col in row and pd.notna(row.get(value_col))
-                else None
-            ),
-            "norm": None,
-            "day_of_year": d.dayofyear,
-        })
+        records.append(
+            {
+                "meteo_type": meteo_type.upper(),
+                "code": str(row["code"]),
+                "date": d.strftime("%Y-%m-%d"),
+                "value": (
+                    float(row[value_col])
+                    if value_col in row and pd.notna(row.get(value_col))
+                    else None
+                ),
+                "norm": None,
+                "day_of_year": d.dayofyear,
+            }
+        )
 
     if not records:
         return 0
@@ -187,7 +187,9 @@ def backfill_meteo_from_csv(
     count = client.write_meteo(records)
     logger.info(
         "Backfilled %d meteo records (%s) for codes %s",
-        count, meteo_type, codes,
+        count,
+        meteo_type,
+        codes,
     )
     return count
 
@@ -228,9 +230,7 @@ def backfill_snow_from_csv(
         code_df = df[df["code"] == code]
         existing_max = max_date_by_code.get(code)
         if existing_max is not None:
-            code_df = code_df[
-                code_df["date"] > pd.Timestamp(existing_max)
-            ]
+            code_df = code_df[code_df["date"] > pd.Timestamp(existing_max)]
         frames.append(code_df)
 
     data_to_write = pd.concat(frames, ignore_index=True)
@@ -239,9 +239,7 @@ def backfill_snow_from_csv(
 
     # Detect elevation band columns
     value_columns = {}
-    main_value_col = (
-        snow_type if snow_type in data_to_write.columns else None
-    )
+    main_value_col = snow_type if snow_type in data_to_write.columns else None
     for col in data_to_write.columns:
         if col.startswith(f"{snow_type}_") and col != snow_type:
             try:
@@ -264,17 +262,12 @@ def backfill_snow_from_csv(
                 if main_value_col and pd.notna(row.get(main_value_col))
                 else None
             ),
-            "norm": (
-                float(row["norm"])
-                if "norm" in row and pd.notna(row.get("norm"))
-                else None
-            ),
+            "norm": (float(row["norm"]) if "norm" in row and pd.notna(row.get("norm")) else None),
         }
         for band_num, col_name in value_columns.items():
             if band_num <= 14:
                 record[f"value{band_num}"] = (
-                    float(row[col_name])
-                    if pd.notna(row.get(col_name)) else None
+                    float(row[col_name]) if pd.notna(row.get(col_name)) else None
                 )
         records.append(record)
 
@@ -284,7 +277,9 @@ def backfill_snow_from_csv(
     count = client.write_snow(records)
     logger.info(
         "Backfilled %d snow records (%s) for codes %s",
-        count, snow_type, codes,
+        count,
+        snow_type,
+        codes,
     )
     return count
 
@@ -292,6 +287,7 @@ def backfill_snow_from_csv(
 # ------------------------------------------------------------------
 # Gap detection
 # ------------------------------------------------------------------
+
 
 def detect_meteo_gaps(
     csv_codes: set[str],
@@ -357,6 +353,7 @@ def detect_snow_gaps(
 # Main
 # ------------------------------------------------------------------
 
+
 def main():
     """Run the backfill pipeline."""
     logging.basicConfig(
@@ -371,9 +368,7 @@ def main():
     sl.load_environment()
 
     if not SAPPHIRE_API_AVAILABLE:
-        logger.error(
-            "sapphire-api-client not installed. Cannot run backfill."
-        )
+        logger.error("sapphire-api-client not installed. Cannot run backfill.")
         sys.exit(1)
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -383,19 +378,11 @@ def main():
         logger.error("SAPPHIRE API at %s is not ready.", api_url)
         sys.exit(1)
 
-    intermediate_data_path = os.getenv(
-        "ieasyforecast_intermediate_data_path", ""
-    )
-    reanalysis_subdir = os.getenv(
-        "ieasyhydroforecast_OUTPUT_PATH_REANALYSIS", ""
-    )
-    snow_subdir = os.getenv(
-        "ieasyhydroforecast_OUTPUT_PATH_SNOW", ""
-    )
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path", "")
+    reanalysis_subdir = os.getenv("ieasyhydroforecast_OUTPUT_PATH_REANALYSIS", "")
+    snow_subdir = os.getenv("ieasyhydroforecast_OUTPUT_PATH_SNOW", "")
 
-    reanalysis_path = os.path.join(
-        intermediate_data_path, reanalysis_subdir
-    )
+    reanalysis_path = os.path.join(intermediate_data_path, reanalysis_subdir)
     snow_path = os.path.join(intermediate_data_path, snow_subdir)
 
     # ----------------------------------------------------------------
@@ -406,7 +393,8 @@ def main():
     snow_cov = get_snow_coverage(api_url)
     logger.info(
         "API coverage: %d meteo groups, %d snow groups",
-        len(meteo_cov), len(snow_cov),
+        len(meteo_cov),
+        len(snow_cov),
     )
 
     # ----------------------------------------------------------------
@@ -418,30 +406,29 @@ def main():
     total_meteo = 0
     for hru in meteo_hrus:
         for meteo_type in ("P", "T"):
-            csv_file = os.path.join(
-                reanalysis_path, f"{hru}_{meteo_type}_reanalysis.csv"
-            )
+            csv_file = os.path.join(reanalysis_path, f"{hru}_{meteo_type}_reanalysis.csv")
             csv_codes = extract_meteo_codes_from_csv(csv_file)
             if not csv_codes:
-                logger.info(
-                    "No codes found in %s, skipping", csv_file
-                )
+                logger.info("No codes found in %s, skipping", csv_file)
                 continue
 
-            new_codes, stale_codes = detect_meteo_gaps(
-                csv_codes, meteo_cov, meteo_type
-            )
+            new_codes, stale_codes = detect_meteo_gaps(csv_codes, meteo_cov, meteo_type)
             gap_codes = new_codes | stale_codes
             if not gap_codes:
                 logger.info(
                     "Meteo %s HRU %s: all %d codes up to date",
-                    meteo_type, hru, len(csv_codes),
+                    meteo_type,
+                    hru,
+                    len(csv_codes),
                 )
                 continue
 
             logger.info(
                 "Meteo %s HRU %s: %d new, %d stale out of %d codes",
-                meteo_type, hru, len(new_codes), len(stale_codes),
+                meteo_type,
+                hru,
+                len(new_codes),
+                len(stale_codes),
                 len(csv_codes),
             )
 
@@ -452,14 +439,19 @@ def main():
 
             try:
                 n = backfill_meteo_from_csv(
-                    csv_file, meteo_type, gap_codes,
-                    client, max_date_by_code,
+                    csv_file,
+                    meteo_type,
+                    gap_codes,
+                    client,
+                    max_date_by_code,
                 )
                 total_meteo += n
             except SapphireAPIError as exc:
                 logger.error(
                     "Error backfilling meteo %s HRU %s: %s",
-                    meteo_type, hru, exc,
+                    meteo_type,
+                    hru,
+                    exc,
                 )
 
     # ----------------------------------------------------------------
@@ -473,30 +465,33 @@ def main():
     total_snow = 0
     for hru in snow_hrus:
         for snow_var in snow_vars:
-            csv_file = os.path.join(
-                snow_path, snow_var, f"{hru}_{snow_var}.csv"
-            )
+            csv_file = os.path.join(snow_path, snow_var, f"{hru}_{snow_var}.csv")
             csv_codes = extract_snow_codes_from_csv(csv_file)
             if not csv_codes:
-                logger.info(
-                    "No codes found in %s, skipping", csv_file
-                )
+                logger.info("No codes found in %s, skipping", csv_file)
                 continue
 
             new_codes, stale_codes = detect_snow_gaps(
-                csv_codes, snow_cov, snow_var,
+                csv_codes,
+                snow_cov,
+                snow_var,
             )
             gap_codes = new_codes | stale_codes
             if not gap_codes:
                 logger.info(
                     "Snow %s HRU %s: all %d codes up to date",
-                    snow_var, hru, len(csv_codes),
+                    snow_var,
+                    hru,
+                    len(csv_codes),
                 )
                 continue
 
             logger.info(
                 "Snow %s HRU %s: %d new, %d stale out of %d codes",
-                snow_var, hru, len(new_codes), len(stale_codes),
+                snow_var,
+                hru,
+                len(new_codes),
+                len(stale_codes),
                 len(csv_codes),
             )
 
@@ -507,14 +502,19 @@ def main():
 
             try:
                 n = backfill_snow_from_csv(
-                    csv_file, snow_var, gap_codes,
-                    client, max_date_by_code,
+                    csv_file,
+                    snow_var,
+                    gap_codes,
+                    client,
+                    max_date_by_code,
                 )
                 total_snow += n
             except SapphireAPIError as exc:
                 logger.error(
                     "Error backfilling snow %s HRU %s: %s",
-                    snow_var, hru, exc,
+                    snow_var,
+                    hru,
+                    exc,
                 )
 
     # ----------------------------------------------------------------
@@ -523,7 +523,8 @@ def main():
     logger.info("=" * 60)
     logger.info(
         "Backfill complete: %d meteo records, %d snow records",
-        total_meteo, total_snow,
+        total_meteo,
+        total_snow,
     )
     logger.info("=" * 60)
 
