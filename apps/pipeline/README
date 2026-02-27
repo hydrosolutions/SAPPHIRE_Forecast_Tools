@@ -1,36 +1,242 @@
-We use the package Luigi to manage the workflow of our forecast pipeline.
+# Pipeline Module
 
-The pipeline is composed of several tasks that are executed in a specific order. Each task is a Python class that inherits from the `luigi.Task` class. The `requires` method of a task returns a list of tasks that need to be executed before the current task. The `output` method returns the output of the task (typically a file). The `run` method contains the code that is executed when the task is run.
+Luigi-based orchestrator for the SAPPHIRE forecast pipeline. Each pipeline step
+runs as a Docker container; Luigi manages dependency ordering, retries, timeouts,
+and notifications.
 
-We provide the option to send an email notification when the pipeline is completed. You configure the SMTP server and the recipient email addresses in the .env file of your project.
+## Module Structure
 
-## Marker File System
+```
+apps/pipeline/
+├── pipeline_docker.py          # All Luigi task classes (operational + maintenance)
+├── luigi.cfg                   # Luigi scheduler config (autoload_range: false)
+├── Dockerfile                  # Pipeline container image (Python 3.12 + uv)
+├── pyproject.toml              # Dependencies: luigi, docker, pyyaml, requests, ...
+├── src/
+│   ├── environment.py          # Thin dotenv wrapper (Environment class)
+│   ├── pipeline_utils.py       # Docker Hub image comparison, TimeoutMixin, TaskLogger
+│   ├── timeout_manager.py      # YAML-driven timeout/retry config per environment
+│   └── notification_manager.py # SMTP email notifications on success/failure
+├── tests/
+│   ├── conftest.py             # Shared fixtures (mock_env, mock_docker_client, etc.)
+│   ├── test_docker_task_base.py
+│   ├── test_maintenance_tasks.py
+│   ├── test_marker_files.py
+│   ├── test_notification_manager.py
+│   ├── test_pipeline_utils.py
+│   ├── test_task_implementations.py
+│   └── test_timeout_manager.py
+└── data/
+    └── marker_files/           # Runtime marker files (gitignored)
+```
 
-The pipeline uses marker files to prevent expensive tasks from running multiple times per day. This is particularly important for the preprocessing gateway task, which makes many API calls to the SAPPHIRE Data Gateway.
+## How It Works
 
-### How It Works
+Every task is a Python class in `pipeline_docker.py`. Tasks that run Docker
+containers inherit from `DockerTaskBase`, which provides:
 
-1. When `PreprocessingGatewayQuantileMapping` completes successfully, it creates a marker file:
-   ```
-   <intermediate_data_path>/marker_files/preprocessing_gateway_YYYY-MM-DD.marker
-   ```
+- `run_docker_container()` — pulls the image if outdated, starts a detached
+  container, waits with timeout, captures logs, and cleans up.
+- `execute_with_retries()` — retries on non-zero exit, writes log files,
+  creates the output marker on success, sends failure notifications.
+- Timeout, retry count, and retry delay are loaded from `TimeoutManager`
+  (YAML config) and can be overridden per-task via Luigi parameters.
 
-2. When downstream tasks (like `RunMLModel`, `ConceptualModel`) declare their dependencies via `requires()`, they call `get_gateway_dependency()` which:
-   - Checks if today's marker file exists
-   - If yes: returns `ExternalPreprocessingGateway` (a lightweight task that just verifies the marker)
-   - If no: returns `PreprocessingGatewayQuantileMapping` (runs the full preprocessing)
+Tasks declare dependencies via `requires()`. Luigi resolves the full DAG and
+runs tasks in dependency order, deduplicating shared dependencies.
 
-3. Marker files are automatically cleaned up by the `DeleteOldMarkerFiles` task, which removes markers older than 3 days (by default).
+## Operational Workflows
 
-### Key Functions
+Triggered daily by cron via the shell scripts in `bin/`.
 
-- `get_marker_filepath(task_name, date, time_slot)` - Generates the marker file path
-- `get_gateway_dependency(time_slot)` - Returns the appropriate gateway task based on marker presence
+### Pentadal / Decadal Forecasting
 
-### Path Resolution
+```
+RunPentadalWorkflow / RunDecadalWorkflow
+  └─ PostProcessingForecasts(mode)
+       ├─ LinearRegression(mode) → PreprocessingRunoff
+       ├─ RunMLModel(model, mode) → [PreprocessingRunoff, gateway_dependency()]
+       └─ ConceptualModel (if CM enabled) → [PreprocessingRunoff, gateway_dependency()]
+  └─ LogFileCleanup
+  └─ DeleteOldMarkerFiles
+  └─ DeleteOldGatewayFiles (if ML/CM enabled)
+  └─ SendPipelineCompletionNotification (optional)
+```
 
-The marker files use `get_bind_path()` for path resolution because the pipeline code runs inside Docker containers. This returns the container-internal path that matches the volume mount point.
+Shell wrappers:
+- `bin/run_preprocessing_gateway.sh` — gateway only (early morning)
+- `bin/run_pentadal_forecasts.sh` — full pentadal pipeline
+- `bin/run_decadal_forecasts.sh` — full decadal pipeline
 
-### Future: Sub-daily Support
+### Maintenance Workflows
 
-The marker file system includes optional `time_slot` parameter support for future sub-daily forecasting (4x daily). When implemented, markers will include the time slot: `preprocessing_gateway_YYYY-MM-DD_slot0.marker`.
+Luigi-orchestrated replacement for the individual `bin/daily_*.sh` scripts.
+Dependencies are explicit instead of relying on cron timing offsets.
+
+```
+RunDailyMaintenanceWorkflow
+  ├─ PostProcessingMaintenance
+  │    ├─ LinRegMaintenance(PENTAD) → PrepRunoffMaintenance
+  │    ├─ LinRegMaintenance(DECAD)  → PrepRunoffMaintenance
+  │    └─ RunAllMLMaintenance (if ML enabled)
+  │         └─ MLMaintenance(model, mode)  [resources: ml_memory=1]
+  │              → [PrepRunoffMaintenance, GatewayMaintenance]
+  └─ FrontendUpdate → PostProcessingMaintenance
+```
+
+ML concurrency is limited to 3 via Luigi resources (`--resources ml_memory=3`).
+
+Shell wrappers:
+- `bin/run_daily_maintenance.sh <env_file_path>`
+- `bin/run_periodic_maintenance.sh <task_type> <env_file_path>`
+
+### Periodic Maintenance
+
+Bimonthly/yearly tasks, triggered by separate cron entries:
+
+```
+RunPeriodicMaintenanceWorkflow(task_type=...)
+  ├─ long_term   → LongTermPostProcessingMaintenance   (bimonthly)
+  ├─ skill_recalc → YearlySkillRecalculation            (Jan 1)
+  └─ snow_norms  → YearlySnowNormRecalculation          (Aug 25)
+```
+
+## Docker Compose
+
+All services are defined in `bin/docker-compose-luigi.yml`. A persistent Luigi
+scheduler daemon (`luigi-daemon`) runs in the background on port 8082. Pipeline
+services connect to it via Docker DNS.
+
+```bash
+# Start the daemon (runs persistently)
+docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+
+# Run a workflow
+docker compose -f bin/docker-compose-luigi.yml run --rm pentadal
+docker compose -f bin/docker-compose-luigi.yml run --rm daily-maintenance
+```
+
+The Luigi web UI is available at `http://localhost:8082`.
+
+## Key Concepts
+
+### DockerTaskBase
+
+Base class for all container-running tasks. Combines `TimeoutMixin` +
+`luigi.Task` and provides:
+
+| Method | Purpose |
+|--------|---------|
+| `run_docker_container()` | Pull image, start container, wait, capture logs, cleanup |
+| `execute_with_retries()` | Retry loop with logging, marker creation, and failure notification |
+| `send_failure_notification()` | Email alert with log file attachments on failure |
+
+Constructor parameters (`timeout_seconds`, `max_retries`, `retry_delay`) are
+loaded from `TimeoutManager` by default but can be overridden as Luigi
+parameters.
+
+The method `run_docker_container()` also accepts `mem_limit`, `memswap_limit`,
+and `command` to control container resource limits and override the default CMD.
+
+### Marker File System
+
+Marker files prevent expensive tasks from running multiple times per day.
+
+1. On success, a task creates:
+   `<intermediate_data_path>/marker_files/<task_name>_YYYY-MM-DD.marker`
+
+2. `get_gateway_dependency()` checks for today's marker:
+   - Marker exists → returns `ExternalPreprocessingGateway` (no-op)
+   - No marker → returns `PreprocessingGatewayQuantileMapping` (runs fully)
+
+3. Maintenance tasks use a separate namespace:
+   `maintenance_<task_name>_YYYY-MM-DD.marker`
+   This prevents collision between operational and maintenance markers.
+
+4. Old markers are cleaned up by `DeleteOldMarkerFiles` (default: 3 days).
+
+Path resolution uses `get_bind_path()` because the pipeline runs inside Docker
+containers — it returns the container-internal path matching the volume mount.
+
+### TimeoutManager
+
+YAML-driven singleton that provides per-task timeout, retry, and delay values
+based on the detected environment. Environment detection uses the combination of
+`ieasyhydroforecast_organization` and `ieasyhydroforecast_backend_docker_image_tag`:
+
+| Organization | Tag contains `local` | Otherwise |
+|-------------|---------------------|-----------|
+| `demo` | `demo_ch` | `demo_ch` |
+| `kghm` | `kghm_local` | `kghm_aws` |
+| `tjhm` | `tjhm_local` | `tjhm_aws` |
+
+Can be overridden explicitly with `IEASYHYDROFORECAST_ENVIRONMENT` env var.
+
+The YAML config file path is read from `IEASYHYDROFORECAST_TIMEOUT_CONFIG_PATH`
+or defaults to `<config_path>/timeout_config.yaml`. If the file is missing,
+hardcoded defaults apply (900s timeout, 2 retries, 5s delay).
+
+### NotificationManager
+
+Sends SMTP email on pipeline completion or task failure. Configured via env vars:
+
+| Env Var | Purpose |
+|---------|---------|
+| `SAPPHIRE_PIPELINE_SMTP_SERVER` | SMTP host |
+| `SAPPHIRE_PIPELINE_SMTP_PORT` | SMTP port (default 587) |
+| `SAPPHIRE_PIPELINE_SMTP_USERNAME` | SMTP login |
+| `SAPPHIRE_PIPELINE_SMTP_PASSWORD` | SMTP password |
+| `SAPPHIRE_PIPELINE_SENDER_EMAIL` | From address |
+| `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Comma-separated recipient list |
+
+### Docker Image Updates
+
+Before starting a container, `run_docker_container()` checks Docker Hub for a
+newer image using `pipeline_utils.there_is_a_newer_image_on_docker_hub()`. This
+uses digest-based comparison (sha256) with a timestamp fallback for images
+without `RepoDigests`.
+
+## Environment Variables
+
+The pipeline reads from a `.env` file at the path specified by
+`ieasyhydroforecast_env_file_path`. Key variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `ieasyhydroforecast_env_file_path` | Path to the .env file |
+| `ieasyhydroforecast_backend_docker_image_tag` | Docker image tag (`latest`, `py312`, `local`) |
+| `ieasyhydroforecast_organization` | Organization ID (`demo`, `kghm`, `tjhm`) |
+| `ieasyhydroforecast_run_ML_models` | Enable ML tasks (`True`/`False`) |
+| `ieasyhydroforecast_run_CM_models` | Enable conceptual model (`True`/`False`) |
+| `ieasyhydroforecast_available_ML_models` | Comma-separated model list (e.g., `TFT,TIDE`) |
+| `SAPPHIRE_DG_HOST` | Data Gateway URL |
+| `ieasyforecast_configuration_path` | Config directory (mounted into containers) |
+| `ieasyforecast_intermediate_data_path` | Intermediate data directory (marker files, logs) |
+| `SAPPHIRE_PREDICTION_MODE` | Prediction mode (`PENTAD`, `DECAD`, `ALL`, `BOTH`) |
+
+## Running Tests
+
+```bash
+cd apps
+SAPPHIRE_TEST_ENV=True bash run_tests.sh pipeline
+```
+
+135 tests across 7 test files:
+
+| Test File | Count | Covers |
+|-----------|-------|--------|
+| `test_timeout_manager.py` | 15 | Environment detection, config loading, singleton |
+| `test_docker_task_base.py` | 10 | Container lifecycle, retry logic, notifications |
+| `test_notification_manager.py` | 7 | SMTP email, failure alerts, attachments |
+| `test_task_implementations.py` | 21 | Operational task `requires()`, `output()`, parameters |
+| `test_maintenance_tasks.py` | 31 | Maintenance task dependencies, markers, resource limits |
+| `test_marker_files.py` | 14 | Marker creation, gateway dependency resolution |
+| `test_pipeline_utils.py` | 30 | Docker Hub comparison (digest + timestamp), image utils |
+
+Tests mock Docker and SMTP — no real containers or network calls.
+
+## Known Quirks
+
+- **Module-level env evaluation**: `pipeline_docker.py` evaluates environment
+  variables at import time (lines 32-41). Test fixtures must set env vars
+  *before* importing the module (handled by `conftest.py`).

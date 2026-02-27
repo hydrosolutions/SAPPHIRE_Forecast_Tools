@@ -92,6 +92,41 @@ services:
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
     container_name: sapphire-pipeline-decadal
 
+  # Daily maintenance workflow
+  # Runs all daily maintenance tasks with dependency ordering.
+  # ML concurrency is limited to 3 via Luigi resources.
+  # Usage: docker compose -f bin/docker-compose-luigi.yml run --rm daily-maintenance
+  daily-maintenance:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
+             '--scheduler-port', '8082', '--resources', 'ml_memory=3',
+             '--workers', '6',
+             '--module', 'apps.pipeline.pipeline_docker',
+             'RunDailyMaintenanceWorkflow']
+    container_name: sapphire-pipeline-daily-maintenance
+
+  # Periodic maintenance workflow (bimonthly/yearly tasks)
+  # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc, snow_norms
+  # Usage: MAINTENANCE_TASK_TYPE=long_term docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
+  periodic-maintenance:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
+             '--scheduler-port', '8082',
+             '--module', 'apps.pipeline.pipeline_docker',
+             'RunPeriodicMaintenanceWorkflow',
+             '--task-type', '${MAINTENANCE_TASK_TYPE:-long_term}']
+    container_name: sapphire-pipeline-periodic-maintenance
+
   # Luigi scheduler daemon
   # This service should be running persistently in the background
   luigi-daemon:

@@ -218,15 +218,18 @@ Add the following to the crontab file. Adjust times for your timezone (example b
 # (3) Decadal Forecast at 05:00 UTC (11:00 Bishkek). Luigi uses completed runoff task.
 0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
 #
-# (4) Maintenance jobs (evening UTC / night Bishkek)
-# Frontend update
-2 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_update_sapphire_frontend.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_frontend_$(date +\%Y\%m\%d).log 2>&1
-# Preprocessing runoff maintenance (gap filling)
-4 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_preprunoff_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_preprunoff_maint_$(date +\%Y\%m\%d).log 2>&1
-# ML model maintenance (hindcast catch-up)
-0 20 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_ml_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_ml_maint_$(date +\%Y\%m\%d).log 2>&1
-# Linear regression maintenance (hindcast catch-up)
-34 20 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_linreg_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_linreg_maint_$(date +\%Y\%m\%d).log 2>&1
+# (4) Daily maintenance via Luigi (replaces individual maintenance cron jobs)
+# Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
+# ML concurrency is limited to 3 via Luigi resources.
+0 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
+#
+# (5) Periodic maintenance tasks (bimonthly/yearly)
+# Bimonthly long-term postprocessing (1st of odd months)
+0 22 1 1,3,5,7,9,11 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh long_term /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_longterm_$(date +\%Y\%m\%d).log 2>&1
+# Yearly skill recalculation (January 1)
+0 1 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
+# Yearly snow norm recalculation (August 25)
+0 2 25 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
 ```
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 

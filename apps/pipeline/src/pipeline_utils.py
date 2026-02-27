@@ -1,14 +1,15 @@
-import docker
-import os
-import luigi
+import builtins
 import datetime
+import os
+import signal
+import threading
+from contextlib import contextmanager
+
+import docker
+import luigi
+import pytz
 import requests
 from dateutil.parser import parse
-import pytz
-from contextlib import contextmanager
-import threading
-import signal
-
 
 
 def get_docker_hub_image_creation_date(namespace, image_name, tag):
@@ -31,7 +32,7 @@ def get_docker_hub_image_creation_date(namespace, image_name, tag):
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             tag_data = response.json()
-            return tag_data.get('tag_last_pushed')  # Tag-specific push date
+            return tag_data.get("tag_last_pushed")  # Tag-specific push date
         else:
             print(f"Failed to fetch image data from Docker Hub: {response.status_code}")
             return None
@@ -57,7 +58,7 @@ def get_docker_hub_image_digest(namespace, image_name, tag):
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             tag_data = response.json()
-            return tag_data.get('digest')
+            return tag_data.get("digest")
         else:
             print(f"Failed to fetch image digest from Docker Hub: {response.status_code}")
             return None
@@ -84,7 +85,7 @@ def get_local_image_digest(client, repository, image_name, tag):
     full_name = f"{repository}/{image_name}:{tag}"
     image = client.images.get(full_name)
 
-    repo_digests = image.attrs.get('RepoDigests', [])
+    repo_digests = image.attrs.get("RepoDigests", [])
     if not repo_digests:
         return None
 
@@ -93,13 +94,14 @@ def get_local_image_digest(client, repository, image_name, tag):
     expected_prefix = f"{repository}/{image_name}@"
     for repo_digest in repo_digests:
         if repo_digest.startswith(expected_prefix):
-            return repo_digest.split('@')[1]
+            return repo_digest.split("@")[1]
 
     # Fallback: return first available digest if prefix doesn't match
-    if '@' in repo_digests[0]:
-        return repo_digests[0].split('@')[1]
+    if "@" in repo_digests[0]:
+        return repo_digests[0].split("@")[1]
 
     return None
+
 
 def _compare_by_timestamp(client, repository, image_name, tag):
     """Fallback timestamp-based comparison (legacy behavior).
@@ -112,9 +114,12 @@ def _compare_by_timestamp(client, repository, image_name, tag):
     """
     try:
         local_image = client.images.get(f"{repository}/{image_name}:{tag}")
-        local_image_creation_date = parse(local_image.attrs['Created'])
+        local_image_creation_date = parse(local_image.attrs["Created"])
 
-        if local_image_creation_date.tzinfo is None or local_image_creation_date.tzinfo.utcoffset(local_image_creation_date) is None:
+        if (
+            local_image_creation_date.tzinfo is None
+            or local_image_creation_date.tzinfo.utcoffset(local_image_creation_date) is None
+        ):
             local_image_creation_date = local_image_creation_date.replace(tzinfo=pytz.UTC)
 
         hub_date_str = get_docker_hub_image_creation_date(repository, image_name, tag)
@@ -123,7 +128,10 @@ def _compare_by_timestamp(client, repository, image_name, tag):
             return False
 
         hub_image_creation_date = parse(hub_date_str)
-        if hub_image_creation_date.tzinfo is None or hub_image_creation_date.tzinfo.utcoffset(hub_image_creation_date) is None:
+        if (
+            hub_image_creation_date.tzinfo is None
+            or hub_image_creation_date.tzinfo.utcoffset(hub_image_creation_date) is None
+        ):
             hub_image_creation_date = hub_image_creation_date.replace(tzinfo=pytz.UTC)
 
         if hub_image_creation_date > local_image_creation_date:
@@ -169,7 +177,7 @@ def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
             print("The local image is up-to-date (digests match).")
             return False
         else:
-            print(f"The Docker Hub image differs from local (digest mismatch).")
+            print("The Docker Hub image differs from local (digest mismatch).")
             print(f"  Local:  {local_digest[:27]}...")
             print(f"  Remote: {hub_digest[:27]}...")
             return True
@@ -182,30 +190,43 @@ def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
 
     return _compare_by_timestamp(client, repository, image_name, tag)
 
+
 @contextmanager
 def timeout(seconds):
     """Context manager for timeout functionality"""
-    timer = threading.Timer(seconds, lambda: signal.pthread_kill(threading.main_thread().ident, signal.SIGINT))
+    timer = threading.Timer(
+        seconds, lambda: signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+    )
     timer.start()
     try:
         yield
     finally:
         timer.cancel()
 
-class TimeoutError(Exception):
+
+class TimeoutError(builtins.TimeoutError):
     pass
+
 
 class TaskLogger:
     """Utility class to handle task logging"""
+
     def __init__(self, log_file=None):
         if log_file is None:
-            root_dir = os.getenv('ieasyforecast_intermediate_data_path', '/app')
-            self.log_file = os.path.join(root_dir, 'task_timings.log')
+            root_dir = os.getenv("ieasyforecast_intermediate_data_path", "/app")
+            self.log_file = os.path.join(root_dir, "task_timings.log")
         else:
             self.log_file = log_file
 
-    def log_task_timing(self, task_name: str, start_time: datetime.datetime, end_time: datetime.datetime, status: str, details: str = ""):
-        with open(self.log_file, 'a') as f:
+    def log_task_timing(
+        self,
+        task_name: str,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime,
+        status: str,
+        details: str = "",
+    ):
+        with open(self.log_file, "a") as f:
             duration = (end_time - start_time).total_seconds()
             log_entry = (
                 f"Task: {task_name}\n"
@@ -214,12 +235,14 @@ class TaskLogger:
                 f"Duration: {duration:.2f} seconds\n"
                 f"Status: {status}\n"
                 f"Details: {details}\n"
-                f"{'-'*50}\n"
+                f"{'-' * 50}\n"
             )
             f.write(log_entry)
 
+
 class TimeoutMixin:
     """Mixin to add timeout functionality to Luigi tasks"""
+
     timeout_seconds = luigi.IntParameter(default=360)  # 6 minutes default
 
     def run_with_timeout(self, func, *args, **kwargs):
@@ -227,5 +250,4 @@ class TimeoutMixin:
             with timeout(self.timeout_seconds):
                 return func(*args, **kwargs)
         except KeyboardInterrupt:
-            raise TimeoutError(f"Task timed out after {self.timeout_seconds} seconds")
-
+            raise TimeoutError(f"Task timed out after {self.timeout_seconds} seconds") from None

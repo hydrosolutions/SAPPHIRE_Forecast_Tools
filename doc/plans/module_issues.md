@@ -191,6 +191,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | P-002 | Gateway double-run | 2026-02-03 | [`archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md`](../archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md) |
+| P-003 | Consolidate maintenance scripts into Luigi pipeline | In Progress | See plan: `ethereal-dazzling-zebra.md` |
 
 ---
 
@@ -240,4 +241,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-27 (INFRA-007 → Review: Phases 1/2/2b/2c done, Phase 3 pending deployment)*
+*Last updated: 2026-02-27 (P-003: maintenance Luigi consolidation in progress; INFRA-007 → Review: Phases 1/2/2b/2c done, Phase 3 pending deployment)*
