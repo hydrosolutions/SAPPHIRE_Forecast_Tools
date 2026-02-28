@@ -4,16 +4,17 @@ Extracted from forecast_library.py — these functions are exclusively
 used by postprocessing_forecasts.
 """
 
+import contextlib
 import datetime as dt_module
-import os
 import logging
-import tempfile
+import os
 import shutil
-
-import pandas as pd
+import tempfile
 
 import forecast_library as fl
-from . import api_writer
+import pandas as pd
+
+from . import api_writer, write_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def _resolve_year(year: int | None) -> int:
 # ---------------------------------------------------------------------------
 # Atomic CSV writer
 # ---------------------------------------------------------------------------
+
 
 def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None:
     """
@@ -46,13 +48,13 @@ def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None
         Exception: If the write operation fails (temp file is cleaned up)
     """
     # Get the directory of the target file
-    target_dir = os.path.dirname(filepath) or '.'
+    target_dir = os.path.dirname(filepath) or "."
 
     # Ensure the target directory exists
     os.makedirs(target_dir, exist_ok=True)
 
     # Create a temp file in the same directory (ensures same filesystem for atomic rename)
-    temp_fd, temp_path = tempfile.mkstemp(suffix='.tmp', dir=target_dir)
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".tmp", dir=target_dir)
 
     try:
         # Close the file descriptor (we'll write via pandas)
@@ -71,10 +73,8 @@ def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None
     except Exception as e:
         # Clean up the temp file if something went wrong
         if os.path.exists(temp_path):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(temp_path)
-            except OSError:
-                pass  # Ignore cleanup errors
         raise e
 
 
@@ -82,7 +82,8 @@ def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None
 # Latest-forecast extraction
 # ---------------------------------------------------------------------------
 
-def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
+
+def get_latest_forecasts(simulated_df, horizon_column_name="pentad_in_year"):
     """
     Extract the latest forecasts for each unique combination of code, pentad_in_year, and model_short.
 
@@ -99,42 +100,45 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     if simulated_df.empty:
         return pd.DataFrame()
 
-    latest_date_temp = simulated_df['date'].max()
-    unique_models = simulated_df['model_short'].unique()
-    latest_models = simulated_df[simulated_df['date'] == latest_date_temp]['model_short'].unique()
+    latest_date_temp = simulated_df["date"].max()
+    unique_models = simulated_df["model_short"].unique()
+    latest_models = simulated_df[simulated_df["date"] == latest_date_temp]["model_short"].unique()
     logger.debug(
-        "Getting latest forecasts — latest date: %s, "
-        "models: %s, models at latest date: %s",
-        latest_date_temp, unique_models, latest_models,
+        "Getting latest forecasts — latest date: %s, models: %s, models at latest date: %s",
+        latest_date_temp,
+        unique_models,
+        latest_models,
     )
 
     # Ensure date is in datetime format
-    if not pd.api.types.is_datetime64_any_dtype(simulated_df['date']):
+    if not pd.api.types.is_datetime64_any_dtype(simulated_df["date"]):
         simulated_df = simulated_df.copy()
-        simulated_df['date'] = pd.to_datetime(simulated_df['date'])
+        simulated_df["date"] = pd.to_datetime(simulated_df["date"])
 
     # Sort by date in descending order first
-    sorted_df = simulated_df.sort_values('date', ascending=False)
+    sorted_df = simulated_df.sort_values("date", ascending=False)
     latest_forecasts = sorted_df.drop_duplicates(
-        subset=['code', horizon_column_name, 'model_short'], keep='first').copy()
+        subset=["code", horizon_column_name, "model_short"], keep="first"
+    ).copy()
 
     # Only keep lines where year of date is equal to the maximum year
     # Here we take data from second to last and last year
-    latest_year = simulated_df['date'].max().year
+    latest_year = simulated_df["date"].max().year
     # Write year into column, derived from date column
-    latest_forecasts.loc[:, 'year'] = latest_forecasts['date'].dt.year
-    latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
+    latest_forecasts.loc[:, "year"] = latest_forecasts["date"].dt.year
+    latest_forecasts = latest_forecasts[latest_forecasts["year"] >= (latest_year - 1)]
 
     logger.debug(
         "Latest year filter: %d, years in result: %s",
-        latest_year, latest_forecasts['year'].unique(),
+        latest_year,
+        latest_forecasts["year"].unique(),
     )
 
     # Drop the 'year' column
-    latest_forecasts = latest_forecasts.drop(columns=['year'])
+    latest_forecasts = latest_forecasts.drop(columns=["year"])
 
     # Round numeric columns to 3 decimal places
-    numeric_cols = latest_forecasts.select_dtypes(include=['float64', 'float32']).columns
+    numeric_cols = latest_forecasts.select_dtypes(include=["float64", "float32"]).columns
     latest_forecasts[numeric_cols] = latest_forecasts[numeric_cols].round(3)
 
     return latest_forecasts
@@ -143,6 +147,7 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
 # ---------------------------------------------------------------------------
 # Save forecast data
 # ---------------------------------------------------------------------------
+
 
 def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
@@ -156,26 +161,32 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
     filename = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+        os.getenv("ieasyforecast_combined_forecast_pentad_file"),
+    )
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
 
     # Ensure code is string without .0
-    if 'code' in simulated.columns:
-        simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Extract latest forecasts BEFORE converting dates to strings,
     # so get_latest_forecasts receives native datetime dates.
-    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='pentad_in_year')
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name="pentad_in_year")
 
     # Format dates as strings for CSV output
-    if 'date' in simulated.columns:
-        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
-    if 'date' in simulated_latest.columns:
-        simulated_latest['date'] = pd.to_datetime(simulated_latest['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in simulated.columns:
+        simulated["date"] = pd.to_datetime(simulated["date"], errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
+    if "date" in simulated_latest.columns:
+        simulated_latest["date"] = pd.to_datetime(
+            simulated_latest["date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
 
     # Write the data to csv (atomic to prevent corruption on crash)
+    write_diagnostics.diagnose_forecast_data(simulated, "pentad", "pentad combined")
     try:
         atomic_write_csv(simulated, filename, index=False)
     except Exception as e:
@@ -183,9 +194,10 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         raise e
 
     # Edit filename by appending '_latest' to the filename
-    filename_latest = filename.replace('.csv', '_latest.csv')
+    filename_latest = filename.replace(".csv", "_latest.csv")
 
     # Write the latest data to a csv file (atomic)
+    write_diagnostics.diagnose_forecast_data(simulated_latest, "pentad", "pentad combined latest")
     try:
         atomic_write_csv(simulated_latest, filename_latest, index=False)
     except Exception as e:
@@ -202,14 +214,16 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
-        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad combined forecasts")
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad combined forecasts"
+        )
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=simulated_latest,
             csv_file_path=filename_latest,
             data_type="combined forecasts pentad",
-            key_columns=['code', 'date', 'pentad_in_year', 'model_short'],
-            value_columns=['forecasted_discharge'],
+            key_columns=["code", "date", "pentad_in_year", "model_short"],
+            value_columns=["forecasted_discharge"],
         )
 
         if is_consistent:
@@ -218,6 +232,7 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return None
+
 
 def save_forecast_data_decade(simulated: pd.DataFrame):
     """
@@ -231,29 +246,35 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     """
     filename = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_combined_forecast_decad_file"))
+        os.getenv("ieasyforecast_combined_forecast_decad_file"),
+    )
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
 
     # Ensure code is string without .0
-    if 'code' in simulated.columns:
-        simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Rename the column decad_in_month to decad
-    simulated = simulated.rename(columns={'decad_in_month': 'decad'})
+    simulated = simulated.rename(columns={"decad_in_month": "decad"})
 
     # Extract latest forecasts BEFORE converting dates to strings,
     # so get_latest_forecasts receives native datetime dates.
-    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='decad_in_year')
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name="decad_in_year")
 
     # Format dates as strings for CSV output
-    if 'date' in simulated.columns:
-        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
-    if 'date' in simulated_latest.columns:
-        simulated_latest['date'] = pd.to_datetime(simulated_latest['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in simulated.columns:
+        simulated["date"] = pd.to_datetime(simulated["date"], errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
+    if "date" in simulated_latest.columns:
+        simulated_latest["date"] = pd.to_datetime(
+            simulated_latest["date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
 
     # Write the data to csv (atomic to prevent corruption on crash)
+    write_diagnostics.diagnose_forecast_data(simulated, "decad", "decad combined")
     try:
         atomic_write_csv(simulated, filename, index=False)
     except Exception as e:
@@ -261,9 +282,10 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
         raise e
 
     # Edit filename by appending '_latest' to the filename
-    filename_latest = filename.replace('.csv', '_latest.csv')
+    filename_latest = filename.replace(".csv", "_latest.csv")
 
     # Write the latest data to a csv file (atomic)
+    write_diagnostics.diagnose_forecast_data(simulated_latest, "decad", "decad combined latest")
     try:
         atomic_write_csv(simulated_latest, filename_latest, index=False)
     except Exception as e:
@@ -280,14 +302,16 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
-        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad combined forecasts")
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad combined forecasts"
+        )
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=simulated_latest,
             csv_file_path=filename_latest,
             data_type="combined forecasts decade",
-            key_columns=['code', 'date', 'decad_in_year', 'model_short'],
-            value_columns=['forecasted_discharge'],
+            key_columns=["code", "date", "decad_in_year", "model_short"],
+            value_columns=["forecasted_discharge"],
         )
 
         if is_consistent:
@@ -301,6 +325,7 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 # ---------------------------------------------------------------------------
 # Save skill metrics
 # ---------------------------------------------------------------------------
+
 
 def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
     """
@@ -320,23 +345,25 @@ def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
     data = data.round(4)
 
     # Ensure code is string without .0
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
     # Ensure date is in %Y-%m-%d format
-    if 'date' in data.columns:
-        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in data.columns:
+        data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
     # convert pentad_in_year to int
-    data['pentad_in_year'] = data['pentad_in_year'].astype(int)
+    data["pentad_in_year"] = data["pentad_in_year"].astype(int)
 
     # Sort in ascending order by 'pentad_in_year', 'code', and 'model_short'
-    data = data.sort_values(by=['pentad_in_year', 'code', 'model_short'])
+    data = data.sort_values(by=["pentad_in_year", "code", "model_short"])
 
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
+        os.getenv("ieasyforecast_pentadal_skill_metrics_file"),
+    )
 
     # Write atomically (temp file + rename) to prevent data loss on crash
+    write_diagnostics.diagnose_skill_metrics(data, "pentad", "pentad skill metrics")
     try:
         atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
@@ -347,25 +374,32 @@ def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
     # Write to SAPPHIRE API
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(
-                data, "pentad", _resolve_year(year)
-            )
+            api_writer._write_skill_metrics_to_api(data, "pentad", _resolve_year(year))
         except Exception as e:
             fl._handle_api_write_error(e, "pentadal skill metrics")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
-        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad skill metrics")
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad skill metrics"
+        )
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=data,
             csv_file_path=filepath,
             data_type="skill metrics pentad",
-            key_columns=['code', 'pentad_in_year', 'model_short'],
+            key_columns=["code", "pentad_in_year", "model_short"],
             value_columns=[
-                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                'n_pairs', 'pbias', 'kgelf', 'nse_log',
+                "sdivsigma",
+                "nse",
+                "delta",
+                "accuracy",
+                "mae",
+                "n_pairs",
+                "pbias",
+                "kgelf",
+                "nse_log",
             ],
         )
 
@@ -375,6 +409,7 @@ def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return None
+
 
 def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
     """Save monthly skill metrics to CSV + API.
@@ -396,19 +431,19 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
     """
     data = data.round(4)
 
-    if 'code' in data.columns:
-        data['code'] = (
-            data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-        )
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
-    data['month_in_year'] = data['month_in_year'].astype(int)
+    data["month_in_year"] = data["month_in_year"].astype(int)
 
-    data = data.sort_values(by=['month_in_year', 'code', 'model_short'])
+    data = data.sort_values(by=["month_in_year", "code", "model_short"])
 
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_monthly_skill_metrics_file"))
+        os.getenv("ieasyforecast_monthly_skill_metrics_file"),
+    )
 
+    write_diagnostics.diagnose_skill_metrics(data, "month", "monthly skill metrics")
     try:
         atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
@@ -418,28 +453,31 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
 
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(
-                data, "month", _resolve_year(year)
-            )
+            api_writer._write_skill_metrics_to_api(data, "month", _resolve_year(year))
         except Exception as e:
             fl._handle_api_write_error(e, "monthly skill metrics")
 
-    consistency_check = (
-        os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
-    )
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info(
-            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency "
-            "for monthly skill metrics"
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for monthly skill metrics"
         )
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=data,
             csv_file_path=filepath,
             data_type="skill metrics month",
-            key_columns=['code', 'month_in_year', 'model_short'],
+            key_columns=["code", "month_in_year", "model_short"],
             value_columns=[
-                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                'n_pairs', 'crps', 'pbias', 'kgelf', 'nse_log',
+                "sdivsigma",
+                "nse",
+                "delta",
+                "accuracy",
+                "mae",
+                "n_pairs",
+                "crps",
+                "pbias",
+                "kgelf",
+                "nse_log",
             ],
         )
         if is_consistent:
@@ -471,70 +509,58 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
 
     filename = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_monthly_combined_forecast_file"))
+        os.getenv("ieasyforecast_monthly_combined_forecast_file"),
+    )
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
 
     # Ensure code is string without .0
-    if 'code' in simulated.columns:
-        simulated['code'] = (
-            simulated['code'].astype(str)
-            .str.replace(r'\.0$', '', regex=True)
-        )
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Extract latest forecasts using month_in_year as horizon.
     # EM/Skilled Mean rows from calculate_monthly_skill_metrics have
     # no date — synthesize from year+month so get_latest_forecasts works.
-    if 'date' in simulated.columns:
+    if "date" in simulated.columns:
         simulated = simulated.copy()
-        if simulated['date'].isna().any() and 'year' in simulated.columns:
-            mask = simulated['date'].isna()
-            simulated.loc[mask, 'date'] = (
-                simulated.loc[mask, 'year'].astype(int).astype(str)
-                + '-'
-                + simulated.loc[mask, 'month'].astype(int).astype(str)
-                .str.zfill(2)
-                + '-01'
+        if simulated["date"].isna().any() and "year" in simulated.columns:
+            mask = simulated["date"].isna()
+            simulated.loc[mask, "date"] = (
+                simulated.loc[mask, "year"].astype(int).astype(str)
+                + "-"
+                + simulated.loc[mask, "month"].astype(int).astype(str).str.zfill(2)
+                + "-01"
             )
         # Ensure consistent datetime type for the entire column
-        simulated['date'] = pd.to_datetime(
-            simulated['date'], errors='coerce'
-        )
-        simulated_latest = get_latest_forecasts(
-            simulated, horizon_column_name='month_in_year'
-        )
+        simulated["date"] = pd.to_datetime(simulated["date"], errors="coerce")
+        simulated_latest = get_latest_forecasts(simulated, horizon_column_name="month_in_year")
     else:
         simulated_latest = simulated.copy()
 
     # Write the data to csv (atomic to prevent corruption on crash)
+    write_diagnostics.diagnose_forecast_data(simulated, "month", "monthly combined")
     try:
         atomic_write_csv(simulated, filename, index=False)
     except Exception as e:
-        logger.error(
-            f"Could not write monthly forecast data to {filename}."
-        )
+        logger.error(f"Could not write monthly forecast data to {filename}.")
         raise e
 
     # Edit filename by appending '_latest' to the filename
-    filename_latest = filename.replace('.csv', '_latest.csv')
+    filename_latest = filename.replace(".csv", "_latest.csv")
 
     # Write the latest data to a csv file (atomic)
+    write_diagnostics.diagnose_forecast_data(simulated_latest, "month", "monthly combined latest")
     try:
         atomic_write_csv(simulated_latest, filename_latest, index=False)
     except Exception as e:
-        logger.error(
-            f"Could not write latest monthly forecast data to "
-            f"{filename_latest}."
-        )
+        logger.error(f"Could not write latest monthly forecast data to {filename_latest}.")
         raise e
 
     # Write ensemble rows (EM, Naive Mean, Skilled Mean) to API
     ret = api_writer._write_monthly_ensemble_to_api(simulated)
     if ret:
-        logger.info(
-            "Monthly ensemble forecasts written to API successfully."
-        )
+        logger.info("Monthly ensemble forecasts written to API successfully.")
     else:
         logger.warning(
             "Monthly ensemble forecasts API write returned False "
@@ -542,23 +568,21 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
         )
 
     # --- Consistency Check ---
-    consistency_check = (
-        os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower()
-        == "true"
-    )
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info(
-            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency "
-            "for monthly combined forecasts"
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for monthly combined forecasts"
         )
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=simulated_latest,
             csv_file_path=filename_latest,
             data_type="combined forecasts monthly",
             key_columns=[
-                'code', 'month_in_year', 'model_short',
+                "code",
+                "month_in_year",
+                "model_short",
             ],
-            value_columns=['forecasted_discharge'],
+            value_columns=["forecasted_discharge"],
         )
         if is_consistent:
             logger.info("CONSISTENCY CHECK PASSED: %s", message)
@@ -593,21 +617,19 @@ def save_daily_skill_metrics(
     """
     resolved_year = _resolve_year(year)
 
+    write_diagnostics.diagnose_daily_skill_metrics(fdc_metrics, threshold_metrics)
+
     # Write FHV/FLV via skill metrics API (horizon_type="day")
     if fdc_metrics is not None and not fdc_metrics.empty:
         fdc_data = fdc_metrics.copy()
         # Add required columns for _write_skill_metrics_to_api
-        fdc_data['day_in_year'] = 1  # placeholder — daily metrics
+        fdc_data["day_in_year"] = 1  # placeholder — daily metrics
         # are aggregated across all days, not per-day
         if api_writer.SAPPHIRE_API_AVAILABLE:
             try:
-                api_writer._write_skill_metrics_to_api(
-                    fdc_data, "day", resolved_year
-                )
+                api_writer._write_skill_metrics_to_api(fdc_data, "day", resolved_year)
             except Exception as e:
-                fl._handle_api_write_error(
-                    e, "daily FDC skill metrics"
-                )
+                fl._handle_api_write_error(e, "daily FDC skill metrics")
     else:
         logger.info("No daily FDC metrics to save")
 
@@ -615,13 +637,9 @@ def save_daily_skill_metrics(
     if threshold_metrics is not None and not threshold_metrics.empty:
         if api_writer.SAPPHIRE_API_AVAILABLE:
             try:
-                api_writer._write_threshold_skill_metrics_to_api(
-                    threshold_metrics, resolved_year
-                )
+                api_writer._write_threshold_skill_metrics_to_api(threshold_metrics, resolved_year)
             except Exception as e:
-                fl._handle_api_write_error(
-                    e, "daily threshold skill metrics"
-                )
+                fl._handle_api_write_error(e, "daily threshold skill metrics")
     else:
         logger.info("No daily threshold metrics to save")
 
@@ -646,23 +664,25 @@ def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
     data = data.round(4)
 
     # Ensure code is string without .0
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
     # Ensure date is in %Y-%m-%d format
-    if 'date' in data.columns:
-        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if "date" in data.columns:
+        data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
     # convert decad_in_year to int
-    data['decad_in_year'] = data['decad_in_year'].astype(int)
+    data["decad_in_year"] = data["decad_in_year"].astype(int)
 
     # Sort in ascending order by 'decad_in_year', 'code', and 'model_short'
-    data = data.sort_values(by=['decad_in_year', 'code', 'model_short'])
+    data = data.sort_values(by=["decad_in_year", "code", "model_short"])
 
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_decadal_skill_metrics_file"))
+        os.getenv("ieasyforecast_decadal_skill_metrics_file"),
+    )
 
     # Write atomically (temp file + rename) to prevent data loss on crash
+    write_diagnostics.diagnose_skill_metrics(data, "decad", "decad skill metrics")
     try:
         atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
@@ -673,25 +693,32 @@ def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
     # Write to SAPPHIRE API
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(
-                data, "decad", _resolve_year(year)
-            )
+            api_writer._write_skill_metrics_to_api(data, "decad", _resolve_year(year))
         except Exception as e:
             fl._handle_api_write_error(e, "decadal skill metrics")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
-        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad skill metrics")
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad skill metrics"
+        )
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=data,
             csv_file_path=filepath,
             data_type="skill metrics decade",
-            key_columns=['code', 'decad_in_year', 'model_short'],
+            key_columns=["code", "decad_in_year", "model_short"],
             value_columns=[
-                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                'n_pairs', 'pbias', 'kgelf', 'nse_log',
+                "sdivsigma",
+                "nse",
+                "delta",
+                "accuracy",
+                "mae",
+                "n_pairs",
+                "pbias",
+                "kgelf",
+                "nse_log",
             ],
         )
 
