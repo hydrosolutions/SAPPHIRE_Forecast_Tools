@@ -438,18 +438,21 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
 
     data = data.sort_values(by=["month_in_year", "code", "model_short"])
 
-    filepath = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_monthly_skill_metrics_file"),
-    )
+    csv_dir = os.getenv("ieasyforecast_intermediate_data_path")
+    csv_file = os.getenv("ieasyforecast_monthly_skill_metrics_file")
 
     write_diagnostics.diagnose_skill_metrics(data, "month", "monthly skill metrics")
-    try:
-        atomic_write_csv(data, filepath, index=False)
-        logger.info(f"Data written to {filepath}.")
-    except Exception as e:
-        logger.error(f"Could not write the data to {filepath}.")
-        raise e
+
+    if csv_dir and csv_file:
+        filepath = os.path.join(csv_dir, csv_file)
+        try:
+            atomic_write_csv(data, filepath, index=False)
+            logger.info(f"Data written to {filepath}.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {filepath}.")
+            raise e
+    else:
+        logger.warning("Monthly skill metrics CSV path not configured, skipping CSV save")
 
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
@@ -507,10 +510,20 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
         logger.info("No monthly forecast data to save")
         return None
 
-    filename = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_monthly_combined_forecast_file"),
-    )
+    csv_dir = os.getenv("ieasyforecast_intermediate_data_path")
+    csv_file = os.getenv("ieasyforecast_monthly_combined_forecast_file")
+    if not csv_dir or not csv_file:
+        logger.warning(
+            "Monthly CSV path not configured "
+            "(ieasyforecast_intermediate_data_path=%s, "
+            "ieasyforecast_monthly_combined_forecast_file=%s), "
+            "skipping CSV save",
+            csv_dir,
+            csv_file,
+        )
+        return None
+
+    filename = os.path.join(csv_dir, csv_file)
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)

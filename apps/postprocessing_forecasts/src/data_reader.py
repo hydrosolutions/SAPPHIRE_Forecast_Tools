@@ -748,7 +748,11 @@ def _read_daily_runoff_api(
         if not all_records:
             return pd.DataFrame()
 
-        return pd.concat(all_records, ignore_index=True)
+        df = pd.concat(all_records, ignore_index=True)
+        # API returns 'discharge'; internal convention is 'discharge_avg'
+        if "discharge" in df.columns and "discharge_avg" not in df.columns:
+            df = df.rename(columns={"discharge": "discharge_avg"})
+        return df
 
     except Exception as e:
         logger.error("Failed to read daily runoff from API: %s", e)
