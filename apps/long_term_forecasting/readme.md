@@ -471,7 +471,7 @@ Q_adjusted = calendar_month_lt_mean * exp(log_ratio_clipped)
 ### Key Features
 
 - **Leave-One-Out**: Excludes prediction year from climatology (prevents data leakage)
-- **Clipping**: ±2σ for N<5 years, Student's t 95% CI for N≥5
+- **Clipping**: No clipping for N<5 years, Student's t 95% CI for N≥5
 - **Multi-Quantile**: Adjusts all Q columns (Q5, Q10, ..., Q95) independently
 - **Non-Negative**: Ensures all adjusted values ≥ 0
 

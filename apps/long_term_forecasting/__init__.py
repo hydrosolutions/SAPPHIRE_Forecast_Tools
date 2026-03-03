@@ -38,8 +38,9 @@ def initialize_today(today_override=None):
 
 today = initialize_today()  # Initialize today at module load time , can be overridden later if needed for synthetic forecasts
 
-def get_today():                                                                                                                                                   
-    return today 
+def get_today():
+    # pd.Timestamp is immutable, so no copy needed
+    return today
 
 
 # Columns retained in long-term forecasting dataframes + Prediction Columns

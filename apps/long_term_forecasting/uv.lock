@@ -992,7 +992,7 @@ requires-dist = [
     { name = "ieasyhydro-sdk", git = "https://github.com/hydrosolutions/ieasyhydro-python-sdk" },
     { name = "ieasyhydroforecast", editable = "../iEasyHydroForecast" },
     { name = "lightgbm", specifier = "==4.5.0" },
-    { name = "lt-forecasting", editable = "../../../../machine_learning_hydrology/monthly_forecasting" },
+    { name = "lt-forecasting", git = "https://github.com/hydrosolutions/long-term-forecasting.git" },
     { name = "matplotlib", specifier = ">=3.8.2" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "optuna", specifier = ">=3.5.0" },
@@ -1025,8 +1025,8 @@ dev = [{ name = "pytest", specifier = "==9.0.0" }]
 
 [[package]]
 name = "lt-forecasting"
-version = "2.0.0"
-source = { editable = "../../../../machine_learning_hydrology/monthly_forecasting" }
+version = "2.1.0"
+source = { git = "https://github.com/hydrosolutions/long-term-forecasting.git#e77f580b996669d9430453ecc34f52120bef556d" }
 dependencies = [
     { name = "catboost" },
     { name = "fiona" },
@@ -1050,45 +1050,6 @@ dependencies = [
     { name = "torchmetrics" },
     { name = "tqdm" },
     { name = "xgboost" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "catboost", specifier = "==1.2.3" },
-    { name = "fiona", specifier = "==1.9.5" },
-    { name = "geopandas", specifier = "==0.14.3" },
-    { name = "lightgbm", specifier = "==4.5.0" },
-    { name = "matplotlib", specifier = "==3.8.2" },
-    { name = "numpy", specifier = "==1.26.4" },
-    { name = "optuna", specifier = "==3.5.0" },
-    { name = "pandas", specifier = "==2.2.0" },
-    { name = "pe-oudin", specifier = "==0.3" },
-    { name = "plotly", specifier = ">=5.0.0" },
-    { name = "pyarrow", specifier = "==15.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "pytorch-lightning", specifier = ">=2.0.0" },
-    { name = "scikit-learn", specifier = "==1.4.0" },
-    { name = "scipy", specifier = "==1.15.2" },
-    { name = "seaborn", specifier = "==0.13.2" },
-    { name = "statsmodels", specifier = ">=0.14.5" },
-    { name = "torch", specifier = ">=2.0.0" },
-    { name = "torchmetrics", specifier = ">=1.0.0" },
-    { name = "tqdm", specifier = "==4.66.2" },
-    { name = "xgboost", specifier = "==2.0.3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "dash", specifier = ">=2.14.0" },
-    { name = "dash-bootstrap-components", specifier = ">=1.7.1" },
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "nbstripout", specifier = ">=0.6.0" },
-    { name = "pingouin", specifier = ">=0.5.5" },
-    { name = "plotly", specifier = ">=5.18.0" },
-    { name = "pytest", specifier = "==8.4.1" },
-    { name = "rasterio", specifier = ">=1.4.3" },
-    { name = "ruff", specifier = ">=0.12.2" },
-    { name = "statsmodels", specifier = ">=0.14.5" },
 ]
 
 [[package]]

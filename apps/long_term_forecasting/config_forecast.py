@@ -277,6 +277,16 @@ class ForecastConfig:
         """
         return self.forecast_config.get("horizon_type", "month")
 
+    def get_forecast_months(self, model_name: str) -> List[int]:
+        """
+        Return the list of forecast months for a given model.
+
+        This can be used to determine which months to include in the forecast
+        output, especially when calendar_month_adjustment is False.
+        """
+        model_config = self.get_model_specific_config(model_name)
+        return model_config["general_config"].get("forecast_months", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+
 
 def order_models_by_dependencies(all_models: List[str], 
                                  model_dependencies: Dict[str, List[str]]) -> List[str]:

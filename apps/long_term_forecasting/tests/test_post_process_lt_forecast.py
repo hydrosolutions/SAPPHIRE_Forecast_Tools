@@ -504,6 +504,248 @@ class TestAdjustForecastToCalendarMonth:
             assert not pd.isna(result[q_col].values[0])
 
 
+class TestQuantileSpreadPreservation:
+    """Tests for quantile spread preservation in adjust_forecast_to_calendar_month.
+
+    Verifies that the hybrid approach:
+    - Clips central estimates (Q50, Q_model_name) independently
+    - Applies delta correction to quantiles (Q5, Q10, Q25, Q75, Q90, Q95)
+      to preserve their spread relative to Q50
+    """
+
+    def test_spread_preserved_when_clipping_upper(self):
+        """Test that Q95/Q50 ratio is preserved when both would clip to upper bound.
+
+        Scenario: fc_mean=100, upper_bound clips at ~0.34 in log-space
+        - Q50_raw=160 → log_ratio=0.47 → clipped → Q50_adj
+        - Q95_raw=200 → log_ratio=0.69 → with delta → Q95_adj
+        - Expected: Q95_adj/Q50_adj ≈ 200/160 = 1.25 (spread preserved)
+        """
+        # Set up data where both Q50 and Q95 exceed the upper bound
+        mapped_data = pd.DataFrame({
+            'Q50': [160.0],  # log_ratio = log(160/100) = 0.47
+            'Q95': [200.0],  # log_ratio = log(200/100) = 0.69
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],  # Small std → tight bounds
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50', 'Q95'])
+
+        # Original ratio
+        original_ratio = 200.0 / 160.0  # 1.25
+
+        # Adjusted ratio should be preserved
+        adjusted_ratio = result['Q95'].values[0] / result['Q50'].values[0]
+
+        # Spread should be preserved (ratios should match)
+        assert abs(adjusted_ratio - original_ratio) < 0.01, (
+            f"Spread not preserved: expected ratio {original_ratio:.4f}, "
+            f"got {adjusted_ratio:.4f}"
+        )
+
+    def test_spread_preserved_when_clipping_lower(self):
+        """Test that Q5/Q50 ratio is preserved when both would clip to lower bound.
+
+        Scenario: Low forecast values relative to climatology
+        - Q50_raw=20 → log_ratio < lower_bound → clipped
+        - Q5_raw=10 → log_ratio < lower_bound → with delta → preserved spread
+        """
+        mapped_data = pd.DataFrame({
+            'Q50': [20.0],  # Very low: log_ratio = log(20/100) = -1.61
+            'Q5': [10.0],   # Even lower: log_ratio = log(10/100) = -2.30
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50', 'Q5'])
+
+        # Original ratio
+        original_ratio = 10.0 / 20.0  # 0.5
+
+        # Adjusted ratio should be preserved
+        adjusted_ratio = result['Q5'].values[0] / result['Q50'].values[0]
+
+        assert abs(adjusted_ratio - original_ratio) < 0.01, (
+            f"Spread not preserved: expected ratio {original_ratio:.4f}, "
+            f"got {adjusted_ratio:.4f}"
+        )
+
+    def test_q50_clipped_independently(self):
+        """Test that Q50 is clipped to climatology bounds (independent clipping)."""
+        # High Q50 that should be clipped
+        mapped_data = pd.DataFrame({
+            'Q50': [300.0],  # Very high relative to fc_mean
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],  # Tight bounds
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50'])
+
+        # Q50 should be clipped (not equal to simple ratio adjustment)
+        simple_ratio_adjustment = 100.0 * (300.0 / 100.0)  # = 300
+        assert result['Q50'].values[0] < simple_ratio_adjustment, (
+            "Q50 should be clipped below simple ratio adjustment"
+        )
+        assert result['Q50'].values[0] > 0, "Q50 should be positive"
+
+    def test_q_model_name_clipped_independently(self):
+        """Test that Q_MC_ALD (model name column) is clipped independently."""
+        mapped_data = pd.DataFrame({
+            'Q_MC_ALD': [300.0],  # High forecast
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q_MC_ALD'])
+
+        # Should be clipped
+        simple_ratio_adjustment = 100.0 * (300.0 / 100.0)
+        assert result['Q_MC_ALD'].values[0] < simple_ratio_adjustment, (
+            "Q_MC_ALD should be clipped"
+        )
+
+    def test_no_q50_no_delta(self):
+        """Test that when Q50 is missing, quantiles get standard ratio adjustment."""
+        mapped_data = pd.DataFrame({
+            'Q95': [130.0],  # No Q50 in data
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q95'])
+
+        # Without Q50, delta=0, so Q95 gets standard ratio adjustment
+        # log_ratio = log(130/100) = 0.262, within bounds
+        expected = 100.0 * (130.0 / 100.0)  # ~130
+        assert abs(result['Q95'].values[0] - expected) < 1.0, (
+            f"Without Q50, Q95 should get ratio adjustment: expected ~{expected}, "
+            f"got {result['Q95'].values[0]}"
+        )
+
+    def test_multiple_rows_independent_delta(self):
+        """Test that each row gets its own delta calculation."""
+        mapped_data = pd.DataFrame({
+            'Q50': [160.0, 80.0],   # Row 0: high, Row 1: low
+            'Q95': [200.0, 100.0],  # Maintain 1.25x ratio in each row
+            'fc_period_lt_mean': [100.0, 100.0],
+            'fc_period_lt_std': [15.0, 15.0],
+            'fc_period_lt_n': [10, 10],
+            'calendar_month_lt_mean': [100.0, 100.0],
+            'calendar_month_lt_std': [15.0, 15.0],
+            'calendar_month_lt_n': [10, 10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50', 'Q95'])
+
+        # Each row should preserve its own Q95/Q50 ratio
+        for i in range(2):
+            original_ratio = mapped_data['Q95'].values[i] / mapped_data['Q50'].values[i]
+            adjusted_ratio = result['Q95'].values[i] / result['Q50'].values[i]
+            assert abs(adjusted_ratio - original_ratio) < 0.01, (
+                f"Row {i}: spread not preserved"
+            )
+
+    def test_all_quantiles_preserve_relative_spread(self):
+        """Test that all quantile columns preserve their spread relative to Q50."""
+        # High forecast where all quantiles would be clipped independently
+        mapped_data = pd.DataFrame({
+            'Q5': [120.0],
+            'Q10': [130.0],
+            'Q25': [145.0],
+            'Q50': [160.0],
+            'Q75': [175.0],
+            'Q90': [190.0],
+            'Q95': [200.0],
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        q_columns = ['Q5', 'Q10', 'Q25', 'Q50', 'Q75', 'Q90', 'Q95']
+        result = adjust_forecast_to_calendar_month(mapped_data, q_columns)
+
+        q50_raw = mapped_data['Q50'].values[0]
+        q50_adj = result['Q50'].values[0]
+
+        # Each quantile should preserve its ratio to Q50
+        for q_col in ['Q5', 'Q10', 'Q25', 'Q75', 'Q90', 'Q95']:
+            original_ratio = mapped_data[q_col].values[0] / q50_raw
+            adjusted_ratio = result[q_col].values[0] / q50_adj
+            assert abs(adjusted_ratio - original_ratio) < 0.01, (
+                f"{q_col}: spread not preserved. "
+                f"Expected ratio {original_ratio:.4f}, got {adjusted_ratio:.4f}"
+            )
+
+    def test_q50_nan_row_gets_zero_delta(self):
+        """Test that rows where Q50 is NaN get delta=0."""
+        mapped_data = pd.DataFrame({
+            'Q50': [160.0, np.nan],  # Row 1 has NaN Q50
+            'Q95': [200.0, 130.0],
+            'fc_period_lt_mean': [100.0, 100.0],
+            'fc_period_lt_std': [15.0, 15.0],
+            'fc_period_lt_n': [10, 10],
+            'calendar_month_lt_mean': [100.0, 100.0],
+            'calendar_month_lt_std': [15.0, 15.0],
+            'calendar_month_lt_n': [10, 10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50', 'Q95'])
+
+        # Row 0: spread preserved
+        ratio_0 = result['Q95'].values[0] / result['Q50'].values[0]
+        assert abs(ratio_0 - 1.25) < 0.01
+
+        # Row 1: Q95 gets standard ratio adjustment (no delta)
+        # log_ratio = log(130/100) = 0.262, within bounds
+        expected_q95_row1 = 100.0 * (130.0 / 100.0)
+        assert abs(result['Q95'].values[1] - expected_q95_row1) < 1.0
+
+    def test_q50_nonpositive_row_gets_zero_delta(self):
+        """Test that rows where Q50 <= 0 get delta=0."""
+        mapped_data = pd.DataFrame({
+            'Q50': [0.0],  # Non-positive Q50
+            'Q95': [50.0],
+            'fc_period_lt_mean': [100.0],
+            'fc_period_lt_std': [15.0],
+            'fc_period_lt_n': [10],
+            'calendar_month_lt_mean': [100.0],
+            'calendar_month_lt_std': [15.0],
+            'calendar_month_lt_n': [10]
+        })
+
+        result = adjust_forecast_to_calendar_month(mapped_data, ['Q50', 'Q95'])
+
+        # Q50 should be 0 (non-positive handling)
+        assert result['Q50'].values[0] == 0
+
+        # Q95 should get standard ratio adjustment (delta=0)
+        # log_ratio = log(50/100) = -0.69, check if within bounds
+        assert result['Q95'].values[0] > 0
+
+
 class TestPostProcessLtForecastOperational:
     """Tests for operational (single year) forecast processing."""
 

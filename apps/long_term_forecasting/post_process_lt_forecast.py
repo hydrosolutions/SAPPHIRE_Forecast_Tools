@@ -28,6 +28,8 @@ LEAVE-ONE-OUT
 To prevent data leakage in hindcast mode, climatology statistics exclude the prediction year.
 Each forecast gets statistics computed from all other years only.
 """
+import re
+
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -493,18 +495,27 @@ def map_forecasted_period_to_calendar_month(prediction_data: pd.DataFrame,
 def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
                                        q_columns: list) -> pd.DataFrame:
     """
-    Apply ratio adjustment to all Q columns (vectorized implementation).
+    Apply ratio adjustment to Q columns with spread preservation.
 
-    For each Q column:
+    Central estimates (Q_model_name, Q50) are clipped independently to
+    climatology bounds. Quantiles (Q5, Q10, Q25, Q75, Q90, Q95) receive
+    delta correction to preserve their spread relative to Q50.
+
+    Column Categories (auto-inferred):
+    - Central estimates: Q50, Q_* (e.g., Q_MC_ALD, Q_LR_Base, Q_loc)
+      → Adjusted with independent clipping
+    - Quantiles: Q followed by digits except Q50 (e.g., Q5, Q10, Q25, Q75, Q90, Q95)
+      → Adjusted with delta correction from Q50 to preserve spread
+
+    For each column:
     - Case A: N = 0 → keep raw forecast
-    - Case B: N < 5 → use no clipping, just apply ratio (don't trust climatology bounds)
-    - Case C: N >= 5 → use Student's t 95% CI
+    - Case B: N < 5 → use no clipping, just apply ratio
+    - Case C: N >= 5 → use Student's t 95% CI bounds
 
-    Adjustment formula:
-    log_ratio = log(Q / fc_period_lt_mean)
-    log_ratio_clipped = clip(log_ratio, bounds)
-    Q_adjusted = calendar_month_lt_mean * exp(log_ratio_clipped)
-    Q_adjusted = max(Q_adjusted, 0)  # Non-negative only
+    Delta correction formula (for quantiles only):
+    delta = log_ratio_50_clipped - log_ratio_50
+    log_ratio_x_corrected = log_ratio_x + delta
+    Q_x_adjusted = calendar_month_lt_mean * exp(log_ratio_x_corrected)
 
     Parameters
     ----------
@@ -516,7 +527,7 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
     Returns
     -------
     pd.DataFrame
-        Adjusted forecast data
+        Adjusted forecast data with spread-preserved quantiles
     """
     # Handle empty data
     if mapped_data.empty:
@@ -536,21 +547,23 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
     lower_bounds = np.full(n_rows, -np.inf)
     upper_bounds = np.full(n_rows, np.inf)
 
-    # Case B: N < 5 → use no clipping
+    # Case B: N < 5 → use no clipping (bounds stay at +/- inf)
 
     # Case C: N >= 5 → use Student's t 95% CI
     case_c_mask = (fc_n >= 5) & ~np.isnan(fc_std) & (fc_std > 0) & (fc_mean > 0)
     if case_c_mask.any():
         t_critical = stats.t.ppf(0.975, df=fc_n[case_c_mask] - 1)
-        
+
         ci_lower = fc_mean[case_c_mask] - t_critical * fc_std[case_c_mask]
         ci_upper = fc_mean[case_c_mask] + t_critical * fc_std[case_c_mask]
 
         # Lower bound: only compute log where ci_lower > 0
         lower_bounds_c = np.full_like(ci_lower, -np.inf)
         valid_lower = ci_lower > 0
-        lower_bounds_c[valid_lower] = np.log(ci_lower[valid_lower] / fc_mean[case_c_mask][valid_lower])
-        
+        lower_bounds_c[valid_lower] = np.log(
+            ci_lower[valid_lower] / fc_mean[case_c_mask][valid_lower]
+        )
+
         # Upper bound: always valid since ci_upper > 0
         upper_bounds_c = np.log(ci_upper / fc_mean[case_c_mask])
 
@@ -559,15 +572,31 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
 
     # Identify rows where we can apply adjustment vs keep raw
     # Case A: N = 0 or missing statistics → keep raw forecast
-    can_adjust_mask = (fc_n > 0) & ~np.isnan(fc_mean) & (cal_n > 0) & ~np.isnan(cal_mean)
+    can_adjust_mask = (
+        (fc_n > 0) & ~np.isnan(fc_mean) & (cal_n > 0) & ~np.isnan(cal_mean)
+    )
     valid_for_log_mask = can_adjust_mask & (fc_mean > 0)
 
-    for q_col in q_columns:
+    # === Separate columns by category (auto-inferred) ===
+    # Quantile cols: Q followed by digit(s), but NOT Q50 (e.g., Q5, Q10, Q25, Q75, Q90, Q95)
+    # Central cols: Q50, Q_model_name (e.g., Q_MC_ALD, Q_LR_Base)
+    quantile_pattern = re.compile(r'^Q(\d+)$')
+
+    quantile_cols = []
+    central_cols = []
+    for col in q_columns:
+        match = quantile_pattern.match(col)
+        if match and match.group(1) != '50':
+            quantile_cols.append(col)
+        else:
+            central_cols.append(col)
+
+    # === Step 1: Adjust central estimates with INDEPENDENT clipping ===
+    for q_col in central_cols:
         if q_col not in adjusted_data.columns:
             continue
 
         q_raw = adjusted_data[q_col].values.copy()
-        adjusted_col = f'{q_col}'
 
         # Initialize with NaN
         q_adjusted = np.full(n_rows, np.nan)
@@ -580,27 +609,76 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
         adjustable_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw > 0)
 
         if adjustable_mask.any():
-            # Calculate log ratio
             log_ratio = np.log(q_raw[adjustable_mask] / fc_mean[adjustable_mask])
 
-            # Clip to bounds
+            # Clip to bounds (independent clipping)
             log_ratio_clipped = np.clip(
                 log_ratio,
                 lower_bounds[adjustable_mask],
                 upper_bounds[adjustable_mask]
             )
 
-            # Calculate adjusted forecast
-            q_adjusted[adjustable_mask] = cal_mean[adjustable_mask] * np.exp(log_ratio_clipped)
+            q_adjusted[adjustable_mask] = (
+                cal_mean[adjustable_mask] * np.exp(log_ratio_clipped)
+            )
 
-        # Handle non-positive raw values that can be adjusted (set to max(0, raw))
+        # Handle non-positive raw values
         nonpos_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw <= 0)
         q_adjusted[nonpos_mask] = np.maximum(0, q_raw[nonpos_mask])
 
         # Ensure non-negative
         q_adjusted = np.where(q_adjusted < 0, 0, q_adjusted)
 
-        adjusted_data[adjusted_col] = q_adjusted
+        adjusted_data[q_col] = q_adjusted
+
+    # === Step 2: Compute delta from Q50 (if present) ===
+    delta = np.zeros(n_rows)
+
+    if 'Q50' in adjusted_data.columns:
+        q50_raw = mapped_data['Q50'].values  # Use original Q50, not adjusted
+        ref_valid_mask = valid_for_log_mask & ~np.isnan(q50_raw) & (q50_raw > 0)
+
+        if ref_valid_mask.any():
+            log_ratio_50 = np.log(q50_raw[ref_valid_mask] / fc_mean[ref_valid_mask])
+            log_ratio_50_clipped = np.clip(
+                log_ratio_50,
+                lower_bounds[ref_valid_mask],
+                upper_bounds[ref_valid_mask]
+            )
+            delta[ref_valid_mask] = log_ratio_50_clipped - log_ratio_50
+
+    # === Step 3: Adjust quantiles with delta correction ===
+    for q_col in quantile_cols:
+        if q_col not in adjusted_data.columns:
+            continue
+
+        q_raw = mapped_data[q_col].values.copy()  # Use original values
+
+        # Initialize with NaN
+        q_adjusted = np.full(n_rows, np.nan)
+
+        # Case A: keep raw forecast where we can't adjust
+        case_a_mask = ~can_adjust_mask & ~np.isnan(q_raw)
+        q_adjusted[case_a_mask] = q_raw[case_a_mask]
+
+        # Apply delta correction (NOT independent clipping)
+        adjustable_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw > 0)
+
+        if adjustable_mask.any():
+            log_ratio = np.log(q_raw[adjustable_mask] / fc_mean[adjustable_mask])
+            log_ratio_corrected = log_ratio + delta[adjustable_mask]
+            q_adjusted[adjustable_mask] = (
+                cal_mean[adjustable_mask] * np.exp(log_ratio_corrected)
+            )
+
+        # Handle non-positive raw values
+        nonpos_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw <= 0)
+        q_adjusted[nonpos_mask] = np.maximum(0, q_raw[nonpos_mask])
+
+        # Ensure non-negative
+        q_adjusted = np.where(q_adjusted < 0, 0, q_adjusted)
+
+        adjusted_data[q_col] = q_adjusted
 
     return adjusted_data
 
