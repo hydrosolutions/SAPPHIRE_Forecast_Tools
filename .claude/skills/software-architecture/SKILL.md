@@ -1,5 +1,6 @@
 ---
 name: software-architecture
+model: haiku
 description: Guide for Python software architecture in the SAPPHIRE forecast tools project. Use when writing code, designing module structure, refactoring, or making architectural decisions. Provides project-specific conventions for Python, Docker, and scientific computing patterns.
 ---
 

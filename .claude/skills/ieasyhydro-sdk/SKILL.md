@@ -1,5 +1,6 @@
 ---
 name: ieasyhydro-sdk
+model: haiku
 description: "Expert guide for the ieasyhydro-python-sdk library for connecting to iEasyHydro High Frequency (HF) database. Use when: (1) Making API requests to iEasyHydro HF, (2) Retrieving discharge/meteorological data, (3) Debugging 422 or other API errors, (4) Formatting filters for get_data_values_for_site(), (5) Working with code in preprocessing_runoff that fetches from iEasyHydro HF, (6) Understanding response structure from the SDK. Triggers: ieasyhydro, iEasyHydro, SDK, HF database, WDDA, WDD, discharge data retrieval, site_codes filter."
 ---
 

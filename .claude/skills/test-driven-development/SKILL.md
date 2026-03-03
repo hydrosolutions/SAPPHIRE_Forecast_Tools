@@ -1,5 +1,6 @@
 ---
 name: test-driven-development
+model: opus
 description: Use when implementing any feature or bugfix, before writing implementation code
 ---
 

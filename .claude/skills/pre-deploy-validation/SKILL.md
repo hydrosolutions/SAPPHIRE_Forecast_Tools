@@ -1,5 +1,6 @@
 ---
 name: pre-deploy-validation
+model: haiku
 description: Validates that code changes are ready for server deployment. Use before pushing significant changes to production server, after completing a development task or bug fix, after fixing issues discovered during server testing, or when unsure if changes are deployment-ready. Guides through local tests, Docker builds, CI/CD checks, and server deployment steps.
 ---
 

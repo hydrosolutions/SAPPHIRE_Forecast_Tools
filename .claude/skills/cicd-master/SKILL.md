@@ -1,11 +1,7 @@
 ---
 name: cicd-master
-description: |
-  CI/CD pipeline advisor for GitHub Actions workflows, deployment scripts, and server task scheduling.
-  Use when: (1) editing or reviewing .github/workflows/*.yml files, (2) working on deployment scripts
-  in bin/, (3) questions about cron jobs or systemd services on local servers, (4) Docker image
-  build/push pipelines, (5) security hardening for CI/CD (secrets, permissions, attestations).
-  This skill provides advice and reviews - it does not execute server commands.
+model: sonnet
+description: "CI/CD pipeline advisor for GitHub Actions workflows, deployment scripts, and server task scheduling. Use when: (1) editing or reviewing .github/workflows/*.yml files, (2) working on deployment scripts in bin/, (3) questions about cron jobs or systemd services on local servers, (4) Docker image build/push pipelines, (5) security hardening for CI/CD (secrets, permissions, attestations). This skill provides advice and reviews - it does not execute server commands."
 ---
 
 # CI/CD Master
