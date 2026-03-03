@@ -19,8 +19,13 @@
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh long-term
 #
-#   # Long-term with specific years/months:
+#   # Long-term with specific years/months/modes:
 #   LT_SIMULATE_YEARS="2024 2025" LT_SIMULATE_NUM_MONTHS=3 \
+#     ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh long-term
+#
+#   # Long-term full coverage (all 10 modes):
+#   LT_SIMULATE_MODES="0 1 2 3 4 5 6 7 8 9" \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh long-term
 #
@@ -432,7 +437,7 @@ run_long_term_forecasting() {
     # so we use simulate_forecasts.py instead — it sets a historical "today"
     # and exercises the same code path.
     local sim_years="${LT_SIMULATE_YEARS:-2024}"
-    local sim_num_months="${LT_SIMULATE_NUM_MONTHS:-2}"
+    local sim_num_months="${LT_SIMULATE_NUM_MONTHS:-1}"
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting.log"
     > "$CURRENT_MODULE_LOG"
@@ -444,8 +449,10 @@ run_long_term_forecasting() {
             -- --years ${sim_years} --all --num_months "${sim_num_months}" \
             || rc=$?
     else
-        # Run all months 0-9; continue even if one fails
-        for month in 0 1 2 3 4 5 6 7 8 9; do
+        # Default: month_0 only (sufficient to test all model types).
+        # Override with LT_SIMULATE_MODES="0 1 2 3 4 5 6 7 8 9" for full coverage.
+        local modes="${LT_SIMULATE_MODES:-0}"
+        for month in $modes; do
             log INFO "  Month: ${month} (years=${sim_years}, num_months=${sim_num_months})"
             if ! run_in_venv long_term_forecasting dev_code/simulate_forecasts.py \
                 "lt_forecast_mode=month_${month}" \
@@ -1149,7 +1156,8 @@ Environment variables:
   SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance)
   lt_forecast_mode                   Specific month for long-term (e.g. month_3)
   LT_SIMULATE_YEARS                  Space-separated years to simulate (default: 2024)
-  LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 2)
+  LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 1)
+  LT_SIMULATE_MODES                  Space-separated month modes to run (default: "0")
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
 
 Examples:
