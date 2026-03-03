@@ -8,6 +8,7 @@ import os
 import pandas as pd
 import requests
 from typing import List, Dict, Any
+import calendar
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -16,7 +17,8 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger, SAPPHIRE_API_AVAILABLE
+from __init__ import logger, SAPPHIRE_API_AVAILABLE, get_today
+from config_forecast import ForecastConfig
 try:
     from sapphire_api_client import SapphirePostprocessingClient, SapphireAPIError
 except ImportError:
@@ -125,6 +127,93 @@ def infer_q_columns(df: pd.DataFrame) -> list:
                 q_columns.append(col)
     return q_columns
 
+
+def nearest_scheduled_issue_date(
+    today: pd.Timestamp,
+    issue_day: int,
+    possible_forecast_months: List[int]
+) -> pd.Timestamp:
+    """Find the closest scheduled issue date in a valid forecast month.
+
+    Searches outward from today (+-6 months) to find the nearest issue date
+    that falls in a month listed in possible_forecast_months.
+
+    Args:
+        today: Current date
+        issue_day: Day of month when forecasts are issued
+        possible_forecast_months: List of valid months (1-12) for this model
+
+    Returns:
+        The nearest scheduled issue date in a valid month
+
+    Raises:
+        ValueError: If possible_forecast_months is empty
+    """
+    if not possible_forecast_months:
+        raise ValueError("possible_forecast_months cannot be empty")
+
+    candidates = []
+    # Search +-6 months to ensure we find at least one valid month
+    for month_delta in range(-6, 7):
+        year = today.year
+        month = today.month + month_delta
+        # Handle year rollover
+        while month < 1:
+            month += 12
+            year -= 1
+        while month > 12:
+            month -= 12
+            year += 1
+        if month not in possible_forecast_months:
+            continue
+        # Clamp to last valid day of that month (e.g. issue_day=31 in Feb -> 28/29)
+        max_day = calendar.monthrange(year, month)[1]
+        candidates.append(pd.Timestamp(year, month, min(issue_day, max_day)))
+
+    return min(candidates, key=lambda d: abs((today - d).days))
+
+def check_valid_forecast_issue_date(forecast_configs: ForecastConfig, model_name: str):
+
+    # get the actual date - now - not the one in the init
+    now_date = pd.Timestamp.now()   
+    now_date = now_date.normalize()  # only keep date part
+    today = get_today()
+
+    # Simple constraint: today can't be after now - we can not issue forecasts for a date in the future
+    assert today <= now_date, f"Forecast can not be issued for a future date. Forecast Issue Date: {today}, Now Date: {now_date}"
+    
+    # Compare when the forecast is issued and when it should be issued
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    possible_forecast_months = forecast_configs.get_forecast_months(model_name=model_name)
+    scheduled_issue_date = nearest_scheduled_issue_date(today, forecast_issue_day, possible_forecast_months)
+    day_offset = (today - scheduled_issue_date).days  # negative = early, positive = late
+
+    # If more than 5 days off, don't run
+    if abs(day_offset) > 5:
+        raise ValueError(
+            f"Forecast for model {model_name} is {abs(day_offset)} days away from the "
+            f"scheduled issue date ({scheduled_issue_date.date()}). This could can lead to wrong results or model performance which doesn't match historical one."
+            f" Refusing to run."
+        )
+
+    # If late, snap back to the scheduled issue date
+    if day_offset > 0:
+        logger.info(
+            f"Adjusting forecast issue date from {today.date()} to "
+            f"scheduled issue date {scheduled_issue_date.date()} for model {model_name}"
+        )
+        today = scheduled_issue_date
+
+    if day_offset != 0:
+        direction = "before" if day_offset < 0 else "after"
+        days = abs(day_offset)
+        unit = "day" if days == 1 else "days"
+        logger.warning(
+            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue date "
+            f"({scheduled_issue_date.date()}). Forecasts are normalized to calendar monthly values; "
+            f"off-schedule runs may lead to degradation in forecast quality."
+        )
+    return today
 
 # ─────────────────────────────────────────────────────────────────
 # DATABASE WRITING FUNCTIONS FOR LONG-TERM FORECASTS

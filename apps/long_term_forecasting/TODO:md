@@ -3,6 +3,10 @@
   - [x] How to run most important bits
   - [ ] how to re-configure a model
 - [x] Data Base migration of different Snowmapper HRU's.
+- [ ] Improve Linear Regressions 
+  - [x] Use Bayesian Ridge (newly featured in lt-forecasting)
+  - [x] Update feature config - lagged features have been super effective for seasonal forecasting (R2 gain of 0.2), hence we need to add lagged features , especially for swe , precipitation and temperature - it could be that swe from last month has higher correlation with discharge in target period compared to the immediate last 10 days of swe. 
+  - [ ] Recalibrate the Linear Regressions. 
 - [ ] Recalibration of Models using correct HRU. (pending)
 - [ ] Testing
 - [ ] Commiting

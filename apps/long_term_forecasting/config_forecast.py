@@ -231,6 +231,61 @@ class ForecastConfig:
     
     def get_operational_month_lead_time(self) -> int:
         return int(self.forecast_config["operational_month_lead_time"])
+    
+    def get_forecast_horizon_months(self) -> int | None:
+        """Return the forecast horizon in months for dynamic multi-month mode."""
+        forecast_horizon_months = self.forecast_config.get("forecast_horizon_months", None)
+        if forecast_horizon_months is None:
+            return None
+        else:
+            return int(forecast_horizon_months)
+
+    def get_calendar_month_adjustment(self) -> bool:
+        """
+        Return whether to apply ratio-based calendar month adjustment.
+
+        If True (default), apply ratio adjustment to scale forecasts to
+        calendar month values. If False, only adjust valid_from/valid_to
+        dates to calendar month boundaries without modifying Q values.
+        """
+        return self.forecast_config.get("calendar_month_adjustment", True)
+
+    def get_target_start_month(self) -> int | None:
+        """
+        Return the fixed target start month (1-12) for seasonal forecasts.
+
+        Used when calendar_month_adjustment=False to set valid_from
+        to the first day of this month.
+        """
+        return self.forecast_config.get("target_start_month", None)
+
+    def get_target_end_month(self) -> int | None:
+        """
+        Return the fixed target end month (1-12) for seasonal forecasts.
+
+        Used when calendar_month_adjustment=False to set valid_to
+        to the last day of this month.
+        """
+        return self.forecast_config.get("target_end_month", None)
+    
+    def get_horizon_type(self) -> str:
+        """
+        Return the type of forecast horizon (e.g., 'month', 'quarter', 'season').
+
+        This can be used to determine how to apply calendar month adjustments
+        and other time-based logic.
+        """
+        return self.forecast_config.get("horizon_type", "month")
+
+    def get_forecast_months(self, model_name: str) -> List[int]:
+        """
+        Return the list of forecast months for a given model.
+
+        This can be used to determine which months to include in the forecast
+        output, especially when calendar_month_adjustment is False.
+        """
+        model_config = self.get_model_specific_config(model_name)
+        return model_config["general_config"].get("forecast_months", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
 
 
 def order_models_by_dependencies(all_models: List[str], 

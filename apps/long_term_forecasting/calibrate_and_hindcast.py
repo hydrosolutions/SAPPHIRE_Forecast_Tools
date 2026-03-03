@@ -235,13 +235,14 @@ def calibrate_model(data_interface: Union[DataInterface, DataInterfaceDB],
     #################################################
     output_path = forecast_configs.get_output_path(model_name=model_name)
     horizon_value = forecast_configs.get_operational_month_lead_time()
+    horizon_type = forecast_configs.get_horizon_type()
 
     # Save hindcast (DB + CSV parallel track)
     save_success = save_forecast(
         forecast_df=hindcast,
         model_name=model_name,
         output_path=output_path,
-        horizon_type="month",
+        horizon_type=horizon_type,
         horizon_value=horizon_value,
         is_hindcast=True
     )

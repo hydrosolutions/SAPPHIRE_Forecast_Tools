@@ -28,6 +28,8 @@ LEAVE-ONE-OUT
 To prevent data leakage in hindcast mode, climatology statistics exclude the prediction year.
 Each forecast gets statistics computed from all other years only.
 """
+import re
+
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -35,6 +37,168 @@ from __init__ import LT_FORECAST_BASE_COLUMNS
 from config_forecast import ForecastConfig
 from lt_utils import infer_q_columns
 
+
+
+def adjust_forecast_dates_only(
+    raw_forecast: pd.DataFrame,
+    target_start_month: int,
+    target_end_month: int
+) -> pd.DataFrame:
+    """
+    Adjust valid_from/valid_to to calendar month boundaries without Q adjustment.
+
+    For multi-month seasonal forecasts (e.g., April-September) where the model
+    output already represents the target period average and no ratio-based
+    scaling is needed.
+
+    Parameters
+    ----------
+    raw_forecast : pd.DataFrame
+        Raw forecast data with Q columns and metadata (date, code, valid_from,
+        valid_to, flag, Q columns)
+    target_start_month : int
+        Fixed start month (1-12) for the forecast period
+    target_end_month : int
+        Fixed end month (1-12) for the forecast period
+
+    Returns
+    -------
+    pd.DataFrame
+        Forecast with adjusted valid_from/valid_to dates. Q values unchanged.
+
+    Raises
+    ------
+    ValueError
+        If target_start_month or target_end_month is None or outside 1-12
+    """
+    # Validation
+    if target_start_month is None:
+        raise ValueError(
+            "target_start_month is required when calendar_month_adjustment=False"
+        )
+    if target_end_month is None:
+        raise ValueError(
+            "target_end_month is required when calendar_month_adjustment=False"
+        )
+    if not (1 <= target_start_month <= 12):
+        raise ValueError(
+            f"target_start_month must be 1-12, got {target_start_month}"
+        )
+    if not (1 <= target_end_month <= 12):
+        raise ValueError(
+            f"target_end_month must be 1-12, got {target_end_month}"
+        )
+
+    if raw_forecast.empty:
+        return raw_forecast.copy()
+
+    adjusted = raw_forecast.copy()
+    adjusted['date'] = pd.to_datetime(adjusted['date'])
+
+    # Target year = issue year (confirmed requirement)
+    issue_year = adjusted['date'].dt.year
+    start_year = issue_year
+
+    # Handle year boundary: if target_end_month < target_start_month,
+    # the period spans into the next year (e.g., Nov-Feb)
+    if target_end_month < target_start_month:
+        end_year = start_year + 1
+    else:
+        end_year = start_year
+
+    # Set valid_from = first day of target_start_month
+    adjusted['valid_from'] = pd.to_datetime({
+        'year': start_year,
+        'month': target_start_month,
+        'day': 1
+    })
+
+    # Set valid_to = last day of target_end_month
+    # Create first day of target_end_month, then add MonthEnd(0)
+    adjusted['valid_to'] = pd.to_datetime({
+        'year': end_year,
+        'month': target_end_month,
+        'day': 1
+    }) + pd.offsets.MonthEnd(0)
+
+    # Infer and retain Q columns along with base columns
+    q_columns = infer_q_columns(raw_forecast)
+    columns_to_retain = LT_FORECAST_BASE_COLUMNS + q_columns
+    adjusted = adjusted[columns_to_retain]
+
+    return adjusted
+
+
+def adjust_forecast_dates_dynamic(
+    raw_forecast: pd.DataFrame,
+    lead_time: int,
+    horizon_length: int
+) -> pd.DataFrame:
+    """
+    Adjust valid_from/valid_to dynamically based on issue date and horizon.
+
+    For each row, calculates target period from issue_date + lead_time
+    spanning horizon_length months.
+
+    Example: issue=March 25, lead_time=1, horizon_length=3
+    -> valid_from = April 1, valid_to = June 30
+
+    Parameters
+    ----------
+    raw_forecast : pd.DataFrame
+        Raw forecast data with Q columns and metadata (date, code, valid_from,
+        valid_to, flag, Q columns)
+    lead_time : int
+        Number of months ahead for the forecast start
+    horizon_length : int
+        Number of months the forecast spans
+
+    Returns
+    -------
+    pd.DataFrame
+        Forecast with adjusted valid_from/valid_to dates. Q values unchanged.
+    """
+    if raw_forecast.empty:
+        return raw_forecast.copy()
+
+    adjusted = raw_forecast.copy()
+    adjusted['date'] = pd.to_datetime(adjusted['date'])
+
+    issue_month = adjusted['date'].dt.month
+    issue_year = adjusted['date'].dt.year
+
+    # Target start month (same formula as monthly mode)
+    target_start_month = (issue_month + lead_time - 1) % 12 + 1
+
+    # Target end month (add horizon_length - 1 more months)
+    target_end_month = (target_start_month + horizon_length - 2) % 12 + 1
+
+    # Start year: if target_start < issue_month, crossed into next year
+    start_year = issue_year + (target_start_month < issue_month).astype(int)
+
+    # End year: if target_end < target_start, spans into next year
+    end_year = start_year + (target_end_month < target_start_month).astype(int)
+
+    # Set valid_from = first day of target_start_month
+    adjusted['valid_from'] = pd.to_datetime({
+        'year': start_year,
+        'month': target_start_month,
+        'day': 1
+    })
+
+    # Set valid_to = last day of target_end_month
+    adjusted['valid_to'] = pd.to_datetime({
+        'year': end_year,
+        'month': target_end_month,
+        'day': 1
+    }) + pd.offsets.MonthEnd(0)
+
+    # Retain base columns + Q columns
+    q_columns = infer_q_columns(raw_forecast)
+    columns_to_retain = LT_FORECAST_BASE_COLUMNS + q_columns
+    adjusted = adjusted[columns_to_retain]
+
+    return adjusted
 
 
 def calculate_lt_statistics_fc_period(discharge_data: pd.DataFrame,
@@ -331,18 +495,27 @@ def map_forecasted_period_to_calendar_month(prediction_data: pd.DataFrame,
 def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
                                        q_columns: list) -> pd.DataFrame:
     """
-    Apply ratio adjustment to all Q columns (vectorized implementation).
+    Apply ratio adjustment to Q columns with spread preservation.
 
-    For each Q column:
+    Central estimates (Q_model_name, Q50) are clipped independently to
+    climatology bounds. Quantiles (Q5, Q10, Q25, Q75, Q90, Q95) receive
+    delta correction to preserve their spread relative to Q50.
+
+    Column Categories (auto-inferred):
+    - Central estimates: Q50, Q_* (e.g., Q_MC_ALD, Q_LR_Base, Q_loc)
+      → Adjusted with independent clipping
+    - Quantiles: Q followed by digits except Q50 (e.g., Q5, Q10, Q25, Q75, Q90, Q95)
+      → Adjusted with delta correction from Q50 to preserve spread
+
+    For each column:
     - Case A: N = 0 → keep raw forecast
-    - Case B: N < 5 → use no clipping, just apply ratio (don't trust climatology bounds)
-    - Case C: N >= 5 → use Student's t 95% CI
+    - Case B: N < 5 → use no clipping, just apply ratio
+    - Case C: N >= 5 → use Student's t 95% CI bounds
 
-    Adjustment formula:
-    log_ratio = log(Q / fc_period_lt_mean)
-    log_ratio_clipped = clip(log_ratio, bounds)
-    Q_adjusted = calendar_month_lt_mean * exp(log_ratio_clipped)
-    Q_adjusted = max(Q_adjusted, 0)  # Non-negative only
+    Delta correction formula (for quantiles only):
+    delta = log_ratio_50_clipped - log_ratio_50
+    log_ratio_x_corrected = log_ratio_x + delta
+    Q_x_adjusted = calendar_month_lt_mean * exp(log_ratio_x_corrected)
 
     Parameters
     ----------
@@ -354,7 +527,7 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
     Returns
     -------
     pd.DataFrame
-        Adjusted forecast data
+        Adjusted forecast data with spread-preserved quantiles
     """
     # Handle empty data
     if mapped_data.empty:
@@ -374,21 +547,23 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
     lower_bounds = np.full(n_rows, -np.inf)
     upper_bounds = np.full(n_rows, np.inf)
 
-    # Case B: N < 5 → use no clipping
+    # Case B: N < 5 → use no clipping (bounds stay at +/- inf)
 
     # Case C: N >= 5 → use Student's t 95% CI
     case_c_mask = (fc_n >= 5) & ~np.isnan(fc_std) & (fc_std > 0) & (fc_mean > 0)
     if case_c_mask.any():
         t_critical = stats.t.ppf(0.975, df=fc_n[case_c_mask] - 1)
-        
+
         ci_lower = fc_mean[case_c_mask] - t_critical * fc_std[case_c_mask]
         ci_upper = fc_mean[case_c_mask] + t_critical * fc_std[case_c_mask]
 
         # Lower bound: only compute log where ci_lower > 0
         lower_bounds_c = np.full_like(ci_lower, -np.inf)
         valid_lower = ci_lower > 0
-        lower_bounds_c[valid_lower] = np.log(ci_lower[valid_lower] / fc_mean[case_c_mask][valid_lower])
-        
+        lower_bounds_c[valid_lower] = np.log(
+            ci_lower[valid_lower] / fc_mean[case_c_mask][valid_lower]
+        )
+
         # Upper bound: always valid since ci_upper > 0
         upper_bounds_c = np.log(ci_upper / fc_mean[case_c_mask])
 
@@ -397,15 +572,31 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
 
     # Identify rows where we can apply adjustment vs keep raw
     # Case A: N = 0 or missing statistics → keep raw forecast
-    can_adjust_mask = (fc_n > 0) & ~np.isnan(fc_mean) & (cal_n > 0) & ~np.isnan(cal_mean)
+    can_adjust_mask = (
+        (fc_n > 0) & ~np.isnan(fc_mean) & (cal_n > 0) & ~np.isnan(cal_mean)
+    )
     valid_for_log_mask = can_adjust_mask & (fc_mean > 0)
 
-    for q_col in q_columns:
+    # === Separate columns by category (auto-inferred) ===
+    # Quantile cols: Q followed by digit(s), but NOT Q50 (e.g., Q5, Q10, Q25, Q75, Q90, Q95)
+    # Central cols: Q50, Q_model_name (e.g., Q_MC_ALD, Q_LR_Base)
+    quantile_pattern = re.compile(r'^Q(\d+)$')
+
+    quantile_cols = []
+    central_cols = []
+    for col in q_columns:
+        match = quantile_pattern.match(col)
+        if match and match.group(1) != '50':
+            quantile_cols.append(col)
+        else:
+            central_cols.append(col)
+
+    # === Step 1: Adjust central estimates with INDEPENDENT clipping ===
+    for q_col in central_cols:
         if q_col not in adjusted_data.columns:
             continue
 
         q_raw = adjusted_data[q_col].values.copy()
-        adjusted_col = f'{q_col}'
 
         # Initialize with NaN
         q_adjusted = np.full(n_rows, np.nan)
@@ -418,27 +609,76 @@ def adjust_forecast_to_calendar_month(mapped_data: pd.DataFrame,
         adjustable_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw > 0)
 
         if adjustable_mask.any():
-            # Calculate log ratio
             log_ratio = np.log(q_raw[adjustable_mask] / fc_mean[adjustable_mask])
 
-            # Clip to bounds
+            # Clip to bounds (independent clipping)
             log_ratio_clipped = np.clip(
                 log_ratio,
                 lower_bounds[adjustable_mask],
                 upper_bounds[adjustable_mask]
             )
 
-            # Calculate adjusted forecast
-            q_adjusted[adjustable_mask] = cal_mean[adjustable_mask] * np.exp(log_ratio_clipped)
+            q_adjusted[adjustable_mask] = (
+                cal_mean[adjustable_mask] * np.exp(log_ratio_clipped)
+            )
 
-        # Handle non-positive raw values that can be adjusted (set to max(0, raw))
+        # Handle non-positive raw values
         nonpos_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw <= 0)
         q_adjusted[nonpos_mask] = np.maximum(0, q_raw[nonpos_mask])
 
         # Ensure non-negative
         q_adjusted = np.where(q_adjusted < 0, 0, q_adjusted)
 
-        adjusted_data[adjusted_col] = q_adjusted
+        adjusted_data[q_col] = q_adjusted
+
+    # === Step 2: Compute delta from Q50 (if present) ===
+    delta = np.zeros(n_rows)
+
+    if 'Q50' in adjusted_data.columns:
+        q50_raw = mapped_data['Q50'].values  # Use original Q50, not adjusted
+        ref_valid_mask = valid_for_log_mask & ~np.isnan(q50_raw) & (q50_raw > 0)
+
+        if ref_valid_mask.any():
+            log_ratio_50 = np.log(q50_raw[ref_valid_mask] / fc_mean[ref_valid_mask])
+            log_ratio_50_clipped = np.clip(
+                log_ratio_50,
+                lower_bounds[ref_valid_mask],
+                upper_bounds[ref_valid_mask]
+            )
+            delta[ref_valid_mask] = log_ratio_50_clipped - log_ratio_50
+
+    # === Step 3: Adjust quantiles with delta correction ===
+    for q_col in quantile_cols:
+        if q_col not in adjusted_data.columns:
+            continue
+
+        q_raw = mapped_data[q_col].values.copy()  # Use original values
+
+        # Initialize with NaN
+        q_adjusted = np.full(n_rows, np.nan)
+
+        # Case A: keep raw forecast where we can't adjust
+        case_a_mask = ~can_adjust_mask & ~np.isnan(q_raw)
+        q_adjusted[case_a_mask] = q_raw[case_a_mask]
+
+        # Apply delta correction (NOT independent clipping)
+        adjustable_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw > 0)
+
+        if adjustable_mask.any():
+            log_ratio = np.log(q_raw[adjustable_mask] / fc_mean[adjustable_mask])
+            log_ratio_corrected = log_ratio + delta[adjustable_mask]
+            q_adjusted[adjustable_mask] = (
+                cal_mean[adjustable_mask] * np.exp(log_ratio_corrected)
+            )
+
+        # Handle non-positive raw values
+        nonpos_mask = valid_for_log_mask & ~np.isnan(q_raw) & (q_raw <= 0)
+        q_adjusted[nonpos_mask] = np.maximum(0, q_raw[nonpos_mask])
+
+        # Ensure non-negative
+        q_adjusted = np.where(q_adjusted < 0, 0, q_adjusted)
+
+        adjusted_data[q_col] = q_adjusted
 
     return adjusted_data
 
@@ -469,6 +709,37 @@ def post_process_lt_forecast(forecast_config: ForecastConfig,
     # Handle empty forecast data
     if raw_forecast.empty:
         return raw_forecast.copy()
+
+    # Check if calendar month adjustment is disabled (multi-month seasonal mode)
+    calendar_month_adjustment = forecast_config.get_calendar_month_adjustment()
+
+    if not calendar_month_adjustment:
+        target_start_month = forecast_config.get_target_start_month()
+
+        if target_start_month is not None:
+            # Fixed multi-month seasonal mode (existing behavior)
+            target_end_month = forecast_config.get_target_end_month()
+            return adjust_forecast_dates_only(
+                raw_forecast=raw_forecast,
+                target_start_month=target_start_month,
+                target_end_month=target_end_month
+            )
+        else:
+            # Dynamic multi-month mode
+            lead_time = forecast_config.get_operational_month_lead_time()
+            horizon_months = forecast_config.get_forecast_horizon_months()
+
+            if horizon_months is None or horizon_months < 1:
+                raise ValueError(
+                    "calendar_month_adjustment=False without target_start_month "
+                    "requires forecast_horizon_months >= 1"
+                )
+
+            return adjust_forecast_dates_dynamic(
+                raw_forecast=raw_forecast,
+                lead_time=lead_time,
+                horizon_length=horizon_months
+            )
 
     # Access the necessary parameters from the forecast_config
     operational_month_lead_time = forecast_config.get_operational_month_lead_time()

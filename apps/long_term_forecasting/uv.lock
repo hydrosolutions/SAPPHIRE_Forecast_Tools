@@ -994,7 +994,7 @@ requires-dist = [
     { name = "ieasyhydro-sdk", git = "https://github.com/hydrosolutions/ieasyhydro-python-sdk" },
     { name = "ieasyhydroforecast", editable = "../iEasyHydroForecast" },
     { name = "lightgbm", specifier = "==4.5.0" },
-    { name = "lt-forecasting", git = "https://github.com/hydrosolutions/long-term-forecasting.git?rev=4cb768213c093d6b3defa5a719dcb5495ac504ee" },
+    { name = "lt-forecasting", git = "https://github.com/hydrosolutions/long-term-forecasting.git" },
     { name = "matplotlib", specifier = ">=3.8.2" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "optuna", specifier = ">=3.5.0" },
@@ -1027,8 +1027,8 @@ dev = [{ name = "pytest", specifier = "==9.0.0" }]
 
 [[package]]
 name = "lt-forecasting"
-version = "1.1.0"
-source = { git = "https://github.com/hydrosolutions/long-term-forecasting.git?rev=4cb768213c093d6b3defa5a719dcb5495ac504ee#4cb768213c093d6b3defa5a719dcb5495ac504ee" }
+version = "2.1.0"
+source = { git = "https://github.com/hydrosolutions/long-term-forecasting.git#e77f580b996669d9430453ecc34f52120bef556d" }
 dependencies = [
     { name = "catboost" },
     { name = "fiona" },
