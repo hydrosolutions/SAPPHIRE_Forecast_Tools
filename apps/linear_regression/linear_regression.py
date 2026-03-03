@@ -266,14 +266,15 @@ DOCKER:
             except ValueError:
                 parser.error(f"Invalid start date format: {args.start_date}. Use YYYY-MM-DD")
 
-        # Parse end date or default to yesterday
+        # Parse end date or default to today (allows backfilling today's
+        # forecast when the operational run failed, e.g. due to late data).
         if args.end_date:
             try:
                 args.end_date = dt.datetime.strptime(args.end_date, "%Y-%m-%d").date()
             except ValueError:
                 parser.error(f"Invalid end date format: {args.end_date}. Use YYYY-MM-DD")
         else:
-            args.end_date = dt.date.today() - dt.timedelta(days=1)
+            args.end_date = dt.date.today()
 
         # Validate date range if start_date is provided
         if args.start_date and args.start_date > args.end_date:
@@ -281,8 +282,10 @@ DOCKER:
                 f"Start date ({args.start_date}) must be before or equal to end date ({args.end_date})"
             )
 
-        if args.end_date >= dt.date.today():
-            parser.error(f"End date ({args.end_date}) must be before today ({dt.date.today()})")
+        if args.end_date > dt.date.today():
+            parser.error(
+                f"End date ({args.end_date}) must not be in the future (today={dt.date.today()})"
+            )
 
     return args
 

@@ -42,12 +42,12 @@ class TestParseArgumentsHindcastMode:
 
     def test_hindcast_flag_only(self):
         """--hindcast alone → hindcast=True, start_date=None,
-        end_date=yesterday."""
+        end_date=today."""
         with patch("sys.argv", ["linear_regression.py", "--hindcast"]):
             args = parse_arguments()
             assert args.hindcast is True
             assert args.start_date is None
-            assert args.end_date == dt.date.today() - dt.timedelta(days=1)
+            assert args.end_date == dt.date.today()
 
     def test_hindcast_with_start_date(self):
         """--hindcast --start-date → start parsed to date object."""
@@ -63,7 +63,7 @@ class TestParseArgumentsHindcastMode:
             args = parse_arguments()
             assert args.hindcast is True
             assert args.start_date == dt.date(2024, 3, 15)
-            assert args.end_date == dt.date.today() - dt.timedelta(days=1)
+            assert args.end_date == dt.date.today()
 
     def test_hindcast_with_start_and_end_date(self):
         """--hindcast --start-date --end-date → both parsed to date."""
@@ -100,10 +100,9 @@ class TestParseArgumentsHindcastMode:
             assert args.start_date == dt.date(2024, 1, 1)
             assert args.end_date == dt.date(2024, 6, 30)
 
-    def test_end_date_defaults_to_yesterday(self):
-        """End date defaults to exactly date.today() - 1 day."""
+    def test_end_date_defaults_to_today(self):
+        """End date defaults to exactly date.today()."""
         fixed_today = dt.date(2025, 7, 15)
-        expected_yesterday = dt.date(2025, 7, 14)
 
         with (
             patch("sys.argv", ["linear_regression.py", "--hindcast"]),
@@ -114,7 +113,7 @@ class TestParseArgumentsHindcastMode:
             mock_dt.timedelta = dt.timedelta
             mock_dt.datetime = dt.datetime
             args = parse_arguments()
-            assert args.end_date == expected_yesterday
+            assert args.end_date == fixed_today
 
 
 # ============================================================================
@@ -155,8 +154,8 @@ class TestParseArgumentsValidation:
                 parse_arguments()
             assert exc_info.value.code == 2
 
-    def test_end_date_today_exits(self):
-        """End date = today → SystemExit(2) (must be before today)."""
+    def test_end_date_today_is_valid(self):
+        """End date = today is allowed (enables backfilling today's forecast)."""
         today_str = dt.date.today().strftime("%Y-%m-%d")
         with patch(
             "sys.argv",
@@ -167,9 +166,8 @@ class TestParseArgumentsValidation:
                 today_str,
             ],
         ):
-            with pytest.raises(SystemExit) as exc_info:
-                parse_arguments()
-            assert exc_info.value.code == 2
+            args = parse_arguments()
+            assert args.end_date == dt.date.today()
 
     def test_end_date_future_exits(self):
         """End date in the future → SystemExit(2)."""
