@@ -1842,8 +1842,14 @@ def read_individual_model_forecasts(
     run_ml = os.getenv("ieasyhydroforecast_run_ML_models", "false").lower()
     if run_ml == "true":
         available_models_str = os.getenv("ieasyhydroforecast_available_ML_models", "")
+        # Env var uses uppercase (TIDE, TSMIXER); API expects camelCase.
+        _ml_name_map = {"TIDE": "TiDE", "TSMIXER": "TSMixer", "TFT": "TFT"}
         if available_models_str:
-            available_models = [m.strip() for m in available_models_str.split(",") if m.strip()]
+            available_models = [
+                _ml_name_map.get(m.strip().upper(), m.strip())
+                for m in available_models_str.split(",")
+                if m.strip()
+            ]
         else:
             available_models = []
 
