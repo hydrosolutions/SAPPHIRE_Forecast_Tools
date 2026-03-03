@@ -1,9 +1,9 @@
 """
 Integration tests for main() in linear_regression.py.
 
-Tests the orchestration logic: mode branching, loop control, early exits,
-and store_last_successful_run_date behavior. All external boundaries
-(sl, fl, tl, SDK) are mocked; the internal wiring runs for real.
+Tests the orchestration logic: mode branching, loop control, early exits.
+All external boundaries (sl, fl, tl, SDK) are mocked; the internal wiring
+runs for real.
 """
 
 import datetime as dt
@@ -71,7 +71,26 @@ def _make_predictor_dates():
     return pd_obj
 
 
-def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf, prediction_mode="PENTAD"):
+class _FakeDate(dt.date):
+    """A date subclass that overrides today() for testing."""
+
+    _today = dt.date(2024, 1, 5)  # default: pentad day
+
+    @classmethod
+    def today(cls):
+        return cls._today
+
+
+def _make_fake_date(target):
+    """Create a FakeDate class pinned to the given date."""
+
+    class PinnedDate(_FakeDate):
+        _today = target
+
+    return PinnedDate
+
+
+def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf):
     """Configure the standard mock behavior for a successful pipeline run.
 
     Args:
@@ -79,7 +98,6 @@ def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf, prediction_mode=
         mock_fl: Mock for forecast_library
         mock_tl: Mock for tag_library
         mock_sdk_hf: Mock for IEasyHydroHFSDK class
-        prediction_mode: PENTAD, DECAD, or BOTH
     """
     # setup_library
     mock_sl.load_environment.return_value = None
@@ -91,7 +109,6 @@ def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf, prediction_mode=
     fake_sites = [_make_fake_site("15013")]
     mock_sl.get_pentadal_forecast_sites_from_HF_SDK.return_value = (fake_sites, ["15013"], None)
     mock_sl.get_decadal_forecast_sites_from_HF_SDK.return_value = (fake_sites, ["15013"], None)
-    mock_sl.store_last_successful_run_date.return_value = None
 
     # forecast_library
     data = _make_data_df()
@@ -128,57 +145,135 @@ _BASE_ENV = {
 
 
 # ============================================================================
-# Forecast mode
+# Forecast (operational) mode
 # ============================================================================
 
 
 class TestMainForecastMode:
-    """Tests for normal (non-hindcast) forecast mode."""
+    """Tests for normal (non-hindcast) operational mode.
+
+    Operational mode runs for today only (no define_run_dates, no
+    store_last_successful_run_date).
+    """
 
     @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_forecast_mode_calls_store_last_run_date(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """In forecast mode, store_last_successful_run_date IS called."""
+    def test_operational_runs_for_today(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+        """Operational mode uses date.today() as the forecast date."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
-        # define_run_dates returns a single day (today=Jan 5 which is a
-        # pentad day)
-        forecast_date = dt.date(2024, 1, 5)
-        mock_sl.define_run_dates.return_value = (
-            forecast_date,
-            forecast_date,
-            forecast_date + dt.timedelta(days=1),
-        )
 
+        # Pin today to Jan 5 (a pentad day)
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
-        with patch("sys.argv", ["linear_regression.py"]), patch.dict(os.environ, env, clear=False):
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 lr_module.main()
-            # main() exits with 1 when ret is not None from the
-            # final check; store returns None → ret=None → exit(0)
-            # but since we set store to return None, ret is None
-            # from the else branch, so exit(0)
             assert exc_info.value.code == 0
 
-        mock_sl.store_last_successful_run_date.assert_called()
+        # Pentad write was called with forecast_date=Jan 5
+        mock_fl.write_linreg_pentad_forecast_data.assert_called_once()
+        call_kwargs = mock_fl.write_linreg_pentad_forecast_data.call_args
+        assert call_kwargs[1]["forecast_date"] == dt.date(2024, 1, 5)
+
+    @patch.object(lr_module, "IEasyHydroHFSDK")
+    @patch.object(lr_module, "tl")
+    @patch.object(lr_module, "fl")
+    @patch.object(lr_module, "sl")
+    def test_operational_no_define_run_dates(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+        """Operational mode never calls define_run_dates."""
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
+        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
+            with pytest.raises(SystemExit):
+                lr_module.main()
+
+        mock_sl.define_run_dates.assert_not_called()
+
+    @patch.object(lr_module, "IEasyHydroHFSDK")
+    @patch.object(lr_module, "tl")
+    @patch.object(lr_module, "fl")
+    @patch.object(lr_module, "sl")
+    def test_operational_no_store_call(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+        """Operational mode does not call store_last_successful_run_date."""
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
+        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                lr_module.main()
+            assert exc_info.value.code == 0
+
+        mock_sl.store_last_successful_run_date.assert_not_called()
+
+    @patch.object(lr_module, "IEasyHydroHFSDK")
+    @patch.object(lr_module, "tl")
+    @patch.object(lr_module, "fl")
+    @patch.object(lr_module, "sl")
+    def test_operational_idempotent(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+        """Running twice on the same day produces the same forecast_date."""
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
+        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
+
+        # First run
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
+            with pytest.raises(SystemExit):
+                lr_module.main()
+
+        first_date = mock_fl.write_linreg_pentad_forecast_data.call_args[1]["forecast_date"]
+
+        # Reset mocks for second run
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+
+        # Second run — same day, same result
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
+            with pytest.raises(SystemExit):
+                lr_module.main()
+
+        second_date = mock_fl.write_linreg_pentad_forecast_data.call_args[1]["forecast_date"]
+        assert first_date == second_date == dt.date(2024, 1, 5)
 
     @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_forecast_mode_pentad_only(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """PENTAD mode → pentad write called, decad write NOT called."""
+        """PENTAD mode -> pentad write called, decad write NOT called."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
-        forecast_date = dt.date(2024, 1, 5)
-        mock_sl.define_run_dates.return_value = (
-            forecast_date,
-            forecast_date,
-            forecast_date + dt.timedelta(days=1),
-        )
 
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
-        with patch("sys.argv", ["linear_regression.py"]), patch.dict(os.environ, env, clear=False):
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
             with pytest.raises(SystemExit):
                 lr_module.main()
 
@@ -190,21 +285,17 @@ class TestMainForecastMode:
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_forecast_mode_decad_only(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """DECAD mode → decad write called, pentad write NOT called."""
+        """DECAD mode -> decad write called, pentad write NOT called."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
-        forecast_date = dt.date(2024, 1, 10)  # 10th is a decad day
-        mock_sl.define_run_dates.return_value = (
-            forecast_date,
-            forecast_date,
-            forecast_date + dt.timedelta(days=1),
-        )
-        # For DECAD mode, ForecastFlags needs decad=True
-        mock_sl.ForecastFlags.from_forecast_date_get_flags.return_value = MagicMock(
-            pentad=True, decad=True
-        )
 
+        # Pin today to 10th (a decad day)
+        fake_date = _make_fake_date(dt.date(2024, 1, 10))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "DECAD"}
-        with patch("sys.argv", ["linear_regression.py"]), patch.dict(os.environ, env, clear=False):
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
             with pytest.raises(SystemExit):
                 lr_module.main()
 
@@ -254,7 +345,7 @@ class TestMainHindcastMode:
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_hindcast_skips_non_forecast_days(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """Hindcast Jan 1-10 with PENTAD → only processes Jan 5 and Jan 10."""
+        """Hindcast Jan 1-10 with PENTAD -> only processes Jan 5 and Jan 10."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
 
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -285,10 +376,10 @@ class TestMainHindcastMode:
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_hindcast_up_to_date_exits_cleanly(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """Start date already past end → SystemExit(0) with nothing to do."""
+        """Start date already past end -> SystemExit(0) with nothing to do."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
 
-        # Use Jan 30 as start — next PENTAD day is Jan 31, but end is Jan 29
+        # Use Jan 30 as start -- next PENTAD day is Jan 31, but end is Jan 29
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
         with (
             patch(
@@ -324,38 +415,19 @@ class TestMainEarlyExits:
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_exits_when_no_forecast_date(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """define_run_dates returns (None, None, None) → exits."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
-        mock_sl.define_run_dates.return_value = (None, None, None)
-
-        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
-        with patch("sys.argv", ["linear_regression.py"]), patch.dict(os.environ, env, clear=False):
-            # main() calls exit() (not sys.exit) for this case,
-            # which also raises SystemExit
-            with pytest.raises(SystemExit):
-                lr_module.main()
-
-        # No forecast processing should have happened
-        mock_fl.get_pentadal_and_decadal_data.assert_not_called()
-
-    @patch.object(lr_module, "IEasyHydroHFSDK")
-    @patch.object(lr_module, "tl")
-    @patch.object(lr_module, "fl")
-    @patch.object(lr_module, "sl")
     def test_exits_when_no_pentad_data(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """Empty pentad DataFrame with PENTAD mode → exits."""
+        """Empty pentad DataFrame with PENTAD mode -> exits."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
-        mock_sl.define_run_dates.return_value = (
-            dt.date(2024, 1, 5),
-            dt.date(2024, 1, 5),
-            dt.date(2024, 1, 6),
-        )
         # Return empty pentad data
         mock_fl.get_pentadal_and_decadal_data.return_value = (pd.DataFrame(), _make_data_df())
 
+        fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
-        with patch("sys.argv", ["linear_regression.py"]), patch.dict(os.environ, env, clear=False):
+        with (
+            patch("sys.argv", ["linear_regression.py"]),
+            patch.dict(os.environ, env, clear=False),
+            patch.object(lr_module.dt, "date", fake_date),
+        ):
             with pytest.raises(SystemExit):
                 lr_module.main()
 
@@ -367,7 +439,7 @@ class TestMainEarlyExits:
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_exits_when_hindcast_autodetect_fails(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
-        """get_hindcast_start_date_from_output returns None → SystemExit(1)."""
+        """get_hindcast_start_date_from_output returns None -> SystemExit(1)."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
 
         with patch.object(

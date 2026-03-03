@@ -9,7 +9,9 @@ USAGE
 -----
 
 1. FORECAST MODE (default) - Daily operational forecasting
-   Runs from last_successful_run_date + 1 day to today.
+   Runs for today only. If today is not a forecast day, exits gracefully.
+   Catch-up for missed days is handled by hindcast mode (--hindcast).
+   Re-running on the same day is safe (upsert semantics).
 
    # Pentad forecasts only (5-day periods, 72 per year)
    SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py
@@ -25,7 +27,6 @@ USAGE
    ieasyhydroforecast_env_file_path=/path/to/.env SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py
 
 2. HINDCAST MODE - Recalculate historical forecasts
-   Does NOT update last_successful_run_date (preserves operational state).
 
    # Explicit date range
    python linear_regression.py --hindcast --start-date 2024-01-01 --end-date 2024-12-31
@@ -179,11 +180,10 @@ linear regression. Forecasts are only produced on specific days:
   - DECAD:  Days 10, 20, and last day of each month
 
 MODES:
-  Forecast Mode (default): Runs from last_successful_run_date + 1 to today.
-                           Updates last_successful_run_date after each run.
+  Forecast Mode (default): Runs for today only. Re-running is safe (upsert).
+                           Catch-up for missed days: use hindcast mode.
 
   Hindcast Mode (-H):      Recalculates historical forecasts for a date range.
-                           Does NOT update last_successful_run_date.
                            Automatically skips non-forecast days for efficiency.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -235,8 +235,7 @@ DOCKER:
         "--hindcast",
         "-H",
         action="store_true",
-        help="Run in hindcast mode to recalculate historical forecasts. "
-        "Does NOT update last_successful_run_date.",
+        help="Run in hindcast mode to recalculate historical forecasts.",
     )
     parser.add_argument(
         "--start-date",
@@ -668,15 +667,11 @@ def main():
         logger.info(f"Hindcast mode: running from {forecast_date} to {date_end}")
         logger.info(f"Hindcast mode: {count_days} forecast days to process")
     else:
-        # Normal forecast mode
-        forecast_date, date_end, bulletin_date = sl.define_run_dates(
-            prediction_mode=prediction_mode
-        )
-
-    # Only perform the next steps if we have to produce a forecast.
-    if not forecast_date:
-        logger.info("No valid forecast date. Exiting.")
-        exit()
+        # Operational mode: run for today only.
+        # Catch-up for missed days is handled by hindcast mode (--hindcast).
+        forecast_date = dt.date.today()
+        date_end = forecast_date
+        bulletin_date = forecast_date + dt.timedelta(days=1)
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
     forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(forecast_date)
@@ -719,31 +714,19 @@ def main():
     while current_day <= date_end:
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
-        # Update dates - in hindcast mode, we use our iteration dates
-        # In normal mode, we re-check from define_run_dates
-        if args.hindcast:
-            # In hindcast mode, use current_day directly (don't re-call define_run_dates)
-            current_date = current_day
-            bulletin_date = current_day + dt.timedelta(days=1)
-        else:
-            # Normal mode: Update the last run_date in the database
-            current_date, date_end, bulletin_date = sl.define_run_dates(
-                prediction_mode=prediction_mode
-            )
-            # Make sure we have a valid forecast date
-            if not forecast_date:
-                print("No valid forecast date. Exiting.")
-                exit()
+        bulletin_date = current_day + dt.timedelta(days=1)
 
         # Update the forecast flags
-        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
+        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_day)
         logger.debug(f"Forecast flags: {forecast_flags}")
 
         # Get predictor dates for the current forecast
         predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
 
-        # Test if today is a forecast day for either pentadal and decadal forecasts
-        # We only run through the rest of the code in the loop if current_date is a forecast day
+        # Guard: run_pentad comes from SAPPHIRE_PREDICTION_MODE (user intent);
+        # forecast_flags.pentad comes from ForecastFlags (calendar check).
+        # Both are needed because get_pentadal_and_decadal_data() unconditionally
+        # sets forecast_flags.pentad = True as a known side-effect.
         if run_pentad and forecast_flags.pentad:
             logger.info(
                 f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}."
@@ -793,9 +776,7 @@ def main():
             # intercept of the linear regression model are calculated for each site for
             # the current forecast.
             # We take into account saved points from the pentad forecast dashboard.
-            print("\n\n\n\n\n\n\n")
             logger.debug("Performing linear regression ...")
-            print("Performing linear regression ...")
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
                 station_col="code",
@@ -916,30 +897,38 @@ def main():
             )
 
             # Write output files for the current forecast horizon
+            try:
+                env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
+                logger.info(f"[linreg] intermediate_data_path={env_intermediate}")
+
+                if "date" in linreg_decad.columns:
+                    _dates = fl.parse_dates_robust(linreg_decad["date"], "date")
+                    _years = (
+                        sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
+                        if not _dates.empty
+                        else []
+                    )
+                    logger.info(
+                        f"[linreg] decad write rows={len(linreg_decad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
+                    )
+                else:
+                    logger.warning("[linreg] decad write: 'date' column missing in output frame")
+
+            except Exception as _e:
+                logger.warning(f"[linreg] decad diagnostics before write failed: {_e}")
+
             fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day)
 
         else:
             logger.info(f"No decadal forecast for {current_day}.")
 
-        # Store the last run date (only in normal forecast mode, NOT in hindcast mode)
-        if args.hindcast:
-            logger.debug("Hindcast mode: NOT updating last_successful_run_date")
-            ret = None
-        else:
-            ret = sl.store_last_successful_run_date(current_day, prediction_mode=prediction_mode)
-
-        # Move to the next day (or next forecast day in hindcast mode)
+        # Advance to next forecast day. In operational mode (single day), the
+        # loop exits after one iteration anyway; in hindcast mode this skips
+        # non-forecast days for efficiency.
         logger.info(f"Iteration for {current_day} completed successfully.")
-        if args.hindcast:
-            # Skip to next forecast day (more efficient than iterating every day)
-            current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
-        else:
-            current_day += dt.timedelta(days=1)
+        current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
 
-    if ret is None:
-        sys.exit(0)  # Success
-    else:
-        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
