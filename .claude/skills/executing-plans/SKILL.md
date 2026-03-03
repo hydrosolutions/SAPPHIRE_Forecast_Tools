@@ -1,5 +1,6 @@
 ---
 name: executing-plans
+model: opus
 description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
 ---
 
@@ -57,13 +58,19 @@ Cross-reference what was written against the CLAUDE.md test categories:
 
 ### Step 6: Update Documentation
 
-Before moving to completion, check for documentation impact:
+Before moving to completion, check for documentation impact.
+Search each file for references to changed/removed functionality:
 
-1. Did inputs/outputs change? → Update module README
-2. Did configuration change? → Update `doc/configuration.md` or `.env` examples
-3. Did pipeline behavior change? → Update `doc/data_flow_*.md`
-4. Did user-facing behavior change? → Update `doc/user_guide.md`
-5. Is this fixing a known issue? → Update `doc/plans/module_issues.md`
+1. Did inputs/outputs/usage change? → Update module README (`apps/<module>/README.md`)
+2. Were modules added/removed or folder structure changed? → Update `README.md` (root)
+3. Did module tables, architecture, or conventions change? → Update `CLAUDE.md`
+4. Did configuration or env vars change? → Update `doc/configuration.md`
+5. Did pipeline behavior change? → Update `doc/data_flow_*.md`
+6. Did user-facing behavior change? → Update `doc/user_guide.md`
+7. Did dev workflows or setup change? → Update `doc/development.md`
+8. Did deployment procedures change? → Update `doc/deployment.md`, `doc/prod/`
+9. Did stable patterns or project knowledge change? → Update Claude memory files
+10. Is this fixing a known issue? → Update `doc/plans/module_issues.md`
 
 **If no docs need updating:** State "No documentation impact" with brief rationale.
 

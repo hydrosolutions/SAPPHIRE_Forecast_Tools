@@ -1,5 +1,6 @@
 ---
 name: issue-planning
+model: sonnet
 description: Guide structured analysis of problems and planning of implementation. Use when starting work on a new feature, encountering a bug, refactoring existing functionality, or any task that benefits from thinking before coding. Helps create well-defined GitHub issues with clear scope, acceptance criteria, and implementation steps.
 ---
 
@@ -246,12 +247,18 @@ uv run pytest tests/ -v -k "test_name"
 
 ## Documentation Impact
 
-[List documentation that must be updated as part of this issue. Check each category:]
+[List documentation that must be updated as part of this issue. Search each file
+for references to changed/removed functionality. Check each category:]
 
 - [ ] Module README (`apps/<module>/README.md`) — if inputs, outputs, or usage changed
+- [ ] Root README (`README.md`) — if modules added/removed or folder structure changed
+- [ ] `CLAUDE.md` — if module tables, architecture, or conventions changed
 - [ ] Configuration docs (`doc/configuration.md`) — if env vars or config changed
 - [ ] Data flow docs (`doc/data_flow_*.md`) — if pipeline behavior changed
 - [ ] User guide (`doc/user_guide.md`) — if user-facing behavior changed
+- [ ] Developer docs (`doc/development.md`) — if dev workflows or setup changed
+- [ ] Deployment docs (`doc/deployment.md`, `doc/prod/`) — if deployment procedures changed
+- [ ] Claude memory files — if stable patterns or project knowledge changed
 - [ ] Other: [specify]
 - [ ] No documentation impact — [brief rationale]
 

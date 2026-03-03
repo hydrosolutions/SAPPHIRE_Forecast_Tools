@@ -89,7 +89,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
-| **LR-002** | Replace `last_successful_run` file with API query | **Medium** | Draft | [`gi_draft_LR_replace_last_run_file_with_api.md`](issues/gi_draft_LR_replace_last_run_file_with_api.md) | — |
+| **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`gi_draft_LR_cleanup_dead_run_date_code.md`](issues/gi_draft_LR_cleanup_dead_run_date_code.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -174,6 +174,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | LR-001 | Leap year date handling and hindcast mode | 2026-02-03 | [`archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md) |
+| LR-002 | Replace `last_successful_run` file with "just run for today" | 2026-03-03 | [`archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md`](issues/archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md) |
 
 ### Postprocessing (`pp`)
 

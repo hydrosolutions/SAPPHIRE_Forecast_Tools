@@ -1,5 +1,6 @@
 ---
 name: executing-issues
+model: opus
 description: Execute a discrete GitHub issue from a detailed plan file (gi_*.md). Use when implementing a specific, well-defined task with an existing implementation plan in doc/plans/issues/. Handles status tracking, verification, and issue lifecycle.
 ---
 
@@ -113,11 +114,17 @@ Go through each acceptance criterion:
 Before moving to review, check for documentation impact:
 
 1. **Check the issue plan** for a "Documentation Impact" section — update listed docs
-2. **If no section exists**, assess impact yourself:
-   - Did inputs/outputs change? → Update module README
-   - Did configuration change? → Update `doc/configuration.md` or `.env` examples
+2. **If no section exists**, assess impact yourself.
+   Search each file for references to changed/removed functionality:
+   - Did inputs/outputs/usage change? → Update module README (`apps/<module>/README.md`)
+   - Were modules added/removed or folder structure changed? → Update `README.md` (root)
+   - Did module tables, architecture, or conventions change? → Update `CLAUDE.md`
+   - Did configuration or env vars change? → Update `doc/configuration.md`
    - Did pipeline behavior change? → Update `doc/data_flow_*.md`
    - Did user-facing behavior change? → Update `doc/user_guide.md`
+   - Did dev workflows or setup change? → Update `doc/development.md`
+   - Did deployment procedures change? → Update `doc/deployment.md`, `doc/prod/`
+   - Did stable patterns or project knowledge change? → Update Claude memory files
    - Is this fixing a known issue? → Update `doc/plans/module_issues.md`
 3. **Update documentation in the same working tree** — docs ship with code, not after
 
