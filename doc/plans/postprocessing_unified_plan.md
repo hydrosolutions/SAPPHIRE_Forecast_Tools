@@ -33,20 +33,20 @@
 | API read tests (postprocessing) | **DONE** — 32 tests in `test_api_read.py`, 17 tests in `test_api_integration.py` |
 | API write test fix | **DONE** — `test_api_read.py` mocks corrected to use `SapphirePreprocessingClient` (commit `ca29b5d`) |
 | `sapphire-api-client` dependency | **DONE** — added to `iEasyHydroForecast/pyproject.toml` and `postprocessing_forecasts/pyproject.toml` |
-| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 7 src modules + 2 shell scripts, 375 tests (commits `9ce63c8`–`41d782e`) |
+| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 5 entry points (2 short-term, 2 long-term, 1 recalculation) + 9 src modules + 2 shell scripts (commits `9ce63c8`–`41d782e`, expanded in Phase 4b) |
 | Server-side batch upsert (CRUD) | **DONE** — `_bulk_upsert()` with PG ON CONFLICT + N+1 fallback (commit `eae7158`) |
 | Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, Skilled Mean (inverse-MAE weighted), Naive Mean, EM baselines, API writer (month horizon + LT model types), file writer, save + log monthly forecasts, recalculate entry point (MONTHLY/ALL modes). 638 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
-| Quarterly + seasonal skill metrics (Phase 4b) | TODO — ready to plan. Phase 4a done. DB already has quarterly (90-91d span) and seasonal (182d span, Apr-Sep) forecasts from `LR_BASE`/`LR_SM`, stored as `horizon_type='MONTH'`. Postprocessing will aggregate monthly forecasts and write with correct horizon tags. See Phase 4b checklist. |
+| Quarterly + seasonal skill metrics (Phase 4b) | **DONE** — `src/aggregation.py` module (single source of truth for quarter/season definitions + monthly→quarterly/seasonal aggregation). Data readers (`read_quarterly_forecasts/observations/combined`, `read_seasonal_forecasts/observations/combined`, `read_latest_quarterly/seasonal_forecasts`), skill metrics (`calculate_quarterly/seasonal_skill_metrics`), ensemble creators (`create_quarterly/seasonal_ensemble_forecasts`), gap detectors (`detect_missing_quarterly/seasonal_ensembles`), writers (API + CSV for both horizons), entry points (`postprocessing_operational_long_term.py` processes quarterly+seasonal alongside monthly, `postprocessing_maintenance_long_term.py` handles gap-fill, `recalculate_skill_metrics.py` supports QUARTERLY/SEASONAL/ALL modes). `write_diagnostics.py` extended for quarter/season. 76 quarterly tests across 6 test files. **Gap:** No dedicated seasonal test files (seasonal paths covered indirectly via quarterly tests and shared aggregation tests). |
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | **DONE** — 6 metric functions (`fdc_fhv`, `fdc_flv`, `estimate_return_period_thresholds`, `binary_contingency`, `lowflow_quantiles`, `calculate_daily_skill_metrics`) in `skill_metrics.py` with `DAILY_METRIC_REGISTRY`. Daily readers in `data_reader.py`, "day" horizon in `api_writer.py`, `fhv`/`flv` DB columns, threshold skill metrics writer, `save_daily_skill_metrics()` in `file_writer.py`. ML module writes daily-resolution records via `_write_ml_daily_forecast_to_api()`. DAILY mode in `recalculate_skill_metrics.py`. 38 new tests in `test_tier2_metrics.py`. Commit `55a27a4`. |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
 | Dashboard metrics visualization (FD-002) | TODO — depends on 4d (now complete). See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 818 postprocessing tests, 0 skips (all API tests pass via module venv). CRUD service: 93 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 1101 postprocessing tests across 39 test files, 0 skips. CRUD service: 93 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -70,44 +70,67 @@
 
 ```
 apps/postprocessing_forecasts/
-├── postprocessing_operational.py      # Daily entry point (fast path)
-├── postprocessing_maintenance.py      # Nightly gap-fill entry point
-├── recalculate_skill_metrics.py       # Yearly skill recalculation entry point
+├── postprocessing_operational.py      # Daily entry point — short-term (pentad/decad)
+├── postprocessing_operational_long_term.py  # Daily entry point — long-term (monthly + quarterly + seasonal)
+├── postprocessing_maintenance.py      # Nightly gap-fill — short-term
+├── postprocessing_maintenance_long_term.py  # Nightly gap-fill — long-term
+├── recalculate_skill_metrics.py       # Yearly skill recalculation (all horizons)
 ├── postprocessing_forecasts.py        # DEPRECATED legacy entry point
 ├── src/
 │   ├── __init__.py                    # Package init
+│   ├── aggregation.py                 # Monthly→quarterly/seasonal aggregation (single source of truth)
 │   ├── api_writer.py                  # API write logic (singleton client, batch upsert)
-│   ├── data_reader.py                 # Read skill metrics from CSV/API
+│   ├── data_reader.py                 # Read observations, forecasts, skill metrics from API/CSV
 │   ├── ensemble_calculator.py         # EM/NE ensemble creation + threshold filtering
 │   ├── file_writer.py                 # Atomic CSV writes + save orchestration
 │   ├── gap_detector.py                # Detect missing ensemble forecasts in recent window
 │   ├── postprocessing_tools.py        # TimingStats, logging utilities
-│   └── skill_metrics.py              # Skill metric calculations (single-pass)
-├── tests/
+│   ├── skill_metrics.py              # Skill metric calculations (single-pass, METRIC_REGISTRY)
+│   └── write_diagnostics.py          # Diagnostic/summary output (FHV/FLV/daily metrics)
+├── tests/                             # 39 test files, 1101 tests total
 │   ├── conftest.py                    # API singleton reset fixture
-│   ├── test_api_integration.py        # 17 tests (API write: forecasts + skill metrics)
-│   ├── test_api_read.py               # 32 tests (API read: LR, ML, observed, fallback)
+│   ├── test_aggregation.py            # 34 tests (quarter/season definitions, aggregation functions)
+│   ├── test_api_integration.py        # 53 tests (API write: forecasts + skill metrics + field mapping)
+│   ├── test_api_read.py               # 54 tests (API read: LR, ML, observed, pagination, fallback)
 │   ├── test_calculate_all_skill_metrics.py  # 22 tests (single-pass metrics, hand-calculated, registry)
 │   ├── test_constants.py              # Shared test constants (model names, thresholds)
-│   ├── test_data_reader.py            # 21 tests (CSV read, API fallback, normalization)
-│   ├── test_edge_cases.py             # 46 tests (empty, NaN, boundaries, duplicates, delta)
-│   ├── test_ensemble_calculator.py    # 9 tests (filtering, creation, NE exclusion, model name consistency)
+│   ├── test_crps.py                   # 19 tests (CRPS calculation, quantile integration)
+│   ├── test_data_reader.py            # 146 tests (CSV/API read, model mapping, all horizons)
+│   ├── test_edge_cases.py             # 48 tests (empty, NaN, boundaries, duplicates, delta)
+│   ├── test_ensemble_calculator.py    # 16 tests (filtering, creation, NE exclusion, model name consistency)
 │   ├── test_error_accumulation.py     # 9 tests (return value tracking, legacy entry point)
-│   ├── test_file_writer.py            # 6 tests (atomic write, latest extraction)
-│   ├── test_gap_detector.py           # 6 tests (missing EM detection, lookback window)
-│   ├── test_integration_postprocessing.py  # 63 tests (full pipeline data routing)
-│   ├── test_maintenance_workflow.py   # 8 tests (gap-fill entry point)
+│   ├── test_file_writer.py            # 33 tests (atomic write, latest extraction, all horizons)
+│   ├── test_gap_detector.py           # 23 tests (missing EM detection, lookback window, all horizons)
+│   ├── test_integration_postprocessing.py  # 71 tests (full pipeline data routing)
+│   ├── test_maintenance_long_term.py  # 12 tests (long-term gap-fill entry point)
+│   ├── test_maintenance_workflow.py   # 14 tests (short-term gap-fill entry point)
 │   ├── test_mock_postprocessing_forecasts.py  # 1 test (legacy combined forecast)
-│   ├── test_operational_workflow.py   # 12 tests (daily entry point)
+│   ├── test_model_long_removal.py     # 27 tests (INFRA-005 characterization + target tests)
+│   ├── test_monthly_data_reader.py    # 27 tests (monthly observations/forecasts reading)
+│   ├── test_monthly_edge_cases.py     # 35 tests (monthly boundary conditions)
+│   ├── test_monthly_ensemble_creation.py  # 31 tests (monthly EM + Skilled Mean + Naive Mean)
+│   ├── test_monthly_integration.py    # 17 tests (monthly end-to-end pipeline)
+│   ├── test_monthly_skill_metrics.py  # 52 tests (monthly metrics calculation)
+│   ├── test_monthly_workflow_integration.py  # 28 tests (monthly workflow E2E)
+│   ├── test_operational_long_term.py  # 12 tests (long-term operational entry point)
+│   ├── test_operational_workflow.py   # 19 tests (short-term operational entry point)
 │   ├── test_performance.py            # 6 benchmarks (groupby, filter, vectorized)
-│   ├── test_postprocessing_tools.py   # 8 tests (logging, safe .iloc[0])
-│   ├── test_recalc_workflow.py        # 8 tests (yearly recalc entry point)
-│   ├── test_model_long_removal.py     # 26 tests (INFRA-005 characterization + target tests)
-│   ├── test_skill_metrics.py          # 7 tests (pentad calculation, ensemble creation)
-│   ├── test_tier1_metrics.py          # 47 tests (PBIAS, KGE, KGElf, NSE_log: unit + registry + pipeline)
+│   ├── test_postprocessing_tools.py   # 18 tests (logging, safe .iloc[0], forecast_target_date)
+│   ├── test_quarterly_api_writer.py   # 13 tests (quarterly API write, field mapping)
+│   ├── test_quarterly_data_reader.py  # 15 tests (quarterly observations/forecasts reading)
+│   ├── test_quarterly_ensemble_creation.py  # 17 tests (quarterly EM + Skilled Mean + Naive Mean)
+│   ├── test_quarterly_gap_detector.py # 8 tests (quarterly gap detection)
+│   ├── test_quarterly_skill_metrics.py  # 17 tests (quarterly metrics calculation)
+│   ├── test_quarterly_workflow_integration.py  # 6 tests (quarterly end-to-end)
+│   ├── test_recalc_workflow.py        # 14 tests (yearly recalc entry point, all modes)
+│   ├── test_skill_metrics.py          # 24 tests (pentad/decad calculation, ensemble creation)
+│   ├── test_tier1_metrics.py          # 44 tests (PBIAS, KGE, KGElf, NSE_log: unit + registry + pipeline)
+│   ├── test_tier2_metrics.py          # 38 tests (FHV, FLV, daily metrics, return period thresholds)
 │   ├── test_wiring_integration.py     # 23 tests (entry point wiring with real internals)
-│   ├── test_workflow_integration.py   # 16 tests (full E2E with real CSV I/O)
+│   ├── test_workflow_integration.py   # 24 tests (full E2E with real CSV I/O)
+│   ├── test_write_diagnostics.py      # 31 tests (diagnostic output, all horizons)
 │   ├── generate_test_data.py          # Test data generator (realistic biases)
+│   ├── hydroTestDataGenerator.py      # Hydrological test data generation utilities
 │   └── test_data/                     # Committed test CSVs (3 stations × 4 models)
 ├── pyproject.toml                     # Includes sapphire-api-client dependency
 ├── Dockerfile
@@ -117,29 +140,45 @@ apps/postprocessing_forecasts/
 apps/iEasyHydroForecast/
 ├── forecast_library.py              # Shared helpers (_handle_api_write_error, etc.)
 ├── setup_library.py                 # Configuration, data loading, API reads
-├── tag_library.py                   # Date utilities (pentad, decad)
+├── tag_library.py                   # Date utilities (pentad, decad — no quarterly/seasonal)
 └── pyproject.toml                   # Includes sapphire-api-client dependency
+# Note: quarterly/seasonal date utilities live in src/aggregation.py, NOT in tag_library.py
 ```
 
-### Execution Flow (Three Entry Points)
+### Execution Flow (Five Entry Points)
 
 ```
-postprocessing_operational.py (DAILY — fast path):
-├── read LATEST forecast data (today's forecasts via setup_library)
-├── read PRE-CALCULATED skill metrics (CSV primary, API fallback)
+postprocessing_operational.py (DAILY — short-term fast path):
+├── read LATEST forecast data (today's pentad/decad forecasts via data_reader)
+├── read PRE-CALCULATED skill metrics (API primary, CSV fallback)
 ├── create ensemble for today using skill thresholds
 ├── save forecasts + ensemble to CSV + API
 └── log recent forecasts for monitoring
 
-postprocessing_maintenance.py (NIGHTLY — gap-fill):
-├── read combined forecasts CSV
+postprocessing_operational_long_term.py (DAILY — long-term fast path):
+├── read PRE-CALCULATED monthly skill metrics (API primary, CSV fallback)
+├── read latest month's forecasts from API
+├── create monthly ensemble forecasts (EM, Skilled Mean, Naive Mean)
+├── create quarterly/seasonal aggregations from monthly ensembles
+├── save all long-term forecasts + ensembles to CSV + API
+└── log recent monthly forecasts for monitoring
+
+postprocessing_maintenance.py (NIGHTLY — short-term gap-fill):
+├── read combined forecasts (API primary, CSV fallback)
 ├── detect missing ensembles in lookback window (default 7 days)
+├── for each gap: read data, create ensemble, save
+└── log what was filled for audit trail
+
+postprocessing_maintenance_long_term.py (NIGHTLY — long-term gap-fill):
+├── read monthly/quarterly/seasonal combined forecasts
+├── detect missing ensembles in lookback window (default 3 months)
 ├── for each gap: read data, create ensemble, save
 └── log what was filled for audit trail
 
 recalculate_skill_metrics.py (YEARLY — slow path):
 ├── read ALL historical data (2010–present)
 ├── calculate ALL skill metrics (single-pass groupby)
+├── supports modes: PENTAD, DECAD, BOTH, MONTHLY, QUARTERLY, SEASONAL, DAILY, ALL
 ├── create ensembles from qualifying models
 ├── save skill metrics + forecasts to CSV + API
 └── used for ensemble selection throughout the next year
@@ -149,12 +188,12 @@ recalculate_skill_metrics.py (YEARLY — slow path):
 
 | Resolution | Periods/Year | Status |
 |------------|--------------|--------|
-| Daily | 365 | Implemented |
+| Daily | 365 | Implemented (Tier 2 metrics) |
 | Pentadal (5-day) | 72 | Implemented |
 | Decadal (10-day) | 36 | Implemented |
-| Monthly | 12 | Implemented in `long_term_forecasting` |
-| Quarterly | 4 | **Not yet implemented** |
-| Seasonal (Apr–Sep) | 1 | **Not yet implemented** |
+| Monthly | 12 | Implemented (Phase 4a) |
+| Quarterly | 4 | Implemented (Phase 4b) |
+| Seasonal (Apr–Sep) | 1 | Implemented (Phase 4b) |
 
 ---
 
@@ -261,40 +300,9 @@ Split the monolithic script into three entry points: **operational (daily)**, **
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### File Structure After Separation — DONE
+### File Structure After Separation — DONE (updated to reflect Phase 4b additions)
 
-```
-apps/postprocessing_forecasts/
-├── postprocessing_operational.py      # Daily entry point
-├── postprocessing_maintenance.py      # Nightly gap-fill entry point
-├── recalculate_skill_metrics.py       # Yearly skill recalculation entry point
-├── postprocessing_forecasts.py        # DEPRECATED: Legacy entry point (keep as fallback)
-├── src/
-│   ├── api_writer.py                  # Shared API write logic (singleton client)
-│   ├── skill_metrics.py               # Skill metric calculations (single-pass)
-│   ├── ensemble_calculator.py         # EM/NE ensemble logic + threshold filtering
-│   ├── data_reader.py                 # Read skill metrics from CSV/API
-│   ├── gap_detector.py                # Detect missing ensembles in recent window
-│   ├── file_writer.py                 # Atomic CSV writes + save orchestration
-│   └── postprocessing_tools.py        # TimingStats, logging utilities
-├── tests/                             # Flat layout (24 files, 375 tests)
-│   ├── conftest.py                    # API singleton reset fixture
-│   ├── test_api_integration.py        # API write path
-│   ├── test_api_read.py               # API read + CSV fallback
-│   ├── test_calculate_all_skill_metrics.py  # Single-pass metrics
-│   ├── test_data_reader.py            # CSV/API reading
-│   ├── test_edge_cases.py             # Boundary conditions
-│   ├── test_ensemble_calculator.py    # Ensemble creation
-│   ├── test_file_writer.py            # Atomic writes
-│   ├── test_gap_detector.py           # Gap detection
-│   ├── test_integration_postprocessing.py  # Full pipeline data routing
-│   ├── test_wiring_integration.py     # Entry point wiring (real internals)
-│   ├── test_workflow_integration.py   # Full E2E (real CSV I/O)
-│   ├── test_*_workflow.py             # Entry point orchestration
-│   ├── generate_test_data.py          # Test data generator
-│   └── test_data/                     # Committed test CSVs
-└── Dockerfile                         # Default CMD → postprocessing_operational.py
-```
+See [Module Structure](#module-structure) above for the full current file listing.
 
 ### Key Design Decisions
 
@@ -428,12 +436,12 @@ Extend `postprocessing_forecasts` to calculate skill metrics for all temporal re
 
 | Resolution | Forecasts produced by | Point metrics | CRPS | Tier 1 (PBIAS, KGElf, NSE_log) | Tier 2 (FHV, FLV, F1/CSI, low-flow CSI) |
 |------------|----------------------|---------------|------|-------------------------------|------------------------------------------|
-| Daily | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | **TODO** (Phase 4d) |
+| Daily | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | **Done** (Phase 4d) |
 | Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
 | Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
 | Monthly | `long_term_forecasting` | **Done** (Phase 4a) | **Done** (Phase 4a) — quantiles available | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
-| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
-| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
+| Quarterly | Aggregated from monthly | **Done** (Phase 4b) | **Done** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
+| Seasonal | Aggregated from monthly | **Done** (Phase 4b) | **Done** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
 
 ### Key Design Decisions
 
@@ -489,13 +497,11 @@ Extend `postprocessing_forecasts` to calculate skill metrics for all temporal re
 | `PredictorDates.month`, `.season` | Exists | `forecast_library.py:8373` |
 | Monthly aggregation logic (daily → monthly mean) | Exists | `long_term_forecasting/post_process_lt_forecast.py:168` |
 
-**Gaps to fill:**
-- `ForecastFlags` and `PredictorDates` lack a `quarter` field
-- `tag_library.py` has no quarterly/seasonal date utilities
-- No skill metric functions for monthly/quarterly/seasonal
-- No CRPS implementation
+**Remaining gaps:**
+- `ForecastFlags` and `PredictorDates` lack a `quarter` field — may not be needed since long-term entry points don't use these data classes
+- `tag_library.py` has no quarterly/seasonal date utilities — season/quarter logic lives in `src/aggregation.py` instead
 - Pentad/decad quantile columns not populated (CRPS for short-term blocked on this)
-- `long_term_forecasting` output needs inspection for direct seasonal/quarterly records
+- `ThresholdSkillMetric` table not yet created in service (Phase 4d Stage 2, blocked on colleague coordination)
 
 ### Quarterly Forecasts (Average runoff over next 3 months)
 
@@ -586,7 +592,10 @@ seasonal:
 | `DECAD` | Decad only | Yes (unchanged) |
 | `BOTH` | Pentad + decad | Yes (unchanged, short-term only) |
 | `MONTHLY` | Monthly only | **New in Phase 4a** |
-| `ALL` | Pentad + decad + monthly (+ quarterly + seasonal when Phase 4b is done) | **New in Phase 4a** |
+| `QUARTERLY` | Quarterly only | **New in Phase 4b** |
+| `SEASONAL` | Seasonal only | **New in Phase 4b** |
+| `DAILY` | Daily only (Tier 2 metrics) | **New in Phase 4d** |
+| `ALL` | Pentad + decad + monthly + quarterly + seasonal + daily | **New in Phase 4a, extended 4b/4d** |
 
 **Entry point support:**
 - **`recalculate_skill_metrics.py`:** Supports all modes including `MONTHLY` and `ALL`. This is the definite entry point for monthly skill metric recalculation.
@@ -595,8 +604,10 @@ seasonal:
 
 ### Integration with Phase 2 Entry Points
 
-- **Operational (daily):** No change for pentad/decad. Monthly operational postprocessing is an open question (see above).
-- **Nightly gap-fill:** No change for pentad/decad. Monthly gap-fill deferred pending speed verification.
+- **Operational (daily, short-term):** `postprocessing_operational.py` handles pentad/decad only.
+- **Operational (daily, long-term):** `postprocessing_operational_long_term.py` handles monthly + quarterly + seasonal — **DONE** (Phase 4b). This resolved the "open question" from Phase 4a about whether monthly postprocessing needs its own operational entry point.
+- **Nightly gap-fill (short-term):** `postprocessing_maintenance.py` handles pentad/decad only.
+- **Nightly gap-fill (long-term):** `postprocessing_maintenance_long_term.py` handles monthly + quarterly + seasonal gap-fill — **DONE** (Phase 4b). Monthly gap-fill was found to be needed (not fast enough to skip).
 - **Yearly recalculation (`recalculate_skill_metrics.py`):** Extended to recalculate monthly, quarterly, and seasonal skill metrics alongside pentad/decad.
 
 ### Implementation Steps
@@ -680,31 +691,60 @@ seasonal:
 
 ## Phase 5: Testing Strategy
 
-### Current Tests (818 postprocessing + 76 iEasyHydroForecast + 93 CRUD service, all passing, 0 skips)
+### Current Tests (1101 postprocessing + 93 CRUD service, all passing, 0 skips)
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `postprocessing_forecasts/tests/test_api_read.py` | 32 | API read: LR/ML/observed, pagination, CSV fallback, data consistency, edge cases |
-| `postprocessing_forecasts/tests/test_api_integration.py` | 17 | API write: skill metrics, combined forecasts, field mapping, NaN handling |
-| `postprocessing_forecasts/tests/test_error_accumulation.py` | 9 | Error accumulation, exit codes (legacy entry point) |
-| `postprocessing_forecasts/tests/test_postprocessing_tools.py` | 8 | Safe `.iloc[0]`, NaT dates, missing codes |
-| `postprocessing_forecasts/tests/test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency (legacy entry point) |
-| `postprocessing_forecasts/tests/test_ensemble_calculator.py` | 25 | Helper functions, threshold filtering, ensemble creation, NE exclusion, single-model discard (LR/TFT/TiDE), composition string, decad, `_is_multi_model_ensemble` helper, model name consistency |
-| `postprocessing_forecasts/tests/test_data_reader.py` | 21 | CSV read, API fallback, model mapping, empty/corrupt files, missing/extra columns, numeric code cleanup, API normalize graceful degradation |
-| `postprocessing_forecasts/tests/test_gap_detector.py` | 6 | Missing EM detection, lookback window, multi-code gaps, date conversion |
-| `postprocessing_forecasts/tests/test_operational_workflow.py` | 12 | Pentad/decad/both modes, error accumulation, empty skill metrics, invalid mode, concurrent errors, edge cases |
-| `postprocessing_forecasts/tests/test_maintenance_workflow.py` | 8 | Gap detection, no-gap idempotency, lookback window, empty combined forecasts, invalid mode, BOTH/DECAD modes, save error |
-| `postprocessing_forecasts/tests/test_recalc_workflow.py` | 8 | Calls calculate_skill_metrics, saves skill metrics, both mode, error accumulation, invalid mode, DECAD-only mode, edge cases |
-| `postprocessing_forecasts/tests/test_integration_postprocessing.py` | 63 | Data routing (operational/maintenance/API fallback/failure modes), single-model ensemble bug, edge case inputs, year/month boundaries, quantile fields, recalc entry point, decadal operational pipeline, maintenance full gap-fill pipeline, realistic recalculate (3 stations × 2 pentads × 2 models, EM creation verification), skill metric save path (CSV columns/rounding/sort, API args, failure resilience), ensemble skill metric numerical verification (hand-calculated), leap year boundary (Feb 29/Mar 1), decadal maintenance gap-fill, decadal recalculate with realistic data |
-| `postprocessing_forecasts/tests/test_edge_cases.py` | 46 | Empty/single-row, NaN handling, discharge boundaries (zero/negative/large), date boundaries, duplicates, thresholds, period coercion, code normalization, delta edge cases (NaN/zero/negative/varying), NaT dates in gap detector, missing columns |
-| `postprocessing_forecasts/tests/test_calculate_all_skill_metrics.py` | 18 | Unit tests for `calculate_all_skill_metrics()`: happy path (hand-calculated), single point, all-NaN, missing column, constant observations, inf values, return type |
-| `postprocessing_forecasts/tests/test_wiring_integration.py` | 23 | Wiring integration: real internal modules, mocked external boundaries. Operational (4), maintenance (4), exception propagation (2), mismatched shapes (2), recalculate (4), surplus data gap-fill (1), NE exclusion (1), cross-workflow roundtrip (1), varying delta accuracy (1), log_most_recent_forecasts no-crash (3) |
-| `postprocessing_forecasts/tests/test_workflow_integration.py` | 16 | Full E2E with real CSV I/O: operational (6), maintenance (6), recalculate (6 incl. cross-workflow), edge cases (5). Uses committed test_data/ with 3 stations × 4 models. Only `load_environment()` mocked. |
-| `postprocessing_forecasts/tests/test_tier1_metrics.py` | 47 | Phase 4c: PBIAS (10), KGE (7), KGElf (10), NSE_log (9), registry (5), pipeline (6). Hand-calculated verification + edge cases |
-| `postprocessing_forecasts/tests/test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
-| `postprocessing_forecasts/tests/test_constants.py` | — | Shared constants (model names, thresholds, delta) |
-| `iEasyHydroForecast/tests/test_forecast_library.py` | 76 | Includes sdivsigma_nse, MAE, accuracy, atomic write, API failure mode, API client singleton tests |
-| `sapphire/services/postprocessing/tests/test_crud.py` | 91 | CRUD: Forecast, LongForecast, LRForecast, SkillMetric, edge cases, _fallback_upsert direct, combined filters, large batch, new metric fields round-trip |
+| **Short-term core** | | |
+| `test_api_read.py` | 54 | API read: LR/ML/observed, pagination, CSV fallback, data consistency, edge cases |
+| `test_api_integration.py` | 53 | API write: skill metrics, combined forecasts, field mapping, NaN handling, all horizons |
+| `test_data_reader.py` | 146 | CSV/API read, model mapping, all horizons, empty/corrupt files, missing/extra columns |
+| `test_edge_cases.py` | 48 | Empty/single-row, NaN, discharge boundaries, date boundaries, duplicates, delta edge cases |
+| `test_ensemble_calculator.py` | 16 | Threshold filtering, ensemble creation, NE exclusion, composition string |
+| `test_file_writer.py` | 33 | Atomic CSV writes, latest extraction, all horizon save functions |
+| `test_gap_detector.py` | 23 | Missing EM detection, lookback window, all horizons |
+| `test_skill_metrics.py` | 24 | Pentad/decad calculation, ensemble creation |
+| `test_calculate_all_skill_metrics.py` | 22 | Single-pass metrics: happy path (hand-calculated), single point, all-NaN, missing column |
+| `test_postprocessing_tools.py` | 18 | Safe `.iloc[0]`, NaT dates, forecast_target_date, timing |
+| `test_error_accumulation.py` | 9 | Error accumulation, exit codes (legacy entry point) |
+| `test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency (legacy entry point) |
+| `test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
+| `test_constants.py` | — | Shared constants (model names, thresholds, delta) |
+| **Short-term workflows** | | |
+| `test_operational_workflow.py` | 19 | Pentad/decad/both modes, error accumulation, empty skill metrics, invalid mode |
+| `test_maintenance_workflow.py` | 14 | Gap detection, no-gap idempotency, lookback window, BOTH/DECAD modes, save error |
+| `test_recalc_workflow.py` | 14 | Calls calculate_skill_metrics, saves skill metrics, all modes, error accumulation |
+| `test_integration_postprocessing.py` | 71 | Full pipeline data routing, single-model ensemble bug, realistic recalculate, skill metric save path, ensemble numerical verification, leap year boundary |
+| `test_wiring_integration.py` | 23 | Entry point wiring with real internals: NE exclusion, cross-workflow roundtrip, varying delta |
+| `test_workflow_integration.py` | 24 | Full E2E with real CSV I/O using committed test_data/ |
+| `test_model_long_removal.py` | 27 | INFRA-005 characterization + target tests |
+| **Monthly (Phase 4a)** | | |
+| `test_monthly_data_reader.py` | 27 | Monthly observations/forecasts reading |
+| `test_monthly_skill_metrics.py` | 52 | Monthly metrics calculation |
+| `test_monthly_ensemble_creation.py` | 31 | Monthly EM + Skilled Mean + Naive Mean |
+| `test_monthly_integration.py` | 17 | Monthly end-to-end pipeline |
+| `test_monthly_workflow_integration.py` | 28 | Monthly workflow E2E |
+| `test_monthly_edge_cases.py` | 35 | Monthly boundary conditions |
+| `test_crps.py` | 19 | CRPS calculation, quantile integration |
+| **Quarterly + seasonal (Phase 4b)** | | |
+| `test_aggregation.py` | 34 | Quarter/season definitions, aggregation functions, coverage thresholds |
+| `test_quarterly_data_reader.py` | 15 | Quarterly observations/forecasts reading |
+| `test_quarterly_skill_metrics.py` | 17 | Quarterly metrics calculation |
+| `test_quarterly_ensemble_creation.py` | 17 | Quarterly EM + Skilled Mean + Naive Mean |
+| `test_quarterly_api_writer.py` | 13 | Quarterly API write, field mapping |
+| `test_quarterly_gap_detector.py` | 8 | Quarterly gap detection |
+| `test_quarterly_workflow_integration.py` | 6 | Quarterly end-to-end |
+| **Long-term entry points** | | |
+| `test_operational_long_term.py` | 12 | Long-term operational entry point (monthly + quarterly + seasonal) |
+| `test_maintenance_long_term.py` | 12 | Long-term maintenance gap-fill entry point |
+| **Tier 1 metrics (Phase 4c)** | | |
+| `test_tier1_metrics.py` | 44 | PBIAS, KGE, KGElf, NSE_log: hand-calculated verification + edge cases |
+| **Tier 2 metrics (Phase 4d)** | | |
+| `test_tier2_metrics.py` | 38 | FHV, FLV, GEV fitting, binary classification, daily metrics, edge cases |
+| **Diagnostics** | | |
+| `test_write_diagnostics.py` | 31 | Diagnostic output for all horizons |
+| **Service tests** | | |
+| `sapphire/services/postprocessing/tests/test_crud.py` | 91 | CRUD: Forecast, LongForecast, LRForecast, SkillMetric, edge cases, bulk upsert |
 | `sapphire/services/postprocessing/tests/test_endpoints.py` | — | Endpoint tests including Tier 1 metric POST/GET round-trip |
 
 ### Integration Test Data Flow Coverage Audit
@@ -988,13 +1028,13 @@ The assertion was already a clean `assert saved_df.empty` when reviewed — no `
 
 ### Phase 4: Monthly, Quarterly, Seasonal & Additional Skill Metrics
 
-Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seasonal)** deferred.
+Split into sub-phases: **4a (monthly) DONE**, **4b (quarterly + seasonal) DONE**, **4c (Tier 1 metrics) DONE**, **4d (Tier 2 metrics) DONE** (client-side; service-side `ThresholdSkillMetric` table pending), **4e (Tier 3) DEFERRED**.
 
 #### Pre-requisites for Phase 4a (must be completed first)
 
 - [x] **INFRA-005 (revised): Remove `model_long` from apps** — DONE (commit `2c52d2a`). `postprocessing_forecasts/src/`, `setup_library.py`, all test data cleaned. 405 + 161 tests pass.
 - [x] **Metrics registry refactoring** — DONE (commit `f70b29f`). `METRIC_REGISTRY`/`METRIC_ORDER`/`THRESHOLD_METRICS` added to `skill_metrics.py`. 3 copies of `filter_for_highly_skilled_forecasts()` consolidated. 4 dead `model_long`-era functions removed from `ensemble_calculator.py`. 392 tests pass, 0 skips.
-- [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
+- [x] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo) — DONE (used by monthly/quarterly/seasonal data readers and writers)
 
 #### Phase 4a: Monthly Skill Metrics
 
@@ -1017,11 +1057,19 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 - [x] `src/data_reader.py`: readiness checks in `_read_daily_runoff_api()` and `_read_long_forecasts_api()`
 - [x] Tests: unit + edge case + integration + API failure (818 postprocessing tests, 93 CRUD tests, 0 skips)
 
-#### Phase 4b: Quarterly & Seasonal Skill Metrics (ready to plan)
+#### Phase 4b: Quarterly & Seasonal Skill Metrics — DONE
 
 **Approach:** Aggregate from single-month records in `long_forecasts` table.
 All 9 models produce monthly forecasts; only 2 produce direct multi-month
 records. Aggregating from monthly ensures full ensemble candidate coverage.
+
+**Key new module:** `src/aggregation.py` — single source of truth for quarter/season
+definitions. Provides `QUARTER_MONTHS` (fixed calendar quarters), `get_season_months()`
+(configurable via `SAPPHIRE_SEASON_START_MONTH`/`SAPPHIRE_SEASON_END_MONTH`),
+cross-year season support (`get_season_year()`), and four aggregation functions
+(`aggregate_monthly_obs/fc_to_quarterly/seasonal`). Coverage thresholds:
+2+ months per quarter (`QUARTER_MIN_MONTHS`), 50% of season months
+(`SEASON_MIN_COVERAGE`).
 
 **Data flow:**
 1. Read single-month forecasts (27-30d span) from `long_forecasts` via API
@@ -1034,83 +1082,105 @@ records. Aggregating from monthly ensures full ensemble candidate coverage.
 
 **Implementation checklist:**
 
+_Aggregation (src/aggregation.py) — NEW module:_
+- [x] `QUARTER_MONTHS`, `QUARTER_MIN_MONTHS`, `SEASON_MIN_COVERAGE` constants
+- [x] `get_season_months()` — configurable via env vars, Central Asia defaults (4, 9)
+- [x] `get_season_year(year, month)` — handles cross-year season wrapping
+- [x] `aggregate_monthly_obs_to_quarterly(monthly_obs)` — requires 2+ months per quarter
+- [x] `aggregate_monthly_obs_to_seasonal(monthly_obs)` — configurable coverage threshold
+- [x] `aggregate_monthly_fc_to_quarterly(monthly_fc)` — averages quantiles Q5-Q95
+- [x] `aggregate_monthly_fc_to_seasonal(monthly_fc)` — averages quantiles Q5-Q95
+
 _Data reader (src/data_reader.py):_
-- [ ] `read_quarterly_forecasts(codes, start_year, end_year)` — read monthly
+- [x] `read_quarterly_forecasts(codes, start_year, end_year)` — read monthly
   forecasts from API, aggregate to quarterly (avg Q5-Q95 per quarter)
-- [ ] `read_quarterly_observations(codes, start_year, end_year)` — read daily
+- [x] `read_quarterly_observations(codes, start_year, end_year)` — read daily
   runoff from API, aggregate to quarterly means (≥50% coverage per month,
   ≥2/3 months per quarter required)
-- [ ] `read_seasonal_forecasts(codes, start_year, end_year, start_month,
+- [x] `read_seasonal_forecasts(codes, start_year, end_year, start_month,
   end_month)` — same as quarterly but for configurable month range
-- [ ] `read_seasonal_observations(codes, start_year, end_year, start_month,
+- [x] `read_seasonal_observations(codes, start_year, end_year, start_month,
   end_month)` — daily → seasonal mean (≥50% coverage per month, ≥50%
   months required)
-- [ ] `read_quarterly_combined_forecasts()` — for maintenance gap detection
-- [ ] `read_seasonal_combined_forecasts()` — for maintenance gap detection
+- [x] `read_latest_quarterly_forecasts(codes, forecast_date)` — latest quarter
+- [x] `read_latest_seasonal_forecasts(codes, forecast_date)` — latest season
+- [x] `read_quarterly_combined_forecasts()` — for maintenance gap detection
+- [x] `read_seasonal_combined_forecasts()` — for maintenance gap detection
+- [x] `read_quarterly_skill_metrics()` — API primary, CSV fallback
+- [x] `read_seasonal_skill_metrics()` — API primary, CSV fallback
 
 _Ensemble calculator (src/ensemble_calculator.py):_
-- [ ] `create_quarterly_ensemble_forecasts(forecasts, skill_stats)` — EM +
-  Skilled Mean + Naive Mean for quarterly horizon (reuse monthly pattern)
-- [ ] `create_seasonal_ensemble_forecasts(forecasts, skill_stats)` — same
+- [x] `create_quarterly_ensemble_forecasts(forecasts, skill_stats)` — EM +
+  Skilled Mean + Naive Mean for quarterly horizon (reuses monthly pattern)
+- [x] `create_seasonal_ensemble_forecasts(forecasts, skill_stats)` — same
   for seasonal horizon
 
 _Skill metrics (src/skill_metrics.py):_
-- [ ] `calculate_quarterly_skill_metrics(obs, fc, timing_stats)` — point
+- [x] `calculate_quarterly_skill_metrics(obs, fc, timing_stats)` — point
   metrics (NSE, MAE, sdivsigma, accuracy, PBIAS, KGElf, NSE_log) + CRPS,
   grouped by (quarter_in_year, code, model_short)
-- [ ] `calculate_seasonal_skill_metrics(obs, fc, timing_stats)` — same
-  grouped by (season_id, code, model_short). Season ID = 1 for the single
-  configured season (may be extended later for multiple seasons)
+- [x] `calculate_seasonal_skill_metrics(obs, fc, timing_stats)` — same
+  grouped by (season_id, code, model_short)
 
 _Writers (src/api_writer.py, src/file_writer.py):_
-- [ ] `api_writer`: extend horizon_type mapping to include 'quarter' and
-  'season'
-- [ ] `file_writer`: `save_quarterly_forecast_data()`,
+- [x] `api_writer`: `HORIZON_TYPE_TO_API` extended with 'quarter' and
+  'season'; `_write_quarterly_ensemble_to_api()`,
+  `_write_seasonal_ensemble_to_api()`, shared
+  `_write_long_term_ensemble_to_api()` helper
+- [x] `file_writer`: `save_quarterly_forecast_data()`,
   `save_quarterly_skill_metrics()`, `save_seasonal_forecast_data()`,
   `save_seasonal_skill_metrics()`
 
 _Entry points:_
-- [ ] `recalculate_skill_metrics.py`: add `QUARTERLY` and `SEASONAL` blocks,
-  update `VALID_MODES` and `ALL` mode to include them
-- [ ] `postprocessing_operational_long_term.py`: extend to process quarterly
-  and seasonal ensembles alongside monthly (same entry point, sequential
-  processing per horizon)
-- [ ] `postprocessing_maintenance_long_term.py`: extend gap detection and
+- [x] `recalculate_skill_metrics.py`: `QUARTERLY` and `SEASONAL` in
+  `VALID_MODES`, `ALL` mode includes them
+- [x] `postprocessing_operational_long_term.py`: processes quarterly and
+  seasonal ensembles alongside monthly (sequential processing per horizon)
+- [x] `postprocessing_maintenance_long_term.py`: gap detection and
   gap-fill for quarterly and seasonal horizons
 
 _Gap detection (src/gap_detector.py):_
-- [ ] `detect_missing_quarterly_ensembles(combined, lookback)` — detect
+- [x] `detect_missing_quarterly_ensembles(combined, lookback)` — detect
   missing EM/Skilled Mean/Naive Mean for (year, quarter, code) tuples
-- [ ] `detect_missing_seasonal_ensembles(combined, lookback)` — detect
+- [x] `detect_missing_seasonal_ensembles(combined, lookback)` — detect
   missing ensembles for (year, code) tuples (one season per year)
 
 _Configuration:_
-- [ ] Seasonal config: `start_month`, `end_month` as env vars
-  (`SAPPHIRE_SEASON_START_MONTH`, `SAPPHIRE_SEASON_END_MONTH`) with
-  Central Asia defaults (4, 9). Migrate to `config.yaml` with PP-006.
+- [x] Seasonal config: `SAPPHIRE_SEASON_START_MONTH`, `SAPPHIRE_SEASON_END_MONTH`
+  env vars with Central Asia defaults (4, 9), read in `src/aggregation.py`
 - [ ] Env vars for output file paths:
   `ieasyforecast_quarterly_combined_forecast_file`,
   `ieasyforecast_quarterly_skill_metrics_file`,
   `ieasyforecast_seasonal_combined_forecast_file`,
-  `ieasyforecast_seasonal_skill_metrics_file`
+  `ieasyforecast_seasonal_skill_metrics_file` — **verify whether these are
+  defined in `apps/config/.env`**
 
 _Date utilities:_
 - [ ] Date utilities in `tag_library.py` (`get_quarter`,
   `is_quarterly_forecast_date`, `is_seasonal_forecast_date`,
-  `get_season_months`)
-- [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates`
+  `get_season_months`) — **NOT added** to `tag_library.py`. Season/quarter
+  logic lives in `src/aggregation.py` instead. Consider whether
+  `tag_library.py` still needs these or if `aggregation.py` is sufficient.
+- [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates` — **NOT
+  done**. Evaluate if still needed given that the long-term entry points
+  handle quarterly/seasonal directly without going through these data classes.
 
 _Diagnostics:_
-- [ ] `write_diagnostics.py`: extend `_PERIOD_COLUMN` mapping for
+- [x] `write_diagnostics.py`: `_PERIOD_COLUMN` mapping includes
   'quarter' and 'season'
 
 _Tests:_
-- [ ] Unit tests for aggregation functions (quarterly/seasonal averaging)
-- [ ] Unit tests for ensemble creation (quarterly/seasonal)
-- [ ] Unit tests for skill metric calculation (quarterly/seasonal)
-- [ ] Edge cases: incomplete months, single-model groups, empty quarters
-- [ ] Integration tests: full pipeline from monthly data → ensembles →
-  skill metrics → API write
+- [x] Unit tests for aggregation functions (34 tests in `test_aggregation.py`)
+- [x] Unit tests for ensemble creation (17 tests in `test_quarterly_ensemble_creation.py`)
+- [x] Unit tests for skill metric calculation (17 tests in `test_quarterly_skill_metrics.py`)
+- [x] Data reader tests (15 tests in `test_quarterly_data_reader.py`)
+- [x] API writer tests (13 tests in `test_quarterly_api_writer.py`)
+- [x] Gap detector tests (8 tests in `test_quarterly_gap_detector.py`)
+- [x] Workflow integration tests (6 tests in `test_quarterly_workflow_integration.py`)
+- [ ] **Missing: Dedicated seasonal test files** — no `test_seasonal_*.py`
+  files. Seasonal paths are covered indirectly via quarterly tests (shared
+  code paths) and `test_aggregation.py` (seasonal aggregation), but no
+  dedicated seasonal end-to-end or edge case tests exist.
 
 #### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation) — DONE
 
@@ -1240,17 +1310,21 @@ flv = Column(Float)   # Low-flow volume bias (%), bottom 30% of FDC
 
 **Implementation:**
 
-- [ ] **`src/skill_metrics.py`**: Add `fdc_fhv()`, `fdc_flv()` functions (from Yilmaz et al., 2008)
-- [ ] **`src/skill_metrics.py`**: Add `estimate_return_period_thresholds()` (GEV fit via scipy)
-- [ ] **`src/skill_metrics.py`**: Add `evaluate_threshold_exceedance()` — binary classification + F1/CSI/precision/recall
-- [ ] **`src/skill_metrics.py`**: Add `evaluate_lowflow_contingency()` — same framework for below-threshold events
-- [ ] **`src/skill_metrics.py`**: Register `fhv`, `flv` in `METRIC_REGISTRY`
-- [ ] **DB migration**: Add `fhv`, `flv` columns to `SkillMetric` table
-- [ ] **DB migration**: Create `ThresholdSkillMetric` table
-- [ ] **API schema**: Add `ThresholdSkillMetricBase` schema + CRUD endpoints
-- [ ] **`src/api_writer.py`**: Write threshold metrics to API
-- [ ] **`recalculate_skill_metrics.py`**: Add daily threshold metric calculation block
-- [ ] **Tests**: Unit tests for GEV fitting, binary classification, FDC metrics; integration tests for full pipeline; edge cases (insufficient years for GEV, no exceedance events, all-below-threshold)
+- [x] **`src/skill_metrics.py`**: `fdc_fhv()`, `fdc_flv()` functions (from Yilmaz et al., 2008) — DONE
+- [x] **`src/skill_metrics.py`**: `estimate_return_period_thresholds()` (GEV fit via scipy) — DONE
+- [x] **`src/skill_metrics.py`**: `binary_contingency()` — binary classification + F1/CSI/precision/recall — DONE
+- [x] **`src/skill_metrics.py`**: `lowflow_quantiles()` — low-flow threshold calculation — DONE
+- [x] **`src/skill_metrics.py`**: `calculate_daily_skill_metrics()` — orchestrates Tier 2 metrics — DONE
+- [x] **`src/skill_metrics.py`**: `DAILY_METRIC_REGISTRY` for FHV/FLV — DONE
+- [x] **DB migration**: `fhv`, `flv` columns added to `SkillMetric` table — DONE
+- [ ] **DB migration**: Create `ThresholdSkillMetric` table — **NOT DONE** (service-side). Client-side `_write_threshold_skill_metrics_to_api()` is implemented with graceful fallback (`AttributeError` → log "Stage 2 pending", `404` → log "endpoint not deployed yet"). This is the planned two-stage rollout.
+- [ ] **API schema**: `ThresholdSkillMetricBase` schema + CRUD endpoints — **NOT DONE** (service-side, Stage 2). Blocked on colleague coordination (see Ownership Boundaries).
+- [x] **`src/api_writer.py`**: `_write_threshold_skill_metrics_to_api()` — client-side ready, graceful no-op until service-side deployed — DONE
+- [x] **`src/file_writer.py`**: `save_daily_skill_metrics()` — writes FHV/FLV to `SkillMetric` CSV + threshold metrics to separate CSV — DONE
+- [x] **`src/data_reader.py`**: daily readers for observations and forecasts — DONE
+- [x] **`recalculate_skill_metrics.py`**: `DAILY` mode in `VALID_MODES`, included in `ALL` — DONE
+- [x] **ML module**: `_write_ml_daily_forecast_to_api()` writes daily-resolution records — DONE
+- [x] **Tests**: 38 tests in `test_tier2_metrics.py` (FHV, FLV, GEV fitting, binary classification, daily metrics, edge cases) — DONE
 
 **Data sufficiency rules:**
 - GEV fit: require >= 15 annual maxima. Stations with fewer years get `n_years` flag and threshold metrics set to NaN
@@ -1360,20 +1434,22 @@ The following metrics are **not planned** for near-term implementation but docum
 
 | File | Purpose |
 |------|---------|
+| `src/aggregation.py` | Monthly→quarterly/seasonal aggregation (Phase 4b) |
 | `src/api_writer.py` | Shared API write logic |
-| `src/skill_metrics.py` | Vectorized skill calculations |
+| `src/skill_metrics.py` | Vectorized skill calculations (METRIC_REGISTRY + DAILY_METRIC_REGISTRY) |
 | `src/ensemble_calculator.py` | EM/NE ensemble logic |
-| `src/data_reader.py` | Data loading utilities |
-| `src/gap_detector.py` | Detect missing ensembles in recent window |
-| `src/file_writer.py` | Atomic CSV writing |
-| `postprocessing_operational.py` | Daily operational entry point |
-| `postprocessing_maintenance.py` | Nightly gap-fill entry point |
-| `recalculate_skill_metrics.py` | Yearly skill recalculation entry point |
+| `src/data_reader.py` | Data loading utilities (all horizons, API primary + CSV fallback) |
+| `src/gap_detector.py` | Detect missing ensembles in recent window (all horizons) |
+| `src/file_writer.py` | Atomic CSV writing (all horizons) |
+| `src/write_diagnostics.py` | Diagnostic/summary output (all horizons) |
+| `postprocessing_operational.py` | Daily entry point — short-term (pentad/decad) |
+| `postprocessing_operational_long_term.py` | Daily entry point — long-term (monthly + quarterly + seasonal) |
+| `postprocessing_maintenance.py` | Nightly gap-fill — short-term |
+| `postprocessing_maintenance_long_term.py` | Nightly gap-fill — long-term |
+| `recalculate_skill_metrics.py` | Yearly skill recalculation (all horizons) |
 | `bin/daily_postprc_maintenance.sh` | Shell runner for nightly gap-fill (cron) |
 | `bin/yearly_skill_metrics_recalculation.sh` | Shell runner for yearly skill recalculation |
-| `tests/unit/*.py` | Unit tests |
-| `tests/integration/*.py` | Integration tests |
-| `tests/conftest.py` | Test fixtures |
+| `tests/` (39 files) | Flat layout — see test inventory table above |
 
 ---
 
@@ -1636,8 +1712,9 @@ Then collapse each pair into a single parameterized function:
 
 ### Prerequisites
 
-- All 8 issues from the pipeline inconsistency PR (atomic writes, date round-trip, decad naming, delta validation, monthly read-back, forecast_target_date helper)
-- Phase 4a monthly skill metrics pipeline
+- ~~All 8 issues from the pipeline inconsistency PR~~ — DONE
+- ~~Phase 4a monthly skill metrics pipeline~~ — DONE
+- ~~Phase 4b quarterly + seasonal pipeline~~ — DONE
 - `ensemble_calculator.py` already parameterized (serves as the reference pattern)
 
 ---
@@ -1714,3 +1791,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-19 | Bea/Claude | **Phase 4c complete: Tier 1 informational metrics (PBIAS, KGElf, NSE_log).** (A) **Metric implementation** in `skill_metrics.py`: `pbias()` (percent volume bias, positive=underestimation), `_kge()` (internal Kling-Gupta helper), `kge_lf()` (average of KGE(Q) and KGE(1/(Q+eps)), per Garcia et al. 2017), `nse_log()` (NSE on log-transformed flows with eps=mean(obs)/100). All 3 registered in `METRIC_REGISTRY` as informational (no thresholds, not used for ensemble selection). `METRIC_ORDER` now 9 metrics. (B) **Full pipeline integration**: `api_writer.py` handles nullable float columns for crps/pbias/kgelf/nse_log; `file_writer.py` includes 3 new columns in pentadal/decadal/monthly CSV output; `data_reader.py` docstrings updated. (C) **DB schema**: `crps`, `pbias`, `kgelf`, `nse_log` columns added to `SkillMetric` model + `SkillMetricBase` schema (all `Optional[float]`). CRPS DB column bundled here as planned. Data migrator updated with graceful fallback for legacy CSVs. (D) **47 new tests** in `test_tier1_metrics.py`: `TestPbias` (10), `TestKge` (7), `TestKgeLf` (10), `TestNseLog` (9), `TestNewMetricsInRegistry` (5), `TestCalculateAllWithNewMetrics` (6). Hand-calculated verification for each metric. Edge cases: zero obs, constant obs/sim, negative sim, min_points boundary. 4 new CRUD service tests (metric fields round-trip + null defaults). (E) **Test quality refactoring** across 12 test files: mock-heavy tests replaced with real file I/O (`test_file_writer.py` now checks actual CSV content, `test_postprocessing_tools.py` uses `tmp_path` fixture, `test_api_integration.py` uses `monkeypatch`); weak `if not df.empty` checks replaced with `assert not df.empty`; `os.environ` try/finally replaced with `monkeypatch.setenv()`. (F) **Unified validation script** `apps/run_validation.sh` (529 lines): orchestrates run_tests.sh → run_locally.sh → run_docker_tests.sh with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`), timestamped logging, color output. Documented in `doc/dev/testing_workflow.md`. Test count: 638→818 postprocessing (+180), 89→93 CRUD (+4). |
 | 2026-02-27 | Bea/Claude | **PP-010 complete: Pentad/decad reads migrated to API-first.** `data_reader.read_observed_and_modelled_data()` composes `read_short_term_observations()` (preprocessing API) + `read_individual_model_forecasts()` (postprocessing API for LR + env-gated ML models). All 3 entry points (operational, maintenance, recalculation) now use the new readers. NE and virtual station calculations remain in `setup_library`, called explicitly from entry points. API Transition Gaps table updated: **all read paths are now API-primary** — only dual-write output path remains as the last CSV dependency. 960 postprocessing tests, 0 skips. |
 | 2026-02-27 | Bea/Claude | **PP-011 verified: Skill metrics unique key includes date.** Colleague's API schema has `UniqueConstraint("horizon_type", "code", "model_type", "date", "horizon_in_year")` with matching CRUD upsert. Client-side `api_writer._write_skill_metrics_to_api()` computes per-row `date` from `horizon_in_year` + target year via `tl.get_date_for_pentad/decad()` or `date(year, month, 1)`. End-to-end alignment confirmed. PP-008 (backfill audit trail) remains blocked — no `is_backfilled` or `backfilled_at` field in Forecast model. PP-010 status corrected from Complete to Review (awaiting server deployment verification). |
+| 2026-03-04 | Bea/Claude | **Plan currency audit and update.** Major update to reflect work done since 2026-02-27 that was not documented: (A) **Phase 4b marked DONE** — quarterly + seasonal skill metrics fully implemented. New `src/aggregation.py` module (quarter/season definitions, monthly→quarterly/seasonal aggregation with configurable coverage thresholds). All Phase 4b checklist items checked off: data readers (8 functions), ensemble creators (2), skill metrics (2), writers (API + CSV for both horizons), gap detectors (2), diagnostics extended. (B) **Two new entry points documented**: `postprocessing_operational_long_term.py` (daily long-term fast path: monthly + quarterly + seasonal ensembles) and `postprocessing_maintenance_long_term.py` (nightly long-term gap-fill). Execution flow updated from "Three Entry Points" to "Five Entry Points". (C) **Phase 4d checklist checked off** — status summary already said DONE (commit `55a27a4`) but individual checklist items were unchecked. Noted: `ThresholdSkillMetric` table and API endpoints are NOT yet created service-side (Stage 2, blocked on colleague coordination); client-side `_write_threshold_skill_metrics_to_api()` has graceful fallback. (D) **Module Structure updated** — added `aggregation.py`, `write_diagnostics.py`, both long-term entry points, `hydroTestDataGenerator.py`. (E) **Test inventory updated** — 39 test files, 1101 postprocessing tests (was 960). Added 15 previously undocumented test files with per-file counts: quarterly (6 files, 76 tests), long-term entry points (2 files, 24 tests), aggregation (34 tests), CRPS (19 tests), write_diagnostics (31 tests), tier2 (38 tests). (F) **Temporal Resolutions table updated** — quarterly and seasonal now "Implemented". (G) **SAPPHIRE_PREDICTION_MODE table updated** — added QUARTERLY, SEASONAL, DAILY modes. (H) **Remaining gaps identified**: no dedicated seasonal test files, `tag_library.py` quarter/season utilities not added (logic in `aggregation.py` instead), `ForecastFlags`/`PredictorDates` quarter field not added, env vars for quarterly/seasonal file paths not verified, `ThresholdSkillMetric` service-side pending. |
