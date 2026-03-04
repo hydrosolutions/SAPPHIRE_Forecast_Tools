@@ -10,7 +10,8 @@ API-first I/O via the SAPPHIRE postprocessing API. The target state is:
 - **Writes:** API as primary destination, CSV as deprecated backup only.
 
 CSV I/O will be removed once API integration is fully validated.
-PP-007, PP-009, PP-010, PP-011, PP-013, and PP-014 are in review.
+PP-007, PP-009, PP-010, PP-011, PP-013, PP-017, and PP-018 are resolved.
+PP-014 is in review.
 
 ## Forecast Horizons
 
@@ -20,15 +21,15 @@ PP-007, PP-009, PP-010, PP-011, PP-013, and PP-014 are in review.
 | **Decadal** | 10-day | 10th, 20th, last of month | Implemented |
 | **Monthly** | 1-month | 1st of month (long-term forecasts) | Implemented |
 | **Daily** | 1-day | Every day for the next 10 days (skill metrics + ensembles, see PP-012) | Implemented |
-| **Quarterly** | 3-month | 1st of quarter (long-term forecasts) | Planned (PP-017) |
-| **Seasonal** | Multi-month | Configurable start/end months (long-term forecasts) | Planned (PP-018) |
+| **Quarterly** | 3-month | 1st of quarter (long-term forecasts) | Implemented |
+| **Seasonal** | Multi-month | Configurable start/end months (long-term forecasts) | Implemented |
 
-**Quarterly and seasonal horizons:** The API schema (`HorizonType.QUARTER`,
-`HorizonType.SEASON`) is ready. The `long_forecasts` table already contains
-monthly records from 9 models that can be aggregated into quarterly and
-seasonal values by this module. Postprocessing support (aggregation,
-ensembles, skill metrics, operational/maintenance) is not yet implemented --
-see PP-017 and PP-018.
+**Quarterly and seasonal horizons:** Fully implemented (Phase 4b). Monthly
+forecasts from 9 models are aggregated into quarterly/seasonal values by
+`src/aggregation.py`. Skill metrics, ensembles (EM, Skilled Mean, Naive Mean),
+operational/maintenance entry points, and API writers all support both horizons.
+Season is configurable via `SAPPHIRE_SEASON_START_MONTH`/`SAPPHIRE_SEASON_END_MONTH`
+(default Apr-Sep), with cross-year wrapping support (e.g. Oct-Mar).
 
 ## Supported Models
 
@@ -45,8 +46,8 @@ Ensemble models (created by this module):
   upstream in `setup_library`) - for short-term forecasts only, not included in EM candidates
 - **EM** - Ensemble Mean (variable composition, only models passing skill
   thresholds) - for all forecast horizons
-- **Skilled Mean** - Weighted by 1/MAE (monthly only) - for long-term forecasts only
-- **Naive Mean** - Unweighted average of all models (monthly only) - for long-term forecasts only
+- **Skilled Mean** - Weighted by 1/MAE - for long-term forecasts (monthly, quarterly, seasonal)
+- **Naive Mean** - Unweighted average of all models - for long-term forecasts (monthly, quarterly, seasonal)
 
 ## Pipeline Overview
 
@@ -310,8 +311,8 @@ valid values depend on the entry point:
 | `BOTH` | Pentad + decad (default) | Operational, maintenance, recalculation |
 | `MONTHLY` | Monthly long-term forecasts only | Recalculation only (operational/maintenance for monthly have separate entry points) |
 | `DAILY` | Daily skill metrics only | Recalculation only (no daily operational/maintenance entry point yet) |
-| `QUARTERLY` | Quarterly long-term forecasts only | Planned (PP-017) |
-| `SEASONAL` | Seasonal long-term forecasts only | Planned (PP-018) |
+| `QUARTERLY` | Quarterly long-term forecasts only | Implemented |
+| `SEASONAL` | Seasonal long-term forecasts only | Implemented |
 | `ALL` | All of the above | Recalculation (runs all horizons in one invocation) |
 
 **Typical usage:** Short-term operational and maintenance runs use `BOTH`
@@ -525,59 +526,26 @@ metric reads).
 `recalculate_skill_metrics.py` (must support being invoked as a background
 process)
 
-### PP-017: Quarterly forecast postprocessing
+### PP-017: Quarterly forecast postprocessing — DONE
 
-**Status:** Ready to plan. Detailed checklist in
-`doc/plans/postprocessing_unified_plan.md` (Phase 4b).
+**Status:** Implemented (Phase 4b). See `doc/plans/postprocessing_unified_plan.md`.
 
-**Current:** The API schema supports `HorizonType.QUARTER` and the
-`long_forecasts` table contains ~18k direct quarterly records (90-91 day
-span, rolling 3-month windows) from `LR_BASE`/`LR_SM`. However, only 2 of 9
-models produce these direct records. `postprocessing_forecasts` has no
-quarterly support.
-
-**Approach:** Aggregate from single-month forecasts (all 9 models) rather
-than consuming the direct quarterly records (2 models only). This ensures
-full ensemble candidate coverage:
-1. Read monthly forecasts from API (already implemented)
-2. Average quantiles (Q5-Q95) across 3-month quarters
-3. Create ensembles (EM, Skilled Mean, Naive Mean)
-4. Calculate skill metrics (point + CRPS) against quarterly observations
-5. Write with `horizon_type='quarter'` to API + CSV
-
-**Entry points:** Extend existing long-term entry points
-(`postprocessing_operational_long_term.py`,
+Quarterly forecasts are aggregated from single-month forecasts (all 9 models)
+via `src/aggregation.py`. Ensembles (EM, Skilled Mean, Naive Mean), skill
+metrics (point + CRPS), and API/CSV writers all support `horizon_type='quarter'`.
+Existing long-term entry points (`postprocessing_operational_long_term.py`,
 `postprocessing_maintenance_long_term.py`, `recalculate_skill_metrics.py`)
-to process quarterly alongside monthly, rather than creating new scripts.
+process quarterly alongside monthly. 76 quarterly tests across 6 test files.
 
-**Affects:** `data_reader.py`, `ensemble_calculator.py`, `skill_metrics.py`,
-`api_writer.py`, `file_writer.py`, `gap_detector.py`,
-`recalculate_skill_metrics.py`, `postprocessing_operational_long_term.py`,
-`postprocessing_maintenance_long_term.py`
+### PP-018: Seasonal forecast postprocessing — DONE
 
-### PP-018: Seasonal forecast postprocessing
+**Status:** Implemented (Phase 4b). See `doc/plans/postprocessing_unified_plan.md`.
 
-**Status:** Ready to plan. Detailed checklist in
-`doc/plans/postprocessing_unified_plan.md` (Phase 4b).
-
-**Current:** The API schema supports `HorizonType.SEASON` and the
-`long_forecasts` table contains ~11k direct seasonal records (182-day span,
-Apr 1 - Sep 30) from `LR_BASE`/`LR_SM`. However, only 2 of 9 models
-produce these direct records. `postprocessing_forecasts` has no seasonal
-support.
-
-**Approach:** Same as quarterly — aggregate from single-month forecasts:
-1. Read monthly forecasts from API
-2. Average quantiles across configurable season months (default Apr-Sep)
-3. Create ensembles (EM, Skilled Mean, Naive Mean)
-4. Calculate skill metrics (point + CRPS) against seasonal observations
-5. Write with `horizon_type='season'` to API + CSV
-
-**Season configuration:** Start/end months via env vars
-(`SAPPHIRE_SEASON_START_MONTH`, `SAPPHIRE_SEASON_END_MONTH`) with Central
-Asia defaults (4=April, 9=September). Will migrate to `config.yaml` with
-PP-006.
-
-**Entry points:** Same as PP-017 — extend existing long-term entry points.
-
-**Affects:** Same files as PP-017, plus seasonal config handling.
+Seasonal forecasts are aggregated from single-month forecasts via
+`src/aggregation.py`. Season is configurable via `SAPPHIRE_SEASON_START_MONTH`
+/ `SAPPHIRE_SEASON_END_MONTH` (default Apr-Sep), with cross-year wrapping
+(e.g. Oct-Mar). Ensembles, skill metrics, and writers all support
+`horizon_type='season'`. 14 dedicated seasonal tests in
+`test_seasonal_integration.py` (Skilled Mean, EM composition, skill edge
+cases, data reader, file writer, cross-year pipeline with numerical
+verification).

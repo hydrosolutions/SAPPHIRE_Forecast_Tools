@@ -40,13 +40,13 @@
 | Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, Skilled Mean (inverse-MAE weighted), Naive Mean, EM baselines, API writer (month horizon + LT model types), file writer, save + log monthly forecasts, recalculate entry point (MONTHLY/ALL modes). 638 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
-| Quarterly + seasonal skill metrics (Phase 4b) | **DONE** — `src/aggregation.py` module (single source of truth for quarter/season definitions + monthly→quarterly/seasonal aggregation). Data readers (`read_quarterly_forecasts/observations/combined`, `read_seasonal_forecasts/observations/combined`, `read_latest_quarterly/seasonal_forecasts`), skill metrics (`calculate_quarterly/seasonal_skill_metrics`), ensemble creators (`create_quarterly/seasonal_ensemble_forecasts`), gap detectors (`detect_missing_quarterly/seasonal_ensembles`), writers (API + CSV for both horizons), entry points (`postprocessing_operational_long_term.py` processes quarterly+seasonal alongside monthly, `postprocessing_maintenance_long_term.py` handles gap-fill, `recalculate_skill_metrics.py` supports QUARTERLY/SEASONAL/ALL modes). `write_diagnostics.py` extended for quarter/season. 76 quarterly tests across 6 test files. **Gap:** No dedicated seasonal test files (seasonal paths covered indirectly via quarterly tests and shared aggregation tests). |
+| Quarterly + seasonal skill metrics (Phase 4b) | **DONE** — `src/aggregation.py` module (single source of truth for quarter/season definitions + monthly→quarterly/seasonal aggregation). Data readers (`read_quarterly_forecasts/observations/combined`, `read_seasonal_forecasts/observations/combined`, `read_latest_quarterly/seasonal_forecasts`), skill metrics (`calculate_quarterly/seasonal_skill_metrics`), ensemble creators (`create_quarterly/seasonal_ensemble_forecasts`), gap detectors (`detect_missing_quarterly/seasonal_ensembles`), writers (API + CSV for both horizons), entry points (`postprocessing_operational_long_term.py` processes quarterly+seasonal alongside monthly, `postprocessing_maintenance_long_term.py` handles gap-fill, `recalculate_skill_metrics.py` supports QUARTERLY/SEASONAL/ALL modes). `write_diagnostics.py` extended for quarter/season. 76 quarterly tests across 6 test files + 14 dedicated seasonal tests in `test_seasonal_integration.py` (Skilled Mean, EM composition, single-model rejection, skill edge cases, data reader, file writer, cross-year pipeline with numerical verification). |
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | **DONE** — 6 metric functions (`fdc_fhv`, `fdc_flv`, `estimate_return_period_thresholds`, `binary_contingency`, `lowflow_quantiles`, `calculate_daily_skill_metrics`) in `skill_metrics.py` with `DAILY_METRIC_REGISTRY`. Daily readers in `data_reader.py`, "day" horizon in `api_writer.py`, `fhv`/`flv` DB columns, threshold skill metrics writer, `save_daily_skill_metrics()` in `file_writer.py`. ML module writes daily-resolution records via `_write_ml_daily_forecast_to_api()`. DAILY mode in `recalculate_skill_metrics.py`. 38 new tests in `test_tier2_metrics.py`. Commit `55a27a4`. |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
 | Dashboard metrics visualization (FD-002) | TODO — depends on 4d (now complete). See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 1101 postprocessing tests across 39 test files, 0 skips. CRUD service: 93 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 1115 postprocessing tests across 40 test files, 0 skips. CRUD service: 93 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -87,7 +87,7 @@ apps/postprocessing_forecasts/
 │   ├── postprocessing_tools.py        # TimingStats, logging utilities
 │   ├── skill_metrics.py              # Skill metric calculations (single-pass, METRIC_REGISTRY)
 │   └── write_diagnostics.py          # Diagnostic/summary output (FHV/FLV/daily metrics)
-├── tests/                             # 39 test files, 1101 tests total
+├── tests/                             # 40 test files, 1115 tests total
 │   ├── conftest.py                    # API singleton reset fixture
 │   ├── test_aggregation.py            # 34 tests (quarter/season definitions, aggregation functions)
 │   ├── test_api_integration.py        # 53 tests (API write: forecasts + skill metrics + field mapping)
@@ -122,6 +122,7 @@ apps/postprocessing_forecasts/
 │   ├── test_quarterly_gap_detector.py # 8 tests (quarterly gap detection)
 │   ├── test_quarterly_skill_metrics.py  # 17 tests (quarterly metrics calculation)
 │   ├── test_quarterly_workflow_integration.py  # 6 tests (quarterly end-to-end)
+│   ├── test_seasonal_integration.py   # 14 tests (seasonal: Skilled Mean, EM, skill edge cases, data reader, file writer, cross-year pipeline)
 │   ├── test_recalc_workflow.py        # 14 tests (yearly recalc entry point, all modes)
 │   ├── test_skill_metrics.py          # 24 tests (pentad/decad calculation, ensemble creation)
 │   ├── test_tier1_metrics.py          # 44 tests (PBIAS, KGE, KGElf, NSE_log: unit + registry + pipeline)
@@ -1177,10 +1178,8 @@ _Tests:_
 - [x] API writer tests (13 tests in `test_quarterly_api_writer.py`)
 - [x] Gap detector tests (8 tests in `test_quarterly_gap_detector.py`)
 - [x] Workflow integration tests (6 tests in `test_quarterly_workflow_integration.py`)
-- [ ] **Missing: Dedicated seasonal test files** — no `test_seasonal_*.py`
-  files. Seasonal paths are covered indirectly via quarterly tests (shared
-  code paths) and `test_aggregation.py` (seasonal aggregation), but no
-  dedicated seasonal end-to-end or edge case tests exist.
+- [x] Seasonal integration tests (14 tests in `test_seasonal_integration.py`)
+- [x] **Dedicated seasonal test file** — `test_seasonal_integration.py` (14 tests): Skilled Mean creation + MAE weighting, EM composition string, single-model rejection, skill metrics edge cases (empty obs/fc/no overlap), data reader with non-empty API data + custom season config, file writer (save_seasonal_skill_metrics + save_seasonal_forecast_data), cross-year Oct-Mar pipeline with numerical verification, custom season (Jun-Aug) end-to-end.
 
 #### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation) — DONE
 
