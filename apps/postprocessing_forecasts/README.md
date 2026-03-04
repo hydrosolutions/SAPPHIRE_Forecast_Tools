@@ -1,64 +1,51 @@
 # Post-processing of Hydrological Forecasts
 
-This module is the final stage of the SAPPHIRE forecast pipeline. It takes raw
-model outputs, creates ensemble forecasts, and calculates skill metrics for
-quality assessment.
-
-**I/O transition:** The module is transitioning from CSV-based I/O to
-API-first I/O via the SAPPHIRE postprocessing API. The target state is:
-- **Reads:** API as primary source, CSV as deprecated fallback only.
-- **Writes:** API as primary destination, CSV as deprecated backup only.
-
-CSV I/O will be removed once API integration is fully validated.
-PP-007, PP-009, PP-010, PP-011, PP-013, PP-017, and PP-018 are resolved.
-PP-014 is in review.
+This module is the final stage of the SAPPHIRE forecast pipeline. It takes
+raw model outputs, creates ensemble forecasts, and calculates skill metrics
+for quality assessment.
 
 ## Forecast Horizons
 
-| Horizon | Period | Boundary days | Status |
-|---------|--------|---------------|--------|
-| **Pentadal** | 5-day | 5th, 10th, 15th, 20th, 25th, last of month | Implemented |
-| **Decadal** | 10-day | 10th, 20th, last of month | Implemented |
-| **Monthly** | 1-month | 1st of month (long-term forecasts) | Implemented |
-| **Daily** | 1-day | Every day for the next 10 days (skill metrics + ensembles, see PP-012) | Implemented |
-| **Quarterly** | 3-month | 1st of quarter (long-term forecasts) | Implemented |
-| **Seasonal** | Multi-month | Configurable start/end months (long-term forecasts) | Implemented |
+| Horizon | Period | Boundary days |
+|---------|--------|---------------|
+| **Pentadal** | 5-day | 5th, 10th, 15th, 20th, 25th, last of month |
+| **Decadal** | 10-day | 10th, 20th, last of month |
+| **Monthly** | 1-month | 1st of month |
+| **Quarterly** | 3-month | 1st of quarter (aggregated from monthly) |
+| **Seasonal** | Configurable | Default Apr-Sep, cross-year supported (e.g. Oct-Mar) |
+| **Daily** | 1-day | Every day for the next 10 days |
 
-**Quarterly and seasonal horizons:** Fully implemented (Phase 4b). Monthly
-forecasts from 9 models are aggregated into quarterly/seasonal values by
-`src/aggregation.py`. Skill metrics, ensembles (EM, Skilled Mean, Naive Mean),
-operational/maintenance entry points, and API writers all support both horizons.
-Season is configurable via `SAPPHIRE_SEASON_START_MONTH`/`SAPPHIRE_SEASON_END_MONTH`
-(default Apr-Sep), with cross-year wrapping support (e.g. Oct-Mar).
+Quarterly and seasonal values are aggregated from monthly forecasts
+(`src/aggregation.py`), giving all 9 models ensemble candidate coverage.
 
 ## Supported Models
 
 Individual forecast models (created upstream):
 
-- **LR** - Linear Regression (statistical baseline)
-- **TFT** - Temporal Fusion Transformer
-- **TiDE** - Temporal Information Decomposition Encoder
-- **TSMixer** - Time Series Mixer
+- **LR** -- Linear Regression (statistical baseline)
+- **TFT** -- Temporal Fusion Transformer
+- **TiDE** -- Temporal Information Decomposition Encoder
+- **TSMixer** -- Time Series Mixer
 
 Ensemble models (created by this module):
 
-- **NE** - Neural Ensemble (fixed composition: TFT + TiDE + TSMixer, created
-  upstream in `setup_library`) - for short-term forecasts only, not included in EM candidates
-- **EM** - Ensemble Mean (variable composition, only models passing skill
-  thresholds) - for all forecast horizons
-- **Skilled Mean** - Weighted by 1/MAE - for long-term forecasts (monthly, quarterly, seasonal)
-- **Naive Mean** - Unweighted average of all models - for long-term forecasts (monthly, quarterly, seasonal)
+- **NE** -- Neural Ensemble (TFT + TiDE + TSMixer, created upstream in
+  `setup_library`). Short-term only, excluded from EM candidates.
+- **EM** -- Ensemble Mean (variable composition, only models passing skill
+  thresholds). All horizons.
+- **Skilled Mean** -- Weighted by 1/MAE. Long-term (monthly, quarterly,
+  seasonal).
+- **Naive Mean** -- Unweighted average of all models. Long-term (monthly,
+  quarterly, seasonal).
 
 ## Pipeline Overview
 
-The module has three operational modes, each with a different trigger and scope.
-
-### Relationship between modes
+The module has three operational modes:
 
 ```
 Recalculation (yearly, on-demand)
     |
-    +-- produces skill metrics (CSV + API)
+    +-- produces skill metrics
     |
     v
 Operational (daily, boundary days)     Maintenance (nightly)
@@ -69,162 +56,71 @@ Operational (daily, boundary days)     Maintenance (nightly)
                                            +-- merges + writes forecasts
 ```
 
-The recalculation run is the prerequisite -- without fresh skill metrics,
-operational and maintenance have no basis for filtering ensemble members.
-
-### 1. Operational -- daily on boundary days
+### 1. Operational
 
 **Entry points:**
 - `postprocessing_operational.py` (pentad/decad)
-- `postprocessing_operational_long_term.py` (monthly)
+- `postprocessing_operational_long_term.py` (monthly + quarterly + seasonal)
 
-**When:** Only on boundary days for the configured horizon. Skips entirely
-otherwise.
+**When:** Boundary days only. Skips otherwise.
 
-**Pipeline stages:**
-
-1. **Boundary check** -- Is today a pentad/decad boundary day?
-2. **Read current forecasts** -- Today's observed + modelled data.
-   - **Target state:** Read from API as the primary source.
-   - **Current state (pentad/decad):** Read from API via
-     `data_reader.read_observed_and_modelled_data()`, with CSV fallback.
-   - **Current state (monthly):** Read from API. Correct.
-3. **Read pre-calculated skill metrics** -- via `data_reader.read_skill_metrics`.
-   - API is the primary source, CSV is a deprecated fallback only.
-4. **Create ensemble forecasts** -- Separately for each horizon:
-   - Filter skill metrics for highly skilled models (sdivsigma < 0.6,
-     NSE > 0.8, accuracy > 0.8)
-   - Merge with forecasts, exclude NE, require >= 2 qualifying models
-   - Group by (date, code), compute mean discharge -> EM rows
-   - Calculate skill metrics for the new EM rows
-5. **Save** -- Write to API (`api_writer`, upsert) as primary + CSV
-   (`file_writer`) as deprecated backup. CSV writes will be removed once
-   API integration is fully validated.
-6. **Log** -- Print most recent forecasts
-
-**Why EM skill metrics are calculated on the fly:** The EM composition changes
-per (date, code) pair. On one date, station 15001's EM might be "LR, TFT"; on
-another it might be "LR, TFT, TiDE". Since the composition varies, last year's
-EM skill metric (calculated for whatever compositions appeared last year) does
-not directly apply. See open issue PP-009 below.
-
-**NE handling:** NE (Neural Ensemble) is created upstream in `setup_library`
-with a fixed composition (TFT + TiDE + TSMixer). NE skill metrics come from the
-annual recalculation. NE is explicitly excluded from EM candidates to avoid
-"ensemble of ensembles."
-
-> **TODO (PP-015):** Many ensemble-related methods currently live in
-> `setup_library` (in `iEasyHydroForecast`), including NE creation. These
-> should be moved into the `postprocessing_forecasts` module where they
-> logically belong. Additionally, verify whether NE calculation currently
-> happens anywhere in `postprocessing_forecasts` or exclusively in
-> `setup_library` -- if only in `setup_library`, the migration is
-> straightforward but must be planned.
+**Steps:**
+1. Check if today is a boundary day
+2. Read today's observed + modelled data from API
+3. Read pre-calculated skill metrics from API
+4. Create ensemble forecasts (filter by skill thresholds, require >= 2
+   qualifying models, compute mean discharge)
+5. Write to API (upsert) + CSV (deprecated backup)
 
 **Runtime:** Seconds.
 
-### 2. Maintenance -- nightly gap-fill
+### 2. Maintenance
 
 **Entry points:**
 - `postprocessing_maintenance.py` (pentad/decad)
-- `postprocessing_maintenance_long_term.py` (monthly)
+- `postprocessing_maintenance_long_term.py` (monthly + quarterly + seasonal)
 
-**When:** Every night, no time gate.
+**When:** Every night.
 
-**Pipeline stages:**
-
-1. **Read existing combined forecasts** -- API-first with CSV fallback
-   (`data_reader.read_combined_forecasts`).
-2. **Detect gaps** -- Find (date, code) pairs missing EM rows within lookback
-   window (`POSTPROCESSING_GAPFILL_WINDOW_DAYS`, default 7 days, configurable
-   up to e.g. 30 days for longer server outages). See PP-006 for moving this
-   to `config.yaml`.
-3. **Read data for gap dates** -- Observed + modelled + pre-calculated skill
-   metrics
-4. **Create ensembles** for gap dates only:
-   - **Short-term (pentad/decad):** EM and NE
-   - **Long-term (monthly):** EM, Naive Mean, and Skilled Mean
-5. **Merge** -- `pd.concat` new EM rows with full existing data, deduplicate on
-   (date, code, model_short) with `keep='last'`
-6. **Save** -- Write to API (upsert) as primary + rewrite CSV as deprecated
-   backup.
-
-**Write behavior:**
-- API: Upsert on unique key `(horizon_type, code, model_type, date, target)`.
-  Only affected rows are updated; no full-table replace.
-- CSV (deprecated): Entire file is rewritten (concat + dedup + save).
-  Historical rows are preserved through the merge.
+**Steps:**
+1. Read existing combined forecasts from API
+2. Detect (date, code) pairs missing EM rows within lookback window
+3. Read data + skill metrics for gap dates
+4. Create ensembles for gap dates only
+5. Merge new rows with existing data, deduplicate
+6. Write to API (upsert) + CSV (deprecated backup)
 
 **Runtime:** Minutes.
 
-### 3. Recalculation -- yearly / on-demand
+### 3. Recalculation
 
 **Entry point:** `recalculate_skill_metrics.py`
 
 **When:** Manually triggered, typically end-of-year or after model changes.
 
-**Purpose:** Re-create all ensembles from scratch and calculate skill metrics
-for all individual models and ensembles over the full historical range. This is
-also the bootstrap path for new sites — when a site is added to the pipeline,
-running this script produces its initial ensembles and skill metrics. See
-PP-016.
+**Steps (pentad/decad):**
+1. Read all historical observations + forecasts
+2. Calculate skill metrics per (period, code, model)
+3. Create all ensembles from scratch
+4. Calculate ensemble skill metrics
+5. Save forecasts + skill metrics to API + CSV
 
-**Pipeline stages (pentad/decad):**
+**Steps (monthly/quarterly/seasonal):**
+1. Read daily runoff from API, aggregate to monthly observations
+2. Read monthly forecasts, aggregate to target horizon
+3. Calculate skill metrics (including CRPS)
+4. Create ensembles (EM, Skilled Mean, Naive Mean)
+5. Save to API + CSV
 
-1. **Read ALL historical data** -- Observations + individual model forecasts
-   across the full date range
-2. **Calculate individual model skill metrics** --
-   `skill_metrics.calculate_skill_metrics_pentad/decade()`:
-   - Merge observed & simulated on (code, date)
-   - Group by (period_in_year, code, model_short)
-   - Calculate all metrics per group: sdivsigma, NSE, MAE, accuracy, delta,
-     n_pairs, PBIAS, KGE-LF, NSE-log
-3. **Create all ensembles from scratch** -- Filter models by skill thresholds,
-   create EM (and Skilled Mean, Naive Mean for monthly). This re-derives
-   ensembles even if they already exist from operational runs.
-4. **Calculate ensemble skill metrics** -- Same metrics as step 2, applied to
-   the newly created ensemble rows.
-5. **Save forecasts** (individual + ensemble) to API (upsert) + CSV
-   (deprecated backup)
-6. **Save skill metrics** to API (upsert) + CSV (deprecated backup)
-
-**Pipeline stages (monthly):**
-
-1. **Read all daily runoff from API** -> aggregate to monthly observations
-2. **Read all monthly long-term forecasts from API**
-3. **Calculate skill metrics** for individual models
-4. **Create ensembles** (EM, Skilled Mean, Naive Mean) + calculate their
-   skill metrics (including CRPS for probabilistic evaluation)
-5. **Save** to API + CSV (deprecated backup)
-
-**Pipeline stages (daily):**
-
+**Steps (daily):**
 1. Read daily observations + forecasts from API
-2. Calculate all metrics: Tier 1 (sdivsigma, NSE, MAE, accuracy, delta,
-   n_pairs) + Tier 2 (PBIAS, KGE-LF, NSE-log, FDC-FHV, FDC-FLV)
-3. Save daily skill metrics to API + CSV (deprecated backup)
+2. Calculate Tier 1 + Tier 2 metrics
+3. Save daily skill metrics to API + CSV
 
 **Runtime:** Hours.
 
-**Note:** `postprocessing_forecasts.py` is **deprecated** -- it duplicates the
-recalculation logic. Use `recalculate_skill_metrics.py` instead.
-
-## Data Sources by Horizon and Mode
-
-| Horizon | Operational reads | Recalculation reads | Status |
-|---------|------------------|--------------------|-|
-| Pentad/decad forecasts | API-first, CSV-fallback | API-first, CSV-fallback | Correct (PP-010 resolved) |
-| Pentad/decad skill metrics | API-first, CSV-fallback | N/A (produces them) | Correct |
-| Monthly | API (with CSV fallback) | API (with CSV fallback) | Correct |
-| Daily | API | API | Correct |
-
-| Horizon | Writes | Status |
-|---------|--------|--------|
-| All | API (upsert) + CSV (atomic write) | CSV to be deprecated after validation |
-
-All read paths now use the API as primary source with CSV as deprecated
-fallback. NE and virtual station calculations remain in `setup_library`
-but these compute derived values, not raw data reads.
+**Note:** `postprocessing_forecasts.py` is deprecated. Use
+`recalculate_skill_metrics.py` instead.
 
 ## Skill Metrics
 
@@ -232,13 +128,14 @@ but these compute derived values, not raw data reads.
 
 | Tier | Metrics | Purpose |
 |------|---------|---------|
-| **Tier 1 (threshold)** | sdivsigma, NSE, accuracy | Used to filter models for EM inclusion |
+| **Tier 1 (threshold)** | sdivsigma, NSE, accuracy | Filter models for EM inclusion |
 | **Tier 1 (always)** | MAE, n_pairs, delta | Calculated for all models |
 | **Tier 2 (informational)** | PBIAS, KGE-LF, NSE-log | Additional quality indicators |
+| **Tier 2 (daily)** | FDC-FHV, FDC-FLV | Flow duration curve metrics |
 
 ### Ensemble filtering thresholds
 
-A model qualifies for EM inclusion only if **all three** threshold metrics pass:
+A model qualifies for EM inclusion only if **all three** pass:
 
 | Metric | Threshold | Env var |
 |--------|-----------|---------|
@@ -248,109 +145,91 @@ A model qualifies for EM inclusion only if **all three** threshold metrics pass:
 
 Setting a threshold to `'False'` disables that filter.
 
-### Skill metrics versioning
-
-Skill metrics CSVs are saved with a year tag (e.g.,
-`skill_metrics_pentad_2025.csv`). In the API, each skill metric record has a
-`date` attribute that stores the **forecast target date** (not a year) and the
-unique key is `(horizon_type, code, model_type, date, horizon_in_year)`.
-This means skill metrics are naturally versioned per forecast date --
-recalculations for different periods do not overwrite each other (PP-011
-resolved).
-
 ## Source Modules
 
 ```
 postprocessing_forecasts/
-|-- postprocessing_operational.py          Entry point: daily operational
-|-- postprocessing_maintenance.py          Entry point: nightly gap-fill
-|-- recalculate_skill_metrics.py           Entry point: yearly recalculation
-|-- postprocessing_operational_long_term.py Entry point: monthly operational
-|-- postprocessing_maintenance_long_term.py Entry point: monthly gap-fill
-|-- postprocessing_forecasts.py            DEPRECATED
+|-- postprocessing_operational.py          Entry point: daily (pentad/decad)
+|-- postprocessing_operational_long_term.py Entry point: daily (monthly/quarterly/seasonal)
+|-- postprocessing_maintenance.py          Entry point: nightly gap-fill (pentad/decad)
+|-- postprocessing_maintenance_long_term.py Entry point: nightly gap-fill (monthly/quarterly/seasonal)
+|-- recalculate_skill_metrics.py           Entry point: yearly recalculation (all horizons)
 |-- src/
-|   |-- data_reader.py         Read skill metrics + monthly data (CSV/API)
-|   |-- ensemble_calculator.py Create ensemble forecasts (EM, Skilled/Naive Mean)
-|   |-- skill_metrics.py       Calculate all skill metrics
+|   |-- aggregation.py         Monthly -> quarterly/seasonal aggregation
 |   |-- api_writer.py          Write forecasts + metrics to SAPPHIRE API
-|   |-- file_writer.py         Write forecasts + metrics to CSV
+|   |-- data_reader.py         Read skill metrics, forecasts, observations (API primary, CSV fallback)
+|   |-- ensemble_calculator.py Create ensemble forecasts (EM, Skilled Mean, Naive Mean)
+|   |-- file_writer.py         Write forecasts + metrics to CSV (deprecated)
 |   |-- gap_detector.py        Detect missing ensemble rows for maintenance
+|   |-- skill_metrics.py       Calculate all skill metrics (METRIC_REGISTRY)
+|   |-- write_diagnostics.py   Diagnostic/summary logging
 |   +-- postprocessing_tools.py Timing, logging, utilities
-+-- tests/
++-- tests/                     40 test files, ~1100 tests
 ```
 
 ## Configuration
 
-### Sensitive variables (`.env` file)
-
-These contain deployment-specific paths, URLs, or credentials and must stay in
-`.env` (never committed to git).
-
-| Variable | Description |
-|----------|-------------|
-| `ieasyhydroforecast_env_file_path` | Path to environment configuration file |
-| `ieasyforecast_intermediate_data_path` | Root directory for CSV data storage |
-| `SAPPHIRE_API_ENABLED` | Enable/disable API writes (default: `true`) |
-| `SAPPHIRE_API_URL` | API base URL (default: `http://localhost:8000`) |
-
-### Module configuration (candidates for `config.yaml`)
-
-These are non-sensitive tuning parameters for the postprocessing module. They
-currently live in environment variables but should be moved to a `config.yaml`
-file inside `postprocessing_forecasts/`. See PP-006.
-
-#### Prediction mode
-
-`SAPPHIRE_PREDICTION_MODE` controls which forecast horizons to process. The
-valid values depend on the entry point:
-
-| Value | What it processes | Used by |
-|-------|-------------------|---------|
-| `PENTAD` | Pentadal forecasts only | Operational, maintenance, recalculation |
-| `DECAD` | Decadal forecasts only | Operational, maintenance, recalculation |
-| `BOTH` | Pentad + decad (default) | Operational, maintenance, recalculation |
-| `MONTHLY` | Monthly long-term forecasts only | Recalculation only (operational/maintenance for monthly have separate entry points) |
-| `DAILY` | Daily skill metrics only | Recalculation only (no daily operational/maintenance entry point yet) |
-| `QUARTERLY` | Quarterly long-term forecasts only | Implemented |
-| `SEASONAL` | Seasonal long-term forecasts only | Implemented |
-| `ALL` | All of the above | Recalculation (runs all horizons in one invocation) |
-
-**Typical usage:** Short-term operational and maintenance runs use `BOTH`
-(default). `MONTHLY` and `DAILY` are only relevant for the recalculation
-entry point, which is the only script that handles all four horizons. The
-monthly and daily operational/maintenance modes have their own dedicated entry
-points (`postprocessing_operational_long_term.py`,
-`postprocessing_maintenance_long_term.py`) that do not read this variable.
-
-#### Recalculation parameters
+### Deployment variables (`.env`)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SAPPHIRE_SKILL_METRICS_YEAR` | Year tag used when saving skill metrics CSV files (e.g., `skill_metrics_pentad_2025.csv`). Also used to compute the forecast target date for API writes. | Current year |
-| `SAPPHIRE_SKILL_METRICS_START_YEAR` | Earliest year of historical data to include in pentad/decad skill metric calculation. Controls how many years of observed vs. modelled pairs are considered. | 20 years before current year |
-| `SAPPHIRE_RECALC_START_YEAR` | First year of the recalculation range for monthly and daily horizons. Monthly recalculation reads all daily runoff from this year onward. | (required for monthly/daily) |
-| `SAPPHIRE_RECALC_END_YEAR` | Last year of the recalculation range for monthly and daily horizons. | (required for monthly/daily) |
+| `ieasyhydroforecast_env_file_path` | Path to environment config file | -- |
+| `ieasyforecast_intermediate_data_path` | Root directory for CSV storage | -- |
+| `SAPPHIRE_API_ENABLED` | Enable/disable API writes | `true` |
+| `SAPPHIRE_API_URL` | API base URL | `http://localhost:8000` |
 
-#### Maintenance parameters
+### Prediction mode
+
+`SAPPHIRE_PREDICTION_MODE` controls which horizons to process:
+
+| Value | Processes |
+|-------|-----------|
+| `PENTAD` | Pentadal only |
+| `DECAD` | Decadal only |
+| `BOTH` | Pentad + decad (default for short-term entry points) |
+| `MONTHLY` | Monthly only |
+| `QUARTERLY` | Quarterly only |
+| `SEASONAL` | Seasonal only |
+| `DAILY` | Daily skill metrics only |
+| `ALL` | All horizons (recalculation) |
+
+Short-term entry points use `BOTH` by default. Long-term entry points
+process monthly + quarterly + seasonal regardless of this variable.
+
+### Recalculation parameters
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `POSTPROCESSING_GAPFILL_WINDOW_DAYS` | Lookback window (in days) for gap detection. Set to a larger value (e.g., 30) after prolonged server outages to backfill missed forecasts. | 7 |
+| `SAPPHIRE_SKILL_METRICS_YEAR` | Year tag for CSV filenames and API date computation | Current year |
+| `SAPPHIRE_SKILL_METRICS_START_YEAR` | Earliest year for pentad/decad calculation | 20 years ago |
+| `SAPPHIRE_RECALC_START_YEAR` | First year for monthly/daily recalculation | Required |
+| `SAPPHIRE_RECALC_END_YEAR` | Last year for monthly/daily recalculation | Required |
 
-#### Ensemble thresholds
+### Maintenance parameters
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ieasyhydroforecast_efficiency_threshold` | sdivsigma threshold for EM inclusion | 0.6 |
-| `ieasyhydroforecast_nse_threshold` | NSE threshold for EM inclusion | 0.8 |
-| `ieasyhydroforecast_accuracy_threshold` | Accuracy threshold for EM inclusion | 0.8 |
+| `POSTPROCESSING_GAPFILL_WINDOW_DAYS` | Lookback window for gap detection (increase after outages) | 7 |
 
-Setting any threshold to `'False'` disables that filter.
+### Season configuration
 
-### Output file paths (candidates for `config.yaml`)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SAPPHIRE_SEASON_START_MONTH` | First month of season (1-12) | 4 (April) |
+| `SAPPHIRE_SEASON_END_MONTH` | Last month of season (1-12) | 9 (September) |
 
-These define CSV output filenames and are non-sensitive. Currently environment
-variables; candidates for `config.yaml`.
+Cross-year wrapping is supported: `start=10, end=3` defines an Oct-Mar
+season. The `season_year` is the year of the start month.
+
+### Ensemble thresholds
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ieasyhydroforecast_efficiency_threshold` | sdivsigma threshold | 0.6 |
+| `ieasyhydroforecast_nse_threshold` | NSE threshold | 0.8 |
+| `ieasyhydroforecast_accuracy_threshold` | Accuracy threshold | 0.8 |
+
+### CSV output paths (deprecated)
 
 | Variable | Description |
 |----------|-------------|
@@ -363,8 +242,6 @@ variables; candidates for `config.yaml`.
 
 ## Testing
 
-Run tests via the project test runner from the `apps/` directory:
-
 ```bash
 cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts
@@ -376,176 +253,3 @@ Or directly:
 cd apps
 SAPPHIRE_TEST_ENV=True pytest postprocessing_forecasts/tests/ -v
 ```
-
-## Open Issues
-
-Issues identified during pipeline review (2026-02-26). These need detailed
-planning before implementation.
-
-### PP-006: Move non-sensitive config from env vars to config.yaml
-
-**Status:** Draft plan in `doc/plans/issues/gi_draft_pp_config_yaml.md`.
-
-**Current:** Module tuning parameters (`POSTPROCESSING_GAPFILL_WINDOW_DAYS`,
-`SAPPHIRE_PREDICTION_MODE`, recalculation year ranges, ensemble thresholds,
-output file paths) are environment variables, mixed in with sensitive
-deployment variables.
-
-**Target:** Create a `postprocessing_forecasts/config.yaml` for non-sensitive
-module configuration. Keep only deployment-specific variables (API URL, API
-enabled, env file path, data root path) in `.env`.
-
-**Benefits:** Easier to adjust parameters (e.g., increasing gapfill window to
-30 days after a server outage) without touching `.env`. Config can be version-
-controlled.
-
-**Affects:** All entry points, `gap_detector.py`, `ensemble_calculator.py`,
-`file_writer.py`
-
-### PP-007: Maintenance should read from API, not CSV — **Review**
-
-**Resolved:** `data_reader.read_combined_forecasts()` now reads from the
-postprocessing API (via `read_short_term_forecasts`) with CSV fallback.
-`gap_detector.read_combined_forecasts()` is deprecated and delegates to
-`data_reader`. `postprocessing_maintenance.py` calls `data_reader` directly.
-
-**Affects:** `data_reader.py`, `gap_detector.py`, `postprocessing_maintenance.py`
-
-**Related:** PP-013 is the monthly-specific variant of this issue.
-
-### PP-008: No audit trail for gap-filled rows
-
-**Current:** Maintenance upserts gap-filled rows silently. There is no way to
-distinguish a forecast that was available in real-time from one reconstructed
-later by the maintenance pipeline.
-
-**Target:** Add a flag (`is_backfilled: bool` or `backfilled_at: timestamp`) to
-the API schema so consumers can distinguish operational from maintenance data.
-
-**Affects:** API schema in `sapphire/services/postprocessing/` (colleague's
-domain). Coordinate before implementing.
-
-### PP-009: Stop calculating EM skill metrics on the fly in operational mode — **Review**
-
-**Resolved:** On-the-fly EM skill metric calculation has been removed from
-operational mode. The ensemble calculator now creates EM forecast rows without
-calculating skill metrics for them. EM skill metrics come from the annual
-recalculation instead.
-
-**Affects:** `ensemble_calculator.create_ensemble_forecasts()`,
-`postprocessing_operational.py`
-
-### PP-010: Pentad/decad reads should use API (operational + recalculation) -- **Review**
-
-**Resolved:** Pentad/decad reads migrated to API-first via
-`data_reader.read_observed_and_modelled_data()`. All three entry points
-(operational, recalculation, maintenance) now use the new readers.
-NE and virtual station calculations remain in `setup_library`, called
-explicitly from entry points.
-
-### PP-011: Skill metrics API unique key should include date -- **Review**
-
-**Resolved:** The API schema uses `UniqueConstraint("horizon_type", "code",
-"model_type", "date", "horizon_in_year")` and the CRUD upsert matches.
-Client-side (`api_writer._write_skill_metrics_to_api`) computes a per-row
-`date` from `horizon_in_year` + target `year` via `tl.get_date_for_pentad()`,
-`tl.get_date_for_decad()`, or `date(year, month, 1)`. Different
-recalculation years produce different `date` values, so skill metrics are
-naturally versioned and do not overwrite across periods.
-
-### PP-012: Daily ensemble creation
-
-**Current:** Daily skill metrics exist (Tier 2: FDC, thresholds) but there are
-no daily ensemble forecasts (no EM/Skilled Mean/Naive Mean for daily horizon).
-
-**Decision:** Yes, implement daily ensembles. The ensemble machinery is already
-parameterized and can be extended to the daily horizon. The forecast dashboard
-consumes these.
-
-**Affects:** `ensemble_calculator.py`, `recalculate_skill_metrics.py`,
-potentially new `postprocessing_operational_daily.py`
-
-### PP-013: Monthly maintenance uses CSV-first gap detection — **Review**
-
-**Resolved:** `data_reader.read_monthly_combined_forecasts()` now reads from
-the postprocessing API (via `read_long_term_forecasts`) with CSV fallback.
-Normalization adds `month_in_year` and `forecasted_discharge` (from `q50`)
-for compatibility with the gap detector and merge-back logic.
-
-**Affects:** `data_reader.py`
-
-### PP-015: Move NE creation from setup_library to postprocessing_forecasts
-
-**Current:** NE (Neural Ensemble) creation and many ensemble-related methods
-live in `setup_library` (`iEasyHydroForecast`), not in `postprocessing_forecasts`
-where they logically belong. This module only receives NE rows and excludes them
-from EM candidates.
-
-**Target:** Move NE creation and related ensemble logic into
-`postprocessing_forecasts`. First step: audit `setup_library` to identify all
-NE-related code and confirm that `postprocessing_forecasts` does not currently
-calculate NE at all.
-
-**Affects:** `iEasyHydroForecast/setup_library.py`, `postprocessing_forecasts/src/ensemble_calculator.py`
-
-### PP-016: Recalculation is the bootstrap path for new sites
-
-**Current behavior (keep as-is):** `recalculate_skill_metrics.py` creates all
-ensembles (EM, Skilled Mean, Naive Mean) from scratch and calculates skill
-metrics for both individual models and ensembles in one pass. For existing
-sites this re-derives ensembles that already exist from operational runs; for
-new sites it is the only way to produce initial ensembles and skill metrics.
-
-**Decision:** Keep the current behavior. The annual recalculation always
-re-creates all ensembles from scratch for all sites, including any newly added
-ones.
-
-**Automatic new-site detection:** Rather than requiring the operator to
-manually trigger recalculation when a new site is added, the maintenance
-pipeline should detect new sites automatically:
-
-1. Maintenance already reads existing forecasts and skill metrics nightly.
-2. Compare site codes: `sites_in_forecasts - sites_in_skill_metrics` =
-   new sites.
-3. If new sites are detected:
-   - Log: "New sites detected: {new_sites}, triggering recalculation"
-   - Trigger `recalculate_skill_metrics.py` as a **separate background
-     process** (not inline — recalculation takes hours and must not block
-     the nightly gap-fill).
-   - Maintenance continues with its normal gap-fill for existing sites.
-4. On the next nightly run, the new sites will have skill metrics and
-   can participate in normal gap-fill.
-
-This approach is self-contained (no cross-module coupling with
-`preprocessing_runoff`), catches new sites regardless of how they were added,
-and reuses infrastructure that maintenance already has (forecast + skill
-metric reads).
-
-**Affects:** `postprocessing_maintenance.py`,
-`postprocessing_maintenance_long_term.py` (new-site detection logic),
-`recalculate_skill_metrics.py` (must support being invoked as a background
-process)
-
-### PP-017: Quarterly forecast postprocessing — DONE
-
-**Status:** Implemented (Phase 4b). See `doc/plans/postprocessing_unified_plan.md`.
-
-Quarterly forecasts are aggregated from single-month forecasts (all 9 models)
-via `src/aggregation.py`. Ensembles (EM, Skilled Mean, Naive Mean), skill
-metrics (point + CRPS), and API/CSV writers all support `horizon_type='quarter'`.
-Existing long-term entry points (`postprocessing_operational_long_term.py`,
-`postprocessing_maintenance_long_term.py`, `recalculate_skill_metrics.py`)
-process quarterly alongside monthly. 76 quarterly tests across 6 test files.
-
-### PP-018: Seasonal forecast postprocessing — DONE
-
-**Status:** Implemented (Phase 4b). See `doc/plans/postprocessing_unified_plan.md`.
-
-Seasonal forecasts are aggregated from single-month forecasts via
-`src/aggregation.py`. Season is configurable via `SAPPHIRE_SEASON_START_MONTH`
-/ `SAPPHIRE_SEASON_END_MONTH` (default Apr-Sep), with cross-year wrapping
-(e.g. Oct-Mar). Ensembles, skill metrics, and writers all support
-`horizon_type='season'`. 14 dedicated seasonal tests in
-`test_seasonal_integration.py` (Skilled Mean, EM composition, skill edge
-cases, data reader, file writer, cross-year pipeline with numerical
-verification).
