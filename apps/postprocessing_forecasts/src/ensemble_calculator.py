@@ -1,6 +1,6 @@
 """Create ensemble forecasts from pre-calculated skill metrics.
 
-Extracted from forecast_library.py calculate_skill_metrics_pentad() lines
+Extracted from forecast_library.py calculate_skill_metrics() lines
 1944-2176.  This module lets the operational entry point create ensembles
 WITHOUT recalculating skill metrics from scratch.
 """

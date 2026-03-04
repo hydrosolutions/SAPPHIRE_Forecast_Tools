@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHyd
 sys.path.insert(0, os.path.dirname(__file__))
 
 import tag_library as tl
+from conftest import PENTAD
 from src import skill_metrics
 from src.ensemble_calculator import (
     create_ensemble_forecasts,
@@ -726,7 +727,7 @@ class TestDuplicateHandling:
                 "SAPPHIRE_SKILL_METRICS_START_YEAR": "2020",
             },
         ):
-            skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+            skill_stats, _, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
         lr = skill_stats[skill_stats["model_short"] == "LR"]
         assert len(lr) == 1
         # Merge produces 4 rows (Jan-01 sim x 2 obs + Jan-02 + Jan-03)
@@ -787,7 +788,7 @@ class TestDuplicateHandling:
                 "SAPPHIRE_SKILL_METRICS_START_YEAR": "2020",
             },
         ):
-            skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+            skill_stats, _, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
         lr = skill_stats[skill_stats["model_short"] == "LR"]
         assert len(lr) == 1
         # LR: Jan-01 obs x 2 sim + Jan-02 + Jan-03 = 4

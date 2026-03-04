@@ -21,6 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import src.horizon_config as _real_horizon_config
+from conftest import DECAD, PENTAD
+
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -214,8 +217,7 @@ def _setup_real_internal_mocks(
         side_effect=_mock_read_observed_and_modelled
     )
 
-    mock_file_writer.save_forecast_data_pentad.return_value = None
-    mock_file_writer.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data.return_value = None
 
     sys.modules["setup_library"] = mock_sl
     sys.modules["tag_library"] = real_tl
@@ -228,6 +230,7 @@ def _setup_real_internal_mocks(
     real_src.gap_detector = real_gap_detector
     real_src.skill_metrics = real_skill_metrics
     real_src.file_writer = mock_file_writer
+    real_src.horizon_config = _real_horizon_config
 
     sys.modules["src"] = real_src
     sys.modules["src.postprocessing_tools"] = real_pt
@@ -236,6 +239,7 @@ def _setup_real_internal_mocks(
     sys.modules["src.gap_detector"] = real_gap_detector
     sys.modules["src.skill_metrics"] = real_skill_metrics
     sys.modules["src.file_writer"] = mock_file_writer
+    sys.modules["src.horizon_config"] = _real_horizon_config
 
     return {
         "sl": mock_sl,
@@ -304,8 +308,8 @@ class TestOperationalWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Verify save was called
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
 
                 # Real ensemble should have been created
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
@@ -359,8 +363,8 @@ class TestOperationalWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Save is called with the original modelled (no EM)
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
                 assert len(em_rows) == 0
 
@@ -402,18 +406,30 @@ class TestOperationalWiringIntegration:
 
                 assert exc_info.value.code == 0
 
-                # Both save functions called
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                mocks["file_writer"].save_forecast_data_decade.assert_called_once()
+                # Unified save_forecast_data called twice (pentad + decad)
+                assert mocks["file_writer"].save_forecast_data.call_count == 2
+
+                # Identify pentad vs decad call by config name
+                calls = mocks["file_writer"].save_forecast_data.call_args_list
+                pentad_df = None
+                decad_df = None
+                for call in calls:
+                    cfg = call[0][0]
+                    df = call[0][1]
+                    if cfg.name == "pentad":
+                        pentad_df = df
+                    elif cfg.name == "decad":
+                        decad_df = df
+
+                assert pentad_df is not None, "save_forecast_data not called for pentad"
+                assert decad_df is not None, "save_forecast_data not called for decad"
 
                 # Pentad EM
-                pentad_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
                 pentad_em = pentad_df[pentad_df["model_short"] == "EM"]
                 assert len(pentad_em) == 1
                 assert pentad_em["forecasted_discharge"].iloc[0] == (pytest.approx(105.0))
 
                 # Decad EM
-                decad_df = mocks["file_writer"].save_forecast_data_decade.call_args[0][0]
                 decad_em = decad_df[decad_df["model_short"] == "EM"]
                 assert len(decad_em) == 1
                 assert decad_em["forecasted_discharge"].iloc[0] == (pytest.approx(210.0))
@@ -434,7 +450,7 @@ class TestOperationalWiringIntegration:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks["file_writer"].save_forecast_data_pentad.return_value = "Error: disk full"
+                mocks["file_writer"].save_forecast_data.return_value = "Error: disk full"
 
                 module, spec = _import_operational()
                 spec.loader.exec_module(module)
@@ -510,8 +526,8 @@ class TestMaintenanceWiringIntegration:
 
                 assert exc_info.value.code == 0
 
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
                 assert len(em_rows) == 1, f"Expected 1 EM gap-fill row, got {len(em_rows)}"
                 assert em_rows["forecasted_discharge"].iloc[0] == (pytest.approx(105.0))
@@ -604,7 +620,7 @@ class TestMaintenanceWiringIntegration:
                 # Data was read but no rows match gap dates
                 mocks["data_reader"].read_observed_and_modelled_data.assert_called_once()
                 # Early return — no save
-                mocks["file_writer"].save_forecast_data_pentad.assert_not_called()
+                mocks["file_writer"].save_forecast_data.assert_not_called()
 
     def test_both_mode_fills_pentad_and_decad_gaps(self, env_setup):
         """BOTH mode with gaps in both horizons => both filled."""
@@ -686,18 +702,30 @@ class TestMaintenanceWiringIntegration:
 
                 assert exc_info.value.code == 0
 
-                # Both saved
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                mocks["file_writer"].save_forecast_data_decade.assert_called_once()
+                # Unified save_forecast_data called twice (pentad + decad)
+                assert mocks["file_writer"].save_forecast_data.call_count == 2
+
+                # Identify pentad vs decad call by config name
+                calls = mocks["file_writer"].save_forecast_data.call_args_list
+                pentad_df = None
+                decad_df = None
+                for call in calls:
+                    cfg = call[0][0]
+                    df = call[0][1]
+                    if cfg.name == "pentad":
+                        pentad_df = df
+                    elif cfg.name == "decad":
+                        decad_df = df
+
+                assert pentad_df is not None, "save_forecast_data not called for pentad"
+                assert decad_df is not None, "save_forecast_data not called for decad"
 
                 # Pentad EM
-                pentad_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
                 pentad_em = pentad_df[pentad_df["model_short"] == "EM"]
                 assert len(pentad_em) == 1
                 assert pentad_em["forecasted_discharge"].iloc[0] == (pytest.approx(105.0))
 
                 # Decad EM
-                decad_df = mocks["file_writer"].save_forecast_data_decade.call_args[0][0]
                 decad_em = decad_df[decad_df["model_short"] == "EM"]
                 assert len(decad_em) == 1
                 assert decad_em["forecasted_discharge"].iloc[0] == (pytest.approx(210.0))
@@ -794,7 +822,7 @@ class TestMismatchedInputShapes:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
+                mocks["file_writer"].save_forecast_data.assert_called_once()
 
     def test_operational_nonempty_observed_empty_modelled(self, env_setup):
         """Real observed + empty modelled => no crash, save called."""
@@ -830,8 +858,8 @@ class TestMismatchedInputShapes:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 # No modelled data => saved DF is empty (no rows to process)
                 assert saved_df.empty, (
                     f"Empty modelled input should produce empty saved DF, got {len(saved_df)} rows"
@@ -857,9 +885,9 @@ def _setup_recalc_mocks(
     observed_decad=None,
     modelled_decad=None,
 ):
-    """Set up sys.modules for recalc with real calculate_skill_metrics_*.
+    """Set up sys.modules for recalc with real calculate_skill_metrics.
 
-    Real: src.skill_metrics (calculate_skill_metrics_pentad/decade,
+    Real: src.skill_metrics (calculate_skill_metrics,
           calculate_all_skill_metrics), postprocessing_tools
     Mocked: setup_library (data reading), file_writer (save functions)
     """
@@ -897,13 +925,13 @@ def _setup_recalc_mocks(
         side_effect=_mock_read_observed_and_modelled
     )
 
-    mock_file_writer.save_forecast_data_pentad.return_value = None
-    mock_file_writer.save_forecast_data_decade.return_value = None
-    mock_file_writer.save_pentadal_skill_metrics.return_value = None
-    mock_file_writer.save_decadal_skill_metrics.return_value = None
+    mock_file_writer.save_forecast_data.return_value = None
+    mock_file_writer.save_skill_metrics.return_value = None
+
+    import tag_library as real_tl
 
     sys.modules["setup_library"] = mock_sl
-    sys.modules["tag_library"] = MagicMock()
+    sys.modules["tag_library"] = real_tl
 
     real_src = MagicMock()
     real_src.postprocessing_tools = real_pt
@@ -911,12 +939,14 @@ def _setup_recalc_mocks(
     real_src.data_reader = mock_data_reader
     real_src.ensemble_calculator = real_ensemble_calc
     real_src.file_writer = mock_file_writer
+    real_src.horizon_config = _real_horizon_config
     sys.modules["src"] = real_src
     sys.modules["src.postprocessing_tools"] = real_pt
     sys.modules["src.skill_metrics"] = real_skill_metrics
     sys.modules["src.data_reader"] = mock_data_reader
     sys.modules["src.ensemble_calculator"] = real_ensemble_calc
     sys.modules["src.file_writer"] = mock_file_writer
+    sys.modules["src.horizon_config"] = _real_horizon_config
 
     return {
         "sl": mock_sl,
@@ -977,7 +1007,7 @@ def _make_recalc_modelled(
 
 
 class TestRecalcWiringIntegration:
-    """Entry point calls real calculate_skill_metrics_pentad.
+    """Entry point calls real calculate_skill_metrics.
 
     Unlike operational/maintenance wiring tests that exercise
     data_reader + ensemble_calculator, recalc wiring tests exercise
@@ -1055,7 +1085,7 @@ class TestRecalcWiringIntegration:
         return observed, modelled
 
     def test_pentad_real_skill_calculated_and_saved(self, env_setup):
-        """Real calculate_skill_metrics_pentad runs, saves both outputs.
+        """Real calculate_skill_metrics runs, saves both outputs.
 
         Verifies the full chain: read → calculate → save forecasts + skills.
         """
@@ -1079,11 +1109,11 @@ class TestRecalcWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Both save functions called
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                mocks["file_writer"].save_pentadal_skill_metrics.assert_called_once()
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                mocks["file_writer"].save_skill_metrics.assert_called_once()
 
                 # Verify skill metrics have correct structure
-                saved_skill = mocks["file_writer"].save_pentadal_skill_metrics.call_args[0][0]
+                saved_skill = mocks["file_writer"].save_skill_metrics.call_args[0][1]
                 assert not saved_skill.empty, "Skill metrics should not be empty"
                 for col in [
                     "pentad_in_year",
@@ -1130,7 +1160,7 @@ class TestRecalcWiringIntegration:
 
                 assert exc_info.value.code == 0
 
-                saved_fc = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                saved_fc = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_fc[saved_fc["model_short"] == "EM"]
                 assert len(em_rows) == 5, f"Expected 5 EM rows (5 dates), got {len(em_rows)}"
 
@@ -1184,9 +1214,7 @@ class TestRecalcWiringIntegration:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks[
-                    "file_writer"
-                ].save_pentadal_skill_metrics.return_value = "Error: write failed"
+                mocks["file_writer"].save_skill_metrics.return_value = "Error: write failed"
 
                 module, spec = _import_recalc()
                 spec.loader.exec_module(module)
@@ -1277,8 +1305,8 @@ class TestMaintenanceSurplusData:
 
                 assert exc_info.value.code == 0
 
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
                 # Merged output: 2 existing EM (Jan 5, Jan 10) + 1 new (Jan 15)
                 assert len(em_rows) == 3, (
@@ -1337,7 +1365,7 @@ class TestNEExclusionIntegration:
 
                 assert exc_info.value.code == 0
 
-                saved_df = mocks["file_writer"].save_forecast_data_pentad.call_args[0][0]
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
                 assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
                 em_discharge = em_rows["forecasted_discharge"].iloc[0]
@@ -1421,8 +1449,8 @@ class TestCrossWorkflowRoundtrip:
         # Step 2: Run recalc — capture skill CSV write
         saved_skills = {}
 
-        def capture_save_skill(df, year=None):
-            """Intercept save_pentadal_skill_metrics to write CSV."""
+        def capture_save_skill(config, df, year=None):
+            """Intercept save_skill_metrics to write CSV."""
             csv_path = os.path.join(
                 str(tmp_path),
                 "skill_pentad.csv",
@@ -1438,7 +1466,7 @@ class TestCrossWorkflowRoundtrip:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks["file_writer"].save_pentadal_skill_metrics.side_effect = capture_save_skill
+                mocks["file_writer"].save_skill_metrics.side_effect = capture_save_skill
 
                 module, spec = _import_recalc()
                 spec.loader.exec_module(module)
@@ -1543,7 +1571,7 @@ class TestVaryingDelta:
 
                 assert exc_info.value.code == 0
 
-                saved_skill = mocks["file_writer"].save_pentadal_skill_metrics.call_args[0][0]
+                saved_skill = mocks["file_writer"].save_skill_metrics.call_args[0][1]
 
                 lr_15001 = saved_skill[
                     (saved_skill["code"] == "15001") & (saved_skill["model_short"] == "LR")
@@ -1571,10 +1599,10 @@ class TestVaryingDelta:
 # TestLogMostRecentForecasts (#35)
 # ===================================================================
 class TestLogMostRecentForecasts:
-    """log_most_recent_forecasts_pentad/decade doesn't crash."""
+    """log_most_recent_forecasts(config, ...) doesn't crash."""
 
     def test_pentad_log_no_crash_with_em(self, env_setup):
-        """log_most_recent_forecasts_pentad on typical data + EM rows."""
+        """log_most_recent_forecasts on typical pentad data + EM rows."""
         from src import postprocessing_tools as pt
 
         modelled = _make_modelled_df(
@@ -1597,20 +1625,20 @@ class TestLogMostRecentForecasts:
         )
         modelled = pd.concat([modelled, em_rows], ignore_index=True)
 
-        result = pt.log_most_recent_forecasts_pentad(modelled)
+        result = pt.log_most_recent_forecasts(PENTAD, modelled)
         assert isinstance(result, pd.DataFrame)
         assert not result.empty
 
     def test_pentad_log_empty_df(self, env_setup):
-        """log_most_recent_forecasts_pentad on empty DataFrame."""
+        """log_most_recent_forecasts on empty DataFrame."""
         from src import postprocessing_tools as pt
 
-        result = pt.log_most_recent_forecasts_pentad(pd.DataFrame())
+        result = pt.log_most_recent_forecasts(PENTAD, pd.DataFrame())
         assert isinstance(result, pd.DataFrame)
         assert result.empty
 
     def test_decade_log_no_crash(self, env_setup):
-        """log_most_recent_forecasts_decade on typical decad data."""
+        """log_most_recent_forecasts on typical decad data."""
         from src import postprocessing_tools as pt
 
         modelled = _make_modelled_df(
@@ -1620,6 +1648,6 @@ class TestLogMostRecentForecasts:
             dates=[pd.Timestamp("2024-01-10")],
         )
 
-        result = pt.log_most_recent_forecasts_decade(modelled)
+        result = pt.log_most_recent_forecasts(DECAD, modelled)
         assert isinstance(result, pd.DataFrame)
         assert not result.empty

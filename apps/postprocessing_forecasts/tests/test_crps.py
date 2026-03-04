@@ -10,12 +10,9 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.skill_metrics import calculate_crps
-
 
 # Standard quantile levels used in SAPPHIRE long-term forecasts
 QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
@@ -28,19 +25,21 @@ class TestCrpsBasic:
         """When all quantiles equal the observation, CRPS = 0."""
         observed = np.array([100.0])
         # All quantiles predict exactly 100.0
-        quantile_forecasts = np.array([[100.0, 100.0, 100.0, 100.0,
-                                        100.0, 100.0, 100.0]])
+        quantile_forecasts = np.array([[100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert result == pytest.approx(0.0, abs=1e-10)
 
     def test_crps_is_non_negative(self):
         """CRPS is always >= 0."""
         observed = np.array([100.0, 120.0, 80.0])
-        quantile_forecasts = np.array([
-            [70, 80, 90, 100, 110, 120, 130],
-            [90, 100, 110, 120, 130, 140, 150],
-            [50, 60, 70, 80, 90, 100, 110],
-        ], dtype=float)
+        quantile_forecasts = np.array(
+            [
+                [70, 80, 90, 100, 110, 120, 130],
+                [90, 100, 110, 120, 130, 140, 150],
+                [50, 60, 70, 80, 90, 100, 110],
+            ],
+            dtype=float,
+        )
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert result >= 0.0
 
@@ -49,18 +48,24 @@ class TestCrpsBasic:
         observed = np.array([100.0, 100.0, 100.0])
 
         # Good forecast: quantiles centered around 100
-        good_q = np.array([
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-        ], dtype=float)
+        good_q = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+            ],
+            dtype=float,
+        )
 
         # Bad forecast: quantiles centered around 200 (biased)
-        bad_q = np.array([
-            [180, 185, 192, 200, 208, 215, 220],
-            [180, 185, 192, 200, 208, 215, 220],
-            [180, 185, 192, 200, 208, 215, 220],
-        ], dtype=float)
+        bad_q = np.array(
+            [
+                [180, 185, 192, 200, 208, 215, 220],
+                [180, 185, 192, 200, 208, 215, 220],
+                [180, 185, 192, 200, 208, 215, 220],
+            ],
+            dtype=float,
+        )
 
         crps_good = calculate_crps(observed, good_q, QUANTILE_LEVELS)
         crps_bad = calculate_crps(observed, bad_q, QUANTILE_LEVELS)
@@ -90,17 +95,16 @@ class TestCrpsBasic:
         q_single = np.array([[80, 85, 92, 100, 108, 115, 120]], dtype=float)
 
         observed_double = np.array([100.0, 100.0])
-        q_double = np.array([
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-        ], dtype=float)
+        q_double = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+            ],
+            dtype=float,
+        )
 
-        crps_single = calculate_crps(
-            observed_single, q_single, QUANTILE_LEVELS
-        )
-        crps_double = calculate_crps(
-            observed_double, q_double, QUANTILE_LEVELS
-        )
+        crps_single = calculate_crps(observed_single, q_single, QUANTILE_LEVELS)
+        crps_double = calculate_crps(observed_double, q_double, QUANTILE_LEVELS)
         assert crps_single == pytest.approx(crps_double, rel=1e-10)
 
 
@@ -190,9 +194,7 @@ class TestCrpsHandCalculated:
             tau=0.95, q=140: u=-40, rho = -40*(0.95-1) = 40*0.05 = 2.0
         """
         observed = np.array([100.0])
-        quantile_forecasts = np.array(
-            [[60.0, 70.0, 85.0, 100.0, 115.0, 130.0, 140.0]]
-        )
+        quantile_forecasts = np.array([[60.0, 70.0, 85.0, 100.0, 115.0, 130.0, 140.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
 
         losses = np.array([2.0, 3.0, 3.75, 0.0, 3.75, 3.0, 2.0])
@@ -207,9 +209,7 @@ class TestCrpsEdgeCases:
     def test_single_observation(self):
         """Works with a single observation."""
         observed = np.array([50.0])
-        quantile_forecasts = np.array(
-            [[30.0, 35.0, 42.0, 50.0, 58.0, 65.0, 70.0]]
-        )
+        quantile_forecasts = np.array([[30.0, 35.0, 42.0, 50.0, 58.0, 65.0, 70.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert isinstance(result, float)
         assert result >= 0.0
@@ -217,19 +217,19 @@ class TestCrpsEdgeCases:
     def test_equal_quantiles_observation_matches(self):
         """All quantiles equal and match observation -> CRPS = 0."""
         observed = np.array([42.0, 42.0])
-        quantile_forecasts = np.array([
-            [42.0] * 7,
-            [42.0] * 7,
-        ])
+        quantile_forecasts = np.array(
+            [
+                [42.0] * 7,
+                [42.0] * 7,
+            ]
+        )
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert result == pytest.approx(0.0, abs=1e-10)
 
     def test_zero_observed_value(self):
         """Zero observation is valid (not missing)."""
         observed = np.array([0.0])
-        quantile_forecasts = np.array(
-            [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
-        )
+        quantile_forecasts = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert result == pytest.approx(0.0, abs=1e-10)
 
@@ -247,9 +247,7 @@ class TestCrpsEdgeCases:
     def test_very_small_positive_values(self):
         """Very small positive values work correctly."""
         observed = np.array([0.001])
-        quantile_forecasts = np.array(
-            [[0.0005, 0.0006, 0.0008, 0.001, 0.0012, 0.0014, 0.0015]]
-        )
+        quantile_forecasts = np.array([[0.0005, 0.0006, 0.0008, 0.001, 0.0012, 0.0014, 0.0015]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isfinite(result)
         assert result >= 0.0
@@ -259,10 +257,9 @@ class TestCrpsEdgeCases:
         n = 1000
         rng = np.random.RandomState(42)
         observed = rng.uniform(50, 200, size=n)
-        quantile_forecasts = np.column_stack([
-            observed + rng.normal(0, 10, size=n) * (tau - 0.5) * 2
-            for tau in QUANTILE_LEVELS
-        ])
+        quantile_forecasts = np.column_stack(
+            [observed + rng.normal(0, 10, size=n) * (tau - 0.5) * 2 for tau in QUANTILE_LEVELS]
+        )
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isfinite(result)
         assert result >= 0.0
@@ -283,31 +280,38 @@ class TestCrpsEdgeCases:
         """
         # Two valid observations
         observed_valid = np.array([100.0, 100.0])
-        q_valid = np.array([
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-        ], dtype=float)
+        q_valid = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+            ],
+            dtype=float,
+        )
         crps_valid = calculate_crps(observed_valid, q_valid, QUANTILE_LEVELS)
 
         # Same two + one NaN
         observed_with_nan = np.array([100.0, 100.0, np.nan])
-        q_with_nan = np.array([
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],  # ignored
-        ], dtype=float)
-        crps_with_nan = calculate_crps(
-            observed_with_nan, q_with_nan, QUANTILE_LEVELS
+        q_with_nan = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],  # ignored
+            ],
+            dtype=float,
         )
+        crps_with_nan = calculate_crps(observed_with_nan, q_with_nan, QUANTILE_LEVELS)
         assert crps_valid == pytest.approx(crps_with_nan, rel=1e-10)
 
     def test_all_nan_observations_returns_nan(self):
         """All NaN observations -> return NaN."""
         observed = np.array([np.nan, np.nan])
-        quantile_forecasts = np.array([
-            [80, 85, 92, 100, 108, 115, 120],
-            [80, 85, 92, 100, 108, 115, 120],
-        ], dtype=float)
+        quantile_forecasts = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [80, 85, 92, 100, 108, 115, 120],
+            ],
+            dtype=float,
+        )
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isnan(result)
 
@@ -321,9 +325,7 @@ class TestCrpsEdgeCases:
         to detect incomplete quantile distributions.
         """
         observed = np.array([100.0])
-        quantile_forecasts = np.array(
-            [[np.nan, np.nan, np.nan, 100.0, np.nan, np.nan, np.nan]]
-        )
+        quantile_forecasts = np.array([[np.nan, np.nan, np.nan, 100.0, np.nan, np.nan, np.nan]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isnan(result)
 
@@ -334,9 +336,7 @@ class TestCrpsEdgeCases:
         scoring rule and should handle any real-valued inputs.
         """
         observed = np.array([-10.0])
-        quantile_forecasts = np.array(
-            [[-20.0, -15.0, -12.0, -10.0, -8.0, -5.0, 0.0]]
-        )
+        quantile_forecasts = np.array([[-20.0, -15.0, -12.0, -10.0, -8.0, -5.0, 0.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isfinite(result)
         assert result >= 0.0

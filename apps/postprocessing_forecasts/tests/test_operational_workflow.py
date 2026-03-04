@@ -11,6 +11,8 @@ import pytest
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, SCRIPT_DIR)
 
+import src.horizon_config as _real_horizon_config
+
 
 def import_operational_module():
     """Import the postprocessing_operational module."""
@@ -64,8 +66,7 @@ def _setup_mocks(prediction_mode, mock_data, mock_skill):
     mock_data_reader.read_skill_metrics.return_value = mock_skill
     mock_ensemble_calc.create_ensemble_forecasts.return_value = (mock_data, mock_skill)
 
-    mock_file_writer.save_forecast_data_pentad.return_value = None
-    mock_file_writer.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data.return_value = None
 
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
@@ -85,6 +86,7 @@ def _setup_mocks(prediction_mode, mock_data, mock_skill):
     sys.modules["src.ensemble_calculator"] = mock_ensemble_calc
     sys.modules["src.skill_metrics"] = mock_skill_metrics
     sys.modules["src.file_writer"] = mock_file_writer
+    sys.modules["src.horizon_config"] = _real_horizon_config
 
     return {
         "sl": mock_sl,
@@ -100,7 +102,7 @@ class TestOperationalWorkflow:
     """Tests for the operational entry point."""
 
     def test_pentad_mode_no_skill_recalc(self, mock_data, mock_skill):
-        """PENTAD mode should NOT call calculate_skill_metrics_pentad."""
+        """PENTAD mode should NOT call calculate_skill_metrics."""
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks("PENTAD", mock_data, mock_skill)
@@ -114,7 +116,7 @@ class TestOperationalWorkflow:
 
                 assert exc_info.value.code == 0
                 # Key assertion: no skill metric recalculation
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_not_called()
+                mocks["skill_metrics"].calculate_skill_metrics.assert_not_called()
                 # But skill metrics were READ
                 mocks["data_reader"].read_skill_metrics.assert_called()
 
@@ -164,7 +166,7 @@ class TestOperationalWorkflow:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks("PENTAD", mock_data, mock_skill)
-                mocks["file_writer"].save_forecast_data_pentad.return_value = "Error: write failed"
+                mocks["file_writer"].save_forecast_data.return_value = "Error: write failed"
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -263,10 +265,11 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks("BOTH", mock_data, mock_skill)
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_pentad.return_value = "Error: pentad write failed"
-                mocks["file_writer"].save_forecast_data_decade.return_value = None
+                # Pentad is called first, then decad
+                mocks["file_writer"].save_forecast_data.side_effect = [
+                    "Error: pentad write failed",
+                    None,
+                ]
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -283,10 +286,11 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks("BOTH", mock_data, mock_skill)
-                mocks["file_writer"].save_forecast_data_pentad.return_value = None
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_decade.return_value = "Error: decad write failed"
+                # Pentad is called first, then decad
+                mocks["file_writer"].save_forecast_data.side_effect = [
+                    None,
+                    "Error: decad write failed",
+                ]
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -303,12 +307,11 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks("BOTH", mock_data, mock_skill)
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_pentad.return_value = "Error: pentad write failed"
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_decade.return_value = "Error: decad write failed"
+                # Pentad is called first, then decad
+                mocks["file_writer"].save_forecast_data.side_effect = [
+                    "Error: pentad write failed",
+                    "Error: decad write failed",
+                ]
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -374,7 +377,7 @@ class TestOperationalEdgeCases:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
+                mocks["file_writer"].save_forecast_data.assert_called_once()
 
 
 class TestBoundaryDaySkipBehavior:
@@ -403,7 +406,7 @@ class TestBoundaryDaySkipBehavior:
                 assert exc_info.value.code == 0
                 # No data reading or writing should occur
                 mocks["data_reader"].read_observed_and_modelled_data.assert_not_called()
-                mocks["file_writer"].save_forecast_data_pentad.assert_not_called()
+                mocks["file_writer"].save_forecast_data.assert_not_called()
                 mocks["data_reader"].read_skill_metrics.assert_not_called()
 
     def test_decad_skips_on_non_decad_day(self, mock_data, mock_skill):
@@ -421,7 +424,7 @@ class TestBoundaryDaySkipBehavior:
 
                 assert exc_info.value.code == 0
                 mocks["data_reader"].read_observed_and_modelled_data.assert_not_called()
-                mocks["file_writer"].save_forecast_data_decade.assert_not_called()
+                mocks["file_writer"].save_forecast_data.assert_not_called()
 
     def test_both_mode_skips_both_on_non_boundary_day(
         self,
@@ -443,8 +446,7 @@ class TestBoundaryDaySkipBehavior:
 
                 assert exc_info.value.code == 0
                 mocks["data_reader"].read_observed_and_modelled_data.assert_not_called()
-                mocks["file_writer"].save_forecast_data_pentad.assert_not_called()
-                mocks["file_writer"].save_forecast_data_decade.assert_not_called()
+                mocks["file_writer"].save_forecast_data.assert_not_called()
 
     def test_both_mode_pentad_only_on_pentad_boundary(
         self,

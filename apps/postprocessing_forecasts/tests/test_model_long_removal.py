@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHyd
 sys.path.insert(0, os.path.dirname(__file__))
 
 import tag_library as tl
+from conftest import DECAD, PENTAD
 from src import data_reader, skill_metrics
 from src.ensemble_calculator import (
     composition_agg,
@@ -350,8 +351,8 @@ class TestSkillMetricsCharacterization:
                 "delta": [1.0, 1.0, 1.0, 1.0],
             }
         )
-        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(
-            observed_no_ml, simulated_sm
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics(
+            PENTAD, observed_no_ml, simulated_sm
         )
         assert not skill_stats.empty
 
@@ -387,14 +388,14 @@ class TestSkillMetricsCharacterization:
                 "model_short": ["MA"] * 8,
             }
         )
-        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(
-            observed_sm, simulated_no_ml
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics(
+            PENTAD, observed_sm, simulated_no_ml
         )
         assert not skill_stats.empty
 
     def test_pentad_groupby_uses_model_short(self, observed_sm, simulated_sm):
         """skill_stats groups by model_short, not model_long."""
-        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(observed_sm, simulated_sm)
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed_sm, simulated_sm)
         assert "model_short" in skill_stats.columns
         model_shorts = skill_stats["model_short"].unique()
         assert "MA" in model_shorts
@@ -406,7 +407,7 @@ class TestSkillMetricsCharacterization:
         MA forecasts for station 123, pentad 1: [10.2, 10.3]
         Observed for station 123, pentad 1: [10.0, 12.0]
         """
-        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(observed_sm, simulated_sm)
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed_sm, simulated_sm)
         # Check MA at station 123, pentad 1
         # pentad_in_year may be string or int depending on input dtype
         ma_123_p1 = skill_stats[
@@ -432,7 +433,7 @@ class TestSkillMetricsCharacterization:
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
         monkeypatch.setenv("ieasyhydroforecast_nse_threshold", "-1.0")
 
-        _, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed_sm, simulated_sm)
+        _, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed_sm, simulated_sm)
         em_rows = joint[(joint["model_short"] == "EM") & (joint["code"] == "123")].sort_values(
             "date"
         )
@@ -461,7 +462,7 @@ class TestSkillMetricsCharacterization:
                 "model_short": ["MA", "MA"],
             }
         )
-        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
         assert not skill_stats.empty
         assert "model_short" in skill_stats.columns
 
@@ -505,7 +506,7 @@ class TestSkillMetricsCharacterization:
                 "model_short": ["MA", "MA", "MB", "MB"],
             }
         )
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
         # EM rows exist in joint forecasts
         em_rows = joint[joint["model_short"] == "EM"]
         assert len(em_rows) == 2

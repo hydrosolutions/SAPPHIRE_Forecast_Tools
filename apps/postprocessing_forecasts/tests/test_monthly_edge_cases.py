@@ -16,48 +16,46 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.data_reader import (
-    read_monthly_observations,
-    read_monthly_forecasts,
     _aggregate_daily_to_monthly,
     _normalize_monthly_forecasts,
+    read_monthly_forecasts,
+    read_monthly_observations,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_daily_runoff(code, start, end, discharge_value=100.0):
     """Create daily runoff DataFrame matching API response structure."""
     dates = pd.date_range(start, end, freq="D")
-    return pd.DataFrame({
-        "code": code,
-        "date": [d.strftime("%Y-%m-%d") for d in dates],
-        "discharge_avg": discharge_value,
-    })
+    return pd.DataFrame(
+        {
+            "code": code,
+            "date": [d.strftime("%Y-%m-%d") for d in dates],
+            "discharge_avg": discharge_value,
+        }
+    )
 
 
 def _make_daily_runoff_with_values(code, start, end, values):
     """Create daily runoff with specific per-day discharge values."""
     dates = pd.date_range(start, end, freq="D")
-    assert len(dates) == len(values), (
-        f"Expected {len(dates)} values, got {len(values)}"
+    assert len(dates) == len(values), f"Expected {len(dates)} values, got {len(values)}"
+    return pd.DataFrame(
+        {
+            "code": code,
+            "date": [d.strftime("%Y-%m-%d") for d in dates],
+            "discharge_avg": values,
+        }
     )
-    return pd.DataFrame({
-        "code": code,
-        "date": [d.strftime("%Y-%m-%d") for d in dates],
-        "discharge_avg": values,
-    })
 
 
-def _make_long_forecast_record(
-    code, year, month, model_type="GBT", q50=120.0
-):
+def _make_long_forecast_record(code, year, month, model_type="GBT", q50=120.0):
     """Create a single long forecast record dict."""
     first_day = date(year, month, 1)
     if month == 12:
@@ -106,8 +104,12 @@ class TestAggregateEmptyData:
         result = _aggregate_daily_to_monthly(df)
         assert result.empty
         expected_cols = {
-            "code", "year", "month", "month_in_year",
-            "discharge_avg", "delta",
+            "code",
+            "year",
+            "month",
+            "month_in_year",
+            "discharge_avg",
+            "delta",
         }
         assert expected_cols.issubset(set(result.columns))
 
@@ -130,11 +132,13 @@ class TestAggregateNanHandling:
     def test_all_nan_discharge_excluded(self):
         """All NaN discharge values -> count=0, below 50% threshold."""
         dates = pd.date_range("2023-01-01", "2023-01-31", freq="D")
-        df = pd.DataFrame({
-            "code": "15013",
-            "date": [d.strftime("%Y-%m-%d") for d in dates],
-            "discharge_avg": [np.nan] * 31,
-        })
+        df = pd.DataFrame(
+            {
+                "code": "15013",
+                "date": [d.strftime("%Y-%m-%d") for d in dates],
+                "discharge_avg": [np.nan] * 31,
+            }
+        )
         result = _aggregate_daily_to_monthly(df)
         assert result.empty
 
@@ -145,11 +149,13 @@ class TestAggregateNanHandling:
         """
         dates = pd.date_range("2023-01-01", "2023-01-31", freq="D")
         values = [100.0] * 16 + [np.nan] * 15
-        df = pd.DataFrame({
-            "code": "15013",
-            "date": [d.strftime("%Y-%m-%d") for d in dates],
-            "discharge_avg": values,
-        })
+        df = pd.DataFrame(
+            {
+                "code": "15013",
+                "date": [d.strftime("%Y-%m-%d") for d in dates],
+                "discharge_avg": values,
+            }
+        )
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 1
         assert result.iloc[0]["discharge_avg"] == pytest.approx(100.0)
@@ -158,11 +164,13 @@ class TestAggregateNanHandling:
         """14 valid + 17 NaN in January (45.2%) -> excluded."""
         dates = pd.date_range("2023-01-01", "2023-01-31", freq="D")
         values = [100.0] * 14 + [np.nan] * 17
-        df = pd.DataFrame({
-            "code": "15013",
-            "date": [d.strftime("%Y-%m-%d") for d in dates],
-            "discharge_avg": values,
-        })
+        df = pd.DataFrame(
+            {
+                "code": "15013",
+                "date": [d.strftime("%Y-%m-%d") for d in dates],
+                "discharge_avg": values,
+            }
+        )
         result = _aggregate_daily_to_monthly(df)
         assert result.empty
 
@@ -183,25 +191,24 @@ class TestAggregateDateBoundaries:
         14 days = 48.3% -> excluded.
         """
         # 15 days: included
-        df_ok = _make_daily_runoff(
-            "15013", "2024-02-01", "2024-02-15", 100.0
-        )
+        df_ok = _make_daily_runoff("15013", "2024-02-01", "2024-02-15", 100.0)
         result_ok = _aggregate_daily_to_monthly(df_ok)
         assert len(result_ok) == 1
 
         # 14 days: excluded
-        df_bad = _make_daily_runoff(
-            "15013", "2024-02-01", "2024-02-14", 100.0
-        )
+        df_bad = _make_daily_runoff("15013", "2024-02-01", "2024-02-14", 100.0)
         result_bad = _aggregate_daily_to_monthly(df_bad)
         assert result_bad.empty
 
     def test_dec_jan_year_boundary(self):
         """December 2022 and January 2023 are separate months."""
-        df = pd.concat([
-            _make_daily_runoff("15013", "2022-12-01", "2022-12-31", 50.0),
-            _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 70.0),
-        ], ignore_index=True)
+        df = pd.concat(
+            [
+                _make_daily_runoff("15013", "2022-12-01", "2022-12-31", 50.0),
+                _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 70.0),
+            ],
+            ignore_index=True,
+        )
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 2
         dec = result[(result["year"] == 2022) & (result["month"] == 12)]
@@ -214,10 +221,13 @@ class TestAggregateDateBoundaries:
 
         March 31 -> month 3, April 1 -> month 4.
         """
-        df = pd.concat([
-            _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 80.0),
-            _make_daily_runoff("15013", "2023-04-01", "2023-04-30", 120.0),
-        ], ignore_index=True)
+        df = pd.concat(
+            [
+                _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 80.0),
+                _make_daily_runoff("15013", "2023-04-01", "2023-04-30", 120.0),
+            ],
+            ignore_index=True,
+        )
         result = _aggregate_daily_to_monthly(df)
         mar = result[result["month"] == 3]
         apr = result[result["month"] == 4]
@@ -254,11 +264,13 @@ class TestAggregateValueBoundaries:
         dates = pd.date_range("2023-06-01", "2023-06-30", freq="D")
         # 30 days with values 1..30; mean = 15.5
         values = list(range(1, 31))
-        df = pd.DataFrame({
-            "code": "15013",
-            "date": [d.strftime("%Y-%m-%d") for d in dates],
-            "discharge_avg": [float(v) for v in values],
-        })
+        df = pd.DataFrame(
+            {
+                "code": "15013",
+                "date": [d.strftime("%Y-%m-%d") for d in dates],
+                "discharge_avg": [float(v) for v in values],
+            }
+        )
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 1
         assert result.iloc[0]["discharge_avg"] == pytest.approx(15.5)
@@ -274,24 +286,26 @@ class TestAggregateDuplicates:
         and contribute to the mean.
         """
         dates = pd.date_range("2023-01-01", "2023-01-31", freq="D")
-        df1 = pd.DataFrame({
-            "code": "15013",
-            "date": [d.strftime("%Y-%m-%d") for d in dates],
-            "discharge_avg": 100.0,
-        })
+        df1 = pd.DataFrame(
+            {
+                "code": "15013",
+                "date": [d.strftime("%Y-%m-%d") for d in dates],
+                "discharge_avg": 100.0,
+            }
+        )
         # Add one duplicate day with a different value
-        dup = pd.DataFrame({
-            "code": ["15013"],
-            "date": ["2023-01-15"],
-            "discharge_avg": [200.0],
-        })
+        dup = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "date": ["2023-01-15"],
+                "discharge_avg": [200.0],
+            }
+        )
         df = pd.concat([df1, dup], ignore_index=True)
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 1
         # 31 days of 100.0 + 1 day of 200.0 = 3300.0 / 32 = 103.125
-        assert result.iloc[0]["discharge_avg"] == pytest.approx(
-            3300.0 / 32.0
-        )
+        assert result.iloc[0]["discharge_avg"] == pytest.approx(3300.0 / 32.0)
 
 
 class TestAggregateMultiEntity:
@@ -307,9 +321,7 @@ class TestAggregateMultiEntity:
             else:
                 end_date = date(2023, m + 1, 1) - pd.Timedelta(days=1)
                 end = str(end_date)
-            frames.append(
-                _make_daily_runoff("15013", start, end, float(m * 10))
-            )
+            frames.append(_make_daily_runoff("15013", start, end, float(m * 10)))
         df = pd.concat(frames, ignore_index=True)
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 12
@@ -320,11 +332,7 @@ class TestAggregateMultiEntity:
         codes = ["15013", "15020", "15030", "15040"]
         frames = []
         for i, code in enumerate(codes):
-            frames.append(
-                _make_daily_runoff(
-                    code, "2023-06-01", "2023-06-30", float((i + 1) * 50)
-                )
-            )
+            frames.append(_make_daily_runoff(code, "2023-06-01", "2023-06-30", float((i + 1) * 50)))
         df = pd.concat(frames, ignore_index=True)
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 4
@@ -332,9 +340,7 @@ class TestAggregateMultiEntity:
         # Check values are station-specific
         for i, code in enumerate(codes):
             row = result[result["code"] == code]
-            assert row.iloc[0]["discharge_avg"] == pytest.approx(
-                float((i + 1) * 50)
-            )
+            assert row.iloc[0]["discharge_avg"] == pytest.approx(float((i + 1) * 50))
 
 
 class TestAggregateDelta:
@@ -342,10 +348,13 @@ class TestAggregateDelta:
 
     def test_delta_with_two_years(self):
         """Two years of data -> std is population-based, delta > 0."""
-        df = pd.concat([
-            _make_daily_runoff("15013", "2022-06-01", "2022-06-30", 100.0),
-            _make_daily_runoff("15013", "2023-06-01", "2023-06-30", 200.0),
-        ], ignore_index=True)
+        df = pd.concat(
+            [
+                _make_daily_runoff("15013", "2022-06-01", "2022-06-30", 100.0),
+                _make_daily_runoff("15013", "2023-06-01", "2023-06-30", 200.0),
+            ],
+            ignore_index=True,
+        )
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 2
         # std([100, 200]) with ddof=1 = 70.71...
@@ -355,11 +364,14 @@ class TestAggregateDelta:
 
     def test_delta_identical_years_is_zero(self):
         """Multiple years with identical discharge -> std=0, delta=0."""
-        df = pd.concat([
-            _make_daily_runoff("15013", "2021-03-01", "2021-03-31", 100.0),
-            _make_daily_runoff("15013", "2022-03-01", "2022-03-31", 100.0),
-            _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 100.0),
-        ], ignore_index=True)
+        df = pd.concat(
+            [
+                _make_daily_runoff("15013", "2021-03-01", "2021-03-31", 100.0),
+                _make_daily_runoff("15013", "2022-03-01", "2022-03-31", 100.0),
+                _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 100.0),
+            ],
+            ignore_index=True,
+        )
         result = _aggregate_daily_to_monthly(df)
         assert len(result) == 3
         for _, row in result.iterrows():
@@ -367,14 +379,17 @@ class TestAggregateDelta:
 
     def test_delta_differs_by_month(self):
         """Different months for the same station get different deltas."""
-        df = pd.concat([
-            # Jan: 100, 200 -> std = 70.71
-            _make_daily_runoff("15013", "2022-01-01", "2022-01-31", 100.0),
-            _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 200.0),
-            # Feb: 50, 50 -> std = 0
-            _make_daily_runoff("15013", "2022-02-01", "2022-02-28", 50.0),
-            _make_daily_runoff("15013", "2023-02-01", "2023-02-28", 50.0),
-        ], ignore_index=True)
+        df = pd.concat(
+            [
+                # Jan: 100, 200 -> std = 70.71
+                _make_daily_runoff("15013", "2022-01-01", "2022-01-31", 100.0),
+                _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 200.0),
+                # Feb: 50, 50 -> std = 0
+                _make_daily_runoff("15013", "2022-02-01", "2022-02-28", 50.0),
+                _make_daily_runoff("15013", "2023-02-01", "2023-02-28", 50.0),
+            ],
+            ignore_index=True,
+        )
         result = _aggregate_daily_to_monthly(df)
         jan_rows = result[result["month"] == 1]
         feb_rows = result[result["month"] == 2]
@@ -415,12 +430,9 @@ class TestNormalizeForecastsEdgeCases:
 
     def test_all_nan_quantiles(self):
         """All quantile columns are NaN -> preserved as NaN, not dropped."""
-        record = _make_long_forecast_record(
-            "15013", 2023, 1, model_type="GBT", q50=None
-        )
+        record = _make_long_forecast_record("15013", 2023, 1, model_type="GBT", q50=None)
         # Override all quantile columns to NaN
-        for col in ["q", "q_obs", "q05", "q10", "q25", "q50",
-                     "q75", "q90", "q95"]:
+        for col in ["q", "q_obs", "q05", "q10", "q25", "q50", "q75", "q90", "q95"]:
             record[col] = None
         df = pd.DataFrame([record])
         result = _normalize_monthly_forecasts(df)
@@ -445,9 +457,7 @@ class TestNormalizeForecastsEdgeCases:
 
     def test_single_record(self):
         """Single forecast record normalizes correctly."""
-        record = _make_long_forecast_record(
-            "15013", 2023, 7, model_type="MC_ALD", q50=85.0
-        )
+        record = _make_long_forecast_record("15013", 2023, 7, model_type="MC_ALD", q50=85.0)
         df = pd.DataFrame([record])
         result = _normalize_monthly_forecasts(df)
         assert len(result) == 1
@@ -459,14 +469,17 @@ class TestNormalizeForecastsEdgeCases:
     def test_all_lt_model_types_pass_through(self):
         """All long-term model types are preserved as model_short."""
         lt_models = [
-            "LR_Base", "LR_SM", "LR_SM_DT", "LR_SM_ROF",
-            "SM_GBT", "SM_GBT_LR", "SM_GBT_Norm",
-            "MC_ALD", "GBT",
+            "LR_Base",
+            "LR_SM",
+            "LR_SM_DT",
+            "LR_SM_ROF",
+            "SM_GBT",
+            "SM_GBT_LR",
+            "SM_GBT_Norm",
+            "MC_ALD",
+            "GBT",
         ]
-        records = [
-            _make_long_forecast_record("15013", 2023, 1, m, 100.0)
-            for m in lt_models
-        ]
+        records = [_make_long_forecast_record("15013", 2023, 1, m, 100.0) for m in lt_models]
         df = pd.DataFrame(records)
         result = _normalize_monthly_forecasts(df)
         assert set(result["model_short"]) == set(lt_models)
@@ -503,14 +516,17 @@ class TestReadMonthlyObservationsEdgeCases:
 
     def test_some_months_pass_some_fail_threshold(self):
         """Mix of months above and below 50% threshold."""
-        daily = pd.concat([
-            # Jan: 31 days (100%) -> pass
-            _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 100.0),
-            # Feb: 5 days (17.9%) -> fail
-            _make_daily_runoff("15013", "2023-02-01", "2023-02-05", 100.0),
-            # Mar: 31 days (100%) -> pass
-            _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 100.0),
-        ], ignore_index=True)
+        daily = pd.concat(
+            [
+                # Jan: 31 days (100%) -> pass
+                _make_daily_runoff("15013", "2023-01-01", "2023-01-31", 100.0),
+                # Feb: 5 days (17.9%) -> fail
+                _make_daily_runoff("15013", "2023-02-01", "2023-02-05", 100.0),
+                # Mar: 31 days (100%) -> pass
+                _make_daily_runoff("15013", "2023-03-01", "2023-03-31", 100.0),
+            ],
+            ignore_index=True,
+        )
         with patch("src.data_reader._read_daily_runoff_api") as mock:
             mock.return_value = daily
             result = read_monthly_observations(["15013"], 2023, 2023)
@@ -522,9 +538,7 @@ class TestReadMonthlyObservationsEdgeCases:
         frames = []
         for year in [2021, 2022, 2023]:
             frames.append(
-                _make_daily_runoff(
-                    "15013", f"{year}-06-01", f"{year}-06-30", float(year)
-                )
+                _make_daily_runoff("15013", f"{year}-06-01", f"{year}-06-30", float(year))
             )
         daily = pd.concat(frames, ignore_index=True)
         with patch("src.data_reader._read_daily_runoff_api") as mock:
@@ -550,8 +564,7 @@ class TestReadMonthlyForecastsEdgeCases:
     def test_single_station_all_12_months(self):
         """One station with forecasts for all 12 months."""
         records = [
-            _make_long_forecast_record("15013", 2023, m, "GBT", float(m * 10))
-            for m in range(1, 13)
+            _make_long_forecast_record("15013", 2023, m, "GBT", float(m * 10)) for m in range(1, 13)
         ]
         df = pd.DataFrame(records)
         with patch("src.data_reader._read_long_forecasts_api") as mock:
@@ -569,8 +582,6 @@ class TestReadMonthlyForecastsEdgeCases:
         df = pd.DataFrame(records)
         with patch("src.data_reader._read_long_forecasts_api") as mock:
             mock.return_value = df
-            result = read_monthly_forecasts(
-                ["15013", "15020", "15030"], 2023, 2023
-            )
+            result = read_monthly_forecasts(["15013", "15020", "15030"], 2023, 2023)
         assert len(result) == 3
         assert set(result["code"]) == {"15013", "15020", "15030"}

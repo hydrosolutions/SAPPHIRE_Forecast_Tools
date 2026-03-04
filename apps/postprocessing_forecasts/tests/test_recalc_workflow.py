@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import src.horizon_config as _real_horizon_config
 
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, SCRIPT_DIR)
@@ -109,12 +110,9 @@ def _setup_mocks(mock_data, mock_skill):
 
     mock_data_reader.read_observed_and_modelled_data.return_value = (mock_data, mock_data)
 
-    mock_skill_metrics.calculate_skill_metrics_pentad.return_value = (mock_skill, mock_data, None)
-    mock_skill_metrics.calculate_skill_metrics_decade.return_value = (mock_skill, mock_data, None)
-    mock_file_writer.save_forecast_data_pentad.return_value = None
-    mock_file_writer.save_pentadal_skill_metrics.return_value = None
-    mock_file_writer.save_forecast_data_decade.return_value = None
-    mock_file_writer.save_decadal_skill_metrics.return_value = None
+    mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
+    mock_file_writer.save_forecast_data.return_value = None
+    mock_file_writer.save_skill_metrics.return_value = None
     mock_file_writer.save_monthly_forecast_data.return_value = None
     mock_file_writer.save_monthly_skill_metrics.return_value = None
 
@@ -153,6 +151,7 @@ def _setup_mocks(mock_data, mock_skill):
     sys.modules["src.file_writer"] = mock_file_writer
     sys.modules["src.data_reader"] = mock_data_reader
     sys.modules["src.postprocessing_tools"] = mock_pt_module
+    sys.modules["src.horizon_config"] = _real_horizon_config
 
     return {
         "sl": mock_sl,
@@ -166,7 +165,7 @@ class TestRecalcWorkflow:
     """Tests for the yearly recalculation entry point."""
 
     def test_calls_calculate_skill_metrics(self, mock_data, mock_skill):
-        """Recalc calls fl.calculate_skill_metrics_pentad (the slow path)."""
+        """Recalc calls skill_metrics.calculate_skill_metrics (the slow path)."""
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
@@ -178,8 +177,8 @@ class TestRecalcWorkflow:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 0
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_called_once()
-                mocks["file_writer"].save_pentadal_skill_metrics.assert_called_once()
+                mocks["skill_metrics"].calculate_skill_metrics.assert_called_once()
+                mocks["file_writer"].save_skill_metrics.assert_called_once()
 
     def test_saves_skill_metrics(self, mock_data, mock_skill):
         """Recalc saves skill metrics (not just forecasts)."""
@@ -194,8 +193,7 @@ class TestRecalcWorkflow:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 0
-                mocks["file_writer"].save_pentadal_skill_metrics.assert_called_once()
-                mocks["file_writer"].save_decadal_skill_metrics.assert_called_once()
+                assert mocks["file_writer"].save_skill_metrics.call_count == 2
 
     def test_both_mode_processes_both(self, mock_data, mock_skill):
         """BOTH mode processes pentad and decad."""
@@ -210,17 +208,14 @@ class TestRecalcWorkflow:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 0
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_called_once()
-                mocks["skill_metrics"].calculate_skill_metrics_decade.assert_called_once()
+                assert mocks["skill_metrics"].calculate_skill_metrics.call_count == 2
 
     def test_save_error_accumulation(self, mock_data, mock_skill):
         """Save errors cause exit code 1."""
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
-                mocks[
-                    "file_writer"
-                ].save_pentadal_skill_metrics.return_value = "Error: write failed"
+                mocks["file_writer"].save_skill_metrics.return_value = "Error: write failed"
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
@@ -244,8 +239,7 @@ class TestRecalcWorkflow:
 
                 assert exc_info.value.code == 1
                 # No calculation should have occurred
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_not_called()
-                mocks["skill_metrics"].calculate_skill_metrics_decade.assert_not_called()
+                mocks["skill_metrics"].calculate_skill_metrics.assert_not_called()
 
     def test_decad_only_mode(self, mock_data, mock_skill):
         """DECAD mode only recalculates decad metrics."""
@@ -260,9 +254,8 @@ class TestRecalcWorkflow:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 0
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_not_called()
-                mocks["skill_metrics"].calculate_skill_metrics_decade.assert_called_once()
-                mocks["file_writer"].save_decadal_skill_metrics.assert_called_once()
+                mocks["skill_metrics"].calculate_skill_metrics.assert_called_once()
+                mocks["file_writer"].save_skill_metrics.assert_called_once()
 
 
 class TestRecalcEdgeCases:
@@ -294,11 +287,9 @@ class TestRecalcEdgeCases:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 0
-                # All four pentad/decad save functions called
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
-                mocks["file_writer"].save_pentadal_skill_metrics.assert_called_once()
-                mocks["file_writer"].save_forecast_data_decade.assert_called_once()
-                mocks["file_writer"].save_decadal_skill_metrics.assert_called_once()
+                # Both pentad + decad saves called (2 each)
+                assert mocks["file_writer"].save_forecast_data.call_count == 2
+                assert mocks["file_writer"].save_skill_metrics.call_count == 2
 
 
 class TestRecalcMonthly:
@@ -343,8 +334,7 @@ class TestRecalcMonthly:
                 mocks["file_writer"].save_monthly_skill_metrics.assert_called_once()
 
                 # Pentad/decad NOT called
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_not_called()
-                mocks["skill_metrics"].calculate_skill_metrics_decade.assert_not_called()
+                mocks["skill_metrics"].calculate_skill_metrics.assert_not_called()
 
     def test_all_mode_runs_pentad_decad_and_monthly(
         self,
@@ -390,12 +380,10 @@ class TestRecalcMonthly:
                 assert exc_info.value.code == 0
 
                 # All four pipelines called
-                mocks["skill_metrics"].calculate_skill_metrics_pentad.assert_called_once()
-                mocks["skill_metrics"].calculate_skill_metrics_decade.assert_called_once()
+                assert mocks["skill_metrics"].calculate_skill_metrics.call_count == 2
                 mocks["skill_metrics"].calculate_monthly_skill_metrics.assert_called_once()
                 mocks["skill_metrics"].calculate_daily_skill_metrics.assert_called_once()
-                mocks["file_writer"].save_pentadal_skill_metrics.assert_called_once()
-                mocks["file_writer"].save_decadal_skill_metrics.assert_called_once()
+                assert mocks["file_writer"].save_skill_metrics.call_count == 2
                 mocks["file_writer"].save_monthly_skill_metrics.assert_called_once()
 
     def test_both_mode_does_not_run_monthly(self, mock_data, mock_skill):

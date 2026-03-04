@@ -12,14 +12,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 
 from src import skill_metrics
 from src.skill_metrics import (
-    METRIC_REGISTRY,
     METRIC_ORDER,
+    METRIC_REGISTRY,
     THRESHOLD_METRICS,
 )
 
@@ -50,37 +48,37 @@ class TestCalculateAllSkillMetricsHappyPath:
         std(obs, ddof=1) = sqrt(125.2/4) = sqrt(31.3) = 5.59464...
         sdivsigma = sqrt(22/4) / std = sqrt(5.5) / 5.59464 = 0.41918...
         """
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0, 105.0, 115.0, 108.0],
-            'sim': [102.0, 108.0, 106.0, 112.0, 110.0],
-            'delta': [5.0, 5.0, 5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0, 105.0, 115.0, 108.0],
+                "sim": [102.0, 108.0, 106.0, 112.0, 110.0],
+                "delta": [5.0, 5.0, 5.0, 5.0, 5.0],
+            }
         )
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
 
-        assert result['n_pairs'] == 5
-        assert abs(result['mae'] - 2.0) < 1e-10
-        assert result['accuracy'] == 1.0
-        assert result['delta'] == 5.0
-        assert abs(result['nse'] - 0.82428) < 1e-4
-        assert abs(result['sdivsigma'] - 0.41918) < 1e-4
+        assert result["n_pairs"] == 5
+        assert abs(result["mae"] - 2.0) < 1e-10
+        assert result["accuracy"] == 1.0
+        assert result["delta"] == 5.0
+        assert abs(result["nse"] - 0.82428) < 1e-4
+        assert abs(result["sdivsigma"] - 0.41918) < 1e-4
 
     def test_perfect_forecast(self):
         """obs == sim -> MAE=0, accuracy=1, NSE=1, sdivsigma=0."""
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0, 120.0],
-            'sim': [100.0, 110.0, 120.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0, 120.0],
+                "sim": [100.0, 110.0, 120.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
         )
-        assert result['mae'] == 0.0
-        assert result['accuracy'] == 1.0
-        assert result['nse'] == 1.0
-        assert result['sdivsigma'] == 0.0
-        assert result['n_pairs'] == 3
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["mae"] == 0.0
+        assert result["accuracy"] == 1.0
+        assert result["nse"] == 1.0
+        assert result["sdivsigma"] == 0.0
+        assert result["n_pairs"] == 3
 
     def test_partial_accuracy(self):
         """2 of 3 within delta -> accuracy = 2/3.
@@ -89,18 +87,18 @@ class TestCalculateAllSkillMetricsHappyPath:
         abs_diff = [2, 2, 10]
         within delta: [True, True, False] -> accuracy = 2/3
         """
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0, 120.0],
-            'sim': [102.0, 108.0, 130.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0, 120.0],
+                "sim": [102.0, 108.0, 130.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
         )
-        assert abs(result['accuracy'] - 2.0 / 3.0) < 1e-10
-        assert result['n_pairs'] == 3
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert abs(result["accuracy"] - 2.0 / 3.0) < 1e-10
+        assert result["n_pairs"] == 3
         # MAE = (2 + 2 + 10) / 3 = 14/3
-        assert abs(result['mae'] - 14.0 / 3.0) < 1e-10
+        assert abs(result["mae"] - 14.0 / 3.0) < 1e-10
 
 
 class TestCalculateAllSkillMetricsSinglePoint:
@@ -108,34 +106,34 @@ class TestCalculateAllSkillMetricsSinglePoint:
 
     def test_single_point_returns_mae_and_accuracy(self):
         """n=1: MAE and accuracy valid, sdivsigma and NSE are NaN."""
-        data = pd.DataFrame({
-            'obs': [100.0],
-            'sim': [103.0],
-            'delta': [5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0],
+                "sim": [103.0],
+                "delta": [5.0],
+            }
         )
-        assert result['n_pairs'] == 1
-        assert result['mae'] == 3.0
-        assert result['accuracy'] == 1.0  # 3 <= 5
-        assert result['delta'] == 5.0
-        assert np.isnan(result['sdivsigma'])
-        assert np.isnan(result['nse'])
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 1
+        assert result["mae"] == 3.0
+        assert result["accuracy"] == 1.0  # 3 <= 5
+        assert result["delta"] == 5.0
+        assert np.isnan(result["sdivsigma"])
+        assert np.isnan(result["nse"])
 
     def test_single_point_outside_delta(self):
         """n=1, abs_diff > delta: accuracy = 0."""
-        data = pd.DataFrame({
-            'obs': [100.0],
-            'sim': [110.0],
-            'delta': [5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0],
+                "sim": [110.0],
+                "delta": [5.0],
+            }
         )
-        assert result['n_pairs'] == 1
-        assert result['mae'] == 10.0
-        assert result['accuracy'] == 0.0
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 1
+        assert result["mae"] == 10.0
+        assert result["accuracy"] == 0.0
 
 
 class TestCalculateAllSkillMetricsAllNaN:
@@ -143,46 +141,46 @@ class TestCalculateAllSkillMetricsAllNaN:
 
     def test_all_nan_observed(self):
         """All NaN in observed -> nan_result."""
-        data = pd.DataFrame({
-            'obs': [np.nan, np.nan],
-            'sim': [100.0, 110.0],
-            'delta': [5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [np.nan, np.nan],
+                "sim": [100.0, 110.0],
+                "delta": [5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 0
-        assert np.isnan(result['mae'])
-        assert np.isnan(result['nse'])
-        assert np.isnan(result['sdivsigma'])
-        assert np.isnan(result['accuracy'])
-        assert np.isnan(result['delta'])
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 0
+        assert np.isnan(result["mae"])
+        assert np.isnan(result["nse"])
+        assert np.isnan(result["sdivsigma"])
+        assert np.isnan(result["accuracy"])
+        assert np.isnan(result["delta"])
 
     def test_all_nan_simulated(self):
         """All NaN in simulated -> nan_result."""
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0],
-            'sim': [np.nan, np.nan],
-            'delta': [5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0],
+                "sim": [np.nan, np.nan],
+                "delta": [5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 0
-        assert np.isnan(result['mae'])
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 0
+        assert np.isnan(result["mae"])
 
     def test_all_nan_delta(self):
         """All NaN in delta -> nan_result."""
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0],
-            'sim': [102.0, 108.0],
-            'delta': [np.nan, np.nan],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0],
+                "sim": [102.0, 108.0],
+                "delta": [np.nan, np.nan],
+            }
         )
-        assert result['n_pairs'] == 0
-        assert np.isnan(result['mae'])
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 0
+        assert np.isnan(result["mae"])
 
     def test_mixed_nan_filters_correctly(self):
         """Some NaN rows filtered, valid rows produce correct metrics.
@@ -194,17 +192,17 @@ class TestCalculateAllSkillMetricsAllNaN:
         n=2, differences = [2, -1], abs_diff = [2, 1]
         MAE = 1.5, accuracy = 1.0 (both <= 5)
         """
-        data = pd.DataFrame({
-            'obs': [np.nan, 110.0, 105.0],
-            'sim': [102.0, 108.0, 106.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [np.nan, 110.0, 105.0],
+                "sim": [102.0, 108.0, 106.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 2
-        assert abs(result['mae'] - 1.5) < 1e-10
-        assert result['accuracy'] == 1.0
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 2
+        assert abs(result["mae"] - 1.5) < 1e-10
+        assert result["accuracy"] == 1.0
 
 
 class TestCalculateAllSkillMetricsMissingColumn:
@@ -212,36 +210,36 @@ class TestCalculateAllSkillMetricsMissingColumn:
 
     def test_missing_observed_col(self):
         """Missing observed column raises ValueError."""
-        data = pd.DataFrame({
-            'sim': [100.0],
-            'delta': [5.0],
-        })
+        data = pd.DataFrame(
+            {
+                "sim": [100.0],
+                "delta": [5.0],
+            }
+        )
         with pytest.raises(ValueError, match="missing required columns"):
-            skill_metrics.calculate_all_skill_metrics(
-                data, 'obs', 'sim', 'delta'
-            )
+            skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
 
     def test_missing_simulated_col(self):
         """Missing simulated column raises ValueError."""
-        data = pd.DataFrame({
-            'obs': [100.0],
-            'delta': [5.0],
-        })
+        data = pd.DataFrame(
+            {
+                "obs": [100.0],
+                "delta": [5.0],
+            }
+        )
         with pytest.raises(ValueError, match="missing required columns"):
-            skill_metrics.calculate_all_skill_metrics(
-                data, 'obs', 'sim', 'delta'
-            )
+            skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
 
     def test_missing_delta_col(self):
         """Missing delta column raises ValueError."""
-        data = pd.DataFrame({
-            'obs': [100.0],
-            'sim': [102.0],
-        })
+        data = pd.DataFrame(
+            {
+                "obs": [100.0],
+                "sim": [102.0],
+            }
+        )
         with pytest.raises(ValueError, match="missing required columns"):
-            skill_metrics.calculate_all_skill_metrics(
-                data, 'obs', 'sim', 'delta'
-            )
+            skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
 
 
 class TestCalculateAllSkillMetricsConstantObservations:
@@ -250,41 +248,41 @@ class TestCalculateAllSkillMetricsConstantObservations:
 
     def test_constant_observations(self):
         """obs all equal (100, 100, 100): std=0, NSE and sdivsigma -> NaN."""
-        data = pd.DataFrame({
-            'obs': [100.0, 100.0, 100.0],
-            'sim': [102.0, 98.0, 101.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 100.0, 100.0],
+                "sim": [102.0, 98.0, 101.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 3
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 3
         # MAE = (2 + 2 + 1) / 3 = 5/3
-        assert abs(result['mae'] - 5.0 / 3.0) < 1e-10
-        assert result['accuracy'] == 1.0  # all within delta
-        assert np.isnan(result['sdivsigma']), (
+        assert abs(result["mae"] - 5.0 / 3.0) < 1e-10
+        assert result["accuracy"] == 1.0  # all within delta
+        assert np.isnan(result["sdivsigma"]), (
             "Constant observations -> std=0 -> sdivsigma should be NaN"
         )
-        assert np.isnan(result['nse']), (
+        assert np.isnan(result["nse"]), (
             "Constant observations -> denominator=0 -> NSE should be NaN"
         )
 
     def test_nearly_constant_observations(self):
         """obs nearly constant (100.0, 100.0001): denominator > 1e-10,
         so sdivsigma and NSE are calculated (not NaN)."""
-        data = pd.DataFrame({
-            'obs': [100.0, 100.0001],
-            'sim': [100.0, 100.0001],
-            'delta': [5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 100.0001],
+                "sim": [100.0, 100.0001],
+                "delta": [5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 2
-        assert result['mae'] == 0.0
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 2
+        assert result["mae"] == 0.0
         # Perfect forecast -> NSE = 1.0, sdivsigma = 0.0
-        assert result['nse'] == 1.0
-        assert result['sdivsigma'] == 0.0
+        assert result["nse"] == 1.0
+        assert result["sdivsigma"] == 0.0
 
 
 class TestCalculateAllSkillMetricsInfValues:
@@ -292,28 +290,28 @@ class TestCalculateAllSkillMetricsInfValues:
 
     def test_inf_observed_filtered(self):
         """Inf in observed is filtered out."""
-        data = pd.DataFrame({
-            'obs': [np.inf, 110.0, 105.0],
-            'sim': [102.0, 108.0, 106.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [np.inf, 110.0, 105.0],
+                "sim": [102.0, 108.0, 106.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 2
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 2
 
     def test_neg_inf_simulated_filtered(self):
         """Negative inf in simulated is filtered out."""
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0],
-            'sim': [-np.inf, 108.0],
-            'delta': [5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0],
+                "sim": [-np.inf, 108.0],
+                "delta": [5.0, 5.0],
+            }
         )
-        assert result['n_pairs'] == 1
-        assert result['mae'] == 2.0
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 1
+        assert result["mae"] == 2.0
 
 
 class TestCalculateAllSkillMetricsReturnType:
@@ -321,29 +319,34 @@ class TestCalculateAllSkillMetricsReturnType:
 
     def test_return_type_is_series(self):
         """Result is a pd.Series with correct index."""
-        data = pd.DataFrame({
-            'obs': [100.0, 110.0],
-            'sim': [102.0, 108.0],
-            'delta': [5.0, 5.0],
-        })
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
+        data = pd.DataFrame(
+            {
+                "obs": [100.0, 110.0],
+                "sim": [102.0, 108.0],
+                "delta": [5.0, 5.0],
+            }
         )
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
         assert isinstance(result, pd.Series)
         expected_index = [
-            'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
-            'pbias', 'kgelf', 'nse_log',
+            "sdivsigma",
+            "nse",
+            "mae",
+            "n_pairs",
+            "delta",
+            "accuracy",
+            "pbias",
+            "kgelf",
+            "nse_log",
         ]
         assert list(result.index) == expected_index
 
     def test_empty_dataframe_returns_nan_result(self):
         """Empty DataFrame returns nan_result with n_pairs=0."""
-        data = pd.DataFrame(columns=['obs', 'sim', 'delta'])
-        result = skill_metrics.calculate_all_skill_metrics(
-            data, 'obs', 'sim', 'delta'
-        )
-        assert result['n_pairs'] == 0
-        assert np.isnan(result['mae'])
+        data = pd.DataFrame(columns=["obs", "sim", "delta"])
+        result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert result["n_pairs"] == 0
+        assert np.isnan(result["mae"])
 
 
 class TestMetricRegistry:
@@ -352,27 +355,32 @@ class TestMetricRegistry:
     def test_metric_order_matches_legacy(self):
         """Index order must match legacy for backward compat."""
         assert METRIC_ORDER == [
-            'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
-            'pbias', 'kgelf', 'nse_log',
+            "sdivsigma",
+            "nse",
+            "mae",
+            "n_pairs",
+            "delta",
+            "accuracy",
+            "pbias",
+            "kgelf",
+            "nse_log",
         ]
 
     def test_all_metrics_have_required_keys(self):
         """Every registry entry has min_points, higher_is_better, env_var."""
         for name, entry in METRIC_REGISTRY.items():
-            assert 'min_points' in entry, f"{name} missing min_points"
-            assert 'higher_is_better' in entry, (
-                f"{name} missing higher_is_better"
-            )
-            assert 'env_var' in entry, f"{name} missing env_var"
+            assert "min_points" in entry, f"{name} missing min_points"
+            assert "higher_is_better" in entry, f"{name} missing higher_is_better"
+            assert "env_var" in entry, f"{name} missing env_var"
 
     def test_threshold_metrics_excludes_metadata(self):
         """Metadata metrics (n_pairs, delta, mae) not in THRESHOLD_METRICS."""
-        assert 'n_pairs' not in THRESHOLD_METRICS
-        assert 'delta' not in THRESHOLD_METRICS
-        assert 'mae' not in THRESHOLD_METRICS
+        assert "n_pairs" not in THRESHOLD_METRICS
+        assert "delta" not in THRESHOLD_METRICS
+        assert "mae" not in THRESHOLD_METRICS
 
     def test_threshold_metrics_includes_filterable(self):
         """Filterable metrics (sdivsigma, nse, accuracy) in THRESHOLD_METRICS."""
-        assert 'sdivsigma' in THRESHOLD_METRICS
-        assert 'nse' in THRESHOLD_METRICS
-        assert 'accuracy' in THRESHOLD_METRICS
+        assert "sdivsigma" in THRESHOLD_METRICS
+        assert "nse" in THRESHOLD_METRICS
+        assert "accuracy" in THRESHOLD_METRICS

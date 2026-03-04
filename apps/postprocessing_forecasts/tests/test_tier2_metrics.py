@@ -12,9 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.skill_metrics import (
     DAILY_METRIC_REGISTRY,
@@ -26,10 +24,10 @@ from src.skill_metrics import (
     lowflow_quantiles,
 )
 
-
 # ===================================================================
 # TestFdcFhv
 # ===================================================================
+
 
 class TestFdcFhv:
     """FDC High Volume bias (%), top 2% of sorted discharge."""
@@ -104,6 +102,7 @@ class TestFdcFhv:
 # TestFdcFlv
 # ===================================================================
 
+
 class TestFdcFlv:
     """FDC Low Volume bias (%), bottom 30% of log-FDC."""
 
@@ -167,6 +166,7 @@ class TestFdcFlv:
 # TestEstimateReturnPeriodThresholds
 # ===================================================================
 
+
 class TestEstimateReturnPeriodThresholds:
     """GEV fit to annual maxima -> return period thresholds."""
 
@@ -178,6 +178,7 @@ class TestEstimateReturnPeriodThresholds:
         With enough data, fit should be close.
         """
         from scipy.stats import gumbel_r
+
         rng = np.random.default_rng(42)
         am = gumbel_r.rvs(loc=100, scale=20, size=50, random_state=rng)
         result = estimate_return_period_thresholds(am)
@@ -225,6 +226,7 @@ class TestEstimateReturnPeriodThresholds:
 # TestBinaryContingency
 # ===================================================================
 
+
 class TestBinaryContingency:
     """Binary contingency table + F1/precision/recall/CSI."""
 
@@ -233,60 +235,60 @@ class TestBinaryContingency:
         obs = np.array([10, 20, 30, 40, 50], dtype=float)
         sim = np.array([10, 20, 30, 40, 50], dtype=float)
         result = binary_contingency(obs, sim, threshold=30.0)
-        assert result['tp'] == 3
-        assert result['fp'] == 0
-        assert result['fn'] == 0
-        assert result['tn'] == 2
-        assert result['precision'] == pytest.approx(1.0)
-        assert result['recall'] == pytest.approx(1.0)
-        assert result['f1'] == pytest.approx(1.0)
-        assert result['csi'] == pytest.approx(1.0)
+        assert result["tp"] == 3
+        assert result["fp"] == 0
+        assert result["fn"] == 0
+        assert result["tn"] == 2
+        assert result["precision"] == pytest.approx(1.0)
+        assert result["recall"] == pytest.approx(1.0)
+        assert result["f1"] == pytest.approx(1.0)
+        assert result["csi"] == pytest.approx(1.0)
 
     def test_no_observed_events(self):
         """No observed events => recall undefined (NaN)."""
         obs = np.array([1, 2, 3], dtype=float)
         sim = np.array([10, 20, 30], dtype=float)
         result = binary_contingency(obs, sim, threshold=50.0)
-        assert result['tp'] == 0
-        assert result['fn'] == 0
-        assert np.isnan(result['recall'])
-        assert np.isnan(result['f1'])
+        assert result["tp"] == 0
+        assert result["fn"] == 0
+        assert np.isnan(result["recall"])
+        assert np.isnan(result["f1"])
 
     def test_all_false_alarms(self):
         """Sim always predicts event, obs never has event."""
         obs = np.array([1, 2, 3, 4, 5], dtype=float)
         sim = np.array([100, 100, 100, 100, 100], dtype=float)
         result = binary_contingency(obs, sim, threshold=50.0)
-        assert result['tp'] == 0
-        assert result['fp'] == 5
-        assert result['fn'] == 0
-        assert result['tn'] == 0
-        assert result['precision'] == pytest.approx(0.0)
-        assert np.isnan(result['recall'])  # no observed events
+        assert result["tp"] == 0
+        assert result["fp"] == 5
+        assert result["fn"] == 0
+        assert result["tn"] == 0
+        assert result["precision"] == pytest.approx(0.0)
+        assert np.isnan(result["recall"])  # no observed events
 
     def test_all_misses(self):
         """Obs always has event, sim never predicts."""
         obs = np.array([100, 100, 100], dtype=float)
         sim = np.array([1, 1, 1], dtype=float)
         result = binary_contingency(obs, sim, threshold=50.0)
-        assert result['tp'] == 0
-        assert result['fp'] == 0
-        assert result['fn'] == 3
-        assert result['tn'] == 0
-        assert np.isnan(result['precision'])  # tp + fp = 0
-        assert result['recall'] == pytest.approx(0.0)
-        assert result['csi'] == pytest.approx(0.0)
+        assert result["tp"] == 0
+        assert result["fp"] == 0
+        assert result["fn"] == 3
+        assert result["tn"] == 0
+        assert np.isnan(result["precision"])  # tp + fp = 0
+        assert result["recall"] == pytest.approx(0.0)
+        assert result["csi"] == pytest.approx(0.0)
 
     def test_below_threshold_mode(self):
         """above=False: event = value <= threshold (low-flow)."""
         obs = np.array([1, 2, 3, 50, 60], dtype=float)
         sim = np.array([1, 2, 3, 50, 60], dtype=float)
         result = binary_contingency(obs, sim, threshold=10.0, above=False)
-        assert result['tp'] == 3  # obs<=10 & sim<=10
-        assert result['fp'] == 0
-        assert result['fn'] == 0
-        assert result['tn'] == 2
-        assert result['f1'] == pytest.approx(1.0)
+        assert result["tp"] == 3  # obs<=10 & sim<=10
+        assert result["fp"] == 0
+        assert result["fn"] == 0
+        assert result["tn"] == 2
+        assert result["f1"] == pytest.approx(1.0)
 
     def test_hand_calculated(self):
         """Hand-calculated contingency.
@@ -310,28 +312,27 @@ class TestBinaryContingency:
         obs = np.array([3, 7, 2, 8, 5], dtype=float)
         sim = np.array([4, 6, 3, 9, 4], dtype=float)
         result = binary_contingency(obs, sim, threshold=5.0)
-        assert result['tp'] == 2
-        assert result['fp'] == 0
-        assert result['fn'] == 1
-        assert result['tn'] == 2
-        assert result['precision'] == pytest.approx(1.0)
-        assert result['recall'] == pytest.approx(2.0 / 3.0)
-        assert result['f1'] == pytest.approx(0.8)
-        assert result['csi'] == pytest.approx(2.0 / 3.0)
+        assert result["tp"] == 2
+        assert result["fp"] == 0
+        assert result["fn"] == 1
+        assert result["tn"] == 2
+        assert result["precision"] == pytest.approx(1.0)
+        assert result["recall"] == pytest.approx(2.0 / 3.0)
+        assert result["f1"] == pytest.approx(0.8)
+        assert result["csi"] == pytest.approx(2.0 / 3.0)
 
     def test_empty_arrays(self):
         """Empty arrays => all zeros, metrics NaN."""
-        result = binary_contingency(
-            np.array([]), np.array([]), threshold=5.0
-        )
-        assert result['tp'] == 0
-        assert result['fp'] == 0
-        assert np.isnan(result['f1'])
+        result = binary_contingency(np.array([]), np.array([]), threshold=5.0)
+        assert result["tp"] == 0
+        assert result["fp"] == 0
+        assert np.isnan(result["f1"])
 
 
 # ===================================================================
 # TestLowflowQuantiles
 # ===================================================================
+
 
 class TestLowflowQuantiles:
     """Q90 (10th pctl) and Q95 (5th pctl) of daily flow."""
@@ -344,14 +345,10 @@ class TestLowflowQuantiles:
         """
         obs = np.linspace(1, 100, 1000)
         result = lowflow_quantiles(obs)
-        assert 'q90' in result
-        assert 'q95' in result
-        assert result['q90'] == pytest.approx(
-            np.percentile(obs, 10), rel=1e-4
-        )
-        assert result['q95'] == pytest.approx(
-            np.percentile(obs, 5), rel=1e-4
-        )
+        assert "q90" in result
+        assert "q95" in result
+        assert result["q90"] == pytest.approx(np.percentile(obs, 10), rel=1e-4)
+        assert result["q95"] == pytest.approx(np.percentile(obs, 5), rel=1e-4)
 
     def test_fewer_than_365(self):
         """<365 points => empty dict."""
@@ -363,14 +360,15 @@ class TestLowflowQuantiles:
         """Boundary: exactly 365 points => computes."""
         obs = np.arange(1, 366, dtype=float)
         result = lowflow_quantiles(obs)
-        assert 'q90' in result
-        assert 'q95' in result
-        assert result['q95'] < result['q90']  # Q95 < Q90
+        assert "q90" in result
+        assert "q95" in result
+        assert result["q95"] < result["q90"]  # Q95 < Q90
 
 
 # ===================================================================
 # TestCalculateDailySkillMetrics
 # ===================================================================
+
 
 class TestCalculateDailySkillMetrics:
     """Combined daily skill metric calculator."""
@@ -378,20 +376,16 @@ class TestCalculateDailySkillMetrics:
     @pytest.fixture
     def daily_obs_df(self):
         """20 years of daily observations for 2 stations."""
-        dates = pd.date_range('2000-01-01', '2019-12-31', freq='D')
+        dates = pd.date_range("2000-01-01", "2019-12-31", freq="D")
         rng = np.random.default_rng(42)
         records = []
-        for code in ['ST01', 'ST02']:
-            base_flow = 50.0 if code == 'ST01' else 30.0
+        for code in ["ST01", "ST02"]:
+            base_flow = 50.0 if code == "ST01" else 30.0
             for d in dates:
                 # Seasonal pattern + random
-                seasonal = 20 * np.sin(
-                    2 * np.pi * d.timetuple().tm_yday / 365
-                )
+                seasonal = 20 * np.sin(2 * np.pi * d.timetuple().tm_yday / 365)
                 val = max(base_flow + seasonal + rng.normal(0, 10), 0.5)
-                records.append({
-                    'code': code, 'date': d, 'discharge_avg': val
-                })
+                records.append({"code": code, "date": d, "discharge_avg": val})
         return pd.DataFrame(records)
 
     @pytest.fixture
@@ -399,124 +393,126 @@ class TestCalculateDailySkillMetrics:
         """Simulated forecasts: obs + small noise, 2 models."""
         rng = np.random.default_rng(99)
         records = []
-        for model in ['TFT', 'TiDE']:
+        for model in ["TFT", "TiDE"]:
             for _, row in daily_obs_df.iterrows():
                 noise = rng.normal(0, 5)
-                val = max(row['discharge_avg'] + noise, 0.1)
-                records.append({
-                    'code': row['code'],
-                    'date': row['date'],
-                    'model_short': model,
-                    'forecasted_discharge': val,
-                })
+                val = max(row["discharge_avg"] + noise, 0.1)
+                records.append(
+                    {
+                        "code": row["code"],
+                        "date": row["date"],
+                        "model_short": model,
+                        "forecasted_discharge": val,
+                    }
+                )
         return pd.DataFrame(records)
 
     def test_happy_path_multi_model(self, daily_obs_df, daily_sim_df):
         """Multi-model, multi-station => FDC + threshold metrics."""
-        fdc_df, threshold_df = calculate_daily_skill_metrics(
-            daily_obs_df, daily_sim_df
-        )
+        fdc_df, threshold_df = calculate_daily_skill_metrics(daily_obs_df, daily_sim_df)
 
         # FDC metrics: 2 stations * 2 models = 4 rows
         assert len(fdc_df) == 4
-        assert set(fdc_df.columns) >= {'code', 'model_short', 'fhv', 'flv'}
+        assert set(fdc_df.columns) >= {"code", "model_short", "fhv", "flv"}
 
         # Check that FHV/FLV are numeric (not all NaN)
-        assert fdc_df['fhv'].notna().any()
-        assert fdc_df['flv'].notna().any()
+        assert fdc_df["fhv"].notna().any()
+        assert fdc_df["flv"].notna().any()
 
         # Threshold metrics: should have rows for each
         # (code, model, threshold_type) combination
         assert len(threshold_df) > 0
         assert set(threshold_df.columns) >= {
-            'code', 'model_short', 'threshold_type',
-            'threshold_value', 'f1', 'tp', 'fp', 'fn', 'tn', 'n_years',
+            "code",
+            "model_short",
+            "threshold_type",
+            "threshold_value",
+            "f1",
+            "tp",
+            "fp",
+            "fn",
+            "tn",
+            "n_years",
         }
 
         # Check threshold types
-        threshold_types = set(threshold_df['threshold_type'].unique())
+        threshold_types = set(threshold_df["threshold_type"].unique())
         # Should have flood thresholds (GEV) and low-flow thresholds
-        assert any('flood' in t for t in threshold_types)
-        assert any('lowflow' in t for t in threshold_types)
+        assert any("flood" in t for t in threshold_types)
+        assert any("lowflow" in t for t in threshold_types)
 
     def test_empty_obs(self):
         """Empty observations => empty results."""
-        obs = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
-        sim = pd.DataFrame(
-            columns=['code', 'date', 'model_short',
-                     'forecasted_discharge']
-        )
+        obs = pd.DataFrame(columns=["code", "date", "discharge_avg"])
+        sim = pd.DataFrame(columns=["code", "date", "model_short", "forecasted_discharge"])
         fdc_df, threshold_df = calculate_daily_skill_metrics(obs, sim)
         assert fdc_df.empty
         assert threshold_df.empty
 
     def test_no_overlap(self, daily_obs_df):
         """No overlapping dates => empty results."""
-        sim = pd.DataFrame({
-            'code': ['ST01'],
-            'date': [pd.Timestamp('2030-01-01')],
-            'model_short': ['TFT'],
-            'forecasted_discharge': [50.0],
-        })
-        fdc_df, threshold_df = calculate_daily_skill_metrics(
-            daily_obs_df, sim
+        sim = pd.DataFrame(
+            {
+                "code": ["ST01"],
+                "date": [pd.Timestamp("2030-01-01")],
+                "model_short": ["TFT"],
+                "forecasted_discharge": [50.0],
+            }
         )
+        fdc_df, threshold_df = calculate_daily_skill_metrics(daily_obs_df, sim)
         assert fdc_df.empty
         assert threshold_df.empty
 
     def test_insufficient_gev_data(self):
         """<15 years of data => no GEV thresholds, no flood metrics."""
         # 2 years of data
-        dates = pd.date_range('2020-01-01', '2021-12-31', freq='D')
+        dates = pd.date_range("2020-01-01", "2021-12-31", freq="D")
         rng = np.random.default_rng(42)
-        obs = pd.DataFrame({
-            'code': 'ST01',
-            'date': dates,
-            'discharge_avg': rng.uniform(10, 100, len(dates)),
-        })
-        sim = pd.DataFrame({
-            'code': 'ST01',
-            'date': dates,
-            'model_short': 'TFT',
-            'forecasted_discharge': rng.uniform(10, 100, len(dates)),
-        })
+        obs = pd.DataFrame(
+            {
+                "code": "ST01",
+                "date": dates,
+                "discharge_avg": rng.uniform(10, 100, len(dates)),
+            }
+        )
+        sim = pd.DataFrame(
+            {
+                "code": "ST01",
+                "date": dates,
+                "model_short": "TFT",
+                "forecasted_discharge": rng.uniform(10, 100, len(dates)),
+            }
+        )
         fdc_df, threshold_df = calculate_daily_skill_metrics(obs, sim)
 
         # FDC metrics should still work (enough daily pairs)
         assert len(fdc_df) == 1
-        assert fdc_df.iloc[0]['fhv'] is not None
+        assert fdc_df.iloc[0]["fhv"] is not None
 
         # No flood thresholds (insufficient GEV data)
-        flood_rows = threshold_df[
-            threshold_df['threshold_type'].str.contains('flood')
-        ]
+        flood_rows = threshold_df[threshold_df["threshold_type"].str.contains("flood")]
         assert flood_rows.empty
 
     def test_single_model(self, daily_obs_df):
         """Single model works correctly."""
         rng = np.random.default_rng(42)
-        sim = daily_obs_df[['code', 'date']].copy()
-        sim['model_short'] = 'TFT'
-        sim['forecasted_discharge'] = (
-            daily_obs_df['discharge_avg']
-            + rng.normal(0, 3, len(daily_obs_df))
+        sim = daily_obs_df[["code", "date"]].copy()
+        sim["model_short"] = "TFT"
+        sim["forecasted_discharge"] = (
+            daily_obs_df["discharge_avg"] + rng.normal(0, 3, len(daily_obs_df))
         ).clip(lower=0.1)
 
-        fdc_df, threshold_df = calculate_daily_skill_metrics(
-            daily_obs_df, sim
-        )
+        fdc_df, threshold_df = calculate_daily_skill_metrics(daily_obs_df, sim)
         assert len(fdc_df) == 2  # 2 stations
-        assert all(fdc_df['model_short'] == 'TFT')
+        assert all(fdc_df["model_short"] == "TFT")
 
     def test_nan_forecasts_excluded(self, daily_obs_df):
         """Rows with NaN forecasted_discharge are excluded."""
-        sim = daily_obs_df[['code', 'date']].copy()
-        sim['model_short'] = 'TFT'
-        sim['forecasted_discharge'] = np.nan  # all NaN
+        sim = daily_obs_df[["code", "date"]].copy()
+        sim["model_short"] = "TFT"
+        sim["forecasted_discharge"] = np.nan  # all NaN
 
-        fdc_df, threshold_df = calculate_daily_skill_metrics(
-            daily_obs_df, sim
-        )
+        fdc_df, threshold_df = calculate_daily_skill_metrics(daily_obs_df, sim)
         assert fdc_df.empty
         assert threshold_df.empty
 
@@ -525,23 +521,25 @@ class TestCalculateDailySkillMetrics:
 # TestMetricRegistry
 # ===================================================================
 
+
 class TestDailyMetricRegistry:
     """Verify Tier 2 daily metrics are registered correctly."""
 
     def test_fhv_registered(self):
-        assert 'fhv' in DAILY_METRIC_REGISTRY
-        assert DAILY_METRIC_REGISTRY['fhv']['min_points'] == 50
-        assert DAILY_METRIC_REGISTRY['fhv']['higher_is_better'] is None
+        assert "fhv" in DAILY_METRIC_REGISTRY
+        assert DAILY_METRIC_REGISTRY["fhv"]["min_points"] == 50
+        assert DAILY_METRIC_REGISTRY["fhv"]["higher_is_better"] is None
 
     def test_flv_registered(self):
-        assert 'flv' in DAILY_METRIC_REGISTRY
-        assert DAILY_METRIC_REGISTRY['flv']['min_points'] == 10
-        assert DAILY_METRIC_REGISTRY['flv']['higher_is_better'] is None
+        assert "flv" in DAILY_METRIC_REGISTRY
+        assert DAILY_METRIC_REGISTRY["flv"]["min_points"] == 10
+        assert DAILY_METRIC_REGISTRY["flv"]["higher_is_better"] is None
 
     def test_fhv_flv_not_in_point_metric_registry(self):
         """FHV/FLV are daily metrics — not in the point metric registry."""
         from src.skill_metrics import METRIC_REGISTRY, THRESHOLD_METRICS
-        assert 'fhv' not in METRIC_REGISTRY
-        assert 'flv' not in METRIC_REGISTRY
-        assert 'fhv' not in THRESHOLD_METRICS
-        assert 'flv' not in THRESHOLD_METRICS
+
+        assert "fhv" not in METRIC_REGISTRY
+        assert "flv" not in METRIC_REGISTRY
+        assert "fhv" not in THRESHOLD_METRICS
+        assert "flv" not in THRESHOLD_METRICS

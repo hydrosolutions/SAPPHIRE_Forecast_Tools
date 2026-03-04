@@ -41,9 +41,11 @@
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, Skilled Mean (inverse-MAE weighted), Naive Mean, EM baselines, API writer (month horizon + LT model types), file writer, save + log monthly forecasts, recalculate entry point (MONTHLY/ALL modes). 638 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
 | Quarterly + seasonal skill metrics (Phase 4b) | **DONE** — `src/aggregation.py` module (single source of truth for quarter/season definitions + monthly→quarterly/seasonal aggregation). Data readers (`read_quarterly_forecasts/observations/combined`, `read_seasonal_forecasts/observations/combined`, `read_latest_quarterly/seasonal_forecasts`), skill metrics (`calculate_quarterly/seasonal_skill_metrics`), ensemble creators (`create_quarterly/seasonal_ensemble_forecasts`), gap detectors (`detect_missing_quarterly/seasonal_ensembles`), writers (API + CSV for both horizons), entry points (`postprocessing_operational_long_term.py` processes quarterly+seasonal alongside monthly, `postprocessing_maintenance_long_term.py` handles gap-fill, `recalculate_skill_metrics.py` supports QUARTERLY/SEASONAL/ALL modes). `write_diagnostics.py` extended for quarter/season. 76 quarterly tests across 6 test files + 14 dedicated seasonal tests in `test_seasonal_integration.py` (Skilled Mean, EM composition, single-model rejection, skill edge cases, data reader, file writer, cross-year pipeline with numerical verification). |
+| Phase 4b loose ends (env vars, tag_library, ForecastFlags) | **RESOLVED** — env vars not needed (quarterly/seasonal are API-only); date utilities stay in `aggregation.py`; `ForecastFlags`/`PredictorDates` don't need `quarter` (only used by `linear_regression` for short-term scheduling). |
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | **DONE** — 6 metric functions (`fdc_fhv`, `fdc_flv`, `estimate_return_period_thresholds`, `binary_contingency`, `lowflow_quantiles`, `calculate_daily_skill_metrics`) in `skill_metrics.py` with `DAILY_METRIC_REGISTRY`. Daily readers in `data_reader.py`, "day" horizon in `api_writer.py`, `fhv`/`flv` DB columns, threshold skill metrics writer, `save_daily_skill_metrics()` in `file_writer.py`. ML module writes daily-resolution records via `_write_ml_daily_forecast_to_api()`. DAILY mode in `recalculate_skill_metrics.py`. 38 new tests in `test_tier2_metrics.py`. Commit `55a27a4`. |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
+| Horizon type parameterization (Phase 6) | **PLANNED** — `ShortTermHorizonConfig` dataclass to collapse 4 pentad/decad function pairs (~490 lines). 6 implementation steps. 2 copy-paste bugs to fix. All prerequisites met. |
 | Dashboard metrics visualization (FD-002) | TODO — depends on 4d (now complete). See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
 | Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 1115 postprocessing tests across 40 test files, 0 skips. CRUD service: 93 tests. |
@@ -1149,22 +1151,20 @@ _Gap detection (src/gap_detector.py):_
 _Configuration:_
 - [x] Seasonal config: `SAPPHIRE_SEASON_START_MONTH`, `SAPPHIRE_SEASON_END_MONTH`
   env vars with Central Asia defaults (4, 9), read in `src/aggregation.py`
-- [ ] Env vars for output file paths:
-  `ieasyforecast_quarterly_combined_forecast_file`,
-  `ieasyforecast_quarterly_skill_metrics_file`,
-  `ieasyforecast_seasonal_combined_forecast_file`,
-  `ieasyforecast_seasonal_skill_metrics_file` — **verify whether these are
-  defined in `apps/config/.env`**
+- [x] Env vars for output file paths — **NOT NEEDED**. Quarterly and
+  seasonal are API-only (no CSV primary output). CSV fallback will be
+  removed entirely; no new env vars required.
 
 _Date utilities:_
-- [ ] Date utilities in `tag_library.py` (`get_quarter`,
-  `is_quarterly_forecast_date`, `is_seasonal_forecast_date`,
-  `get_season_months`) — **NOT added** to `tag_library.py`. Season/quarter
-  logic lives in `src/aggregation.py` instead. Consider whether
-  `tag_library.py` still needs these or if `aggregation.py` is sufficient.
-- [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates` — **NOT
-  done**. Evaluate if still needed given that the long-term entry points
-  handle quarterly/seasonal directly without going through these data classes.
+- [x] Date utilities in `tag_library.py` — **NOT NEEDED**. Season/quarter
+  logic lives in `src/aggregation.py`, which is the single source of truth.
+  `tag_library.py` handles short-term horizons (pentad/decad) only.
+- [x] Add `quarter` field to `ForecastFlags` and `PredictorDates` — **NOT
+  NEEDED**. These classes are only used by `linear_regression` for
+  short-term forecast scheduling. Postprocessing long-term entry points
+  handle quarterly/seasonal directly without these data classes. The
+  forecast dashboard uses its own `DashboardConfig.horizon` (pentad/decad
+  only). No module needs a `quarter` flag.
 
 _Diagnostics:_
 - [x] `write_diagnostics.py`: `_PERIOD_COLUMN` mapping includes
@@ -1662,59 +1662,143 @@ class PredictorDates:
 
 ### Problem
 
-Significant code duplication between pentad and decade code paths:
+Four pentad/decad function pairs are near-identical, differing only in column
+names, env var names, and the period-computation function. Total: ~490
+duplicated lines plus 2 copy-paste bugs discovered during analysis.
 
 | File | Duplicated lines | Functions |
 |------|-----------------|-----------|
 | `src/skill_metrics.py` | ~200 | `calculate_skill_metrics_pentad()` vs `calculate_skill_metrics_decade()` |
-| `src/file_writer.py` | ~130 | `save_forecast_data_pentad()` vs `save_forecast_data_decade()`, `save_pentadal_skill_metrics()` vs `save_decadal_skill_metrics()` |
-| `src/postprocessing_tools.py` | ~160 | `log_most_recent_forecasts_pentad()` vs `log_most_recent_forecasts_decade()` |
+| `src/file_writer.py` | ~165 | `save_forecast_data_pentad()` vs `save_forecast_data_decade()`, `save_pentadal_skill_metrics()` vs `save_decadal_skill_metrics()` |
+| `src/postprocessing_tools.py` | ~130 | `log_most_recent_forecasts_pentad()` vs `log_most_recent_forecasts_decade()` |
 | `src/ensemble_calculator.py` | 0 | Already parameterized via `period_col` / `get_period_in_month_func` |
 
-These pairs differ only in column names (`pentad_in_year` vs `decad_in_year`, `pentad_in_month` vs `decad_in_month`), env var names, and the period-computation function (`get_pentad` vs `get_decad_in_month`).
+**Known copy-paste bugs** (fix during refactoring):
+- `file_writer.py` ~line 260: `save_forecast_data_decade()` has an extra
+  `rename(columns={"decad_in_month": "decad"})` not present in pentad version
+- `postprocessing_tools.py` ~line 358, ~line 432: comments in decade version
+  still say "pentad"
 
 ### Solution
 
-Introduce a `HorizonConfig` dataclass that encapsulates all horizon-specific parameters:
+Introduce a `ShortTermHorizonConfig` dataclass encapsulating all
+horizon-specific parameters. Scope is **pentad/decad only** — monthly,
+quarterly, and seasonal functions are already single implementations and
+stay as-is.
 
 ```python
+from dataclasses import dataclass
+from typing import Callable
+
 @dataclass(frozen=True)
-class HorizonConfig:
-    name: str                    # "pentad", "decad", "month"
-    period_col: str              # "pentad_in_year", "decad_in_year", ...
-    period_in_month_col: str     # "pentad_in_month", "decad_in_month", ...
-    get_period_func: Callable    # tl.get_pentad, tl.get_decad_in_month, ...
+class ShortTermHorizonConfig:
+    """Encapsulates all pentad/decad-specific parameters."""
+    name: str                    # "pentad" or "decad"
+    period_col: str              # "pentad_in_year" or "decad_in_year"
+    period_in_month_col: str     # "pentad_in_month" or "decad_in_month"
+    get_period_func: Callable    # tl.get_pentad or tl.get_decad_in_month
     combined_csv_env: str        # env var for combined forecast CSV
-    latest_csv_env: str          # env var for latest forecast CSV
     skill_csv_env: str           # env var for skill metrics CSV
-    horizon_column_name: str     # column used for get_latest_forecasts()
+    api_horizon_type: str        # "pentad" or "decad" (for API calls)
+
+
+PENTAD = ShortTermHorizonConfig(
+    name="pentad",
+    period_col="pentad_in_year",
+    period_in_month_col="pentad_in_month",
+    get_period_func=tl.get_pentad,
+    combined_csv_env="ieasyforecast_combined_forecast_pentad_file",
+    skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
+    api_horizon_type="pentad",
+)
+
+DECAD = ShortTermHorizonConfig(
+    name="decad",
+    period_col="decad_in_year",
+    period_in_month_col="decad_in_month",
+    get_period_func=tl.get_decad_in_month,
+    combined_csv_env="ieasyforecast_combined_forecast_decad_file",
+    skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
+    api_horizon_type="decad",
+)
 ```
 
-Then collapse each pair into a single parameterized function:
+**Design decisions:**
+- Named `ShortTermHorizonConfig` (not `HorizonConfig`) because monthly/
+  quarterly/seasonal have different structure (no `period_in_month_col`,
+  no `get_period_func`) and don't need this abstraction.
+- Dropped `latest_csv_env` from the original plan — `get_latest_forecasts()`
+  uses `horizon_column_name` which is identical to `period_col`.
+- `ensemble_calculator.py` already parameterized — serves as the reference
+  pattern. Its signature uses loose params (`period_col`, `period_in_month_col`,
+  `get_period_in_month_func`); Phase 6 can pass `config.period_col`, etc.
+  No need to change `ensemble_calculator.py`'s signature.
 
-- `calculate_skill_metrics(config: HorizonConfig, ...)`
-- `save_forecast_data(config: HorizonConfig, ...)`
-- `save_skill_metrics(config: HorizonConfig, ...)`
-- `log_most_recent_forecasts(config: HorizonConfig, ...)`
+### Implementation Steps
+
+**Step 1: Add `ShortTermHorizonConfig` dataclass**
+- New file: `src/horizon_config.py` (dataclass + `PENTAD`/`DECAD` instances)
+- Or add to `src/__init__.py` if preferred — small enough for either
+
+**Step 2: Merge `skill_metrics.py` pair → `calculate_skill_metrics()`**
+- Keep `calculate_skill_metrics_pentad()` as the base, parameterize the 5–6
+  column/function references with `config: ShortTermHorizonConfig`
+- Delete `calculate_skill_metrics_decade()`
+- Rename to `calculate_skill_metrics(config, observed, simulated, ...)`
+
+**Step 3: Merge `file_writer.py` pairs**
+- `save_forecast_data_pentad()` + `save_forecast_data_decade()` →
+  `save_forecast_data(config, ...)`
+  - Fix the extra `rename()` bug in decade version during merge
+- `save_pentadal_skill_metrics()` + `save_decadal_skill_metrics()` →
+  `save_skill_metrics(config, ...)`
+
+**Step 4: Merge `postprocessing_tools.py` pair → `log_most_recent_forecasts()`**
+- Fix copy-paste comment bugs during merge
+
+**Step 5: Update entry points**
+- `postprocessing_operational.py`: Replace pentad/decad branches with
+  loop over `[PENTAD, DECAD]` (filtered by boundary check)
+- `postprocessing_maintenance.py`: Already has `_run_horizon_postprocessing()`
+  helper with loose dict params — replace with `ShortTermHorizonConfig`
+- `recalculate_skill_metrics.py`: Replace if-branches with config dispatch
+
+**Step 6: Update tests**
+- Test files that call the old function names need updating
+- Add `@pytest.mark.parametrize("config", [PENTAD, DECAD])` where
+  appropriate to test both horizons with one test function
+- Verify: all 1115+ postprocessing tests pass, 0 skips
 
 ### Affected files
 
 | File | Change |
 |------|--------|
-| `src/skill_metrics.py` | Merge pentad/decade `calculate_skill_metrics_*()` into one |
-| `src/file_writer.py` | Merge pentad/decade `save_forecast_data_*()` and `save_*_skill_metrics()` into one each |
-| `src/postprocessing_tools.py` | Merge pentad/decade `log_most_recent_forecasts_*()` into one |
-| `postprocessing_operational.py` | Pass `HorizonConfig` instead of branching on mode |
-| `postprocessing_maintenance.py` | Same |
-| `recalculate_skill_metrics.py` | Same |
-| All test files | Update to use parameterized functions with config objects |
+| `src/horizon_config.py` (new) | `ShortTermHorizonConfig` dataclass + `PENTAD`/`DECAD` instances |
+| `src/skill_metrics.py` | Merge pair → `calculate_skill_metrics(config, ...)`, delete decade copy |
+| `src/file_writer.py` | Merge 2 pairs → `save_forecast_data(config, ...)` + `save_skill_metrics(config, ...)`, fix rename bug |
+| `src/postprocessing_tools.py` | Merge pair → `log_most_recent_forecasts(config, ...)`, fix comment bugs |
+| `src/ensemble_calculator.py` | **No change** — already parameterized, callers pass `config.period_col` etc. |
+| `postprocessing_operational.py` | Pass config instead of branching |
+| `postprocessing_maintenance.py` | Replace loose dict with `ShortTermHorizonConfig` |
+| `recalculate_skill_metrics.py` | Replace if-branches with config dispatch |
+| Tests (~10 files) | Update function names, add parametrize where beneficial |
 
-### Prerequisites
+### What is NOT in scope
+
+- **Monthly/quarterly/seasonal functions** — already single implementations,
+  no duplication to resolve. Leave as-is.
+- **`ensemble_calculator.py`** — already parameterized. Callers change but
+  the module itself does not.
+- **`data_reader.py`** — already uses `horizon_type: str` parameter
+  throughout. No duplication.
+- **`gap_detector.py`** — already generic.
+
+### Prerequisites (all met)
 
 - ~~All 8 issues from the pipeline inconsistency PR~~ — DONE
 - ~~Phase 4a monthly skill metrics pipeline~~ — DONE
 - ~~Phase 4b quarterly + seasonal pipeline~~ — DONE
-- `ensemble_calculator.py` already parameterized (serves as the reference pattern)
+- `ensemble_calculator.py` already parameterized (reference pattern)
 
 ---
 

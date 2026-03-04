@@ -152,8 +152,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         horizon_value_col = "pentad_in_month"
         horizon_in_year_col = "pentad_in_year"
     elif horizon_type == "decad":
-        # Note: save_forecast_data_decade renames decad_in_month to decad
-        horizon_value_col = "decad"
+        horizon_value_col = "decad_in_month"
         horizon_in_year_col = "decad_in_year"
     else:
         raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decad'.")

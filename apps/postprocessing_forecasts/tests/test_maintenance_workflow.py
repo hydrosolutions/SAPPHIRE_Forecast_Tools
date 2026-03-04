@@ -11,6 +11,8 @@ import pytest
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, SCRIPT_DIR)
 
+import src.horizon_config as _real_horizon_config
+
 
 def import_maintenance_module():
     """Import the postprocessing_maintenance module."""
@@ -89,8 +91,7 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     )
     mock_ensemble_calc.create_ensemble_forecasts.return_value = (ensemble_result, mock_skill)
 
-    mock_file_writer.save_forecast_data_pentad.return_value = None
-    mock_file_writer.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data.return_value = None
 
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
@@ -112,6 +113,7 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     sys.modules["src.gap_detector"] = mock_gap_detector
     sys.modules["src.skill_metrics"] = mock_skill_metrics
     sys.modules["src.file_writer"] = mock_file_writer
+    sys.modules["src.horizon_config"] = _real_horizon_config
 
     return {
         "sl": mock_sl,
@@ -343,7 +345,7 @@ class TestMaintenanceWorkflow:
                     combined=combined,
                     gaps=gaps,
                 )
-                mocks["file_writer"].save_forecast_data_pentad.return_value = "Error: disk full"
+                mocks["file_writer"].save_forecast_data.return_value = "Error: disk full"
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
@@ -385,10 +387,11 @@ class TestMaintenanceConcurrentErrors:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = self._make_gaps_setup(mock_data, mock_skill)
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_pentad.return_value = "Error: pentad write failed"
-                mocks["file_writer"].save_forecast_data_decade.return_value = None
+                mock_fw = mocks["file_writer"]
+                mock_fw.save_forecast_data.side_effect = [
+                    "Error: pentad write failed",
+                    None,
+                ]
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
@@ -403,10 +406,11 @@ class TestMaintenanceConcurrentErrors:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = self._make_gaps_setup(mock_data, mock_skill)
-                mocks["file_writer"].save_forecast_data_pentad.return_value = None
-                mocks[
-                    "file_writer"
-                ].save_forecast_data_decade.return_value = "Error: decad write failed"
+                mock_fw = mocks["file_writer"]
+                mock_fw.save_forecast_data.side_effect = [
+                    None,
+                    "Error: decad write failed",
+                ]
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
@@ -541,4 +545,4 @@ class TestMaintenanceEdgeCases:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                mocks["file_writer"].save_forecast_data_pentad.assert_called_once()
+                mocks["file_writer"].save_forecast_data.assert_called_once()

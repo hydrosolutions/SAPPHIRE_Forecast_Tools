@@ -136,12 +136,11 @@ class TestWriteCombinedForecastToApi:
         mock_client.write_forecasts.return_value = 1
         mock_client_class.return_value = mock_client
 
-        # Note: save_forecast_data_decade renames decad_in_month to decad
         data = pd.DataFrame(
             {
                 "code": [12345],
                 "date": pd.to_datetime(["2024-01-15"]),
-                "decad": [2],  # After rename from decad_in_month
+                "decad_in_month": [2],
                 "decad_in_year": [2],
                 "forecasted_discharge": [150.0],
                 "model_short": ["TFT"],

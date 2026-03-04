@@ -10,10 +10,9 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import pandas as pd
 from src.skill_metrics import (
     METRIC_ORDER,
     METRIC_REGISTRY,
@@ -24,12 +23,11 @@ from src.skill_metrics import (
     nse_log,
     pbias,
 )
-import pandas as pd
-
 
 # ===================================================================
 # TestPbias
 # ===================================================================
+
 
 class TestPbias:
     """PBIAS: 100 * SUM(obs - sim) / SUM(obs)."""
@@ -97,6 +95,7 @@ class TestPbias:
 # TestKge
 # ===================================================================
 
+
 class TestKge:
     """Internal _kge helper: 1 - sqrt((r-1)^2 + (a-1)^2 + (b-1)^2)."""
 
@@ -157,6 +156,7 @@ class TestKge:
 # ===================================================================
 # TestKgeLf
 # ===================================================================
+
 
 class TestKgeLf:
     """KGElf: average of KGE(Q) and KGE(1/(Q+eps))."""
@@ -219,16 +219,15 @@ class TestKgeLf:
         KGE_direct = 0.939509, KGE_inv = 0.846772
         KGElf = (0.939509 + 0.846772) / 2 = 0.893140
         """
-        obs = np.array([5., 8., 12., 15., 20., 25.,
-                        30., 18., 10., 7., 6., 4.])
-        sim = np.array([6., 9., 11., 14., 22., 24.,
-                        28., 19., 11., 8., 5., 5.])
+        obs = np.array([5.0, 8.0, 12.0, 15.0, 20.0, 25.0, 30.0, 18.0, 10.0, 7.0, 6.0, 4.0])
+        sim = np.array([6.0, 9.0, 11.0, 14.0, 22.0, 24.0, 28.0, 19.0, 11.0, 8.0, 5.0, 5.0])
         assert kge_lf(obs, sim) == pytest.approx(0.893140, abs=1e-4)
 
 
 # ===================================================================
 # TestNseLog
 # ===================================================================
+
 
 class TestNseLog:
     """NSE on log-transformed flows."""
@@ -298,104 +297,116 @@ class TestNseLog:
 # TestNewMetricsInRegistry
 # ===================================================================
 
+
 class TestNewMetricsInRegistry:
     """Verify the 3 new metrics are registered correctly."""
 
     def test_pbias_in_registry(self):
-        assert 'pbias' in METRIC_REGISTRY
-        assert METRIC_REGISTRY['pbias']['higher_is_better'] is None
-        assert METRIC_REGISTRY['pbias']['env_var'] is None
-        assert METRIC_REGISTRY['pbias']['default_threshold'] is None
+        assert "pbias" in METRIC_REGISTRY
+        assert METRIC_REGISTRY["pbias"]["higher_is_better"] is None
+        assert METRIC_REGISTRY["pbias"]["env_var"] is None
+        assert METRIC_REGISTRY["pbias"]["default_threshold"] is None
 
     def test_kgelf_in_registry(self):
-        assert 'kgelf' in METRIC_REGISTRY
-        assert METRIC_REGISTRY['kgelf']['higher_is_better'] is True
-        assert METRIC_REGISTRY['kgelf']['env_var'] is None
-        assert METRIC_REGISTRY['kgelf']['default_threshold'] is None
+        assert "kgelf" in METRIC_REGISTRY
+        assert METRIC_REGISTRY["kgelf"]["higher_is_better"] is True
+        assert METRIC_REGISTRY["kgelf"]["env_var"] is None
+        assert METRIC_REGISTRY["kgelf"]["default_threshold"] is None
 
     def test_nse_log_in_registry(self):
-        assert 'nse_log' in METRIC_REGISTRY
-        assert METRIC_REGISTRY['nse_log']['higher_is_better'] is True
-        assert METRIC_REGISTRY['nse_log']['env_var'] is None
-        assert METRIC_REGISTRY['nse_log']['default_threshold'] is None
+        assert "nse_log" in METRIC_REGISTRY
+        assert METRIC_REGISTRY["nse_log"]["higher_is_better"] is True
+        assert METRIC_REGISTRY["nse_log"]["env_var"] is None
+        assert METRIC_REGISTRY["nse_log"]["default_threshold"] is None
 
     def test_metric_order_length(self):
         assert len(METRIC_ORDER) == 9
 
     def test_new_metrics_not_in_threshold(self):
         """Informational metrics must not appear in THRESHOLD_METRICS."""
-        assert 'pbias' not in THRESHOLD_METRICS
-        assert 'kgelf' not in THRESHOLD_METRICS
-        assert 'nse_log' not in THRESHOLD_METRICS
+        assert "pbias" not in THRESHOLD_METRICS
+        assert "kgelf" not in THRESHOLD_METRICS
+        assert "nse_log" not in THRESHOLD_METRICS
 
 
 # ===================================================================
 # TestCalculateAllWithNewMetrics
 # ===================================================================
 
+
 class TestCalculateAllWithNewMetrics:
     """Verify new metrics flow through calculate_all_skill_metrics."""
 
     def test_5_point_happy_path(self):
         """5-point case: pbias+nse_log computed, kgelf=NaN (<10 points)."""
-        data = pd.DataFrame({
-            'obs': [10.0, 20.0, 30.0, 40.0, 50.0],
-            'sim': [12.0, 18.0, 32.0, 38.0, 52.0],
-            'delta': [5.0] * 5,
-        })
-        result = calculate_all_skill_metrics(data, 'obs', 'sim', 'delta')
-        assert np.isfinite(result['pbias'])
-        assert np.isnan(result['kgelf'])  # <10 points
-        assert np.isfinite(result['nse_log'])
+        data = pd.DataFrame(
+            {
+                "obs": [10.0, 20.0, 30.0, 40.0, 50.0],
+                "sim": [12.0, 18.0, 32.0, 38.0, 52.0],
+                "delta": [5.0] * 5,
+            }
+        )
+        result = calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert np.isfinite(result["pbias"])
+        assert np.isnan(result["kgelf"])  # <10 points
+        assert np.isfinite(result["nse_log"])
 
     def test_15_point_all_computed(self):
         """15-point case: all 3 new metrics are finite."""
         rng = np.random.RandomState(99)
         obs = rng.uniform(5, 50, size=15)
         sim = obs * rng.uniform(0.9, 1.1, size=15)
-        data = pd.DataFrame({
-            'obs': obs,
-            'sim': sim,
-            'delta': np.full(15, 5.0),
-        })
-        result = calculate_all_skill_metrics(data, 'obs', 'sim', 'delta')
-        assert np.isfinite(result['pbias'])
-        assert np.isfinite(result['kgelf'])
-        assert np.isfinite(result['nse_log'])
+        data = pd.DataFrame(
+            {
+                "obs": obs,
+                "sim": sim,
+                "delta": np.full(15, 5.0),
+            }
+        )
+        result = calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert np.isfinite(result["pbias"])
+        assert np.isfinite(result["kgelf"])
+        assert np.isfinite(result["nse_log"])
 
     def test_n_lt_2_returns_nan_for_all_new(self):
         """n<2 early return has NaN for all 3 new metrics."""
-        data = pd.DataFrame({
-            'obs': [10.0],
-            'sim': [12.0],
-            'delta': [5.0],
-        })
-        result = calculate_all_skill_metrics(data, 'obs', 'sim', 'delta')
-        assert np.isnan(result['pbias'])
-        assert np.isnan(result['kgelf'])
-        assert np.isnan(result['nse_log'])
+        data = pd.DataFrame(
+            {
+                "obs": [10.0],
+                "sim": [12.0],
+                "delta": [5.0],
+            }
+        )
+        result = calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert np.isnan(result["pbias"])
+        assert np.isnan(result["kgelf"])
+        assert np.isnan(result["nse_log"])
 
     def test_all_nan_input(self):
         """All-NaN obs/sim => NaN for all new metrics."""
-        data = pd.DataFrame({
-            'obs': [np.nan, np.nan, np.nan],
-            'sim': [np.nan, np.nan, np.nan],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = calculate_all_skill_metrics(data, 'obs', 'sim', 'delta')
-        assert np.isnan(result['pbias'])
-        assert np.isnan(result['kgelf'])
-        assert np.isnan(result['nse_log'])
+        data = pd.DataFrame(
+            {
+                "obs": [np.nan, np.nan, np.nan],
+                "sim": [np.nan, np.nan, np.nan],
+                "delta": [5.0, 5.0, 5.0],
+            }
+        )
+        result = calculate_all_skill_metrics(data, "obs", "sim", "delta")
+        assert np.isnan(result["pbias"])
+        assert np.isnan(result["kgelf"])
+        assert np.isnan(result["nse_log"])
 
     def test_negative_sim_in_pipeline(self):
         """Negative sim flows through without crashing; kgelf/nse_log=NaN."""
-        data = pd.DataFrame({
-            'obs': [10.0, 20.0, 30.0],
-            'sim': [-5.0, 25.0, 28.0],
-            'delta': [5.0, 5.0, 5.0],
-        })
-        result = calculate_all_skill_metrics(data, 'obs', 'sim', 'delta')
+        data = pd.DataFrame(
+            {
+                "obs": [10.0, 20.0, 30.0],
+                "sim": [-5.0, 25.0, 28.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
+        )
+        result = calculate_all_skill_metrics(data, "obs", "sim", "delta")
         # pbias still computes (formula works with negative sim)
-        assert np.isfinite(result['pbias'])
+        assert np.isfinite(result["pbias"])
         # nse_log: sim[0]+eps = -5+0.2 = -4.8 < 0 => NaN
-        assert np.isnan(result['nse_log'])
+        assert np.isnan(result["nse_log"])

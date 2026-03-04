@@ -30,8 +30,10 @@ forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 sys.path.append(forecast_dir)
 
 import setup_library as sl
+import tag_library as tl
 from src import data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
+from src.horizon_config import ShortTermHorizonConfig
 from src.postprocessing_tools import TimingStats, timer
 
 # region Logging
@@ -56,6 +58,27 @@ logger.addHandler(console_handler)
 # endregion
 
 timing_stats = TimingStats()
+
+PENTAD = ShortTermHorizonConfig(
+    name="pentad",
+    period_col="pentad_in_year",
+    period_in_month_col="pentad_in_month",
+    get_period_func=tl.get_pentad,
+    combined_csv_env="ieasyforecast_combined_forecast_pentad_file",
+    skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
+    api_horizon_type="pentad",
+    neural_ensemble_func=sl.calculate_neural_ensemble_forecast,
+)
+DECAD = ShortTermHorizonConfig(
+    name="decad",
+    period_col="decad_in_year",
+    period_in_month_col="decad_in_month",
+    get_period_func=tl.get_decad_in_month,
+    combined_csv_env="ieasyforecast_combined_forecast_decad_file",
+    skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
+    api_horizon_type="decad",
+    neural_ensemble_func=sl.calculate_neural_ensemble_forecast_decade,
+)
 
 VALID_MODES = [
     "PENTAD",
@@ -86,6 +109,46 @@ def _read_station_codes():
     return codes
 
 
+def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_):
+    """Read data, recalculate skill metrics, save results for one horizon."""
+    label = config.name.upper()
+
+    with timer(timing_stats_, f"reading {config.name} data"):
+        logger.info(f"\n\n------ Reading {config.name} observed and modelled data -------")
+        observed, modelled = data_reader.read_observed_and_modelled_data(config.name)
+        modelled = sl.calculate_virtual_stations_data(modelled)
+        modelled = config.neural_ensemble_func(modelled)
+
+    with timer(timing_stats_, f"calculating skill metrics {config.name}"):
+        logger.info(f"\n\n------ Calculating skill metrics {config.name} --------")
+        skill_metrics_result, modelled, returned_timing_stats = (
+            skill_metrics.calculate_skill_metrics(config, observed, modelled, timing_stats_)
+        )
+
+    with timer(
+        returned_timing_stats if returned_timing_stats is not None else timing_stats_,
+        f"saving {config.name} results",
+    ):
+        logger.info(f"\n\n------ Saving {config.name} results --------------------")
+        ret = file_writer.save_forecast_data(config, modelled)
+        if ret is None:
+            logger.info(f"{label} forecast results saved successfully.")
+        else:
+            logger.error(f"Error saving {label} forecast results: {ret}")
+            errors.append(f"{label} forecast save failed: {ret}")
+
+        ret = file_writer.save_skill_metrics(config, skill_metrics_result, year=skill_metrics_year)
+        if ret is None:
+            logger.info(f"{label} skill metrics saved successfully.")
+        else:
+            logger.error(f"Error saving {label} skill metrics: {ret}")
+            errors.append(f"{label} skill metrics save failed: {ret}")
+
+    pt.log_most_recent_forecasts(config, modelled)
+
+    return returned_timing_stats if returned_timing_stats is not None else timing_stats_
+
+
 def recalculate_skill_metrics():
     global timing_stats
 
@@ -112,84 +175,10 @@ def recalculate_skill_metrics():
         logger.info(f"Skill metrics target year: {skill_metrics_year}")
 
         if prediction_mode in ["PENTAD", "BOTH", "ALL"]:
-            with timer(timing_stats, "reading pentadal data"):
-                logger.info("\n\n------ Reading pentadal observed and modelled data -------")
-                observed, modelled = data_reader.read_observed_and_modelled_data("pentad")
-                modelled = sl.calculate_virtual_stations_data(modelled)
-                modelled = sl.calculate_neural_ensemble_forecast(modelled)
-
-            with timer(timing_stats, "calculating skill metrics pentads"):
-                logger.info("\n\n------ Calculating skill metrics pentads --------")
-                original_timing_stats = timing_stats
-                skill_metrics_result, modelled, returned_timing_stats = (
-                    skill_metrics.calculate_skill_metrics_pentad(observed, modelled, timing_stats)
-                )
-                if returned_timing_stats is not None:
-                    timing_stats = returned_timing_stats
-                else:
-                    timing_stats = original_timing_stats
-
-            with timer(timing_stats, "saving pentad results"):
-                logger.info("\n\n------ Saving pentad results --------------------")
-                ret = file_writer.save_forecast_data_pentad(modelled)
-                if ret is None:
-                    logger.info("Pentadal forecast results saved successfully.")
-                else:
-                    logger.error(f"Error saving pentadal forecast results: {ret}")
-                    errors.append(f"Pentad forecast save failed: {ret}")
-
-                ret = file_writer.save_pentadal_skill_metrics(
-                    skill_metrics_result, year=skill_metrics_year
-                )
-                if ret is None:
-                    logger.info("Pentadal skill metrics saved successfully.")
-                else:
-                    logger.error(f"Error saving pentadal skill metrics: {ret}")
-                    errors.append(f"Pentad skill metrics save failed: {ret}")
-
-            pt.log_most_recent_forecasts_pentad(modelled)
+            timing_stats = _run_short_term_recalc(PENTAD, skill_metrics_year, errors, timing_stats)
 
         if prediction_mode in ["DECAD", "BOTH", "ALL"]:
-            with timer(timing_stats, "reading decadal data"):
-                logger.info("\n\n------ Reading decadal observed and modelled data -------")
-                observed_decade, modelled_decade = data_reader.read_observed_and_modelled_data(
-                    "decad"
-                )
-                modelled_decade = sl.calculate_virtual_stations_data(modelled_decade)
-                modelled_decade = sl.calculate_neural_ensemble_forecast_decade(modelled_decade)
-
-            with timer(timing_stats, "calculating skill metrics decads"):
-                logger.info("\n\n------ Calculating skill metrics decads ---------")
-                original_timing_stats = timing_stats
-                skill_metrics_decade, modelled_decade, returned_timing_stats = (
-                    skill_metrics.calculate_skill_metrics_decade(
-                        observed_decade, modelled_decade, timing_stats
-                    )
-                )
-                if returned_timing_stats is not None:
-                    timing_stats = returned_timing_stats
-                else:
-                    timing_stats = original_timing_stats
-
-            with timer(timing_stats, "saving decade results"):
-                logger.info("\n\n------ Saving decade results --------------------")
-                ret = file_writer.save_forecast_data_decade(modelled_decade)
-                if ret is None:
-                    logger.info("Decadal forecast results saved successfully.")
-                else:
-                    logger.error(f"Error saving decadal forecast results: {ret}")
-                    errors.append(f"Decade forecast save failed: {ret}")
-
-                ret = file_writer.save_decadal_skill_metrics(
-                    skill_metrics_decade, year=skill_metrics_year
-                )
-                if ret is None:
-                    logger.info("Decadal skill metrics saved successfully.")
-                else:
-                    logger.error(f"Error saving decadal skill metrics: {ret}")
-                    errors.append(f"Decade skill metrics save failed: {ret}")
-
-            pt.log_most_recent_forecasts_decade(modelled_decade)
+            timing_stats = _run_short_term_recalc(DECAD, skill_metrics_year, errors, timing_stats)
 
         if prediction_mode in ["MONTHLY", "ALL"]:
             current_year = dt.date.today().year

@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import forecast_library as fl
 import tag_library as tl
+from conftest import DECAD, PENTAD
 from src import (
     api_writer,
     data_reader,
@@ -261,7 +262,7 @@ class TestOperationalDataRouting:
         assert "LR" in comp and "TFT" in comp
 
         # Save to CSV (API disabled via env_setup)
-        file_writer.save_forecast_data_pentad(joint)
+        file_writer.save_forecast_data(PENTAD, joint)
 
         csv_path = os.path.join(str(env_setup), "combined_pentad.csv")
         latest_path = csv_path.replace(".csv", "_latest.csv")
@@ -296,7 +297,7 @@ class TestOperationalDataRouting:
             ),
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
         ):
-            file_writer.save_forecast_data_pentad(joint)
+            file_writer.save_forecast_data(PENTAD, joint)
 
         mock_client.write_forecasts.assert_called_once()
         records = mock_client.write_forecasts.call_args[0][0]
@@ -341,7 +342,7 @@ class TestOperationalDataRouting:
 
         mock_client = MagicMock()
         with patch.object(api_writer, "_get_postprocessing_client", return_value=mock_client):
-            file_writer.save_forecast_data_pentad(joint)
+            file_writer.save_forecast_data(PENTAD, joint)
 
         mock_client.write_forecasts.assert_not_called()
 
@@ -435,7 +436,7 @@ class TestOperationalDataRouting:
         """Save EM to CSV, read back, verify composition string preserved."""
         skill_stats = data_reader.read_skill_metrics("pentad")
         joint, _ = _make_ensemble(pentad_forecasts, skill_stats)
-        file_writer.save_forecast_data_pentad(joint)
+        file_writer.save_forecast_data(PENTAD, joint)
 
         csv_path = os.path.join(str(env_setup), "combined_pentad.csv")
         saved = pd.read_csv(csv_path)
@@ -468,7 +469,7 @@ class TestOperationalDataRouting:
             ),
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
         ):
-            file_writer.save_forecast_data_pentad(joint)
+            file_writer.save_forecast_data(PENTAD, joint)
 
         records = mock_client.write_forecasts.call_args[0][0]
         em_records = [r for r in records if r["model_type"] == "EM"]
@@ -500,7 +501,7 @@ class TestOperationalDataRouting:
             ),
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
         ):
-            file_writer.save_forecast_data_pentad(joint)
+            file_writer.save_forecast_data(PENTAD, joint)
 
         records = mock_client.write_forecasts.call_args[0][0]
         # target = date + 1 day (first day of forecast period)
@@ -857,7 +858,7 @@ class TestOperationalDataRouting:
         """Save EM to CSV, read back, verify exact composition string."""
         skill_stats = data_reader.read_skill_metrics("pentad")
         joint, _ = _make_ensemble(pentad_forecasts, skill_stats)
-        file_writer.save_forecast_data_pentad(joint)
+        file_writer.save_forecast_data(PENTAD, joint)
 
         csv_path = os.path.join(str(env_setup), "combined_pentad.csv")
         saved = pd.read_csv(csv_path)
@@ -1036,7 +1037,7 @@ class TestDecadalOperationalPipeline:
         assert abs(em_sorted.iloc[1]["forecasted_discharge"] - 125.0) < 0.01
 
         # Save to CSV
-        file_writer.save_forecast_data_decade(joint)
+        file_writer.save_forecast_data(DECAD, joint)
         csv_path = os.path.join(str(decad_env_setup), "combined_decad.csv")
         assert os.path.exists(csv_path)
         saved = pd.read_csv(csv_path)
@@ -1072,7 +1073,7 @@ class TestDecadalOperationalPipeline:
             ),
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
         ):
-            file_writer.save_forecast_data_decade(joint)
+            file_writer.save_forecast_data(DECAD, joint)
 
         mock_client.write_forecasts.assert_called_once()
         records = mock_client.write_forecasts.call_args[0][0]
@@ -1363,7 +1364,7 @@ class TestMaintenanceFullGapFill:
         )
 
         # 6. Save to CSV and verify
-        file_writer.save_forecast_data_pentad(joint)
+        file_writer.save_forecast_data(PENTAD, joint)
         csv_path = os.path.join(str(tmp_path), "combined_pentad.csv")
         saved = pd.read_csv(csv_path)
         saved_em = saved[saved["model_short"] == "EM"]
@@ -1753,7 +1754,7 @@ class TestApiFailureModes:
             ),
         ):
             try:
-                file_writer.save_forecast_data_pentad(data)
+                file_writer.save_forecast_data(PENTAD, data)
             except RuntimeError:
                 raised = True
 
@@ -2426,7 +2427,7 @@ class TestQuantileFields:
 # TestRecalculateWithRealisticData
 # ---------------------------------------------------------------------------
 class TestRecalculateWithRealisticData:
-    """Test #8: Feed realistic data through calculate_skill_metrics_pentad().
+    """Test #8: Feed realistic data through calculate_skill_metrics(PENTAD).
 
     Uses real logic for skill metric calculation and ensemble creation.
     3 stations x 2 pentads x 2 models, with known observed values so
@@ -2558,7 +2559,7 @@ class TestRecalculateWithRealisticData:
         """
         observed, simulated = realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
         # Base: 3 stations x 2 pentads x 2 models = 12
         base_groups = skill_stats[skill_stats["model_short"] != "EM"]
@@ -2582,7 +2583,7 @@ class TestRecalculateWithRealisticData:
         """
         observed, simulated = realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
         # Check 15001 LR skill — forecasts are close to observed
         lr_15001_p1 = skill_stats[
@@ -2613,7 +2614,7 @@ class TestRecalculateWithRealisticData:
         """
         observed, simulated = realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
         # 15003 LR errors are large (~30 m3/s vs obs ~50)
         lr_15003 = skill_stats[
@@ -2641,7 +2642,7 @@ class TestRecalculateWithRealisticData:
         """
         observed, simulated = realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
         # Original rows preserved
         original_count = len(simulated)
@@ -2680,11 +2681,11 @@ class TestRecalculateWithRealisticData:
         observed, simulated = realistic_data
         tmp_path = recalc_env
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
         # Save skill metrics
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_pentadal_skill_metrics(skill_stats)
+            file_writer.save_skill_metrics(PENTAD, skill_stats)
 
         # Verify skill metrics CSV
         skill_csv = os.path.join(str(tmp_path), "skill_pentad.csv")
@@ -2711,14 +2712,14 @@ class TestRecalculateWithRealisticData:
             assert col in saved_skill.columns, f"Missing column in skill CSV: {col}"
 
         # Save combined forecasts
-        # Need pentad_in_month for save_forecast_data_pentad
+        # Need pentad_in_month for save_forecast_data(PENTAD, ...)
         joint_with_pim = joint.copy()
         if "pentad_in_month" not in joint_with_pim.columns:
             joint_with_pim["pentad_in_month"] = (
                 pd.to_datetime(joint_with_pim["date"]) + pd.Timedelta(days=1)
             ).apply(tl.get_pentad)
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_forecast_data_pentad(joint_with_pim)
+            file_writer.save_forecast_data(PENTAD, joint_with_pim)
 
         # Verify combined forecasts CSV
         forecast_csv = os.path.join(str(tmp_path), "combined_pentad.csv")
@@ -2734,7 +2735,7 @@ class TestRecalculateWithRealisticData:
 # TestSkillMetricSavePath
 # ---------------------------------------------------------------------------
 class TestSkillMetricSavePath:
-    """Test #9: Verify save_pentadal_skill_metrics() writes CSV correctly
+    """Test #9: Verify save_skill_metrics(PENTAD) writes CSV correctly
     and calls API with properly mapped records."""
 
     @pytest.fixture
@@ -2793,7 +2794,7 @@ class TestSkillMetricSavePath:
         """CSV has correct columns and is sorted by
         (pentad_in_year, code, model_short)."""
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_pentadal_skill_metrics(known_skill_stats)
+            file_writer.save_skill_metrics(PENTAD, known_skill_stats)
 
         csv_path = os.path.join(str(save_env), "skill_pentad.csv")
         saved = pd.read_csv(csv_path)
@@ -2830,7 +2831,7 @@ class TestSkillMetricSavePath:
     ):
         """Float values are rounded to 4 decimal places."""
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_pentadal_skill_metrics(known_skill_stats)
+            file_writer.save_skill_metrics(PENTAD, known_skill_stats)
 
         csv_path = os.path.join(str(save_env), "skill_pentad.csv")
         saved = pd.read_csv(csv_path, dtype={"code": str})
@@ -2864,7 +2865,7 @@ class TestSkillMetricSavePath:
             }
         )
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_pentadal_skill_metrics(data)
+            file_writer.save_skill_metrics(PENTAD, data)
 
         csv_path = os.path.join(str(save_env), "skill_pentad.csv")
         saved = pd.read_csv(csv_path, dtype={"code": str})
@@ -2883,7 +2884,7 @@ class TestSkillMetricSavePath:
             patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
             patch.object(api_writer, "_write_skill_metrics_to_api") as mock_api_write,
         ):
-            file_writer.save_pentadal_skill_metrics(known_skill_stats, year=2024)
+            file_writer.save_skill_metrics(PENTAD, known_skill_stats, year=2024)
 
             mock_api_write.assert_called_once()
             call_args = mock_api_write.call_args
@@ -2911,7 +2912,7 @@ class TestSkillMetricSavePath:
             ),
             patch.object(fl, "_handle_api_write_error"),
         ):
-            file_writer.save_pentadal_skill_metrics(known_skill_stats)
+            file_writer.save_skill_metrics(PENTAD, known_skill_stats)
 
         # CSV should still exist
         csv_path = os.path.join(str(save_env), "skill_pentad.csv")
@@ -2926,7 +2927,7 @@ class TestSkillMetricSavePath:
     ):
         """Date column is formatted as YYYY-MM-DD string in CSV."""
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_pentadal_skill_metrics(known_skill_stats)
+            file_writer.save_skill_metrics(PENTAD, known_skill_stats)
 
         csv_path = os.path.join(str(save_env), "skill_pentad.csv")
         saved = pd.read_csv(csv_path)
@@ -2976,7 +2977,7 @@ class TestRecalculateSkillMetricsIntegration:
                 side_effect=lambda x: x,
             ),
             patch(
-                "src.skill_metrics.calculate_skill_metrics_pentad",
+                "src.skill_metrics.calculate_skill_metrics",
                 return_value=(
                     pd.DataFrame(),
                     pd.DataFrame(),
@@ -2984,11 +2985,11 @@ class TestRecalculateSkillMetricsIntegration:
                 ),
             ) as mock_calc,
             patch(
-                "src.file_writer.save_forecast_data_pentad",
+                "src.file_writer.save_forecast_data",
                 return_value=None,
             ) as mock_save_fc,
             patch(
-                "src.file_writer.save_pentadal_skill_metrics",
+                "src.file_writer.save_skill_metrics",
                 return_value=None,
             ) as mock_save_sk,
             patch.dict(
@@ -3049,7 +3050,7 @@ class TestRecalculateSkillMetricsIntegration:
                 side_effect=lambda x: x,
             ),
             patch(
-                "src.skill_metrics.calculate_skill_metrics_pentad",
+                "src.skill_metrics.calculate_skill_metrics",
                 return_value=(
                     pd.DataFrame(),
                     pd.DataFrame(),
@@ -3057,11 +3058,11 @@ class TestRecalculateSkillMetricsIntegration:
                 ),
             ),
             patch(
-                "src.file_writer.save_forecast_data_pentad",
+                "src.file_writer.save_forecast_data",
                 return_value="DB connection failed",
             ),
             patch(
-                "src.file_writer.save_pentadal_skill_metrics",
+                "src.file_writer.save_skill_metrics",
                 return_value=None,
             ),
             patch.dict(
@@ -3663,7 +3664,7 @@ class TestDecadalMaintenanceFullGapFill:
         )
 
         # 6. Save to CSV and verify
-        file_writer.save_forecast_data_decade(joint)
+        file_writer.save_forecast_data(DECAD, joint)
         csv_path = os.path.join(str(tmp_path), "combined_decad.csv")
         saved = pd.read_csv(csv_path)
         saved_em = saved[saved["model_short"] == "EM"]
@@ -3674,7 +3675,7 @@ class TestDecadalMaintenanceFullGapFill:
 # TestDecadalRecalculateWithRealisticData (#21)
 # ---------------------------------------------------------------------------
 class TestDecadalRecalculateWithRealisticData:
-    """Test #21: Feed realistic data through calculate_skill_metrics_decade().
+    """Test #21: Feed realistic data through calculate_skill_metrics(DECAD).
 
     Mirrors TestRecalculateWithRealisticData but for decadal resolution.
     3 stations x 2 decads x 2 models, with known observed values.
@@ -3799,7 +3800,7 @@ class TestDecadalRecalculateWithRealisticData:
         """
         observed, simulated = decad_realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
         # Base: 3 stations x 2 decads x 2 models = 12
         base_groups = skill_stats[skill_stats["model_short"] != "EM"]
@@ -3818,7 +3819,7 @@ class TestDecadalRecalculateWithRealisticData:
         """Station 15001 gets EM rows (both LR and TFT close to observed)."""
         observed, simulated = decad_realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
         em_rows = skill_stats[
             (skill_stats["code"] == "15001") & (skill_stats["model_short"] == "EM")
@@ -3833,7 +3834,7 @@ class TestDecadalRecalculateWithRealisticData:
         """Station 15003 has no EM (both models far from observed)."""
         observed, simulated = decad_realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
         em_15003 = skill_stats[
             (skill_stats["code"] == "15003") & (skill_stats["model_short"] == "EM")
@@ -3848,7 +3849,7 @@ class TestDecadalRecalculateWithRealisticData:
         """EM discharge in joint forecasts = mean(LR, TFT)."""
         observed, simulated = decad_realistic_data
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
         em_rows = joint[joint["model_short"] == "EM"]
         assert len(em_rows) > 0, "EM rows should be in joint forecasts"
@@ -3880,11 +3881,11 @@ class TestDecadalRecalculateWithRealisticData:
         observed, simulated = decad_realistic_data
         tmp_path = decad_recalc_env
 
-        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
         # Save skill metrics
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_decadal_skill_metrics(skill_stats)
+            file_writer.save_skill_metrics(DECAD, skill_stats)
 
         skill_csv = os.path.join(str(tmp_path), "skill_decad.csv")
         assert os.path.exists(skill_csv), "Skill metrics CSV not created"
@@ -3898,7 +3899,7 @@ class TestDecadalRecalculateWithRealisticData:
                 pd.to_datetime(joint_with_dim["date"]) + pd.Timedelta(days=1)
             ).apply(tl.get_decad_in_month)
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
-            file_writer.save_forecast_data_decade(joint_with_dim)
+            file_writer.save_forecast_data(DECAD, joint_with_dim)
 
         forecast_csv = os.path.join(str(tmp_path), "combined_decad.csv")
         assert os.path.exists(forecast_csv), "Forecast CSV not created"
