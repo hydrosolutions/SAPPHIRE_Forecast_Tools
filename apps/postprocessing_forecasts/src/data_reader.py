@@ -32,20 +32,26 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
     """Read pre-calculated skill metrics from API (primary) or CSV (fallback).
 
     Args:
-        horizon_type: 'pentad', 'decad', or 'month'
+        horizon_type: 'pentad', 'decad', 'month', 'quarter', or 'season'
 
     Returns:
-        DataFrame with columns: [pentad_in_year|decad_in_year, code,
+        DataFrame with columns: [pentad_in_year|decad_in_year|
+        month_in_year|quarter_in_year|season_in_year, code,
         model_short, sdivsigma, nse, delta, accuracy, mae, n_pairs]
 
     Raises:
         ValueError: If horizon_type is invalid.
     """
-    if horizon_type not in ("pentad", "decad", "month"):
-        raise ValueError(f"horizon_type must be 'pentad', 'decad', or 'month', got: {horizon_type}")
+    valid = ("pentad", "decad", "month", "quarter", "season")
+    if horizon_type not in valid:
+        raise ValueError(f"horizon_type must be one of {valid}, got: {horizon_type}")
 
     if horizon_type == "month":
         return read_monthly_skill_metrics()
+    if horizon_type == "quarter":
+        return read_quarterly_skill_metrics()
+    if horizon_type == "season":
+        return read_seasonal_skill_metrics()
 
     # API-first: try the authoritative source
     df = _read_skill_metrics_api(horizon_type)
@@ -1945,3 +1951,515 @@ def read_observed_and_modelled_data(
         )
 
     return observed, forecasts
+
+
+# ===================================================================
+# Quarterly skill metrics, observations, and forecasts
+# ===================================================================
+
+
+def read_quarterly_skill_metrics() -> pd.DataFrame:
+    """Read pre-calculated quarterly skill metrics from API.
+
+    API-only (no CSV fallback for new horizons).
+
+    Returns:
+        DataFrame with columns: [quarter_in_year, code, model_short,
+        sdivsigma, nse, delta, accuracy, mae, n_pairs, ...]
+    """
+    df = _read_horizon_skill_metrics_api("quarter")
+    if df is not None and not df.empty:
+        logger.info("Read %d quarterly skill metric rows from API", len(df))
+        return df
+    logger.warning("No quarterly skill metrics available")
+    return pd.DataFrame()
+
+
+def read_seasonal_skill_metrics() -> pd.DataFrame:
+    """Read pre-calculated seasonal skill metrics from API.
+
+    API-only (no CSV fallback for new horizons).
+
+    Returns:
+        DataFrame with columns: [season_in_year, code, model_short,
+        sdivsigma, nse, delta, accuracy, mae, n_pairs, ...]
+    """
+    df = _read_horizon_skill_metrics_api("season")
+    if df is not None and not df.empty:
+        logger.info("Read %d seasonal skill metric rows from API", len(df))
+        return df
+    logger.warning("No seasonal skill metrics available")
+    return pd.DataFrame()
+
+
+def _read_horizon_skill_metrics_api(
+    horizon_type: str,
+) -> pd.DataFrame | None:
+    """Read skill metrics from API for an arbitrary horizon type.
+
+    Shared implementation for quarter/season (and potentially others).
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug("sapphire-api-client not installed, skipping API read")
+        return None
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        return None
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.readiness_check():
+            logger.warning("Postprocessing API not ready at %s", api_url)
+            return None
+
+        all_records = []
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_skill_metrics(horizon=horizon_type, skip=skip, limit=batch_size)
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+        if not all_records:
+            return None
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_horizon_skill_metrics(df, horizon_type)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read %s skill metrics from API: %s",
+            horizon_type,
+            e,
+        )
+        return None
+
+
+def _normalize_horizon_skill_metrics(
+    df: pd.DataFrame,
+    horizon_type: str,
+) -> pd.DataFrame:
+    """Normalize API skill metrics response for quarter/season horizons.
+
+    Maps horizon_in_year → quarter_in_year or season_in_year,
+    model_type → model_short.
+    """
+    period_col_map = {
+        "quarter": "quarter_in_year",
+        "season": "season_in_year",
+    }
+    period_col = period_col_map.get(horizon_type, f"{horizon_type}_in_year")
+
+    rename_map = {
+        "horizon_in_year": period_col,
+        "model_type": "model_short",
+    }
+    df = df.rename(columns=rename_map)
+
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    return df
+
+
+# -------------------------------------------------------------------
+# Quarterly/seasonal observations — delegate to monthly + aggregate
+# -------------------------------------------------------------------
+
+
+def read_quarterly_observations(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read quarterly observations by aggregating monthly observations.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, year, quarter_in_year,
+        discharge_avg, delta].
+    """
+    from src.aggregation import aggregate_monthly_obs_to_quarterly
+
+    monthly = read_monthly_observations(codes, start_year, end_year)
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "year",
+                "quarter_in_year",
+                "discharge_avg",
+                "delta",
+            ]
+        )
+    return aggregate_monthly_obs_to_quarterly(monthly)
+
+
+def read_seasonal_observations(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read seasonal observations by aggregating monthly observations.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, season_year, season_in_year,
+        discharge_avg, delta].
+    """
+    from src.aggregation import aggregate_monthly_obs_to_seasonal
+
+    monthly = read_monthly_observations(codes, start_year, end_year)
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "season_year",
+                "season_in_year",
+                "discharge_avg",
+                "delta",
+            ]
+        )
+    return aggregate_monthly_obs_to_seasonal(monthly)
+
+
+# -------------------------------------------------------------------
+# Quarterly/seasonal forecasts — delegate to monthly + aggregate
+# -------------------------------------------------------------------
+
+
+def read_quarterly_forecasts(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read quarterly forecasts by aggregating monthly forecasts.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, year, quarter_in_year,
+        model_short, q05-q95, forecasted_discharge, valid_from,
+        valid_to].
+    """
+    from src.aggregation import aggregate_monthly_fc_to_quarterly
+
+    monthly = read_monthly_forecasts(codes, start_year, end_year)
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "year",
+                "quarter_in_year",
+                "model_short",
+            ]
+        )
+    return aggregate_monthly_fc_to_quarterly(monthly)
+
+
+def read_seasonal_forecasts(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read seasonal forecasts by aggregating monthly forecasts.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, season_year, season_in_year,
+        model_short, q05-q95, forecasted_discharge, valid_from,
+        valid_to].
+    """
+    from src.aggregation import aggregate_monthly_fc_to_seasonal
+
+    monthly = read_monthly_forecasts(codes, start_year, end_year)
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "season_year",
+                "season_in_year",
+                "model_short",
+            ]
+        )
+    return aggregate_monthly_fc_to_seasonal(monthly)
+
+
+# -------------------------------------------------------------------
+# Latest quarterly/seasonal forecasts (for operational entry point)
+# -------------------------------------------------------------------
+
+
+def read_latest_quarterly_forecasts(
+    codes: list[str],
+    forecast_date: dt.date | None = None,
+) -> pd.DataFrame:
+    """Read latest monthly forecasts, aggregate to quarterly.
+
+    Uses a wider lookback window (~120 days) to capture a full
+    quarter's worth of monthly forecasts.
+
+    Args:
+        codes: Station codes to read.
+        forecast_date: Reference date for lookback window.
+
+    Returns:
+        DataFrame with quarterly forecasts for the most recent
+        quarter. Empty DataFrame if no data.
+    """
+    from src.aggregation import (
+        aggregate_monthly_fc_to_quarterly,
+    )
+
+    today = forecast_date if forecast_date is not None else dt.date.today()
+    start_date = today - dt.timedelta(days=120)
+    start_year = start_date.year
+    end_year = today.year
+
+    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    if raw is None or raw.empty:
+        logger.warning("No recent monthly forecast data for quarterly aggregation")
+        return pd.DataFrame()
+
+    df = _normalize_monthly_forecasts(raw)
+    if df.empty:
+        return df
+
+    # Add forecasted_discharge from q50 if missing
+    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
+        df["forecasted_discharge"] = df["q50"].astype(float)
+
+    quarterly = aggregate_monthly_fc_to_quarterly(df)
+    if quarterly.empty:
+        return quarterly
+
+    # Filter to the most recent quarter
+    max_year = int(quarterly["year"].max())
+    max_q = int(quarterly[quarterly["year"] == max_year]["quarter_in_year"].max())
+    quarterly = quarterly[
+        (quarterly["year"] == max_year) & (quarterly["quarter_in_year"] == max_q)
+    ].copy()
+
+    logger.info(
+        "Read %d latest quarterly forecasts for Q%d-%d",
+        len(quarterly),
+        max_q,
+        max_year,
+    )
+    return quarterly
+
+
+def read_latest_seasonal_forecasts(
+    codes: list[str],
+    forecast_date: dt.date | None = None,
+) -> pd.DataFrame:
+    """Read latest monthly forecasts, aggregate to seasonal.
+
+    Uses a wide lookback (~200 days) to capture cross-year seasons.
+
+    Args:
+        codes: Station codes to read.
+        forecast_date: Reference date for lookback window.
+
+    Returns:
+        DataFrame with seasonal forecasts for the most recent season.
+        Empty DataFrame if no data.
+    """
+    from src.aggregation import aggregate_monthly_fc_to_seasonal
+
+    today = forecast_date if forecast_date is not None else dt.date.today()
+    start_date = today - dt.timedelta(days=200)
+    start_year = start_date.year
+    end_year = today.year
+
+    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    if raw is None or raw.empty:
+        logger.warning("No recent monthly forecast data for seasonal aggregation")
+        return pd.DataFrame()
+
+    df = _normalize_monthly_forecasts(raw)
+    if df.empty:
+        return df
+
+    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
+        df["forecasted_discharge"] = df["q50"].astype(float)
+
+    seasonal = aggregate_monthly_fc_to_seasonal(df)
+    if seasonal.empty:
+        return seasonal
+
+    # Filter to the most recent season_year
+    max_sy = int(seasonal["season_year"].max())
+    seasonal = seasonal[seasonal["season_year"] == max_sy].copy()
+
+    logger.info(
+        "Read %d latest seasonal forecasts for season_year %d",
+        len(seasonal),
+        max_sy,
+    )
+    return seasonal
+
+
+# -------------------------------------------------------------------
+# Quarterly/seasonal combined forecasts (from API)
+# -------------------------------------------------------------------
+
+
+def read_quarterly_combined_forecasts() -> pd.DataFrame:
+    """Read quarterly combined forecasts from API.
+
+    API-only — no CSV fallback for new horizons.
+
+    Returns:
+        DataFrame with combined quarterly forecasts, or empty DataFrame.
+    """
+    df = _read_long_combined_forecasts_api("quarter")
+    if df is not None and not df.empty:
+        logger.info("Read %d quarterly combined forecast rows from API", len(df))
+        return df
+    logger.warning("No quarterly combined forecasts available")
+    return pd.DataFrame()
+
+
+def read_seasonal_combined_forecasts() -> pd.DataFrame:
+    """Read seasonal combined forecasts from API.
+
+    API-only — no CSV fallback for new horizons.
+
+    Returns:
+        DataFrame with combined seasonal forecasts, or empty DataFrame.
+    """
+    df = _read_long_combined_forecasts_api("season")
+    if df is not None and not df.empty:
+        logger.info("Read %d seasonal combined forecast rows from API", len(df))
+        return df
+    logger.warning("No seasonal combined forecasts available")
+    return pd.DataFrame()
+
+
+def _read_long_combined_forecasts_api(
+    horizon_type: str,
+) -> pd.DataFrame | None:
+    """Read long-term combined forecasts from API for a given horizon type.
+
+    Shared implementation for quarter/season.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug("sapphire-api-client not installed, skipping API read")
+        return None
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        return None
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.readiness_check():
+            logger.warning("Postprocessing API not ready at %s", api_url)
+            return None
+
+        all_records = []
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_long_term_forecasts(
+                horizon_type=horizon_type, skip=skip, limit=batch_size
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+        if not all_records:
+            return None
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_combined_forecasts(df, horizon_type)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read %s combined forecasts from API: %s",
+            horizon_type,
+            e,
+        )
+        return None
+
+
+def _normalize_combined_forecasts(
+    df: pd.DataFrame,
+    horizon_type: str,
+) -> pd.DataFrame:
+    """Normalize API combined forecast response for quarter/season.
+
+    Extracts year/quarter/season from valid_from, renames model_type
+    to model_short, adds derived columns.
+    """
+    from src.aggregation import MONTH_TO_QUARTER, get_season_year
+
+    df = df.copy()
+
+    # Parse valid_from for year extraction
+    df["valid_from"] = pd.to_datetime(df["valid_from"])
+
+    if "model_type" in df.columns:
+        df = df.rename(columns={"model_type": "model_short"})
+
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    if horizon_type == "quarter":
+        df["year"] = df["valid_from"].dt.year
+        month = df["valid_from"].dt.month
+        df["quarter_in_year"] = month.map(MONTH_TO_QUARTER)
+    elif horizon_type == "season":
+        df["season_year"] = df.apply(
+            lambda r: get_season_year(r["valid_from"].year, r["valid_from"].month),
+            axis=1,
+        )
+        df["season_in_year"] = 1
+
+    # Add forecasted_discharge from q/q50
+    if "forecasted_discharge" not in df.columns:
+        if "q" in df.columns:
+            df["forecasted_discharge"] = pd.to_numeric(df["q"], errors="coerce")
+        elif "q50" in df.columns:
+            df["forecasted_discharge"] = df["q50"].astype(float)
+
+    # Drop API-only columns
+    drop_cols = [
+        "id",
+        "horizon_type",
+        "horizon_value",
+        "model_type_description",
+    ]
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+
+    return df

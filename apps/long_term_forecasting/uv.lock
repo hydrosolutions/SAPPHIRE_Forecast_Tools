@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1028,7 +1028,7 @@ dev = [{ name = "pytest", specifier = "==9.0.0" }]
 [[package]]
 name = "lt-forecasting"
 version = "2.1.0"
-source = { git = "https://github.com/hydrosolutions/long-term-forecasting.git#e77f580b996669d9430453ecc34f52120bef556d" }
+source = { git = "https://github.com/hydrosolutions/long-term-forecasting.git#a5554aba0d91659cacf7e3a37bd9080401561594" }
 dependencies = [
     { name = "catboost" },
     { name = "fiona" },

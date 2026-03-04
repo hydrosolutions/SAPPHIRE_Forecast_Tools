@@ -7,11 +7,10 @@ Follows the same singleton pattern as data_reader.py.
 """
 
 import datetime as dt_module
-import os
 import logging
+import os
 
 import pandas as pd
-
 import tag_library as tl
 
 logger = logging.getLogger(__name__)
@@ -49,6 +48,8 @@ HORIZON_TYPE_TO_API = {
     "decad": "decade",
     "month": "month",
     "day": "day",
+    "quarter": "quarter",
+    "season": "season",
 }
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ try:
     from sapphire_api_client.postprocessing import (
         SapphirePostprocessingClient,
     )
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -95,6 +97,7 @@ def _reset_api_client():
 # ---------------------------------------------------------------------------
 # Write functions
 # ---------------------------------------------------------------------------
+
 
 def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     """
@@ -139,10 +142,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        logger.warning(
-            f"SAPPHIRE API at {api_url} is not ready, "
-            "skipping combined forecast write"
-        )
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping combined forecast write")
         return False
 
     data = data.copy()
@@ -156,10 +156,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         horizon_value_col = "decad"
         horizon_in_year_col = "decad_in_year"
     else:
-        raise ValueError(
-            f"Invalid horizon_type: {horizon_type}. "
-            "Must be 'pentad' or 'decad'."
-        )
+        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decad'.")
 
     # Compute missing horizon values from dates before iterating.
     # Virtual station outer merges and ML API reads can produce rows
@@ -186,17 +183,17 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     need_repair = missing_hv | missing_hiy
     if need_repair.any():
-        dates_for_repair = pd.to_datetime(data.loc[need_repair, 'date'], errors='coerce')
+        dates_for_repair = pd.to_datetime(data.loc[need_repair, "date"], errors="coerce")
         valid_dates = dates_for_repair.notna()
         if valid_dates.any():
             repair_idx = dates_for_repair[valid_dates].index
             first_day = dates_for_repair[valid_dates] + pd.Timedelta(days=1)
             # tl functions return strings; convert to int for float64 columns
             data.loc[repair_idx, horizon_value_col] = pd.to_numeric(
-                first_day.apply(get_period_func), errors='coerce'
+                first_day.apply(get_period_func), errors="coerce"
             )
             data.loc[repair_idx, horizon_in_year_col] = pd.to_numeric(
-                first_day.apply(get_period_in_year_func), errors='coerce'
+                first_day.apply(get_period_in_year_func), errors="coerce"
             )
             repaired_count = len(repair_idx)
             logger.info(
@@ -214,15 +211,13 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     if skipped_count > 0:
         # Identify which codes/dates were dropped so operators can investigate
         dropped = data[data[horizon_value_col].isna() | data[horizon_in_year_col].isna()]
-        dropped_detail = (
-            dropped[['code', 'date']].drop_duplicates()
-            .head(10)
-            .to_dict('records')
-        )
+        dropped_detail = dropped[["code", "date"]].drop_duplicates().head(10).to_dict("records")
         logger.warning(
             "Dropped %d forecast records with missing horizon values "
             "after repair attempt (%s). Sample codes/dates: %s",
-            skipped_count, horizon_type, dropped_detail,
+            skipped_count,
+            horizon_type,
+            dropped_detail,
         )
 
     if df_rec.empty:
@@ -230,21 +225,22 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     else:
         # Map model_short to API model_type
         df_rec = df_rec.copy()
-        df_rec['model_type'] = (
-            df_rec['model_short'].astype(str).str.upper()
+        df_rec["model_type"] = (
+            df_rec["model_short"]
+            .astype(str)
+            .str.upper()
             .map(MODEL_TYPE_MAP)
-            .fillna(df_rec['model_short'].astype(str))
+            .fillna(df_rec["model_short"].astype(str))
         )
-        df_rec['date_str'] = pd.to_datetime(df_rec['date']).dt.strftime('%Y-%m-%d')
+        df_rec["date_str"] = pd.to_datetime(df_rec["date"]).dt.strftime("%Y-%m-%d")
 
         # Ensure composition column exists
-        if 'composition' not in df_rec.columns:
-            df_rec['composition'] = None
+        if "composition" not in df_rec.columns:
+            df_rec["composition"] = None
         # Warn about ensemble rows missing composition
-        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
+        is_ensemble = df_rec["model_short"].astype(str).str.upper().isin(["EM", "NE"])
         missing_comp = is_ensemble & (
-            df_rec['composition'].isna()
-            | (df_rec['composition'].astype(str).str.strip() == '')
+            df_rec["composition"].isna() | (df_rec["composition"].astype(str).str.strip() == "")
         )
         if missing_comp.any():
             logger.warning(
@@ -254,72 +250,70 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             )
 
         # Target = first day of forecast period (day after the boundary)
-        df_rec['target_str'] = (
-            pd.to_datetime(df_rec['date']) + pd.Timedelta(days=1)
-        ).dt.strftime('%Y-%m-%d')
+        df_rec["target_str"] = (pd.to_datetime(df_rec["date"]) + pd.Timedelta(days=1)).dt.strftime(
+            "%Y-%m-%d"
+        )
 
-        records_df = pd.DataFrame({
-            'horizon_type': api_horizon_type,
-            'code': df_rec['code'].astype(str),
-            'model_type': df_rec['model_type'],
-            'date': df_rec['date_str'],
-            'target': df_rec['target_str'],
-            'horizon_value': df_rec[horizon_value_col].astype(float).astype(int),
-            'horizon_in_year': df_rec[horizon_in_year_col].astype(float).astype(int),
-            'composition': df_rec['composition'],
-            'forecasted_discharge': df_rec['forecasted_discharge'].where(
-                df_rec['forecasted_discharge'].notna()
-            ),
-        })
+        records_df = pd.DataFrame(
+            {
+                "horizon_type": api_horizon_type,
+                "code": df_rec["code"].astype(str),
+                "model_type": df_rec["model_type"],
+                "date": df_rec["date_str"],
+                "target": df_rec["target_str"],
+                "horizon_value": df_rec[horizon_value_col].astype(float).astype(int),
+                "horizon_in_year": df_rec[horizon_in_year_col].astype(float).astype(int),
+                "composition": df_rec["composition"],
+                "forecasted_discharge": df_rec["forecasted_discharge"].where(
+                    df_rec["forecasted_discharge"].notna()
+                ),
+            }
+        )
 
         # Deduplicate on the unique constraint columns to prevent
         # CardinalityViolation ("cannot affect row a second time").
-        unique_cols = ['horizon_type', 'code', 'model_type', 'date', 'target']
+        unique_cols = ["horizon_type", "code", "model_type", "date", "target"]
         n_before_dedup = len(records_df)
-        records_df = records_df.drop_duplicates(
-            subset=unique_cols, keep='last'
-        )
+        records_df = records_df.drop_duplicates(subset=unique_cols, keep="last")
         n_dupes = n_before_dedup - len(records_df)
         if n_dupes > 0:
             logger.warning(
-                "Dropped %d duplicate forecast records on %s (%s) "
-                "before API write",
-                n_dupes, unique_cols, horizon_type,
+                "Dropped %d duplicate forecast records on %s (%s) before API write",
+                n_dupes,
+                unique_cols,
+                horizon_type,
             )
 
         # Convert to records, replacing NaN/NaT with None
         records = [
             {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
-            for row_dict in records_df.to_dict('records')
+            for row_dict in records_df.to_dict("records")
         ]
 
     # Write to API
     if records:
-        logger.debug(
-            f"Sample record being sent to API ({horizon_type}): {records[0]}"
-        )
+        logger.debug(f"Sample record being sent to API ({horizon_type}): {records[0]}")
         try:
             count = client.write_forecasts(records)
         except Exception as e:
             # Log server response body for diagnosis
-            response_body = getattr(e, 'response', None)
+            response_body = getattr(e, "response", None)
             if response_body:
-                logger.error(
-                    f"API response body for {horizon_type} write: "
-                    f"{response_body[:1000]}"
-                )
+                logger.error(f"API response body for {horizon_type} write: {response_body[:1000]}")
             raise
-        logger.info(f"Successfully wrote {count} combined forecast records to SAPPHIRE API ({horizon_type})")
-        print(f"SAPPHIRE API: Successfully wrote {count} combined forecast records ({horizon_type})")
+        logger.info(
+            f"Successfully wrote {count} combined forecast records to SAPPHIRE API ({horizon_type})"
+        )
+        print(
+            f"SAPPHIRE API: Successfully wrote {count} combined forecast records ({horizon_type})"
+        )
         return True
     else:
         logger.info(f"No combined forecast records to write to API ({horizon_type})")
         return False
 
 
-def _write_skill_metrics_to_api(
-    data: pd.DataFrame, horizon_type: str, year: int
-) -> bool:
+def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int) -> bool:
     """
     Write skill metrics to SAPPHIRE postprocessing API.
 
@@ -369,10 +363,7 @@ def _write_skill_metrics_to_api(
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        logger.warning(
-            f"SAPPHIRE API at {api_url} is not ready, "
-            "skipping skill metrics write"
-        )
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping skill metrics write")
         return False
 
     data = data.copy()
@@ -386,10 +377,15 @@ def _write_skill_metrics_to_api(
         horizon_in_year_col = "month_in_year"
     elif horizon_type == "day":
         horizon_in_year_col = "day_in_year"
+    elif horizon_type == "quarter":
+        horizon_in_year_col = "quarter_in_year"
+    elif horizon_type == "season":
+        horizon_in_year_col = "season_in_year"
     else:
         raise ValueError(
             f"Invalid horizon_type: {horizon_type}. "
-            "Must be 'pentad', 'decad', 'month', or 'day'."
+            "Must be 'pentad', 'decad', 'month', 'day', "
+            "'quarter', or 'season'."
         )
 
     # Prepare records for API (vectorized)
@@ -401,37 +397,38 @@ def _write_skill_metrics_to_api(
     if skipped_count > 0:
         dropped = data[data[horizon_in_year_col].isna()]
         dropped_detail = (
-            dropped[['code', 'model_short']].drop_duplicates()
-            .head(10)
-            .to_dict('records')
+            dropped[["code", "model_short"]].drop_duplicates().head(10).to_dict("records")
         )
         logger.warning(
-            "Dropped %d skill metric records with missing %s. "
-            "Sample codes/models: %s",
-            skipped_count, horizon_in_year_col, dropped_detail,
+            "Dropped %d skill metric records with missing %s. Sample codes/models: %s",
+            skipped_count,
+            horizon_in_year_col,
+            dropped_detail,
         )
 
     if df_rec.empty:
         records = []
     else:
         # Map model_short to API model_type
-        df_rec['model_type'] = (
-            df_rec['model_short'].astype(str).str.upper()
+        df_rec["model_type"] = (
+            df_rec["model_short"]
+            .astype(str)
+            .str.upper()
             .map(MODEL_TYPE_MAP)
-            .fillna(df_rec['model_short'].astype(str))
+            .fillna(df_rec["model_short"].astype(str))
         )
 
         # Extract composition from existing column
-        if 'composition' in df_rec.columns:
-            df_rec['_composition'] = df_rec['composition'].where(
-                df_rec['composition'].notna()
-                & (df_rec['composition'].astype(str).str.strip() != '')
+        if "composition" in df_rec.columns:
+            df_rec["_composition"] = df_rec["composition"].where(
+                df_rec["composition"].notna()
+                & (df_rec["composition"].astype(str).str.strip() != "")
             )
         else:
-            df_rec['_composition'] = None
+            df_rec["_composition"] = None
         # Warn about ensemble rows missing composition
-        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
-        missing_comp = is_ensemble & df_rec['_composition'].isna()
+        is_ensemble = df_rec["model_short"].astype(str).str.upper().isin(["EM", "NE"])
+        missing_comp = is_ensemble & df_rec["_composition"].isna()
         if missing_comp.any():
             logger.warning(
                 "%d ensemble skill metric rows have no composition; "
@@ -441,60 +438,100 @@ def _write_skill_metrics_to_api(
 
         # Compute per-row date from the period index and target year
         if horizon_type == "pentad":
-            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
-                lambda p: tl.get_date_for_pentad(p, year)
+            df_rec["_date"] = (
+                df_rec[horizon_in_year_col]
+                .astype(int)
+                .apply(lambda p: tl.get_date_for_pentad(p, year))
             )
         elif horizon_type == "decad":
-            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
-                lambda d: tl.get_date_for_decad(d, year)
+            df_rec["_date"] = (
+                df_rec[horizon_in_year_col]
+                .astype(int)
+                .apply(lambda d: tl.get_date_for_decad(d, year))
             )
         elif horizon_type == "day":
-            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
-                lambda doy: (
-                    dt_module.date(year, 1, 1)
-                    + dt_module.timedelta(days=doy - 1)
-                ).strftime('%Y-%m-%d')
+            df_rec["_date"] = (
+                df_rec[horizon_in_year_col]
+                .astype(int)
+                .apply(
+                    lambda doy: (
+                        dt_module.date(year, 1, 1) + dt_module.timedelta(days=doy - 1)
+                    ).strftime("%Y-%m-%d")
+                )
             )
-        else:  # month
-            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
-                lambda m: dt_module.date(year, m, 1).strftime('%Y-%m-%d')
+        elif horizon_type == "month":
+            df_rec["_date"] = (
+                df_rec[horizon_in_year_col]
+                .astype(int)
+                .apply(lambda m: dt_module.date(year, m, 1).strftime("%Y-%m-%d"))
             )
+        elif horizon_type == "quarter":
+            # Quarter 1→Jan, 2→Apr, 3→Jul, 4→Oct
+            df_rec["_date"] = (
+                df_rec[horizon_in_year_col]
+                .astype(int)
+                .apply(lambda q: dt_module.date(year, (q - 1) * 3 + 1, 1).strftime("%Y-%m-%d"))
+            )
+        else:  # season
+            from src.aggregation import get_season_months
+
+            season_start = get_season_months()[0]
+            df_rec["_date"] = dt_module.date(year, season_start, 1).strftime("%Y-%m-%d")
 
         # Build nullable float columns
         metric_cols = {}
-        for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                    'crps', 'pbias', 'kgelf', 'nse_log', 'fhv', 'flv'):
+        for col in (
+            "sdivsigma",
+            "nse",
+            "delta",
+            "accuracy",
+            "mae",
+            "crps",
+            "pbias",
+            "kgelf",
+            "nse_log",
+            "fhv",
+            "flv",
+        ):
             if col in df_rec.columns:
                 metric_cols[col] = df_rec[col].where(df_rec[col].notna())
             else:
                 metric_cols[col] = None
-        n_pairs_col = df_rec['n_pairs'].where(df_rec['n_pairs'].notna()) if 'n_pairs' in df_rec.columns else None
+        n_pairs_col = (
+            df_rec["n_pairs"].where(df_rec["n_pairs"].notna())
+            if "n_pairs" in df_rec.columns
+            else None
+        )
 
-        records_df = pd.DataFrame({
-            'horizon_type': api_horizon_type,
-            'code': df_rec['code'].astype(str),
-            'model_type': df_rec['model_type'],
-            'date': df_rec['_date'],
-            'horizon_in_year': df_rec[horizon_in_year_col].astype(int),
-            'composition': df_rec['_composition'],
-            **metric_cols,
-        })
+        records_df = pd.DataFrame(
+            {
+                "horizon_type": api_horizon_type,
+                "code": df_rec["code"].astype(str),
+                "model_type": df_rec["model_type"],
+                "date": df_rec["_date"],
+                "horizon_in_year": df_rec[horizon_in_year_col].astype(int),
+                "composition": df_rec["_composition"],
+                **metric_cols,
+            }
+        )
         if n_pairs_col is not None:
-            records_df['n_pairs'] = n_pairs_col
+            records_df["n_pairs"] = n_pairs_col
         # Convert to records, replacing NaN/NaT with None
         records = [
             {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
-            for row_dict in records_df.to_dict('records')
+            for row_dict in records_df.to_dict("records")
         ]
         # Ensure n_pairs is int where not None
         for r in records:
-            if r.get('n_pairs') is not None:
-                r['n_pairs'] = int(r['n_pairs'])
+            if r.get("n_pairs") is not None:
+                r["n_pairs"] = int(r["n_pairs"])
 
     # Write to API
     if records:
         count = client.write_skill_metrics(records)
-        logger.info(f"Successfully wrote {count} skill metric records to SAPPHIRE API ({horizon_type})")
+        logger.info(
+            f"Successfully wrote {count} skill metric records to SAPPHIRE API ({horizon_type})"
+        )
         print(f"SAPPHIRE API: Successfully wrote {count} skill metric records ({horizon_type})")
         return True
     else:
@@ -502,9 +539,7 @@ def _write_skill_metrics_to_api(
         return False
 
 
-def _write_threshold_skill_metrics_to_api(
-    data: pd.DataFrame, year: int
-) -> bool:
+def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool:
     """Write threshold-based skill metrics to SAPPHIRE API.
 
     Writes F1/CSI/precision/recall for flood and low-flow thresholds
@@ -525,19 +560,13 @@ def _write_threshold_skill_metrics_to_api(
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning(
-            "sapphire-api-client not installed, skipping "
-            "threshold skill metrics API write"
+            "sapphire-api-client not installed, skipping threshold skill metrics API write"
         )
         return False
 
-    api_enabled = (
-        os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
-    )
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via "
-            "SAPPHIRE_API_ENABLED=false"
-        )
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return False
 
     client = _get_postprocessing_client()
@@ -547,8 +576,8 @@ def _write_threshold_skill_metrics_to_api(
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     if not client.readiness_check():
         logger.warning(
-            "SAPPHIRE API at %s is not ready, skipping "
-            "threshold skill metrics write", api_url,
+            "SAPPHIRE API at %s is not ready, skipping threshold skill metrics write",
+            api_url,
         )
         return False
 
@@ -556,69 +585,56 @@ def _write_threshold_skill_metrics_to_api(
         df = data.copy()
 
         # Map model_short to API model_type
-        df['model_type'] = (
-            df['model_short'].astype(str).str.upper()
+        df["model_type"] = (
+            df["model_short"]
+            .astype(str)
+            .str.upper()
             .map(MODEL_TYPE_MAP)
-            .fillna(df['model_short'].astype(str))
+            .fillna(df["model_short"].astype(str))
         )
 
         # Build date from year (use Jan 1 as reference date)
-        date_str = dt_module.date(year, 1, 1).strftime('%Y-%m-%d')
+        date_str = dt_module.date(year, 1, 1).strftime("%Y-%m-%d")
 
         records = []
         for _, row in df.iterrows():
             record = {
-                'code': str(row['code']),
-                'model_type': row['model_type'],
-                'horizon_type': 'day',
-                'threshold_type': str(row['threshold_type']),
-                'threshold_value': (
-                    float(row['threshold_value'])
-                    if pd.notna(row.get('threshold_value'))
-                    else None
+                "code": str(row["code"]),
+                "model_type": row["model_type"],
+                "horizon_type": "day",
+                "threshold_type": str(row["threshold_type"]),
+                "threshold_value": (
+                    float(row["threshold_value"]) if pd.notna(row.get("threshold_value")) else None
                 ),
-                'date': date_str,
-                'n_years': (
-                    int(row['n_years'])
-                    if pd.notna(row.get('n_years'))
-                    else None
-                ),
+                "date": date_str,
+                "n_years": (int(row["n_years"]) if pd.notna(row.get("n_years")) else None),
             }
             # Add contingency metrics (nullable)
-            for col in ('f1', 'precision', 'recall', 'csi'):
+            for col in ("f1", "precision", "recall", "csi"):
                 val = row.get(col)
-                record[col] = (
-                    float(val) if pd.notna(val) else None
-                )
+                record[col] = float(val) if pd.notna(val) else None
             # Rename 'precision' to avoid SQL keyword conflict
-            if 'precision' in record:
-                record['precision_score'] = record.pop('precision')
-            for col in ('tp', 'fp', 'fn', 'tn'):
+            if "precision" in record:
+                record["precision_score"] = record.pop("precision")
+            for col in ("tp", "fp", "fn", "tn"):
                 val = row.get(col)
-                record[col] = (
-                    int(val) if pd.notna(val) else None
-                )
+                record[col] = int(val) if pd.notna(val) else None
             records.append(record)
 
         if not records:
             logger.info("No threshold skill metric records to write")
             return False
 
-        logger.debug(
-            "Sample threshold skill metric record: %s", records[0]
-        )
+        logger.debug("Sample threshold skill metric record: %s", records[0])
         # Use write_threshold_skill_metrics if client supports it;
         # gracefully no-op if endpoint doesn't exist yet (Stage 2).
         try:
             count = client.write_threshold_skill_metrics(records)
             logger.info(
-                "Successfully wrote %d threshold skill metric "
-                "records to API", count,
+                "Successfully wrote %d threshold skill metric records to API",
+                count,
             )
-            print(
-                f"SAPPHIRE API: Successfully wrote {count} "
-                f"threshold skill metric records"
-            )
+            print(f"SAPPHIRE API: Successfully wrote {count} threshold skill metric records")
             return True
         except AttributeError:
             logger.info(
@@ -632,16 +648,14 @@ def _write_threshold_skill_metrics_to_api(
             err_str = str(e)
             if "404" in err_str or "Not Found" in err_str:
                 logger.info(
-                    "ThresholdSkillMetric endpoint not deployed yet "
-                    "(Stage 2 pending): %s", err_str,
+                    "ThresholdSkillMetric endpoint not deployed yet (Stage 2 pending): %s",
+                    err_str,
                 )
                 return False
             raise
 
     except Exception as e:
-        logger.error(
-            "Failed to write threshold skill metrics to API: %s", e
-        )
+        logger.error("Failed to write threshold skill metrics to API: %s", e)
         return False
 
 
@@ -662,26 +676,19 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
     """
     import calendar
 
-    ensemble_models = {'EM', 'Naive Mean', 'Skilled Mean'}
+    ensemble_models = {"EM", "Naive Mean", "Skilled Mean"}
 
     if data is None or data.empty:
         logger.info("No monthly ensemble data to write to API")
         return False
 
     if not SAPPHIRE_API_AVAILABLE:
-        logger.warning(
-            "sapphire-api-client not installed, skipping monthly "
-            "ensemble API write"
-        )
+        logger.warning("sapphire-api-client not installed, skipping monthly ensemble API write")
         return False
 
-    api_enabled = (
-        os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
-    )
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
-        )
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return False
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -691,13 +698,12 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
 
         if not client.readiness_check():
             logger.warning(
-                f"SAPPHIRE API at {api_url} is not ready, "
-                "skipping monthly ensemble write"
+                f"SAPPHIRE API at {api_url} is not ready, skipping monthly ensemble write"
             )
             return False
 
         # Filter to ensemble rows only
-        ens_mask = data['model_short'].isin(ensemble_models)
+        ens_mask = data["model_short"].isin(ensemble_models)
         ens_data = data[ens_mask].copy()
         if ens_data.empty:
             logger.info("No ensemble rows in monthly forecast data")
@@ -705,27 +711,25 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
 
         records = []
         for _, row in ens_data.iterrows():
-            year = int(row['year'])
-            month = int(row['month'])
-            code = str(row['code']).replace('.0', '')
+            year = int(row["year"])
+            month = int(row["month"])
+            code = str(row["code"]).replace(".0", "")
 
             # Synthesize valid_from/valid_to from year+month if missing
-            if pd.notna(row.get('valid_from')):
-                valid_from = str(row['valid_from'])[:10]
+            if pd.notna(row.get("valid_from")):
+                valid_from = str(row["valid_from"])[:10]
             else:
                 valid_from = f"{year}-{month:02d}-01"
 
-            if pd.notna(row.get('valid_to')):
-                valid_to = str(row['valid_to'])[:10]
+            if pd.notna(row.get("valid_to")):
+                valid_to = str(row["valid_to"])[:10]
             else:
                 last_day = calendar.monthrange(year, month)[1]
                 valid_to = f"{year}-{month:02d}-{last_day:02d}"
 
             # Map model_short to API model_type
-            model_upper = str(row['model_short']).upper()
-            model_type = MODEL_TYPE_MAP.get(
-                model_upper, str(row['model_short'])
-            )
+            model_upper = str(row["model_short"]).upper()
+            model_type = MODEL_TYPE_MAP.get(model_upper, str(row["model_short"]))
 
             record = {
                 "horizon_type": "month",
@@ -737,23 +741,21 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
                 "valid_to": valid_to,
                 "flag": 0,
                 "q": (
-                    float(row['forecasted_discharge'])
-                    if pd.notna(row.get('forecasted_discharge'))
+                    float(row["forecasted_discharge"])
+                    if pd.notna(row.get("forecasted_discharge"))
                     else None
                 ),
             }
 
             # Add quantile columns if present and not NaN
-            for qcol in (
-                'q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95'
-            ):
+            for qcol in ("q05", "q10", "q25", "q50", "q75", "q90", "q95"):
                 if qcol in row.index and pd.notna(row.get(qcol)):
                     record[qcol] = float(row[qcol])
 
             # Add composition if present
-            comp = row.get('composition', '')
+            comp = row.get("composition", "")
             if pd.notna(comp) and str(comp).strip():
-                record['composition'] = str(comp)
+                record["composition"] = str(comp)
 
             records.append(record)
 
@@ -761,23 +763,199 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
             logger.info("No monthly ensemble records to write to API")
             return False
 
-        logger.debug(
-            "Sample monthly ensemble record: %s", records[0]
-        )
+        logger.debug("Sample monthly ensemble record: %s", records[0])
         count = client.write_long_forecasts(records)
         logger.info(
-            "Successfully wrote %d monthly ensemble forecast records "
-            "to SAPPHIRE API", count,
+            "Successfully wrote %d monthly ensemble forecast records to SAPPHIRE API",
+            count,
         )
-        print(
-            f"SAPPHIRE API: Successfully wrote {count} monthly "
-            f"ensemble forecast records"
-        )
+        print(f"SAPPHIRE API: Successfully wrote {count} monthly ensemble forecast records")
         return True
 
     except Exception as e:
         logger.error(
             "Failed to write monthly ensemble forecasts to API: %s",
+            str(e),
+        )
+        return False
+
+
+def _write_quarterly_ensemble_to_api(data: pd.DataFrame) -> bool:
+    """Write quarterly ensemble forecasts to the SAPPHIRE long_forecasts table.
+
+    Args:
+        data: DataFrame with quarterly joint forecasts. Expects columns:
+            code, year, quarter_in_year, forecasted_discharge, model_short,
+            and optionally q05-q95, valid_from, valid_to, composition.
+
+    Returns:
+        True if successful, False otherwise (never raises).
+    """
+    return _write_aggregated_ensemble_to_api(
+        data,
+        horizon_type="quarter",
+        period_col="quarter_in_year",
+        label="quarterly",
+    )
+
+
+def _write_seasonal_ensemble_to_api(data: pd.DataFrame) -> bool:
+    """Write seasonal ensemble forecasts to the SAPPHIRE long_forecasts table.
+
+    Args:
+        data: DataFrame with seasonal joint forecasts. Expects columns:
+            code, season_year, season_in_year, forecasted_discharge,
+            model_short, and optionally q05-q95, valid_from, valid_to,
+            composition.
+
+    Returns:
+        True if successful, False otherwise (never raises).
+    """
+    return _write_aggregated_ensemble_to_api(
+        data,
+        horizon_type="season",
+        period_col="season_in_year",
+        label="seasonal",
+    )
+
+
+def _write_aggregated_ensemble_to_api(
+    data: pd.DataFrame,
+    horizon_type: str,
+    period_col: str,
+    label: str,
+) -> bool:
+    """Shared implementation for writing quarterly/seasonal ensembles.
+
+    Mirrors _write_monthly_ensemble_to_api() with parameterized columns.
+    """
+    import calendar
+
+    from src.aggregation import QUARTER_MONTHS, get_season_months
+
+    ensemble_models = {"EM", "Naive Mean", "Skilled Mean"}
+
+    if data is None or data.empty:
+        logger.info("No %s ensemble data to write to API", label)
+        return False
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning(
+            "sapphire-api-client not installed, skipping %s ensemble API write",
+            label,
+        )
+        return False
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = _get_postprocessing_client()
+
+        if not client.readiness_check():
+            logger.warning(
+                "SAPPHIRE API at %s is not ready, skipping %s ensemble write",
+                api_url,
+                label,
+            )
+            return False
+
+        # Filter to ensemble rows only
+        ens_mask = data["model_short"].isin(ensemble_models)
+        ens_data = data[ens_mask].copy()
+        if ens_data.empty:
+            logger.info("No ensemble rows in %s forecast data", label)
+            return False
+
+        records = []
+        for _, row in ens_data.iterrows():
+            code = str(row["code"]).replace(".0", "")
+
+            # Map model_short to API model_type
+            model_upper = str(row["model_short"]).upper()
+            model_type = MODEL_TYPE_MAP.get(model_upper, str(row["model_short"]))
+
+            # Compute valid_from / valid_to / horizon_value
+            if horizon_type == "quarter":
+                year = int(row["year"])
+                quarter = int(row["quarter_in_year"])
+                start_month = QUARTER_MONTHS[quarter][0]
+                end_month = QUARTER_MONTHS[quarter][-1]
+                valid_from = f"{year}-{start_month:02d}-01"
+                last_day = calendar.monthrange(year, end_month)[1]
+                valid_to = f"{year}-{end_month:02d}-{last_day:02d}"
+                horizon_value = quarter
+            else:  # season
+                season_year = int(row.get("season_year", row.get("year")))
+                season_months = get_season_months()
+                start_m = season_months[0]
+                end_m = season_months[-1]
+                # Cross-year: start in season_year, end may be next year
+                if start_m <= end_m:
+                    valid_from = f"{season_year}-{start_m:02d}-01"
+                    last_day = calendar.monthrange(season_year, end_m)[1]
+                    valid_to = f"{season_year}-{end_m:02d}-{last_day:02d}"
+                else:
+                    valid_from = f"{season_year}-{start_m:02d}-01"
+                    end_year = season_year + 1
+                    last_day = calendar.monthrange(end_year, end_m)[1]
+                    valid_to = f"{end_year}-{end_m:02d}-{last_day:02d}"
+                horizon_value = 1
+
+            # Use existing valid_from/valid_to if present
+            if pd.notna(row.get("valid_from")):
+                valid_from = str(row["valid_from"])[:10]
+            if pd.notna(row.get("valid_to")):
+                valid_to = str(row["valid_to"])[:10]
+
+            record = {
+                "horizon_type": horizon_type,
+                "horizon_value": horizon_value,
+                "code": code,
+                "date": valid_from,
+                "model_type": model_type,
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+                "flag": 0,
+                "q": (
+                    float(row["forecasted_discharge"])
+                    if pd.notna(row.get("forecasted_discharge"))
+                    else None
+                ),
+            }
+
+            for qcol in ("q05", "q10", "q25", "q50", "q75", "q90", "q95"):
+                if qcol in row.index and pd.notna(row.get(qcol)):
+                    record[qcol] = float(row[qcol])
+
+            comp = row.get("composition", "")
+            if pd.notna(comp) and str(comp).strip():
+                record["composition"] = str(comp)
+
+            records.append(record)
+
+        if not records:
+            logger.info("No %s ensemble records to write to API", label)
+            return False
+
+        logger.debug("Sample %s ensemble record: %s", label, records[0])
+        count = client.write_long_forecasts(records)
+        logger.info(
+            "Successfully wrote %d %s ensemble forecast records to SAPPHIRE API",
+            count,
+            label,
+        )
+        print(f"SAPPHIRE API: Successfully wrote {count} {label} ensemble forecast records")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Failed to write %s ensemble forecasts to API: %s",
+            label,
             str(e),
         )
         return False

@@ -16,6 +16,8 @@ _PERIOD_COLUMN = {
     "pentad": "pentad_in_year",
     "decad": "decad_in_year",
     "month": "month_in_year",
+    "quarter": "quarter_in_year",
+    "season": "season_in_year",
 }
 
 

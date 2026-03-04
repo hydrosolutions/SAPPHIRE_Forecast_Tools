@@ -40,7 +40,7 @@
 | Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, Skilled Mean (inverse-MAE weighted), Naive Mean, EM baselines, API writer (month horizon + LT model types), file writer, save + log monthly forecasts, recalculate entry point (MONTHLY/ALL modes). 638 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
-| Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
+| Quarterly + seasonal skill metrics (Phase 4b) | TODO — ready to plan. Phase 4a done. DB already has quarterly (90-91d span) and seasonal (182d span, Apr-Sep) forecasts from `LR_BASE`/`LR_SM`, stored as `horizon_type='MONTH'`. Postprocessing will aggregate monthly forecasts and write with correct horizon tags. See Phase 4b checklist. |
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | **DONE** — 6 metric functions (`fdc_fhv`, `fdc_flv`, `estimate_return_period_thresholds`, `binary_contingency`, `lowflow_quantiles`, `calculate_daily_skill_metrics`) in `skill_metrics.py` with `DAILY_METRIC_REGISTRY`. Daily readers in `data_reader.py`, "day" horizon in `api_writer.py`, `fhv`/`flv` DB columns, threshold skill metrics writer, `save_daily_skill_metrics()` in `file_writer.py`. ML module writes daily-resolution records via `_write_ml_daily_forecast_to_api()`. DAILY mode in `recalculate_skill_metrics.py`. 38 new tests in `test_tier2_metrics.py`. Commit `55a27a4`. |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
@@ -444,9 +444,25 @@ Extend `postprocessing_forecasts` to calculate skill metrics for all temporal re
    - **Pentad/decad:** The `Forecast` table already has quantile columns (q05, q25, q50, q75, q95) but they are **not yet populated** by `linear_regression` / `machine_learning`. Once these modules produce prediction intervals or ensemble quantiles, CRPS can be calculated for short-term forecasts too. Until then, pentad/decad use traditional metrics only.
    - **Traditional (point-based):** Always calculated for all resolutions. For long-term forecasts, Q50 (median) is used as the point forecast for NSE, MAE, sdivsigma, accuracy.
 
-3. **Aggregation-first for quarterly/seasonal, with direct forecast support.** Start by averaging monthly forecast quantiles to produce quarterly (3-month) and seasonal values. However, `long_term_forecasting` may already produce forecasts with `horizon_type='season'` directly (target horizon of 1 season). If such records exist in the `long_forecasts` table, `postprocessing_forecasts` uses them directly instead of aggregating from monthly. The same applies to quarterly forecasts.
+3. **Aggregation from monthly forecasts.** Quarterly and seasonal values
+   are produced by aggregating monthly forecast quantiles (averaging Q5–Q95
+   across the target months). The `long_forecasts` table already contains
+   multi-month records (90-91 day quarterly spans and 182-day Apr-Sep
+   seasonal spans from `LR_BASE`/`LR_SM`), but these are stored with
+   `horizon_type='MONTH'` and are **not** consumed by postprocessing.
+   Instead, postprocessing reads only the single-month records (27-30 day
+   spans) and aggregates them into quarterly/seasonal values, then writes
+   the results with `horizon_type='quarter'`/`'season'`.
 
-   > **Note:** The `long_term_forecasting` module is still under active development. The exact output structure (which horizon types are produced, whether seasonal records exist directly) needs to be verified by inspecting the module's CSV output once it is complete. **Refine this integration plan once `long_term_forecasting` is finalized.**
+   > **Data verified (2026-03-04):** The `long_forecasts` table contains:
+   > - 1,307,069 monthly records (27-30d span) from 9 models (GBT, LR_BASE, LR_SM, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_NORM)
+   > - 18,204 quarterly records (90-91d, rolling 3-month windows Apr-Dec) from 2 models (LR_BASE, LR_SM) — these are direct outputs, not used by postprocessing
+   > - 10,854 seasonal records (182d, Apr 1 - Sep 30) from 2 models (LR_BASE, LR_SM) — these are direct outputs, not used by postprocessing
+   >
+   > All records use `horizon_type='MONTH'`. Postprocessing aggregates from
+   > the monthly records to ensure all 9 models contribute to ensemble
+   > candidates, not just the 2 models that produce direct multi-month
+   > records.
 
 4. **Configurable season definition.** Season start/end months are defined in `config.yaml` (not hardcoded), supporting different deployments (Central Asia Apr–Sep, Nepal Jun–Sep, Switzerland Apr–Oct, etc.).
 
@@ -555,11 +571,11 @@ seasonal:
 │  → Write to skill_metrics table (horizon_type='quarter'/'season')│
 └──────────────────────────────────────────────────────────────────┘
 
-  ⚠ long_term_forecasting integration note:
-  The long_term_forecasting module is under active development.
-  Whether it produces direct seasonal/quarterly records needs to be
-  verified once the module is complete. Refine this integration
-  plan at that point.
+  ℹ long_term_forecasting integration (verified 2026-03-04):
+  The long_forecasts table has direct quarterly (90-91d) and seasonal
+  (182d) records from LR_BASE/LR_SM, but only 2 of 9 models produce
+  them. Postprocessing aggregates from single-month records (all 9
+  models) to ensure full ensemble candidate coverage.
 ```
 
 ### `SAPPHIRE_PREDICTION_MODE` Semantics (decided 2026-02-16)
@@ -1001,15 +1017,100 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 - [x] `src/data_reader.py`: readiness checks in `_read_daily_runoff_api()` and `_read_long_forecasts_api()`
 - [x] Tests: unit + edge case + integration + API failure (818 postprocessing tests, 93 CRUD tests, 0 skips)
 
-#### Phase 4b: Quarterly & Seasonal Skill Metrics (deferred)
+#### Phase 4b: Quarterly & Seasonal Skill Metrics (ready to plan)
 
-- [ ] Date utilities in `tag_library.py` (`get_quarter`, `is_quarterly_forecast_date`, `is_seasonal_forecast_date`, `get_season_months`)
-- [ ] Quarterly aggregation + skill metrics (average 3 monthly quantiles)
-- [ ] Seasonal aggregation + skill metrics (configurable month range)
+**Approach:** Aggregate from single-month records in `long_forecasts` table.
+All 9 models produce monthly forecasts; only 2 produce direct multi-month
+records. Aggregating from monthly ensures full ensemble candidate coverage.
+
+**Data flow:**
+1. Read single-month forecasts (27-30d span) from `long_forecasts` via API
+2. Group by quarter (3 months) or season (configurable months)
+3. Average quantiles (Q5-Q95) and point forecasts across target months
+4. Create ensembles (EM, Skilled Mean, Naive Mean)
+5. Calculate skill metrics (point + CRPS) against aggregated observations
+6. Write forecasts with `horizon_type='quarter'`/`'season'` to API
+7. Write skill metrics with `horizon_type='quarter'`/`'season'` to API
+
+**Implementation checklist:**
+
+_Data reader (src/data_reader.py):_
+- [ ] `read_quarterly_forecasts(codes, start_year, end_year)` — read monthly
+  forecasts from API, aggregate to quarterly (avg Q5-Q95 per quarter)
+- [ ] `read_quarterly_observations(codes, start_year, end_year)` — read daily
+  runoff from API, aggregate to quarterly means (≥50% coverage per month,
+  ≥2/3 months per quarter required)
+- [ ] `read_seasonal_forecasts(codes, start_year, end_year, start_month,
+  end_month)` — same as quarterly but for configurable month range
+- [ ] `read_seasonal_observations(codes, start_year, end_year, start_month,
+  end_month)` — daily → seasonal mean (≥50% coverage per month, ≥50%
+  months required)
+- [ ] `read_quarterly_combined_forecasts()` — for maintenance gap detection
+- [ ] `read_seasonal_combined_forecasts()` — for maintenance gap detection
+
+_Ensemble calculator (src/ensemble_calculator.py):_
+- [ ] `create_quarterly_ensemble_forecasts(forecasts, skill_stats)` — EM +
+  Skilled Mean + Naive Mean for quarterly horizon (reuse monthly pattern)
+- [ ] `create_seasonal_ensemble_forecasts(forecasts, skill_stats)` — same
+  for seasonal horizon
+
+_Skill metrics (src/skill_metrics.py):_
+- [ ] `calculate_quarterly_skill_metrics(obs, fc, timing_stats)` — point
+  metrics (NSE, MAE, sdivsigma, accuracy, PBIAS, KGElf, NSE_log) + CRPS,
+  grouped by (quarter_in_year, code, model_short)
+- [ ] `calculate_seasonal_skill_metrics(obs, fc, timing_stats)` — same
+  grouped by (season_id, code, model_short). Season ID = 1 for the single
+  configured season (may be extended later for multiple seasons)
+
+_Writers (src/api_writer.py, src/file_writer.py):_
+- [ ] `api_writer`: extend horizon_type mapping to include 'quarter' and
+  'season'
+- [ ] `file_writer`: `save_quarterly_forecast_data()`,
+  `save_quarterly_skill_metrics()`, `save_seasonal_forecast_data()`,
+  `save_seasonal_skill_metrics()`
+
+_Entry points:_
+- [ ] `recalculate_skill_metrics.py`: add `QUARTERLY` and `SEASONAL` blocks,
+  update `VALID_MODES` and `ALL` mode to include them
+- [ ] `postprocessing_operational_long_term.py`: extend to process quarterly
+  and seasonal ensembles alongside monthly (same entry point, sequential
+  processing per horizon)
+- [ ] `postprocessing_maintenance_long_term.py`: extend gap detection and
+  gap-fill for quarterly and seasonal horizons
+
+_Gap detection (src/gap_detector.py):_
+- [ ] `detect_missing_quarterly_ensembles(combined, lookback)` — detect
+  missing EM/Skilled Mean/Naive Mean for (year, quarter, code) tuples
+- [ ] `detect_missing_seasonal_ensembles(combined, lookback)` — detect
+  missing ensembles for (year, code) tuples (one season per year)
+
+_Configuration:_
+- [ ] Seasonal config: `start_month`, `end_month` as env vars
+  (`SAPPHIRE_SEASON_START_MONTH`, `SAPPHIRE_SEASON_END_MONTH`) with
+  Central Asia defaults (4, 9). Migrate to `config.yaml` with PP-006.
+- [ ] Env vars for output file paths:
+  `ieasyforecast_quarterly_combined_forecast_file`,
+  `ieasyforecast_quarterly_skill_metrics_file`,
+  `ieasyforecast_seasonal_combined_forecast_file`,
+  `ieasyforecast_seasonal_skill_metrics_file`
+
+_Date utilities:_
+- [ ] Date utilities in `tag_library.py` (`get_quarter`,
+  `is_quarterly_forecast_date`, `is_seasonal_forecast_date`,
+  `get_season_months`)
 - [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates`
-- [ ] Seasonal config in `postprocessing_forecasts/config.yaml` (`start_month`, `end_month`)
-- [ ] Env vars for quarterly/seasonal output file paths
-- [ ] Extend `recalculate_skill_metrics.py` for quarterly/seasonal
+
+_Diagnostics:_
+- [ ] `write_diagnostics.py`: extend `_PERIOD_COLUMN` mapping for
+  'quarter' and 'season'
+
+_Tests:_
+- [ ] Unit tests for aggregation functions (quarterly/seasonal averaging)
+- [ ] Unit tests for ensemble creation (quarterly/seasonal)
+- [ ] Unit tests for skill metric calculation (quarterly/seasonal)
+- [ ] Edge cases: incomplete months, single-model groups, empty quarters
+- [ ] Integration tests: full pipeline from monthly data → ensembles →
+  skill metrics → API write
 
 #### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation) — DONE
 

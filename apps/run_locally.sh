@@ -19,6 +19,10 @@
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh long-term
 #
+#   # Long-term operational (full pipeline with run_forecast.py, months 0-9):
+#   ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh long-term-operational
+#
 #   # Long-term with specific years/months/modes:
 #   LT_SIMULATE_YEARS="2024 2025" LT_SIMULATE_NUM_MONTHS=3 \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
@@ -46,7 +50,8 @@
 #
 # Operational targets:
 #   short-term                          Short-term forecast pipeline
-#   long-term                           Long-term forecast pipeline (months 0-9)
+#   long-term                           Long-term forecast pipeline (simulate mode, for testing)
+#   long-term-operational               Full long-term pipeline (preprocessing + run_forecast.py months 0-9 + postprocess)
 #   all                                 Both pipelines
 #   <module>                            Single module by name (with per-module validation)
 #
@@ -477,6 +482,47 @@ run_long_term_forecasting() {
     return $rc
 }
 
+run_long_term_forecasting_operational() {
+    banner "Module: long_term_forecasting (operational)"
+    local start
+    start=$(get_timestamp)
+    local rc=0
+    local any_failed=false
+
+    # Operational run_forecast.py uses today's date (or LT_FORECAST_TODAY override)
+    # and checks each mode's operational_issue_day to decide whether to run.
+    local modes="${LT_OPERATIONAL_MODES:-0 1 2 3 4 5 6 7 8 9}"
+    local today_args=()
+    if [ -n "${LT_FORECAST_TODAY:-}" ]; then
+        today_args=(--today "${LT_FORECAST_TODAY}")
+    fi
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting_operational.log"
+    > "$CURRENT_MODULE_LOG"
+    for month in $modes; do
+        log INFO "  Month: month_${month} (operational)"
+        if ! run_in_venv long_term_forecasting run_forecast.py \
+            "lt_forecast_mode=month_${month}" \
+            -- --all "${today_args[@]}"; then
+            log WARN "  month_${month} failed, continuing with next month"
+            any_failed=true
+        fi
+    done
+    if [ "$any_failed" = true ]; then
+        rc=1
+    fi
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "long_term_forecasting (operational) completed in $(format_duration $elapsed)"
+        record_result "long_term_forecasting (operational)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log ERROR "long_term_forecasting (operational) had failures after $(format_duration $elapsed)"
+        record_result "long_term_forecasting (operational)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return $rc
+}
+
 # ---------------------------------------------------------------------------
 # Maintenance runner functions
 # ---------------------------------------------------------------------------
@@ -703,6 +749,28 @@ run_maintenance_postprocessing_long_term() {
     return $rc
 }
 
+run_recalculate_monthly_skill_metrics() {
+    banner "Recalculate: monthly skill metrics"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_recalculate_monthly.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv postprocessing_forecasts recalculate_skill_metrics.py \
+        "SAPPHIRE_PREDICTION_MODE=MONTHLY"
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "monthly skill metrics recalculation completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (monthly skill metrics)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log ERROR "monthly skill metrics recalculation failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (monthly skill metrics)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return $rc
+}
+
 # ---------------------------------------------------------------------------
 # API validation
 # ---------------------------------------------------------------------------
@@ -797,8 +865,41 @@ run_short_term_pipeline() {
 
 run_long_term_pipeline() {
     banner "LONG-TERM FORECAST PIPELINE"
+
+    # Phase 1: Generate forecasts
     run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 2: Operational postprocessing
     run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 3: Monthly skill metrics (needed for ensemble creation)
+    run_recalculate_monthly_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 4: Maintenance gap-fill (creates ensembles using skill metrics)
+    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    run_api_validation "long-term"
+}
+
+run_long_term_operational_pipeline() {
+    banner "LONG-TERM OPERATIONAL PIPELINE"
+
+    # Phase 1: Preprocessing (shared, runs once)
+    log INFO "Phase 1: Preprocessing"
+    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 2: Generate forecasts (operational run_forecast.py, months 0-9)
+    run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 3: Operational postprocessing
+    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 4: Monthly skill metrics (needed for ensemble creation)
+    run_recalculate_monthly_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # Phase 5: Maintenance gap-fill (creates ensembles using skill metrics)
+    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
     run_api_validation "long-term"
 }
@@ -936,7 +1037,7 @@ validate_env() {
         daily)
             log OK "Prediction mode: PENTAD + DECAD (daily)"
             ;;
-        long-term|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term)
+        long-term|long-term-operational|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term)
             # These targets don't depend on SAPPHIRE_PREDICTION_MODE
             ;;
     esac
@@ -946,6 +1047,7 @@ validate_env() {
     case "$target" in
         short-term)                      modules_to_check=("${SHORT_TERM_MODULES[@]}") ;;
         long-term)                       modules_to_check=(long_term_forecasting postprocessing_forecasts) ;;
+        long-term-operational)           modules_to_check=(preprocessing_runoff preprocessing_gateway long_term_forecasting postprocessing_forecasts) ;;
         all)                             modules_to_check=("${ALL_MODULES[@]}") ;;
         daily)                           modules_to_check=("${SHORT_TERM_MODULES[@]}" long_term_forecasting) ;;
         maintenance)                     modules_to_check=("${MAINTENANCE_MODULES[@]}" long_term_forecasting) ;;
@@ -1121,7 +1223,9 @@ Combined targets:
 
 Operational targets:
   short-term              Run the short-term forecast pipeline
-  long-term               Run the long-term forecast pipeline (months 0-9)
+  long-term               Long-term pipeline in simulate mode (for testing)
+  long-term-operational   Full long-term pipeline: preprocessing + run_forecast.py
+                          (months 0-9) + postprocess + skill metrics + gap-fill
   all                     Run both short-term and long-term pipelines
   <module_name>           Run a single module (see list below)
 
@@ -1158,6 +1262,8 @@ Environment variables:
   LT_SIMULATE_YEARS                  Space-separated years to simulate (default: 2024)
   LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 1)
   LT_SIMULATE_MODES                  Space-separated month modes to run (default: "0")
+  LT_OPERATIONAL_MODES                Month modes for long-term-operational (default: "0 1 2 3 4 5 6 7 8 9")
+  LT_FORECAST_TODAY                   Override today's date for run_forecast.py (YYYY-MM-DD)
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
 
 Examples:
@@ -1193,6 +1299,15 @@ Examples:
   # All yearly tasks (snow norms + skill metrics)
   ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh yearly
+
+  # Full long-term operational pipeline (months 0-9)
+  ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh long-term-operational
+
+  # Long-term operational with date override
+  LT_FORECAST_TODAY=2026-02-25 \
+    ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh long-term-operational
 
   # Long-term calibration
   ieasyhydroforecast_env_file_path=~/config/.env \
@@ -1245,7 +1360,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term"
+    local valid_targets="daily short-term long-term long-term-operational all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -1304,6 +1419,9 @@ main() {
             ;;
         long-term)
             run_long_term_pipeline || exit_code=$?
+            ;;
+        long-term-operational)
+            run_long_term_operational_pipeline || exit_code=$?
             ;;
         all)
             run_all || exit_code=$?

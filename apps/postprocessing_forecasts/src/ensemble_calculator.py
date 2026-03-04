@@ -434,3 +434,278 @@ def _add_naive_mean_monthly(
         joint = _append_to_joint(joint, naive_avg)
 
     return joint
+
+
+# ---------------------------------------------------------------------------
+# Quarterly ensemble creation
+# ---------------------------------------------------------------------------
+
+
+def create_quarterly_ensemble_forecasts(
+    forecasts: pd.DataFrame,
+    skill_stats: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create EM, Skilled Mean, Naive Mean for quarterly forecasts.
+
+    Uses pre-calculated quarterly skill metrics. Same algorithm as
+    monthly but with quarter_in_year instead of month_in_year.
+
+    Args:
+        forecasts: Quarterly forecasts with columns:
+            code, year, quarter_in_year, model_short,
+            forecasted_discharge, q05-q95.
+        skill_stats: Pre-calculated quarterly skill metrics with:
+            quarter_in_year, code, model_short, sdivsigma, nse,
+            delta, accuracy, mae, n_pairs.
+
+    Returns:
+        DataFrame with ensemble rows appended to input forecasts.
+    """
+    return _create_aggregated_ensemble_forecasts(
+        forecasts,
+        skill_stats,
+        period_col="quarter_in_year",
+        time_group_cols=["year", "quarter_in_year", "code"],
+    )
+
+
+def create_seasonal_ensemble_forecasts(
+    forecasts: pd.DataFrame,
+    skill_stats: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create EM, Skilled Mean, Naive Mean for seasonal forecasts.
+
+    Uses pre-calculated seasonal skill metrics.
+
+    Args:
+        forecasts: Seasonal forecasts with columns:
+            code, season_year, season_in_year, model_short,
+            forecasted_discharge, q05-q95.
+        skill_stats: Pre-calculated seasonal skill metrics with:
+            season_in_year, code, model_short, sdivsigma, nse,
+            delta, accuracy, mae, n_pairs.
+
+    Returns:
+        DataFrame with ensemble rows appended to input forecasts.
+    """
+    return _create_aggregated_ensemble_forecasts(
+        forecasts,
+        skill_stats,
+        period_col="season_in_year",
+        time_group_cols=["season_year", "code"],
+    )
+
+
+def _create_aggregated_ensemble_forecasts(
+    forecasts: pd.DataFrame,
+    skill_stats: pd.DataFrame,
+    period_col: str,
+    time_group_cols: list[str],
+) -> pd.DataFrame:
+    """Shared implementation for quarterly/seasonal ensemble creation.
+
+    Mirrors create_monthly_ensemble_forecasts() with parameterized
+    column names.
+    """
+    from src.skill_metrics import (
+        _QUANTILE_COLS,
+        _append_to_joint,
+        filter_for_highly_skilled_forecasts,
+    )
+
+    if forecasts.empty:
+        return pd.DataFrame()
+
+    if skill_stats.empty:
+        logger.warning("Empty skill metrics — returning forecasts without ensembles")
+        return forecasts.copy()
+
+    # Ensure forecasted_discharge exists (may be q50 from API)
+    if "forecasted_discharge" not in forecasts.columns and "q50" in forecasts.columns:
+        forecasts = forecasts.copy()
+        forecasts["forecasted_discharge"] = forecasts["q50"].astype(float)
+
+    joint = forecasts.copy()
+    baselines = {"EM", "Naive Mean", "Skilled Mean"}
+
+    # --- EM (threshold-filtered average) ---
+    skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    merge_keys = [period_col, "code", "model_short"]
+
+    # Normalize types for merge
+    for df in (joint, skill_filtered):
+        if period_col in df.columns:
+            df[period_col] = pd.to_numeric(df[period_col], errors="coerce")
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str)
+
+    qualifying = joint.merge(
+        skill_filtered[merge_keys].drop_duplicates(),
+        on=merge_keys,
+        how="inner",
+    )
+    qualifying = qualifying[~qualifying["model_short"].isin(baselines)].copy()
+    qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
+
+    n_models = joint[~joint["model_short"].isin(baselines)]["model_short"].nunique()
+
+    if n_models > 1 and not qualifying.empty:
+        em_agg = {
+            "forecasted_discharge": "mean",
+            "model_short": composition_agg,
+        }
+        if period_col not in time_group_cols:
+            em_agg[period_col] = "first"
+        for qcol in _QUANTILE_COLS:
+            if qcol in qualifying.columns:
+                em_agg[qcol] = "mean"
+        for dcol in ("valid_from", "valid_to", "date"):
+            if dcol in qualifying.columns:
+                em_agg[dcol] = "first"
+
+        em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
+        em_avg = em_avg.rename(columns={"model_short": "composition"})
+        em_avg["model_short"] = "EM"
+
+        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
+
+        if not em_avg.empty:
+            em_avg["flag"] = 0
+            joint = _append_to_joint(joint, em_avg)
+
+    # --- Skilled Mean (1/MAE weighted) ---
+    joint = _add_skilled_mean_aggregated_ens(
+        joint,
+        skill_filtered,
+        baselines,
+        _QUANTILE_COLS,
+        period_col,
+        time_group_cols,
+    )
+
+    # --- Naive Mean (unweighted) ---
+    joint = _add_naive_mean_aggregated_ens(
+        joint,
+        baselines,
+        _QUANTILE_COLS,
+        period_col,
+        time_group_cols,
+    )
+
+    return joint
+
+
+def _add_skilled_mean_aggregated_ens(
+    joint,
+    skill_filtered,
+    baselines,
+    quantile_cols,
+    period_col,
+    time_group_cols,
+):
+    """Add Skilled Mean rows for quarterly/seasonal ensemble creation."""
+    from src.skill_metrics import _append_to_joint
+
+    filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
+    if filtered.empty:
+        return joint
+
+    mae_df = filtered[[period_col, "code", "model_short", "mae"]].copy()
+    mae_df = mae_df.dropna(subset=["mae"])
+    if mae_df.empty:
+        return joint
+
+    mean_mae = mae_df["mae"].mean()
+    eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
+    mae_df["weight"] = 1.0 / (mae_df["mae"] + eps)
+
+    qualifying_keys = mae_df[[period_col, "code", "model_short"]].drop_duplicates()
+
+    pool = joint[~joint["model_short"].isin(baselines)].copy()
+    pool = pool.merge(
+        qualifying_keys,
+        on=[period_col, "code", "model_short"],
+        how="inner",
+    )
+    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
+    if pool.empty:
+        return joint
+
+    pool = pool.merge(
+        mae_df[[period_col, "code", "model_short", "weight"]],
+        on=[period_col, "code", "model_short"],
+        how="left",
+    )
+
+    def _weighted_mean(group, col):
+        w = pool.loc[group.index, "weight"].to_numpy()
+        d = group.to_numpy()
+        return np.average(d, weights=w)
+
+    sm_agg = {
+        "forecasted_discharge": (
+            "forecasted_discharge",
+            lambda x: _weighted_mean(x, "forecasted_discharge"),
+        ),
+        "composition": ("model_short", composition_agg),
+    }
+    if period_col not in time_group_cols:
+        sm_agg[period_col] = (period_col, "first")
+    for qcol in quantile_cols:
+        if qcol in pool.columns:
+            sm_agg[qcol] = (qcol, lambda x, _c=qcol: _weighted_mean(x, _c))
+    for dcol in ("valid_from", "valid_to", "date"):
+        if dcol in pool.columns:
+            sm_agg[dcol] = (dcol, "first")
+
+    sm_avg = pool.groupby(time_group_cols).agg(**sm_agg).reset_index()
+    sm_avg["model_short"] = "Skilled Mean"
+
+    sm_avg = sm_avg[sm_avg["composition"].apply(is_multi_model_composition)].copy()
+
+    if not sm_avg.empty:
+        sm_avg["flag"] = 0
+        joint = _append_to_joint(joint, sm_avg)
+
+    return joint
+
+
+def _add_naive_mean_aggregated_ens(
+    joint,
+    baselines,
+    quantile_cols,
+    period_col,
+    time_group_cols,
+):
+    """Add Naive Mean rows for quarterly/seasonal ensemble creation."""
+    from src.skill_metrics import _append_to_joint
+
+    pool = joint[~joint["model_short"].isin(baselines)].copy()
+    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
+    if pool.empty:
+        return joint
+
+    naive_agg = {
+        "forecasted_discharge": "mean",
+        "model_short": composition_agg,
+    }
+    if period_col not in time_group_cols:
+        naive_agg[period_col] = "first"
+    for qcol in quantile_cols:
+        if qcol in pool.columns:
+            naive_agg[qcol] = "mean"
+    for dcol in ("valid_from", "valid_to", "date"):
+        if dcol in pool.columns:
+            naive_agg[dcol] = "first"
+
+    naive_avg = pool.groupby(time_group_cols).agg(naive_agg).reset_index()
+    naive_avg = naive_avg.rename(columns={"model_short": "composition"})
+    naive_avg["model_short"] = "Naive Mean"
+
+    naive_avg = naive_avg[naive_avg["composition"].apply(is_multi_model_composition)].copy()
+
+    if not naive_avg.empty:
+        naive_avg["flag"] = 0
+        joint = _append_to_joint(joint, naive_avg)
+
+    return joint

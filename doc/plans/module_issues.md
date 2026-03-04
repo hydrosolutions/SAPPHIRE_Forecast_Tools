@@ -109,6 +109,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-014**~~ | ~~Skill metrics read priority inverted (CSV-first, should be API-first)~~ | | Complete | Moved to Completed Issues |
 | **PP-015** | Move NE creation from setup_library to postprocessing | **Low** | Open | See `postprocessing_forecasts/README.md` PP-015 | — |
 | **PP-016** | Recalculation bootstrap for new sites (auto-detect) | **Low** | Open | See `postprocessing_forecasts/README.md` PP-016 | — |
+| **PP-017** | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-017, unified plan Phase 4b | — |
+| **PP-018** | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-018, unified plan Phase 4b | — |
 
 ### Forecast Dashboard (`fd`)
 

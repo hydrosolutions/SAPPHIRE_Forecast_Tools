@@ -30,58 +30,60 @@ def detect_missing_ensembles(
         Empty DataFrame if no gaps found.
     """
     if ensemble_models is None:
-        ensemble_models = {'EM'}
+        ensemble_models = {"EM"}
 
-    empty = pd.DataFrame(columns=['date', 'code', 'model_short'])
+    empty = pd.DataFrame(columns=["date", "code", "model_short"])
 
     if combined_forecasts.empty:
         return empty
 
     # Ensure date is datetime
-    if not pd.api.types.is_datetime64_any_dtype(combined_forecasts['date']):
+    if not pd.api.types.is_datetime64_any_dtype(combined_forecasts["date"]):
         combined_forecasts = combined_forecasts.copy()
-        combined_forecasts['date'] = pd.to_datetime(combined_forecasts['date'])
+        combined_forecasts["date"] = pd.to_datetime(combined_forecasts["date"])
 
     # Determine lookback window
-    max_date = combined_forecasts['date'].max()
+    max_date = combined_forecasts["date"].max()
     cutoff = max_date - pd.Timedelta(days=lookback_days)
-    recent = combined_forecasts[combined_forecasts['date'] >= cutoff]
+    recent = combined_forecasts[combined_forecasts["date"] >= cutoff]
 
     if recent.empty:
         return empty
 
     # Find all (date, code) pairs with any forecasts
-    all_pairs = recent[['date', 'code']].drop_duplicates()
+    all_pairs = recent[["date", "code"]].drop_duplicates()
 
     # Check each ensemble model
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent['model_short'] == model][
-            ['date', 'code']
-        ].drop_duplicates()
+        model_pairs = recent[recent["model_short"] == model][["date", "code"]].drop_duplicates()
 
         merged = all_pairs.merge(
-            model_pairs, on=['date', 'code'],
-            how='left', indicator=True,
+            model_pairs,
+            on=["date", "code"],
+            how="left",
+            indicator=True,
         )
-        gaps = merged[merged['_merge'] == 'left_only'][
-            ['date', 'code']
-        ].copy()
+        gaps = merged[merged["_merge"] == "left_only"][["date", "code"]].copy()
         if not gaps.empty:
-            gaps['model_short'] = model
+            gaps["model_short"] = model
             missing_parts.append(gaps)
 
         logger.info(
             "Gap detection (%s): %d total pairs, %d present, %d missing",
-            model, len(all_pairs), len(model_pairs), len(gaps),
+            model,
+            len(all_pairs),
+            len(model_pairs),
+            len(gaps),
         )
 
     if not missing_parts:
         return empty
 
     return pd.concat(
-        missing_parts, ignore_index=True,
-    )[['date', 'code', 'model_short']]
+        missing_parts,
+        ignore_index=True,
+    )[["date", "code", "model_short"]]
 
 
 def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
@@ -101,6 +103,7 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
         ValueError: If horizon_type is invalid.
     """
     from src import data_reader
+
     return data_reader.read_combined_forecasts(horizon_type)
 
 
@@ -123,11 +126,9 @@ def detect_missing_monthly_ensembles(
         needing gap-fill. Empty DataFrame if no gaps found.
     """
     if ensemble_models is None:
-        ensemble_models = {'EM'}
+        ensemble_models = {"EM"}
 
-    empty = pd.DataFrame(
-        columns=["year", "month", "code", "model_short"]
-    )
+    empty = pd.DataFrame(columns=["year", "month", "code", "model_short"])
 
     if combined_forecasts.empty:
         return empty
@@ -176,9 +177,7 @@ def detect_missing_monthly_ensembles(
         return empty
 
     # Find all (year, month, code) pairs with any forecasts
-    all_pairs = recent[
-        ["year", "month", "code"]
-    ].drop_duplicates()
+    all_pairs = recent[["year", "month", "code"]].drop_duplicates()
 
     # Check each ensemble model
     missing_parts = []
@@ -188,25 +187,210 @@ def detect_missing_monthly_ensembles(
         ].drop_duplicates()
 
         merged = all_pairs.merge(
-            model_pairs, on=["year", "month", "code"],
-            how="left", indicator=True,
+            model_pairs,
+            on=["year", "month", "code"],
+            how="left",
+            indicator=True,
         )
-        gaps = merged[merged["_merge"] == "left_only"][
-            ["year", "month", "code"]
-        ].copy()
+        gaps = merged[merged["_merge"] == "left_only"][["year", "month", "code"]].copy()
         if not gaps.empty:
             gaps["model_short"] = model
             missing_parts.append(gaps)
 
         logger.info(
-            "Monthly gap detection (%s): %d total pairs, "
-            "%d present, %d missing",
-            model, len(all_pairs), len(model_pairs), len(gaps),
+            "Monthly gap detection (%s): %d total pairs, %d present, %d missing",
+            model,
+            len(all_pairs),
+            len(model_pairs),
+            len(gaps),
         )
 
     if not missing_parts:
         return empty
 
     return pd.concat(
-        missing_parts, ignore_index=True,
+        missing_parts,
+        ignore_index=True,
     )[["year", "month", "code", "model_short"]]
+
+
+def detect_missing_quarterly_ensembles(
+    combined_forecasts: pd.DataFrame,
+    lookback_quarters: int = 2,
+    ensemble_models: set[str] | None = None,
+) -> pd.DataFrame:
+    """Find (year, quarter_in_year, code, model_short) tuples missing ensembles.
+
+    Args:
+        combined_forecasts: DataFrame with [year, quarter_in_year, code,
+            model_short, ...].
+        lookback_quarters: Quarters to scan back from most recent.
+        ensemble_models: Ensemble model_short values to check.
+            Defaults to ``{'EM'}``.
+
+    Returns:
+        DataFrame with gap tuples. Empty DataFrame if no gaps found.
+    """
+    if ensemble_models is None:
+        ensemble_models = {"EM"}
+
+    cols = ["year", "quarter_in_year", "code", "model_short"]
+    empty = pd.DataFrame(columns=cols)
+
+    if combined_forecasts.empty:
+        return empty
+
+    required = {"year", "quarter_in_year", "code", "model_short"}
+    if not required.issubset(combined_forecasts.columns):
+        logger.warning(
+            "Quarterly combined forecasts missing columns: %s",
+            required - set(combined_forecasts.columns),
+        )
+        return empty
+
+    df = combined_forecasts.copy()
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    df["quarter_in_year"] = pd.to_numeric(df["quarter_in_year"], errors="coerce")
+    df = df.dropna(subset=["year", "quarter_in_year"])
+    df["year"] = df["year"].astype(int)
+    df["quarter_in_year"] = df["quarter_in_year"].astype(int)
+
+    if df.empty:
+        return empty
+
+    max_year = df["year"].max()
+    max_q = df[df["year"] == max_year]["quarter_in_year"].max()
+
+    recent_periods = []
+    y, q = int(max_year), int(max_q)
+    for _ in range(lookback_quarters):
+        recent_periods.append((y, q))
+        q -= 1
+        if q < 1:
+            q = 4
+            y -= 1
+
+    recent = df[
+        df.apply(
+            lambda r: (r["year"], r["quarter_in_year"]) in recent_periods,
+            axis=1,
+        )
+    ]
+
+    if recent.empty:
+        return empty
+
+    all_pairs = recent[["year", "quarter_in_year", "code"]].drop_duplicates()
+
+    missing_parts = []
+    for model in sorted(ensemble_models):
+        model_pairs = recent[recent["model_short"] == model][
+            ["year", "quarter_in_year", "code"]
+        ].drop_duplicates()
+
+        merged = all_pairs.merge(
+            model_pairs,
+            on=["year", "quarter_in_year", "code"],
+            how="left",
+            indicator=True,
+        )
+        gaps = merged[merged["_merge"] == "left_only"][["year", "quarter_in_year", "code"]].copy()
+        if not gaps.empty:
+            gaps["model_short"] = model
+            missing_parts.append(gaps)
+
+        logger.info(
+            "Quarterly gap detection (%s): %d total, %d present, %d missing",
+            model,
+            len(all_pairs),
+            len(model_pairs),
+            len(gaps),
+        )
+
+    if not missing_parts:
+        return empty
+
+    return pd.concat(missing_parts, ignore_index=True)[cols]
+
+
+def detect_missing_seasonal_ensembles(
+    combined_forecasts: pd.DataFrame,
+    lookback_seasons: int = 1,
+    ensemble_models: set[str] | None = None,
+) -> pd.DataFrame:
+    """Find (season_year, code, model_short) tuples missing ensembles.
+
+    Args:
+        combined_forecasts: DataFrame with [season_year, code,
+            model_short, ...].
+        lookback_seasons: Seasons to scan back from most recent.
+        ensemble_models: Ensemble model_short values to check.
+            Defaults to ``{'EM'}``.
+
+    Returns:
+        DataFrame with gap tuples. Empty DataFrame if no gaps found.
+    """
+    if ensemble_models is None:
+        ensemble_models = {"EM"}
+
+    cols = ["season_year", "code", "model_short"]
+    empty = pd.DataFrame(columns=cols)
+
+    if combined_forecasts.empty:
+        return empty
+
+    required = {"season_year", "code", "model_short"}
+    if not required.issubset(combined_forecasts.columns):
+        logger.warning(
+            "Seasonal combined forecasts missing columns: %s",
+            required - set(combined_forecasts.columns),
+        )
+        return empty
+
+    df = combined_forecasts.copy()
+    df["season_year"] = pd.to_numeric(df["season_year"], errors="coerce")
+    df = df.dropna(subset=["season_year"])
+    df["season_year"] = df["season_year"].astype(int)
+
+    if df.empty:
+        return empty
+
+    max_sy = df["season_year"].max()
+    recent_years = list(range(max_sy, max_sy - lookback_seasons, -1))
+
+    recent = df[df["season_year"].isin(recent_years)]
+
+    if recent.empty:
+        return empty
+
+    all_pairs = recent[["season_year", "code"]].drop_duplicates()
+
+    missing_parts = []
+    for model in sorted(ensemble_models):
+        model_pairs = recent[recent["model_short"] == model][
+            ["season_year", "code"]
+        ].drop_duplicates()
+
+        merged = all_pairs.merge(
+            model_pairs,
+            on=["season_year", "code"],
+            how="left",
+            indicator=True,
+        )
+        gaps = merged[merged["_merge"] == "left_only"][["season_year", "code"]].copy()
+        if not gaps.empty:
+            gaps["model_short"] = model
+            missing_parts.append(gaps)
+
+        logger.info(
+            "Seasonal gap detection (%s): %d total, %d present, %d missing",
+            model,
+            len(all_pairs),
+            len(model_pairs),
+            len(gaps),
+        )
+
+    if not missing_parts:
+        return empty
+
+    return pd.concat(missing_parts, ignore_index=True)[cols]

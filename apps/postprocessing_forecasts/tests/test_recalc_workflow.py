@@ -118,6 +118,26 @@ def _setup_mocks(mock_data, mock_skill):
     mock_file_writer.save_monthly_forecast_data.return_value = None
     mock_file_writer.save_monthly_skill_metrics.return_value = None
 
+    # Quarterly/seasonal mocks
+    mock_data_reader.read_quarterly_observations.return_value = pd.DataFrame()
+    mock_data_reader.read_quarterly_forecasts.return_value = pd.DataFrame()
+    mock_data_reader.read_seasonal_observations.return_value = pd.DataFrame()
+    mock_data_reader.read_seasonal_forecasts.return_value = pd.DataFrame()
+    mock_skill_metrics.calculate_quarterly_skill_metrics.return_value = (
+        pd.DataFrame(),
+        pd.DataFrame(),
+        None,
+    )
+    mock_skill_metrics.calculate_seasonal_skill_metrics.return_value = (
+        pd.DataFrame(),
+        pd.DataFrame(),
+        None,
+    )
+    mock_file_writer.save_quarterly_forecast_data.return_value = None
+    mock_file_writer.save_quarterly_skill_metrics.return_value = None
+    mock_file_writer.save_seasonal_forecast_data.return_value = None
+    mock_file_writer.save_seasonal_skill_metrics.return_value = None
+
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
 

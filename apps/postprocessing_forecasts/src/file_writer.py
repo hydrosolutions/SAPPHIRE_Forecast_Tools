@@ -741,3 +741,144 @@ def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Quarterly/seasonal save functions (API-only, no CSV)
+# ---------------------------------------------------------------------------
+
+
+def save_quarterly_skill_metrics(data: pd.DataFrame, year: int = None):
+    """Save quarterly skill metrics to API.
+
+    API-only — no CSV output for quarterly metrics.
+
+    Args:
+        data: DataFrame with quarterly skill metrics. Expected columns:
+            quarter_in_year, code, model_short, sdivsigma, nse, delta,
+            accuracy, mae, n_pairs, crps, composition (optional).
+        year: Target year for API skill metric dates. Defaults to
+            current calendar year.
+    """
+    if data is None or data.empty:
+        logger.info("No quarterly skill metrics to save")
+        return None
+
+    data = data.round(4)
+
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    data["quarter_in_year"] = data["quarter_in_year"].astype(int)
+    data = data.sort_values(by=["quarter_in_year", "code", "model_short"])
+
+    write_diagnostics.diagnose_skill_metrics(data, "quarter", "quarterly skill metrics")
+
+    if api_writer.SAPPHIRE_API_AVAILABLE:
+        try:
+            api_writer._write_skill_metrics_to_api(data, "quarter", _resolve_year(year))
+        except Exception as e:
+            fl._handle_api_write_error(e, "quarterly skill metrics")
+
+    return None
+
+
+def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None):
+    """Save seasonal skill metrics to API.
+
+    API-only — no CSV output for seasonal metrics.
+
+    Args:
+        data: DataFrame with seasonal skill metrics. Expected columns:
+            season_in_year, code, model_short, sdivsigma, nse, delta,
+            accuracy, mae, n_pairs, crps, composition (optional).
+        year: Target year for API skill metric dates. Defaults to
+            current calendar year.
+    """
+    if data is None or data.empty:
+        logger.info("No seasonal skill metrics to save")
+        return None
+
+    data = data.round(4)
+
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    data["season_in_year"] = data["season_in_year"].astype(int)
+    data = data.sort_values(by=["season_in_year", "code", "model_short"])
+
+    write_diagnostics.diagnose_skill_metrics(data, "season", "seasonal skill metrics")
+
+    if api_writer.SAPPHIRE_API_AVAILABLE:
+        try:
+            api_writer._write_skill_metrics_to_api(data, "season", _resolve_year(year))
+        except Exception as e:
+            fl._handle_api_write_error(e, "seasonal skill metrics")
+
+    return None
+
+
+def save_quarterly_forecast_data(simulated: pd.DataFrame):
+    """Save quarterly combined forecasts (ensemble rows) to API.
+
+    API-only — no CSV output for quarterly forecasts.
+
+    Args:
+        simulated: DataFrame with quarterly joint forecasts. Expected
+            columns: code, year, quarter_in_year, model_short,
+            forecasted_discharge, and optionally q05-q95, composition.
+    """
+    if simulated is None or simulated.empty:
+        logger.info("No quarterly forecast data to save")
+        return None
+
+    simulated = simulated.round(3)
+
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    write_diagnostics.diagnose_forecast_data(simulated, "quarter", "quarterly combined")
+
+    ret = api_writer._write_quarterly_ensemble_to_api(simulated)
+    if ret:
+        logger.info("Quarterly ensemble forecasts written to API successfully.")
+    else:
+        logger.warning(
+            "Quarterly ensemble forecasts API write returned False "
+            "(disabled, unavailable, or failed)."
+        )
+
+    return None
+
+
+def save_seasonal_forecast_data(simulated: pd.DataFrame):
+    """Save seasonal combined forecasts (ensemble rows) to API.
+
+    API-only — no CSV output for seasonal forecasts.
+
+    Args:
+        simulated: DataFrame with seasonal joint forecasts. Expected
+            columns: code, season_year, season_in_year, model_short,
+            forecasted_discharge, and optionally q05-q95, composition.
+    """
+    if simulated is None or simulated.empty:
+        logger.info("No seasonal forecast data to save")
+        return None
+
+    simulated = simulated.round(3)
+
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    write_diagnostics.diagnose_forecast_data(simulated, "season", "seasonal combined")
+
+    ret = api_writer._write_seasonal_ensemble_to_api(simulated)
+    if ret:
+        logger.info("Seasonal ensemble forecasts written to API successfully.")
+    else:
+        logger.warning(
+            "Seasonal ensemble forecasts API write returned False "
+            "(disabled, unavailable, or failed)."
+        )
+
+    return None

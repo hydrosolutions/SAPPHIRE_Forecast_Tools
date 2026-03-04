@@ -271,7 +271,7 @@ class TestReadSkillMetricsIntegration:
 
     def test_invalid_horizon_type_raises(self):
         """Invalid horizon_type raises ValueError."""
-        with pytest.raises(ValueError, match="'pentad', 'decad', or 'month'"):
+        with pytest.raises(ValueError, match="horizon_type must be one of"):
             read_skill_metrics("weekly")
 
     def test_month_delegates_to_monthly_reader(self):

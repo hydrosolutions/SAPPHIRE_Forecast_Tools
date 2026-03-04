@@ -12,8 +12,10 @@
 #   PENTAD  — pentadal skill metrics only
 #   DECAD   — decadal skill metrics only
 #   BOTH    — pentad + decad (backward compatible)
-#   MONTHLY — monthly skill metrics only (long-term forecasts)
-#   ALL     — pentad + decad + monthly
+#   MONTHLY   — monthly skill metrics only (long-term forecasts)
+#   QUARTERLY — quarterly skill metrics (aggregated from monthly)
+#   SEASONAL  — seasonal skill metrics (aggregated from monthly)
+#   ALL       — pentad + decad + monthly + quarterly + seasonal + daily
 
 import datetime as dt
 import json
@@ -55,7 +57,16 @@ logger.addHandler(console_handler)
 
 timing_stats = TimingStats()
 
-VALID_MODES = ["PENTAD", "DECAD", "BOTH", "MONTHLY", "DAILY", "ALL"]
+VALID_MODES = [
+    "PENTAD",
+    "DECAD",
+    "BOTH",
+    "MONTHLY",
+    "DAILY",
+    "QUARTERLY",
+    "SEASONAL",
+    "ALL",
+]
 
 
 def _read_station_codes():
@@ -226,6 +237,100 @@ def recalculate_skill_metrics():
                     errors.append(f"Monthly skill metrics save failed: {ret}")
 
             pt.log_most_recent_forecasts_monthly(monthly_joint)
+
+        if prediction_mode in ["QUARTERLY", "ALL"]:
+            current_year = dt.date.today().year
+            start_year = int(
+                os.getenv(
+                    "SAPPHIRE_SKILL_METRICS_START_YEAR",
+                    os.getenv("SAPPHIRE_RECALC_START_YEAR", current_year - 20),
+                )
+            )
+            end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
+            codes = _read_station_codes()
+
+            with timer(timing_stats, "reading quarterly data"):
+                logger.info("\n\n------ Reading quarterly data (aggregated from monthly) -------")
+                quarterly_obs = data_reader.read_quarterly_observations(codes, start_year, end_year)
+                quarterly_fc = data_reader.read_quarterly_forecasts(codes, start_year, end_year)
+
+            with timer(timing_stats, "calculating skill metrics quarterly"):
+                logger.info("\n\n------ Calculating skill metrics quarterly ------")
+                original_timing_stats = timing_stats
+                quarterly_skill, quarterly_joint, returned_timing_stats = (
+                    skill_metrics.calculate_quarterly_skill_metrics(
+                        quarterly_obs, quarterly_fc, timing_stats
+                    )
+                )
+                if returned_timing_stats is not None:
+                    timing_stats = returned_timing_stats
+                else:
+                    timing_stats = original_timing_stats
+
+            with timer(timing_stats, "saving quarterly results"):
+                logger.info("\n\n------ Saving quarterly results -----------------")
+                ret = file_writer.save_quarterly_forecast_data(quarterly_joint)
+                if ret is None:
+                    logger.info("Quarterly forecast data saved successfully.")
+                else:
+                    logger.error(f"Error saving quarterly forecast data: {ret}")
+                    errors.append(f"Quarterly forecast data save failed: {ret}")
+
+                ret = file_writer.save_quarterly_skill_metrics(
+                    quarterly_skill, year=skill_metrics_year
+                )
+                if ret is None:
+                    logger.info("Quarterly skill metrics saved successfully.")
+                else:
+                    logger.error(f"Error saving quarterly skill metrics: {ret}")
+                    errors.append(f"Quarterly skill metrics save failed: {ret}")
+
+        if prediction_mode in ["SEASONAL", "ALL"]:
+            current_year = dt.date.today().year
+            start_year = int(
+                os.getenv(
+                    "SAPPHIRE_SKILL_METRICS_START_YEAR",
+                    os.getenv("SAPPHIRE_RECALC_START_YEAR", current_year - 20),
+                )
+            )
+            end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
+            codes = _read_station_codes()
+
+            with timer(timing_stats, "reading seasonal data"):
+                logger.info("\n\n------ Reading seasonal data (aggregated from monthly) -------")
+                seasonal_obs = data_reader.read_seasonal_observations(codes, start_year, end_year)
+                seasonal_fc = data_reader.read_seasonal_forecasts(codes, start_year, end_year)
+
+            with timer(timing_stats, "calculating skill metrics seasonal"):
+                logger.info("\n\n------ Calculating skill metrics seasonal ------")
+                original_timing_stats = timing_stats
+                seasonal_skill, seasonal_joint, returned_timing_stats = (
+                    skill_metrics.calculate_seasonal_skill_metrics(
+                        seasonal_obs, seasonal_fc, timing_stats
+                    )
+                )
+                if returned_timing_stats is not None:
+                    timing_stats = returned_timing_stats
+                else:
+                    timing_stats = original_timing_stats
+
+            with timer(timing_stats, "saving seasonal results"):
+                logger.info("\n\n------ Saving seasonal results -----------------")
+                ret = file_writer.save_seasonal_forecast_data(seasonal_joint)
+                if ret is None:
+                    logger.info("Seasonal forecast data saved successfully.")
+                else:
+                    logger.error(f"Error saving seasonal forecast data: {ret}")
+                    errors.append(f"Seasonal forecast data save failed: {ret}")
+
+                ret = file_writer.save_seasonal_skill_metrics(
+                    seasonal_skill, year=skill_metrics_year
+                )
+                if ret is None:
+                    logger.info("Seasonal skill metrics saved successfully.")
+                else:
+                    logger.error(f"Error saving seasonal skill metrics: {ret}")
+                    errors.append(f"Seasonal skill metrics save failed: {ret}")
 
         if prediction_mode in ["DAILY", "ALL"]:
             current_year = dt.date.today().year
