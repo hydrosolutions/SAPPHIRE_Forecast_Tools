@@ -50,16 +50,21 @@ class WidgetManager:
         # ── Invisible ───────────────────────────────────────────────────────
         self.date_picker = widgets.create_date_picker(dm.forecasts_all)
 
-        last_date, self.forecast_horizon, self.forecast_year = (
-            dm.get_bulletin_metadata()
-        )
-        self.pentad_selector = widgets.create_pentad_selector(last_date)
-        self.decad_selector = widgets.create_decad_selector(last_date)
-
         # ── Hydropost ───────────────────────────────────────────────────────
         self.station_selector = widgets.create_station_selector(station_dict)
         width = self.station_selector.width
         self.station_card = widgets.create_station_card(self.station_selector)
+
+        # ── Horizon ─────────────────────────────────────────────────────────
+        self.horizon_selector = widgets.create_horizon_selector()
+        self.horizon_card = widgets.create_horizon_card(self.horizon_selector, width)
+
+        # ── Invisible ───────────────────────────────────────────────────────
+        last_date, self.forecast_horizon, self.forecast_year = (
+            dm.get_bulletin_metadata(self.horizon_selector.value)
+        )
+        self.pentad_selector = widgets.create_pentad_selector(last_date)
+        self.decad_selector = widgets.create_decad_selector(last_date)
 
         # ── Forecast configuration ──────────────────────────────────────────
         available_models = dm.get_available_models(
@@ -93,7 +98,7 @@ class WidgetManager:
         self.basin_card = widgets.create_basin_card(self.basin_selector, width)
 
         # ── Manual re-run of latest forecasts ───────────────────────────────
-        self.reload_card = cfg.viz.create_reload_button()
+        self.reload_card = cfg.viz.create_reload_button(self.horizon_selector.value)
 
         # === PREDICTORS TAB WIDGETS ===
         # ── Warning ─────────────────────────────────────────────────────────
@@ -152,12 +157,12 @@ class WidgetManager:
         self._wire_site_object_binding(dm)
 
     def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
-        @pn.depends(self.station_selector, self.pentad_selector, self.decad_selector, watch=True)
-        def _on_change(station_value, selected_pentad, selected_decad):
+        @pn.depends(self.horizon_selector, self.station_selector, self.pentad_selector, self.decad_selector, watch=True)
+        def _on_change(horizon, station_value, selected_pentad, selected_decad):
             """Reload data for the new station and refresh the model checkbox."""
             _ = self._gettext
-            dm.load_station(station_value.split()[0])
-            dm.update_sites_for_pentad(_, selected_pentad, selected_decad)
+            dm.load_station(horizon, station_value.split()[0])
+            dm.update_sites_for_pentad(_, horizon, selected_pentad, selected_decad)
             dm.invalidate_render_cache()
 
             self.refresh_warnings()
@@ -206,6 +211,7 @@ class WidgetManager:
 
         # Get pre-selected models
         best_models = self._dm.get_best_models(
+            self.horizon_selector.value,
             self.station_selector.value,
             self.pentad_selector.value,
             self.decad_selector.value,
@@ -220,12 +226,12 @@ class WidgetManager:
         print(f"  New options to set: {available_models}")
         print(f"  New values to set: {new_values}")
 
-        with pn.io.hold(pn.state.curdoc):
-            # Try updating options first, then values
-            self.model_checkbox.options = available_models
-            self.model_checkbox.value = new_values
-            # model_checkbox.param.trigger('options')
-            # model_checkbox.param.trigger('value')
+        # with pn.io.hold(pn.state.curdoc):
+        # Try updating options first, then values
+        self.model_checkbox.options = available_models
+        self.model_checkbox.value = new_values
+        # model_checkbox.param.trigger('options')
+        # model_checkbox.param.trigger('value')
         
         print("\nAfter options update:")
         print(f"  Widget options: {self.model_checkbox.options}")
@@ -276,6 +282,7 @@ class WidgetManager:
     # ------------------------------------------------------------------
     def _apply_best_models(self) -> None:
         best_models = self._dm.get_best_models(
+            self.horizon_selector.value,
             self.station_selector.value,
             self.pentad_selector.value,
             self.decad_selector.value,

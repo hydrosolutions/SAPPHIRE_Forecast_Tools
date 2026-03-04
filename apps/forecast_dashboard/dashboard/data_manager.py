@@ -37,7 +37,7 @@ class DataManager(param.Parameterized):
 
     Usage:
         dm = DataManager(all_stations=..., ...)
-        dm.load_station('15189')
+        dm.load_station('pentad', '15189')
         forecasts = dm.forecasts_all
     """
 
@@ -45,12 +45,15 @@ class DataManager(param.Parameterized):
     # current_station = param.String(default='', doc="Currently selected station code")
     # data_version = param.Integer(default=0, doc="Incremented on every data reload to notify dependents")
 
-    def __init__(self, all_stations, cfg, **kwargs):
+    def __init__(self, all_stations, **kwargs):
         super().__init__(**kwargs)
 
         # Immutable configuration
-        self._horizon = cfg.horizon
-        self._horizon_in_year = cfg.horizon_in_year
+        # self._horizon = horizon
+        # if horizon == "pentad":
+        #     self._horizon_in_year = "pentad_in_year"
+        # elif horizon == "decade":
+        #     self._horizon_in_year = "decad_in_year"
 
         # Station metadata (may be replaced by async iehhf load)
         self._all_stations = all_stations
@@ -84,6 +87,14 @@ class DataManager(param.Parameterized):
     @property
     def rram_forecast(self):
         return self._rram_forecast
+
+    def horizon_in_year(self, horizon):
+        horizon_in_year = None
+        if horizon == "pentad":
+            horizon_in_year = "pentad_in_year"
+        elif horizon == "decade":
+            horizon_in_year = "decad_in_year"
+        return horizon_in_year
 
     # @property
     # def all_models(self) -> dict:
@@ -135,13 +146,13 @@ class DataManager(param.Parameterized):
     # Data loading
     # ------------------------------------------------------------------
 
-    def load_station(self, station_code: str) -> None:
+    def load_station(self, horizon: str, station_code: str) -> None:
         """
         Fetch data for a station and rebuild derived structures.
         This is the *only* place `db.get_data` should be called.
         """
         logger.info(f"Loading data for station {station_code}")
-        self._data = db.get_data(station_code, self._all_stations)
+        self._data = db.get_data(horizon, station_code, self._all_stations)
         # self.current_station = station_code
         self._rebuild_all_models()
         # self.data_version += 1  # notify watchers
@@ -173,10 +184,15 @@ class DataManager(param.Parameterized):
             station_code, selected_date,
         )
 
-    def get_best_models(self, station_code: str, pentad, decad) -> list:
+    def get_best_models(self, horizon, station_code: str, pentad, decad) -> list:
         """Return the best models for a station/pentad combination."""
+        horizon_value = ""
+        if horizon == "pentad":
+            horizon_value = pentad
+        elif horizon == "decade":
+            horizon_value = decad
         return processing.get_best_models_for_station_and_pentad(
-            self.forecasts_all, station_code, pentad, decad,
+            horizon, self.horizon_in_year(horizon), horizon_value, self.forecasts_all, station_code
         )
 
     def resolve_model_values(self, available_models: dict, preselected: list) -> list:
@@ -205,29 +221,29 @@ class DataManager(param.Parameterized):
     # Site attribute updates
     # ------------------------------------------------------------------
 
-    def update_sites_for_pentad(self, _, pentad, decad) -> None:
+    def update_sites_for_pentad(self, _, horizon, pentad, decad) -> None:
         """Refresh hydrograph statistics + linear regression predictor on sites."""
         # Initial site attribute computation
         self._sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(
             _=_, sites=self._sites_list,
             df=self.hydrograph_pentad_all,
             pentad=pentad, decad=decad,
-            horizon=self._horizon,
-            horizon_in_year=self._horizon_in_year,
+            horizon=horizon,
+            horizon_in_year=self.horizon_in_year(horizon),
         )
         self._sites_list = utils.update_site_attributes_with_linear_regression_predictor(
             _, sites=self._sites_list,
             df=self.linreg_predictor,
             pentad=pentad, decad=decad,
-            horizon=self._horizon,
-            horizon_in_year=self._horizon_in_year,
+            horizon=horizon,
+            horizon_in_year=self.horizon_in_year(horizon),
         )
 
     # ------------------------------------------------------------------
     # Station metadata replacement (async iehhf callback)
     # ------------------------------------------------------------------
 
-    def replace_stations(self, new_all_stations, new_station_dict, station_widget,
+    def replace_stations(self, horizon, new_all_stations, new_station_dict, station_widget,
                          _, pentad, decad) -> None:
         """
         Called from the background thread callback when iehhf stations finish
@@ -238,7 +254,7 @@ class DataManager(param.Parameterized):
         station_widget.groups = new_station_dict
 
         self._sites_list = Site.get_site_attribues_from_iehhf_dataframe(new_all_stations)
-        self.update_sites_for_pentad(_, pentad, decad)
+        self.update_sites_for_pentad(_, horizon, pentad, decad)
 
     # ------------------------------------------------------------------
     # Render tracking – avoids redundant expensive plot updates
@@ -265,7 +281,7 @@ class DataManager(param.Parameterized):
     # Bulletin helpers
     # ------------------------------------------------------------------
 
-    def get_bulletin_metadata(self):
+    def get_bulletin_metadata(self, horizon):
         """Return (last_date, forecast_horizon, forecast_year) for bulletin saving."""
         # Get the last available date in the data
         last_date = self.forecasts_all['date'].max() + dt.timedelta(days=1)
@@ -273,7 +289,7 @@ class DataManager(param.Parameterized):
         # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
         # the pentad of the forecast period.
         forecast_horizon = int(
-            self.linreg_predictor[self._horizon_in_year].tail(1).values[0]
+            self.linreg_predictor[self.horizon_in_year(horizon)].tail(1).values[0]
         ) + 1
         return last_date, forecast_horizon, last_date.year
 
@@ -322,7 +338,7 @@ class DataManager(param.Parameterized):
                 # print(type(new_all_stations))
                 if new_all_stations is not None:
                     # print("Stations: ", new_all_stations)
-                    self.replace_stations(
+                    self.replace_stations(wm.horizon_selector.value,
                         new_all_stations, new_station_dict, wm.station_selector,
                         gettext, wm.pentad_selector.value, wm.decad_selector.value,
                     )

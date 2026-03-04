@@ -45,9 +45,8 @@ class PlotManager:
         )
         dashboard_tabs.param.watch(
             lambda event: self._cfg.viz.update_sidepane_card_visibility(
-                dashboard_tabs,
-                self._wm.station_card, self._wm.forecast_card, self._wm.basin_card,
-                self._wm.reload_card, event,
+                dashboard_tabs, self._wm.horizon_card, self._wm.station_card, 
+                self._wm.forecast_card, self._wm.basin_card, self._wm.reload_card, event,
             ),
             "active",
         )
@@ -95,7 +94,7 @@ class PlotManager:
 
     def _init_skill_table(self):
         self.skill_table = pn.panel(
-            self._cfg.viz.create_skill_table(self._, self._dm.forecast_stats),
+            self._cfg.viz.create_skill_table(self._, self._wm.horizon_selector.value, self._dm.forecast_stats),
             sizing_mode="stretch_width",
         )
         (
@@ -133,11 +132,13 @@ class PlotManager:
         if self._wm.aggregate_radiobutton.value == self._("Yes"):
             return self._cfg.viz.plot_pentad_forecast_hydrograph_data(
                 self._,
+                horizon=self._wm.horizon_selector.value,
                 hydrograph_pentad_all=self._dm.hydrograph_pentad_all,
                 **kw,
             )
         return self._cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
             self._,
+            horizon=self._wm.horizon_selector.value,
             hydrograph_day_all=self._dm.hydrograph_day_all,
             linreg_predictor=self._dm.linreg_predictor,
             rram_forecast=self._dm.rram_forecast,
@@ -152,6 +153,7 @@ class PlotManager:
         # Initial tabulator fill
         self._cfg.viz.create_forecast_summary_tabulator(
             self._,
+            self._wm,
             self._dm.forecasts_all,
             self._wm.station_selector,
             self._wm.date_picker,
@@ -171,6 +173,7 @@ class PlotManager:
 
         eff, acc = self._cfg.viz.plot_forecast_skill(
             self._,
+            self._wm,
             self._dm.hydrograph_pentad_all,
             self._dm.forecasts_all,
             station_widget=self._wm.station_selector.value,
@@ -196,6 +199,7 @@ class PlotManager:
         #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
         self._cfg.viz.plot_pentad_forecast_hydrograph_data(
             self._,
+            horizon=self._wm.horizon_selector.value,
             hydrograph_pentad_all=self._dm.hydrograph_pentad_all,
             **kw,
         )
@@ -203,6 +207,7 @@ class PlotManager:
         #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
         self._cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
             self._,
+            horizon=self._wm.horizon_selector.value,
             hydrograph_day_all=self._dm.hydrograph_day_all,
             linreg_predictor=self._dm.linreg_predictor,
             rram_forecast=self._dm.rram_forecast,
@@ -230,23 +235,23 @@ class PlotManager:
 
     def _render_predictors_tab(self, viz, dm, wm):
         self.daily_hydrograph.object = viz.plot_daily_hydrograph_data(
-            self._, dm.hydrograph_day_all, dm.linreg_predictor,
+            self._, dm, wm, dm.hydrograph_day_all, dm.linreg_predictor,
             wm.station_selector.value, wm.date_picker.value,
         )
         if self._cfg.display_weather_data:
             self.daily_rainfall.object = viz.plot_daily_rainfall_data(
-                self._, dm.rain, wm.station_selector.value,
+                self._, wm, dm.rain, wm.station_selector.value,
                 wm.date_picker.value, dm.linreg_predictor,
             )
             self.daily_temperature.object = viz.plot_daily_temperature_data(
-                self._, dm.temp, wm.station_selector.value,
+                self._, wm, dm.temp, wm.station_selector.value,
                 wm.date_picker.value, dm.linreg_predictor,
             )
         if self._cfg.display_snow_data:
             for var in dm.snow_data.keys():
                 if dm.snow_data[var] is not None:
                     self.snow_plots[var].object = viz.plot_daily_snow_data(
-                        self._, dm.snow_data, var, wm.station_selector.value,
+                        self._, wm, dm.snow_data, var, wm.station_selector.value,
                         wm.date_picker.value, dm.linreg_predictor,
                     )
                 else:
@@ -258,7 +263,7 @@ class PlotManager:
 
     def _render_forecast_tab(self, viz, dm, wm):
         plot = viz.select_and_plot_data(
-            self._, dm.linreg_predictor, wm.station_selector.value,
+            self._, dm, wm, dm.linreg_predictor, wm.station_selector.value,
             wm.pentad_selector.value, wm.decad_selector.value,
             self._cfg.save_directory,
         )

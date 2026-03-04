@@ -185,7 +185,7 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
+    page.locator("select#input").nth(1).select_option(value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
 
@@ -206,7 +206,7 @@ def test_local(page: Page):
     summary_table_values = []
 
     def select_station_and_add_to_bulletin(station):
-        page.select_option("select#input", value=station, timeout=60000)
+        page.locator("select#input").nth(1).select_option(value=station, timeout=60000)
         print(f"#### SELECTED station: {station}")
         time.sleep(SLEEP)
 

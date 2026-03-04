@@ -12,42 +12,43 @@ import param
 
 # region Widget update functions
 
-def update_station_widget(event, station):
-    station.name = _("Select discharge station:")
-    print("update_station_widget: new name: ", station.name)
+# def update_station_widget(event, station):
+#     station.name = _("Select discharge station:")
+#     print("update_station_widget: new name: ", station.name)
 
 # endregion
 
 
 # May be deprecated, could not get it to work
-class DashboardTitle(param.Parameterized):
-    value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
+# class DashboardTitle(param.Parameterized):
+#     value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
 
 
 # Define components of the layout
-def define_sidebar(_, station_card, forecast_card, basin_card, message_pane,
-                   reload_card):
-    return pn.Column(
-        pn.Row(station_card),
-        #pn.Row(pentad_card),
-        #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
-        #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
-                       #title=_('Date:'),
-                       #width_policy='fit', width=station.width,
-                       #collapsed=False)),
-        pn.Row(forecast_card),
-        pn.Row(basin_card),
-        pn.Row(message_pane),
-        pn.Row(reload_card),
-        #pn.Row(range_selection),
-        #pn.Row(manual_range),
-        #pn.Row(print_button),
-        #pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
-        #            width_policy='fit', width=station.width)),
-    )
+# def define_sidebar(_, station_card, forecast_card, basin_card, message_pane,
+#                    reload_card):
+#     return pn.Column(
+#         pn.Row(station_card),
+#         #pn.Row(pentad_card),
+#         #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
+#         #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
+#                        #title=_('Date:'),
+#                        #width_policy='fit', width=station.width,
+#                        #collapsed=False)),
+#         pn.Row(forecast_card),
+#         pn.Row(basin_card),
+#         pn.Row(message_pane),
+#         pn.Row(reload_card),
+#         #pn.Row(range_selection),
+#         #pn.Row(manual_range),
+#         #pn.Row(print_button),
+#         #pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
+#         #            width_policy='fit', width=station.width)),
+#     )
 
 def define_sidebar_2(_, wm):
     return pn.Column(
+        pn.Row(wm.horizon_card),
         pn.Row(wm.station_card),
         pn.Row(wm.forecast_card),
         pn.Row(wm.basin_card),

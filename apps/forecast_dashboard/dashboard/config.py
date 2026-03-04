@@ -34,7 +34,9 @@ def init_dashboard(pn) -> DashboardConfig:
     env_file_path, in_docker, icon_path = load_env_and_icons()
     save_directory = setup_directories()
     viz = setup_localization(pn)
-    horizon, horizon_in_year, dashboard_title = get_horizon()
+    # horizon, horizon_in_year, dashboard_title = get_horizon()
+    horizon, horizon_in_year = get_horizon()
+    dashboard_title = _('SAPPHIRE Central Asia - Forecast dashboard')
     display_weather, display_snow = display_weather_and_snow_data()
 
     return DashboardConfig(
@@ -131,7 +133,8 @@ def load_env_and_icons():
     in_docker_flag = load_configuration(env_file_path)
 
     # Get icon path from config
-    icon_path = processing.get_icon_path(in_docker_flag)
+    # icon_path = processing.get_icon_path(in_docker_flag)
+    icon_path = os.path.join("www", "Pentad.png")
 
     # The current date is displayed as the title of each visualization.
     # today = dt.datetime.now()
@@ -221,9 +224,9 @@ def get_horizon():
     
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
-        dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+        # dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
     else:
         horizon_in_year = "decad_in_year"
-        dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
+        # dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
     
-    return horizon, horizon_in_year, dashboard_title
+    return horizon, horizon_in_year#, dashboard_title
