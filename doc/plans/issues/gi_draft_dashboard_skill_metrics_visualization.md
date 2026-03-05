@@ -4,9 +4,9 @@
 
 **Labels**: `enhancement`, `forecast_dashboard`, `skill-metrics`, `medium-priority`
 
-**Status**: Draft
+**Status**: Ready for implementation (assigned to colleague managing `sapphire/services/`)
 
-**Depends on**: Phase 4c (Tier 1 metrics) and Phase 4d (Tier 2 metrics) in `postprocessing_unified_plan.md`
+**Depends on**: Phase 4c (Tier 1 metrics) and Phase 4d (Tier 2 metrics) in `postprocessing_unified_plan.md` — **both complete**
 
 ---
 
@@ -195,6 +195,6 @@ INTERPRETATION_TEMPLATES = {
 
 ## Notes
 
-- This issue is **blocked** by Phases 4c (Tier 1 metrics) and 4d (Tier 2 metrics) — the metrics must be calculated and available via API before they can be visualized
+- ~~This issue was blocked by Phases 4c (Tier 1 metrics) and 4d (Tier 2 metrics)~~ — **unblocked** as of 2026-03-04. All metrics are calculated and available via API. Note: Tier 2 threshold-based metrics (`ThresholdSkillMetric` table) are pending service-side creation — FHV/FLV are available in `SkillMetric` but F1/CSI/low-flow CSI data won't be queryable until the table is created
 - The interpretation engine should be designed as a reusable component — it may also be used in automated reports or email alerts in future
 - Consider colorblind-safe color coding for quality categories

@@ -45,8 +45,8 @@
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | **DONE** — 6 metric functions (`fdc_fhv`, `fdc_flv`, `estimate_return_period_thresholds`, `binary_contingency`, `lowflow_quantiles`, `calculate_daily_skill_metrics`) in `skill_metrics.py` with `DAILY_METRIC_REGISTRY`. Daily readers in `data_reader.py`, "day" horizon in `api_writer.py`, `fhv`/`flv` DB columns, threshold skill metrics writer, `save_daily_skill_metrics()` in `file_writer.py`. ML module writes daily-resolution records via `_write_ml_daily_forecast_to_api()`. DAILY mode in `recalculate_skill_metrics.py`. 38 new tests in `test_tier2_metrics.py`. Commit `55a27a4`. |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
-| Horizon type parameterization (Phase 6) | **PLANNED** — `ShortTermHorizonConfig` dataclass to collapse 4 pentad/decad function pairs (~490 lines). 6 implementation steps. 2 copy-paste bugs to fix. All prerequisites met. |
-| Dashboard metrics visualization (FD-002) | TODO — depends on 4d (now complete). See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
+| Horizon type parameterization (Phase 6) | **DONE** — `ShortTermHorizonConfig` dataclass in `src/horizon_config.py`. 4 pentad/decad function pairs collapsed into parameterized functions (~490 lines removed). 2 copy-paste bugs fixed. Commit `eef357d`. |
+| Dashboard metrics visualization (FD-002) | **UNBLOCKED** — Phases 4c/4d complete. Assigned to colleague. See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
 | Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 1115 postprocessing tests across 40 test files, 0 skips. CRUD service: 93 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
@@ -1041,10 +1041,7 @@ Split into sub-phases: **4a (monthly) DONE**, **4b (quarterly + seasonal) DONE**
 
 #### Phase 4a: Monthly Skill Metrics
 
-> **Detailed plan:** [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md)
-> Contains: step-by-step implementation (7 steps), function signatures, data flow, model mappings, test requirements, and LLM instructions for the sapphire-api-client pre-requisite.
->
-> **Note:** The detail plan needs updating to reflect decisions made 2026-02-16: delta computed on-the-fly, `Skilled Mean`/`Naive Mean` computed in postprocessing, metrics registry as pre-requisite.
+> **Detailed plan:** Archived to `archive/postprocessing_unified_plan_detailMonthlyForecasts_COMPLETED_2026-02-17.md` (Phase 4a complete).
 
 - [x] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), also compute `delta = 0.674 * std` per (station, month)
 - [x] `src/data_reader.py`: `read_monthly_forecasts()` — read from `long_forecasts` table via API
@@ -1658,7 +1655,7 @@ class PredictorDates:
 
 ---
 
-## Phase 6: Horizon Type Parameterization — NOT STARTED
+## Phase 6: Horizon Type Parameterization — DONE
 
 ### Problem
 
@@ -1828,13 +1825,13 @@ is the dual-write output path, which will be removed in Phase 6 of
 
 | Document | Status |
 |----------|--------|
-| [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) | Phase 4a detail plan — monthly skill metrics implementation steps + sapphire-api-client LLM instructions |
+| `archive/postprocessing_unified_plan_detailMonthlyForecasts_COMPLETED_2026-02-17.md` | Phase 4a detail plan — **ARCHIVED** (Phase 4a complete) |
 | `doc/plans/sapphire_api_integration_plan.md` | COMPLETE (Phase 6 pending: remove CSV fallback) |
 | `doc/plans/postprocessing_api_integration_test_plan.md` | COMPLETE (all 7 tests passed) |
 | `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` | RESOLVED |
 | `doc/plans/issues/gi_draft_prepg_yearly_norm_recalculation.md` | NOT STARTED |
 | `doc/plans/bulk_read_endpoints_instructions.md` | READY for implementation |
-| [`doc/plans/issues/gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) | Draft — FD-002: Dashboard visualization of new skill metrics with plain-language interpretation. Blocked by Phases 4c/4d. |
+| [`doc/plans/issues/gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) | **UNBLOCKED** — FD-002: Dashboard visualization of new skill metrics with plain-language interpretation. Assigned to colleague. |
 
 ## Superseded Documents
 
@@ -1875,3 +1872,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-27 | Bea/Claude | **PP-010 complete: Pentad/decad reads migrated to API-first.** `data_reader.read_observed_and_modelled_data()` composes `read_short_term_observations()` (preprocessing API) + `read_individual_model_forecasts()` (postprocessing API for LR + env-gated ML models). All 3 entry points (operational, maintenance, recalculation) now use the new readers. NE and virtual station calculations remain in `setup_library`, called explicitly from entry points. API Transition Gaps table updated: **all read paths are now API-primary** — only dual-write output path remains as the last CSV dependency. 960 postprocessing tests, 0 skips. |
 | 2026-02-27 | Bea/Claude | **PP-011 verified: Skill metrics unique key includes date.** Colleague's API schema has `UniqueConstraint("horizon_type", "code", "model_type", "date", "horizon_in_year")` with matching CRUD upsert. Client-side `api_writer._write_skill_metrics_to_api()` computes per-row `date` from `horizon_in_year` + target year via `tl.get_date_for_pentad/decad()` or `date(year, month, 1)`. End-to-end alignment confirmed. PP-008 (backfill audit trail) remains blocked — no `is_backfilled` or `backfilled_at` field in Forecast model. PP-010 status corrected from Complete to Review (awaiting server deployment verification). |
 | 2026-03-04 | Bea/Claude | **Plan currency audit and update.** Major update to reflect work done since 2026-02-27 that was not documented: (A) **Phase 4b marked DONE** — quarterly + seasonal skill metrics fully implemented. New `src/aggregation.py` module (quarter/season definitions, monthly→quarterly/seasonal aggregation with configurable coverage thresholds). All Phase 4b checklist items checked off: data readers (8 functions), ensemble creators (2), skill metrics (2), writers (API + CSV for both horizons), gap detectors (2), diagnostics extended. (B) **Two new entry points documented**: `postprocessing_operational_long_term.py` (daily long-term fast path: monthly + quarterly + seasonal ensembles) and `postprocessing_maintenance_long_term.py` (nightly long-term gap-fill). Execution flow updated from "Three Entry Points" to "Five Entry Points". (C) **Phase 4d checklist checked off** — status summary already said DONE (commit `55a27a4`) but individual checklist items were unchecked. Noted: `ThresholdSkillMetric` table and API endpoints are NOT yet created service-side (Stage 2, blocked on colleague coordination); client-side `_write_threshold_skill_metrics_to_api()` has graceful fallback. (D) **Module Structure updated** — added `aggregation.py`, `write_diagnostics.py`, both long-term entry points, `hydroTestDataGenerator.py`. (E) **Test inventory updated** — 39 test files, 1101 postprocessing tests (was 960). Added 15 previously undocumented test files with per-file counts: quarterly (6 files, 76 tests), long-term entry points (2 files, 24 tests), aggregation (34 tests), CRPS (19 tests), write_diagnostics (31 tests), tier2 (38 tests). (F) **Temporal Resolutions table updated** — quarterly and seasonal now "Implemented". (G) **SAPPHIRE_PREDICTION_MODE table updated** — added QUARTERLY, SEASONAL, DAILY modes. (H) **Remaining gaps identified**: no dedicated seasonal test files, `tag_library.py` quarter/season utilities not added (logic in `aggregation.py` instead), `ForecastFlags`/`PredictorDates` quarter field not added, env vars for quarterly/seasonal file paths not verified, `ThresholdSkillMetric` service-side pending. |
+| 2026-03-05 | Bea/Claude | **Archival and status update.** (A) **Phase 6 marked DONE** — `ShortTermHorizonConfig` dataclass implemented in `src/horizon_config.py`, all 4 pentad/decad function pairs collapsed into parameterized functions (commit `eef357d`). (B) **Monthly detail plan archived** — `postprocessing_unified_plan_detailMonthlyForecasts.md` moved to `archive/` with `_COMPLETED_2026-02-17` suffix. (C) **FD-002 unblocked** — dashboard skill metrics visualization no longer blocked by Phases 4c/4d (both complete). Draft issue updated to "Ready for implementation", assigned to colleague. (D) 1115 postprocessing tests, 0 skips confirmed. |
