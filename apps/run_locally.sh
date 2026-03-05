@@ -626,8 +626,7 @@ run_maintenance_postprocessing_forecasts() {
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_maintenance.log"
     > "$CURRENT_MODULE_LOG"
-    run_in_venv postprocessing_forecasts postprocessing_maintenance.py \
-        "POSTPROCESSING_GAPFILL_WINDOW_DAYS=${POSTPROCESSING_GAPFILL_WINDOW_DAYS:-7}"
+    run_in_venv postprocessing_forecasts postprocessing_maintenance.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))

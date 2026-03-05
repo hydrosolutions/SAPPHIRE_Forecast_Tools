@@ -1858,7 +1858,6 @@ class PostProcessingMaintenance(DockerTaskBase):
         volumes = _standard_maintenance_volumes()
         environment = _common_maintenance_env() + [
             "SAPPHIRE_PREDICTION_MODE=BOTH",
-            "POSTPROCESSING_GAPFILL_WINDOW_DAYS=7",
         ]
 
         status, details = self.execute_with_retries(

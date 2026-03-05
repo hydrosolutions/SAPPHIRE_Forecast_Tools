@@ -116,7 +116,7 @@ docker run \
     -e SAPPHIRE_OPDEV_ENV=True \
     -e IN_DOCKER=True \
     -e SAPPHIRE_PREDICTION_MODE=${SAPPHIRE_PREDICTION_MODE:-BOTH} \
-    -e POSTPROCESSING_GAPFILL_WINDOW_DAYS=${POSTPROCESSING_GAPFILL_WINDOW_DAYS:-7} \
+    ${POSTPROCESSING_GAPFILL_MAX_MONTHS:+-e POSTPROCESSING_GAPFILL_MAX_MONTHS=${POSTPROCESSING_GAPFILL_MAX_MONTHS}} \
     ${DOCKER_HOST_OVERRIDE} \
     -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
     -v ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data \

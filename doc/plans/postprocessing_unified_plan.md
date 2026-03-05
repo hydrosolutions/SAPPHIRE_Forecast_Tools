@@ -58,6 +58,8 @@
 | Unified validation script | **DONE** — `apps/run_validation.sh` orchestrates all 3 validation stages (unit tests → local pipeline → Docker smoke tests) with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`). Documented in `doc/dev/testing_workflow.md` |
 | PP-010: Pentad/decad reads should use API | **DONE** — `data_reader.read_observed_and_modelled_data()` reads observations from preprocessing API and LR/ML forecasts from postprocessing API (API-first, CSV fallback). All 3 entry points (operational, maintenance, recalculation) use the new readers. NE and virtual station calculations remain in `setup_library`, called explicitly from entry points. 960 postprocessing tests, 0 skips. |
 | PP-011: Skill metrics API unique key includes date | **DONE** — API schema uses `UniqueConstraint("horizon_type", "code", "model_type", "date", "horizon_in_year")`. Client-side `api_writer._write_skill_metrics_to_api()` computes per-row `date` from `horizon_in_year` + target year. Different recalculation years produce distinct records. |
+| Short-term ensemble quantile propagation (PP-019) | Draft — see [`gi_draft_pp_short_term_ensemble_quantiles.md`](issues/gi_draft_pp_short_term_ensemble_quantiles.md) |
+| Probabilistic forecast quality metrics (PP-020) | Draft — see [`gi_draft_pp_probabilistic_forecast_quality.md`](issues/gi_draft_pp_probabilistic_forecast_quality.md) |
 
 ### Pre-requisites (all completed)
 
@@ -363,14 +365,11 @@ See [Module Structure](#module-structure) above for the full current file listin
 
 4. **PYTHONPATH:** The current Dockerfile sets `PYTHONPATH=/app/apps/iEasyHydroForecast`. The new `src/` modules should be self-contained where possible, importing from `iEasyHydroForecast` only for functions not yet extracted. This dependency shrinks as extraction progresses.
 
-5. **Gap-fill configuration:** A `config.yaml` in `apps/postprocessing_forecasts/` controls the lookback window, following the same pattern as `preprocessing_runoff/config.yaml`:
-   ```yaml
-   maintenance:
-     # Number of days to look back for missing ensembles
-     # Override with: POSTPROCESSING_GAPFILL_WINDOW_DAYS
-     lookback_days: 7
-   ```
-   The nightly shell script passes the env var override to the container if set; otherwise the Python code reads `config.yaml` directly.
+5. **Gap-fill configuration:** The lookback window is controlled by the
+   `POSTPROCESSING_GAPFILL_MAX_MONTHS` env var (default `13`). The Python
+   entry point (`postprocessing_maintenance.py`) reads this directly; no
+   `config.yaml` is needed for a single setting. The old
+   `POSTPROCESSING_GAPFILL_WINDOW_DAYS` env var is deprecated and ignored.
 
 ### Dependency: Skill Metrics → Ensemble
 
@@ -1850,7 +1849,7 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-06 | Claude | Unified plan: integrated both plans, marked Tier 1 bugs as done, aligned module separation approach |
 | 2026-02-06 | Claude | Review fixes: corrected test file names/counts, added Docker/pipeline integration, DB prerequisites, rollback strategy, code reference appendix |
 | 2026-02-12 | Claude | Phase 1 complete: updated all status fields, Bug 5 done (7 tests), config fix done, API read tests (45) + write tests (16) documented, test counts updated (79 postprocessing + 206 iEasyHydroForecast), migration steps 1–2 marked done, `sapphire-api-client` dependency added to pyproject.toml files |
-| 2026-02-12 | Bea/Claude | Phase 2 target architecture: split maintenance into nightly gap-fill (postprocessing_maintenance.py) and yearly recalculation (recalculate_skill_metrics.py). Added gap_detector module, POSTPROCESSING_GAPFILL_WINDOW_DAYS env var, updated file structure/tests/rollback for three entry points. Shell runners (`bin/daily_postprc_maintenance.sh`, `bin/yearly_skill_metrics_recalculation.sh`) instead of Luigi tasks for maintenance, following `daily_preprunoff_maintenance.sh` pattern |
+| 2026-02-12 | Bea/Claude | Phase 2 target architecture: split maintenance into nightly gap-fill (postprocessing_maintenance.py) and yearly recalculation (recalculate_skill_metrics.py). Added gap_detector module, POSTPROCESSING_GAPFILL_MAX_MONTHS env var (replacing deprecated GAPFILL_WINDOW_DAYS), updated file structure/tests/rollback for three entry points. Shell runners (`bin/daily_postprc_maintenance.sh`, `bin/yearly_skill_metrics_recalculation.sh`) instead of Luigi tasks for maintenance, following `daily_preprunoff_maintenance.sh` pattern |
 | 2026-02-12 | Bea/Claude | Phase 4 expanded: renamed to "Monthly, Quarterly & Seasonal Skill Metrics". Monthly skill metrics calculated in postprocessing_forecasts (reads long_forecasts from API). Dual metrics: Q50-based traditional (NSE/MAE/accuracy) + CRPS. CRPS is cross-cutting — applies to pentad/decad too once quantile columns are populated (currently blocked). Quarterly/seasonal: use direct records from long_term_forecasting if available, otherwise aggregate from monthly. Note added: refine long_term_forecasting integration once module is finalized. Configurable season definition via config.yaml. Monthly observations aggregated on-the-fly from daily discharge (≥50% coverage) |
 | 2026-02-12 | Bea/Claude | Post-implementation review: updated Phase 2 checklist (10 items done, 3 deferred to Phase 3). Updated Phase 5 test inventory to actual counts (131 postprocessing tests). Documented remaining test gaps: ensemble skill metric numerical verification, `_calculate_ensemble_skill()` isolation test. Updated status summary test counts. |
 | 2026-02-13 | Bea/Claude | Bug 6 fix: single-model ensemble filter in `ensemble_calculator.py` — added `_is_multi_model_ensemble()` helper replacing hardcoded LR-only rejection. Integration test hardening: 21 new tests across 6 classes (single-model bug e2e, extended data routing, edge case inputs, year/month boundaries, quantile fields, recalc entry point). Model name consistency tests added. Total: 180 postprocessing tests, all passing. |

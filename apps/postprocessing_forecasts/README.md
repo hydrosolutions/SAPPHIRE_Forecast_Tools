@@ -209,7 +209,7 @@ process monthly + quarterly + seasonal regardless of this variable.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `POSTPROCESSING_GAPFILL_WINDOW_DAYS` | Lookback window for gap detection (increase after outages) | 7 |
+| `POSTPROCESSING_GAPFILL_MAX_MONTHS` | Lookback window in months for gap detection (increase after outages) | 13 |
 
 ### Season configuration
 

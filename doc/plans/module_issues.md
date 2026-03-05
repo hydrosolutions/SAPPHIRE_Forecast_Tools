@@ -67,6 +67,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | Draft | [`gi_draft_infra_forecast_date_rule.md`](issues/gi_draft_infra_forecast_date_rule.md) | — |
 | **INFRA-005** | Remove `model_long` from app pipeline (incremental) | infra | **Medium** | Draft | [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) | — |
 | **INFRA-007** | Fix ML forecast API reader & align write/read architecture | infra | **High** | Review | [`gi_draft_fix_ml_forecast_api_reader.md`](issues/gi_draft_fix_ml_forecast_api_reader.md) | Phase 3 cleanup pending production deployment |
+| **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
 
@@ -98,7 +99,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-003**~~ | ~~Implement batch upsert in postprocessing CRUD~~ | | Complete | See `postprocessing_unified_plan.md` Phase 3 | — |
 | ~~**PP-004**~~ | ~~Replace iterrows() with vectorized operations~~ | | Complete | See `postprocessing_unified_plan.md` Phase 3 | — |
 | ~~**PP-005**~~ | ~~Create operational/maintenance entry point split~~ | | Complete | See `postprocessing_unified_plan.md` Phase 2 | — |
-| **PP-006** | Add config.yaml to postprocessing_forecasts (deduplicate defaults) | **Low** | Draft | [`gi_draft_pp_config_yaml.md`](issues/gi_draft_pp_config_yaml.md) | — |
+| ~~**PP-006**~~ | ~~Remove deprecated `GAPFILL_WINDOW_DAYS` references from shell scripts~~ | | Complete | Archived: [`gi_draft_pp_config_yaml_DONE_2026-03-05.md`](archive/gi_draft_pp_config_yaml_DONE_2026-03-05.md) | — |
 | **PP-007** | Maintenance should read from API, not CSV | **High** | Review | See `postprocessing_forecasts/README.md` PP-007 | — |
 | **PP-008** | No audit trail for gap-filled rows | **Low** | Open | See `postprocessing_forecasts/README.md` PP-008 | API schema (colleague) |
 | **PP-009** | Stop calculating EM skill metrics on the fly in operational mode | **Medium** | Review | See `postprocessing_forecasts/README.md` PP-009 | — |
@@ -109,8 +110,10 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-014**~~ | ~~Skill metrics read priority inverted (CSV-first, should be API-first)~~ | | Complete | Moved to Completed Issues |
 | **PP-015** | Move NE creation from setup_library to postprocessing | **Low** | Open | See `postprocessing_forecasts/README.md` PP-015 | — |
 | **PP-016** | Recalculation bootstrap for new sites (auto-detect) | **Low** | Open | See `postprocessing_forecasts/README.md` PP-016 | — |
-| **PP-017** | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-017, unified plan Phase 4b | — |
-| **PP-018** | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-018, unified plan Phase 4b | — |
+| ~~**PP-017**~~ | ~~Quarterly forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
+| ~~**PP-018**~~ | ~~Seasonal forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
+| **PP-019** | Propagate quantiles through short-term ensemble creation | **High** | Draft | [`gi_draft_pp_short_term_ensemble_quantiles.md`](issues/gi_draft_pp_short_term_ensemble_quantiles.md) | — |
+| **PP-020** | Probabilistic forecast quality metrics & documentation | **Medium** | Draft | [`gi_draft_pp_probabilistic_forecast_quality.md`](issues/gi_draft_pp_probabilistic_forecast_quality.md) | PP-019 (partial) |
 
 ### Forecast Dashboard (`fd`)
 
@@ -188,6 +191,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-004 | Replace iterrows() with vectorized operations | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-005 | Create operational/maintenance entry point split | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 2 |
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
+| PP-017 | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
+| PP-018 | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 
 ### Pipeline (`p`)
 
@@ -244,4 +249,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-27 (PP-010 → Review; PP-011 → Review (API schema now includes date in unique key); PP-008 still blocked (no backfill flag in API schema))*
+*Last updated: 2026-03-05 (PP-017 → Complete; PP-018 → Complete; PP-006 description updated — env var deprecated, remaining work is shell cleanup; PP-019/PP-020 drafts corrected)*
