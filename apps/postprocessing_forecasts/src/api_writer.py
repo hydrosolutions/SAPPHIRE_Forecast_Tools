@@ -101,7 +101,9 @@ def _reset_api_client():
 
 def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     """
-    Write combined forecasts (from all models) to SAPPHIRE postprocessing API.
+    Write combined forecasts (ML + ensemble models) to SAPPHIRE postprocessing
+    API.  LR forecasts are excluded — they live exclusively in the
+    ``lr_forecasts`` table, written by the linear-regression module.
 
     Args:
         data: DataFrame with forecast data. Expected columns:
@@ -110,13 +112,29 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             - pentad_in_month/decad: horizon value
             - pentad_in_year/decad_in_year: horizon in year
             - forecasted_discharge: the forecast value
-            - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
+            - model_short: model identifier (TFT, TIDE, TSMIXER, EM, NE, …)
             - composition (optional): for ensemble models, which models compose it
         horizon_type: "pentad" or "decad" (translated to API enum at boundary)
 
     Returns:
         bool: True if successful, False otherwise
     """
+    # LR forecasts live exclusively in the lr_forecasts table (written by
+    # the linear_regression module).  Exclude them here to avoid duplication.
+    if "model_short" in data.columns:
+        n_before = len(data)
+        data = data[data["model_short"] != "LR"]
+        n_dropped = n_before - len(data)
+        if n_dropped > 0:
+            logger.debug(
+                "Excluded %d LR rows from combined forecast write (%s)",
+                n_dropped,
+                horizon_type,
+            )
+        if data.empty:
+            logger.info("No non-LR forecast records to write (%s)", horizon_type)
+            return False
+
     # Validate inputs before any I/O
     api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
     if api_horizon_type is None:

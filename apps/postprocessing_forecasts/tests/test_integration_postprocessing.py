@@ -302,12 +302,16 @@ class TestOperationalDataRouting:
         mock_client.write_forecasts.assert_called_once()
         records = mock_client.write_forecasts.call_args[0][0]
 
-        # 2 stations x 2 dates x 3 models = 12, + 2 EM (station 15001 only)
-        assert len(records) == 14
+        # LR is excluded from the combined forecast write (lives in
+        # lr_forecasts table). Only ML + ensemble models are written:
+        # 2 stations x 2 dates x 2 ML models (TFT, TiDE) = 8
+        # + 2 EM (station 15001 only) = 10
+        assert len(records) == 10
 
-        # EM model type present
+        # EM model type present; LR excluded
         model_types = {r["model_type"] for r in records}
         assert "EM" in model_types
+        assert "LR" not in model_types
 
         # All records have required fields
         for r in records:
@@ -1078,8 +1082,12 @@ class TestDecadalOperationalPipeline:
         mock_client.write_forecasts.assert_called_once()
         records = mock_client.write_forecasts.call_args[0][0]
 
-        # 2 stations x 2 dates x 2 models = 8, + 2 EM (station 15001)
-        assert len(records) == 10, f"Expected 10 records, got {len(records)}"
+        # LR excluded from combined write. Only ML + ensembles:
+        # 2 stations x 2 dates x 1 ML model (TFT) = 4, + 2 EM (station 15001)
+        assert len(records) == 6, f"Expected 6 records, got {len(records)}"
+
+        model_types = {r["model_type"] for r in records}
+        assert "LR" not in model_types
 
         em_records = [r for r in records if r["model_type"] == "EM"]
         assert len(em_records) == 2
@@ -1729,7 +1737,7 @@ class TestApiFailureModes:
                 "pentad_in_year": [1],
                 "pentad_in_month": ["1"],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -1772,7 +1780,7 @@ class TestApiFailureModes:
         saved = pd.read_csv(csv_path)
         assert len(saved) == 1
         assert str(saved.iloc[0]["code"]) == "15001"
-        assert saved.iloc[0]["model_short"] == "LR"
+        assert saved.iloc[0]["model_short"] == "TFT"
         assert abs(saved.iloc[0]["forecasted_discharge"] - 100.0) < 0.01
 
     def test_fail_mode_raises_after_api_error(self, env_setup):

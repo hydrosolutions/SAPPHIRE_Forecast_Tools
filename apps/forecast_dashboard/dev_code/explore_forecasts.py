@@ -58,6 +58,7 @@ def _(
     start_date,
     station,
 ):
+    # ML / ensemble forecasts from the combined forecasts table
     df = fetch_forecasts(
         api_url.value,
         station.value,
@@ -66,7 +67,7 @@ def _(
         end_date.value,
     )
 
-    # Try to add LR data
+    # LR forecasts from the dedicated lr-forecast table
     try:
         lr = fetch_lr_forecasts(
             api_url.value,
@@ -76,9 +77,6 @@ def _(
             end_date.value,
         )
         if not lr.empty:
-            lr.rename(columns={"forecasted_discharge": "E[Q]"}, inplace=True)
-            lr["model_short"] = "LR"
-            lr["model_long"] = "Linear regression (LR)"
             common = [c for c in df.columns if c in lr.columns]
             df = pd.concat([df, lr[common]], ignore_index=True)
     except Exception:

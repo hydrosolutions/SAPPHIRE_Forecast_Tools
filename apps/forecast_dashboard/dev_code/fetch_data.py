@@ -159,7 +159,14 @@ def fetch_lr_forecasts(
     start_date: str,
     end_date: str,
 ) -> pd.DataFrame:
-    """Fetch linear regression forecasts from the postprocessing API."""
+    """Fetch linear regression forecasts from the postprocessing API.
+
+    The ``lr-forecast`` endpoint stores the boundary day as ``date``
+    (the last day of the previous period).  This function computes a
+    ``target`` column (boundary + 1 day = first day of forecast period)
+    and renames columns so the result is compatible with the ML forecast
+    DataFrame returned by :func:`fetch_forecasts`.
+    """
     df = _read_data(
         api_base,
         "postprocessing",
@@ -172,8 +179,27 @@ def fetch_lr_forecasts(
             "limit": 10000,
         },
     )
+    if df.empty:
+        return df
+
+    # Compute target date (first day of forecast period)
+    df["date"] = pd.to_datetime(df["date"])
+    df["target"] = df["date"] + pd.Timedelta(days=1)
+
+    # Rename to match the fetch_forecasts() schema
+    df.rename(
+        columns={
+            "date": "forecast_date",
+            "target": "date",
+            "forecasted_discharge": "E[Q]",
+        },
+        inplace=True,
+    )
+    df["model_short"] = "LR"
+    df["model_long"] = "Linear Regression"
+
     df.drop(
-        columns=["horizon_type", "horizon_value", "id"],
+        columns=["horizon_type", "horizon_value", "horizon_in_year", "id"],
         inplace=True,
         errors="ignore",
     )

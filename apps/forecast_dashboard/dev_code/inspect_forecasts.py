@@ -156,7 +156,7 @@ def main():
 
     print(f"  {len(df)} rows, models: {sorted(df['model_short'].unique())}")
 
-    # Also fetch LR data and merge
+    # LR forecasts from the dedicated lr-forecast table
     try:
         lr = fetch_lr_forecasts(
             args.api_url,
@@ -166,10 +166,6 @@ def main():
             args.end_date,
         )
         if not lr.empty:
-            lr.rename(columns={"forecasted_discharge": "E[Q]"}, inplace=True)
-            lr["model_short"] = "LR"
-            lr["model_long"] = "Linear regression (LR)"
-            # Keep only columns that exist in df
             common_cols = [c for c in df.columns if c in lr.columns]
             df = pd.concat([df, lr[common_cols]], ignore_index=True)
     except Exception as e:

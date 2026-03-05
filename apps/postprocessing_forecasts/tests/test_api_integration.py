@@ -52,6 +52,21 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [1],
                 "pentad_in_year": [1],
                 "forecasted_discharge": [100.0],
+                "model_short": ["TFT"],
+            }
+        )
+        result = _write_combined_forecast_to_api(data, "pentad")
+        assert result is False
+
+    def test_lr_only_data_returns_false(self):
+        """LR rows are excluded — LR-only input returns False."""
+        data = pd.DataFrame(
+            {
+                "code": [12345],
+                "date": pd.to_datetime(["2024-01-06"]),
+                "pentad_in_month": [1],
+                "pentad_in_year": [1],
+                "forecasted_discharge": [100.0],
                 "model_short": ["LR"],
             }
         )
@@ -75,7 +90,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [1],
                 "pentad_in_year": [1],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -100,7 +115,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [2],
                 "pentad_in_year": [2],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -118,7 +133,7 @@ class TestWriteCombinedForecastToApi:
         # Check field mapping
         assert record["horizon_type"] == "pentad"
         assert record["code"] == "12345"
-        assert record["model_type"] == "LR"
+        assert record["model_type"] == "TFT"
         assert record["date"] == "2024-01-06"
         assert record["target"] == "2024-01-07"  # date + 1 day
         assert record["horizon_value"] == 2
@@ -180,7 +195,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [2, 2],
                 "pentad_in_year": [2, 2],
                 "forecasted_discharge": [100.0, 105.0],
-                "model_short": ["LR", "EM"],
+                "model_short": ["TFT", "EM"],
                 "composition": ["", "LR, TFT"],
             }
         )
@@ -191,9 +206,9 @@ class TestWriteCombinedForecastToApi:
         call_args = mock_client.write_forecasts.call_args[0][0]
         assert len(call_args) == 2
 
-        # LR record: empty composition passes through as empty string
-        lr_rec = [r for r in call_args if r["model_type"] == "LR"][0]
-        assert lr_rec["composition"] == ""
+        # TFT record: empty composition passes through as empty string
+        tft_rec = [r for r in call_args if r["model_type"] == "TFT"][0]
+        assert tft_rec["composition"] == ""
 
         # EM record: composition = 'LR, TFT'
         em_rec = [r for r in call_args if r["model_type"] == "EM"][0]
@@ -234,24 +249,27 @@ class TestWriteCombinedForecastToApi:
 
     @patch("src.api_writer.SapphirePostprocessingClient")
     def test_model_type_mapping(self, mock_client_class):
-        """Test that model types are correctly mapped to API format."""
+        """Test that model types are correctly mapped to API format.
+
+        LR is excluded from the combined forecast write (it lives in
+        the lr_forecasts table), so only ML/ensemble models are tested.
+        """
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.write_forecasts.return_value = 6
+        mock_client.write_forecasts.return_value = 5
         mock_client_class.return_value = mock_client
 
-        # Test all model types
         data = pd.DataFrame(
             {
-                "code": [12345, 12345, 12345, 12345, 12345, 12345],
-                "date": pd.to_datetime(["2024-01-06"] * 6),
-                "pentad_in_month": [1] * 6,
-                "pentad_in_year": [1] * 6,
-                "forecasted_discharge": [100.0] * 6,
-                "model_short": ["LR", "TFT", "TIDE", "TSMIXER", "EM", "NE"],
+                "code": [12345, 12345, 12345, 12345, 12345],
+                "date": pd.to_datetime(["2024-01-06"] * 5),
+                "pentad_in_month": [1] * 5,
+                "pentad_in_year": [1] * 5,
+                "forecasted_discharge": [100.0] * 5,
+                "model_short": ["TFT", "TIDE", "TSMIXER", "EM", "NE"],
             }
         )
 
@@ -259,9 +277,7 @@ class TestWriteCombinedForecastToApi:
 
         call_args = mock_client.write_forecasts.call_args[0][0]
 
-        # Check model type mappings
         model_types = [r["model_type"] for r in call_args]
-        assert "LR" in model_types
         assert "TFT" in model_types
         assert "TiDE" in model_types  # TIDE -> TiDE
         assert "TSMixer" in model_types  # TSMIXER -> TSMixer
@@ -287,7 +303,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [np.nan],
                 "pentad_in_year": [np.nan],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -318,7 +334,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [np.nan],
                 "pentad_in_year": [np.nan],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -346,7 +362,7 @@ class TestWriteCombinedForecastToApi:
                 "pentad_in_month": [2],
                 "pentad_in_year": [2],
                 "forecasted_discharge": [np.nan],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -466,7 +482,7 @@ class TestCombinedForecastTarget:
                 "pentad_in_month": [6],
                 "pentad_in_year": [12],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
@@ -488,7 +504,7 @@ class TestCombinedForecastTarget:
                 "decad": [3],
                 "decad_in_year": [3],
                 "forecasted_discharge": [100.0],
-                "model_short": ["LR"],
+                "model_short": ["TFT"],
             }
         )
 
