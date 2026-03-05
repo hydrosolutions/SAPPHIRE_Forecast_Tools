@@ -229,20 +229,3 @@ fi
 
 echo ""
 echo -e "${GREEN}All tests completed successfully!${NC}"
-
-# Check if integration tests were skipped and print warning
-INTEGRATION_WARNING=false
-if [[ " ${PASSED[*]} " =~ " forecast_dashboard " ]] || [[ "$1" == "forecast_dashboard" ]]; then
-    if [ "${TEST_LOCAL:-false}" != "true" ] && [ "${TEST_PENTAD:-false}" != "true" ] && [ "${TEST_DECAD:-false}" != "true" ]; then
-        INTEGRATION_WARNING=true
-    fi
-fi
-
-if [ "$INTEGRATION_WARNING" = true ]; then
-    echo ""
-    echo -e "${YELLOW}⚠ NOTE: Dashboard integration tests were SKIPPED.${NC}"
-    echo -e "${YELLOW}  To run integration tests, use environment variables:${NC}"
-    echo -e "${YELLOW}    TEST_LOCAL=true bash run_tests.sh forecast_dashboard${NC}"
-    echo -e "${YELLOW}    TEST_PENTAD=true bash run_tests.sh forecast_dashboard${NC}"
-    echo -e "${YELLOW}    TEST_DECAD=true bash run_tests.sh forecast_dashboard${NC}"
-fi
