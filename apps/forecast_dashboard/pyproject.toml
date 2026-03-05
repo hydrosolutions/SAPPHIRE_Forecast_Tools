@@ -32,6 +32,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",
+    "matplotlib>=3.8.0",
+    "marimo>=0.10.0",
 ]
 test = [
     "pytest>=8.2.0",

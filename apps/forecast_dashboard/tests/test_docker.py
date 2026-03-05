@@ -1,10 +1,12 @@
-'''
+"""
 Test the docker image for the forecast dashboard
 
 This test script gets a docker client and gets a list of containers.
 Requires Docker daemon to be running — skips gracefully if not.
-'''
+"""
+
 import os
+
 import docker
 import pytest
 
@@ -22,9 +24,9 @@ except docker.errors.DockerException:
     reason="Docker daemon not running",
 )
 def test_docker_image():
-    '''
+    """
     Test the docker image for the forecast dashboard
-    '''
+    """
 
     # Echo DOCKER_HOST
     print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
