@@ -35,10 +35,12 @@ For each task:
 When batch complete:
 - Show what was implemented
 - Show verification output
+- Update the plan file: set the status of completed items to **Review**
 - Say: "Ready for feedback."
 
 ### Step 4: Continue
 Based on feedback:
+- If approved: update the plan file — set reviewed items to **Done**
 - Apply changes if needed
 - Execute next batch
 - Repeat until complete
