@@ -129,7 +129,7 @@ class TestMaintenanceWorkflow:
     """Tests for the maintenance gap-fill entry point."""
 
     def test_no_gaps_skips_processing(self, mock_data, mock_skill):
-        """When no gaps detected, skips data reading and ensemble creation."""
+        """When no gaps detected, skips ensemble creation."""
         combined = pd.DataFrame(
             {
                 "date": pd.to_datetime(["2024-01-05"]),
@@ -153,8 +153,9 @@ class TestMaintenanceWorkflow:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                # No gap-fill needed, so no data reading for gap-fill
-                mocks["data_reader"].read_observed_and_modelled_data.assert_not_called()
+                # Modelled data is read before gap detection (for blind
+                # spot coverage), but no ensemble creation needed
+                mocks["data_reader"].read_observed_and_modelled_data.assert_called()
                 mocks["ensemble_calc"].create_ensemble_forecasts.assert_not_called()
 
     def test_gaps_trigger_ensemble_creation(self, mock_data, mock_skill):
@@ -192,7 +193,7 @@ class TestMaintenanceWorkflow:
                 mocks["ensemble_calc"].create_ensemble_forecasts.assert_called_once()
 
     def test_lookback_env_var(self, mock_data, mock_skill):
-        """POSTPROCESSING_GAPFILL_WINDOW_DAYS env var is respected."""
+        """POSTPROCESSING_GAPFILL_MAX_MONTHS env var is respected."""
         combined = pd.DataFrame(
             {
                 "date": pd.to_datetime(["2024-01-05"]),
@@ -204,7 +205,7 @@ class TestMaintenanceWorkflow:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "14",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "6",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -222,20 +223,61 @@ class TestMaintenanceWorkflow:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                # Verify lookback was passed to detect_missing_ensembles
-                # _fill_gaps_for_horizon passes lookback as positional arg
                 call_args = mocks["gap_detector"].detect_missing_ensembles.call_args
-                assert len(call_args[0]) >= 2, "lookback should be passed as positional arg"
-                assert call_args[0][1] == 14, f"Expected lookback=14, got {call_args[0][1]}"
+                assert call_args.kwargs["max_lookback_months"] == 6
+
+    def test_old_env_var_deprecation_warning(self, mock_data, mock_skill, caplog):
+        """Setting old POSTPROCESSING_GAPFILL_WINDOW_DAYS logs deprecation."""
+        import logging
+
+        combined = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-05"]),
+                "code": ["10001"],
+                "model_short": ["EM"],
+            }
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "14",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_mocks(
+                    mock_data,
+                    mock_skill,
+                    combined=combined,
+                    gaps=pd.DataFrame(columns=["date", "code", "model_short"]),
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                # Re-add caplog handler (exec_module replaces root handlers)
+                logging.getLogger().addHandler(caplog.handler)
+                caplog.set_level(logging.WARNING)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                assert "POSTPROCESSING_GAPFILL_WINDOW_DAYS is deprecated" in caplog.text
 
     def test_empty_combined_forecasts_skips(self, mock_data, mock_skill):
-        """When no combined forecasts file exists, skips gracefully."""
+        """When no combined or modelled data exists, skips gracefully."""
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(
                     mock_data,
                     mock_skill,
                     combined=pd.DataFrame(),
+                )
+                # Also make modelled data empty so both-empty path is hit
+                mocks["data_reader"].read_observed_and_modelled_data.return_value = (
+                    pd.DataFrame(),
+                    pd.DataFrame(),
                 )
 
                 module, spec = import_maintenance_module()

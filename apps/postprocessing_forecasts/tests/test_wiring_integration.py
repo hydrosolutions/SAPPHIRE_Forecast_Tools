@@ -507,7 +507,7 @@ class TestMaintenanceWiringIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "7",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -573,20 +573,34 @@ class TestMaintenanceWiringIntegration:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                # No gaps => data_reader.read_observed_and_modelled_data
-                # should NOT have been called
-                mocks["data_reader"].read_observed_and_modelled_data.assert_not_called()
+                # Modelled data is now read before gap detection,
+                # but no ensemble creation needed when no gaps
+                mocks["file_writer"].save_forecast_data.assert_not_called()
 
     def test_gap_dates_no_matching_modelled_data(self, env_setup):
         """Gap detected but modelled data has no matching rows => no save."""
         tmp_path = env_setup
         _make_skill_csv(tmp_path, "pentad")
 
-        # Gap at Jan 10 (no EM)
+        # Jan 5 has EM (no gap), Jan 10 has LR only (gap)
         _make_combined_csv(
             tmp_path,
             "pentad",
             rows_data=[
+                {
+                    "date": "2024-01-05",
+                    "code": "15001",
+                    "model_short": "LR",
+                    "forecasted_discharge": 100.0,
+                    "pentad_in_year": 1,
+                },
+                {
+                    "date": "2024-01-05",
+                    "code": "15001",
+                    "model_short": "EM",
+                    "forecasted_discharge": 100.0,
+                    "pentad_in_year": 1,
+                },
                 {
                     "date": "2024-01-10",
                     "code": "15001",
@@ -1286,7 +1300,7 @@ class TestMaintenanceSurplusData:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "30",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):

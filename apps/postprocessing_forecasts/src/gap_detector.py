@@ -14,16 +14,28 @@ logger = logging.getLogger(__name__)
 
 def detect_missing_ensembles(
     combined_forecasts: pd.DataFrame,
-    lookback_days: int = 7,
+    max_lookback_months: int = 13,
     ensemble_models: set[str] | None = None,
+    horizon_type: str = "pentad",
+    modelled_forecasts: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Find (date, code, model_short) tuples missing ensemble forecasts.
 
+    Scans up to ``max_lookback_months`` months back from the most recent
+    date in the data.  When ``modelled_forecasts`` is provided, its
+    (date, code) pairs are included so that gaps where combined_forecasts
+    has nothing but modelled data exists are also detected.
+
     Args:
         combined_forecasts: DataFrame with [date, code, model_short, ...].
-        lookback_days: Days to scan back from most recent date.
+        max_lookback_months: Months to scan back from most recent date.
         ensemble_models: Set of ensemble model_short values to check.
             Defaults to ``{'EM'}`` for backward compatibility.
+        horizon_type: 'pentad' or 'decad' (for logging).
+        modelled_forecasts: Optional DataFrame with [date, code, ...].
+            If provided, its (date, code) pairs are merged into the
+            universe of pairs to check, fixing the blind spot where
+            postprocessing never ran for a date.
 
     Returns:
         DataFrame with [date, code, model_short] tuples needing gap-fill.
@@ -34,29 +46,70 @@ def detect_missing_ensembles(
 
     empty = pd.DataFrame(columns=["date", "code", "model_short"])
 
-    if combined_forecasts.empty:
+    both_empty = combined_forecasts.empty and (
+        modelled_forecasts is None or modelled_forecasts.empty
+    )
+    if both_empty:
         return empty
 
-    # Ensure date is datetime
-    if not pd.api.types.is_datetime64_any_dtype(combined_forecasts["date"]):
+    # Ensure date is datetime on combined
+    if not combined_forecasts.empty and not pd.api.types.is_datetime64_any_dtype(
+        combined_forecasts["date"]
+    ):
         combined_forecasts = combined_forecasts.copy()
         combined_forecasts["date"] = pd.to_datetime(combined_forecasts["date"])
 
-    # Determine lookback window
-    max_date = combined_forecasts["date"].max()
-    cutoff = max_date - pd.Timedelta(days=lookback_days)
-    recent = combined_forecasts[combined_forecasts["date"] >= cutoff]
+    # Ensure date is datetime on modelled
+    if (
+        modelled_forecasts is not None
+        and not modelled_forecasts.empty
+        and not pd.api.types.is_datetime64_any_dtype(modelled_forecasts["date"])
+    ):
+        modelled_forecasts = modelled_forecasts.copy()
+        modelled_forecasts["date"] = pd.to_datetime(modelled_forecasts["date"])
 
-    if recent.empty:
+    # Determine the most recent date across both sources
+    dates = []
+    if not combined_forecasts.empty:
+        dates.append(combined_forecasts["date"].max())
+    if modelled_forecasts is not None and not modelled_forecasts.empty:
+        dates.append(modelled_forecasts["date"].max())
+    max_date = max(dates)
+
+    cutoff = max_date - pd.DateOffset(months=max_lookback_months)
+
+    # Filter combined to lookback window
+    if not combined_forecasts.empty:
+        recent_combined = combined_forecasts[combined_forecasts["date"] >= cutoff]
+    else:
+        recent_combined = combined_forecasts
+
+    # Build the universe of (date, code) pairs from both sources
+    pair_frames = []
+    if not recent_combined.empty:
+        pair_frames.append(recent_combined[["date", "code"]])
+    if modelled_forecasts is not None and not modelled_forecasts.empty:
+        recent_modelled = modelled_forecasts[modelled_forecasts["date"] >= cutoff]
+        if not recent_modelled.empty:
+            pair_frames.append(recent_modelled[["date", "code"]])
+
+    if not pair_frames:
         return empty
 
-    # Find all (date, code) pairs with any forecasts
-    all_pairs = recent[["date", "code"]].drop_duplicates()
+    all_pairs = pd.concat(pair_frames, ignore_index=True).drop_duplicates()
 
-    # Check each ensemble model
+    if all_pairs.empty:
+        return empty
+
+    # Check each ensemble model against combined (ensembles live there)
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent["model_short"] == model][["date", "code"]].drop_duplicates()
+        if not recent_combined.empty:
+            model_pairs = recent_combined[recent_combined["model_short"] == model][
+                ["date", "code"]
+            ].drop_duplicates()
+        else:
+            model_pairs = pd.DataFrame(columns=["date", "code"])
 
         merged = all_pairs.merge(
             model_pairs,
@@ -70,7 +123,8 @@ def detect_missing_ensembles(
             missing_parts.append(gaps)
 
         logger.info(
-            "Gap detection (%s): %d total pairs, %d present, %d missing",
+            "Gap detection %s (%s): %d total pairs, %d present, %d missing",
+            horizon_type,
             model,
             len(all_pairs),
             len(model_pairs),

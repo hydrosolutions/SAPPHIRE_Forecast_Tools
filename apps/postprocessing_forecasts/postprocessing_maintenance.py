@@ -6,7 +6,7 @@
 # Usage:
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #   SAPPHIRE_PREDICTION_MODE=BOTH \
-#   POSTPROCESSING_GAPFILL_WINDOW_DAYS=7 \
+#   POSTPROCESSING_GAPFILL_MAX_MONTHS=13 \
 #   python postprocessing_maintenance.py
 
 import datetime as dt
@@ -81,8 +81,16 @@ def postprocessing_maintenance():
     logger.debug(f"Script started at {dt.datetime.now()}.")
 
     errors = []
-    lookback = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_DAYS", "7"))
-    logger.info(f"Gap-fill lookback window: {lookback} days")
+
+    # Deprecation: warn if the old env var is still set
+    if os.getenv("POSTPROCESSING_GAPFILL_WINDOW_DAYS"):
+        logger.warning(
+            "POSTPROCESSING_GAPFILL_WINDOW_DAYS is deprecated. "
+            "Use POSTPROCESSING_GAPFILL_MAX_MONTHS instead."
+        )
+
+    max_lookback_months = int(os.getenv("POSTPROCESSING_GAPFILL_MAX_MONTHS", "13"))
+    logger.info(f"Gap-fill lookback window: {max_lookback_months} months")
 
     with timer(timing_stats, "total execution"):
         with timer(timing_stats, "setup"):
@@ -99,10 +107,10 @@ def postprocessing_maintenance():
         logger.info(f"Running maintenance postprocessing for mode: {prediction_mode}")
 
         if prediction_mode in ["PENTAD", "BOTH"]:
-            _fill_gaps_for_horizon(PENTAD, lookback, errors)
+            _fill_gaps_for_horizon(PENTAD, max_lookback_months, errors)
 
         if prediction_mode in ["DECAD", "BOTH"]:
-            _fill_gaps_for_horizon(DECAD, lookback, errors)
+            _fill_gaps_for_horizon(DECAD, max_lookback_months, errors)
 
     # Print timing summary
     summary, total = timing_stats.summary()
@@ -126,7 +134,7 @@ def postprocessing_maintenance():
         sys.exit(0)
 
 
-def _fill_gaps_for_horizon(config, lookback, errors):
+def _fill_gaps_for_horizon(config, max_lookback_months, errors):
     """Detect and fill ensemble gaps for one horizon type."""
     global timing_stats
 
@@ -136,15 +144,23 @@ def _fill_gaps_for_horizon(config, lookback, errors):
         logger.info(f"\n\n------ Reading {label} combined forecasts for gap detection ----")
         combined = data_reader.read_combined_forecasts(config.name)
 
-    if combined.empty:
-        logger.info(f"No {label} combined forecasts found. Skipping gap detection.")
+    with timer(timing_stats, f"reading {label} data for gap-fill"):
+        logger.info(f"\n\n------ Reading {label} observed and modelled data ----")
+        _, modelled = data_reader.read_observed_and_modelled_data(config.name)
+        modelled = sl.calculate_virtual_stations_data(modelled)
+        modelled = config.neural_ensemble_func(modelled)
+
+    if combined.empty and modelled.empty:
+        logger.info(f"No {label} combined or modelled data found. Skipping gap detection.")
         return
 
     with timer(timing_stats, f"detecting {label} gaps"):
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback,
+            max_lookback_months=max_lookback_months,
             ensemble_models={"EM", "NE"},
+            horizon_type=config.name,
+            modelled_forecasts=modelled,
         )
 
     if gaps.empty:
@@ -167,12 +183,6 @@ def _fill_gaps_for_horizon(config, lookback, errors):
         return
 
     logger.info(f"Found {len(gaps)} {label} (date, code) pairs needing gap-fill")
-
-    with timer(timing_stats, f"reading {label} data for gap-fill"):
-        logger.info(f"\n\n------ Reading {label} observed and modelled data ----")
-        _, modelled = data_reader.read_observed_and_modelled_data(config.name)
-        modelled = sl.calculate_virtual_stations_data(modelled)
-        modelled = config.neural_ensemble_func(modelled)
 
     # Filter modelled to gap dates only
     gap_dates = set(gaps["date"].unique())
@@ -231,7 +241,9 @@ def _fill_gaps_for_horizon(config, lookback, errors):
     pt.log_most_recent_forecasts(config, merged)
 
     # Audit trail
-    logger.info(f"AUDIT: Filled {len(gaps)} {label} ensemble gaps (lookback={lookback} days)")
+    logger.info(
+        f"AUDIT: Filled {len(gaps)} {label} ensemble gaps (lookback={max_lookback_months} months)"
+    )
     for _, gap_row in gaps.iterrows():
         logger.info(f"  Filled: date={gap_row['date']}, code={gap_row['code']}")
 

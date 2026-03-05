@@ -839,7 +839,7 @@ class TestOperationalDataRouting:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         # Only station B should have a gap
         assert len(gaps) == 1
@@ -1167,7 +1167,7 @@ class TestMaintenanceDataRouting:
 
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         assert len(gaps) == 1
         assert str(gaps.iloc[0]["code"]) == "15001"
@@ -1184,29 +1184,29 @@ class TestMaintenanceDataRouting:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         assert gaps.empty
 
     def test_lookback_window_limits_scope(self, env_setup):
-        """Old gaps (>lookback days) ignored, recent gaps detected."""
+        """Old gaps (>13 months) ignored, recent gaps detected."""
         self._build_combined_csv(
             env_setup,
             include_em_dates=[],
-            no_em_dates=["2025-12-20", "2026-01-10"],
+            no_em_dates=["2024-11-20", "2026-01-10"],
         )
 
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=7,
+            max_lookback_months=13,
         )
 
-        # max_date=2026-01-10, cutoff=2026-01-03
-        # Only 2026-01-10 is within 7-day window
+        # max_date=2026-01-10, cutoff~=2024-12-10
+        # 2024-11-20 is outside 13-month window
         gap_dates = gaps["date"].dt.strftime("%Y-%m-%d").tolist()
         assert "2026-01-10" in gap_dates
-        assert "2025-12-20" not in gap_dates
+        assert "2024-11-20" not in gap_dates
 
     def test_gap_fill_preserves_existing_data(self, env_setup):
         """After gap detection, original non-EM rows are unchanged."""
@@ -1220,7 +1220,7 @@ class TestMaintenanceDataRouting:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         assert not gaps.empty
 
@@ -1316,7 +1316,7 @@ class TestMaintenanceFullGapFill:
 
         # 3. Detect gap
         combined = gap_detector.read_combined_forecasts("pentad")
-        gaps = gap_detector.detect_missing_ensembles(combined, lookback_days=10)
+        gaps = gap_detector.detect_missing_ensembles(combined, max_lookback_months=13)
         assert len(gaps) == 1
         gap_date_str = pd.Timestamp(gaps.iloc[0]["date"]).strftime("%Y-%m-%d")
         assert gap_date_str == "2026-01-10"
@@ -1454,7 +1454,7 @@ class TestMultiStationMultiGapMaintenance:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         assert len(gaps) == 2, f"Expected 2 gaps, got {len(gaps)}"
 
@@ -2265,14 +2265,14 @@ class TestYearAndMonthBoundaries:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=10,
+            max_lookback_months=13,
         )
         assert len(gaps) == 1
         gap_date = gaps.iloc[0]["date"]
         assert pd.Timestamp(gap_date).strftime("%Y-%m-%d") == "2026-01-05"
 
     def test_year_boundary_lookback_window(self, env_setup):
-        """Dec 25 and Jan 5 both missing EM, 7-day lookback from max date."""
+        """Dec 25 and Jan 5 both missing EM, 13-month lookback includes both."""
         tmp_path = env_setup
         rows = []
         for date_str, pentad, pim in [
@@ -2297,13 +2297,12 @@ class TestYearAndMonthBoundaries:
         combined = gap_detector.read_combined_forecasts("pentad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=7,
+            max_lookback_months=13,
         )
-        # max_date=2026-01-05, cutoff=2025-12-29
-        # Dec 25 is outside 7-day window, only Jan 5 detected
+        # max_date=2026-01-05, 13-month window includes both dates
         gap_dates = gaps["date"].dt.strftime("%Y-%m-%d").tolist()
         assert "2026-01-05" in gap_dates
-        assert "2025-12-25" not in gap_dates
+        assert "2025-12-25" in gap_dates
 
     def test_month_boundary_ensemble_creation(self, env_setup):
         """Jan 31 (pentad 6) + Feb 5 (pentad 7) -> EM for both."""
@@ -3610,7 +3609,7 @@ class TestDecadalMaintenanceFullGapFill:
         combined = gap_detector.read_combined_forecasts("decad")
         gaps = gap_detector.detect_missing_ensembles(
             combined,
-            lookback_days=15,
+            max_lookback_months=13,
         )
         assert len(gaps) == 1
         gap_date_str = pd.Timestamp(gaps.iloc[0]["date"]).strftime("%Y-%m-%d")

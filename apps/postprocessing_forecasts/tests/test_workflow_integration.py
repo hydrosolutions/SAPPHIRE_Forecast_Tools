@@ -463,7 +463,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -520,7 +520,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -592,7 +592,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -615,7 +615,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "DECAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -645,7 +645,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "BOTH",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -684,7 +684,7 @@ class TestMaintenanceIntegration:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "1",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "1",
             },
         ):
             with patch.dict(sys.modules, {}):
@@ -1054,7 +1054,7 @@ class TestEdgeCases:
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "PENTAD",
-                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
             },
         ):
             with patch.dict(sys.modules, {}):

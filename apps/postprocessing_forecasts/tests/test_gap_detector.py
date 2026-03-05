@@ -30,7 +30,7 @@ class TestDetectMissingEnsembles:
                 "model_short": ["LR", "TFT", "EM"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert result.empty
         assert list(result.columns) == ["date", "code", "model_short"]
 
@@ -43,27 +43,27 @@ class TestDetectMissingEnsembles:
                 "model_short": ["LR", "TFT"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert len(result) == 1
         assert result.iloc[0]["code"] == "10001"
         assert result.iloc[0]["date"] == pd.Timestamp("2024-01-05")
         assert result.iloc[0]["model_short"] == "EM"
 
     def test_lookback_window(self):
-        """Only dates within lookback window are checked."""
-        dates = pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-10", "2024-01-10"])
+        """13-month default window caps how far back we scan."""
+        # Data older than 13 months from max date is excluded
         df = pd.DataFrame(
             {
-                "date": dates,
+                "date": pd.to_datetime(["2023-01-01", "2023-01-01", "2024-06-01", "2024-06-01"]),
                 "code": ["10001"] * 4,
                 "model_short": ["LR", "TFT", "LR", "TFT"],
             }
         )
-        # lookback=3 from max date 2024-01-10 => cutoff 2024-01-07
-        # Only 2024-01-10 is in window
-        result = detect_missing_ensembles(df, lookback_days=3)
+        # Default 13 months from 2024-06-01 => cutoff ~2023-05-01
+        # 2023-01-01 is outside => only 2024-06-01 gap detected
+        result = detect_missing_ensembles(df)
         assert len(result) == 1
-        assert result.iloc[0]["date"] == pd.Timestamp("2024-01-10")
+        assert result.iloc[0]["date"] == pd.Timestamp("2024-06-01")
 
     def test_multi_code_gaps(self):
         """Gaps detected independently per code."""
@@ -74,14 +74,14 @@ class TestDetectMissingEnsembles:
                 "model_short": ["LR", "TFT", "EM", "LR", "TFT"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert len(result) == 1
         assert result.iloc[0]["code"] == "10002"
 
     def test_empty_input(self):
         """Empty input returns empty DataFrame."""
         df = pd.DataFrame(columns=["date", "code", "model_short"])
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert result.empty
         assert list(result.columns) == ["date", "code", "model_short"]
 
@@ -94,7 +94,7 @@ class TestDetectMissingEnsembles:
                 "model_short": ["LR", "TFT"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert len(result) == 1
         assert pd.api.types.is_datetime64_any_dtype(result["date"])
         assert result.iloc[0]["code"] == "10001"
@@ -110,7 +110,6 @@ class TestDetectMissingEnsembles:
         )
         result = detect_missing_ensembles(
             df,
-            lookback_days=7,
             ensemble_models={"EM", "NE"},
         )
         assert len(result) == 1
@@ -127,7 +126,6 @@ class TestDetectMissingEnsembles:
         )
         result = detect_missing_ensembles(
             df,
-            lookback_days=7,
             ensemble_models={"EM", "NE"},
         )
         assert len(result) == 2
@@ -142,7 +140,141 @@ class TestDetectMissingEnsembles:
                 "model_short": ["LR", "TFT"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "EM"
+
+    def test_13_month_cap(self):
+        """Gaps older than 13 months from max date are excluded."""
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2023-01-01",
+                        "2023-01-01",
+                        "2024-03-05",
+                        "2024-03-05",
+                    ]
+                ),
+                "code": ["10001"] * 4,
+                "model_short": ["LR", "TFT", "LR", "TFT"],
+            }
+        )
+        # Max = 2024-03-05, cutoff = 2023-02-05 => 2023-01-01 is outside
+        result = detect_missing_ensembles(df, max_lookback_months=13)
+        assert len(result) == 1
+        assert result.iloc[0]["date"] == pd.Timestamp("2024-03-05")
+
+    def test_finds_gaps_across_months(self):
+        """Multi-month span: gaps at different dates all detected."""
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2024-01-05",
+                        "2024-01-05",
+                        "2024-03-10",
+                        "2024-03-10",
+                        "2024-06-15",
+                        "2024-06-15",
+                        "2024-06-15",
+                    ]
+                ),
+                "code": ["10001"] * 7,
+                "model_short": ["LR", "TFT", "LR", "TFT", "LR", "TFT", "EM"],
+            }
+        )
+        result = detect_missing_ensembles(df)
+        # 2024-01-05 and 2024-03-10 are missing EM, 2024-06-15 has it
+        assert len(result) == 2
+        gap_dates = set(result["date"])
+        assert pd.Timestamp("2024-01-05") in gap_dates
+        assert pd.Timestamp("2024-03-10") in gap_dates
+
+    def test_blind_spot_modelled_only(self):
+        """Modelled data exists but combined doesn't — gap detected."""
+        combined = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-06-15"] * 3),
+                "code": ["10001"] * 3,
+                "model_short": ["LR", "TFT", "EM"],
+            }
+        )
+        modelled = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-06-10", "2024-06-10"]),
+                "code": ["10001", "10001"],
+                "model_short": ["LR", "TFT"],
+            }
+        )
+        result = detect_missing_ensembles(
+            combined,
+            modelled_forecasts=modelled,
+        )
+        # 2024-06-10 exists in modelled but not in combined => EM gap
+        assert len(result) == 1
+        assert result.iloc[0]["date"] == pd.Timestamp("2024-06-10")
+        assert result.iloc[0]["code"] == "10001"
+
+    def test_year_boundary(self):
+        """Dec→Jan gap detection across year boundary."""
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2023-12-25",
+                        "2023-12-25",
+                        "2024-01-05",
+                        "2024-01-05",
+                        "2024-01-05",
+                    ]
+                ),
+                "code": ["10001"] * 5,
+                "model_short": ["LR", "TFT", "LR", "TFT", "EM"],
+            }
+        )
+        result = detect_missing_ensembles(df)
+        # 2023-12-25 is within 13 months of 2024-01-05 => EM gap detected
+        assert len(result) == 1
+        assert result.iloc[0]["date"] == pd.Timestamp("2023-12-25")
+
+    def test_empty_combined_with_modelled(self):
+        """Combined is empty, modelled has data — gaps detected."""
+        combined = pd.DataFrame(columns=["date", "code", "model_short"])
+        modelled = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-06-10", "2024-06-10"]),
+                "code": ["10001", "10001"],
+                "model_short": ["LR", "TFT"],
+            }
+        )
+        result = detect_missing_ensembles(
+            combined,
+            modelled_forecasts=modelled,
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["date"] == pd.Timestamp("2024-06-10")
+
+    def test_both_empty(self):
+        """Both combined and modelled empty returns empty."""
+        combined = pd.DataFrame(columns=["date", "code", "model_short"])
+        modelled = pd.DataFrame(columns=["date", "code", "model_short"])
+        result = detect_missing_ensembles(
+            combined,
+            modelled_forecasts=modelled,
+        )
+        assert result.empty
+
+    def test_decad_horizon(self):
+        """Works for decad horizon_type (parameter accepted)."""
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-10"] * 2),
+                "code": ["10001"] * 2,
+                "model_short": ["LR", "TFT"],
+            }
+        )
+        result = detect_missing_ensembles(df, horizon_type="decad")
         assert len(result) == 1
         assert result.iloc[0]["model_short"] == "EM"
 

@@ -161,13 +161,13 @@ class TestEmptyAndSingleRowData:
                 "model_short": ["LR"],
             }
         )
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert len(result) == 1
 
     def test_gap_detection_empty_input(self):
         """Empty input returns empty DataFrame with correct schema."""
         df = pd.DataFrame(columns=["date", "code", "model_short"])
-        result = detect_missing_ensembles(df, lookback_days=7)
+        result = detect_missing_ensembles(df)
         assert result.empty
         assert list(result.columns) == ["date", "code", "model_short"]
 
@@ -565,7 +565,7 @@ class TestDateBoundaries:
                 "model_short": ["LR", "TFT", "EM", "LR", "TFT"],
             }
         )
-        gaps = detect_missing_ensembles(df, lookback_days=10)
+        gaps = detect_missing_ensembles(df)
         assert len(gaps) == 1
         assert gaps.iloc[0]["date"] == pd.Timestamp("2026-01-05")
 
@@ -668,7 +668,7 @@ class TestDuplicateHandling:
                 "model_short": ["LR", "LR", "TFT"],
             }
         )
-        gaps = detect_missing_ensembles(df, lookback_days=7)
+        gaps = detect_missing_ensembles(df)
         # Only 1 unique (date, code) pair, and it has no EM
         assert len(gaps) == 1
 
@@ -1293,7 +1293,7 @@ class TestNaTDatesInGapDetector:
             }
         )
         # Should not crash even though one date is NaT
-        gaps = detect_missing_ensembles(df, lookback_days=7)
+        gaps = detect_missing_ensembles(df)
         # Only 2024-01-05 has models but no EM for that date
         # 2024-01-10 has EM, NaT row is malformed
         assert isinstance(gaps, pd.DataFrame)
@@ -1307,7 +1307,7 @@ class TestNaTDatesInGapDetector:
                 "model_short": ["LR", "TFT"],
             }
         )
-        gaps = detect_missing_ensembles(df, lookback_days=7)
+        gaps = detect_missing_ensembles(df)
         assert gaps.empty
 
 
@@ -1331,4 +1331,4 @@ class TestMissingRequiredColumns:
             }
         )
         with pytest.raises(KeyError):
-            detect_missing_ensembles(df, lookback_days=7)
+            detect_missing_ensembles(df)
