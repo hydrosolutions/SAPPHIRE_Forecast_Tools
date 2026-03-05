@@ -40,6 +40,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | Review | [`gi_draft_infra_date_mismatch_and_sentinel.md`](issues/gi_draft_infra_date_mismatch_and_sentinel.md) |
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
+| **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Draft | [`gi_draft_ml_api_primary_reads.md`](issues/gi_draft_ml_api_primary_reads.md) |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
@@ -253,4 +254,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-05 (PP-019 → Ready; INFRA-008 → Ready; PREPQ-007 + LR-004 added — external site data ingestion plan ready; PP-017/PP-018 → Complete; PP-020 draft)*
+*Last updated: 2026-03-05 (PP-019 → Ready; INFRA-008 → Ready; PREPQ-007 + LR-004 added — external site data ingestion plan ready; PP-017/PP-018 → Complete; PP-020 draft; ML-003 draft — API-primary reads for maintenance scripts)*
