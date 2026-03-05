@@ -51,9 +51,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Module | Priority | Status | File | Blocked By |
 |----|-------|--------|----------|--------|------|------------|
 | **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | **High** | Draft | [`gi_draft_api_bulk_read_endpoints.md`](issues/gi_draft_api_bulk_read_endpoints.md) | Colleague (sapphire/services/) |
-| **API-002** | Add missing params to sapphire-api-client (model, target, dates) | infra | **High** | Draft | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) | External repo (sapphire-api-client) |
+| ~~**API-002**~~ | ~~Add missing params to sapphire-api-client (model, target, dates)~~ | ~~infra~~ | | Complete | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) | — |
 | **API-003** | Define CSV removal acceptance criteria per module | infra | **Medium** | Open | — (needs D-002 decision) | D-002 |
-| **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | API-002 |
+| **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | — |
 | **API-005** | Migrate long_term_forecasting from direct SQL to API client | infra | **Medium** | Open | — | API-001 |
 
 ---
@@ -197,6 +197,12 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
 | PP-017 | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 | PP-018 | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
+
+### API (`api`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| API-002 | Add missing params to sapphire-api-client (model, target, dates) | 2026-03-05 | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) |
 
 ### Pipeline (`p`)
 
