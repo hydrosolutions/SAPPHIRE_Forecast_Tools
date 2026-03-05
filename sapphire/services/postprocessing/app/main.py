@@ -6,7 +6,7 @@ from typing import List
 
 from app import crud
 from app.database import engine, Base, get_db
-from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate
+from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate, BulletinResponse, BulletinBulkCreate, LRVisibilityResponse, LRVisibilityBulkCreate
 from app.logger import logger
 from app.config import settings
 
@@ -247,4 +247,84 @@ def read_skill_metric(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve skill metrics"
+        )
+
+
+@app.post("/bulletin/", response_model=List[BulletinResponse], status_code=status.HTTP_201_CREATED, tags=["Bulletin"])
+def create_bulletin(bulk_data: BulletinBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple bulletins in bulk"""
+    try:
+        return crud.create_bulletin(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update bulletins in bulk"
+        )
+
+
+@app.get("/bulletin/", response_model=List[BulletinResponse], tags=["Bulletin"])
+def read_bulletin(
+    horizon: str = None,
+    year: int = None,
+    horizon_value: int = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Retrieve bulletins with optional filtering by horizon type and value, year, code, model_type, date range"""
+    try:
+        bulletins = crud.get_bulletin(
+            db=db,
+            horizon=horizon,
+            year=year,
+            horizon_value=horizon_value,
+            skip=skip,
+            limit=limit
+        )
+        return bulletins
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve bulletins"
+        )
+
+
+@app.post("/lr-visibility/", response_model=List[LRVisibilityResponse], status_code=status.HTTP_201_CREATED, tags=["LRVisibility"])
+def create_lr_visibility(bulk_data: LRVisibilityBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple LR visibility records in bulk"""
+    try:
+        return crud.create_lr_visibility(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update LR visibility records in bulk"
+        )
+
+
+@app.get("/lr-visibility/", response_model=List[LRVisibilityResponse], tags=["LRVisibility"])
+def read_lr_visibility(
+    horizon: str = None,
+    code: str = None,
+    month: int = None,
+    horizon_value: int = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Retrieve LR visibility records with optional filtering by horizon_type, code, month, horizon_value, year"""
+    try:
+        lr_visibility_records = crud.get_lr_visibility(
+            db=db,
+            horizon=horizon,
+            code=code,
+            month=month,
+            horizon_value=horizon_value,
+            skip=skip,
+            limit=limit
+        )
+        return lr_visibility_records
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve LR visibility records"
         )

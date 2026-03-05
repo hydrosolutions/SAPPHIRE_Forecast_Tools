@@ -2,8 +2,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.models import Forecast, LongForecast, LRForecast, SkillMetric
-from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate
+from app.models import Forecast, LongForecast, LRForecast, SkillMetric, Bulletin, LRVisibility
+from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate, BulletinBulkCreate, LRVisibilityBulkCreate
 from app.logger import logger
 
 
@@ -317,4 +317,145 @@ def get_skill_metric(
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching skill metrics: {str(e)}", exc_info=True)
+        raise
+
+
+def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin]:
+    """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code, model_type)"""
+    try:
+        db_bulletins = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same unique constraint fields exists
+            existing_bulletin = db.query(Bulletin).filter(
+                Bulletin.horizon_type == item.horizon_type,
+                Bulletin.year == item.year,
+                Bulletin.horizon_value == item.horizon_value,
+                Bulletin.code == item.code,
+                Bulletin.model_type == item.model_type
+            ).first()
+
+            if existing_bulletin:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_bulletin, key, value)
+                db_bulletins.append(existing_bulletin)
+                logger.info(f"Updated bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
+            else:
+                # Create new record
+                new_bulletin = Bulletin(**item.model_dump())
+                db.add(new_bulletin)
+                db.flush()  # Flush so subsequent queries find this pending record
+                db_bulletins.append(new_bulletin)
+                logger.info(f"Created bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
+
+        db.commit()
+
+        # Refresh all bulletins to get updated state
+        for bulletin in db_bulletins:
+            db.refresh(bulletin)
+
+        logger.info(f"Processed {len(db_bulletins)} bulletins in bulk")
+        return db_bulletins
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating/updating bulletins in bulk: {str(e)}", exc_info=True)
+        raise
+
+
+def get_bulletin(
+    db: Session,
+    horizon: Optional[str] = None,
+    year: Optional[int] = None,
+    horizon_value: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[Bulletin]:
+    """Retrieve bulletins with optional filtering by horizon_type, year, horizon_value, code, and model_type"""
+    try:
+        query = db.query(Bulletin)
+        if horizon:
+            query = query.filter(Bulletin.horizon_type == horizon)
+        if year:
+            query = query.filter(Bulletin.year == year)
+        if horizon_value is not None:
+            query = query.filter(Bulletin.horizon_value == horizon_value)
+
+        results = query.offset(skip).limit(limit).all()
+        logger.info(f"Fetched {len(results)} bulletins (skip={skip}, limit={limit})")
+        return results
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching bulletins: {str(e)}", exc_info=True)
+        raise
+
+
+def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> List[LRVisibility]:
+    """Create or update multiple LR visibility records in bulk (upsert based on horizon_type, code, month, horizon_value)"""
+    try:
+        db_lr_visibility = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same unique constraint fields exists
+            existing_record = db.query(LRVisibility).filter(
+                LRVisibility.horizon_type == item.horizon_type,
+                LRVisibility.code == item.code,
+                LRVisibility.month == item.month,
+                LRVisibility.horizon_value == item.horizon_value,
+                LRVisibility.year == item.year
+            ).first()
+
+            if existing_record:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_record, key, value)
+                db_lr_visibility.append(existing_record)
+                logger.info(f"Updated LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
+            else:
+                # Create new record
+                new_record = LRVisibility(**item.model_dump())
+                db.add(new_record)
+                db.flush()  # Flush so subsequent queries find this pending record
+                db_lr_visibility.append(new_record)
+                logger.info(f"Created LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
+
+        db.commit()
+
+        # Refresh all records to get updated state
+        for record in db_lr_visibility:
+            db.refresh(record)
+
+        logger.info(f"Processed {len(db_lr_visibility)} LR visibility records in bulk")
+        return db_lr_visibility
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating/updating LR visibility records in bulk: {str(e)}", exc_info=True)
+        raise
+
+
+def get_lr_visibility(
+    db: Session,
+    horizon: Optional[str] = None,
+    code: Optional[str] = None,
+    month: Optional[int] = None,
+    horizon_value: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[LRVisibility]:
+    """Retrieve LR visibility records with optional filtering by horizon_type, code, month, horizon_value, and year"""
+    try:
+        query = db.query(LRVisibility)
+        if horizon:
+            query = query.filter(LRVisibility.horizon_type == horizon)
+        if code:
+            query = query.filter(LRVisibility.code == code)
+        if month is not None:
+            query = query.filter(LRVisibility.month == month)
+        if horizon_value is not None:
+            query = query.filter(LRVisibility.horizon_value == horizon_value)
+
+        results = query.offset(skip).limit(limit).all()
+        logger.info(f"Fetched {len(results)} LR visibility records (code={code}, month={month}, horizon_value={horizon_value}, skip={skip}, limit={limit})")
+        return results
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching LR visibility records: {str(e)}", exc_info=True)
         raise

@@ -197,3 +197,60 @@ class SkillMetricResponse(SkillMetricBase):
 
     class Config:
         from_attributes = True
+
+
+class BulletinBase(BaseModel):
+    horizon_type: HorizonType
+    year: int
+    horizon_value: int
+    code: str
+    model_type: ModelType
+
+    basin_name: Optional[str] = None
+    station_label: Optional[str] = None
+    forecated_discharge: Optional[float] = None
+    fc_lower: Optional[float] = None
+    fc_upper: Optional[float] = None
+    delta: Optional[float] = None
+    sdivsigma: Optional[float] = None
+    mae: Optional[float] = None
+    accuracy: Optional[float] = None
+
+
+class BulletinCreate(BulletinBase):
+    pass
+
+
+class BulletinBulkCreate(BaseModel):
+    data: List[BulletinCreate]
+
+
+class BulletinResponse(BulletinBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class LRVisibilityBase(BaseModel):
+    horizon_type: HorizonType
+    code: str
+    month: int
+    horizon_value: int
+    year: int
+    visible: bool
+
+
+class LRVisibilityCreate(LRVisibilityBase):
+    pass
+
+
+class LRVisibilityBulkCreate(BaseModel):
+    data: List[LRVisibilityCreate]
+
+
+class LRVisibilityResponse(LRVisibilityBase):
+    id: int
+
+    class Config:
+        from_attributes = True

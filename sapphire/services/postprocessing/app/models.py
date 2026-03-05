@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Float, Enum as SQLEnum, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, Float, Enum as SQLEnum, Index, UniqueConstraint, Boolean
 from app.database import Base
 from enum import Enum
 
@@ -187,4 +187,56 @@ class SkillMetric(Base):
     __table_args__ = (
         Index('ix_skill_metrics_horizon_code_model_date', 'horizon_type', 'code', 'model_type', 'date'),
         UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'horizon_in_year', name='uq_skill_metrics_horizon_code_model_date_horizon')
+    )
+
+
+class Bulletin(Base):
+    __tablename__ = "bulletins"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    year = Column(Integer, nullable=False)
+    horizon_value = Column(Integer, nullable=False)
+
+    code = Column(String(10), nullable=False)
+    model_type = Column(SQLEnum(ModelType), nullable=False)
+
+    basin_name = Column(String(100))
+    station_label = Column(String(100))
+    forecated_discharge = Column(Float)
+    fc_lower = Column(Float)
+    fc_upper = Column(Float)
+    delta = Column(Float)
+    sdivsigma = Column(Float)
+    mae = Column(Float)
+    accuracy = Column(Float)
+
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_bulletins_horizon_year_number', 'horizon_type', 'year', 'horizon_value'),
+        UniqueConstraint('horizon_type', 'year', 'horizon_value', 'code', 'model_type', name='uq_bulletins_horizon_year_number_code_model')
+    )
+
+
+class LRVisibility(Base):
+    __tablename__ = "lr_visibility"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    code = Column(String(10), nullable=False)
+    month = Column(Integer, nullable=False)
+    horizon_value = Column(Integer, nullable=False)
+
+    year = Column(Integer, nullable=False)
+    visible = Column(Boolean)
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_lr_visibility_horizon_code_month_number', 'horizon_type', 'code', 'month', 'horizon_value'),
+        UniqueConstraint('horizon_type', 'code', 'month', 'horizon_value', 'year', name='uq_lr_visibility_horizon_code_month_number_year')
     )
