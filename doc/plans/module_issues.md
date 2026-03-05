@@ -67,6 +67,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | Draft | [`gi_draft_infra_forecast_date_rule.md`](issues/gi_draft_infra_forecast_date_rule.md) | — |
 | **INFRA-005** | Remove `model_long` from app pipeline (incremental) | infra | **Medium** | Draft | [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) | — |
 | **INFRA-007** | Fix ML forecast API reader & align write/read architecture | infra | **High** | Review | [`gi_draft_fix_ml_forecast_api_reader.md`](issues/gi_draft_fix_ml_forecast_api_reader.md) | Phase 3 cleanup pending production deployment |
+| **INFRA-008** | CPU-only PyTorch + Dockerize long_term_forecasting | infra | **High** | Ready | [`dockerization_ltf_and_optimization_dockerization.md`](dockerization_ltf_and_optimization_dockerization.md) | — |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
@@ -85,12 +86,14 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **PREPQ-004** | Swiss data source integration & module refactoring | **Low** | Blocked | [`gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md) | Swiss API docs unavailable |
+| **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Ready | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
 
 ### Linear Regression (`lr`)
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`gi_draft_LR_cleanup_dead_run_date_code.md`](issues/gi_draft_LR_cleanup_dead_run_date_code.md) | — |
+| **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Ready | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | PREPQ-007 Phase 1 |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -112,7 +115,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-016** | Recalculation bootstrap for new sites (auto-detect) | **Low** | Open | See `postprocessing_forecasts/README.md` PP-016 | — |
 | ~~**PP-017**~~ | ~~Quarterly forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
 | ~~**PP-018**~~ | ~~Seasonal forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
-| **PP-019** | Propagate quantiles through short-term ensemble creation | **High** | Draft | [`gi_draft_pp_short_term_ensemble_quantiles.md`](issues/gi_draft_pp_short_term_ensemble_quantiles.md) | — |
+| **PP-019** | Propagate quantiles through short-term ensemble creation | **High** | Ready | [`gi_draft_pp_short_term_ensemble_quantiles.md`](issues/gi_draft_pp_short_term_ensemble_quantiles.md) | — |
 | **PP-020** | Probabilistic forecast quality metrics & documentation | **Medium** | Draft | [`gi_draft_pp_probabilistic_forecast_quality.md`](issues/gi_draft_pp_probabilistic_forecast_quality.md) | PP-019 (partial) |
 
 ### Forecast Dashboard (`fd`)
@@ -218,6 +221,7 @@ These documents contain context and specifications referenced by issues above.
 | `monitoring_improvement_plan.md` | Alert strategy improvement | Planning — needs D-004 decision |
 | `security_updates.md` | Vulnerability tracking | Active — SEC-005 pending |
 | `ieasyhydro_hf_migration_plan.md` | Legacy iEH deprecation | Planning — Phase 1 audit needed |
+| `external_site_data_ingestion_plan.md` | Manual sites + Google Sheets ingestion (4 phases) | Ready for implementation |
 | `sapphire_v2_planning.md` | v2 architecture + demo milestones | Active |
 | `sub_daily_forecasting_architecture.md` | Sub-daily forecasting design | Blocked — API spec undefined |
 | `bulk_read_endpoints_instructions.md` | Bulk endpoint specification | Spec complete — implementation not started |
@@ -249,4 +253,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-05 (PP-017 → Complete; PP-018 → Complete; PP-006 description updated — env var deprecated, remaining work is shell cleanup; PP-019/PP-020 drafts corrected)*
+*Last updated: 2026-03-05 (INFRA-008 → Ready; PREPQ-007 + LR-004 added — external site data ingestion plan ready; PP-017/PP-018 → Complete; PP-019/PP-020 drafts)*
