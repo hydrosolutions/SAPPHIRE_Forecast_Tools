@@ -1,102 +1,167 @@
-# Hydrological forecast with machine learning tools
-This repository contains the code to generate hydrological forecasts using machine learning tools. 
+# Hydrological Forecast with Machine Learning Tools
 
-Possible Operational Pipeline:
-recalculate_nan_forecasts.py -> make_forecast.py -> fill_ml_gaps.py 
-Note: See point 4. to decide when to run recalculate_nan_forecasts.py
+This module generates hydrological forecasts using machine learning models.
 
-1. make_forecast.py:
-    makes a forecast for the selected basin with the selected model for either pentadal or decadal mode.
-    This file writes or updates the forecast file: {MODE}_{MODEL_TO_USE}_forecast.csv (eg. pentad_TFT_forecast.csv).
-    It uses old forecasts to fill recent gaps up to a specified (ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END), it also interpolates other missing values up to a threshold (ieasyhydroforecast_THRESHOLD_MISSING_DAYS_TFT).
-    The forecast also get flagged:
-    
-    Output File: {MODE}_{MODEL_TO_USE}_forecast.csv
+> **Data I/O transition**: This module uses `sapphire_api_client` for reading
+> and writing forecast data via the SAPPHIRE REST API, with CSV file fallback.
+> CSV-only I/O will be removed once API integration is fully tested.
 
-2. hindcast_ML_models.py:
-    This file makes historical forecasts and the behaviour can be specified with these params:
-        SAPPHIRE_MODEL_TO_USE = which model
-        SAPPHIRE_HINDCAST_MODE = pentad; 5 days ahead, decad; 10 days ahead
-        ieasyhydroforecast_START_DATE = start of the hindcast
-        ieasyhydroforecast_END_DATE = last day of the hindcast
-        ieasyhydroforecast_NEW_STATIONS = this controlls for which specific stations the hindcast should be made. If it is set to 'None', a hindcast is produced for all configured stations.
-    In the hindcast script the output gets flagged automatically according to the flagging system, with either 3 or 4.
+## Flagging System
 
-    Output File: {MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv
+| Flag | Meaning |
+|------|---------|
+| 0 | Successful forecast |
+| 1 | NaN values in the forecast (e.g. missing operational data) |
+| 2 | Forecast was not successful (code error) |
+| 3 | NaN value after hindcasting (no data available at all) |
+| 4 | Hindcast value produced successfully |
 
-3. fill_ml_gaps.py:
-    This script checks if there are any missing forecast dates in the {MODE}_{MODEL_TO_USE}_forecast.csv file: A missing date would indicate that the system was not working, otherwise the forecasted value for this date would be written and flagged accordingly. 
-    This script then calls the hindcast script with the data gap as min and max date and fills the forecast file with these hindcasted values:
+## Operational Pipeline
 
-    Output: Updated {MODE}_{MODEL_TO_USE}_forecast.csv file.
+`recalculate_nan_forecasts.py` → `make_forecast.py` → `fill_ml_gaps.py`
 
-4. recalculate_nan_forecasts.py
-    This script checks if there are any nan values in the forecasts and then recalculates them. Nan values from operational forecasts have flag == 1, while nan values from hindcasts have flag == 3. This script checks if there are nan values in the forecasts and then recalculates them (nan values in the forecast are indicated by 1 or 2 (if code failure)), by calling the hindcast script. The hindcast will return a file which is already flagged. 
-    Note: If this script is called imidiatly after make_forecast.py, the missing operational data, responsible for the nan values, will most likely not be available, which would lead to a reflaging of the nan values (1 -> 3). Once the flag is 3, it will not be recalculated.
+Note: See point 4 to decide when to run `recalculate_nan_forecasts.py`.
 
-    Output: Updated {MODE}_{MODEL_TO_USE}_forecast.csv file.
+### 1. make_forecast.py
 
-Flagging System:
-    Flag == 0: Successful Forecast
-    Flag == 1: Nan Values in the forecast, due to missing data for example - indicates not available operational data.
-    Flag == 2: Forecast was not successful - other error in the code.
-    Flag == 3: Nan value after hindcasting - this indicates no available data at all.
-    Flag == 4: A hindcast value was produces successfully. 
+Makes a forecast for the selected basin with the selected model for either pentadal or decadal mode. This file writes or updates the forecast file: `{MODE}_{MODEL_TO_USE}_forecast.csv` (e.g. `pentad_TFT_forecast.csv`). It uses old forecasts to fill recent gaps up to a specified threshold (`ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END`), and interpolates other missing values up to another threshold (`ieasyhydroforecast_THRESHOLD_MISSING_DAYS_TFT`). The forecast also gets flagged.
 
-5. add_new_stations.py
-   If new stations are added to the config file, this script will calculate the hindcast for newly added stations. Depending on how many stations are added, this script can take some time. It needs to be manually run.
+Output: `{MODE}_{MODEL_TO_USE}_forecast.csv`
 
-   Output: Updated {MODE}_{MODEL_TO_USE}_forecast.csv file.
+### 2. hindcast_ML_models.py
 
-6. initialize_ml_tool.py
-    This file will initialize the {MODE}_{MODEL_TO_USE}_forecast.csv file by calculating a hindcast. This script ensures that we have hindcast to properly evaluate the models. This script will ask the user for the time period for which the hindcast should be calculated. Note that the forcing data from the preprocessing_gateway need to be available in order for this to work properly.
+Makes historical forecasts. Behaviour is controlled by these environment variables:
+- `SAPPHIRE_MODEL_TO_USE` — which model
+- `SAPPHIRE_HINDCAST_MODE` — `pentad` (5 days ahead) or `decad` (10 days ahead)
+- `ieasyhydroforecast_START_DATE` — start of the hindcast
+- `ieasyhydroforecast_END_DATE` — last day of the hindcast
+- `ieasyhydroforecast_NEW_STATIONS` — controls which stations the hindcast is made for. If set to `'None'`, a hindcast is produced for all configured stations.
 
-    Output: {MODE}_{MODEL_TO_USE}_forecast.csv file.
+The output gets flagged automatically according to the flagging system (flag 3 or 4).
 
+Output: `{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv`
 
+### 3. fill_ml_gaps.py
 
+Checks for missing forecast dates in the `{MODE}_{MODEL_TO_USE}_forecast.csv` file. A missing date indicates the system was not running (otherwise the forecasted value would be written and flagged accordingly). This script calls the hindcast script with the data gap as min and max date and fills the forecast file with the hindcasted values.
+
+Output: Updated `{MODE}_{MODEL_TO_USE}_forecast.csv`
+
+### 4. recalculate_nan_forecasts.py
+
+Checks for NaN values in forecasts and recalculates them. NaN values from operational forecasts have flag 1, while NaN values from hindcasts have flag 3. This script recalculates entries with flag 1 or 2 by calling the hindcast script, which returns already-flagged results.
+
+Note: If this script is called immediately after `make_forecast.py`, the missing operational data responsible for the NaN values will most likely not be available yet, which would lead to reflagging (1 → 3). Once the flag is 3, it will not be recalculated.
+
+Output: Updated `{MODE}_{MODEL_TO_USE}_forecast.csv`
+
+### 5. add_new_stations.py
+
+If new stations are added to the config file, this script calculates the hindcast for newly added stations. Depending on how many stations are added, this can take some time. It needs to be manually run.
+
+Output: Updated `{MODE}_{MODEL_TO_USE}_forecast.csv`
+
+### 6. initialize_ml_tool.py
+
+Initializes the `{MODE}_{MODEL_TO_USE}_forecast.csv` file by calculating a hindcast. This ensures we have hindcast data to properly evaluate the models. The script will ask the user for the time period. Note that the forcing data from `preprocessing_gateway` need to be available for this to work properly.
+
+Output: `{MODE}_{MODEL_TO_USE}_forecast.csv`
+
+## How to Run
+
+### As part of the full pipeline
+
+The recommended way to run this module is via the pipeline runner:
+
+```bash
+cd apps
+bash run_locally.sh machine_learning            # operational forecasts
+bash run_locally.sh maintenance:machine_learning # NaN recalc + gap-fill + new stations
+```
+
+This runs each script for all configured models (TFT, TIDE, TSMIXER) automatically.
+
+### Running individual scripts
+
+Scripts can also be run directly within the module's virtual environment:
+
+```bash
+cd apps/machine_learning
+SAPPHIRE_MODEL_TO_USE=TFT uv run python make_forecast.py
+SAPPHIRE_MODEL_TO_USE=TFT uv run python fill_ml_gaps.py
+```
+
+Key environment variables (set in the `.env` file or exported before running):
+- `SAPPHIRE_MODEL_TO_USE` — model to use (`TFT`, `TIDE`, `TSMIXER`)
+- `SAPPHIRE_PREDICTION_MODE` — `pentad` or `decad`
+- `ieasyhydroforecast_env_file_path` — path to the `.env` configuration file
+
+### Running tests
+
+```bash
+cd apps
+SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning
+```
 
 ## Predictor Classes
 
-In order for a model to work in the ML-forecasting system it should Inherit fromt the BasePredictor class. Here the functions are definined which each model's PredictorClass should provide [get_input_chunk_length, get_max_forecast_horizon, predict, hindcast].
-The BaseDartsDLPredictor Class is a wrapper for Global Darts forecasting Models (TFT, TiDE, TSMixer...). 
+For a model to work in the ML-forecasting system it must inherit from the `BasePredictor` class, which defines the interface each model's predictor class should provide:
+- `get_input_chunk_length` — required input sequence length
+- `get_max_forecast_horizon` — maximum forecast horizon
+- `predict` — produce a forecast
+- `hindcast` — produce a historical forecast
 
+The `BaseDartsDLPredictor` class is a wrapper for global Darts forecasting models (TFT, TiDE, TSMixer, etc.).
 
 ## Model Folder Setup
 
-Each model has it's own model folder (the path is configured in the .env file).
+Each model has its own model folder (the path is configured in the `.env` file).
 
 ### Setup Darts Deep Learning Models (TFT, TSMixer and TiDE)
 
-Folder Structure \
+Folder structure:
 - **model/**
-  - scaler_stats_discharge.csv
-  - scaler_stats_era5.csv
-  - scaler_stats_static.csv
-  - model.pt
-  - model.pt.ckpt
-  - model_config.json
-  - other_additional_information (description, train - val loss etc)
+  - `scaler_stats_discharge.csv`
+  - `scaler_stats_era5.csv`
+  - `scaler_stats_static.csv`
+  - `model.pt`
+  - `model.pt.ckpt`
+  - `model_config.json`
+  - other additional information (description, train/val loss, etc.)
 
-the scaler files save the statistics to normalize the input data.
+The scaler files save the statistics to normalize the input data.
 
-#### model_config.json 
+#### model_config.json
+
+Note: The comments below are for documentation only — JSON does not support comments. Remove them before use.
+
 ```json
 {
-  "num_samples": 200, // Number of Samples to draw 
-  "quantiles": [0.1, 0.5, 0.9], // Quantiles to save (Note that these should cover ranges the model was trained on..)
-  "scaling_type": "standard",          // or "minmax"
+  "num_samples": 200,
+  "quantiles": [0.1, 0.5, 0.9],
+  "scaling_type": "standard",
   "scaling_type_covariates": "minmax",
   "scaling_type_static": "standard",
-  "exogene_covariates_cols": ["P", "T", "PET"], // exogene variables either from ERA5-Land or Snowmapper
-  "past_covariates_cols": ["moving_avr_dis_3", "moving_avr_dis_5", "moving_avr_dis_10"], // covariates to use which are known until the forecast date
-  "future_covariates_cols": ["P", "T", "PET", "daylight_hours"], // future covariates to use - here we have forecasted values
-  "window_sizes": [3, 5, 10], // window sizes over which the averages of the past discharge should be calculated
+  "exogene_covariates_cols": ["P", "T", "PET"],
+  "past_covariates_cols": ["moving_avr_dis_3", "moving_avr_dis_5", "moving_avr_dis_10"],
+  "future_covariates_cols": ["P", "T", "PET", "daylight_hours"],
+  "window_sizes": [3, 5, 10],
   "trainer_config": {
     "accelerator": "cpu",
     "logger": false
-  } // trainer config for sampling through the data - generally you do not change this.
+  }
 }
 ```
 
-
+| Field | Description |
+|-------|-------------|
+| `num_samples` | Number of samples to draw |
+| `quantiles` | Quantiles to save (should cover ranges the model was trained on) |
+| `scaling_type` | Scaling for discharge: `"standard"` or `"minmax"` |
+| `scaling_type_covariates` | Scaling for covariates |
+| `scaling_type_static` | Scaling for static features |
+| `exogene_covariates_cols` | Exogenous variables from ERA5-Land or Snowmapper |
+| `past_covariates_cols` | Covariates known until the forecast date |
+| `future_covariates_cols` | Future covariates (forecasted values) |
+| `window_sizes` | Window sizes for past discharge moving averages |
+| `trainer_config` | Trainer config for sampling — generally do not change |
