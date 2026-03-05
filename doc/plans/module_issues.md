@@ -253,4 +253,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-05 (INFRA-008 → Ready; PREPQ-007 + LR-004 added — external site data ingestion plan ready; PP-017/PP-018 → Complete; PP-019/PP-020 drafts)*
+*Last updated: 2026-03-05 (PP-019 → Ready; INFRA-008 → Ready; PREPQ-007 + LR-004 added — external site data ingestion plan ready; PP-017/PP-018 → Complete; PP-020 draft)*
