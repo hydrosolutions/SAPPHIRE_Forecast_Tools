@@ -2252,9 +2252,10 @@ class TestNormalizeLrForecasts:
         assert "delta" in stats.columns
         assert len(stats) == 2
 
-        # Forecasts should NOT have q_mean, q_std_sigma
+        # Forecasts should NOT have stats columns (q_mean, q_std_sigma, delta)
         assert "q_mean" not in fc.columns
         assert "q_std_sigma" not in fc.columns
+        assert "delta" not in fc.columns
         assert "forecasted_discharge" in fc.columns
         assert "model_short" in fc.columns
 

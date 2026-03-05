@@ -1552,9 +1552,13 @@ def _normalize_lr_forecasts(
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
 
-    # Rename model_type -> model_short
+    # Rename model_type -> model_short, or set it explicitly.
+    # The lr-forecast API endpoint does not return a model_type column,
+    # so we must assign model_short = "LR" when it's absent.
     if "model_type" in df.columns:
         df = df.rename(columns={"model_type": "model_short"})
+    if "model_short" not in df.columns:
+        df["model_short"] = "LR"
 
     # Extract stats columns before dropping them from forecasts
     stats_cols = ["date", "code", "q_mean", "q_std_sigma", "delta"]
@@ -1568,6 +1572,7 @@ def _normalize_lr_forecasts(
     drop_from_fc = [
         "q_mean",
         "q_std_sigma",
+        "delta",
         "discharge_avg",
     ]
     forecasts = df.drop(
