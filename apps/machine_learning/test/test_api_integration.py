@@ -36,8 +36,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scr"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 
 from scr.utils_ml_forecast import (
+    _API_PAGE_SIZE,
+    ML_MODEL_TYPE_MAP,
     SAPPHIRE_API_AVAILABLE,
     _check_ml_forecast_consistency,
+    _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
     calculate_decad_from_date,
     calculate_pentad_from_date,
@@ -552,3 +555,177 @@ class TestCheckMLForecastConsistency:
         finally:
             os.environ.pop("SAPPHIRE_CONSISTENCY_CHECK", None)
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+
+# =============================================================================
+# Tests for _read_ml_forecasts_from_api
+# =============================================================================
+
+
+def _make_api_response(n_rows=3):
+    """Helper: create a DataFrame mimicking the API response schema."""
+    return pd.DataFrame(
+        {
+            "code": ["12345"] * n_rows,
+            "date": pd.date_range("2024-01-01", periods=n_rows, freq="D")
+            .strftime("%Y-%m-%d")
+            .tolist(),
+            "target": pd.date_range("2024-01-06", periods=n_rows, freq="D")
+            .strftime("%Y-%m-%d")
+            .tolist(),
+            "flag": [0] * n_rows,
+            "q05": [50.0] * n_rows,
+            "q25": [80.0] * n_rows,
+            "forecasted_discharge": [100.0] * n_rows,
+            "q75": [120.0] * n_rows,
+            "q95": [150.0] * n_rows,
+        }
+    )
+
+
+class TestReadMLForecastsFromAPI:
+    """Tests for _read_ml_forecasts_from_api."""
+
+    def test_returns_empty_when_api_unavailable(self):
+        """When sapphire-api-client is not installed, returns empty."""
+        with patch("scr.utils_ml_forecast.SAPPHIRE_API_AVAILABLE", False):
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert result.empty
+
+    def test_returns_empty_when_api_disabled(self):
+        """When SAPPHIRE_API_ENABLED=false, returns empty."""
+        os.environ["SAPPHIRE_API_ENABLED"] = "false"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert result.empty
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_returns_empty_when_api_not_ready(self, mock_client_class):
+        """When readiness check fails, returns empty."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = False
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert result.empty
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_returns_empty_on_readiness_exception(self, mock_client_class):
+        """When readiness check raises, returns empty (no crash)."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.side_effect = ConnectionError("timeout")
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert result.empty
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_returns_dataframe_on_success(self, mock_client_class):
+        """Successful API read returns DataFrame with CSV-schema columns."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.return_value = _make_api_response(3)
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert not result.empty
+            assert len(result) == 3
+            # Verify column renaming: API → CSV schema
+            assert "forecast_date" in result.columns
+            assert "date" in result.columns
+            assert "Q5" in result.columns
+            assert "Q25" in result.columns
+            assert "Q50" in result.columns
+            assert "Q75" in result.columns
+            assert "Q95" in result.columns
+            # Verify datetime conversion
+            assert pd.api.types.is_datetime64_any_dtype(result["forecast_date"])
+            assert pd.api.types.is_datetime64_any_dtype(result["date"])
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_returns_empty_on_api_exception(self, mock_client_class):
+        """When API read raises, returns empty (no crash)."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.side_effect = Exception("API error")
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert result.empty
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_paginates_large_result_sets(self, mock_client_class):
+        """When first page is full, fetches second page and concatenates."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        page1 = _make_api_response(_API_PAGE_SIZE)
+        page2 = _make_api_response(10)
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.side_effect = [page1, page2]
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            result = _read_ml_forecasts_from_api("TFT", "pentad")
+            assert len(result) == _API_PAGE_SIZE + 10
+            assert mock_client.read_short_term_forecasts.call_count == 2
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_model_type_mapping(self, mock_client_class):
+        """Model type is correctly mapped (e.g. TIDE → TiDE)."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.return_value = pd.DataFrame()
+        mock_client_class.return_value = mock_client
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            _read_ml_forecasts_from_api("TIDE", "pentad")
+            call_kwargs = mock_client.read_short_term_forecasts.call_args[1]
+            assert call_kwargs["model"] == "TiDE"
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    def test_ml_model_type_map_shared(self):
+        """ML_MODEL_TYPE_MAP contains expected mappings."""
+        assert ML_MODEL_TYPE_MAP["TFT"] == "TFT"
+        assert ML_MODEL_TYPE_MAP["TIDE"] == "TiDE"
+        assert ML_MODEL_TYPE_MAP["TSMIXER"] == "TSMixer"

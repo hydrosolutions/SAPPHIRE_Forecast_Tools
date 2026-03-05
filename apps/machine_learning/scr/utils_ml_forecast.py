@@ -518,6 +518,114 @@ def calculate_decad_from_date(date) -> tuple:
     return decad_in_month, decad_in_year
 
 
+# Maps internal model names (uppercase) to API ModelType values.
+# Shared by _read_ml_forecasts_from_api() and _write_ml_forecast_to_api().
+ML_MODEL_TYPE_MAP = {"TFT": "TFT", "TIDE": "TiDE", "TSMIXER": "TSMixer"}
+
+_API_PAGE_SIZE = 5000  # rows per page; balances request count vs. payload size
+
+
+def _read_ml_forecasts_from_api(
+    model_type: str,
+    horizon_type: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    code: str | None = None,
+) -> pd.DataFrame:
+    """Read ML forecasts from the SAPPHIRE postprocessing API.
+
+    Paginates automatically — safe for large result sets.
+
+    Returns a DataFrame with columns matching the CSV schema:
+        code, date (target), forecast_date, flag, Q5, Q25, Q50, Q75, Q95.
+    Returns an empty DataFrame if the API is unavailable or returns no records.
+
+    Args:
+        model_type: "TFT", "TIDE", or "TSMIXER"
+        horizon_type: "pentad" or "decade" — used only for log messages
+            (API query always uses horizon="day" since ML stores daily targets)
+        start_date: ISO date string for forecast_date (issue date) filter
+        end_date: ISO date string for forecast_date (issue date) filter
+        code: station code to filter; None means all codes
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed; cannot read ML forecasts from API")
+        return pd.DataFrame()
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        return pd.DataFrame()
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    try:
+        if not client.readiness_check():
+            logger.warning(
+                "SAPPHIRE API at %s is not ready; cannot read ML forecasts",
+                api_url,
+            )
+            return pd.DataFrame()
+    except Exception as exc:
+        logger.warning("SAPPHIRE API readiness check failed: %s", exc)
+        return pd.DataFrame()
+
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
+
+    # Paginate to avoid silent truncation
+    pages: list[pd.DataFrame] = []
+    skip = 0
+    try:
+        while True:
+            page = client.read_short_term_forecasts(
+                horizon="day",
+                model=api_model_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=_API_PAGE_SIZE,
+            )
+            if page.empty:
+                break
+            pages.append(page)
+            if len(page) < _API_PAGE_SIZE:
+                break  # last page
+            skip += _API_PAGE_SIZE
+    except Exception as exc:
+        logger.warning("Failed to read ML forecasts from API: %s", exc)
+        return pd.DataFrame()
+
+    if not pages:
+        return pd.DataFrame()
+
+    df = pd.concat(pages, ignore_index=True)
+    logger.info(
+        "Read %d %s %s forecast rows from API",
+        len(df),
+        model_type,
+        horizon_type,
+    )
+
+    # Rename API columns → CSV schema.
+    # CSV convention: "forecast_date" = issue date, "date" = target date.
+    # API convention: "date" = issue date, "target" = target date.
+    df = df.rename(
+        columns={
+            "date": "forecast_date",
+            "target": "date",
+            "q05": "Q5",
+            "q25": "Q25",
+            "forecasted_discharge": "Q50",
+            "q75": "Q75",
+            "q95": "Q95",
+        }
+    )
+    df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
     """
     Write ML forecasts to SAPPHIRE postprocessing API.
@@ -562,9 +670,8 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping ML forecast write")
         return False
 
-    # Map model type to API format
-    model_type_map = {"TFT": "TFT", "TIDE": "TiDE", "TSMIXER": "TSMixer"}
-    api_model_type = model_type_map.get(model_type.upper(), model_type)
+    # Map model type to API format (shared constant)
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
 
     # Prepare records for API — always stored as horizon_type="day"
     records = []
@@ -715,9 +822,8 @@ def _check_ml_forecast_consistency(
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Map model type to API format
-    model_type_map = {"TFT": "TFT", "TIDE": "TiDE", "TSMIXER": "TSMixer"}
-    api_model_type = model_type_map.get(model_type.upper(), model_type)
+    # Map model type to API format (shared constant)
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
 
     # Get the date range from CSV data
     csv_data = csv_data.copy()
