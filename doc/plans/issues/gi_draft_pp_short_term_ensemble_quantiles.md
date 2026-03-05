@@ -1,6 +1,6 @@
 # PP-019: Propagate Quantiles Through Short-Term Ensemble Creation
 
-**Status**: Ready
+**Status**: Ready for Review
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `forecast-quality`, `uncertainty`, `postprocessing`

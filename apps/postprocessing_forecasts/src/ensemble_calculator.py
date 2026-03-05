@@ -138,16 +138,19 @@ def create_ensemble_forecasts(
         return forecasts.copy(), skill_stats.copy()
 
     # Step 4: group by [period, date, code], compute mean forecasted_discharge
-    ensemble_avg = (
-        qualifying.groupby([period_col, "date", "code"])
-        .agg(
-            {
-                "forecasted_discharge": "mean",
-                "model_short": composition_agg,
-            }
-        )
-        .reset_index()
-    )
+    # Also average quantile columns when present (vincentization —
+    # same pattern as monthly ensembles at line 276-278).
+    from src.skill_metrics import _QUANTILE_COLS
+
+    agg_dict = {
+        "forecasted_discharge": "mean",
+        "model_short": composition_agg,
+    }
+    for qcol in _QUANTILE_COLS:
+        if qcol in qualifying.columns:
+            agg_dict[qcol] = "mean"
+
+    ensemble_avg = qualifying.groupby([period_col, "date", "code"]).agg(agg_dict).reset_index()
     # model_short now holds the composition string (e.g. "LR, TFT")
     ensemble_avg = ensemble_avg.rename(columns={"model_short": "composition"})
     ensemble_avg["model_short"] = "EM"
@@ -167,25 +170,16 @@ def create_ensemble_forecasts(
         get_period_in_month_func
     )
 
-    # Step 8: outer join ensemble rows into forecasts
-    # Ensure forecasts has composition column for the outer merge
+    # Step 8: append ensemble rows to forecasts via pd.concat
+    # (matches the monthly pattern using _append_to_joint / pd.concat
+    # instead of the fragile outer merge that put payload in join keys)
     if "composition" not in forecasts.columns:
         forecasts = forecasts.copy()
         forecasts["composition"] = ""
-    join_cols = [
-        "code",
-        "date",
-        period_in_month_col,
-        period_col,
-        "forecasted_discharge",
-        "model_short",
-        "composition",
-    ]
-    joint_forecasts = pd.merge(
-        forecasts,
-        ensemble_avg[join_cols],
-        on=join_cols,
-        how="outer",
+
+    joint_forecasts = pd.concat(
+        [forecasts, ensemble_avg],
+        ignore_index=True,
     )
 
     return joint_forecasts, skill_stats.copy()

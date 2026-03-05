@@ -2376,8 +2376,8 @@ class TestQuantileFields:
         assert lr_row["q05"] == 80.0
         assert tft_row["q05"] == 90.0
 
-    def test_ensemble_rows_lack_quantiles(self, env_setup):
-        """EM rows have NaN/missing for quantile columns (current behavior)."""
+    def test_ensemble_rows_have_averaged_quantiles(self, env_setup):
+        """EM rows have averaged quantile columns (PP-019: vincentization)."""
         skill = pd.DataFrame(
             {
                 "pentad_in_year": [1, 1],
@@ -2403,23 +2403,16 @@ class TestQuantileFields:
                 "q95": [120.0, 130.0],
             }
         )
-        pd.DataFrame(
-            {
-                "code": ["15001"],
-                "date": pd.to_datetime(["2026-01-05"]),
-                "discharge_avg": [105.0],
-                "delta": [5.0],
-            }
-        )
         joint, _ = _make_ensemble(forecasts, skill)
         em_rows = joint[joint["model_short"] == "EM"]
         assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
         # EM discharge = mean(LR=100, TFT=110) = 105.0
         assert abs(em_rows.iloc[0]["forecasted_discharge"] - 105.0) < 0.01
-        # EM rows should have NaN for quantile columns
-        for qcol in ("q05", "q95"):
+        # EM rows should have averaged quantile columns
+        # Both LR and TFT have quantiles here, so mean(80,90)=85, mean(120,130)=125
+        for qcol, expected in [("q05", 85.0), ("q95", 125.0)]:
             if qcol in em_rows.columns:
-                assert em_rows[qcol].isna().all()
+                assert abs(em_rows.iloc[0][qcol] - expected) < 0.01
 
 
 # ---------------------------------------------------------------------------

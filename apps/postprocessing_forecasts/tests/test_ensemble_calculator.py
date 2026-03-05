@@ -4,6 +4,7 @@ import os
 import sys
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -453,3 +454,172 @@ class TestModelNameConsistency:
 
         for key, value in MODEL_TYPE_MAP.items():
             assert isinstance(value, str), f"MODEL_TYPE_MAP[{key!r}] = {value!r} is not a string"
+
+
+# ---------------------------------------------------------------------------
+# Quantile propagation tests (PP-019)
+# ---------------------------------------------------------------------------
+
+# Shared environment for ensemble threshold tests
+_ENSEMBLE_ENV = {
+    "ieasyhydroforecast_efficiency_threshold": "0.6",
+    "ieasyhydroforecast_accuracy_threshold": "0.8",
+    "ieasyhydroforecast_nse_threshold": "0.8",
+}
+
+
+@pytest.fixture
+def skill_stats_three_models():
+    """Skill stats where LR, TFT, and TiDE all pass thresholds."""
+    return pd.DataFrame(
+        {
+            "pentad_in_year": [1, 1, 1],
+            "code": ["A", "A", "A"],
+            "model_short": ["LR", "TFT", "TiDE"],
+            "sdivsigma": [0.3, 0.4, 0.5],
+            "nse": [0.9, 0.85, 0.82],
+            "delta": [5.0, 5.0, 5.0],
+            "accuracy": [0.9, 0.85, 0.85],
+            "mae": [5.0, 8.0, 10.0],
+            "n_pairs": [20, 20, 20],
+        }
+    )
+
+
+@pytest.fixture
+def forecasts_with_quantiles():
+    """Forecasts with LR (no quantiles) + TFT/TiDE (with quantiles)."""
+    return pd.DataFrame(
+        {
+            "pentad_in_year": [1, 1, 1],
+            "pentad_in_month": [1, 1, 1],
+            "date": pd.Timestamp("2025-01-05"),
+            "code": ["A", "A", "A"],
+            "model_short": ["LR", "TFT", "TiDE"],
+            "forecasted_discharge": [100.0, 110.0, 90.0],
+            "q05": [np.nan, 80.0, 60.0],
+            "q25": [np.nan, 95.0, 75.0],
+            "q75": [np.nan, 125.0, 105.0],
+            "q95": [np.nan, 140.0, 120.0],
+        }
+    )
+
+
+class TestEnsembleQuantilePropagation:
+    """PP-019: Verify quantiles propagate through short-term ensemble creation."""
+
+    def _make_ensemble(self, forecasts, skill_stats):
+        return create_ensemble_forecasts(
+            forecasts=forecasts,
+            skill_stats=skill_stats,
+            period_col="pentad_in_year",
+            period_in_month_col="pentad_in_month",
+            get_period_in_month_func=tl.get_pentad,
+        )
+
+    def test_ensemble_propagates_quantiles(
+        self, forecasts_with_quantiles, skill_stats_three_models
+    ):
+        """EM ensemble rows have averaged q05/q25/q75/q95 from ML models."""
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
+
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert not em_rows.empty
+
+        for qcol in ("q05", "q25", "q75", "q95"):
+            assert qcol in em_rows.columns
+            assert em_rows[qcol].notna().all(), f"EM {qcol} should not be NaN"
+
+    def test_ensemble_quantiles_numerical_verification(
+        self, forecasts_with_quantiles, skill_stats_three_models
+    ):
+        """EM quantiles are the mean of qualifying ML models' quantiles.
+
+        LR has NaN quantiles, so only TFT and TiDE contribute.
+        """
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
+
+        em = joint[joint["model_short"] == "EM"].iloc[0]
+        # TFT q05=80, TiDE q05=60 → mean=70
+        assert em["q05"] == pytest.approx(70.0)
+        # TFT q25=95, TiDE q25=75 → mean=85
+        assert em["q25"] == pytest.approx(85.0)
+        # TFT q75=125, TiDE q75=105 → mean=115
+        assert em["q75"] == pytest.approx(115.0)
+        # TFT q95=140, TiDE q95=120 → mean=130
+        assert em["q95"] == pytest.approx(130.0)
+
+    def test_ensemble_quantile_model_mix_asymmetry(
+        self, forecasts_with_quantiles, skill_stats_three_models
+    ):
+        """EM point forecast uses all 3 models; EM quantiles use only 2 ML models.
+
+        This asymmetry is expected: LR contributes to the point forecast
+        but not to quantiles (it has NaN quantiles).
+        """
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
+
+        em = joint[joint["model_short"] == "EM"].iloc[0]
+        # Point forecast: mean(100, 110, 90) = 100.0 (all 3 models)
+        assert em["forecasted_discharge"] == pytest.approx(100.0)
+        # q25: mean(95, 75) = 85.0 (only TFT + TiDE)
+        assert em["q25"] == pytest.approx(85.0)
+
+    def test_ensemble_no_quantiles_backward_compatible(self):
+        """Ensemble creation works when input has no quantile columns."""
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.9],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.9],
+                "mae": [5.0, 5.0],
+                "n_pairs": [20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "pentad_in_month": [1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts, skill_stats)
+
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert not em_rows.empty
+        assert em_rows["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
+
+    def test_joint_output_preserves_individual_quantiles(
+        self, forecasts_with_quantiles, skill_stats_three_models
+    ):
+        """Individual ML model rows retain their original quantiles in joint output."""
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
+
+        tft = joint[joint["model_short"] == "TFT"].iloc[0]
+        assert tft["q25"] == pytest.approx(95.0)
+        assert tft["q75"] == pytest.approx(125.0)
+
+        tide = joint[joint["model_short"] == "TiDE"].iloc[0]
+        assert tide["q05"] == pytest.approx(60.0)
+        assert tide["q95"] == pytest.approx(120.0)
+
+    def test_lr_rows_have_nan_quantiles(self, forecasts_with_quantiles, skill_stats_three_models):
+        """LR model rows retain NaN quantiles (unchanged)."""
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
+
+        lr = joint[joint["model_short"] == "LR"].iloc[0]
+        for qcol in ("q05", "q25", "q75", "q95"):
+            assert pd.isna(lr[qcol]), f"LR {qcol} should be NaN"

@@ -269,6 +269,13 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             }
         )
 
+        # Short-term Forecast schema supports q05, q25, q75, q95 only
+        # (NOT q10, q50, q90 — those exist only in the LongForecast table)
+        _SHORT_TERM_QUANTILE_COLS = ("q05", "q25", "q75", "q95")
+        for qcol in _SHORT_TERM_QUANTILE_COLS:
+            if qcol in df_rec.columns:
+                records_df[qcol] = df_rec[qcol]
+
         # Deduplicate on the unique constraint columns to prevent
         # CardinalityViolation ("cannot affect row a second time").
         unique_cols = ["horizon_type", "code", "model_type", "date", "target"]
