@@ -63,16 +63,15 @@ dev = [
 [tool.uv]
 allow-insecure-host = []
 
-# Override lt-forecasting's hard pin on pandas==2.2.0
-# to be compatible with iEasyHydroForecast's pandas>=2.2.2
-override-dependencies = [
-    "pandas>=2.2.2",
-    "scikit-learn>=1.5.0",
-]
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.uv.sources]
 iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
-lt-forecasting = { git = "https://github.com/hydrosolutions/long-term-forecasting.git" }
+lt-forecasting = { git = "https://github.com/hydrosolutions/long-term-forecasting.git", rev = "a5554aba0d91659cacf7e3a37bd9080401561594" }
+torch = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

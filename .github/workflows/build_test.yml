@@ -13,6 +13,7 @@ env:
   PREPG_IMAGE_NAME: mabesa/sapphire-prepgateway
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
   ML_IMAGE_NAME: mabesa/sapphire-ml
+  LT_IMAGE_NAME: mabesa/sapphire-ltforecast
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
   RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
@@ -300,6 +301,64 @@ jobs:
           -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/machine_learning/Dockerfile .
 
+  # Test long-term forecasting with Python 3.12 + uv
+  test_long_term_forecasting:
+    runs-on: ubuntu-latest
+    name: Test long-term forecasting
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install long_term_forecasting dependencies
+        working-directory: ./apps/long_term_forecasting
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          long_term_forecasting/.venv/bin/python -c "import torch; import catboost; import lightgbm; import xgboost; import sapphire_api_client; from ieasyhydro_sdk.sdk import IEasyHydroSDK; import pandas; import numpy; print('All imports successful!'); print(f'torch: {torch.__version__}')"
+
+  # Build long-term forecasting Python 3.12 + uv image
+  # Note: LT image is large due to PyTorch + catboost/lightgbm/xgboost, needs extra disk space
+  build_long_term_forecasting:
+    needs: [test_long_term_forecasting, build_base_image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    name: Build long-term forecasting
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/docker_base_image/Dockerfile .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.LT_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/long_term_forecasting/Dockerfile .
+
   # Test forecast dashboard with Python 3.12 + uv
   test_dashboard:
     runs-on: ubuntu-latest
@@ -439,6 +498,7 @@ jobs:
       build_preprocessing_runoff,
       build_preprocessing_gateway,
       build_machine_learning,
+      build_long_term_forecasting,
       build_dashboard,
       build_postprocessing,
       build_linreg
@@ -458,6 +518,7 @@ jobs:
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.LT_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY

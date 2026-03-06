@@ -38,9 +38,15 @@ dev = [
 # Allow git and local path dependencies
 allow-insecure-host = []
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 # Use local iEasyHydroForecast from sibling directory
 iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+torch = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 # Tests are in the test/ directory (when added)

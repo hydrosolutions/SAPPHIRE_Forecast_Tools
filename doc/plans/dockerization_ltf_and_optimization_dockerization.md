@@ -132,6 +132,13 @@ sometimes lags behind PyPI by a few days for new releases. If `uv lock` fails
 because a torch version isn't available on the CPU index, pin torch to the
 latest version available there.
 
+**Risk (verified 2026-03-06):** The current `pyproject.toml` specifies
+`torch>=2.9.0`. The PyTorch CPU index may not yet have 2.9.x wheels. If
+`uv lock` fails after adding the CPU index, either relax the pin to
+`torch>=2.8.0` or pin to the latest version available on the CPU index
+(e.g. `torch==2.8.0`). The ML module pins `torch==2.8.0` so 2.8.0+cpu is
+known to work.
+
 ### 2.3 Regenerate `apps/long_term_forecasting/uv.lock`
 
 ```bash

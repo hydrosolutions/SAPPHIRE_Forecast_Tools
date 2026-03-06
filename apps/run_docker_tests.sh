@@ -19,6 +19,7 @@
 #   --build-only    Build images, skip smoke tests
 #   --skip-build    Smoke test existing images, skip builds
 #   --skip-ml       Exclude machine_learning (huge image, ~10+ min build)
+#   --skip-lt       Exclude long_term_forecasting (huge image, ~10+ min build)
 #   --help          Print usage
 #
 # Prerequisites:
@@ -57,6 +58,7 @@ SMOKE_SKIPPED=()
 BUILD_ONLY=false
 SKIP_BUILD=false
 SKIP_ML=false
+SKIP_LT=false
 
 # Timing
 SCRIPT_START=0
@@ -80,6 +82,7 @@ TARGETS=(
     "prepgateway|mabesa/sapphire-prepgateway|apps/preprocessing_gateway/Dockerfile|import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client|"
     "linreg|mabesa/sapphire-linreg|apps/linear_regression/Dockerfile|import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK|"
     "ml|mabesa/sapphire-ml|apps/machine_learning/Dockerfile|import torch; import darts; import pandas; import numpy|"
+    "ltforecast|mabesa/sapphire-ltforecast|apps/long_term_forecasting/Dockerfile|import torch; import catboost; import lightgbm; import xgboost; import sapphire_api_client; from ieasyhydro_sdk.sdk import IEasyHydroSDK; import pandas; import numpy||linux/amd64"
     "dashboard|mabesa/sapphire-dashboard|apps/forecast_dashboard/Dockerfile|import panel; import holoviews; import bokeh; import pandas; import numpy|"
     "postprocessing|mabesa/sapphire-postprocessing|apps/postprocessing_forecasts/Dockerfile|import pandas; import numpy; import openpyxl|"
 )
@@ -127,12 +130,13 @@ format_duration() {
     fi
 }
 
-# Parse a target entry: KEY|IMAGE|DOCKERFILE|SMOKE_CMD|VENV_PREFIX
+# Parse a target entry: KEY|IMAGE|DOCKERFILE|SMOKE_CMD|VENV_PREFIX|PLATFORM
 target_key()          { echo "$1" | cut -d'|' -f1; }
 target_image()        { echo "$1" | cut -d'|' -f2; }
 target_dockerfile()   { echo "$1" | cut -d'|' -f3; }
 target_smoke_cmd()    { echo "$1" | cut -d'|' -f4; }
 target_venv_prefix()  { echo "$1" | cut -d'|' -f5; }
+target_platform()     { echo "$1" | cut -d'|' -f6; }
 
 # ---------------------------------------------------------------------------
 # Precondition checks
@@ -163,6 +167,7 @@ build_image() {
     local key="$1"
     local image="$2"
     local dockerfile="$3"
+    local platform="${4:-}"
     local start elapsed
     local build_log
 
@@ -171,18 +176,29 @@ build_image() {
     log INFO "Building ${key} (${image}:${IMAGE_TAG}) ..."
     start=$(get_timestamp)
 
+    # Some targets require a specific platform (e.g. linux/amd64) because
+    # their dependencies lack native wheels for the local architecture.
+    local platform_flag=()
+    if [ -n "$platform" ]; then
+        platform_flag=(--platform "$platform")
+        log INFO "  Using platform: ${platform}"
+    fi
+
     # Child images use FROM mabesa/sapphire-pythonbaseimage:latest.
     # BuildKit may resolve that against the registry manifest (which may
     # lack the local platform, e.g. arm64).  --build-context overrides the
     # FROM reference to point at our locally-built base image instead.
+    # When a cross-platform build is requested, skip --build-context so
+    # Docker pulls the correct architecture from the registry.
     local build_ctx_flag=()
-    if [ "$key" != "base" ]; then
+    if [ "$key" != "base" ] && [ -z "$platform" ]; then
         build_ctx_flag=(--build-context
             "${BASE_IMAGE}:latest=docker-image://${BASE_IMAGE}:${IMAGE_TAG}")
     fi
 
     if DOCKER_BUILDKIT=1 docker build \
         "${build_ctx_flag[@]}" \
+        "${platform_flag[@]}" \
         -t "${image}:${IMAGE_TAG}" \
         -f "${dockerfile}" . \
         >"$build_log" 2>&1; then
@@ -346,6 +362,7 @@ Targets (default: all):
   prepgateway     Preprocessing gateway
   linreg          Linear regression
   ml              Machine learning (large, ~10+ min)
+  ltforecast      Long-term forecasting (large, ~10+ min)
   dashboard       Forecast dashboard
   postprocessing  Postprocessing forecasts
 
@@ -353,6 +370,7 @@ Flags:
   --build-only    Build images, skip smoke tests
   --skip-build    Smoke test existing images, skip builds
   --skip-ml       Exclude machine_learning target
+  --skip-lt       Exclude long_term_forecasting target
   --help          Show this help message
 
 Examples:
@@ -378,6 +396,7 @@ main() {
             --build-only)  BUILD_ONLY=true ;;
             --skip-build)  SKIP_BUILD=true ;;
             --skip-ml)     SKIP_ML=true ;;
+            --skip-lt)     SKIP_LT=true ;;
             --help|-h)     print_usage; exit 0 ;;
             -*)
                 echo "Unknown flag: $1"
@@ -416,6 +435,12 @@ main() {
                 SMOKE_SKIPPED+=("ml")
                 continue
             fi
+            if [ "$SKIP_LT" = true ] && [ "$key" = "ltforecast" ]; then
+                log WARN "Skipping ltforecast (--skip-lt)"
+                BUILD_SKIPPED+=("ltforecast")
+                SMOKE_SKIPPED+=("ltforecast")
+                continue
+            fi
             targets_to_run+=("$entry")
         done
     else
@@ -428,6 +453,10 @@ main() {
                         log WARN "Skipping ml (--skip-ml)"
                         BUILD_SKIPPED+=("ml")
                         SMOKE_SKIPPED+=("ml")
+                    elif [ "$SKIP_LT" = true ] && [ "$sel" = "ltforecast" ]; then
+                        log WARN "Skipping ltforecast (--skip-lt)"
+                        BUILD_SKIPPED+=("ltforecast")
+                        SMOKE_SKIPPED+=("ltforecast")
                     else
                         targets_to_run+=("$entry")
                     fi
@@ -437,7 +466,7 @@ main() {
             done
             if [ "$found" = false ]; then
                 log ERROR "Unknown target: ${sel}"
-                echo "Valid targets: base pipeline preprunoff prepgateway linreg ml dashboard postprocessing"
+                echo "Valid targets: base pipeline preprunoff prepgateway linreg ml ltforecast dashboard postprocessing"
                 exit 1
             fi
         done
@@ -503,7 +532,7 @@ main() {
             key=$(target_key "$entry")
             [ "$key" = "base" ] && continue
 
-            build_image "$key" "$(target_image "$entry")" "$(target_dockerfile "$entry")" || true
+            build_image "$key" "$(target_image "$entry")" "$(target_dockerfile "$entry")" "$(target_platform "$entry")" || true
         done
     fi
 
