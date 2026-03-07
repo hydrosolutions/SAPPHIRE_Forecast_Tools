@@ -3305,12 +3305,25 @@ def get_runoff_data_for_sites_HF(
         target_timezone (str, optional): The timezone to convert the data to. Default is None.
         mode (str, optional): Operating mode - 'operational' or 'maintenance'. Default is 'operational'.
     """
+    # Determine manual site codes from config
+    from setup_library import _get_manual_site_codes
+
     from .config import get_maintenance_lookback_days
 
-    # Test if id_list is None or empty. Return error if it is.
-    if id_list is None or len(id_list) == 0:
+    # Import Google Sheets reader for manual site data
+    from .google_sheets_reader import (
+        get_google_sheets_site_codes,
+        is_google_sheets_enabled,
+        read_discharge_from_google_sheet,
+    )
+
+    manual_site_codes = _get_manual_site_codes()
+
+    # Relax id_list guard: allow empty when manual sites exist
+    if (id_list is None or len(id_list) == 0) and not manual_site_codes:
         raise ValueError(
-            "id_list is None or empty. Please provide a list of site IDs to read data for."
+            "id_list is None or empty and no manual sites configured. "
+            "Please provide a list of site IDs to read data for."
         )
 
     # Validate mode parameter
@@ -3353,6 +3366,87 @@ def get_runoff_data_for_sites_HF(
     if not read_data.empty:
         read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
 
+    # --- Google Sheets ingestion for manual sites ---
+    if is_google_sheets_enabled():
+        gs_site_codes = get_google_sheets_site_codes()
+        if not gs_site_codes:
+            logger.info("GOOGLE_SHEETS_ENABLED=true but no site codes configured.")
+        else:
+            # Conjunction rule: site must be in BOTH env var AND marked manual
+            eligible_codes = []
+            for gc in gs_site_codes:
+                if gc in manual_site_codes:
+                    eligible_codes.append(gc)
+                else:
+                    logger.warning(
+                        f"Site {gc} is in GOOGLE_SHEETS_SITE_CODES but not "
+                        f"marked manual in config — skipping Google Sheets fetch."
+                    )
+
+            if eligible_codes:
+                sheet_id = os.getenv("GOOGLE_SHEETS_DISCHARGE_ID", "")
+                creds_path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "")
+                gs_data = read_discharge_from_google_sheet(
+                    sheet_id=sheet_id,
+                    site_codes=eligible_codes,
+                    credentials_path=creds_path,
+                )
+
+                if not gs_data.empty:
+                    # Rename columns to match pipeline convention
+                    gs_data = gs_data.rename(
+                        columns={
+                            "code": code_col,
+                            "date": date_col,
+                            "discharge": discharge_col,
+                        }
+                    )
+                    gs_data[date_col] = pd.to_datetime(gs_data[date_col]).dt.normalize()
+
+                    if mode == "operational" and not read_data.empty:
+                        # Filter to rows newer than latest cached date per site
+                        filtered_rows = []
+                        for sc in eligible_codes:
+                            cached_site = read_data[read_data[code_col].astype(str) == sc]
+                            gs_site = gs_data[gs_data[code_col].astype(str) == sc]
+                            if not cached_site.empty:
+                                latest = cached_site[date_col].max()
+                                gs_site = gs_site[gs_site[date_col] > latest]
+                            filtered_rows.append(gs_site)
+                        if filtered_rows:
+                            gs_data = pd.concat(filtered_rows, ignore_index=True)
+                        else:
+                            gs_data = pd.DataFrame()
+
+                    if not gs_data.empty:
+                        # Validate: warn on extreme values
+                        for sc in eligible_codes:
+                            site_gs = gs_data[gs_data[code_col].astype(str) == sc]
+                            site_cached = (
+                                read_data[read_data[code_col].astype(str) == sc]
+                                if not read_data.empty
+                                else pd.DataFrame()
+                            )
+                            if not site_cached.empty and not site_gs.empty:
+                                hist_max = site_cached[discharge_col].max()
+                                extreme = site_gs[site_gs[discharge_col] > 10 * hist_max]
+                                if not extreme.empty:
+                                    logger.warning(
+                                        f"Google Sheets site {sc}: "
+                                        f"{len(extreme)} value(s) > 10x "
+                                        f"historical max ({hist_max})."
+                                    )
+
+                        # Add name column if needed
+                        if name_col not in gs_data.columns:
+                            gs_data[name_col] = ""
+
+                        read_data = pd.concat([read_data, gs_data], ignore_index=True)
+                        logger.info(
+                            f"Google Sheets: merged {len(gs_data)} rows "
+                            f"for {len(eligible_codes)} manual site(s)."
+                        )
+
     # Initialize a flag for virtual stations
     virtual_stations_present = False
     # Get virtual station codes from json (if file exists)
@@ -3372,9 +3466,23 @@ def get_runoff_data_for_sites_HF(
                 f"Virtual stations configuration file {virtual_stations_config_file_path} not found."
             )
 
-    if ieh_hf_sdk is None:
-        # We do not have access to an iEasyHydro database
-        logger.info("No data read from iEasyHydro Database.")
+    # Filter out manual site codes from SDK fetch list
+    if manual_site_codes and code_list:
+        sdk_code_list = [c for c in code_list if str(c) not in manual_site_codes]
+        if len(sdk_code_list) < len(code_list):
+            logger.info(
+                f"Excluded {len(code_list) - len(sdk_code_list)} manual site(s) "
+                f"from SDK fetch: {[c for c in code_list if str(c) in manual_site_codes]}"
+            )
+    else:
+        sdk_code_list = code_list
+
+    if ieh_hf_sdk is None or not sdk_code_list:
+        # We do not have access to an iEasyHydro database or no SDK sites
+        if ieh_hf_sdk is None:
+            logger.info("No data read from iEasyHydro Database.")
+        else:
+            logger.info("All sites are manual — skipping SDK fetch.")
         return read_data
 
     else:
@@ -3400,7 +3508,7 @@ def get_runoff_data_for_sites_HF(
             logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
             db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
                 ieh_hf_sdk=ieh_hf_sdk,
-                id_list=code_list,
+                id_list=sdk_code_list,
                 start_datetime=start_datetime,
                 end_datetime=end_datetime,
                 target_timezone=target_timezone,
@@ -3417,14 +3525,14 @@ def get_runoff_data_for_sites_HF(
 
             # Calculate efficient fetch ranges
             fetch_groups = calculate_fetch_ranges(
-                code_list=code_list,
+                code_list=sdk_code_list,
                 coverage_per_site=coverage_per_site,
                 default_lookback_days=lookback_days,
                 end_date=pd.Timestamp.now().normalize(),
             )
 
             # Print summary
-            print_smart_lookback_summary(code_list, coverage_per_site, fetch_groups)
+            print_smart_lookback_summary(sdk_code_list, coverage_per_site, fetch_groups)
 
             # Fetch data in batches, grouped by start date
             all_batch_data = []
@@ -3480,7 +3588,7 @@ def get_runoff_data_for_sites_HF(
                 f"[GAPS] Date range in read_data: {read_data[date_col].min()} to {read_data[date_col].max()}"
             )
             logger.info(
-                f"[GAPS] code_list has {len(code_list) if code_list else 0} manual sites: {code_list[:5] if code_list else 'None'}..."
+                f"[GAPS] sdk_code_list has {len(sdk_code_list) if sdk_code_list else 0} SDK sites: {sdk_code_list[:5] if sdk_code_list else 'None'}..."
             )
 
             gaps = _detect_gaps_in_data(read_data, code_col, date_col)
@@ -3494,7 +3602,7 @@ def get_runoff_data_for_sites_HF(
                     date_col=date_col,
                     discharge_col=discharge_col,
                     code_col=code_col,
-                    manual_site_codes=code_list,  # Only fill gaps for manual sites
+                    manual_site_codes=sdk_code_list,  # Only fill gaps for SDK sites
                 )
                 logger.info(f"[GAPS] API returned {len(gap_data)} records for gap filling")
                 if not gap_data.empty:
@@ -3534,7 +3642,7 @@ def get_runoff_data_for_sites_HF(
         # Get today's morning data if necessary
         db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
             ieh_hf_sdk=ieh_hf_sdk,
-            id_list=code_list,  # Use code_list (string codes) - API requires site_codes, not site_ids
+            id_list=sdk_code_list,  # Use sdk_code_list — excludes manual sites
             target_timezone=target_timezone,
             date_col=date_col,
             discharge_col=discharge_col,

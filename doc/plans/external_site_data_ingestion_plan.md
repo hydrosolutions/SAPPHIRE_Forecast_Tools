@@ -8,7 +8,7 @@ with 4 iEH HF sites + 1 additional site whose discharge data is provided
 manually by the operator.
 
 **Created**: 2026-03-05
-**Status**: Ready for implementation
+**Status**: Phases 1-3 implemented (branch `develop_long_term_fix_api_postprocessing_forecasts`)
 
 ### Resolved Outstanding Items (from review 2026-03-06, resolved 2026-03-06)
 
@@ -34,7 +34,7 @@ All four items have been audited against the codebase and resolved:
    trigger Google Sheets ingestion. If a collision removes the `manual`
    marker (§1.4 edge case), subsequent runs skip the Google Sheets fetch
    for that code even if it remains in the env var. The reader logs a
-   warning: `"Site 99001 is in GOOGLE_SHEETS_SITE_CODES but not marked
+   warning: `"Site 10001 is in GOOGLE_SHEETS_SITE_CODES but not marked
    manual in config — skipping Google Sheets fetch"`. This eliminates the
    half-state: the library JSON is the enforcement point, the env var is
    the feature toggle.
@@ -157,7 +157,7 @@ credentials path, site codes, enabled flag). Two options:
 GOOGLE_SHEETS_ENABLED=true
 GOOGLE_SHEETS_DISCHARGE_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
 GOOGLE_SHEETS_CREDENTIALS_PATH=/etc/sapphire/google_credentials.json
-GOOGLE_SHEETS_SITE_CODES=99001,99002
+GOOGLE_SHEETS_SITE_CODES=10001,10002
 ```
 
 Pro: Same pattern as everything else in the project. No new config file format.
@@ -233,7 +233,7 @@ applied in both, since we cannot control which runs last.
 
 ## Implementation
 
-### Phase 1: Protect manually-added sites in config refresh
+### Phase 1: Protect manually-added sites in config refresh — DONE
 
 **Goal**: A site added manually to `config_all_stations_library.json` and
 the station selection files must survive SDK-triggered refreshes.
@@ -253,9 +253,9 @@ Add a `"data_source"` field to the site's JSON entry. Convention:
       "lat": [42.5], "long": [74.6],
       "...": "..."
     },
-    "99001": {
+    "10001": {
       "data_source": "manual",
-      "code": [99001],
+      "code": [10001],
       "name_ru": ["River Name - Location Name"],
       "site_name": ["River Name - Location Name"],
       "river_ru": ["River Name"],
@@ -302,14 +302,14 @@ This function (starts at line ~613; the list-wrapping and JSON write logic is
 around lines 747–766) overwrites `config_all_stations_library.json` with a
 merged DataFrame from the SDK. The change:
 
-- [ ] Before writing, read existing JSON and extract entries where
+- [x] Before writing, read existing JSON and extract entries where
       `data_source` is present AND != `"ieh_hf"`.
-- [ ] **Back up** the existing JSON to a `.bak` file (overwriting any
+- [x] **Back up** the existing JSON to a `.bak` file (overwriting any
       previous backup) before writing the new version. This enables
       recovery if the merge logic has a bug.
-- [ ] After constructing the new JSON from SDK data, **merge back** the
+- [x] After constructing the new JSON from SDK data, **merge back** the
       manual entries (preserving their `data_source` field).
-- [ ] Write the combined result.
+- [x] Write the combined result.
 
 **Caution**: This function wraps each column value in a list (line ~753).
 The `data_source` field must be handled specially — either excluded from
@@ -320,7 +320,7 @@ one convention and apply it to both read and write paths.
 all other fields in the JSON. The helper `_get_manual_site_codes()` must
 unwrap with `val[0] if isinstance(val, list) else val` when reading.
 
-- [ ] Verify that all consumers of this JSON can tolerate the new
+- [x] Verify that all consumers of this JSON can tolerate the new
       `data_source` field (check `Site.from_dataframe()` and any code
       that iterates over station keys).
 
@@ -349,10 +349,10 @@ them to the new SDK codes before writing.
 
 For each:
 
-- [ ] Before writing, read `config_all_stations_library.json` and collect
+- [x] Before writing, read `config_all_stations_library.json` and collect
       codes where `data_source` is present AND != `"ieh_hf"`.
-- [ ] Append these manual codes to the SDK-derived code list.
-- [ ] Write the combined list.
+- [x] Append these manual codes to the SDK-derived code list.
+- [x] Write the combined list.
 
 **Implementation note**: Extract the guard logic into a shared helper
 (e.g., `_get_manual_site_codes()`) to avoid duplicating the read-and-filter
@@ -360,28 +360,28 @@ logic in four places.
 
 #### 1.4 Tests
 
-- [ ] Unit test: manual site survives `get_pentadal_forecast_sites_complicated_method()` refresh
-- [ ] Unit test: manual site code survives `get_pentadal_forecast_sites_from_HF_SDK()` selection refresh
-- [ ] Unit test: manual site code survives `get_decadal_forecast_sites_from_HF_SDK()` selection refresh
-- [ ] Unit test: manual site code survives `get_all_forecast_sites_from_HF_SDK()` selection refresh
-- [ ] Edge case: empty SDK response does not wipe manual sites
-- [ ] Edge case: manual site with same code as SDK site — warn and prefer
+- [x] Unit test: manual site survives `get_pentadal_forecast_sites_complicated_method()` refresh
+- [x] Unit test: manual site code survives `get_pentadal_forecast_sites_from_HF_SDK()` selection refresh
+- [x] Unit test: manual site code survives `get_decadal_forecast_sites_from_HF_SDK()` selection refresh
+- [x] Unit test: manual site code survives `get_all_forecast_sites_from_HF_SDK()` selection refresh
+- [x] Edge case: empty SDK response does not wipe manual sites
+- [x] Edge case: manual site with same code as SDK site — warn and prefer
       SDK (overwrite the entry entirely, removing `data_source: manual`).
       The site code must also be removed from `GOOGLE_SHEETS_SITE_CODES`
       by the operator; log a warning if a collision is detected so the
       operator knows to update the `.env` file.
-- [ ] Edge case: `data_source` field absent on existing entries — treated as `"ieh_hf"` (no protection)
-- [ ] Unit test: `data_source` list-wrapping round-trip — write a manual entry
+- [x] Edge case: `data_source` field absent on existing entries — treated as `"ieh_hf"` (no protection)
+- [x] Unit test: `data_source` list-wrapping round-trip — write a manual entry
       with `["manual"]`, read it back via `_get_manual_site_codes()`, verify
       the code is correctly identified as manual
-- [ ] Unit test: `config_station_selection.json` concurrent write —
+- [x] Unit test: `config_station_selection.json` concurrent write —
       functions #2 and #3 both preserve manual codes regardless of execution
       order (run both in sequence, verify manual code present after each)
 - [ ] Integration: full pipeline run via `run_locally.sh all` with a test manual site in config
 
 ---
 
-### Phase 2: Remove iEH HF SDK dependency from `linear_regression`
+### Phase 2: Remove iEH HF SDK dependency from `linear_regression` — DONE
 
 **Goal**: `linear_regression` uses config JSON files for site discovery
 instead of instantiating `IEasyHydroHFSDK` itself. This is safe because
@@ -400,12 +400,12 @@ The current branching logic (lines 576-622) has two paths controlled by
 
 The change removes the HF SDK path:
 
-- [ ] Remove `IEasyHydroHFSDK` from the import (keep `IEasyHydroSDK`)
-- [ ] Remove `ieh_hf_sdk = IEasyHydroHFSDK()` instantiation (line ~585)
-- [ ] Remove the `has_access_to_hf_db` branch that calls
+- [x] Remove `IEasyHydroHFSDK` from the import (keep `IEasyHydroSDK`)
+- [x] Remove `ieh_hf_sdk = IEasyHydroHFSDK()` instantiation (line ~585)
+- [x] Remove the `has_access_to_hf_db` branch that calls
       `sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)` and
       `sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)`
-- [ ] Always use the config-file path:
+- [x] Always use the config-file path:
       `sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)` and
       `sl.get_decadal_forecast_sites_from_pentadal_sites()`
 
@@ -432,8 +432,8 @@ Attributes accessed by `linear_regression.py` during execution:
 | `delta`, `perc_norm` | Set during computation | Safe |
 | `iehhf_site_id` | HF SDK only | Safe — LR discards `site_ids` with `_` (verified: lines 599, 602) |
 
-- [ ] Audit all `site.` attribute accesses in `linear_regression.py`
-- [ ] Confirm no dependency on other HF-SDK-only fields
+- [x] Audit all `site.` attribute accesses in `linear_regression.py`
+- [x] Confirm no dependency on other HF-SDK-only fields
 
 #### 2.3 Decadal site discovery
 
@@ -449,24 +449,26 @@ site list. This function already exists and does NOT require SDK access.
 to `get_runoff_data_for_sites_HF()`). The switch from HF SDK path to
 config-file path in LR is safe — no third return value is needed.
 
-- [ ] Switch decadal path from `get_decadal_forecast_sites_from_HF_SDK()`
+- [x] Switch decadal path from `get_decadal_forecast_sites_from_HF_SDK()`
       to `get_decadal_forecast_sites_from_pentadal_sites()`
 
 #### 2.4 Tests
 
-- [ ] Existing `linear_regression` tests pass without iEH HF SDK available
+- [x] Existing `linear_regression` tests pass without iEH HF SDK available
 - [ ] Integration test: pipeline runs with a mix of iEH HF and manual sites
-- [ ] Verify decadal forecasts still work with the config-file path
+- [x] Verify decadal forecasts still work with the config-file path
 - [ ] Unit test: LR produces valid forecast output when `qdanger is None`
       (manual site without dangerous discharge threshold)
 - [ ] Full pipeline run: `run_locally.sh short-term` with test manual site
 
 ---
 
-### Phase 3: Google Sheets data ingestion
+### Phase 3: Google Sheets data ingestion — DONE
 
 **Goal**: `preprocessing_runoff` reads daily average discharge data for manual
 sites from a private Google Sheet, authenticated via service account.
+
+**Reader verified with live UZB test sheet (2026-03-07).**
 
 **Files changed**:
 - `apps/preprocessing_runoff/src/google_sheets_reader.py` (new)
@@ -485,8 +487,8 @@ The operator maintains a Google Sheet with this structure:
 | 03.03.2026 | -         |   <- missing value
 ```
 
-- **One sheet per station** (tab name = station code, e.g., "99001").
-- **Date format**: `DD.MM.YYYY` (matches existing Excel convention).
+- **One sheet per station** (tab name = station code, e.g., "10001").
+- **Date format**: `DD.MM.YYYY` or `YYYY-MM-DD` (both accepted).
 - **Discharge**: daily average in m3/s, or `-` for missing.
 - **Header row**: first row is headers (skipped during reading).
 - **No morning discharge column** — manual sites provide daily averages only.
@@ -507,7 +509,7 @@ is **optional** — omit them entirely for deployments that don't use the featur
 GOOGLE_SHEETS_ENABLED=true
 GOOGLE_SHEETS_DISCHARGE_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
 GOOGLE_SHEETS_CREDENTIALS_PATH=/etc/sapphire/google_credentials.json
-GOOGLE_SHEETS_SITE_CODES=99001,99002
+GOOGLE_SHEETS_SITE_CODES=10001,10002
 ```
 
 | Variable | Required | Default | Description |
@@ -546,7 +548,7 @@ def read_discharge_from_google_sheet(
     Fetch daily average discharge for manual sites from a Google Sheet.
 
     Each site_code corresponds to a worksheet (tab) in the spreadsheet.
-    Expected columns: date (DD.MM.YYYY), discharge (float or '-').
+    Expected columns: date (DD.MM.YYYY or YYYY-MM-DD), discharge (float or '-').
 
     Args:
         sheet_id: Google Sheets spreadsheet ID.
@@ -562,7 +564,7 @@ def read_discharge_from_google_sheet(
 
 Key implementation details:
 
-- [ ] Guard the `gspread` import with try/except ImportError so the module
+- [x] Guard the `gspread` import with try/except ImportError so the module
       loads without `gspread` installed (for deployments that don't use it):
       ```python
       try:
@@ -572,31 +574,31 @@ Key implementation details:
       ```
       Return empty DataFrame with a clear log message if `gspread` is None
       and the feature is enabled.
-- [ ] **Validate `credentials_path`** before calling gspread: check that the
+- [x] **Validate `credentials_path`** before calling gspread: check that the
       file exists and is a regular file (`os.path.isfile()`). Log ERROR and
       return empty DataFrame if not.
-- [ ] **Validate `site_codes`**: reject any code that does not match
+- [x] **Validate `site_codes`**: reject any code that does not match
       `re.fullmatch(r"\d+", code)`. Log ERROR per invalid code and exclude
       it from processing. Continue with remaining valid codes.
-- [ ] Use `gspread.service_account(filename=credentials_path)` for auth
-- [ ] **Catch authentication errors specifically** (e.g.,
+- [x] Use `gspread.service_account(filename=credentials_path)` for auth
+- [x] **Catch authentication errors specifically** (e.g.,
       `gspread.exceptions.APIError` with 401/403 status): log at ERROR level
       with message including `credentials_path` so operators can distinguish
       auth failures from network errors.
-- [ ] Open sheet by ID: `gc.open_by_key(sheet_id)`
-- [ ] For each site code, read the matching tab: `sh.worksheet(site_code)`
-- [ ] Parse dates with `pd.to_datetime(col, format="%d.%m.%Y")`
-- [ ] Replace `"-"` with `NaN` for missing discharge values
-- [ ] **Validate discharge values are numeric** after NaN replacement: log
+- [x] Open sheet by ID: `gc.open_by_key(sheet_id)`
+- [x] For each site code, read the matching tab: `sh.worksheet(site_code)`
+- [x] Parse dates with `pd.to_datetime()` — accept both `%d.%m.%Y` and `%Y-%m-%d`
+- [x] Replace `"-"` with `NaN` for missing discharge values
+- [x] **Validate discharge values are numeric** after NaN replacement: log
       WARNING and drop rows where the value cannot be parsed as float.
-- [ ] Return DataFrame with columns `(code, date, discharge)` — same as
+- [x] Return DataFrame with columns `(code, date, discharge)` — same as
       the existing Excel reader output
-- [ ] Wrap in try/except: log errors but return empty DataFrame (pipeline
+- [x] Wrap in try/except: log errors but return empty DataFrame (pipeline
       continues for iEH HF sites; operator sees warning in logs)
 
 Dependency:
 
-- [ ] Add `gspread` as an optional dependency in `pyproject.toml`:
+- [x] Add `gspread` as an optional dependency in `pyproject.toml`:
       `gspread = {version = ">=6.0,<7", optional = true}`
 - [ ] Add to Docker image only for deployments that use it (or include
       universally — it's small, ~2 MB with deps)
@@ -661,14 +663,14 @@ correct handling:
 
 Specific changes in `get_runoff_data_for_sites_HF()`:
 
-- [ ] **Relax `id_list` validation guard** (line ~3311). The function
+- [x] **Relax `id_list` validation guard** (line ~3311). The function
       currently raises `ValueError` if `id_list is None or empty`. Manual
       sites have no `iehhf_site_id`, so when ALL sites are manual the list
       would be empty. Change: allow empty `id_list` when manual sites exist
       (determined by reading the library JSON for `data_source: "manual"`
       entries) — skip the SDK fetch path entirely. When `id_list` contains
       some IDs (mixed iEH HF + manual), SDK fetch proceeds for those only.
-- [ ] **Insert Google Sheets fetch before virtual station computation**
+- [x] **Insert Google Sheets fetch before virtual station computation**
       (between lines ~3350 and ~3356). Determine eligible manual sites
       using the **conjunction rule**: a site must appear in BOTH
       `GOOGLE_SHEETS_SITE_CODES` (env var) AND be marked
@@ -678,11 +680,11 @@ Specific changes in `get_runoff_data_for_sites_HF()`:
       has reclaimed the code but the operator hasn't updated `.env`).
       For eligible sites, call `read_discharge_from_google_sheet()` and
       concatenate the result into `read_data` before `add_hydroposts()`.
-- [ ] In operational mode: filter Google Sheets data to rows newer than
+- [x] In operational mode: filter Google Sheets data to rows newer than
       the latest cached date for each manual site code.
-- [ ] Skip SDK fetch (`code_list` filtering) for site codes marked
+- [x] Skip SDK fetch (`code_list` filtering) for site codes marked
       `"data_source": "manual"` in the library JSON.
-- [ ] Continue with existing pipeline (outlier filtering, hydrograph
+- [x] Continue with existing pipeline (outlier filtering, hydrograph
       calculation, CSV + API write).
 
 **Known limitation — backfill**: In operational mode, only rows newer than
@@ -693,22 +695,22 @@ next maintenance run. Document this for operators.
 **Discharge validation**: Unlike SDK data (which is vetted by iEH HF),
 Google Sheets data is manually entered and error-prone. After reading:
 
-- [ ] Log a warning for negative discharge values (likely typos).
+- [x] Log a warning for negative discharge values (likely typos).
 - [ ] Log a warning for discharge values > 10× the site's historical
       maximum (if available from cached data), as a sanity check.
-- [ ] Do not silently drop invalid rows — log them and let the existing
+- [x] Do not silently drop invalid rows — log them and let the existing
       outlier filtering handle removal downstream.
 
 **Operator feedback**: After a successful Google Sheets fetch, log an
 info-level summary per site: number of rows ingested and the date range.
-Example: `"Google Sheets: site 99001 — 3 new rows (2026-03-03 to 2026-03-05)"`.
+Example: `"Google Sheets: site 10001 — 3 new rows (2026-03-03 to 2026-03-05)"`.
 This lets the operator or admin verify ingestion without inspecting raw data.
 
 **Staleness monitoring**: Track consecutive empty fetches per manual site
 (use the cached CSV's latest date as a proxy — if it hasn't advanced in N
 runs, the site is stale). After 3 consecutive runs with zero new rows for a
 manual site, escalate the log from INFO to WARNING:
-`"Site 99001: no new data for 3 consecutive runs — check Google Sheet"`.
+`"Site 10001: no new data for 3 consecutive runs — check Google Sheet"`.
 This prevents silent data gaps from going unnoticed.
 
 #### 3.5 Deployment setup (one-time, per hydromet)
@@ -745,53 +747,79 @@ calendar date at the gauging station), not the date at their current location.
 
 #### 3.6 Tests
 
-- [ ] Unit test: `read_discharge_from_google_sheet()` with mocked gspread
+- [x] Unit test: `read_discharge_from_google_sheet()` with mocked gspread
       client returns correct DataFrame
-- [ ] Unit test: missing tab for a site code returns empty DataFrame + warning
-- [ ] Unit test: malformed date/discharge values handled gracefully
-- [ ] Unit test: `gspread` not installed — returns empty DataFrame + log
+- [x] Unit test: missing tab for a site code returns empty DataFrame + warning
+- [x] Unit test: malformed date/discharge values handled gracefully
+- [x] Unit test: `gspread` not installed — returns empty DataFrame + log
 - [ ] Integration test: Google Sheets data merges correctly with SDK data
 - [ ] Integration test: operational mode filters to new rows only
-- [ ] Edge case: Google Sheet is empty (no data rows)
+- [x] Edge case: Google Sheet is empty (no data rows)
 - [ ] Edge case: network error during fetch (pipeline continues without
       manual site data)
-- [ ] Edge case: negative discharge value logs warning
+- [x] Edge case: negative discharge value logs warning
 - [ ] Edge case: out-of-order historical backfill not picked up in
       operational mode (known limitation — verify maintenance mode catches it)
-- [ ] Unit test: operator feedback log message contains site code, row count,
+- [x] Unit test: operator feedback log message contains site code, row count,
       and date range
-- [ ] Unit test: conjunction rule — site in `GOOGLE_SHEETS_SITE_CODES` but
+- [x] Unit test: conjunction rule — site in `GOOGLE_SHEETS_SITE_CODES` but
       NOT marked `manual` in library JSON → skipped with warning log
-- [ ] Unit test: conjunction rule — site marked `manual` in library JSON but
+- [x] Unit test: conjunction rule — site marked `manual` in library JSON but
       NOT in `GOOGLE_SHEETS_SITE_CODES` → skipped (no data source configured)
-- [ ] Unit test: non-numeric site code in `GOOGLE_SHEETS_SITE_CODES` →
+- [x] Unit test: non-numeric site code in `GOOGLE_SHEETS_SITE_CODES` →
       rejected with error log, other valid codes still processed
-- [ ] Unit test: `GOOGLE_SHEETS_ENABLED=true` but `GOOGLE_SHEETS_SITE_CODES`
+- [x] Unit test: `GOOGLE_SHEETS_ENABLED=true` but `GOOGLE_SHEETS_SITE_CODES`
       is empty/whitespace → no fetch attempted, info log
-- [ ] Unit test: authentication failure (expired/invalid credentials) →
+- [x] Unit test: authentication failure (expired/invalid credentials) →
       ERROR-level log mentioning credential path, empty DataFrame returned
-- [ ] Unit test: `GOOGLE_SHEETS_CREDENTIALS_PATH` points to non-existent
+- [x] Unit test: `GOOGLE_SHEETS_CREDENTIALS_PATH` points to non-existent
       file or symlink → clear error before attempting gspread auth
-- [ ] Unit test: discharge column contains non-numeric string (not `-`) →
+- [x] Unit test: discharge column contains non-numeric string (not `-`) →
       row skipped with warning, other rows processed
 - [ ] Full pipeline: `run_locally.sh all` with a mock Google Sheet
 
 ---
 
-### Phase 4 (optional): Dashboard data-entry card
+### ~~Phase 4 (optional): Dashboard data-entry card~~ — Out of scope
 
-**Goal**: Provide a browser-based alternative for operators who cannot or
-prefer not to use Google Sheets.
+Removed from this plan. Can be planned separately if needed in the future.
 
-**Not detailed here** — can be planned separately if needed. High-level:
+---
 
-- New tab in `forecast_dashboard` (visible only when manual sites are
-  configured)
-- Panel `FileInput` widget for Excel upload, or `DatePicker` +
-  `FloatInput` for direct entry
-- Writes to `ieasyforecast_daily_discharge_path` (Excel) or directly to
-  preprocessing API
-- Behind existing dashboard authentication
+## End-to-End Validation (UZB deployment)
+
+**Status**: Blocked — waiting on colleague coordination.
+
+### Prerequisites
+
+Two paths depending on whether we can start testing iEH HF sites before
+formal approval from the hydromet directorate:
+
+**Path A — iEH HF sites available for testing:**
+
+1. **T. + A.**: Confirm we can start testing iEH HF sites before positive
+   reply from hydromet directorate
+2. **V.**: Create a `sapphire-forecast` user in the UZB iEH HF deployment
+   with read access to operational data
+3. **A.**: Provide time series for currently implemented iEH HF sites
+   (if they want forecasts for them) and for the manual sites
+4. Update `.env_develop_uzb` with iEH HF credentials and set
+   `ieasyhydroforecast_connect_to_iEH=True`
+5. Run full pipeline: `ieasyhydroforecast_env_file_path=.../config/.env_develop_uzb bash apps/run_locally.sh short-term`
+
+**Path B — manual sites only (no iEH HF access yet):**
+
+1. **A.**: Provide discharge time series for the manual site(s)
+2. Populate Google Sheet with provided data
+3. Keep `ieasyhydroforecast_connect_to_iEH=False`
+4. Run full pipeline with manual site only
+
+### Validation checklist
+
+- [ ] `preprocessing_runoff` reads Google Sheets data and writes to `runoff_day.csv`
+- [ ] `linear_regression` produces forecast output for the manual site
+- [ ] Forecast output appears in `intermediate_data/forecasts_pentad.csv`
+- [ ] If iEH HF sites included: mixed iEH HF + manual sites work together
 
 ---
 
@@ -810,7 +838,7 @@ prefer not to use Google Sheets.
 | Manual site code collides with future SDK site | Low — ambiguous data source | Warn on collision, prefer SDK, log message telling operator to update `.env`. |
 | Credential expiry / compromise | Medium — silent data gap for manual sites | Catch auth errors specifically at ERROR level (not WARNING). Include credential path in log message so operators can distinguish auth failures from network errors. Document rotation procedure in deployment guide. |
 | Malicious or malformed site code in env var | Low — potential path traversal in CSV filenames or log injection | Validate `GOOGLE_SHEETS_SITE_CODES` entries against `^\d+$`. Reject non-numeric codes before use as tab names, file path components, or log values. |
-| Consecutive empty fetches go unnoticed | Medium — manual site forecasts go stale silently | After 3+ consecutive runs where a manual site returns zero rows, escalate from INFO to WARNING: `"Site 99001: no new data for 3 consecutive runs — check Google Sheet"`. |
+| Consecutive empty fetches go unnoticed | Medium — manual site forecasts go stale silently | After 3+ consecutive runs where a manual site returns zero rows, escalate from INFO to WARNING: `"Site 10001: no new data for 3 consecutive runs — check Google Sheet"`. |
 | Config JSON corruption during write | Medium — loss of manual site metadata | Back up `config_all_stations_library.json` to a `.bak` file before each write in `get_pentadal_forecast_sites_complicated_method()`. |
 | Concurrent writers to `config_station_selection.json` | Low — manual codes dropped if cron overlap | Functions #2 and #3 both write the same file. Document as known limitation: pipeline must not run concurrently (enforced by cron scheduling). |
 | Operator enters dates from wrong timezone | Low — off-by-one day error | Document in deployment guide and Google Sheet template: dates are hydrological observation dates (local time), not entry dates. |
@@ -869,17 +897,13 @@ This is architecturally independent from the data ingestion changes above.
 
 ## Execution Order
 
-| Phase | Depends on |
-|-------|-----------|
-| Phase 1: Config protection | None |
-| Phase 2: LR SDK removal | Phase 1 |
-| Phase 3: Google Sheets reader | Phase 1 |
-| Phase 4: Dashboard card | Phase 3 (optional) |
-
-Phases 1 and 3 are tightly coupled (manual sites need both config protection
-and a data source). Phase 2 (LR SDK removal) is independently valuable code
-hygiene — it can be committed with Phase 1 or as a separate PR. Each phase
-must pass `run_locally.sh all` with a test manual site before merging.
+| Phase | Depends on | Status |
+|-------|-----------|--------|
+| Phase 1: Config protection | None | Done |
+| Phase 2: LR SDK removal | Phase 1 | Done |
+| Phase 3: Google Sheets reader | Phase 1 | Done (reader verified with live Google Sheet) |
+| End-to-end validation | Phases 1-3 + colleague coordination | Blocked |
+| ~~Phase 4: Dashboard card~~ | — | Out of scope |
 
 ---
 
@@ -890,4 +914,4 @@ must pass `run_locally.sh all` with a test manual site before merging.
 - `doc/plans/sapphire_api_integration_plan.md` — API integration patterns
 - `doc/plans/issues/gi_draft_infra_model_registry.md` — model registry plan
 
-*Last updated: 2026-03-07 (security review: added credential validation/rotation, site code input sanitization, auth error logging, staleness monitoring, config backup, conjunction rule tests, qdanger regression test, data_source round-trip test, virtual station execution order analysis, timezone guidance)*
+*Last updated: 2026-03-07 (Phases 1-3 implemented, Google Sheets reader verified with live UZB test sheet, Phase 4 removed from scope, added end-to-end validation section with Path A/B depending on iEH HF access)*

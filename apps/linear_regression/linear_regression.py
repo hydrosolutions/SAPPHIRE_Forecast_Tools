@@ -109,7 +109,7 @@ import pandas as pd
 
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-from ieasyhydro_sdk.sdk import IEasyHydroHFSDK, IEasyHydroSDK
+from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -573,53 +573,34 @@ def main():
         else:
             logger.debug(f"SSH tunnels found: {tunnels}")
 
-    # Test if we read from iEasyHydro or iEasyHydro HF
+    # Legacy iEasyHydro SDK — used only for qdanger lookup (optional).
+    # Site discovery uses config JSON files (populated by preprocessing_runoff).
     if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
         ieh_sdk = IEasyHydroSDK()
         has_access_to_db = sl.check_database_access(ieh_sdk)
-        has_access_to_hf_db = False
         if not has_access_to_db:
             ieh_sdk = None
     else:
-        # Connect to iEasyHydro HF
-        ieh_hf_sdk = IEasyHydroHFSDK()
-        has_access_to_hf_db = sl.check_database_access(ieh_hf_sdk)
+        ieh_sdk = None
         has_access_to_db = False
-        if not has_access_to_db:
-            ieh_sdk = None
-        if not has_access_to_hf_db:
-            ieh_hf_sdk = None
 
-    # Identify sites for which to produce forecasts FIRST
-    # (Needed for hindcast auto-detection to check for new gauges)
-    # Gets us a list of site objects with the necessary information to write forecast outputs
-    if has_access_to_hf_db:
-        # Use the iEH HF SDK to get the sites
-        fc_sites_pentad, site_list_pentad, _ = (
-            sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_pentad else ([], [], None)
-        )
-        fc_sites_decad, site_list_decad, _ = (
-            sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_decad else ([], [], None)
-        )
-    else:
-        # Use the iEH SDK to get the sites
-        fc_sites_pentad, site_list_pentad = (
-            sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db) if run_pentad else ([], [])
-        )
-        fc_sites_decad, site_list_decad = ([], [])
-        if run_decad:
-            if run_pentad:
-                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
-                    fc_sites_pentad, site_list_pentad
-                )
-            else:
-                # If only running decadal forecasts, we need to get pentadal sites first for reference
-                temp_fc_sites_pentad, temp_site_list_pentad = sl.get_pentadal_forecast_sites(
-                    ieh_sdk, has_access_to_db
-                )
-                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
-                    temp_fc_sites_pentad, temp_site_list_pentad
-                )
+    # Identify sites from config JSON files (always config-file path)
+    fc_sites_pentad, site_list_pentad = (
+        sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db) if run_pentad else ([], [])
+    )
+    fc_sites_decad, site_list_decad = ([], [])
+    if run_decad:
+        if run_pentad:
+            fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+                fc_sites_pentad, site_list_pentad
+            )
+        else:
+            temp_fc_sites_pentad, temp_site_list_pentad = sl.get_pentadal_forecast_sites(
+                ieh_sdk, has_access_to_db
+            )
+            fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+                temp_fc_sites_pentad, temp_site_list_pentad
+            )
 
     # Combine site lists for hindcast auto-detection
     all_site_codes = list(set(site_list_pentad + site_list_decad))
@@ -701,12 +682,12 @@ def main():
 
     # Save pentadal data
     if run_pentad:
-        fl.write_pentad_hydrograph_data(data_pentad, iehhf_sdk=ieh_hf_sdk)
+        fl.write_pentad_hydrograph_data(data_pentad)
         fl.write_pentad_time_series_data(data_pentad)
 
     # Save decadal data
     if run_decad:
-        fl.write_decad_hydrograph_data(data_decad, iehhf_sdk=ieh_hf_sdk)
+        fl.write_decad_hydrograph_data(data_decad)
         fl.write_decad_time_series_data(data_decad)
 
     # Iterate over the dates

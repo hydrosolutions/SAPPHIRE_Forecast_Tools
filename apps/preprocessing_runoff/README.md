@@ -128,6 +128,11 @@ iEasyHydro HF Database
 ### iEasyHydro HF (Primary)
 Access to iEasyHydro HF database via SDK for operational data.
 
+### Google Sheets (Manual Sites)
+For sites not in the iEasyHydro HF database, discharge data can be read from a private Google Sheet via service account authentication. Each site gets its own worksheet tab (tab name = site code). Expected format: two columns (`date` in DD.MM.YYYY or YYYY-MM-DD, `discharge` in m³/s or `-` for missing). See the [external site data ingestion plan](../../doc/plans/external_site_data_ingestion_plan.md) for deployment setup instructions.
+
+Requires the optional `gspread` dependency: `pip install 'gspread>=6.0,<7'` (or install with `pip install -e '.[google-sheets]'`).
+
 ### Excel Files (Alternative)
 Excel files with daily river runoff data, one file per measurement site:
 - 2 header lines; first header contains station code and name (space-separated)
@@ -341,6 +346,10 @@ uv run pytest test/ -v
 | `IEASYHYDRO_SPOTCHECK_SITES` | Comma-separated site codes for spot-check validation (e.g., `15166,16159,15189`) | optional |
 | `PREPROCESSING_PROFILING` | Set to `true` to enable performance profiling output | optional |
 | `log_level` | System-wide log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` | optional, default: INFO |
+| `GOOGLE_SHEETS_ENABLED` | Set to `true` to enable Google Sheets discharge ingestion for manual sites | optional, default: false |
+| `GOOGLE_SHEETS_DISCHARGE_ID` | Google Sheets spreadsheet ID (from the URL) | required if enabled |
+| `GOOGLE_SHEETS_CREDENTIALS_PATH` | Path to Google service account JSON key file | required if enabled |
+| `GOOGLE_SHEETS_SITE_CODES` | Comma-separated site codes; each must match a tab name in the sheet | required if enabled |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.
 

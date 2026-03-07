@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import subprocess
 import urllib.parse
@@ -607,6 +608,72 @@ def check_database_access(ieh_sdk):
         raise
 
 
+def _get_manual_site_codes() -> list[str]:
+    """Return site codes marked as manual in config_all_stations_library.json.
+
+    A site is considered manual if its ``data_source`` field is present and
+    not equal to ``"ieh_hf"``. The field may be list-wrapped (``["manual"]``)
+    per the JSON convention used by ``get_pentadal_forecast_sites_complicated_method``.
+
+    Returns:
+        List of site code strings that are manually managed.
+    """
+    try:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+        with open(config_all_file) as f:
+            data = json.load(f)
+    except Exception:
+        logger.debug("Could not read config for manual site codes — assuming none.")
+        return []
+
+    manual_codes = []
+    stations = data.get("stations_available_for_forecast", {})
+    for code, entry in stations.items():
+        ds = entry.get("data_source")
+        if ds is None:
+            continue
+        # Unwrap list-wrapped value
+        if isinstance(ds, list):
+            ds = ds[0] if ds else None
+        if ds is not None and ds != "ieh_hf":
+            manual_codes.append(str(code))
+    return manual_codes
+
+
+def _read_manual_entries_from_config() -> dict:
+    """Read the full JSON entries for manual sites from the config file.
+
+    Returns:
+        Dict mapping site code (str) to the full JSON entry dict for sites
+        where ``data_source`` is present and != ``"ieh_hf"``.
+    """
+    try:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+        with open(config_all_file) as f:
+            data = json.load(f)
+    except Exception:
+        logger.debug("Could not read config for manual site entries — assuming none.")
+        return {}
+
+    manual_entries = {}
+    stations = data.get("stations_available_for_forecast", {})
+    for code, entry in stations.items():
+        ds = entry.get("data_source")
+        if ds is None:
+            continue
+        if isinstance(ds, list):
+            ds = ds[0] if ds else None
+        if ds is not None and ds != "ieh_hf":
+            manual_entries[str(code)] = entry
+    return manual_entries
+
+
 # The functions below are required for the old iEasyHydro App.
 # For using the forecast tools with the new iEasyHydro HF App, we can read the
 # station metadata from the database directly through an API.
@@ -744,8 +811,22 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
             columns={"name_ru": "site_name", "lat": "latitude", "long": "longitude"}, inplace=True
         )
 
+    # Preserve manual site entries before overwriting
+    manual_entries = _read_manual_entries_from_config()
+
+    # Check for collisions: manual site codes that now appear in SDK data
+    if manual_entries:
+        sdk_codes = set(db_sites["site_code"].astype(str))
+        for manual_code in list(manual_entries.keys()):
+            if manual_code in sdk_codes:
+                logger.warning(
+                    f"Site {manual_code} exists in both SDK and manual config. "
+                    f"Preferring SDK data — remove from GOOGLE_SHEETS_SITE_CODES."
+                )
+                del manual_entries[manual_code]
+
     # Save db_sites to a json file. This overwrites the existing file.
-    db_sites_to_json = db_sites
+    db_sites_to_json = db_sites.copy()
     # Convert each column to a list
     db_sites_to_json["code"] = db_sites_to_json["site_code"].astype(int)
     for col in db_sites.columns:
@@ -759,6 +840,20 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     json_string = db_sites_to_json.to_json(orient="index", force_ascii=False)
     # Wrap the JSON string in another object
     json_dict = {"stations_available_for_forecast": json.loads(json_string)}
+
+    # Merge back manual site entries
+    if manual_entries:
+        for code, entry in manual_entries.items():
+            json_dict["stations_available_for_forecast"][code] = entry
+        logger.info(
+            f"Preserved {len(manual_entries)} manual site(s) in config: "
+            f"{list(manual_entries.keys())}"
+        )
+
+    # Back up existing config before overwriting
+    if os.path.exists(config_all_file):
+        shutil.copy2(config_all_file, config_all_file + ".bak")
+
     # Convert the dictionary to a pretty-printed JSON string
     json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
     # Write the JSON string to a file
@@ -947,8 +1042,14 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     # Get unique site IDs
     site_ids = [site.iehhf_site_id for site in fc_sites]
 
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in site_codes:
+            site_codes.append(mc)
+
     # Write the updated site selection to the config file
-    json_file = os.path.join(
+    json_file_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
         os.getenv("ieasyforecast_config_file_station_selection_decad"),
     )
@@ -956,8 +1057,8 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     data = {"stationsID": site_codes}
 
     # Write the dictionary to a JSON file
-    with open(json_file, "w") as json_file:
-        json.dump(data, json_file, indent=2)
+    with open(json_file_path, "w") as f:
+        json.dump(data, f, indent=2)
 
     return fc_sites, site_codes, site_ids
 
@@ -1099,8 +1200,14 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     # Get the unique site IDs
     site_ids = [site.iehhf_site_id for site in fc_sites]
 
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in site_codes:
+            site_codes.append(mc)
+
     # Write the updated site selection to the config file
-    json_file = os.path.join(
+    json_file_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
         os.getenv("ieasyforecast_config_file_station_selection"),
     )
@@ -1108,8 +1215,8 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     data = {"stationsID": site_codes}
 
     # Write the dictionary to a JSON file
-    with open(json_file, "w") as json_file:
-        json.dump(data, json_file, indent=2)
+    with open(json_file_path, "w") as f:
+        json.dump(data, f, indent=2)
 
     return fc_sites, site_codes, site_ids
 
@@ -1170,13 +1277,19 @@ def get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk):
         f" {len(unique_fc_sites)} unique Site object(s) for all forecasts: {[s.code for s in unique_fc_sites]}"
     )
 
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in unique_codes:
+            unique_codes.append(mc)
+
     # Write the updated site selection to the config file
-    json_file = os.path.join(
+    json_file_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
         os.getenv("ieasyforecast_config_file_station_selection"),
     )
     data = {"stationsID": unique_codes}
-    with open(json_file, "w") as f:
+    with open(json_file_path, "w") as f:
         json.dump(data, f, indent=2)
 
     return unique_fc_sites, unique_codes, unique_ids
@@ -3431,9 +3544,14 @@ def calculate_neural_ensemble_forecast(forecasts):
     ensemble_mean["composition"] = model_names
 
     # Calculate the ensemble mean over the filtered models
+    agg_dict = {"forecasted_discharge": "mean"}
+    for qcol in ("q05", "q25", "q75", "q95"):
+        if qcol in filtered_forecasts.columns:
+            agg_dict[qcol] = "mean"
+
     ensemble_mean_q = (
         filtered_forecasts.groupby(["date", "code", "pentad_in_month", "pentad_in_year"])
-        .agg({"forecasted_discharge": "mean"})
+        .agg(agg_dict)
         .reset_index()
     )
 
@@ -3493,9 +3611,14 @@ def calculate_neural_ensemble_forecast_decade(forecasts):
     ensemble_mean["composition"] = model_names
 
     # Calculate the ensemble mean over the filtered models
+    agg_dict = {"forecasted_discharge": "mean"}
+    for qcol in ("q05", "q25", "q75", "q95"):
+        if qcol in filtered_forecasts.columns:
+            agg_dict[qcol] = "mean"
+
     ensemble_mean_q = (
         filtered_forecasts.groupby(["date", "code", "decad_in_month", "decad_in_year"])
-        .agg({"forecasted_discharge": "mean"})
+        .agg(agg_dict)
         .reset_index()
     )
 

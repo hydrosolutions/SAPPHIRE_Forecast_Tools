@@ -90,25 +90,25 @@ def _make_fake_date(target):
     return PinnedDate
 
 
-def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+def _setup_common_mocks(mock_sl, mock_fl, mock_tl):
     """Configure the standard mock behavior for a successful pipeline run.
 
     Args:
         mock_sl: Mock for setup_library
         mock_fl: Mock for forecast_library
         mock_tl: Mock for tag_library
-        mock_sdk_hf: Mock for IEasyHydroHFSDK class
     """
     # setup_library
     mock_sl.load_environment.return_value = None
-    mock_sl.check_database_access.return_value = True
+    mock_sl.check_database_access.return_value = False
     mock_sl.ForecastFlags.from_forecast_date_get_flags.return_value = MagicMock(
         pentad=True, decad=True
     )
 
     fake_sites = [_make_fake_site("15013")]
-    mock_sl.get_pentadal_forecast_sites_from_HF_SDK.return_value = (fake_sites, ["15013"], None)
-    mock_sl.get_decadal_forecast_sites_from_HF_SDK.return_value = (fake_sites, ["15013"], None)
+    # Config-file path: get_pentadal_forecast_sites returns (sites, codes)
+    mock_sl.get_pentadal_forecast_sites.return_value = (fake_sites, ["15013"])
+    mock_sl.get_decadal_forecast_sites_from_pentadal_sites.return_value = (fake_sites, ["15013"])
 
     # forecast_library
     data = _make_data_df()
@@ -130,9 +130,6 @@ def _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf):
     # tag_library
     mock_tl.get_pentad_in_year.return_value = 1
     mock_tl.get_decad_in_year.return_value = 1
-
-    # SDK
-    mock_sdk_hf.return_value = MagicMock()
 
 
 # Common env vars for all tests
@@ -156,13 +153,12 @@ class TestMainForecastMode:
     store_last_successful_run_date).
     """
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_operational_runs_for_today(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_operational_runs_for_today(self, mock_sl, mock_fl, mock_tl):
         """Operational mode uses date.today() as the forecast date."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         # Pin today to Jan 5 (a pentad day)
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
@@ -181,13 +177,12 @@ class TestMainForecastMode:
         call_kwargs = mock_fl.write_linreg_pentad_forecast_data.call_args
         assert call_kwargs[1]["forecast_date"] == dt.date(2024, 1, 5)
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_operational_no_define_run_dates(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_operational_no_define_run_dates(self, mock_sl, mock_fl, mock_tl):
         """Operational mode never calls define_run_dates."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -201,13 +196,12 @@ class TestMainForecastMode:
 
         mock_sl.define_run_dates.assert_not_called()
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_operational_no_store_call(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_operational_no_store_call(self, mock_sl, mock_fl, mock_tl):
         """Operational mode does not call store_last_successful_run_date."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -222,13 +216,12 @@ class TestMainForecastMode:
 
         mock_sl.store_last_successful_run_date.assert_not_called()
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_operational_idempotent(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_operational_idempotent(self, mock_sl, mock_fl, mock_tl):
         """Running twice on the same day produces the same forecast_date."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -245,7 +238,7 @@ class TestMainForecastMode:
         first_date = mock_fl.write_linreg_pentad_forecast_data.call_args[1]["forecast_date"]
 
         # Reset mocks for second run
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         # Second run — same day, same result
         with (
@@ -259,13 +252,12 @@ class TestMainForecastMode:
         second_date = mock_fl.write_linreg_pentad_forecast_data.call_args[1]["forecast_date"]
         assert first_date == second_date == dt.date(2024, 1, 5)
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_forecast_mode_pentad_only(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_forecast_mode_pentad_only(self, mock_sl, mock_fl, mock_tl):
         """PENTAD mode -> pentad write called, decad write NOT called."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -280,13 +272,12 @@ class TestMainForecastMode:
         mock_fl.write_linreg_pentad_forecast_data.assert_called()
         mock_fl.write_linreg_decad_forecast_data.assert_not_called()
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_forecast_mode_decad_only(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_forecast_mode_decad_only(self, mock_sl, mock_fl, mock_tl):
         """DECAD mode -> decad write called, pentad write NOT called."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         # Pin today to 10th (a decad day)
         fake_date = _make_fake_date(dt.date(2024, 1, 10))
@@ -311,13 +302,12 @@ class TestMainForecastMode:
 class TestMainHindcastMode:
     """Tests for hindcast mode behavior."""
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_hindcast_does_not_store_last_run_date(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_hindcast_does_not_store_last_run_date(self, mock_sl, mock_fl, mock_tl):
         """In hindcast mode, store_last_successful_run_date is NOT called."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
         with (
@@ -340,13 +330,12 @@ class TestMainHindcastMode:
 
         mock_sl.store_last_successful_run_date.assert_not_called()
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_hindcast_skips_non_forecast_days(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_hindcast_skips_non_forecast_days(self, mock_sl, mock_fl, mock_tl):
         """Hindcast Jan 1-10 with PENTAD -> only processes Jan 5 and Jan 10."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
         with (
@@ -371,13 +360,12 @@ class TestMainHindcastMode:
         # (Jan 5 and Jan 10)
         assert mock_fl.write_linreg_pentad_forecast_data.call_count == 2
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_hindcast_up_to_date_exits_cleanly(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_hindcast_up_to_date_exits_cleanly(self, mock_sl, mock_fl, mock_tl):
         """Start date already past end -> SystemExit(0) with nothing to do."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         # Use Jan 30 as start -- next PENTAD day is Jan 31, but end is Jan 29
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -411,13 +399,12 @@ class TestMainHindcastMode:
 class TestMainEarlyExits:
     """Tests for early exit conditions in main()."""
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_exits_when_no_pentad_data(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_exits_when_no_pentad_data(self, mock_sl, mock_fl, mock_tl):
         """Empty pentad DataFrame with PENTAD mode -> exits."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
         # Return empty pentad data
         mock_fl.get_pentadal_and_decadal_data.return_value = (pd.DataFrame(), _make_data_df())
 
@@ -434,13 +421,12 @@ class TestMainEarlyExits:
         # Should not reach the forecast loop
         mock_fl.perform_linear_regression.assert_not_called()
 
-    @patch.object(lr_module, "IEasyHydroHFSDK")
     @patch.object(lr_module, "tl")
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
-    def test_exits_when_hindcast_autodetect_fails(self, mock_sl, mock_fl, mock_tl, mock_sdk_hf):
+    def test_exits_when_hindcast_autodetect_fails(self, mock_sl, mock_fl, mock_tl):
         """get_hindcast_start_date_from_output returns None -> SystemExit(1)."""
-        _setup_common_mocks(mock_sl, mock_fl, mock_tl, mock_sdk_hf)
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
         with patch.object(
             lr_module,

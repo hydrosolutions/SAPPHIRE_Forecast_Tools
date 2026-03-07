@@ -87,14 +87,14 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **PREPQ-004** | Swiss data source integration & module refactoring | **Low** | Blocked | [`gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md) | Swiss API docs unavailable |
-| **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Ready | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
+| **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
 
 ### Linear Regression (`lr`)
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`gi_draft_LR_cleanup_dead_run_date_code.md`](issues/gi_draft_LR_cleanup_dead_run_date_code.md) | — |
-| **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Ready | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | PREPQ-007 Phase 1 |
+| **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -120,6 +120,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-020** | Probabilistic forecast quality metrics & documentation | **Medium** | Draft | [`gi_draft_pp_probabilistic_forecast_quality.md`](issues/gi_draft_pp_probabilistic_forecast_quality.md) | PP-019 (partial) |
 | **PP-021** | Improve short-term maintenance pipeline efficiency and stale quantile detection | **High** | Review | [`gi_draft_pp_maintenance_pipeline_efficiency.md`](issues/gi_draft_pp_maintenance_pipeline_efficiency.md) | PP-019 (complete) |
 | **PP-022** | Fix stale-record refresh and minor inconsistencies in maintenance pipeline | **Critical** | Ready for Review | [`gi_draft_pp_maintenance_stale_refresh_fix.md`](issues/gi_draft_pp_maintenance_stale_refresh_fix.md) | PP-021 (complete) |
+| **PP-023** | Period-aware aggregation of ML daily targets (fix contamination from adjacent periods) | **Critical** | Draft | [`gi_draft_pp_period_aware_aggregation.md`](issues/gi_draft_pp_period_aware_aggregation.md) | — |
+| **PP-024** | Write maintenance gap-fill records directly to API (DB retains gaps after maintenance) | **High** | Draft | [`gi_draft_pp_maintenance_api_write.md`](issues/gi_draft_pp_maintenance_api_write.md) | PP-022 (complete) |
 
 ### Forecast Dashboard (`fd`)
 
@@ -230,7 +232,7 @@ These documents contain context and specifications referenced by issues above.
 | `monitoring_improvement_plan.md` | Alert strategy improvement | Planning — needs D-004 decision |
 | `security_updates.md` | Vulnerability tracking | Active — SEC-005 pending |
 | `ieasyhydro_hf_migration_plan.md` | Legacy iEH deprecation | Planning — Phase 1 audit needed |
-| `external_site_data_ingestion_plan.md` | Manual sites + Google Sheets ingestion (4 phases) | Ready for implementation |
+| `external_site_data_ingestion_plan.md` | Manual sites + Google Sheets ingestion (4 phases) | Phases 1-3 done |
 | `sapphire_v2_planning.md` | v2 architecture + demo milestones | Active |
 | `sub_daily_forecasting_architecture.md` | Sub-daily forecasting design | Blocked — API spec undefined |
 | `bulk_read_endpoints_instructions.md` | Bulk endpoint specification | Spec complete — implementation not started |
