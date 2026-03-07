@@ -13,6 +13,7 @@ import datetime as dt
 import logging
 import os
 import sys
+import warnings
 from logging.handlers import TimedRotatingFileHandler
 
 import pandas as pd
@@ -24,7 +25,7 @@ sys.path.append(forecast_dir)
 
 import setup_library as sl
 import tag_library as tl
-from src import data_reader, ensemble_calculator, file_writer, gap_detector
+from src import api_writer, data_reader, ensemble_calculator, file_writer, gap_detector
 from src import postprocessing_tools as pt
 from src.horizon_config import ShortTermHorizonConfig
 from src.postprocessing_tools import TimingStats, timer
@@ -135,99 +136,261 @@ def postprocessing_maintenance():
 
 
 def _fill_gaps_for_horizon(config, max_lookback_months, errors):
-    """Detect and fill ensemble gaps for one horizon type."""
+    """Detect and fill ensemble gaps for one horizon type.
+
+    New flow (PP-021):
+    1. Read combined forecasts (cheap).
+    2. Detect EM gaps using combined only — no expensive modelled read.
+    3. Detect stale individual-model / NE records (q05 IS NULL).
+    4. Detect stale EM records (q05 IS NULL for EM rows).
+    5. Early exit if nothing to do.
+    6. Read modelled data scoped to affected dates only.
+    7. Create NE + EM rows with quantiles.
+    8. Merge and save.
+    """
     global timing_stats
 
     label = config.name.upper()
 
+    # Step 1: read what we already have (cheap)
     with timer(timing_stats, f"reading {label} combined forecasts"):
         logger.info(f"\n\n------ Reading {label} combined forecasts for gap detection ----")
         combined = data_reader.read_combined_forecasts(config.name)
 
-    with timer(timing_stats, f"reading {label} data for gap-fill"):
-        logger.info(f"\n\n------ Reading {label} observed and modelled data ----")
-        _, modelled = data_reader.read_observed_and_modelled_data(config.name)
-        modelled = sl.calculate_virtual_stations_data(modelled)
-        modelled = config.neural_ensemble_func(modelled)
-
-    if combined.empty and modelled.empty:
-        logger.info(f"No {label} combined or modelled data found. Skipping gap detection.")
+    if combined.empty:
+        logger.info(f"No {label} combined data found. Skipping gap detection.")
         return
 
+    # Step 2–4: detect gaps and stale records (all cheap, in-memory)
     with timer(timing_stats, f"detecting {label} gaps"):
-        gaps = gap_detector.detect_missing_ensembles(
+        # EM + NE gaps (missing rows)
+        all_gaps = gap_detector.detect_missing_ensembles(
             combined,
             max_lookback_months=max_lookback_months,
             ensemble_models={"EM", "NE"},
             horizon_type=config.name,
-            modelled_forecasts=modelled,
+        )
+        ne_gaps = all_gaps[all_gaps["model_short"] == "NE"]
+        if not ne_gaps.empty:
+            logger.info(
+                "Found %d NE gaps within lookback window. "
+                "NE rows will be re-created from individual-model data.",
+                len(ne_gaps),
+            )
+        em_gaps = all_gaps[all_gaps["model_short"] == "EM"].reset_index(drop=True)
+
+        # Stale individual-model / NE rows (have discharge, no quantiles)
+        stale = gap_detector.detect_stale_quantiles(
+            combined,
+            max_lookback_months=max_lookback_months,
+            horizon_type=config.name,
         )
 
-    if gaps.empty:
-        logger.info(f"No {label} ensemble gaps found. Nothing to fill.")
+        # Stale EM rows (have discharge, no quantiles)
+        stale_em = pd.DataFrame(columns=["date", "code"])
+        if "q05" in combined.columns:
+            stale_em = (
+                combined[
+                    (combined["model_short"] == "EM")
+                    & combined["forecasted_discharge"].notna()
+                    & combined["q05"].isna()
+                ][["date", "code"]]
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
+
+    # Step 5: early exit if nothing to do
+    em_gap_dates = set(pd.to_datetime(em_gaps["date"]).unique()) if not em_gaps.empty else set()
+    stale_dates = set(pd.to_datetime(stale["date"]).unique()) if not stale.empty else set()
+    stale_em_dates = set(pd.to_datetime(stale_em["date"]).unique()) if not stale_em.empty else set()
+    ne_gap_dates = set(pd.to_datetime(ne_gaps["date"]).unique()) if not ne_gaps.empty else set()
+    all_affected = em_gap_dates | stale_dates | stale_em_dates | ne_gap_dates
+
+    logger.info(
+        "%s: %d EM gaps, %d NE gaps, %d stale individual/NE records, "
+        "%d stale EM records → %d total affected dates",
+        label,
+        len(em_gaps),
+        len(ne_gaps),
+        len(stale),
+        len(stale_em),
+        len(all_affected),
+    )
+
+    if not all_affected:
+        logger.info(f"No {label} gaps or stale records found. Nothing to do.")
         return
 
-    # NE gaps are created by the operational pipeline and cannot be
-    # filled by maintenance — warn and keep only EM gaps.
-    ne_gaps = gaps[gaps["model_short"] == "NE"]
-    if not ne_gaps.empty:
-        logger.warning(
-            "Found %d NE gaps (created by operational pipeline, not fillable by maintenance): %s",
-            len(ne_gaps),
-            ne_gaps[["date", "code"]].drop_duplicates().to_dict("records")[:10],
+    # Compute gap codes BEFORE data read so we can scope the API query
+    gap_codes: set[str] = set()
+    for df_check in [em_gaps, ne_gaps, stale, stale_em]:
+        if not df_check.empty and "code" in df_check.columns:
+            gap_codes.update(df_check["code"].unique())
+
+    # Step 6: read modelled data scoped to affected dates and codes
+    affected_dates = sorted(all_affected)
+    with timer(timing_stats, f"reading {label} data for gap-fill"):
+        logger.info(
+            "\n\n------ Reading %s modelled data for %d affected date(s) ----",
+            label,
+            len(affected_dates),
         )
-    gaps = gaps[gaps["model_short"] == "EM"].reset_index(drop=True)
+        modelled, _ = data_reader.read_individual_model_forecasts_for_dates(
+            config.name,
+            affected_dates,
+            codes=list(gap_codes) if gap_codes else None,
+        )
+        modelled = sl.calculate_virtual_stations_data(modelled)
+        modelled = config.neural_ensemble_func(modelled)
 
-    if gaps.empty:
-        logger.info(f"No fillable {label} EM gaps after filtering. Nothing to fill.")
+    if modelled.empty:
+        logger.warning(f"No {label} modelled data for affected dates. Cannot fill gaps.")
         return
 
-    logger.info(f"Found {len(gaps)} {label} (date, code) pairs needing gap-fill")
-
-    # Filter modelled to gap dates only
-    gap_dates = set(gaps["date"].unique())
-    gap_codes = set(gaps["code"].unique())
     modelled_filtered = modelled[
-        modelled["date"].isin(gap_dates) & modelled["code"].isin(gap_codes)
+        modelled["date"].isin(all_affected) & modelled["code"].isin(gap_codes)
     ].copy()
 
     if modelled_filtered.empty:
-        logger.warning(f"No {label} forecast data available for gap dates. Cannot fill gaps.")
+        logger.warning(f"No {label} forecast data for affected dates/codes. Cannot fill gaps.")
         return
 
     with timer(timing_stats, f"reading {label} skill metrics"):
         skill_stats = data_reader.read_skill_metrics(config.name)
 
-    if skill_stats.empty:
-        logger.warning(f"No {label} skill metrics available. Cannot create ensembles.")
-        return
+    # Step 7: build the set of refreshed rows to merge back into combined.
+    # Only include rows that are actually stale/gap-fill — not all of
+    # modelled_filtered, which would duplicate non-stale individual rows.
+    refresh_parts: list[pd.DataFrame] = []
+    stale_keys: set[tuple] = set()
 
-    with timer(timing_stats, f"creating {label} gap-fill ensembles"):
-        joint, _ = ensemble_calculator.create_ensemble_forecasts(
-            forecasts=modelled_filtered,
-            skill_stats=skill_stats,
-            period_col=config.period_col,
-            period_in_month_col=config.period_in_month_col,
-            get_period_in_month_func=config.get_period_func,
+    # 7a: Refreshed stale individual/NE rows (from freshly-read modelled data)
+    if not stale.empty:
+        stale_keys = set(
+            zip(
+                pd.to_datetime(stale["date"]).dt.normalize(),
+                stale["code"],
+                stale["model_short"],
+                strict=True,
+            )
         )
+        stale_mask = modelled_filtered.apply(
+            lambda r: (
+                pd.Timestamp(r["date"]).normalize(),
+                r["code"],
+                r["model_short"],
+            )
+            in stale_keys,
+            axis=1,
+        )
+        refreshed_stale = modelled_filtered[stale_mask]
+        if not refreshed_stale.empty:
+            refresh_parts.append(refreshed_stale)
 
-    # Extract only the new EM rows from the gap-fill output
-    new_em_rows = joint[joint["model_short"] == "EM"].copy()
+    # 7b: New NE rows for NE gaps (created by neural_ensemble_func above).
+    # Skip NE rows already captured as stale in 7a to avoid double-counting.
+    if not ne_gaps.empty:
+        ne_gap_keys = set(
+            zip(
+                pd.to_datetime(ne_gaps["date"]).dt.normalize(),
+                ne_gaps["code"],
+                strict=True,
+            )
+        )
+        ne_mask = modelled_filtered.apply(
+            lambda r: r["model_short"] == "NE"
+            and (pd.Timestamp(r["date"]).normalize(), r["code"]) in ne_gap_keys
+            and (
+                pd.Timestamp(r["date"]).normalize(),
+                r["code"],
+                "NE",
+            )
+            not in stale_keys,
+            axis=1,
+        )
+        new_ne = modelled_filtered[ne_mask]
+        if not new_ne.empty:
+            refresh_parts.append(new_ne)
 
-    if new_em_rows.empty:
-        logger.info(f"No new {label} ensemble rows created. Nothing to save.")
+    # 7c: EM rows (gap-fill + stale EM refresh) — requires skill metrics
+    if skill_stats.empty:
+        logger.warning(
+            f"No {label} skill metrics available. "
+            "Refreshing individual/NE rows but skipping EM creation."
+        )
+    else:
+        with timer(timing_stats, f"creating {label} gap-fill ensembles"):
+            ensemble_out, _ = ensemble_calculator.create_ensemble_forecasts(
+                forecasts=modelled_filtered,
+                skill_stats=skill_stats,
+                period_col=config.period_col,
+                period_in_month_col=config.period_in_month_col,
+                get_period_in_month_func=config.get_period_func,
+            )
+        new_em = ensemble_out[ensemble_out["model_short"] == "EM"]
+        if not new_em.empty:
+            refresh_parts.append(new_em)
+
+    if not refresh_parts:
+        logger.info(f"No new {label} rows created from gap-fill data. Nothing to save.")
         return
 
-    # Merge new EM rows into existing combined data to preserve history.
-    # Without this merge, save would overwrite the combined CSV with
-    # only the gap-fill rows, losing all non-gap historical data.
-    merged = pd.concat([combined, new_em_rows], ignore_index=True)
-    # Deduplicate on (date, code, model_short) in case of overlap
-    merged = merged.drop_duplicates(subset=["date", "code", "model_short"], keep="last")
+    joint = pd.concat(refresh_parts, ignore_index=True)
+
+    # Step 8: merge refreshed rows into combined.
+    # Drop all-NA columns from joint to avoid introducing empty columns
+    # into the merge. Suppress the remaining FutureWarning from pandas
+    # >= 2.1 about concat dtype inference with all-NA entries — the
+    # current behavior is correct for our use case.
+    joint = joint.dropna(axis=1, how="all")
+
+    # Write refreshed rows directly to API (bypasses get_latest_forecasts
+    # filter so that historical gap-fills reach the database).
+    if not joint.empty:
+        try:
+            ok = api_writer._write_combined_forecast_to_api(joint, config.name)
+            if ok:
+                logger.info(
+                    "%s: submitted %d refreshed rows to API",
+                    label,
+                    len(joint),
+                )
+            else:
+                logger.warning(
+                    "%s: direct API write returned False (API may be unavailable or data filtered)",
+                    label,
+                )
+        except Exception:
+            logger.exception(
+                "%s: direct API write of refreshed rows failed",
+                label,
+            )
+            errors.append(f"{label} direct API write failed")
+
+    # concat puts combined first, joint last → keep="last" replaces stale entries
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="The behavior of DataFrame concatenation with empty or all-NA",
+            category=FutureWarning,
+        )
+        merged = pd.concat([combined, joint], ignore_index=True)
+    merged = merged.drop_duplicates(
+        subset=["date", "code", config.period_col, "model_short"], keep="last"
+    )
+
+    n_em = (joint["model_short"] == "EM").sum()
+    n_ne = (joint["model_short"] == "NE").sum()
+    n_individual = len(joint) - n_em - n_ne
 
     logger.info(
-        f"Merged {len(new_em_rows)} new EM rows into "
-        f"{len(combined)} existing rows -> {len(merged)} total"
+        "Merged %d refreshed rows (%d EM, %d NE, %d individual) into %d existing → %d total",
+        len(joint),
+        n_em,
+        n_ne,
+        n_individual,
+        len(combined),
+        len(merged),
     )
 
     with timer(timing_stats, f"saving {label} gap-fill results"):
@@ -242,10 +405,19 @@ def _fill_gaps_for_horizon(config, max_lookback_months, errors):
 
     # Audit trail
     logger.info(
-        f"AUDIT: Filled {len(gaps)} {label} ensemble gaps (lookback={max_lookback_months} months)"
+        "AUDIT: %s — filled %d EM gaps, refreshed %d NE, %d individual rows; "
+        "%d stale detected (%d NE/individual, %d EM); lookback=%d months",
+        label,
+        len(em_gaps),
+        n_ne,
+        n_individual,
+        len(stale) + len(stale_em),
+        len(stale),
+        len(stale_em),
+        max_lookback_months,
     )
-    for _, gap_row in gaps.iterrows():
-        logger.info(f"  Filled: date={gap_row['date']}, code={gap_row['code']}")
+    for _, gap_row in em_gaps.iterrows():
+        logger.info("  Filled EM: date=%s, code=%s", gap_row["date"], gap_row["code"])
 
 
 if __name__ == "__main__":
