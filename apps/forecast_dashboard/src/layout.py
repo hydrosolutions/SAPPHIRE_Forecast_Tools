@@ -3,51 +3,49 @@ import datetime as dt
 import os
 
 import panel as pn
-import param
 
-from .gettext_config import _
 from .vizualization import update_sidepane_card_visibility
 
 # region Widget update functions
 
-
-def update_station_widget(event, station):
-    station.name = _("Select discharge station:")
-    print("update_station_widget: new name: ", station.name)
-
+# def update_station_widget(event, station):
+#     station.name = _("Select discharge station:")
+#     print("update_station_widget: new name: ", station.name)
 
 # endregion
 
 
 # May be deprecated, could not get it to work
-class DashboardTitle(param.Parameterized):
-    value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
+# class DashboardTitle(param.Parameterized):
+#     value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
 
 
 # Define components of the layout
-def define_sidebar(_, station_card, forecast_card, basin_card, message_pane, reload_card):
-    return pn.Column(
-        pn.Row(station_card),
-        # pn.Row(pentad_card),
-        # pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
-        # pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
-        # title=_('Date:'),
-        # width_policy='fit', width=station.width,
-        # collapsed=False)),
-        pn.Row(forecast_card),
-        pn.Row(basin_card),
-        pn.Row(message_pane),
-        pn.Row(reload_card),
-        # pn.Row(range_selection),
-        # pn.Row(manual_range),
-        # pn.Row(print_button),
-        # pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
-        #            width_policy='fit', width=station.width)),
-    )
+# def define_sidebar(_, station_card, forecast_card, basin_card, message_pane,
+#                    reload_card):
+#     return pn.Column(
+#         pn.Row(station_card),
+#         #pn.Row(pentad_card),
+#         #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
+#         #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
+#                        #title=_('Date:'),
+#                        #width_policy='fit', width=station.width,
+#                        #collapsed=False)),
+#         pn.Row(forecast_card),
+#         pn.Row(basin_card),
+#         pn.Row(message_pane),
+#         pn.Row(reload_card),
+#         #pn.Row(range_selection),
+#         #pn.Row(manual_range),
+#         #pn.Row(print_button),
+#         #pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
+#         #            width_policy='fit', width=station.width)),
+#     )
 
 
 def define_sidebar_2(_, wm):
     return pn.Column(
+        pn.Row(wm.horizon_card),
         pn.Row(wm.station_card),
         pn.Row(wm.forecast_card),
         pn.Row(wm.basin_card),
@@ -88,25 +86,6 @@ def define_disclaimer(_, in_docker_flag):
         pn.pane.HTML("<p> </p>"),
         pn.pane.Markdown(_("disclaimer_waranty")),
         pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + "."),
-        pn.pane.HTML("""
-            <div style="font-size: 11px; color: #666; padding: 10px; border-top: 1px solid #ddd; margin-top: 20px;">
-                <strong>Open Source Attribution</strong><br>
-                SAPPHIRE Forecast Tools is open-source software licensed under the 
-                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/blob/main/LICENSE" target="_blank">MIT License</a>.<br><br>
-                Built with: 
-                <a href="https://panel.holoviz.org/" target="_blank">Panel</a>, 
-                <a href="https://bokeh.org/" target="_blank">Bokeh</a>, 
-                <a href="https://holoviews.org/" target="_blank">HoloViews</a> (BSD-3-Clause) · 
-                <a href="https://luigi.readthedocs.io/" target="_blank">Luigi</a> (Apache 2.0) · 
-                <a href="https://unit8co.github.io/darts/" target="_blank">Darts</a> (Apache 2.0) · 
-                <a href="https://pytorch.org/" target="_blank">PyTorch</a> (BSD) · 
-                <a href="https://numpy.org/" target="_blank">NumPy</a>, 
-                <a href="https://pandas.pydata.org/" target="_blank">Pandas</a>, 
-                <a href="https://scikit-learn.org/" target="_blank">scikit-learn</a> (BSD)<br>
-                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools" target="_blank">Source Code</a> · 
-                <a href="https://hydrosolutions.github.io/SAPPHIRE_forecast_tools/" target="_blank">Documentation</a>
-            </div>
-        """),
     )
 
 

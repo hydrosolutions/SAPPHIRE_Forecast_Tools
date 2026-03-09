@@ -7,18 +7,17 @@ from dashboard.logger import setup_logger
 logger = setup_logger()
 
 
-def _get_bulletin_csv_path(year, horizon_value, save_directory):
+def _get_bulletin_csv_path(horizon_type, year, horizon_value, save_directory):
     """Generate CSV path with pentad information"""
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     horizon_string = f"{horizon_value:02d}"
-    bulletin_filename = f'bulletin_{horizon}_{year}_{horizon_string}.csv'
+    bulletin_filename = f'bulletin_{horizon_type}_{year}_{horizon_string}.csv'
     return os.path.join(save_directory, bulletin_filename)
 
 
 # Function to load bulletin data from CSV
-def _load_bulletin_from_csv(forecast_year, forecast_horizon, save_directory, sites_list):
+def _load_bulletin_from_csv(horizon_type,forecast_year, forecast_horizon, save_directory, sites_list):
     """Load bulletin data from CSV file for current pentad"""
-    current_bulletin_path = _get_bulletin_csv_path(forecast_year, forecast_horizon, save_directory)
+    current_bulletin_path = _get_bulletin_csv_path(horizon_type, forecast_year, forecast_horizon, save_directory)
     print(f"DEBUG: bulletin_manager.py: current_bulletin_path: {current_bulletin_path}")
 
     if not os.path.exists(current_bulletin_path):
@@ -66,10 +65,10 @@ def _load_bulletin_from_csv(forecast_year, forecast_horizon, save_directory, sit
 
 
 # Function to save bulletin data to CSV
-def _save_bulletin_to_csv(forecast_year, forecast_horizon, save_directory, bulletin_sites):
+def _save_bulletin_to_csv(horizon_type, forecast_year, forecast_horizon, save_directory, bulletin_sites):
     """Save bulletin data to CSV file."""
 
-    current_bulletin_path = _get_bulletin_csv_path(forecast_year, forecast_horizon, save_directory)
+    current_bulletin_path = _get_bulletin_csv_path(horizon_type, forecast_year, forecast_horizon, save_directory)
 
     data = []
     for site in bulletin_sites:
@@ -125,6 +124,7 @@ class BulletinManager:
 
         # --- Load persisted bulletin sites ---
         self.bulletin_sites = _load_bulletin_from_csv(
+            wm.horizon_selector.value,
             wm.forecast_year, wm.forecast_horizon,
             cfg.save_directory, dm.sites_list,
         )
@@ -149,6 +149,7 @@ class BulletinManager:
     # ------------------------------------------------------------------
     def _save(self):
         _save_bulletin_to_csv(
+            self.wm.horizon_selector.value,
             self.wm.forecast_year, self.wm.forecast_horizon,
             self.cfg.save_directory, self.bulletin_sites,
         )
@@ -291,7 +292,7 @@ class BulletinManager:
             for site in filtered:
                 print(f"DEBUG: Writing site '{site.code}' with forecasts: {site.forecasts}")
 
-            last_date, forecast_horizon, forecast_year = self.dm.get_bulletin_metadata()
+            last_date, forecast_horizon, forecast_year = self.dm.get_bulletin_metadata(self.wm.horizon_selector.value)
             bulletin_header_info = self._processing.get_bulletin_header_info(
                 last_date, self.cfg.horizon,
             )

@@ -1,35 +1,3 @@
-"""
-Integration tests for the forecast dashboard.
-
-These tests use Playwright to test the dashboard UI in a real browser.
-By default, integration tests are SKIPPED to allow CI/CD to pass without
-requiring external services.
-
-Environment Variables:
-    TEST_LOCAL  - Set to 'true' to run local dashboard tests (requires local
-                  server running at localhost:5055 and data connection)
-    TEST_PENTAD - Set to 'true' to run pentad production server tests
-    TEST_DECAD  - Set to 'true' to run decad production server tests
-
-Usage Examples:
-    # Run only unit tests (integration tests skipped)
-    pytest test_integration.py
-
-    # Run local integration tests (requires local server + data)
-    TEST_LOCAL=true pytest test_integration.py
-
-    # Run pentad production tests
-    TEST_PENTAD=true pytest test_integration.py
-
-    # Run all integration tests
-    TEST_LOCAL=true TEST_PENTAD=true TEST_DECAD=true pytest test_integration.py
-
-Requirements for TEST_LOCAL=true:
-    - Local dashboard server running at http://localhost:5055/forecast_dashboard
-    - Valid credentials: user1 / user1
-    - Data connection available (ieasyhydroforecast_data_dir environment variable set)
-"""
-
 import csv
 import datetime as dt
 import os
@@ -40,20 +8,9 @@ import pandas as pd
 import tag_library as tl
 from playwright.sync_api import Page, expect
 
-
-def get_test_flag(env_var: str, default: bool) -> bool:
-    """Get test flag from environment variable or use default."""
-    value = os.getenv(env_var, "").lower()
-    if value in ("true", "1", "yes"):
-        return True
-    elif value in ("false", "0", "no"):
-        return False
-    return default
-
-
-TEST_PENTAD = get_test_flag("TEST_PENTAD", False)
-TEST_DECAD = get_test_flag("TEST_DECAD", False)
-TEST_LOCAL = get_test_flag("TEST_LOCAL", False)
+TEST_PENTAD = os.getenv("TEST_PENTAD", "").lower() == "true"
+TEST_DECAD = os.getenv("TEST_DECAD", "").lower() == "true"
+TEST_LOCAL = os.getenv("TEST_LOCAL", "").lower() == "true"
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
@@ -231,8 +188,8 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.select_option(
-        "select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000
+    page.locator("select#input").nth(1).select_option(
+        value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000
     )
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
@@ -263,7 +220,7 @@ def test_local(page: Page):
     summary_table_values = []
 
     def select_station_and_add_to_bulletin(station):
-        page.select_option("select#input", value=station, timeout=60000)
+        page.locator("select#input").nth(1).select_option(value=station, timeout=60000)
         print(f"#### SELECTED station: {station}")
         time.sleep(SLEEP)
 

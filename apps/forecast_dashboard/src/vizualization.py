@@ -29,7 +29,6 @@ from bokeh.models import (
     Label,
     Line,
     NumberFormatter,
-    Title,
 )
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import BooleanFormatter, CheckboxEditor
@@ -137,26 +136,30 @@ elif observed_runoff_palette == "black":
 
 # Update visibility of sidepane widgets
 def update_sidepane_card_visibility(
-    tabs, station_card, forecast_card, basin_card, reload_card, event
+    tabs, horizon_card, station_card, forecast_card, basin_card, reload_card, event
 ):
     active_tab = tabs.active
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
+        horizon_card.visible = True
         station_card.visible = True
         forecast_card.visible = False
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 1:  # 'Forecast' tab
+        horizon_card.visible = True
         station_card.visible = True
         forecast_card.visible = True
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
+        horizon_card.visible = True
         station_card.visible = False
         forecast_card.visible = False
         basin_card.visible = True
         reload_card.visible = True
     else:  # 'Disclaimer' tab
+        horizon_card.visible = False
         station_card.visible = False
         forecast_card.visible = False
         basin_card.visible = False
@@ -291,55 +294,49 @@ def make_frame_attribution_hook(
     return hook
 
 
-def make_side_attribution_hook(text, location="below", text_color="gray", text_font_size="8pt"):
-    """Return a hook that adds a small Title on a plot side (above/below/left/right).
+# def make_side_attribution_hook(text,
+#                                location='below',
+#                                text_color='gray',
+#                                text_font_size='8pt'):
+#     """Return a hook that adds a small Title on a plot side (above/below/left/right).
 
-    This is very robust and always visible as part of the plot layout.
-    location: one of 'above', 'below', 'left', 'right'.
-    """
+#     This is very robust and always visible as part of the plot layout.
+#     location: one of 'above', 'below', 'left', 'right'.
+#     """
 
-    def hook(plot, element):
-        fig = plot.state
-        try:
-            fig.toolbar.logo = None
-        except Exception:
-            pass
+#     def hook(plot, element):
+#         fig = plot.state
+#         try:
+#             fig.toolbar.logo = None
+#         except Exception:
+#             pass
 
-        # Update existing attribution if present
-        try:
-            existing = [
-                t
-                for t in fig.select({"type": Title})
-                if getattr(t, "name", None) == f"side_attribution_{location}"
-            ]
-        except Exception:
-            existing = []
-        if existing:
-            t = existing[0]
-            t.text = text
-            t.text_color = text_color
-            t.text_font_size = text_font_size
-            return
+#         # Update existing attribution if present
+#         try:
+#             existing = [t for t in fig.select({'type': Title}) if getattr(t, 'name', None) == f'side_attribution_{location}']
+#         except Exception:
+#             existing = []
+#         if existing:
+#             t = existing[0]
+#             t.text = text
+#             t.text_color = text_color
+#             t.text_font_size = text_font_size
+#             return
 
-        t = Title(
-            name=f"side_attribution_{location}",
-            text=text,
-            text_color=text_color,
-            text_font_size=text_font_size,
-        )
-        try:
-            fig.add_layout(t, location)
-        except Exception:
-            # Fallback to below if invalid location
-            fig.add_layout(t, "below")
+#         t = Title(name=f'side_attribution_{location}', text=text, text_color=text_color, text_font_size=text_font_size)
+#         try:
+#             fig.add_layout(t, location)
+#         except Exception:
+#             # Fallback to below if invalid location
+#             fig.add_layout(t, 'below')
 
-    return hook
+#     return hook
 
 
-def add_custom_xticklabels_pentad(_, plot, element):
+def add_custom_xticklabels_pentad(_, horizon, plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         ticks = list(range(1, 73))
         labels = {}
@@ -412,7 +409,13 @@ def plot_runoff_line(data, date_col, line_data_col, label_text, color):
 
 
 def plot_runoff_forecasts(
-    data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
+    horizon,
+    data,
+    date_col,
+    forecast_data_col,
+    forecast_name_col,
+    runoff_forecast_colors,
+    unit_string,
 ):
     # Return an empty plot if the data DataFrame is empty
     if data.empty:
@@ -476,7 +479,7 @@ def plot_runoff_forecasts(
         runoff_forecast_color = runoff_forecast_colors
         line_types = ["solid", "dashed", "dotdash", "dotted", "dashdot", "solid", "dashed"]
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 
     # Create the overlay
     for i, model in enumerate(models):
@@ -521,7 +524,7 @@ def plot_runoff_forecasts(
 
 
 def plot_runoff_forecasts_steps(
-    data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
+    wm, data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
 ):
     # Return an empty plot if the data DataFrame is empty
     if data.empty:
@@ -585,7 +588,8 @@ def plot_runoff_forecasts_steps(
         runoff_forecast_color = runoff_forecast_colors
         line_types = ["solid", "dashed", "dotdash", "dotted", "dashdot", "solid", "dashed"]
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon = wm.horizon_selector.value
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 
     # Create the overlay
     for i, model in enumerate(models):
@@ -631,7 +635,13 @@ def plot_runoff_forecasts_steps(
 
 
 def plot_runoff_forecasts_v2(
-    data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
+    horizon,
+    data,
+    date_col,
+    forecast_data_col,
+    forecast_name_col,
+    runoff_forecast_colors,
+    unit_string,
 ):
     # Return an empty plot if the data DataFrame is empty
     if data.empty:
@@ -695,7 +705,7 @@ def plot_runoff_forecasts_v2(
         runoff_forecast_color = runoff_forecast_colors
         line_types = ["solid", "dashed", "dotdash", "dotted", "dashdot", "solid", "dashed"]
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 
     # Create the overlay
     for i, model in enumerate(models):
@@ -757,7 +767,7 @@ def plot_runoff_forecasts_v2(
 
 
 def plot_current_runoff_forecasts(
-    data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
+    wm, data, date_col, forecast_data_col, forecast_name_col, runoff_forecast_colors, unit_string
 ):
     # Return an empty plot if the data DataFrame is empty
     if data.empty:
@@ -815,7 +825,8 @@ def plot_current_runoff_forecasts(
     elif len(models) == 7:
         runoff_forecast_color = runoff_forecast_colors
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon = wm.horizon_selector.value
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 
     # Create the overlay
     for i, model in enumerate(models):
@@ -1700,15 +1711,15 @@ def plot_runoff_range_bound_v2(data, date_col, range_bound_col, range_color, hov
     return boundary_line
 
 
-def create_cached_vlines(_, for_dates=True, y_text=1):
+def create_cached_vlines(_, horizon, for_dates=True, y_text=1):
     """Create and cache vertical lines for pentad markers"""
     # Check if already in cache
-    cache_key = "vlines_dates" if for_dates else "vlines_pentad"
+    cache_key = f"vlines_dates_{horizon}" if for_dates else f"vlines_pentad_{horizon}"
 
     if PlotCache.contains(cache_key):
         return PlotCache.get(cache_key)
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if for_dates:
         if horizon == "pentad":
             days = [1, 6, 11, 16, 21, 26]
@@ -1797,7 +1808,7 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
     return combined
 
 
-def create_cached_vlines_hs_special_case(_, for_dates=True, y_text=0.01):
+def create_cached_vlines_hs_special_case(_, horizon, for_dates=True, y_text=0.01):
     """Create and cache vertical lines for pentad markers"""
     # Check if already in cache
     cache_key = "vlines_dates_hs_special_case" if for_dates else "vlines_pentad_hs_special_case"
@@ -1805,7 +1816,7 @@ def create_cached_vlines_hs_special_case(_, for_dates=True, y_text=0.01):
     if PlotCache.contains(cache_key):
         return PlotCache.get(cache_key)
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if for_dates:
         if horizon == "pentad":
             days = [1, 6, 11, 16, 21, 26]
@@ -1894,72 +1905,70 @@ def create_cached_vlines_hs_special_case(_, for_dates=True, y_text=0.01):
     return combined
 
 
-def update_pentad_text(date_picker, _):
-    """
-    Function to calculate and return the dynamic pentad text based on the selected date.
-    """
-    # Calculate the next day's date (to align with the logic used earlier)
-    selected_date = date_picker
+# def update_pentad_text(date_picker, _):
+#     """
+#     Function to calculate and return the dynamic pentad text based on the selected date.
+#     """
+#     # Calculate the next day's date (to align with the logic used earlier)
+#     selected_date = date_picker
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    if horizon == "pentad":
-        # Calculate pentad, month, and day range
-        title_pentad = tl.get_pentad(selected_date)
-        title_month = tl.get_month_str_case2_viz(_, selected_date)
-        title_day_start = tl.get_pentad_first_day(selected_date.strftime("%Y-%m-%d"))
-        title_day_end = tl.get_pentad_last_day(selected_date.strftime("%Y-%m-%d"))
-        title_year = selected_date.year
+#     horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+#     if horizon == "pentad":
+#         # Calculate pentad, month, and day range
+#         title_pentad = tl.get_pentad(selected_date)
+#         title_month = tl.get_month_str_case2_viz(_, selected_date)
+#         title_day_start = tl.get_pentad_first_day(selected_date.strftime("%Y-%m-%d"))
+#         title_day_end = tl.get_pentad_last_day(selected_date.strftime("%Y-%m-%d"))
+#         title_year = selected_date.year
 
-        # Create the formatted text for display
-        text = (
-            f"**{_('Selected Pentad')}**: {title_pentad} {_('pentad')} {_('of')} "
-            f"{title_month} {title_year} "
-            f"({_('days')} {title_day_start}-{title_day_end})"
-        )
-    else:
-        title_decad = tl.get_decad_in_month(selected_date)
-        title_month = tl.get_month_str_case2_viz(_, selected_date)
-        title_day_start = tl.get_decad_first_day(selected_date.strftime("%Y-%m-%d"))
-        title_day_end = tl.get_decad_last_day(selected_date.strftime("%Y-%m-%d"))
-        title_year = selected_date.year
+#         # Create the formatted text for display
+#         text = (f"**{_('Selected Pentad')}**: {title_pentad} {_('pentad')} {_('of')} "
+#                 f"{title_month} {title_year} "
+#                 f"({_('days')} {title_day_start}-{title_day_end})")
+#     else:
+#         title_decad = tl.get_decad_in_month(selected_date)
+#         title_month = tl.get_month_str_case2_viz(_, selected_date)
+#         title_day_start = tl.get_decad_first_day(selected_date.strftime("%Y-%m-%d"))
+#         title_day_end = tl.get_decad_last_day(selected_date.strftime("%Y-%m-%d"))
+#         title_year = selected_date.year
 
-        # Create the formatted text for display
-        text = (
-            f"**{_('Selected Pentad')}**: {title_decad} {_('pentad')} {_('of')} "
-            f"{title_month} {title_year} "
-            f"({_('days')} {title_day_start}-{title_day_end})"
-        )
+#         # Create the formatted text for display
+#         text = (f"**{_('Selected Pentad')}**: {title_decad} {_('pentad')} {_('of')} "
+#                 f"{title_month} {title_year} "
+#                 f"({_('days')} {title_day_start}-{title_day_end})")
 
-    return text
+#     return text
 
 
-def create_date_picker_with_pentad_text(date_picker, _):
-    # Create a Markdown pane to display the dynamic pentad text
-    pentad_text_pane = pn.pane.Markdown("")
+# def create_date_picker_with_pentad_text(date_picker, _):
+#     # Create a Markdown pane to display the dynamic pentad text
+#     pentad_text_pane = pn.pane.Markdown("")
 
-    # Define the callback function to update the pentad text when the date changes
-    def update_pentad_widget(event=None):
-        # Get the updated pentad text from the visualization function
-        new_text = update_pentad_text(date_picker.value, _)
+#     # Define the callback function to update the pentad text when the date changes
+#     def update_pentad_widget(event=None):
+#         # Get the updated pentad text from the visualization function
+#         new_text = update_pentad_text(date_picker.value, _)
 
-        # Update the Markdown pane's object with the new text
-        pentad_text_pane.object = new_text
+#         # Update the Markdown pane's object with the new text
+#         pentad_text_pane.object = new_text
 
-    # Bind the update function to the DatePicker's value change
-    date_picker.param.watch(update_pentad_widget, "value")
+#     # Bind the update function to the DatePicker's value change
+#     date_picker.param.watch(update_pentad_widget, 'value')
 
-    # Call the update function once initially to set the text
-    update_pentad_widget()
+#     # Call the update function once initially to set the text
+#     update_pentad_widget()
 
-    # Return the layout with the DatePicker and the dynamic text pane
-    return pentad_text_pane
+#     # Return the layout with the DatePicker and the dynamic text pane
+#     return pentad_text_pane
 
 
 # endregion
 
 
 # region predictor_tab
-def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
+def plot_daily_hydrograph_data(
+    _, dm, wm, hydrograph_day_all, linreg_predictor, station, title_date
+):
     # print(f"\n\nDEBUG: plot_daily_hydrograph_data")
     # print(f"station: {station}")
     # print(f"hydrograph_day_all head:\n{hydrograph_day_all.head()}")
@@ -1985,7 +1994,10 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     # print(f"title_month: {title_month}")
 
     # filter hydrograph_day_all & linreg_predictor by station
-    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
+    horizon = wm.horizon_selector.value
+    linreg_predictor = processing.add_predictor_dates(
+        horizon, linreg_predictor, station, title_date
+    )
 
     # print("hydrograph_day_all head before data assign: ", hydrograph_day_all.head())
     # print("station: ", station)
@@ -1997,7 +2009,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     current_year = int(data["date"].dt.year.max())
     last_year = current_year - 1
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         period = "3 day sum"
     else:
@@ -2056,7 +2068,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         show_legend=False,
     )
 
-    vlines = create_cached_vlines(_, for_dates=True)
+    vlines = create_cached_vlines(_, horizon, for_dates=True)
 
     def make_hover_bounds(data, date_col, low_col, high_col, color):
         def add_hover_bounds(plot, element):
@@ -2165,31 +2177,29 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     return daily_hydrograph
 
 
-def get_copyright_text(data, station_data, column):
-    # Create copyright text using plot bounds for better "fixed" positioning
-    # Use the xlim and ylim values that you're setting in figure.opts()
-    plot_date_min = min(data["date"])
-    plot_date_max = max(data["date"])
-    plot_precip_max = (
-        max([station_data[column].max(), station_data[f"{column}_norm"].max()]) * 1.1
-    )  # Same as ylim
+# def get_copyright_text(data, station_data, column):
+#     # Create copyright text using plot bounds for better "fixed" positioning
+#     # Use the xlim and ylim values that you're setting in figure.opts()
+#     plot_date_min = min(data['date'])
+#     plot_date_max = max(data['date'])
+#     plot_precip_max = max([station_data[column].max(), station_data[f'{column}_norm'].max()]) * 1.1  # Same as ylim
 
-    # Calculate position based on plot bounds (not just data bounds)
-    if hasattr(plot_date_min, "to_pydatetime"):
-        date_range = (plot_date_max - plot_date_min).total_seconds()
-        copyright_x = plot_date_min + pd.Timedelta(seconds=date_range * 0.02)  # 2% from left
-    else:
-        date_range = (plot_date_max - plot_date_min).total_seconds()
-        copyright_x = plot_date_min + dt.timedelta(seconds=date_range * 0.02)  # 2% from left
+#     # Calculate position based on plot bounds (not just data bounds)
+#     if hasattr(plot_date_min, 'to_pydatetime'):
+#         date_range = (plot_date_max - plot_date_min).total_seconds()
+#         copyright_x = plot_date_min + pd.Timedelta(seconds=date_range * 0.02)  # 2% from left
+#     else:
+#         date_range = (plot_date_max - plot_date_min).total_seconds()
+#         copyright_x = plot_date_min + dt.timedelta(seconds=date_range * 0.02)  # 2% from left
 
-    # Position near top of the plot area
-    copyright_y = plot_precip_max - 5  # 5 units from top
+#     # Position near top of the plot area
+#     copyright_y = plot_precip_max - 5  # 5 units from top
 
-    # Keep returning an empty overlay; actual frame-pinned label is added via a hook
-    return hv.Overlay([])
+#     # Keep returning an empty overlay; actual frame-pinned label is added via a hook
+#     return hv.Overlay([])
 
 
-def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker, linreg_predictor):
+def plot_daily_rainfall_data(_, wm, daily_rainfall, station, date_picker, linreg_predictor):
     # Extract code from station
     station_code = station.split(" - ")[0]
 
@@ -2222,7 +2232,10 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker, linreg_pre
     # print(f"Tail of current_year\n{current_year.tail(10)}")
 
     # Accumulate rainfall over the predictor period
-    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
+    horizon = wm.horizon_selector.value
+    linreg_predictor = processing.add_predictor_dates(
+        horizon, linreg_predictor, station, date_picker
+    )
     predictor_start_date = linreg_predictor["predictor_start_date"].values[0]
     predictor_end_date = linreg_predictor["predictor_end_date"].values[0]
     predictor_rainfall = current_year[
@@ -2246,7 +2259,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker, linreg_pre
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
     """
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         current_period = "3 day sum"
         forecast_period = "5 day sum"
@@ -2281,7 +2294,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker, linreg_pre
         show_legend=False,
     )
 
-    vlines = create_cached_vlines(_, for_dates=True, y_text=station_data["P"].max() * 1.05)
+    vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=station_data["P"].max() * 1.05)
 
     # A bar plot for the norm rainfall
     hv_norm_rainfall = hv.Curve(norm_rainfall, kdims="date", vdims="P", label=_("Norm"))
@@ -2339,7 +2352,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker, linreg_pre
     return figure
 
 
-def plot_daily_temperature_data(_, daily_rainfall, station, date_picker, linreg_predictor):
+def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker, linreg_predictor):
     # Extract code from station
     station_code = station.split(" - ")[0]
 
@@ -2371,7 +2384,10 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker, linreg_
     # print(f"Tail of current_year\n{current_year.tail(10)}")
 
     # Accumulate rainfall over the predictor period
-    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
+    horizon = wm.horizon_selector.value
+    linreg_predictor = processing.add_predictor_dates(
+        horizon, linreg_predictor, station, date_picker
+    )
     predictor_start_date = linreg_predictor["predictor_start_date"].values[0]
     predictor_end_date = linreg_predictor["predictor_end_date"].values[0]
     predictor_rainfall = current_year[
@@ -2394,7 +2410,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker, linreg_
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
     """
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         current_period = _("3 day mean")
         forecast_period = _("5 day mean")
@@ -2427,7 +2443,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker, linreg_
         show_legend=False,
     )
 
-    vlines = create_cached_vlines(_, for_dates=True, y_text=station_data["T"].max() * 1.05)
+    vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=station_data["T"].max() * 1.05)
 
     # A bar plot for the norm rainfall
     hv_norm_rainfall = hv.Curve(norm_rainfall, kdims="date", vdims="T", label=_("Norm"))
@@ -2486,7 +2502,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker, linreg_
     return figure
 
 
-def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_predictor):
+def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linreg_predictor):
     """
     Plot snow data for a specific variable.
     """
@@ -2566,7 +2582,10 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
     # norm_snow = norm_snow.sort_values('date')
 
     # Get predictor period data
-    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
+    horizon = wm.horizon_selector.value
+    linreg_predictor = processing.add_predictor_dates(
+        horizon, linreg_predictor, station, date_picker
+    )
     predictor_start_date = linreg_predictor["predictor_start_date"].values[0]
     predictor_end_date = linreg_predictor["predictor_end_date"].values[0]
     predictor_snow = current_year[
@@ -2574,7 +2593,7 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
         & (current_year["date"] <= predictor_end_date)
     ].copy()
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         current_period = _("3 day mean")
         forecast_period = _("5 day mean")
@@ -2627,9 +2646,9 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
         y_min, y_max = 0, 1
 
     if variable == "HS":
-        vlines = create_cached_vlines_hs_special_case(_, for_dates=True)
+        vlines = create_cached_vlines_hs_special_case(_, horizon, for_dates=True)
     else:
-        vlines = create_cached_vlines(_, for_dates=True, y_text=y_min * 1.05)
+        vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=y_min * 1.05)
 
     # Norm curve
     hv_norm = hv.Curve(norm_snow, kdims="date", vdims=variable, label=_("Norm"))
@@ -2677,6 +2696,7 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
 # region forecast_tab
 def plot_pentad_forecast_hydrograph_data_v2(
     _,
+    horizon,
     hydrograph_day_all,
     linreg_predictor,
     forecasts_all,
@@ -2690,7 +2710,7 @@ def plot_pentad_forecast_hydrograph_data_v2(
     ml_forecast,
 ):
     forecast_date = pd.to_datetime(title_date + dt.timedelta(days=1))
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_in_month = "pentad_in_month"
@@ -2782,7 +2802,9 @@ def plot_pentad_forecast_hydrograph_data_v2(
     # print(f"title_month: {title_month}")
 
     # filter hydrograph_day_all & linreg_predictor by station
-    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
+    linreg_predictor = processing.add_predictor_dates(
+        horizon, linreg_predictor, station, title_date
+    )
 
     data = hydrograph_day_all[hydrograph_day_all["station_labels"] == station].copy()
     data["date"] = pd.to_datetime(data["date"])
@@ -2918,7 +2940,7 @@ def plot_pentad_forecast_hydrograph_data_v2(
         show_legend=False,
     )
 
-    vlines = create_cached_vlines(_, for_dates=True)
+    vlines = create_cached_vlines(_, horizon, for_dates=True)
 
     full_range_area = plot_runoff_range_area(
         data, date_col, min_col, max_col, _("Full range legend entry"), runoff_full_range_color
@@ -2986,6 +3008,7 @@ def plot_pentad_forecast_hydrograph_data_v2(
         hover_tool=True,
     )
     forecast_line = plot_runoff_forecasts_v2(
+        horizon,
         forecasts_past,
         _("date"),
         _("forecasted_discharge column name"),
@@ -3097,6 +3120,7 @@ def plot_pentad_forecast_hydrograph_data_v2(
 
 def plot_pentad_forecast_hydrograph_data(
     _,
+    horizon,
     hydrograph_pentad_all,
     forecasts_all,
     station,
@@ -3114,7 +3138,7 @@ def plot_pentad_forecast_hydrograph_data(
     # print(f"forecast_date: {forecast_date}")
 
     # Get variables depending on forecast horizon (pentad or decad)
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_column_name = _("pentad_of_year column name")
@@ -3377,6 +3401,7 @@ def plot_pentad_forecast_hydrograph_data(
         hover_tool=True,
     )
     forecast_line = plot_runoff_forecasts(
+        horizon,
         forecasts_past,
         horizon_column_name,
         _("forecasted_discharge column name"),
@@ -3430,7 +3455,7 @@ def plot_pentad_forecast_hydrograph_data(
         show_legend=True,
         hooks=[
             remove_bokeh_logo,
-            lambda p, e: add_custom_xticklabels_pentad(_, p, e),
+            lambda p, e: add_custom_xticklabels_pentad(_, horizon, p, e),
         ],
         # tools=['hover'],
         toolbar="right",
@@ -3442,9 +3467,9 @@ def plot_pentad_forecast_hydrograph_data(
 
 
 def create_forecast_summary_table(
-    _, forecasts_all, station, date_picker, model_selection, range_type, range_slider
+    _, horizon, forecasts_all, station, date_picker, model_selection, range_type, range_slider
 ):
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
     else:
@@ -3572,6 +3597,7 @@ def create_forecast_summary_table(
 
 def create_forecast_summary_tabulator(
     _,
+    wm,
     forecasts_all,
     station,
     date_picker,
@@ -3582,8 +3608,9 @@ def create_forecast_summary_tabulator(
 ):
     """Put table data into a Tabulator widget"""
 
+    horizon = wm.horizon_selector.value
     final_forecast_table = create_forecast_summary_table(
-        _, forecasts_all, station, date_picker, model_selection, range_type, range_slider
+        _, horizon, forecasts_all, station, date_picker, model_selection, range_type, range_slider
     ).reset_index(drop=True)
 
     # Return empty Tabulator if the table is empty
@@ -3773,7 +3800,7 @@ def establish_ssh_tunnel(ssh_script_path):
 
 
 def select_and_plot_data(
-    _, linreg_predictor, station_widget, pentad_selector, decad_selector, SAVE_DIRECTORY
+    _, dm, wm, linreg_predictor, station_widget, pentad_selector, decad_selector, SAVE_DIRECTORY
 ):
     # Define a variable to hold the visible data across functions
     global visible_data
@@ -3785,7 +3812,8 @@ def select_and_plot_data(
     # print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
     #      linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon = wm.horizon_selector.value
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
 
@@ -4207,8 +4235,7 @@ def select_and_plot_data(
     popup = pn.pane.Alert(_("Changes Saved Successfully"), alert_type="success", visible=False)
 
     # Adjust the sizing modes of your components
-    # Note: Keep forecast_data_table.sizing_mode as 'stretch_width' (set in Tabulator init)
-    # Using 'stretch_both' causes column rendering issues with Panel's Tabulator
+    forecast_data_table.sizing_mode = "stretch_both"
     plot_pane.sizing_mode = "stretch_both"
 
     progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)
@@ -4541,7 +4568,7 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
     return callback
 
 
-def create_reload_button():
+def create_reload_button(horizon):
     reload_button = pn.widgets.Button(name=_("Trigger forecasts"), button_type="danger")
 
     # Loading spinner and messages
@@ -4653,7 +4680,8 @@ def create_reload_button():
                 environment = [
                     "SAPPHIRE_OPDEV_ENV=True",
                     "IN_DOCKER_CONTAINER=True",
-                    f"SAPPHIRE_PREDICTION_MODE={os.getenv('sapphire_forecast_horizon', 'pentad').upper()}",
+                    # f'SAPPHIRE_PREDICTION_MODE={os.getenv("sapphire_forecast_horizon", "pentad").upper()}',
+                    f"SAPPHIRE_PREDICTION_MODE={horizon.upper()}",
                     f"ieasyhydroforecast_env_file_path={get_bind_path(env.get('ieasyforecast_configuration_path'))}/.env_develop_kghm",
                 ]
                 print("environment: \n", environment)
@@ -4725,7 +4753,8 @@ def create_reload_button():
                         "ieasyhydroforecast_available_ML_models", "TFT,TIDE,TSMIXER"
                     ).split(",")
                     print(f"Available ML models: {model_list}")
-                    mode = os.getenv("sapphire_forecast_horizon", "pentad").upper()
+                    # mode = os.getenv("sapphire_forecast_horizon", "pentad").upper()
+                    mode = horizon.upper()
 
                     for model in model_list:
                         container_name = f"ml_{model}_{mode}"
@@ -4910,6 +4939,7 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
 # region skill metrics
 def plot_forecast_skill(
     _,
+    wm,
     hydrograph_pentad_all,
     forecasts_all,
     station_widget,
@@ -4919,7 +4949,8 @@ def plot_forecast_skill(
     manual_range_widget,
     show_range_button,
 ):
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon = wm.horizon_selector.value
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_x_label = _("Pentad of the month (starting from January 1)")
@@ -4971,6 +5002,7 @@ def plot_forecast_skill(
         label=_("Effectiveness") + " <= 0.8",
     ).opts(alpha=0.05, color="orange", line_width=0)
     hv_current_forecast_skill_effectiveness = plot_current_runoff_forecasts(
+        wm,
         data=current_forecast_pentad,
         date_col=horizon_in_year,
         forecast_data_col="sdivsigma",
@@ -4979,6 +5011,7 @@ def plot_forecast_skill(
         unit_string="[-]",
     )
     hv_forecast_skill_effectiveness = plot_runoff_forecasts_steps(
+        wm,
         forecast_pentad,
         date_col=horizon_in_year,
         forecast_data_col="sdivsigma",
@@ -4996,7 +5029,7 @@ def plot_forecast_skill(
     )
     effectiveness_plot.opts(
         responsive=True,
-        hooks=[remove_bokeh_logo, lambda p, e: add_custom_xticklabels_pentad(_, p, e)],
+        hooks=[remove_bokeh_logo, lambda p, e: add_custom_xticklabels_pentad(_, horizon, p, e)],
         title=title_effectiveness,
         shared_axes=False,
         # legend_position='bottom_left',  # 'right',
@@ -5014,6 +5047,7 @@ def plot_forecast_skill(
     )
 
     hv_current_forecast_skill_accuracy = plot_current_runoff_forecasts(
+        wm,
         data=current_forecast_pentad,
         date_col=horizon_in_year,
         forecast_data_col="accuracy",
@@ -5022,6 +5056,7 @@ def plot_forecast_skill(
         unit_string="[%]",
     )
     hv_forecast_skill_accuracy = plot_runoff_forecasts_steps(
+        wm,
         forecast_pentad,
         date_col=horizon_in_year,
         forecast_data_col="accuracy",
@@ -5037,7 +5072,7 @@ def plot_forecast_skill(
     accuracy_plot = hv_forecast_skill_accuracy * hv_current_forecast_skill_accuracy
     accuracy_plot.opts(
         responsive=True,
-        hooks=[remove_bokeh_logo, lambda p, e: add_custom_xticklabels_pentad(_, p, e)],
+        hooks=[remove_bokeh_logo, lambda p, e: add_custom_xticklabels_pentad(_, horizon, p, e)],
         title=title_accuracy,
         shared_axes=False,
         # legend_position='bottom_left',  # 'right',
@@ -5061,9 +5096,9 @@ def plot_forecast_skill(
     return all_skill_figures
 
 
-def add_month_pentad_per_month_to_df(df):
+def add_month_pentad_per_month_to_df(horizon, df):
     """Based on column pentad_in_year, add columns month and pentad_in_month."""
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_in_month = "pentad_in_month"
@@ -5085,9 +5120,9 @@ def add_month_pentad_per_month_to_df(df):
     return df
 
 
-def create_skill_table(_, forecast_stats):
+def create_skill_table(_, horizon, forecast_stats):
     """Creates a tabulator widget for the forecast statistics."""
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_in_month = "pentad_in_month"
@@ -5100,7 +5135,7 @@ def create_skill_table(_, forecast_stats):
         horizon_placeholder = _("Filter by decad")
 
     # Get pentad in month and month
-    forecast_stats = add_month_pentad_per_month_to_df(forecast_stats)
+    forecast_stats = add_month_pentad_per_month_to_df(horizon, forecast_stats)
 
     # Do not show column model_long and pentad_in_year
     forecast_stats_loc = forecast_stats.drop(columns=["model_long", horizon_in_year, "date"]).copy()

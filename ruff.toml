@@ -13,6 +13,8 @@ exclude = [
     "apps/machine_learning_monthly/",
     "apps/conceptual_model/",
     "apps/daily_runoff/",
+    "sapphire/services/",
+    "apps/forecast_dashboard/",
     ".venv",
     "__pycache__",
     "*.egg-info",

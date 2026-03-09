@@ -23,18 +23,9 @@ SNOW_VALUE_COLS = [f"value{i}" for i in range(1, 15)]
 NE_BASE_MODELS = ["TFT", "TiDE", "TSMixer"]
 NE_QUANTILE_COLS = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
 
-horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-if horizon == "decad":
-    horizon = "decade"
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _get_horizon() -> str:
-    h = os.getenv("sapphire_forecast_horizon", "pentad")
-    return "decade" if h == "decad" else h
-
 
 def _horizon_in_year_col(horizon: str) -> str:
     return "decad_in_year" if horizon == "decade" else "pentad_in_year"
@@ -84,6 +75,7 @@ def _read_data(service_type: str, data_type: str, params: dict = None) -> pd.Dat
     df = pd.DataFrame(response.json())
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
+    # print("### dbg: _read_data:", df)
     return df.convert_dtypes()
 
 # ---------------------------------------------------------------------------
@@ -110,8 +102,7 @@ def get_hydrograph_day_all(station) -> pd.DataFrame:
 
 
 @_timed
-def get_hydrograph_pentad_all(station) -> pd.DataFrame:
-    horizon = _get_horizon()
+def get_hydrograph_pentad_all(horizon, station) -> pd.DataFrame:
     code = _resolve_station(station)
     df = _read_data("preprocessing", "hydrograph", {
         "horizon": horizon,
@@ -181,11 +172,10 @@ def get_snow_data(station) -> dict[str, pd.DataFrame]:
 
 
 @_timed
-def get_ml_forecast(station) -> pd.DataFrame:
-    horizon = _get_horizon()
+def get_ml_forecast(horizon, station) -> pd.DataFrame:
     code = _resolve_station(station)
     df = _read_data("postprocessing", "forecast", {
-        "horizon": horizon,
+        "horizon": "day",
         "code": code,
         "start_date": f"{PREVIOUS_YEAR}-12-01",
         "end_date": f"{CURRENT_YEAR}-12-31",
@@ -219,8 +209,7 @@ def get_ml_forecast(station) -> pd.DataFrame:
 
 
 @_timed
-def get_linreg_predictor(station) -> pd.DataFrame:
-    horizon = _get_horizon()
+def get_linreg_predictor(horizon, station) -> pd.DataFrame:
     code = _resolve_station(station)
     df = _read_data("postprocessing", "lr-forecast", {
         "horizon": horizon,
@@ -235,10 +224,9 @@ def get_linreg_predictor(station) -> pd.DataFrame:
     return _convert_na_to_nan(df)
 
 @_timed
-def get_forecasts_all(station=None) -> pd.DataFrame:
-    horizon = _get_horizon()
+def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
     hin = _horizon_in_year_col(horizon)
-    hv_col = "decad" if horizon == "decade" else "pentad_in_month"
+    hv_col = "decade" if horizon == "decade" else "pentad_in_month"
 
     code = None
     if station is not None:
@@ -249,7 +237,7 @@ def get_forecasts_all(station=None) -> pd.DataFrame:
         "horizon": horizon,
         "start_date": f"{PREVIOUS_YEAR}-12-20",
         "end_date": f"{CURRENT_YEAR}-12-31",
-        "target": "null",
+        # "target": "null",
         "limit": 1000,
     }
     if code:
@@ -268,7 +256,7 @@ def get_forecasts_all(station=None) -> pd.DataFrame:
     # --- Linear regression forecasts ---
     lr_params = {k: v for k, v in ml_params.items() if k != "target"}
     df_lr = _read_data("postprocessing", "lr-forecast", lr_params)
-    lr_hv = "decad" if horizon == "decade" else "pentad"
+    lr_hv = "decade" if horizon == "decade" else "pentad"
     df_lr.rename(columns={
         "horizon_value": lr_hv, "horizon_in_year": hin,
     }, inplace=True)
@@ -285,8 +273,7 @@ def get_forecasts_all(station=None) -> pd.DataFrame:
     return _convert_na_to_nan(combined.sort_values("Date"))
 
 @_timed
-def get_forecast_stats(station) -> pd.DataFrame:
-    horizon = _get_horizon()
+def get_forecast_stats(horizon, station) -> pd.DataFrame:
     code = _resolve_station(station)
     df = _read_data("postprocessing", "skill-metric", {
         "horizon": horizon,
@@ -307,8 +294,7 @@ def get_forecast_stats(station) -> pd.DataFrame:
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
-def get_data(station, all_stations) -> dict:
-    horizon = _get_horizon()
+def get_data(horizon, station, all_stations) -> dict:
     hin = _horizon_in_year_col(horizon)
 
     add_labels = lambda df: processing.add_labels_to_hydrograph(df, all_stations)
@@ -316,14 +302,14 @@ def get_data(station, all_stations) -> dict:
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
-        "hydrograph_pentad_all": add_labels(get_hydrograph_pentad_all(station)),
+        "hydrograph_pentad_all": add_labels(get_hydrograph_pentad_all(horizon, station)),
         "rain":                 get_rain(station),
         "temp":                 get_temp(station),
         "snow_data":            get_snow_data(station),
-        "ml_forecast":          add_labels(get_ml_forecast(station)),
-        "linreg_predictor":     add_labels(get_linreg_predictor(station)),
-        "forecasts_all":        i18n_models(add_labels(get_forecasts_all(station))),
-        "forecast_stats":       i18n_models(get_forecast_stats(station)),
+        "ml_forecast":          add_labels(get_ml_forecast(horizon, station)),
+        "linreg_predictor":     add_labels(get_linreg_predictor(horizon, station)),
+        "forecasts_all":        i18n_models(add_labels(get_forecasts_all(horizon, station))),
+        "forecast_stats":       i18n_models(get_forecast_stats(horizon, station)),
     }
 
     data["forecasts_all"] = data["forecasts_all"].merge(

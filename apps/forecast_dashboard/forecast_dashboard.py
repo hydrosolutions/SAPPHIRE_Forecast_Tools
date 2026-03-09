@@ -31,14 +31,15 @@ cfg = config.init_dashboard(pn)
 
 # ─── 2. Station metadata & DataManager ──────────────────────────────
 all_stations, station_dict = processing.get_all_stations_from_file()
+horizon = "pentad"
 
-dm = DataManager(all_stations=all_stations, cfg=cfg)
+dm = DataManager(all_stations=all_stations)
 station_code = station_dict[next(iter(station_dict))][0].split()[0]
-dm.load_station(station_code)
+dm.load_station(horizon, station_code)
 
 # ─── 3. Widgets ─────────────────────────────────────────────────────
 wm = WidgetManager(dm, cfg, station_dict)
-dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
+dm.update_sites_for_pentad(_, horizon, wm.pentad_selector.value, wm.decad_selector.value)
 
 # ─── 4. Plot manager ────────────────────────────────────────────────
 pm = PlotManager(dm, wm, cfg, gettext=_)

@@ -1,6 +1,6 @@
 from datetime import date as DateType
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, computed_field
 
 from app.models import HorizonType, ModelType
 
@@ -34,14 +34,15 @@ class ForecastBulkCreate(BaseModel):
 
 
 class ForecastResponse(ForecastBase):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
+
+    class Config:
+        from_attributes = True
 
 
 class LongForecastBase(BaseModel):
@@ -110,14 +111,15 @@ class LongForecastBulkCreate(BaseModel):
 
 
 class LongForecastResponse(LongForecastBase):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
+
+    class Config:
+        from_attributes = True
 
 
 class LRForecastBase(BaseModel):
@@ -150,9 +152,10 @@ class LRForecastBulkCreate(BaseModel):
 
 
 class LRForecastResponse(LRForecastBase):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
+
+    class Config:
+        from_attributes = True
 
 
 class SkillMetricBase(BaseModel):
@@ -168,7 +171,7 @@ class SkillMetricBase(BaseModel):
     delta: float | None = None
     accuracy: float | None = None
     mae: float | None = None
-    n_pairs: int | None = None
+    n_pairs: float | None = None
     crps: float | None = None
     pbias: float | None = None
     kgelf: float | None = None
@@ -186,11 +189,69 @@ class SkillMetricBulkCreate(BaseModel):
 
 
 class SkillMetricResponse(SkillMetricBase):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
+
+    class Config:
+        from_attributes = True
+
+
+class BulletinBase(BaseModel):
+    horizon_type: HorizonType
+    year: int
+    horizon_value: int
+    code: str
+    model_type: ModelType
+
+    basin_name: str | None = None
+    station_label: str | None = None
+    forecated_discharge: float | None = None
+    fc_lower: float | None = None
+    fc_upper: float | None = None
+    delta: float | None = None
+    sdivsigma: float | None = None
+    mae: float | None = None
+    accuracy: float | None = None
+
+
+class BulletinCreate(BulletinBase):
+    pass
+
+
+class BulletinBulkCreate(BaseModel):
+    data: list[BulletinCreate]
+
+
+class BulletinResponse(BulletinBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class LRVisibilityBase(BaseModel):
+    horizon_type: HorizonType
+    code: str
+    month: int
+    horizon_value: int
+    year: int
+    visible: bool
+
+
+class LRVisibilityCreate(LRVisibilityBase):
+    pass
+
+
+class LRVisibilityBulkCreate(BaseModel):
+    data: list[LRVisibilityCreate]
+
+
+class LRVisibilityResponse(LRVisibilityBase):
+    id: int
+
+    class Config:
+        from_attributes = True
