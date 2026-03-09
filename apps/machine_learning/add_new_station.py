@@ -209,15 +209,14 @@ def main():
         "code"
     ].tolist()
     rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    # convert to int
-    rivers_to_predict = [int(code) for code in rivers_to_predict]
+    rivers_to_predict = [str(code) for code in rivers_to_predict]
 
     # --------------------------------------------------------------------
     # Compare which codes are new
     # --------------------------------------------------------------------
     # Get the codes that are already in the decad forecast
-    codes_decad_forecast = decad_forecast["code"].unique()
-    pentad_codes = pentad_forecast["code"].unique()
+    codes_decad_forecast = [str(c) for c in decad_forecast["code"].unique()]
+    pentad_codes = [str(c) for c in pentad_forecast["code"].unique()]
 
     # Get the codes that are new
     new_codes_decad = list(set(rivers_to_predict) - set(codes_decad_forecast))

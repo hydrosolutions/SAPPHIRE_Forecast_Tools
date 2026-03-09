@@ -313,8 +313,24 @@ def main():
                 fc_sites, site_codes, site_ids = sl.get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk)
                 logger.debug("[CONFIG] Forecast sites loaded from iEasyHydro HF SDK")
 
+                # If SDK returned None (no DB access), fall back to config file
+                if site_codes is None:
+                    config_path = os.path.join(
+                        os.getenv("ieasyforecast_configuration_path"),
+                        os.getenv("ieasyforecast_config_file_station_selection"),
+                    )
+                    import json
+
+                    with open(config_path) as f:
+                        site_codes = json.load(f)["stationsID"]
+                    site_ids = []
+                    fc_sites = []
+                    logger.info(
+                        f"[CONFIG] No SDK — loaded {len(site_codes)} sites from {config_path}"
+                    )
+
                 # Save to cache in maintenance mode
-                if mode == "maintenance" and cache_enabled:
+                if mode == "maintenance" and cache_enabled and site_codes:
                     src.save_site_cache(cache_file, site_codes, site_ids)
                     logger.info(f"[CONFIG] Site cache updated: {cache_file}")
             except Exception as e:

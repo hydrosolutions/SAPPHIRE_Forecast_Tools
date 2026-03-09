@@ -77,54 +77,70 @@ def _(
             end_date.value,
         )
         if not lr.empty:
-            common = [c for c in df.columns if c in lr.columns]
-            df = pd.concat([df, lr[common]], ignore_index=True)
+            if df.empty:
+                df = lr
+            else:
+                common = [c for c in df.columns if c in lr.columns]
+                df = pd.concat([df, lr[common]], ignore_index=True)
     except Exception:
         pass
 
-    mo.md(f"**{len(df)} rows**, models: {sorted(df['model_short'].unique())}")
+    if df.empty:
+        mo.md("**No forecast data found** for the selected station/horizon/dates.")
+    else:
+        models = sorted(df["model_short"].unique()) if "model_short" in df.columns else []
+        mo.md(f"**{len(df)} rows**, models: {models}")
     return (df,)
 
 
 @app.cell
 def _(df, mo):
-    model_filter = mo.ui.multiselect(
-        options=sorted(df["model_short"].unique().tolist()),
-        value=sorted(df["model_short"].unique().tolist()),
-        label="Models",
-    )
+    if df.empty or "model_short" not in df.columns:
+        model_filter = mo.ui.multiselect(options=[], value=[], label="Models")
+    else:
+        model_filter = mo.ui.multiselect(
+            options=sorted(df["model_short"].unique().tolist()),
+            value=sorted(df["model_short"].unique().tolist()),
+            label="Models",
+        )
     model_filter  # noqa: B018 — marimo display expression
     return (model_filter,)
 
 
 @app.cell
 def _(df, horizon, insert_gap_nans, mo, model_filter, pd, plt):
-    filtered = df[df["model_short"].isin(model_filter.value)]
+    if df.empty or "model_short" not in df.columns or not model_filter.value:
+        filtered = df
+        _output = mo.md("## Forecast Time Series\n\nNo data to plot.")
+    else:
+        filtered = df[df["model_short"].isin(model_filter.value)]
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    colors = plt.cm.tab10.colors
+        fig, ax = plt.subplots(figsize=(12, 6))
+        colors = plt.cm.tab10.colors
 
-    for i, model in enumerate(sorted(filtered["model_short"].unique())):
-        subset = filtered[filtered["model_short"] == model].sort_values("date")
-        subset = insert_gap_nans(subset, horizon=horizon.value)
-        color = colors[i % len(colors)]
-        eq = pd.to_numeric(subset["E[Q]"], errors="coerce")
-        ax.plot(subset["date"], eq, label=model, color=color, marker=".", markersize=4)
-        if "Q5" in subset.columns and "Q95" in subset.columns:
-            q5 = pd.to_numeric(subset["Q5"], errors="coerce")
-            q95 = pd.to_numeric(subset["Q95"], errors="coerce")
-            ax.fill_between(subset["date"], q5, q95, alpha=0.15, color=color)
+        for i, model in enumerate(sorted(filtered["model_short"].unique())):
+            subset = filtered[filtered["model_short"] == model].sort_values("date")
+            subset = insert_gap_nans(subset, horizon=horizon.value)
+            color = colors[i % len(colors)]
+            eq = pd.to_numeric(subset["E[Q]"], errors="coerce")
+            ax.plot(subset["date"], eq, label=model, color=color, marker=".", markersize=4)
+            if "Q5" in subset.columns and "Q95" in subset.columns:
+                q5 = pd.to_numeric(subset["Q5"], errors="coerce")
+                q95 = pd.to_numeric(subset["Q95"], errors="coerce")
+                ax.fill_between(subset["date"], q5, q95, alpha=0.15, color=color)
 
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Discharge (m³/s)")
-    ax.set_title("Forecast Time Series")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Discharge (m³/s)")
+        ax.set_title("Forecast Time Series")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.close(fig)
 
-    mo.md("## Forecast Time Series")
-    fig  # noqa: B018 — marimo display expression
+        _output = mo.vstack([mo.md("## Forecast Time Series"), mo.as_html(fig)])
+
+    _output
     return (filtered,)
 
 

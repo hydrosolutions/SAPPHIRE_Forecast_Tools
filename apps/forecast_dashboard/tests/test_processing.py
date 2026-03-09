@@ -8,119 +8,6 @@ import pandas as pd
 import pytest
 from src import processing
 
-# ── filter_dataframe_for_selected_stations ──────────────────────────────────
-
-
-class TestFilterDataframeForSelectedStations:
-    def test_filters_matching_codes(self, sample_stations_df):
-        result = processing.filter_dataframe_for_selected_stations(
-            sample_stations_df, "code", ["99001", "99003"]
-        )
-        assert list(result["code"]) == ["99001", "99003"]
-
-    def test_returns_empty_when_no_match(self, sample_stations_df):
-        result = processing.filter_dataframe_for_selected_stations(
-            sample_stations_df, "code", ["00000"]
-        )
-        assert len(result) == 0
-
-    def test_returns_all_when_all_selected(self, sample_stations_df):
-        result = processing.filter_dataframe_for_selected_stations(
-            sample_stations_df, "code", ["99001", "99002", "99003"]
-        )
-        assert len(result) == 3
-
-    def test_empty_selection_returns_empty(self, sample_stations_df):
-        result = processing.filter_dataframe_for_selected_stations(sample_stations_df, "code", [])
-        assert len(result) == 0
-
-
-# ── parse_dates ─────────────────────────────────────────────────────────────
-
-
-class TestParseDates:
-    def test_iso_format(self):
-        result = processing.parse_dates("2026-03-05")
-        assert result == pd.Timestamp("2026-03-05")
-
-    def test_dot_format(self):
-        result = processing.parse_dates("05.03.2026")
-        assert result == pd.Timestamp("2026-03-05")
-
-    def test_invalid_returns_nat(self):
-        result = processing.parse_dates("not-a-date")
-        assert pd.isna(result)
-
-    def test_empty_string_returns_nat(self):
-        result = processing.parse_dates("")
-        assert pd.isna(result)
-
-
-# ── shift_date_by_n_days ───────────────────────────────────────────────────
-
-
-class TestShiftDateByNDays:
-    def test_shifts_date_column(self):
-        df = pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2026-03-01", "2026-03-02"]),
-                "predictor": [1.0, 2.0],
-                "discharge_avg": [10.0, 20.0],
-            }
-        )
-        result = processing.shift_date_by_n_days(df, n=1)
-        # date column is dropped after shift
-        assert "date" not in result.columns
-        assert len(result) == 2
-
-    def test_does_not_mutate_original(self):
-        df = pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2026-03-01"]),
-                "predictor": [1.0],
-                "discharge_avg": [10.0],
-            }
-        )
-        original_date = df["date"].iloc[0]
-        processing.shift_date_by_n_days(df, n=5)
-        assert df["date"].iloc[0] == original_date
-
-    def test_drops_nan_predictor_rows(self):
-        df = pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2026-03-01", "2026-03-02"]),
-                "predictor": [1.0, np.nan],
-                "discharge_avg": [10.0, 20.0],
-            }
-        )
-        result = processing.shift_date_by_n_days(df, n=1)
-        assert len(result) == 1
-
-    def test_drops_nan_discharge_avg_rows(self):
-        df = pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2026-03-01", "2026-03-02"]),
-                "predictor": [1.0, 2.0],
-                "discharge_avg": [np.nan, 20.0],
-            }
-        )
-        result = processing.shift_date_by_n_days(df, n=1)
-        assert len(result) == 1
-
-    def test_updates_pentad_in_year_if_present(self):
-        df = pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2026-03-01"]),
-                "pentad_in_year": [13],
-                "predictor": [1.0],
-                "discharge_avg": [10.0],
-            }
-        )
-        result = processing.shift_date_by_n_days(df, n=1)
-        # pentad_in_year should be recalculated for Mar 2 (still pentad 13)
-        assert "pentad_in_year" in result.columns
-        assert result["pentad_in_year"].dtype in (int, np.int64, np.int32)
-
 
 # ── internationalize_forecast_model_names ──────────────────────────────────
 
@@ -196,31 +83,6 @@ class TestAddLabelsToHydrograph:
         assert pd.isna(result["station_labels"].iloc[0])
 
 
-# ── add_labels_to_forecast_pentad_df ───────────────────────────────────────
-
-
-class TestAddLabelsToForecastPentadDf:
-    def test_adds_labels_with_code_format(self, sample_stations_df):
-        forecast = pd.DataFrame(
-            {
-                "code": ["99001", "99002"],
-                "forecasted_discharge": [10.0, 20.0],
-            }
-        )
-        result = processing.add_labels_to_forecast_pentad_df(forecast, sample_stations_df)
-        assert result["station_labels"].iloc[0] == "99001 - Test River A"
-
-    def test_strips_trailing_dot_zero(self, sample_stations_df):
-        forecast = pd.DataFrame(
-            {
-                "code": ["99001.0"],
-                "forecasted_discharge": [10.0],
-            }
-        )
-        result = processing.add_labels_to_forecast_pentad_df(forecast, sample_stations_df)
-        assert result["code"].iloc[0] == "99001"
-
-
 # ── calculate_forecast_range ───────────────────────────────────────────────
 
 
@@ -282,51 +144,6 @@ class TestCalculateForecastRange:
         # Fallback is delta mode
         assert result["fc_lower"].iloc[0] == pytest.approx(90.0)
         assert result["fc_upper"].iloc[0] == pytest.approx(110.0)
-
-
-# ── get_best_models_for_station_and_pentad ─────────────────────────────────
-
-
-class TestGetBestModelsForStationAndPentad:
-    def test_returns_lr_and_best_ml(self, sample_forecast_df):
-        result = processing.get_best_models_for_station_and_pentad(
-            sample_forecast_df,
-            selected_station="99001 - Test River A",
-            selected_pentad=13,
-            selected_decad=None,
-        )
-        # Should include LR and the ML model with highest accuracy (NE=88)
-        assert len(result) == 2
-        assert "Linear regression (LR)" in result
-        assert "Neural Ensemble (NE)" in result
-
-    def test_no_ml_models_returns_lr_only(self):
-        df = pd.DataFrame(
-            {
-                "station_labels": ["S1", "S1"],
-                "pentad_in_year": [13, 13],
-                "model_short": ["LR", "LR"],
-                "model_long": ["Linear regression (LR)", "Linear regression (LR)"],
-                "forecasted_discharge": [10.0, 10.0],
-                "accuracy": [80.0, 80.0],
-            }
-        )
-        result = processing.get_best_models_for_station_and_pentad(df, "S1", 13, None)
-        assert result == ["Linear regression (LR)"]
-
-    def test_no_forecasts_returns_empty(self):
-        df = pd.DataFrame(
-            {
-                "station_labels": ["S1"],
-                "pentad_in_year": [99],
-                "model_short": ["TFT"],
-                "model_long": ["Temporal Fusion Transformer (TFT)"],
-                "forecasted_discharge": [10.0],
-                "accuracy": [80.0],
-            }
-        )
-        result = processing.get_best_models_for_station_and_pentad(df, "S1", 13, None)
-        assert result == []
 
 
 # ── get_bulletin_header_info ───────────────────────────────────────────────

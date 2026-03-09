@@ -385,7 +385,7 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         self.assertTrue(unique_codes > 0, "Expected multiple station codes in the result")
 
         # Verify all expected station codes are present
-        expected_codes = [16161, 16158, 16936, 16055, 14256]
+        expected_codes = ["16161", "16158", "16936", "16055", "14256"]
         for code in expected_codes[:5]:  # Check at least some of the expected codes
             self.assertIn(code, result["code"].values, f"Station {code} missing from results")
 

@@ -603,7 +603,7 @@ def main():
             )
 
     # Combine site lists for hindcast auto-detection
-    all_site_codes = list(set(site_list_pentad + site_list_decad))
+    all_site_codes = list(set(list(site_list_pentad) + list(site_list_decad)))
     logger.info(f"Total sites from iEH: {len(all_site_codes)}")
 
     # Get start and end dates for current call to the script.

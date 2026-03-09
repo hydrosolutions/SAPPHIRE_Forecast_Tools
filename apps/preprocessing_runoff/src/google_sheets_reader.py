@@ -49,6 +49,7 @@ def _validate_credentials_path(path: str) -> bool:
     if not path:
         logger.error("GOOGLE_SHEETS_CREDENTIALS_PATH is empty.")
         return False
+    path = os.path.expanduser(path)
     if not os.path.exists(path):
         logger.error(f"Credentials file not found: {path}")
         return False
@@ -93,6 +94,7 @@ def read_discharge_from_google_sheet(
         logger.info("No site codes for Google Sheets fetch — skipping.")
         return empty
 
+    credentials_path = os.path.expanduser(credentials_path)
     if not _validate_credentials_path(credentials_path):
         return empty
 

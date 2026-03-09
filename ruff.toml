@@ -47,6 +47,15 @@ known-first-party = ["iEasyHydroForecast"]
 [lint.per-file-ignores]
 # Most app modules and tests use sys.path manipulation before imports
 "apps/**/*.py" = ["E402"]
+# forecast_library.py is a 7600-line legacy file — suppress pre-existing
+# lint noise until a dedicated cleanup pass (SIM105=contextlib.suppress,
+# B904=raise-from, E712=bool-comparison, E721=type-comparison,
+# SIM118=dict.keys(), B007=unused-loop-var, B006=mutable-default)
+"apps/iEasyHydroForecast/forecast_library.py" = [
+    "SIM105", "SIM103", "SIM118",      # flake8-simplify
+    "B904", "B007", "B006", "B015",    # flake8-bugbear
+    "E711", "E712", "E721", "E722",    # pycodestyle
+]
 
 [format]
 # Match existing project convention: double quotes, trailing commas
