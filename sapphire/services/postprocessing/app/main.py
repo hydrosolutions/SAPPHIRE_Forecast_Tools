@@ -289,6 +289,40 @@ def read_bulletin(
         )
 
 
+@app.delete("/bulletin/", status_code=status.HTTP_204_NO_CONTENT, tags=["Bulletin"])
+def delete_bulletin(
+    horizon: str,
+    year: int,
+    horizon_value: int,
+    code: str,
+    model: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a bulletin identified by its unique constraint fields:
+    horizon_type, year, horizon_value, code, model_type"""
+    try:
+        deleted = crud.delete_bulletin(
+            db=db,
+            horizon=horizon,
+            year=year,
+            horizon_value=horizon_value,
+            code=code,
+            model=model
+        )
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Bulletin not found"
+            )
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete bulletin"
+        )
+
+
 @app.post("/lr-visibility/", response_model=List[LRVisibilityResponse], status_code=status.HTTP_201_CREATED, tags=["LRVisibility"])
 def create_lr_visibility(bulk_data: LRVisibilityBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple LR visibility records in bulk"""

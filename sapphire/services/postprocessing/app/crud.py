@@ -389,6 +389,37 @@ def get_bulletin(
         raise
 
 
+def delete_bulletin(
+    db: Session,
+    horizon: str,
+    year: int,
+    horizon_value: int,
+    code: str,
+    model: str,
+) -> bool:
+    """Delete a bulletin by its unique constraint fields. Returns True if deleted, False if not found."""
+    try:
+        existing_bulletin = db.query(Bulletin).filter(
+            Bulletin.horizon_type == horizon,
+            Bulletin.year == year,
+            Bulletin.horizon_value == horizon_value,
+            Bulletin.code == code,
+            Bulletin.model_type == model
+        ).first()
+
+        if not existing_bulletin:
+            return False
+
+        db.delete(existing_bulletin)
+        db.commit()
+        logger.info(f"Deleted bulletin: {horizon}, {year}, {horizon_value}, {code}, {model}")
+        return True
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error deleting bulletin: {str(e)}", exc_info=True)
+        raise
+
+
 def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> List[LRVisibility]:
     """Create or update multiple LR visibility records in bulk (upsert based on horizon_type, code, month, horizon_value)"""
     try:
