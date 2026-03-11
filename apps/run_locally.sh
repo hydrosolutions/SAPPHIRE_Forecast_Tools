@@ -46,7 +46,7 @@
 #   bash apps/run_locally.sh calibrate_long_term
 #
 # Combined targets:
-#   daily                                Short-term daily run (PENTAD + DECAD + maintenance)
+#   daily                                Short-term daily + long-term (gated by day-of-month)
 #
 # Operational targets:
 #   short-term                          Short-term forecast pipeline
@@ -141,7 +141,6 @@ ML_SCRIPTS=(
     recalculate_nan_forecasts.py
     make_forecast.py
     fill_ml_gaps.py
-    add_new_station.py
 )
 
 # ML maintenance scripts (no make_forecast.py — only gap-fill and recalc)
@@ -214,6 +213,48 @@ format_duration() {
     else
         printf "%ds" "$seconds"
     fi
+}
+
+# Check if today's day-of-month is within ±5 days of any long-term issue day.
+# Uses LT_FORECAST_TODAY override if set, otherwise today's real date.
+# Sets LT_GATE_DAY, LT_GATE_ISSUE_DAYS, and LT_ACTIVE_WINDOW (nearest
+# matching issue day, e.g. "10" or "25") for use in log messages and
+# window-aware pipeline logic.
+is_lt_issue_window() {
+    local issue_days="${LT_OPERATIONAL_ISSUE_DAYS:-10 25}"
+    LT_GATE_ISSUE_DAYS="$issue_days"
+    LT_ACTIVE_WINDOW=""
+
+    local today_dom
+    if [ -n "${LT_FORECAST_TODAY:-}" ]; then
+        # Extract day from YYYY-MM-DD (macOS then GNU fallback)
+        today_dom=$(date -j -f "%Y-%m-%d" "${LT_FORECAST_TODAY}" "+%d" 2>/dev/null \
+                    || date -d "${LT_FORECAST_TODAY}" "+%d" 2>/dev/null)
+        today_dom=$((10#$today_dom))
+    else
+        today_dom=$((10#$(date "+%d")))
+    fi
+    LT_GATE_DAY="$today_dom"
+
+    local best_day=""
+    local best_diff=999
+    for issue_day in $issue_days; do
+        local diff=$(( today_dom - issue_day ))
+        if [ $diff -lt 0 ]; then diff=$(( -diff )); fi
+        # Also check wrap-around (e.g., day 1 near day 28+)
+        local wrap_diff=$(( 30 - diff ))
+        if [ $wrap_diff -lt $diff ]; then diff=$wrap_diff; fi
+        if [ $diff -le 5 ] && [ $diff -lt $best_diff ]; then
+            best_diff=$diff
+            best_day=$issue_day
+        fi
+    done
+
+    if [ -n "$best_day" ]; then
+        LT_ACTIVE_WINDOW="$best_day"
+        return 0
+    fi
+    return 1
 }
 
 record_result() {
@@ -489,12 +530,10 @@ run_long_term_forecasting_operational() {
     local rc=0
     local any_failed=false
 
-    # Operational run_forecast.py uses today's date (or LT_FORECAST_TODAY override)
-    # and checks each mode's operational_issue_day to decide whether to run.
     local modes="${LT_OPERATIONAL_MODES:-0 1 2 3 4 5 6 7 8 9}"
-    local today_args=()
+    local run_args=(--all)
     if [ -n "${LT_FORECAST_TODAY:-}" ]; then
-        today_args=(--today "${LT_FORECAST_TODAY}")
+        run_args=(--today "${LT_FORECAST_TODAY}")
     fi
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting_operational.log"
@@ -503,7 +542,7 @@ run_long_term_forecasting_operational() {
         log INFO "  Month: month_${month} (operational)"
         if ! run_in_venv long_term_forecasting run_forecast.py \
             "lt_forecast_mode=month_${month}" \
-            -- --all "${today_args[@]}"; then
+            -- "${run_args[@]}"; then
             log WARN "  month_${month} failed, continuing with next month"
             any_failed=true
         fi
@@ -748,24 +787,29 @@ run_maintenance_postprocessing_long_term() {
     return $rc
 }
 
-run_recalculate_monthly_skill_metrics() {
-    banner "Recalculate: monthly skill metrics"
+run_recalculate_long_term_skill_metrics() {
+    local modes="${1:-MONTHLY QUARTERLY SEASONAL}"
+    banner "Recalculate: long-term skill metrics (${modes})"
     local start
     start=$(get_timestamp)
+    local rc=0
 
-    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_recalculate_monthly.log"
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_recalculate_lt.log"
     > "$CURRENT_MODULE_LOG"
-    run_in_venv postprocessing_forecasts recalculate_skill_metrics.py \
-        "SAPPHIRE_PREDICTION_MODE=MONTHLY"
-    local rc=$?
+
+    for mode in $modes; do
+        log INFO "  Recalculating: ${mode}"
+        run_in_venv postprocessing_forecasts recalculate_skill_metrics.py \
+            "SAPPHIRE_PREDICTION_MODE=${mode}" || { rc=$?; break; }
+    done
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
-        log OK "monthly skill metrics recalculation completed in $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (monthly skill metrics)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+        log OK "long-term skill metrics recalculation completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term skill metrics)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
-        log ERROR "monthly skill metrics recalculation failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (monthly skill metrics)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+        log ERROR "long-term skill metrics recalculation failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term skill metrics)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -871,8 +915,8 @@ run_long_term_pipeline() {
     # Phase 2: Operational postprocessing
     run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
-    # Phase 3: Monthly skill metrics (needed for ensemble creation)
-    run_recalculate_monthly_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    # Phase 3: Long-term skill metrics (monthly + quarterly + seasonal)
+    run_recalculate_long_term_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
     # Phase 4: Maintenance gap-fill (creates ensembles using skill metrics)
     run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -883,10 +927,22 @@ run_long_term_pipeline() {
 run_long_term_operational_pipeline() {
     banner "LONG-TERM OPERATIONAL PIPELINE"
 
+    # Determine which issue window we are in
+    if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
+        is_lt_issue_window || true
+    fi
+
     # Phase 1: Preprocessing (shared, runs once)
     log INFO "Phase 1: Preprocessing"
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
+        log WARN "No active issue window (day ${LT_GATE_DAY}), skipping long-term pipeline"
+        return 0
+    fi
+
+    log INFO "Active issue window: day ${LT_ACTIVE_WINDOW}"
 
     # Phase 2: Generate forecasts (operational run_forecast.py, months 0-9)
     run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -894,8 +950,12 @@ run_long_term_operational_pipeline() {
     # Phase 3: Operational postprocessing
     run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
-    # Phase 4: Monthly skill metrics (needed for ensemble creation)
-    run_recalculate_monthly_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    # Phase 4: Skill metrics — 25th runs all horizons, 10th runs monthly only
+    if [ "$LT_ACTIVE_WINDOW" = "25" ]; then
+        run_recalculate_long_term_skill_metrics "MONTHLY QUARTERLY SEASONAL" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    else
+        run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     # Phase 5: Maintenance gap-fill (creates ensembles using skill metrics)
     run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -956,7 +1016,7 @@ run_maintenance_pipeline() {
 }
 
 run_daily_pipeline() {
-    banner "DAILY PIPELINE (short-term: PENTAD + DECAD + maintenance)"
+    banner "DAILY PIPELINE (short-term + maintenance + long-term if near issue day)"
 
     local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
 
@@ -992,6 +1052,21 @@ run_daily_pipeline() {
 
     # Restore original mode
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
+
+    # --- Phase 5: Long-term forecasting (gated by day-of-month) ---
+    if is_lt_issue_window; then
+        log INFO "Phase 5: Long-term forecasting (day ${LT_GATE_DAY} within ±5 of issue day ${LT_ACTIVE_WINDOW})"
+        run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        if [ "$LT_ACTIVE_WINDOW" = "25" ]; then
+            run_recalculate_long_term_skill_metrics "MONTHLY QUARTERLY SEASONAL" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        else
+            run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        fi
+        run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    else
+        log INFO "Phase 5: Skipping long-term forecasting — today (day ${LT_GATE_DAY}) is not within ±5 days of issue days (${LT_GATE_ISSUE_DAYS})"
+    fi
 
     run_api_validation "daily"
 }
@@ -1034,7 +1109,7 @@ validate_env() {
             fi
             ;;
         daily)
-            log OK "Prediction mode: PENTAD + DECAD (daily)"
+            log OK "Prediction mode: PENTAD + DECAD (daily) + long-term (gated)"
             ;;
         long-term|long-term-operational|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term)
             # These targets don't depend on SAPPHIRE_PREDICTION_MODE
@@ -1218,7 +1293,7 @@ Usage: bash apps/run_locally.sh [FLAGS] TARGET
 
 Combined targets:
   daily                   Short-term daily run: PENTAD + DECAD + maintenance
-                          (does not include long-term forecasting)
+                          + long-term forecasting (gated by day-of-month)
 
 Operational targets:
   short-term              Run the short-term forecast pipeline
@@ -1263,6 +1338,8 @@ Environment variables:
   LT_SIMULATE_MODES                  Space-separated month modes to run (default: "0")
   LT_OPERATIONAL_MODES                Month modes for long-term-operational (default: "0 1 2 3 4 5 6 7 8 9")
   LT_FORECAST_TODAY                   Override today's date for run_forecast.py (YYYY-MM-DD)
+  LT_OPERATIONAL_ISSUE_DAYS            Days of month for LT issue window (default: "10 25").
+                                        25th runs all horizons; 10th runs monthly only.
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
 
 Examples:
@@ -1300,13 +1377,18 @@ Examples:
     bash apps/run_locally.sh yearly
 
   # Full long-term operational pipeline (months 0-9)
+  # Runs automatically when within ±5 days of issue days (10th or 25th)
   ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh long-term-operational
 
-  # Long-term operational with date override
+  # Long-term operational with explicit date override
   LT_FORECAST_TODAY=2026-02-25 \
     ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh long-term-operational
+
+  # Daily run — long-term auto-triggers near 10th/25th
+  ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh daily
 
   # Long-term calibration
   ieasyhydroforecast_env_file_path=~/config/.env \
@@ -1439,7 +1521,23 @@ main() {
             run_maintenance_linear_regression || exit_code=$?
             ;;
         maintenance:machine_learning)
-            run_maintenance_machine_learning || exit_code=$?
+            local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+            local modes_to_run=()
+            if [ "$original_mode" = "BOTH" ]; then
+                modes_to_run=(PENTAD DECAD)
+                log INFO "BOTH mode: will run ML maintenance for PENTAD then DECAD"
+            elif [ -n "$original_mode" ]; then
+                modes_to_run=("$original_mode")
+            else
+                modes_to_run=(PENTAD)
+                log WARN "SAPPHIRE_PREDICTION_MODE not set, defaulting to PENTAD"
+            fi
+            for mode in "${modes_to_run[@]}"; do
+                export SAPPHIRE_PREDICTION_MODE="$mode"
+                log INFO "Running ML maintenance for mode: ${mode}"
+                run_maintenance_machine_learning || { exit_code=$?; break; }
+            done
+            export SAPPHIRE_PREDICTION_MODE="$original_mode"
             ;;
         maintenance:postprocessing_forecasts)
             run_maintenance_postprocessing_forecasts || exit_code=$?
