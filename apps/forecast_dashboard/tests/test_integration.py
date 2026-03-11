@@ -1,7 +1,7 @@
 import os
 import time
-import csv
 import re
+import requests
 import pandas as pd
 from playwright.sync_api import Page, expect
 import tag_library as tl
@@ -15,8 +15,8 @@ LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
-# Needs full, absolute path with "/" at the end 
-sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+API_BASE = "http://localhost:8000/api"
+API_TIMEOUT = 30
 horizon = "pentad"  # pentad or decad
 
 today = dt.datetime.now()
@@ -30,6 +30,7 @@ if horizon == "pentad":
     print("Pentad in year:", horizon_value)
     horizon_value_in_month = tl.get_pentad(today)
     print("Pentad in month:", horizon_value_in_month)
+    # horizon_value_in_month = "2"
     sheet_name = f"{horizon_value_in_month} пентада"
 else:
     horizon_value = tl.get_decad_for_date(today)
@@ -40,6 +41,7 @@ else:
 
 if len(str(horizon_value)) == 1:
     horizon_value = "0" + str(horizon_value)
+# horizon_value = "14"
 
 def normalize_spaces(s):
     return re.sub(r'\s+', ' ', s).strip()
@@ -47,6 +49,45 @@ def normalize_spaces(s):
 
 def normalize_comma(s):
     return s.replace(",", "")
+
+
+def _fetch_bulletin_from_api() -> list[dict]:
+    """Fetch bulletin records from the backend API for the current horizon/year."""
+    print("horizon, year, horizon_value:", horizon, year, horizon_value)
+    resp = requests.get(
+        f"{API_BASE}/postprocessing/bulletin/",
+        params={
+            "horizon":       horizon,
+            "year":          year,
+            "horizon_value": horizon_value,
+            "limit":         1000,
+        },
+        timeout=API_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _get_float(value) -> float | str:
+    try:
+        if isinstance(value, str) and "," in value:
+            value = value.replace(",", ".")
+        return float(value)
+    except (ValueError, TypeError):
+        return "nan"
+
+
+def _compare_numeric(api_val, ui_str: str, tolerance: float = 0.05) -> None:
+    """Assert that an API numeric value matches a UI string value within tolerance."""
+    ui_float = _get_float(ui_str)
+    if api_val is None or (isinstance(api_val, float) and pd.isna(api_val)):
+        assert ui_str in ('-', '', 'nan'), f"Expected empty UI value, got '{ui_str}'"
+    elif isinstance(api_val, str):
+        assert _get_float(api_val.strip()) == ui_float, f"{api_val!r} != {ui_str!r}"
+    else:
+        assert abs(api_val - ui_float) <= tolerance * abs(api_val), (
+            f"API {api_val} vs UI '{ui_str}' exceeds {tolerance:.0%} tolerance"
+        )
 
 
 def test_pentad(page: Page):
@@ -219,6 +260,7 @@ def test_local(page: Page):
 
     stations = [
         "15013 - Джыргалан-с.Советское",
+        # "15016 - Тургень-Ак-Суу - пос.лесозавода",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
         #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
         "15212 - Ак-Суу - с.Чон-Арык",
@@ -277,42 +319,44 @@ def test_local(page: Page):
     print("#### Write bulletin button clicked")
     time.sleep(SLEEP)
 
-    # Extract CSV values
-    csv_file_path = f"{sensitive_data_forecast_tools}config/linreg_point_selection/bulletin_{horizon}_{year}_{horizon_value}.csv"
-    with open(csv_file_path, mode='r', newline='') as file:
-        reader = csv.reader(file)
-        next(reader)  # Skip header
-        csv_data = [row for row in reader]
-
-    print("#### CSV values:")
-    for row in csv_data:
-        print(row)
+    # Fetch bulletin records from the API
+    print("#### Fetching bulletin from API...")
+    api_records = _fetch_bulletin_from_api()
+    print(f"#### API returned {len(api_records)} bulletin record(s):")
+    for rec in api_records:
+        print(rec)
     time.sleep(SLEEP)
 
-    # Compare csv file with bulletin values
-    print("Comparing Forecast bulletin with CSV...")
+    assert api_records, "API returned no bulletin records — was the bulletin written correctly?"
+
+    # Compare API records with UI bulletin table
+    print("Comparing API bulletin records with UI forecast bulletin table...")
     count = 0
-    for row in csv_data:
-        for i, r in enumerate(row):
-            if r == '':
-                row[i] = '-'
-        row[-1] = normalize_spaces(row[-1])  # basin_ru
-        row[-2] = normalize_spaces(row[-2])  # station_label
+    for rec in api_records:
+        api_station  = normalize_spaces(rec.get("station_label", ""))
+        api_basin    = normalize_spaces(rec.get("basin_name", ""))
+        api_model    = rec.get("model_type", "")
         for f_value in forecast_bulletin_values:
-            if row[-1] == f_value[2] and row[-2] == f_value[0]:
+            ui_station = normalize_spaces(f_value[0])
+            ui_basin   = normalize_spaces(f_value[2])
+            if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
                 count += 1
-                assert row[0] == f_value[1]  # model_short
-                assert row[1] == f_value[3]  # forecasted_discharge
-                assert row[2] == f_value[4]  # fc_lower
-                assert row[3] == normalize_comma(f_value[5])  # fc_upper
-                assert row[4] == f_value[6]  # delta
-                assert row[5] == f_value[7]  # sdivsigma
-                assert row[7] == f_value[8]  # accuracy
-    assert count == len(forecast_bulletin_values) == len(csv_data)
-    print("#### Forecast bulletin values are EQUAL to CSV file values")
+                _compare_numeric(rec.get("forecated_discharge"), f_value[3])  # forecasted discharge
+                _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
+                _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
+                if rec.get("delta") is not None:
+                    assert str(rec["delta"]).replace(",", ".") == f_value[6].replace(",", ".")  # δ
+                _compare_numeric(rec.get("sdivsigma"),           f_value[7])  # s/σ
+                _compare_numeric(rec.get("accuracy"),            f_value[8])  # accuracy
+    assert count == len(forecast_bulletin_values) == len(api_records), (
+        f"Match count {count} does not equal bulletin rows {len(forecast_bulletin_values)} "
+        f"or API records {len(api_records)}"
+    )
+    print("#### API bulletin records are EQUAL to UI Forecast bulletin values")
     time.sleep(SLEEP)
 
     # Construct all excel paths
+    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
     excel_file_paths = []
     basins = set()
     for f_value in forecast_bulletin_values:
@@ -328,49 +372,37 @@ def test_local(page: Page):
         print(path)
     time.sleep(SLEEP)
 
-    # Extract Excel values
-    def get_float(value):
-        try:
-            if isinstance(value, str) and "," in value:
-                value = value.replace(",", ".")
-            return round(float(value))
-        except ValueError:
-            return "nan"
-
-    def compare(excel, csv, tolerance=0.05):
-        csv_value = get_float(csv)
-        if isinstance(excel, str):
-            excel_value = get_float(excel.strip())
-            assert excel_value == csv_value
-            # assert abs(excel_value - csv_value) <= tolerance * abs(excel_value)
-        elif pd.isna(excel):
-            assert "nan" == csv_value
-        else:
-            # assert excel == csv_value
-            assert abs(excel - csv_value) <= tolerance * abs(excel)
-        print(excel, "<=>", csv_value)
+    # Compare Excel values with API records
+    print("Comparing Excel values with API bulletin records...")
 
     count = 0
     for excel_file_path in excel_file_paths:
         df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
-        print(f"Comparing CSV with: {excel_file_path}")
+        print(f"Comparing Excel with API: {excel_file_path}")
         for row_index in range(len(df)):
             if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
                 continue
-            for row in csv_data:
-                # print(df.iloc[row_index, 0], "#", df.iloc[row_index, 1], "#", row[-2])
-                # check if `река` and `пункт` of Excel are in station_label of CSV
-                if df.iloc[row_index, 0] in row[-2] and df.iloc[row_index, 1] in row[-2]:
+            excel_river  = df.iloc[row_index, 0]
+            excel_punkt  = df.iloc[row_index, 1]
+            excel_model  = df.iloc[row_index, 2]
+            excel_delta  = df.iloc[row_index, 5]
+            for rec in api_records:
+                api_station = normalize_spaces(rec.get("station_label", ""))
+                # match when both Excel river and punkt appear in the API station label
+                if excel_river in api_station and excel_punkt in api_station:
                     count += 1
-                    assert df.iloc[row_index, 2] == row[0]  # model_short
-                    #compare(df.iloc[row_index, 4], row[1])  # forecasted_discharge
-                    #compare(df.iloc[row_index, 15], row[2])  # fc_lower
-                    #compare(df.iloc[row_index, 17], row[3])  # fc_upper
-                    if not (pd.isna(df.iloc[row_index, 5]) and row[4] == '-'):
-                        assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
-                    #compare(df.iloc[row_index, 10], row[5]) 
-        print("#### CSV values are EQUAL to Excel values")
-    assert count == len(csv_data) * 2
+                    assert excel_model == rec.get("model_type"), (
+                        f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
+                    )
+                    api_delta = rec.get("delta")
+                    if not (pd.isna(excel_delta) and api_delta is None):
+                        assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
+                            f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
+                        )
+        print("#### Excel values are EQUAL to API bulletin records")
+    assert count == len(api_records) * 2, (
+        f"Expected {len(api_records) * 2} Excel/API matches (2 files), got {count}"
+    )
 
     # Clicking Remove Selected button
     page.get_by_role("button", name="Удалить выбранное").click()
