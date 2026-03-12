@@ -1,6 +1,6 @@
 # Organization-Aware Module Filtering in run_locally.sh
 
-**Status**: Draft
+**Status**: Complete (implemented 2026-03-12)
 **Module**: Infrastructure (`apps/run_locally.sh`)
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 
