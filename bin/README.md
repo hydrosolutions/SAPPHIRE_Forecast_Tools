@@ -38,6 +38,7 @@ bin/
 ├── run_pentadal_forecasts.sh       # Full pentadal forecast pipeline
 ├── run_decadal_forecasts.sh        # Full decadal forecast pipeline
 ├── run_daily_maintenance.sh        # Daily maintenance via Luigi (consolidated)
+├── run_long_term_forecasts.sh       # Long-term forecast pipeline (self-gating via schedule query)
 ├── run_periodic_maintenance.sh     # Periodic maintenance via Luigi (bimonthly/yearly)
 │
 ├── daily_preprunoff_maintenance.sh     # [Legacy] Runoff gap-filling
@@ -105,6 +106,7 @@ provides the common image, working directory, environment, and volume mounts.
 | `pentadal` | Pentadal forecast workflow |
 | `decadal` | Decadal forecast workflow |
 | `daily-maintenance` | Daily maintenance (6 workers, ml_memory=3) |
+| `long-term` | Long-term forecast workflow (parameterized by `LT_ACTIVE_MODES`) |
 | `periodic-maintenance` | Periodic tasks (parameterized by `MAINTENANCE_TASK_TYPE`) |
 
 ```bash
@@ -143,15 +145,22 @@ These scripts follow a common pattern:
 5. Submit the workflow via `docker compose run --rm <service>`
 
 Scripts: `run_pentadal_forecasts.sh`, `run_decadal_forecasts.sh`,
-`run_preprocessing_gateway.sh`, `run_preprocessing_runoff.sh`,
-`run_daily_maintenance.sh`, `run_periodic_maintenance.sh`
+`run_long_term_forecasts.sh`, `run_preprocessing_gateway.sh`,
+`run_preprocessing_runoff.sh`, `run_daily_maintenance.sh`,
+`run_periodic_maintenance.sh`
 
 Usage:
 ```bash
 bash bin/run_pentadal_forecasts.sh /path/to/config/.env
+bash bin/run_long_term_forecasts.sh /path/to/config/.env
+bash bin/run_long_term_forecasts.sh --dry-run /path/to/config/.env  # Validate without running
 bash bin/run_daily_maintenance.sh /path/to/config/.env
 bash bin/run_periodic_maintenance.sh long_term /path/to/config/.env
 ```
+
+The `--dry-run` flag (supported by `run_long_term_forecasts.sh`) validates the
+env file and compose YAML, prints what would happen, and exits without starting
+any containers.
 
 ### Legacy maintenance scripts (still functional for manual use)
 
@@ -188,6 +197,7 @@ See `doc/deployment.md` for the full recommended crontab. Summary:
 | 03:00 | `run_preprocessing_gateway.sh` | Gateway preprocessing |
 | 04:00 | `run_pentadal_forecasts.sh` | Pentadal forecast |
 | 05:00 | `run_decadal_forecasts.sh` | Decadal forecast |
+| 06:00 | `run_long_term_forecasts.sh` | Long-term forecast (self-gating via schedule query) |
 | 19:00 | `run_daily_maintenance.sh` | Daily maintenance (all steps) |
 | 22:00 1st odd months | `run_periodic_maintenance.sh long_term` | Long-term postprocessing |
 | 01:00 Jan 1 | `run_periodic_maintenance.sh skill_recalc` | Yearly skill recalculation |
@@ -218,3 +228,28 @@ Scripts expect these variables (set in `.env` or exported before running):
 | `ieasyhydroforecast_organization` | Organization (`demo`, `kghm`, `tjhm`) |
 | `ieasyhydroforecast_ssh_to_iEH` | Enable SSH tunnel to iEasyHydro (`true`/`false`) |
 | `COMPOSE_PROJECT_NAME` | Docker Compose project name (default: `sapphire`) |
+
+## Testing Long-Term Pipeline Locally
+
+The long-term forecasting pipeline can be validated locally in layers, from
+fast unit tests to full Docker integration:
+
+```bash
+# Layer 1: Unit tests (no Docker required)
+cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh pipeline
+
+# Layer 2: Dry-run validation (validates env + compose, no containers started)
+bash bin/run_long_term_forecasts.sh --dry-run /path/to/.env
+
+# Layers 2-4: Full Docker test (build + smoke + integration)
+bash apps/run_docker_tests.sh ltforecast --with-integration /path/to/.env
+```
+
+The `--with-integration <env_path>` flag on `run_docker_tests.sh` adds a
+PIPELINE INTEGRATION phase after the smoke tests. It runs:
+
+1. **Compose YAML validation** — `docker compose config` on `docker-compose-luigi.yml`
+2. **Bash syntax check** — `bash -n` on `run_long_term_forecasts.sh`
+3. **Schedule query smoke** — runs `lt_schedule_query.py` inside the ltforecast
+   container with a known date to verify active modes are returned
+4. **Dry-run validation** — runs `run_long_term_forecasts.sh --dry-run`

@@ -16,11 +16,12 @@
 #   bash apps/run_docker_tests.sh preprunoff linreg  # Multiple targets
 #
 # Flags:
-#   --build-only    Build images, skip smoke tests
-#   --skip-build    Smoke test existing images, skip builds
-#   --skip-ml       Exclude machine_learning (huge image, ~10+ min build)
-#   --skip-lt       Exclude long_term_forecasting (huge image, ~10+ min build)
-#   --help          Print usage
+#   --build-only                  Build images, skip smoke tests
+#   --skip-build                  Smoke test existing images, skip builds
+#   --skip-ml                     Exclude machine_learning (huge image, ~10+ min build)
+#   --skip-lt                     Exclude long_term_forecasting (huge image, ~10+ min build)
+#   --with-integration <env_path> Run pipeline integration tests after smoke tests
+#   --help                        Print usage
 #
 # Prerequisites:
 #   - Docker daemon running
@@ -53,12 +54,16 @@ BUILD_SKIPPED=()
 SMOKE_PASSED=()
 SMOKE_FAILED=()
 SMOKE_SKIPPED=()
+INTEGRATION_PASSED=()
+INTEGRATION_FAILED=()
 
 # Flags
 BUILD_ONLY=false
 SKIP_BUILD=false
 SKIP_ML=false
 SKIP_LT=false
+WITH_INTEGRATION=false
+INTEGRATION_ENV_PATH=""
 
 # Timing
 SCRIPT_START=0
@@ -319,6 +324,18 @@ print_summary() {
         done
     fi
 
+    # Integration results
+    if [ "$WITH_INTEGRATION" = true ]; then
+        echo ""
+        echo -e "${BOLD}Integration Results:${NC}"
+        for t in "${INTEGRATION_PASSED[@]+"${INTEGRATION_PASSED[@]}"}"; do
+            echo -e "  ${GREEN}PASS${NC}  ${t}"
+        done
+        for t in "${INTEGRATION_FAILED[@]+"${INTEGRATION_FAILED[@]}"}"; do
+            echo -e "  ${RED}FAIL${NC}  ${t}"
+        done
+    fi
+
     # Totals
     echo ""
     local build_pass=${#BUILD_PASSED[@]}
@@ -327,19 +344,24 @@ print_summary() {
     local smoke_pass=${#SMOKE_PASSED[@]}
     local smoke_fail=${#SMOKE_FAILED[@]}
     local smoke_skip=${#SMOKE_SKIPPED[@]}
+    local integ_pass=${#INTEGRATION_PASSED[@]}
+    local integ_fail=${#INTEGRATION_FAILED[@]}
 
     if [ "$SKIP_BUILD" = false ]; then
-        echo -e "Builds:  ${GREEN}${build_pass} passed${NC}, ${RED}${build_fail} failed${NC}, ${YELLOW}${build_skip} skipped${NC}"
+        echo -e "Builds:       ${GREEN}${build_pass} passed${NC}, ${RED}${build_fail} failed${NC}, ${YELLOW}${build_skip} skipped${NC}"
     fi
     if [ "$BUILD_ONLY" = false ]; then
-        echo -e "Smokes:  ${GREEN}${smoke_pass} passed${NC}, ${RED}${smoke_fail} failed${NC}, ${YELLOW}${smoke_skip} skipped${NC}"
+        echo -e "Smokes:       ${GREEN}${smoke_pass} passed${NC}, ${RED}${smoke_fail} failed${NC}, ${YELLOW}${smoke_skip} skipped${NC}"
+    fi
+    if [ "$WITH_INTEGRATION" = true ]; then
+        echo -e "Integration:  ${GREEN}${integ_pass} passed${NC}, ${RED}${integ_fail} failed${NC}"
     fi
 
-    echo -e "Time:    $(format_duration $total_elapsed)"
+    echo -e "Time:         $(format_duration $total_elapsed)"
     echo ""
 
     # Exit code
-    if [ "$build_fail" -gt 0 ] || [ "$smoke_fail" -gt 0 ]; then
+    if [ "$build_fail" -gt 0 ] || [ "$smoke_fail" -gt 0 ] || [ "$integ_fail" -gt 0 ]; then
         return 1
     fi
     return 0
@@ -367,11 +389,12 @@ Targets (default: all):
   postprocessing  Postprocessing forecasts
 
 Flags:
-  --build-only    Build images, skip smoke tests
-  --skip-build    Smoke test existing images, skip builds
-  --skip-ml       Exclude machine_learning target
-  --skip-lt       Exclude long_term_forecasting target
-  --help          Show this help message
+  --build-only                  Build images, skip smoke tests
+  --skip-build                  Smoke test existing images, skip builds
+  --skip-ml                     Exclude machine_learning target
+  --skip-lt                     Exclude long_term_forecasting target
+  --with-integration <env_path> Run pipeline integration tests after smoke tests
+  --help                        Show this help message
 
 Examples:
   bash apps/run_docker_tests.sh                    # Build all + smoke test all
@@ -380,6 +403,7 @@ Examples:
   bash apps/run_docker_tests.sh --skip-build       # Test existing images
   bash apps/run_docker_tests.sh preprunoff         # Single module
   bash apps/run_docker_tests.sh preprunoff linreg  # Multiple modules
+  bash apps/run_docker_tests.sh ltforecast --with-integration /path/.env  # With integration
 USAGE
 }
 
@@ -397,6 +421,19 @@ main() {
             --skip-build)  SKIP_BUILD=true ;;
             --skip-ml)     SKIP_ML=true ;;
             --skip-lt)     SKIP_LT=true ;;
+            --with-integration)
+                WITH_INTEGRATION=true
+                shift
+                if [ $# -eq 0 ]; then
+                    log ERROR "--with-integration requires an <env_path> argument"
+                    exit 1
+                fi
+                INTEGRATION_ENV_PATH="$1"
+                if [ ! -f "$INTEGRATION_ENV_PATH" ]; then
+                    log ERROR "Integration env file not found: $INTEGRATION_ENV_PATH"
+                    exit 1
+                fi
+                ;;
             --help|-h)     print_usage; exit 0 ;;
             -*)
                 echo "Unknown flag: $1"
@@ -579,6 +616,85 @@ main() {
                 smoke_test_module "$key" "$image" "$smoke_cmd" "$venv_prefix" || true
             fi
         done
+    fi
+
+    # -----------------------------------------------------------------------
+    # PIPELINE INTEGRATION PHASE
+    # -----------------------------------------------------------------------
+    if [ "$WITH_INTEGRATION" = true ]; then
+        banner "PIPELINE INTEGRATION PHASE"
+
+        # 2a. Compose YAML validation
+        log INFO "Validating docker-compose-luigi.yml ..."
+        if docker compose -f bin/docker-compose-luigi.yml config >/dev/null 2>&1; then
+            log OK "  compose-yaml: valid"
+            INTEGRATION_PASSED+=("compose-yaml")
+        else
+            log ERROR "  compose-yaml: INVALID"
+            INTEGRATION_FAILED+=("compose-yaml")
+        fi
+
+        # 2b. Bash syntax validation
+        log INFO "Checking bash syntax of run_long_term_forecasts.sh ..."
+        if bash -n bin/run_long_term_forecasts.sh 2>/dev/null; then
+            log OK "  bash-syntax: OK"
+            INTEGRATION_PASSED+=("bash-syntax")
+        else
+            log ERROR "  bash-syntax: FAILED"
+            INTEGRATION_FAILED+=("bash-syntax")
+        fi
+
+        # 2c. Schedule query functional test (only if ltforecast image exists)
+        local lt_image="mabesa/sapphire-ltforecast:${IMAGE_TAG}"
+        if docker image inspect "$lt_image" >/dev/null 2>&1; then
+            log INFO "Running schedule query smoke test (--today 2026-03-25) ..."
+
+            # Source common_functions to derive volume paths from the env file
+            source bin/utils/common_functions.sh
+
+            # Temporarily disable set -e to capture read_configuration output
+            # (it prints banners we don't need). We only need the exported vars.
+            local rc_output
+            rc_output=$(read_configuration "$INTEGRATION_ENV_PATH" 2>&1) || true
+
+            local schedule_out
+            schedule_out=$(docker run --rm \
+                -v "${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config" \
+                -v "${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data" \
+                -e "ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}" \
+                -e "IN_DOCKER=True" \
+                "$lt_image" \
+                .venv/bin/python lt_schedule_query.py --today 2026-03-25 2>/dev/null) || true
+
+            if [ -n "$schedule_out" ]; then
+                # Verify active_modes is non-empty
+                local modes
+                modes=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(','.join(d.get('active_modes',[])))" "$schedule_out" 2>/dev/null) || true
+                if [ -n "$modes" ]; then
+                    log OK "  schedule-query: active_modes=${modes}"
+                    INTEGRATION_PASSED+=("schedule-query")
+                else
+                    log ERROR "  schedule-query: returned empty active_modes"
+                    log ERROR "  Output: ${schedule_out}"
+                    INTEGRATION_FAILED+=("schedule-query")
+                fi
+            else
+                log ERROR "  schedule-query: no output or container failed"
+                INTEGRATION_FAILED+=("schedule-query")
+            fi
+        else
+            log WARN "Skipping schedule-query test (${lt_image} not available)"
+        fi
+
+        # 2d. Dry-run validation
+        log INFO "Running dry-run validation ..."
+        if bash bin/run_long_term_forecasts.sh --dry-run "$INTEGRATION_ENV_PATH" >/dev/null 2>&1; then
+            log OK "  dry-run: OK"
+            INTEGRATION_PASSED+=("dry-run")
+        else
+            log ERROR "  dry-run: FAILED"
+            INTEGRATION_FAILED+=("dry-run")
+        fi
     fi
 
     # -----------------------------------------------------------------------
