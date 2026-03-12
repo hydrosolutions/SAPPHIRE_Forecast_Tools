@@ -1,6 +1,6 @@
 # PP-022: Fix stale-record refresh and minor inconsistencies in maintenance pipeline
 
-**Status**: Ready for Review
+**Status**: Implemented
 **Module**: postprocessing_forecasts
 **Priority**: Critical
 **Labels**: `bug`, `maintenance`, `data-quality`
@@ -100,16 +100,20 @@ This is tracked as a separate follow-on because it requires changes to
 `_read_ml_forecasts_pp_api` parameter passing and deserves its own tests. It does
 not affect correctness, only efficiency.
 
-### Issue F — NE gaps logged as "not fillable" but NE rows exist in `joint` (INFO)
+### Bug F — NE gap dates excluded from `all_affected`; NE gaps not filled (MEDIUM)
 
-`_fill_gaps_for_horizon` detects NE gaps and logs a warning
-("created by operational pipeline, not fillable by maintenance") but then calls
-`config.neural_ensemble_func(modelled)` which does create NE rows with quantiles.
-After Bug A is fixed (saving all of `joint`), freshly created NE rows will be
-saved correctly, making the warning partially incorrect. The comment should be
-updated to reflect the real constraint: NE rows for gap dates CAN be created from
-modelled data, but if modelled data is missing for a gap date then NE cannot be
-created.
+`_fill_gaps_for_horizon` detects NE gaps but does NOT add their dates to
+`all_affected` (line 204 only unions `em_gap_dates | stale_dates | stale_em_dates`).
+This means: if NE is missing for a date (gap, not stale), maintenance won't read
+data for that date and won't create the NE row — even though NE creation only
+requires individual-model data (no skill metrics needed).
+
+The warning at lines 174–179 says NE gaps are "not fillable by maintenance", which
+is incorrect: `config.neural_ensemble_func(modelled)` creates NE rows from
+individual-model data without any skill metrics.
+
+**Fix**: Add `ne_gap_dates` to `all_affected`. Update the warning to an info log.
+NE rows will be created by `neural_ensemble_func` and saved via the Bug A fix.
 
 ### Issue G — Operational reads all history; maintenance reads scoped (INFO)
 
@@ -125,10 +129,13 @@ asymmetry in the docstring.
 
 - Stale individual-model, NE, and EM rows (`q05 IS NULL`) are detected AND
   replaced in the output after a maintenance run.
+- Missing NE rows (gaps) are also filled — NE creation only needs individual-model
+  data, not skill metrics.
+- Stale individual-model and NE rows are refreshed even when skill metrics are
+  unavailable (skill metrics are only needed for EM creation).
 - The `drop_duplicates` key is consistent with the operational pipeline's natural
   key.
 - `gap_codes` is computed before the data read and passed to the API query.
-- Warning comment about NE gaps is accurate.
 - All existing tests pass; new tests cover the fixed save path.
 
 ---
@@ -203,16 +210,29 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
 
 ### Implementation Steps
 
-- [ ] **Step 1: Compute `gap_codes` before the data read (Bug D)**
+- [x] **Step 1: Add NE gap dates to `all_affected` and compute `gap_codes` before
+  the data read (Bugs D + F)**
 
-  Move the `gap_codes` assembly block (currently at lines 239–242) to immediately
-  after the `all_affected` computation (before line 220 `affected_dates = sorted(...)`).
-  Then pass `codes=list(gap_codes)` to `read_individual_model_forecasts_for_dates`.
+  NE creation only needs individual-model data (no skill metrics), so NE gaps
+  should be treated the same as EM gaps for the purpose of scoping the data read.
+
+  After the `all_affected` computation (line 204), add `ne_gap_dates`:
+
+  ```python
+  ne_gap_dates = (
+      set(pd.to_datetime(ne_gaps["date"]).unique()) if not ne_gaps.empty else set()
+  )
+  all_affected = em_gap_dates | stale_dates | stale_em_dates | ne_gap_dates
+  ```
+
+  Then move the `gap_codes` assembly block (currently at lines 239–242) to
+  immediately after `all_affected`, and include `ne_gaps` in the loop. Pass
+  `codes=list(gap_codes)` to `read_individual_model_forecasts_for_dates`.
 
   ```python
   # Compute gap codes BEFORE data read so we can scope the API query
   gap_codes: set[str] = set()
-  for df_check in [em_gaps, stale, stale_em]:
+  for df_check in [em_gaps, ne_gaps, stale, stale_em]:
       if not df_check.empty and "code" in df_check.columns:
           gap_codes.update(df_check["code"].unique())
 
@@ -233,9 +253,43 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
   modelled_filtered = modelled[modelled["date"].isin(all_affected)].copy()
   ```
 
-- [ ] **Step 2: Save all refreshed rows, not just EM (Bugs A + B)**
+- [x] **Step 2: Decouple stale refresh from EM creation (new behaviour)**
 
-  Replace lines 269–284 with:
+  Currently, missing skill metrics causes an early return at line 255–257, which
+  prevents refreshing stale individual/NE rows even though those don't need skill
+  metrics. Restructure to: always build `joint` from `modelled_filtered` (which
+  already has NE via `neural_ensemble_func`), then optionally add EM if skill
+  metrics are available.
+
+  Replace lines 252–273 with:
+
+  ```python
+  with timer(timing_stats, f"reading {label} skill metrics"):
+      skill_stats = data_reader.read_skill_metrics(config.name)
+
+  # Start with modelled_filtered as the base (individual + NE rows with quantiles)
+  joint = modelled_filtered.copy()
+
+  # Add EM rows only if skill metrics are available
+  if skill_stats.empty:
+      logger.warning(
+          f"No {label} skill metrics available. "
+          "Refreshing individual/NE rows but skipping EM creation."
+      )
+  else:
+      with timer(timing_stats, f"creating {label} gap-fill ensembles"):
+          joint, _ = ensemble_calculator.create_ensemble_forecasts(
+              forecasts=modelled_filtered,
+              skill_stats=skill_stats,
+              period_col=config.period_col,
+              period_in_month_col=config.period_in_month_col,
+              get_period_in_month_func=config.get_period_func,
+          )
+  ```
+
+- [ ] **Step 2b: Save all refreshed rows, not just EM (Bugs A + B + C)**
+
+  Replace the EM-only filter and merge (old lines 269–284) with:
 
   ```python
   if joint.empty:
@@ -264,27 +318,38 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
   )
   ```
 
-- [ ] **Step 3: Update NE gap warning comment (Issue F)**
+- [x] **Step 3: Update NE gap handling — include in affected dates, fix log (Bug F)**
 
-  Replace the NE gap warning block (lines 172–180) comment text:
+  Replace the NE gap warning block (lines 172–180). NE gaps are now included in
+  `all_affected` (Step 1), so downgrade the warning to info:
 
   ```python
   ne_gaps = all_gaps[all_gaps["model_short"] == "NE"]
   if not ne_gaps.empty:
-      logger.warning(
+      logger.info(
           "Found %d NE gaps within lookback window. "
-          "NE rows will be re-created if individual-model data exists for those dates; "
-          "if modelled data is absent, NE gaps cannot be filled.",
+          "NE rows will be re-created from individual-model data.",
           len(ne_gaps),
       )
   em_gaps = all_gaps[all_gaps["model_short"] == "EM"].reset_index(drop=True)
   ```
 
-  Note: `ne_gaps` dates are NOT added to `all_affected` — they are only reported.
-  NE rows for `stale` dates ARE created (via `config.neural_ensemble_func`) and
-  saved because `stale` includes stale NE records. This is intentional and correct.
+  Update the summary log (lines 206–214) to include NE gap count:
 
-- [ ] **Step 4: Update audit log to include NE and individual-model counts**
+  ```python
+  logger.info(
+      "%s: %d EM gaps, %d NE gaps, %d stale individual/NE records, "
+      "%d stale EM records → %d total affected dates",
+      label,
+      len(em_gaps),
+      len(ne_gaps),
+      len(stale),
+      len(stale_em),
+      len(all_affected),
+  )
+  ```
+
+- [x] **Step 4: Update audit log to include NE and individual-model counts**
 
   Replace the AUDIT log at lines 297–307 with:
 
@@ -309,7 +374,7 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
       logger.info("  Filled EM: date=%s, code=%s", gap_row["date"], gap_row["code"])
   ```
 
-- [ ] **Step 5: Update `_setup_mocks` in `test_maintenance_workflow.py`**
+- [x] **Step 5: Update `_setup_mocks` in `test_maintenance_workflow.py`**
 
   The mock `ensemble_result` already contains NE + individual rows (LR) alongside
   EM. Verify this is true and extend it explicitly:
@@ -342,7 +407,7 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
   )
   ```
 
-- [ ] **Step 6: Add new tests for the fixed save path**
+- [x] **Step 6: Add new tests for the fixed save path**
 
   Add to `TestMaintenanceWorkflow`:
 
@@ -370,9 +435,20 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
       """Stale NE rows (q05=NULL) are replaced when modelled data exists."""
       # NE in stale → triggers data read → NE rows in joint → saved
 
+  def test_ne_gaps_are_filled(self, mock_data, mock_skill):
+      """Missing NE rows (gap, not stale) trigger data read and NE creation."""
+      # NE in all_gaps → ne_gap_dates added to all_affected → data read
+      # → neural_ensemble_func creates NE → saved in joint
+
   def test_save_uses_all_joint_rows_not_just_em(self, mock_data, mock_skill):
       """file_writer receives joint (EM+NE+individual), not just EM rows."""
       # assert save_forecast_data called with df containing NE and individual model rows
+
+  def test_stale_refresh_without_skill_metrics(self, mock_data, mock_skill):
+      """Individual/NE rows are refreshed even when skill metrics are empty."""
+      # skill_stats empty → EM not created, but individual + NE still saved
+      # assert save_forecast_data called
+      # assert saved df has no EM rows but does have LR/NE rows
 
   def test_gap_codes_passed_to_data_reader(self, mock_data, mock_skill):
       """read_individual_model_forecasts_for_dates is called with gap_codes."""
@@ -380,7 +456,7 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
       # contains codes kwarg matching the codes from em_gaps
   ```
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
   ```bash
   cd apps
@@ -399,9 +475,11 @@ Targeted fixes to `_fill_gaps_for_horizon` only. No changes to `data_reader.py`,
   `joint` after maintenance run
 - [ ] Stale NE rows (`q05=NULL`) → replaced with fresh NE rows from `joint`
 - [ ] Stale EM rows → replaced with new EM from `create_ensemble_forecasts`
+- [ ] Missing NE rows (gaps) → created by `neural_ensemble_func` and saved
+- [ ] No skill metrics → individual/NE rows still refreshed, EM skipped
 - [ ] No gaps + no stale → early exit, `save_forecast_data` not called (existing)
 - [ ] `read_individual_model_forecasts_for_dates` receives `codes` matching
-  gap/stale stations
+  gap/stale stations (including NE gap codes)
 - [ ] `drop_duplicates` dedup key includes `config.period_col`
 - [ ] Existing `test_no_gaps_skips_processing` and `test_gaps_trigger_ensemble_creation`
   still pass
@@ -465,12 +543,14 @@ GROUP BY model_type;
   lookback window) have `q05` populated in the combined CSV and API
 - [ ] After a maintenance run, stale NE rows have `q05` populated
 - [ ] After a maintenance run, stale EM rows have `q05` populated
+- [ ] Missing NE rows (gaps) are created and saved
+- [ ] Individual/NE rows are refreshed even when skill metrics are unavailable
+  (EM is skipped, but stale refresh still happens)
 - [ ] `read_individual_model_forecasts_for_dates` receives `codes=list(gap_codes)`
   (verified by test)
 - [ ] `drop_duplicates` uses `["date", "code", config.period_col, "model_short"]`
 - [ ] No regression: no-gap early exit still skips all data reads
-- [ ] All existing tests pass; 4 new tests added
-- [ ] NE gap warning comment accurately describes behaviour
+- [ ] All existing tests pass; 6 new tests added
 
 ---
 

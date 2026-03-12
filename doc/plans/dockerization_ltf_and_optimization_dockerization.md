@@ -1,6 +1,6 @@
 # Plan: CPU-Only PyTorch + Dockerize Long-Term Forecasting
 
-**Status: Ready** | INFRA-008 | Reviewed 2026-03-05
+**Status: Review** | INFRA-008 | Phases 1-4,6 done; Phase 5 (CI/CD) pending
 
 ## Context
 
@@ -275,10 +275,25 @@ Add LT image to the summary echo list.
 | `apps/run_docker_tests.sh` | Add ltforecast target + --skip-lt flag |
 | `.github/workflows/build_test.yml` | Add test + build jobs for LT |
 
+## Phase 6: Local testing infrastructure + production deploy scripts
+
+### Done (2026-03-12)
+
+1. **`bin/run_long_term_forecasts.sh --dry-run`** — validates env file +
+   compose YAML, prints what would happen, exits without starting containers.
+2. **`apps/run_docker_tests.sh --with-integration <env_path>`** — adds a
+   PIPELINE INTEGRATION phase after smoke tests: compose validation, bash
+   syntax check, schedule query smoke test, dry-run validation.
+3. **`bin/utils/build_docker_images.sh`** — added org-gated
+   `sapphire-lt-forecasting` build (non-demo orgs). Also fixed pre-existing
+   syntax bug in kghm guard (`["$var"` → `[ "$var"`).
+4. **`bin/utils/pull_docker_images.sh`** — added `sapphire-lt-forecasting`
+   pull in both `kghm` and `tjhm` blocks.
+5. **`bin/README.md`** — documented `--dry-run`, `--with-integration`, and
+   added "Testing Long-Term Pipeline Locally" section.
+
 ## Deferred (separate tasks)
 
-- Luigi pipeline integration (`apps/pipeline/pipeline_docker.py`) -- requires
-  designing dependency graph for LT in the pipeline
 - `deploy_main.yml` updates -- done when merging to main
 - Docker image size audit after CPU switch
 - `.dockerignore` for LT and ML modules (excludes `tests/`, `dev_code/`,

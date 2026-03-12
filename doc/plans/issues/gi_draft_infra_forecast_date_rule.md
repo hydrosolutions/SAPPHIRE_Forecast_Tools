@@ -117,12 +117,6 @@ parameter for hindcast mode instead of always calling `today()`.
 - `vizualization.py:1472,1553`: `year = dt.datetime.now().year`
 - `forecast_dashboard.py:122`: `today = dt.datetime.now()`
 
-**`machine_learning/make_forecast.py`** — 4 calls:
-- Line 282: `today = pd.to_datetime(datetime.datetime.now().date())`
-- Line 711: `predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())`
-- Line 715: `predictions['date'] = pd.to_datetime(datetime.datetime.now().date())`
-- Line 730: `predictions['forecast_date'] = datetime.datetime.now().date()`
-
 ### Category 3: Logging / timestamps (NO CHANGE needed)
 
 ~40% of all calls are for log messages, file naming, or performance timers. These
@@ -264,8 +258,7 @@ as a separate PR:
 1. `preprocessing_runoff/src/src.py` (5 calls) — highest risk, hydrograph generation
    is date-sensitive
 2. `preprocessing_station_forcing/src/src.py` (3 calls)
-3. `machine_learning/make_forecast.py` (4 calls)
-4. `forecast_dashboard` (3 calls) — lower risk, display only
+3. `forecast_dashboard` (3 calls) — lower risk, display only
 
 For each module:
 - [ ] Add `forecast_date` or `year` parameter to affected functions
@@ -329,7 +322,6 @@ SAPPHIRE_TEST_ENV=True pytest iEasyHydroForecast/tests/ -v -k "run_date"
 cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff
 SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_station_forcing
-SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning
 SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard
 
 # Full suite after all phases
@@ -354,10 +346,10 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
 |-------|-------|--------|------|
 | Phase 1 | 4 function signatures + 4 dashboard call sites + tests | ~3 hours | Low (isolated bug fix) |
 | Phase 2 | 1 function signature + 1 caller + tests | ~2 hours | Low |
-| Phase 3 | 15 call sites across 4 modules + tests per module | ~8 hours (2h/module) | Medium (threading params through call chains) |
+| Phase 3 | 11 call sites across 3 modules + tests per module | ~6 hours (2h/module) | Medium (threading params through call chains) |
 | Phase 4 | Test refactoring (no production code) | ~4 hours | Low |
 
-**Total**: ~17 hours across 4 PRs
+**Total**: ~15 hours across 4 PRs
 
 ---
 
@@ -367,6 +359,7 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
   and performance timers is correct and should not be changed
 - **`long_term_forecasting` module**: Already follows the correct pattern — no
   changes needed
+- **`machine_learning`**: Colleague's responsibility — coordinate separately
 - **`machine_learning_monthly`**: Deprecated module, not worth refactoring
 - **`backend/`**: Legacy module being phased out
 - **Global singleton approach**: We considered a module-level `today` singleton (like
@@ -390,7 +383,7 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
 - [ ] Boundary-date tests exist for Dec 31, Jan 1, Feb 29 in at least `tag_library`,
   `setup_library`, and `preprocessing_runoff`
 - [ ] All existing tests pass with zero new skips
-- [ ] `grep -rn "date.today()" apps/ --include="*.py" | grep -v test | grep -v ".venv" | grep -v log | grep -v "machine_learning_monthly" | grep -v backend | grep -v long_term_forecasting`
+- [ ] `grep -rn "date.today()" apps/ --include="*.py" | grep -v test | grep -v ".venv" | grep -v log | grep -v "machine_learning" | grep -v backend | grep -v long_term_forecasting`
   returns only logging/timestamp uses
 
 ---
