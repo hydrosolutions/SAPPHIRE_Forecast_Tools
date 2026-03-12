@@ -268,14 +268,25 @@ def recalculate_nan_forecasts():
     print("Min missing date:", min_date)
     print("Max missing date:", max_date)
 
-    hindcast = call_hindcast_script(
-        min_missing_date=min_date,
-        max_missing_date=max_date,
-        MODEL_TO_USE=MODEL_TO_USE,
-        intermediate_data_path=intermediate_data_path,
-        codes_with_nan=codes_with_nan,
-        PREDICTION_MODE=PREDICTION_MODE,
-    )
+    try:
+        hindcast = call_hindcast_script(
+            min_missing_date=min_date,
+            max_missing_date=max_date,
+            MODEL_TO_USE=MODEL_TO_USE,
+            intermediate_data_path=intermediate_data_path,
+            codes_with_nan=codes_with_nan,
+            PREDICTION_MODE=PREDICTION_MODE,
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        logger.error(
+            "Hindcast call failed for model=%s, mode=%s, dates=[%s..%s]: %s",
+            MODEL_TO_USE,
+            PREDICTION_MODE,
+            min_date,
+            max_date,
+            exc,
+        )
+        return
 
     print("Hindcast shape:", hindcast.shape)
     print("Hindcast columns:", hindcast.columns)
@@ -286,6 +297,7 @@ def recalculate_nan_forecasts():
     hindcast["flag"] = hindcast["flag"].astype(int)
     hindcast["date"] = pd.to_datetime(hindcast["date"])
     hindcast["forecast_date"] = pd.to_datetime(hindcast["forecast_date"])
+    hindcast["code"] = hindcast["code"].astype(str)
 
     def update_forecast(forecast_code, hindcast_code):
         # Fix the syntax error in value_cols definition
@@ -324,23 +336,34 @@ def recalculate_nan_forecasts():
 
     # Save the updated forecast
     forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
-    # sort the forecast by forecast_date
     forecast = forecast.sort_values(by="forecast_date")
-    # save the forecast
-    forecast.to_csv(
-        os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv"), index=False
-    )
 
-    # Write recalculated forecasts to SAPPHIRE API (maintenance mode)
-    # Only write the hindcast data that replaced NaN values
+    # --- Write to API first (primary), then CSV (deprecated fallback) ---
+    api_write_ok = False
     if SAPPHIRE_API_AVAILABLE and len(hindcast) > 0:
         try:
             horizon_type = "pentad" if prefix == "pentad" else "decade"
-            _write_ml_forecast_to_api(hindcast, horizon_type, MODEL_TO_USE)
-            logger.info(f"Wrote {len(hindcast)} recalculated forecasts to API")
+            api_write_ok = _write_ml_forecast_to_api(hindcast, horizon_type, MODEL_TO_USE)
+            if api_write_ok:
+                logger.info("Wrote %d recalculated forecasts to API", len(hindcast))
+            else:
+                logger.warning(
+                    "API write returned failure for %d forecasts (model=%s)",
+                    len(hindcast),
+                    MODEL_TO_USE,
+                )
         except Exception as e:
-            logger.error(f"Failed to write recalculated forecasts to API: {e}")
-            # Don't fail the whole process - CSV was already saved
+            logger.error("Failed to write recalculated forecasts to API: %s", e)
+
+    # CSV write (deprecated fallback)
+    csv_path = os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv")
+    forecast.to_csv(csv_path, index=False)
+
+    if not api_write_ok:
+        logger.warning(
+            "API write unsuccessful; data persisted only in CSV: %s",
+            csv_path,
+        )
 
     logger.info("Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n")
     logger.info("--------------------------------------------------------------------")

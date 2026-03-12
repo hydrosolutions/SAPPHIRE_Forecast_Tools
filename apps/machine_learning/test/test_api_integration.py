@@ -402,6 +402,47 @@ class TestWriteMLForecastToApi:
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_duplicate_rows_deduplicated_before_write(self, mock_client_class):
+        """Duplicate (code, forecast_date, date) rows must be deduplicated
+        before the API call to avoid PostgreSQL CardinalityViolation."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            # Two rows with identical (code, forecast_date, date) — the
+            # second row (Q50=200) should win (keep="last").
+            data = pd.DataFrame(
+                {
+                    "code": [12345, 12345],
+                    "date": pd.to_datetime(["2024-01-06", "2024-01-06"]),
+                    "forecast_date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                    "flag": [0, 0],
+                    "Q5": [50.0, 55.0],
+                    "Q25": [80.0, 85.0],
+                    "Q50": [100.0, 200.0],
+                    "Q75": [120.0, 125.0],
+                    "Q95": [150.0, 155.0],
+                }
+            )
+
+            result = _write_ml_forecast_to_api(data, "pentad", "TFT")
+            assert result is True
+
+            # Only 1 record should reach the API
+            call_args = mock_client.write_forecasts.call_args[0][0]
+            assert len(call_args) == 1
+            assert call_args[0]["forecasted_discharge"] == 200.0
+
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
 
 # =============================================================================
 # Tests for _check_ml_forecast_consistency

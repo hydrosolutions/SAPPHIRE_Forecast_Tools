@@ -673,6 +673,22 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     # Map model type to API format (shared constant)
     api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
 
+    # Deduplicate by the DB unique key (horizon_type, code, model_type, date,
+    # target) before building records.  Within a single call horizon_type and
+    # model_type are constant, so (code, forecast_date, date) is sufficient.
+    # Keeps last occurrence so the most-recent data wins — matching the CSV
+    # dedup convention used elsewhere (e.g. make_forecast.py:190).
+    n_before = len(data)
+    data = data.drop_duplicates(subset=["code", "forecast_date", "date"], keep="last")
+    n_dropped = n_before - len(data)
+    if n_dropped > 0:
+        logger.warning(
+            "Dropped %d duplicate rows before API write (%s, %s)",
+            n_dropped,
+            model_type,
+            horizon_type,
+        )
+
     # Prepare records for API — always stored as horizon_type="day"
     records = []
     for _, row in data.iterrows():
@@ -757,6 +773,17 @@ def _write_ml_daily_forecast_to_api(data: pd.DataFrame, model_type: str) -> bool
     }
     api_model_type = model_type_map.get(model_type.upper(), model_type)
 
+    # Deduplicate by the DB unique key before building records.
+    n_before = len(data)
+    data = data.drop_duplicates(subset=["code", "forecast_date", "date"], keep="last")
+    n_dropped = n_before - len(data)
+    if n_dropped > 0:
+        logger.warning(
+            "Dropped %d duplicate rows before daily API write (%s)",
+            n_dropped,
+            model_type,
+        )
+
     records = []
     for _, row in data.iterrows():
         target_date = pd.to_datetime(row["date"])
@@ -778,6 +805,10 @@ def _write_ml_daily_forecast_to_api(data: pd.DataFrame, model_type: str) -> bool
             "q95": (float(row["Q95"]) if pd.notna(row.get("Q95")) else None),
             "forecasted_discharge": (float(row["Q50"]) if pd.notna(row.get("Q50")) else None),
         }
+        # Skip records where Q50 is NaN — writing null discharge
+        # creates phantom rows that mask real gaps in gap detectors.
+        if pd.isna(row.get("Q50")):
+            continue
         records.append(record)
 
     if records:

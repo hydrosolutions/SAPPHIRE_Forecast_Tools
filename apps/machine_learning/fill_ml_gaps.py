@@ -216,6 +216,17 @@ def fill_ml_gaps():
         )
         return
 
+    # Treat null-discharge rows as missing — they are phantom records
+    # that should not count as valid forecasts for gap detection.
+    if "Q50" in forecast.columns:
+        n_nulls = forecast["Q50"].isna().sum()
+        if n_nulls > 0:
+            logger.info(
+                "fill_ml_gaps: Excluding %d null-discharge rows from gap detection",
+                n_nulls,
+            )
+            forecast = forecast[forecast["Q50"].notna()].copy()
+
     missing_forecasts_dict = {}
     min_missing_date = None
     max_missing_date = None
@@ -225,8 +236,7 @@ def fill_ml_gaps():
         forecast_code = forecast[forecast.code == code].copy()
         # get the unique forecast dates
         forecast_dates = forecast_code["forecast_date"].unique()
-        forecast_dates = pd.to_datetime(forecast_dates)
-        forecast_dates = forecast_dates.sort_values()
+        forecast_dates = pd.DatetimeIndex(forecast_dates).sort_values()
         # check if there are any missing forecasts
         missing_forecasts = []
 
@@ -273,15 +283,26 @@ def fill_ml_gaps():
         print("Missing forecasts for the following code:", list(missing_forecasts_dict.keys()))
 
         # trigger the hindcast script to fill in the missing forecasts
-        hindcast = call_hindcast_script(
-            min_missing_date,
-            max_missing_date,
-            MODEL_TO_USE,
-            intermediate_data_path,
-            PREDICTION_MODE,
-        )
+        try:
+            hindcast = call_hindcast_script(
+                min_missing_date,
+                max_missing_date,
+                MODEL_TO_USE,
+                intermediate_data_path,
+                PREDICTION_MODE,
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            logger.error(
+                "fill_ml_gaps: hindcast call failed for %s (%s–%s): %s",
+                prefix,
+                min_missing_date,
+                max_missing_date,
+                exc,
+            )
+            return
 
         hindcast["forecast_date"] = pd.to_datetime(hindcast["forecast_date"])
+        hindcast["code"] = hindcast["code"].astype(str)
 
         # now iterate and fill the missing forecasts,
         # this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
@@ -306,21 +327,56 @@ def fill_ml_gaps():
         forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
         # sort the forecast by forecast_date
         forecast = forecast.sort_values(by="forecast_date")
-        # save the forecast
+
+        # --- Write gap-filled forecasts: API first (primary), CSV second (fallback) ---
+        api_ok = False
+        filled_df = None
+        if len(all_filled_forecasts) > 0:
+            filled_df = pd.concat(all_filled_forecasts, axis=0)
+            if filled_df.empty:
+                logger.warning(
+                    "fill_ml_gaps: %d gap intervals detected but 0 hindcast rows "
+                    "matched — possible code-type or date-range mismatch",
+                    sum(len(v) for v in missing_forecasts_dict.values()),
+                )
+
+        if SAPPHIRE_API_AVAILABLE and filled_df is not None and len(filled_df) > 0:
+            try:
+                horizon_type = "pentad" if prefix == "pentad" else "decade"
+                api_ok = _write_ml_forecast_to_api(filled_df, horizon_type, MODEL_TO_USE)
+                if api_ok:
+                    logger.info(
+                        "Wrote %d gap-filled forecasts to API for %s/%s",
+                        len(filled_df),
+                        prefix,
+                        MODEL_TO_USE,
+                    )
+                else:
+                    logger.warning(
+                        "API write returned failure for %s/%s; falling back to CSV",
+                        prefix,
+                        MODEL_TO_USE,
+                    )
+            except Exception:
+                logger.error(
+                    "API write raised an exception for %s/%s; falling back to CSV",
+                    prefix,
+                    MODEL_TO_USE,
+                    exc_info=True,
+                )
+
+        # CSV write (deprecated fallback — will be removed once API is sole store)
         forecast.to_csv(
-            os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv"), index=False
+            os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv"),
+            index=False,
         )
 
-        # Write gap-filled forecasts to SAPPHIRE API (maintenance mode)
-        if SAPPHIRE_API_AVAILABLE and len(all_filled_forecasts) > 0:
-            try:
-                filled_df = pd.concat(all_filled_forecasts, axis=0)
-                horizon_type = "pentad" if prefix == "pentad" else "decade"
-                _write_ml_forecast_to_api(filled_df, horizon_type, MODEL_TO_USE)
-                logger.info(f"Wrote {len(filled_df)} gap-filled forecasts to API")
-            except Exception as e:
-                logger.error(f"Failed to write gap-filled forecasts to API: {e}")
-                # Don't fail the whole process - CSV was already saved
+        if not api_ok and filled_df is not None and len(filled_df) > 0:
+            logger.warning(
+                "Gap-filled data for %s/%s exists only in CSV — API write failed",
+                prefix,
+                MODEL_TO_USE,
+            )
 
         logger.info("Missing forecasts filled in")
 
