@@ -159,6 +159,14 @@ MAINTENANCE_MODULES=(
     postprocessing_forecasts
 )
 
+# Organization-aware module skip list.
+# Demo org only needs: preprocessing_runoff, linear_regression, postprocessing_forecasts.
+# Matches Docker image pull logic in bin/utils/pull_docker_images.sh.
+# ORG is resolved in resolve_org() — it reads from the shell environment first,
+# then falls back to extracting ieasyhydroforecast_organization from the .env file.
+ORG=""
+DEMO_SKIP_MODULES=(preprocessing_gateway machine_learning long_term_forecasting)
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -286,6 +294,37 @@ check_venv() {
         return 1
     fi
     return 0
+}
+
+should_skip_module() {
+    local module="$1"
+    if [ "$ORG" = "demo" ]; then
+        for skip in "${DEMO_SKIP_MODULES[@]}"; do
+            [ "$module" = "$skip" ] && return 0
+        done
+    fi
+    return 1
+}
+
+resolve_org() {
+    # 1. Shell environment takes precedence
+    if [ -n "${ieasyhydroforecast_organization:-}" ]; then
+        ORG="$ieasyhydroforecast_organization"
+        return
+    fi
+    # 2. Extract from .env file if available
+    local env_file="${ieasyhydroforecast_env_file_path:-}"
+    if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+        local from_file
+        from_file=$(grep -m1 '^ieasyhydroforecast_organization=' "$env_file" \
+                    | cut -d'=' -f2 | tr -d '[:space:]"'"'")
+        if [ -n "$from_file" ]; then
+            ORG="$from_file"
+            return
+        fi
+    fi
+    # 3. Not set — run all modules (production default)
+    ORG=""
 }
 
 # ---------------------------------------------------------------------------
@@ -888,14 +927,20 @@ run_short_term_pipeline() {
     # Preprocessing runs once regardless of mode
     log INFO "Running preprocessing (shared across modes)..."
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if should_skip_module preprocessing_gateway; then
+        log INFO "Skipping preprocessing_gateway (not required for ${ORG} org)"
+    else
+        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     # Forecasting + postprocessing runs per mode
     for mode in "${modes_to_run[@]}"; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running forecasting for mode: ${mode}"
 
-        run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        if ! should_skip_module machine_learning; then
+            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
@@ -908,6 +953,11 @@ run_short_term_pipeline() {
 
 run_long_term_pipeline() {
     banner "LONG-TERM FORECAST PIPELINE"
+
+    if should_skip_module long_term_forecasting; then
+        log INFO "Skipping long-term pipeline (not required for ${ORG} org)"
+        return 0
+    fi
 
     # Phase 1: Generate forecasts
     run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -926,6 +976,11 @@ run_long_term_pipeline() {
 
 run_long_term_operational_pipeline() {
     banner "LONG-TERM OPERATIONAL PIPELINE"
+
+    if should_skip_module long_term_forecasting; then
+        log INFO "Skipping long-term operational pipeline (not required for ${ORG} org)"
+        return 0
+    fi
 
     # Determine which issue window we are in
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
@@ -967,8 +1022,11 @@ run_all() {
     banner "FULL PIPELINE (short-term + long-term)"
     run_short_term_pipeline
     local st_rc=$?
-    run_long_term_pipeline
-    local lt_rc=$?
+    local lt_rc=0
+    if ! should_skip_module long_term_forecasting; then
+        run_long_term_pipeline
+        lt_rc=$?
+    fi
 
     run_api_validation "all"
 
@@ -996,21 +1054,27 @@ run_maintenance_pipeline() {
 
     # Preprocessing maintenance runs once (mode-independent)
     run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if ! should_skip_module preprocessing_gateway; then
+        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     # linear_regression and ML maintenance run per mode
     for mode in "${modes_to_run[@]}"; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running maintenance for mode: ${mode}"
 
-        run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        if ! should_skip_module machine_learning; then
+            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
 
     # Long-term maintenance (mode-independent, runs once)
-    log INFO "Running long-term postprocessing maintenance"
-    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if ! should_skip_module long_term_forecasting; then
+        log INFO "Running long-term postprocessing maintenance"
+        run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 }
@@ -1023,19 +1087,25 @@ run_daily_pipeline() {
     # --- Phase 1: Preprocessing (runs once) ---
     log INFO "Phase 1: Preprocessing (shared across all horizons)"
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if ! should_skip_module preprocessing_gateway; then
+        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     # --- Phase 2: Maintenance preprocessing (runs once) ---
     log INFO "Phase 2: Maintenance preprocessing"
     run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if ! should_skip_module preprocessing_gateway; then
+        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
 
     # --- Phase 3: Forecasting + postprocessing per horizon ---
     for mode in PENTAD DECAD; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
 
-        run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        if ! should_skip_module machine_learning; then
+            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
@@ -1045,7 +1115,9 @@ run_daily_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
 
-        run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        if ! should_skip_module machine_learning; then
+            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
@@ -1054,7 +1126,9 @@ run_daily_pipeline() {
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 
     # --- Phase 5: Long-term forecasting (gated by day-of-month) ---
-    if is_lt_issue_window; then
+    if should_skip_module long_term_forecasting; then
+        log INFO "Phase 5: Skipping long-term forecasting (not required for ${ORG} org)"
+    elif is_lt_issue_window; then
         log INFO "Phase 5: Long-term forecasting (day ${LT_GATE_DAY} within ±5 of issue day ${LT_ACTIVE_WINDOW})"
         run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -1073,7 +1147,11 @@ run_daily_pipeline() {
 
 run_yearly_pipeline() {
     banner "YEARLY PIPELINE (snow norms + skill metrics)"
-    run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    if should_skip_module preprocessing_gateway; then
+        log INFO "Skipping snow norm recalculation (not required for ${ORG} org)"
+    else
+        run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    fi
     run_recalculate_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 }
 
@@ -1134,8 +1212,12 @@ validate_env() {
         *)                               modules_to_check=("$target") ;;
     esac
 
-    # Check venvs
+    # Check venvs (skip modules not needed for this org)
     for module in "${modules_to_check[@]}"; do
+        if should_skip_module "$module"; then
+            log INFO "venv: ${module} (skipped for ${ORG} org)"
+            continue
+        fi
         if check_venv "$module"; then
             log OK "venv: ${module}/.venv/bin/python"
         else
@@ -1341,6 +1423,8 @@ Environment variables:
   LT_OPERATIONAL_ISSUE_DAYS            Days of month for LT issue window (default: "10 25").
                                         25th runs all horizons; 10th runs monthly only.
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
+  ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm).
+                                          Demo skips: preprocessing_gateway, machine_learning, long_term_forecasting.
 
 Examples:
   # Full daily run (PENTAD + DECAD + maintenance)
@@ -1463,11 +1547,19 @@ main() {
     # Create log directory
     mkdir -p "$LOG_DIR"
 
+    # Resolve organization (shell env → .env file → empty = run all)
+    resolve_org
+
     banner "SAPPHIRE Local Pipeline Runner"
     log INFO "Target: ${target}"
+    log INFO "Organization: ${ORG:-<not set, running all modules>}"
     log INFO "Continue on error: ${CONTINUE_ON_ERROR}"
     log INFO "Dry run: ${DRY_RUN}"
     log INFO "Log file: ${LOG_FILE}"
+
+    if [ "$ORG" = "demo" ]; then
+        log INFO "Demo org: skipping modules — ${DEMO_SKIP_MODULES[*]}"
+    fi
 
     # Validate environment
     if ! validate_env "$target"; then
@@ -1515,12 +1607,19 @@ main() {
             run_maintenance_preprocessing_runoff || exit_code=$?
             ;;
         maintenance:preprocessing_gateway)
-            run_maintenance_preprocessing_gateway || exit_code=$?
+            if should_skip_module preprocessing_gateway; then
+                log INFO "Skipping maintenance:preprocessing_gateway (not required for ${ORG} org)"
+            else
+                run_maintenance_preprocessing_gateway || exit_code=$?
+            fi
             ;;
         maintenance:linear_regression)
             run_maintenance_linear_regression || exit_code=$?
             ;;
         maintenance:machine_learning)
+            if should_skip_module machine_learning; then
+                log INFO "Skipping maintenance:machine_learning (not required for ${ORG} org)"
+            else
             local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
             local modes_to_run=()
             if [ "$original_mode" = "BOTH" ]; then
@@ -1538,24 +1637,37 @@ main() {
                 run_maintenance_machine_learning || { exit_code=$?; break; }
             done
             export SAPPHIRE_PREDICTION_MODE="$original_mode"
+            fi
             ;;
         maintenance:postprocessing_forecasts)
             run_maintenance_postprocessing_forecasts || exit_code=$?
             ;;
         maintenance:postprocessing_long_term)
-            run_maintenance_postprocessing_long_term || exit_code=$?
+            if should_skip_module long_term_forecasting; then
+                log INFO "Skipping maintenance:postprocessing_long_term (not required for ${ORG} org)"
+            else
+                run_maintenance_postprocessing_long_term || exit_code=$?
+            fi
             ;;
         recalculate_skill_metrics)
             run_recalculate_skill_metrics || exit_code=$?
             ;;
         recalculate_snow_norms)
-            run_recalculate_snow_norms || exit_code=$?
+            if should_skip_module preprocessing_gateway; then
+                log INFO "Skipping recalculate_snow_norms (not required for ${ORG} org)"
+            else
+                run_recalculate_snow_norms || exit_code=$?
+            fi
             ;;
         yearly)
             run_yearly_pipeline || exit_code=$?
             ;;
         calibrate_long_term)
-            run_calibrate_long_term || exit_code=$?
+            if should_skip_module long_term_forecasting; then
+                log INFO "Skipping calibrate_long_term (not required for ${ORG} org)"
+            else
+                run_calibrate_long_term || exit_code=$?
+            fi
             ;;
         # Single operational module targets (with per-module validation)
         preprocessing_runoff)
@@ -1563,24 +1675,36 @@ main() {
             run_module_validation "preprocessing_runoff"
             ;;
         preprocessing_gateway)
-            run_preprocessing_gateway || exit_code=$?
-            run_module_validation "preprocessing_gateway"
+            if should_skip_module preprocessing_gateway; then
+                log INFO "Skipping preprocessing_gateway (not required for ${ORG} org)"
+            else
+                run_preprocessing_gateway || exit_code=$?
+                run_module_validation "preprocessing_gateway"
+            fi
             ;;
         linear_regression)
             run_linear_regression || exit_code=$?
             run_module_validation "linear_regression"
             ;;
         machine_learning)
-            run_machine_learning || exit_code=$?
-            run_module_validation "machine_learning"
+            if should_skip_module machine_learning; then
+                log INFO "Skipping machine_learning (not required for ${ORG} org)"
+            else
+                run_machine_learning || exit_code=$?
+                run_module_validation "machine_learning"
+            fi
             ;;
         postprocessing_forecasts)
             run_postprocessing_forecasts || exit_code=$?
             run_module_validation "postprocessing_forecasts"
             ;;
         long_term_forecasting)
-            run_long_term_forecasting || exit_code=$?
-            run_module_validation "long_term_forecasting"
+            if should_skip_module long_term_forecasting; then
+                log INFO "Skipping long_term_forecasting (not required for ${ORG} org)"
+            else
+                run_long_term_forecasting || exit_code=$?
+                run_module_validation "long_term_forecasting"
+            fi
             ;;
     esac
 
