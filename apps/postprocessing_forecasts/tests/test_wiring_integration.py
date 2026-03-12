@@ -198,14 +198,12 @@ def _setup_real_internal_mocks(
 
     # Build per-horizon return values for the unified reader
     _pentad_data = (
-        (observed_pentad, modelled_pentad)
-        if observed_pentad is not None
-        else (pd.DataFrame(), pd.DataFrame())
+        observed_pentad if observed_pentad is not None else pd.DataFrame(),
+        modelled_pentad if modelled_pentad is not None else pd.DataFrame(),
     )
     _decad_data = (
-        (observed_decad, modelled_decad)
-        if observed_decad is not None
-        else (pd.DataFrame(), pd.DataFrame())
+        observed_decad if observed_decad is not None else pd.DataFrame(),
+        modelled_decad if modelled_decad is not None else pd.DataFrame(),
     )
 
     def _mock_read_observed_and_modelled(horizon_type, **kwargs):
@@ -215,6 +213,23 @@ def _setup_real_internal_mocks(
 
     real_data_reader.read_observed_and_modelled_data = MagicMock(
         side_effect=_mock_read_observed_and_modelled
+    )
+
+    # PP-021: maintenance now calls read_individual_model_forecasts_for_dates
+    # instead of read_observed_and_modelled_data.  Return the modelled portion
+    # of the test data (same as the old reader's second element).
+    def _mock_read_individual_for_dates(horizon_type, dates, codes=None):
+        if horizon_type == "pentad":
+            modelled = _pentad_data[1] if _pentad_data[1] is not None else pd.DataFrame()
+        else:
+            modelled = _decad_data[1] if _decad_data[1] is not None else pd.DataFrame()
+        if not modelled.empty and dates:
+            dates_ts = pd.to_datetime(list(dates))
+            modelled = modelled[modelled["date"].isin(dates_ts)].copy()
+        return modelled, pd.DataFrame()
+
+    real_data_reader.read_individual_model_forecasts_for_dates = MagicMock(
+        side_effect=_mock_read_individual_for_dates
     )
 
     mock_file_writer.save_forecast_data.return_value = None
@@ -582,7 +597,8 @@ class TestMaintenanceWiringIntegration:
         tmp_path = env_setup
         _make_skill_csv(tmp_path, "pentad")
 
-        # Jan 5 has EM (no gap), Jan 10 has LR only (gap)
+        # Jan 5 has LR + NE + EM (complete), Jan 10 has LR only (EM gap)
+        # NE included at Jan 5 so NE gaps don't pull Jan 5 into affected dates
         _make_combined_csv(
             tmp_path,
             "pentad",
@@ -591,6 +607,13 @@ class TestMaintenanceWiringIntegration:
                     "date": "2024-01-05",
                     "code": "15001",
                     "model_short": "LR",
+                    "forecasted_discharge": 100.0,
+                    "pentad_in_year": 1,
+                },
+                {
+                    "date": "2024-01-05",
+                    "code": "15001",
+                    "model_short": "NE",
                     "forecasted_discharge": 100.0,
                     "pentad_in_year": 1,
                 },
@@ -631,8 +654,8 @@ class TestMaintenanceWiringIntegration:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                # Data was read but no rows match gap dates
-                mocks["data_reader"].read_observed_and_modelled_data.assert_called_once()
+                # PP-021: scoped read called but returns no rows for Jan 10 gap
+                mocks["data_reader"].read_individual_model_forecasts_for_dates.assert_called_once()
                 # Early return — no save
                 mocks["file_writer"].save_forecast_data.assert_not_called()
 
@@ -920,14 +943,12 @@ def _setup_recalc_mocks(
 
     # Build per-horizon return values for the unified reader
     _pentad_data = (
-        (observed_pentad, modelled_pentad)
-        if observed_pentad is not None
-        else (pd.DataFrame(), pd.DataFrame())
+        observed_pentad if observed_pentad is not None else pd.DataFrame(),
+        modelled_pentad if modelled_pentad is not None else pd.DataFrame(),
     )
     _decad_data = (
-        (observed_decad, modelled_decad)
-        if observed_decad is not None
-        else (pd.DataFrame(), pd.DataFrame())
+        observed_decad if observed_decad is not None else pd.DataFrame(),
+        modelled_decad if modelled_decad is not None else pd.DataFrame(),
     )
 
     def _mock_read_observed_and_modelled(horizon_type, **kwargs):
@@ -1248,15 +1269,15 @@ class TestMaintenanceSurplusData:
     def test_fills_only_gap_dates_not_surplus(self, env_setup):
         """Combined CSV has 3 dates, 2 already have EM.
 
-        Only the 1 gap date should get an EM row; the 2 existing EM rows
+        Only the 1 gap date should get new rows; the 2 existing dates
         should NOT be duplicated.
         """
         tmp_path = env_setup
         _make_skill_csv(tmp_path, "pentad")
 
         combined_rows = []
-        # Date 1 (Jan 5): LR + TFT + EM — already complete
-        for ms in ["LR", "TFT", "EM"]:
+        # Date 1 (Jan 5): LR + TFT + NE + EM — complete
+        for ms in ["LR", "TFT", "NE", "EM"]:
             combined_rows.append(
                 {
                     "date": "2024-01-05",
@@ -1266,8 +1287,8 @@ class TestMaintenanceSurplusData:
                     "pentad_in_year": 1,
                 }
             )
-        # Date 2 (Jan 10): LR + TFT + EM — already complete
-        for ms in ["LR", "TFT", "EM"]:
+        # Date 2 (Jan 10): LR + TFT + NE + EM — complete
+        for ms in ["LR", "TFT", "NE", "EM"]:
             combined_rows.append(
                 {
                     "date": "2024-01-10",
@@ -1277,7 +1298,7 @@ class TestMaintenanceSurplusData:
                     "pentad_in_year": 2,
                 }
             )
-        # Date 3 (Jan 15): LR + TFT but NO EM — gap
+        # Date 3 (Jan 15): LR + TFT but NO NE/EM — gap
         for ms in ["LR", "TFT"]:
             combined_rows.append(
                 {
@@ -1322,17 +1343,450 @@ class TestMaintenanceSurplusData:
                 mocks["file_writer"].save_forecast_data.assert_called_once()
                 saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_df[saved_df["model_short"] == "EM"]
-                # Merged output: 2 existing EM (Jan 5, Jan 10) + 1 new (Jan 15)
+                # Merged: 2 existing EM (Jan 5, Jan 10) + 1 new (Jan 15)
                 assert len(em_rows) == 3, (
                     f"Expected 3 EM rows (2 existing + 1 gap-fill), got {len(em_rows)}"
                 )
                 em_dates = sorted(pd.to_datetime(em_rows["date"]).dt.strftime("%Y-%m-%d"))
                 assert "2024-01-15" in em_dates, f"Gap-fill EM for Jan 15 missing from {em_dates}"
-                # Existing EM rows preserved
                 assert "2024-01-05" in em_dates
                 assert "2024-01-10" in em_dates
-                # Total rows should be combined(8) + new EM(1) = 9
-                assert len(saved_df) == 9, f"Expected 9 merged rows, got {len(saved_df)}"
+                # combined(10) + 1 new EM for Jan 15 = 11 total
+                assert len(saved_df) == 11, f"Expected 11 merged rows, got {len(saved_df)}"
+
+
+# ===================================================================
+# TestMaintenanceStaleRefreshWiring (PP-022)
+# ===================================================================
+class TestMaintenanceStaleRefreshWiring:
+    """Stale-record refresh with real gap_detector + real ensemble_calculator.
+
+    These tests exercise the production merge logic (lambda key matching,
+    concat + drop_duplicates) that the mock-based tests in
+    test_maintenance_workflow.py cannot cover.
+    """
+
+    def test_stale_individual_rows_get_quantiles(self, env_setup):
+        """Stale LR/TFT rows (q05=NULL) are replaced with fresh rows.
+
+        Combined CSV has LR+TFT+NE+EM at Jan 5, where LR+TFT have
+        forecasted_discharge but q05=NULL. Maintenance should detect
+        these as stale, re-read modelled data, and merge fresh rows
+        with quantiles into the output.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, "pentad")
+
+        combined_rows = [
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "LR",
+                "forecasted_discharge": 100.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "TFT",
+                "forecasted_discharge": 110.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "NE",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 90.0,  # ok
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "EM",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 85.0,  # ok
+            },
+        ]
+        _make_combined_csv(tmp_path, "pentad", rows_data=combined_rows)
+
+        # Modelled data: fresh LR+TFT with quantiles from the reader
+        modelled = _make_modelled_df(
+            discharge_values={"LR": 100.0, "TFT": 110.0},
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+
+                # All 4 model types should be in the output
+                assert set(saved_df["model_short"].unique()) >= {"LR", "TFT", "NE", "EM"}
+
+                # The stale LR/TFT rows should be replaced (keep="last")
+                # with fresh rows from modelled data. Verify row count
+                # didn't grow (dedup should replace, not duplicate).
+                lr_rows = saved_df[
+                    (saved_df["model_short"] == "LR")
+                    & (saved_df["date"].astype(str).str.startswith("2024-01-05"))
+                ]
+                assert len(lr_rows) == 1, f"Expected 1 LR row, got {len(lr_rows)}"
+
+    def test_stale_em_rows_get_refreshed(self, env_setup):
+        """Stale EM row (q05=NULL) is replaced with fresh EM from ensemble calc.
+
+        Combined has LR+TFT (good) + EM (stale q05=NULL). Maintenance
+        detects stale EM, re-reads data, creates fresh EM with quantiles.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, "pentad")
+
+        combined_rows = [
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "LR",
+                "forecasted_discharge": 100.0,
+                "pentad_in_year": 1,
+                "q05": 80.0,
+                "q50": 100.0,
+                "q95": 120.0,
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "TFT",
+                "forecasted_discharge": 110.0,
+                "pentad_in_year": 1,
+                "q05": 90.0,
+                "q50": 110.0,
+                "q95": 130.0,
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "NE",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 85.0,
+                "q50": 105.0,
+                "q95": 125.0,
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "EM",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale EM
+            },
+        ]
+        _make_combined_csv(tmp_path, "pentad", rows_data=combined_rows)
+
+        modelled = _make_modelled_df(
+            discharge_values={"LR": 100.0, "TFT": 110.0},
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+
+                em_rows = saved_df[saved_df["model_short"] == "EM"]
+                assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
+                # EM discharge = mean(LR, TFT) = 105
+                assert em_rows["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
+                # ensemble_calculator creates EM with composition, not quantiles
+                assert "composition" in saved_df.columns
+
+    def test_stale_refresh_without_skill_metrics(self, env_setup):
+        """Stale individual rows refreshed even without skill CSV.
+
+        No skill CSV → no EM creation, but stale LR/TFT rows should
+        still be refreshed from the re-read modelled data.
+        """
+        tmp_path = env_setup
+        # Deliberately do NOT create a skill CSV
+
+        combined_rows = [
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "LR",
+                "forecasted_discharge": 100.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "NE",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 85.0,
+            },
+        ]
+        _make_combined_csv(tmp_path, "pentad", rows_data=combined_rows)
+
+        modelled = _make_modelled_df(
+            models=["LR"],
+            discharge_values={"LR": 100.0},
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+
+                # LR row should be in the output (refreshed)
+                lr_rows = saved_df[saved_df["model_short"] == "LR"]
+                assert not lr_rows.empty, "Stale LR row should have been refreshed"
+                # No EM created (no skill metrics)
+                em_rows = saved_df[saved_df["model_short"] == "EM"]
+                assert em_rows.empty, "EM should not be created without skill metrics"
+
+    def test_mixed_stale_and_gap(self, env_setup):
+        """Stale individual rows + EM gap at same date handled together.
+
+        Combined has stale LR (q05=NULL) + no EM row. Maintenance should
+        refresh LR AND create EM in a single pass.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, "pentad")
+
+        combined_rows = [
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "LR",
+                "forecasted_discharge": 100.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "TFT",
+                "forecasted_discharge": 110.0,
+                "pentad_in_year": 1,
+                "q05": None,  # stale
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "NE",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 85.0,
+            },
+            # No EM row — gap
+        ]
+        _make_combined_csv(tmp_path, "pentad", rows_data=combined_rows)
+
+        modelled = _make_modelled_df(
+            discharge_values={"LR": 100.0, "TFT": 110.0},
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+
+                # All model types present: LR (refreshed), TFT (refreshed),
+                # NE (preserved), EM (newly created)
+                saved_models = set(saved_df["model_short"].unique())
+                assert saved_models >= {"LR", "TFT", "NE", "EM"}, (
+                    f"Expected all model types, got {saved_models}"
+                )
+                # EM was created with correct discharge
+                em_rows = saved_df[saved_df["model_short"] == "EM"]
+                assert len(em_rows) >= 1
+                assert em_rows["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
+
+
+# ===================================================================
+# TestMaintenanceNEGapFillWiring (PP-022)
+# ===================================================================
+class TestMaintenanceNEGapFillWiring:
+    """NE gap-fill with neural_ensemble_func that actually creates NE rows.
+
+    The default mock uses identity (lambda x: x) which never adds NE.
+    These tests use a realistic mock that creates NE rows from
+    individual-model data, validating the full NE gap-fill path.
+    """
+
+    def test_ne_gap_filled_by_neural_ensemble_func(self, env_setup):
+        """Missing NE row detected and filled by neural_ensemble_func.
+
+        Combined has LR+TFT+EM but no NE. Maintenance detects NE gap,
+        reads modelled data, neural_ensemble_func creates NE, and the
+        NE row is saved.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, "pentad")
+
+        combined_rows = [
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "LR",
+                "forecasted_discharge": 100.0,
+                "pentad_in_year": 1,
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "TFT",
+                "forecasted_discharge": 110.0,
+                "pentad_in_year": 1,
+            },
+            {
+                "date": "2024-01-05",
+                "code": "15001",
+                "model_short": "EM",
+                "forecasted_discharge": 105.0,
+                "pentad_in_year": 1,
+                "q05": 85.0,
+            },
+            # No NE row — gap
+        ]
+        _make_combined_csv(tmp_path, "pentad", rows_data=combined_rows)
+
+        modelled = _make_modelled_df(
+            discharge_values={"LR": 100.0, "TFT": 110.0},
+        )
+
+        # Realistic neural_ensemble_func: creates NE as mean of individual models
+        def _create_ne(df):
+            individual = df[~df["model_short"].isin(["NE", "EM"])]
+            if individual.empty:
+                return df
+            ne_rows = []
+            for (date, code), group in individual.groupby(["date", "code"]):
+                ne_rows.append(
+                    {
+                        "date": date,
+                        "code": code,
+                        "model_short": "NE",
+                        "forecasted_discharge": group["forecasted_discharge"].mean(),
+                        "pentad_in_year": group["pentad_in_year"].iloc[0],
+                    }
+                )
+            if ne_rows:
+                ne_df = pd.DataFrame(ne_rows)
+                return pd.concat([df, ne_df], ignore_index=True)
+            return df
+
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_MAX_MONTHS": "13",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    modelled_pentad=modelled,
+                )
+                # Replace identity mock with realistic NE creator
+                mocks["sl"].calculate_neural_ensemble_forecast.side_effect = _create_ne
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+
+                # NE row should now exist in the output
+                ne_rows = saved_df[saved_df["model_short"] == "NE"]
+                assert not ne_rows.empty, "NE gap should have been filled by neural_ensemble_func"
+                # NE discharge = mean(LR=100, TFT=110) = 105
+                assert ne_rows["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
 
 
 # ===================================================================

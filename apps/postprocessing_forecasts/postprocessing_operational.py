@@ -90,7 +90,11 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
 
     with timer(timing_stats_, f"reading {config.name} data"):
         logger.info(f"\n\n------ Reading {config.name} observed and modelled data -------")
-        _, modelled = data_reader.read_observed_and_modelled_data(config.name)
+        _, modelled = data_reader.read_observed_and_modelled_data(
+            config.name,
+            start_year=today.year,
+            end_year=today.year,
+        )
         modelled = sl.calculate_virtual_stations_data(modelled)
         modelled = config.neural_ensemble_func(modelled)
 

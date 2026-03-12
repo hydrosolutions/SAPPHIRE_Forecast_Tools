@@ -1723,14 +1723,19 @@ def calculate_skill_metrics(
         # Perform the aggregations and keep only the unique combinations
         # Group by period + date + code so forecasts from different periods
         # are never averaged together.
+        em_agg_dict = {
+            "forecasted_discharge": "mean",
+            "model_short": composition_agg,
+        }
+        # Propagate quantiles into EM rows (vincentization)
+        _SHORT_TERM_Q_COLS = ["q05", "q25", "q75", "q95"]
+        for qcol in _SHORT_TERM_Q_COLS:
+            if qcol in skill_metrics_df_ensemble.columns:
+                em_agg_dict[qcol] = "mean"
+
         skill_metrics_df_ensemble_avg = (
             skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
-            .agg(
-                {
-                    "forecasted_discharge": "mean",
-                    "model_short": composition_agg,
-                }
-            )
+            .agg(em_agg_dict)
             .reset_index()
         )
         # model_short now holds the composition string
@@ -1791,6 +1796,10 @@ def calculate_skill_metrics(
                 "model_short",
                 "composition",
             ]
+            # Carry quantile columns through into EM rows
+            for qcol in _SHORT_TERM_Q_COLS:
+                if qcol in ensemble_skill_metrics_df.columns:
+                    join_cols.append(qcol)
             joint_forecasts = pd.merge(
                 simulated, ensemble_skill_metrics_df[join_cols], on=join_cols, how="outer"
             )

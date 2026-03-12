@@ -82,15 +82,17 @@ Operational (daily, boundary days)     Maintenance (nightly)
 
 **When:** Every night.
 
-**Steps:**
-1. Read existing combined forecasts from API
-2. Detect (date, code) pairs missing EM rows within lookback window
-3. Read data + skill metrics for gap dates
-4. Create ensembles for gap dates only
-5. Merge new rows with existing data, deduplicate
-6. Write to API (upsert) + CSV (deprecated backup)
+**Steps (PP-021 efficient flow):**
+1. Read existing combined forecasts from API (cheap)
+2. Detect (date, code) pairs missing EM rows within lookback window (cheap, in-memory)
+3. Detect records with NULL quantiles (stale individual-model/NE rows and stale EM rows)
+4. **Early exit if no gaps and no stale records** — completes in <30 seconds
+5. Read individual-model forecasts scoped to affected dates only (not full history)
+6. Create NE + EM rows with quantiles for affected dates
+7. Merge new rows with existing data, deduplicate
+8. Write to API (upsert) + CSV (deprecated backup)
 
-**Runtime:** Minutes.
+**Runtime:** Seconds (no-gap nights) to minutes (gap/stale-record nights).
 
 ### 3. Recalculation
 
@@ -160,7 +162,7 @@ postprocessing_forecasts/
 |   |-- data_reader.py         Read skill metrics, forecasts, observations (API primary, CSV fallback)
 |   |-- ensemble_calculator.py Create ensemble forecasts (EM, Skilled Mean, Naive Mean)
 |   |-- file_writer.py         Write forecasts + metrics to CSV (deprecated)
-|   |-- gap_detector.py        Detect missing ensemble rows for maintenance
+|   |-- gap_detector.py        Detect missing/stale ensemble rows for maintenance
 |   |-- skill_metrics.py       Calculate all skill metrics (METRIC_REGISTRY)
 |   |-- write_diagnostics.py   Diagnostic/summary logging
 |   +-- postprocessing_tools.py Timing, logging, utilities

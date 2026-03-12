@@ -661,7 +661,7 @@ def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None):
 
 
 def save_quarterly_forecast_data(simulated: pd.DataFrame):
-    """Save quarterly combined forecasts (ensemble rows) to API.
+    """Save quarterly forecasts (individual models and ensembles) to API.
 
     API-only — no CSV output for quarterly forecasts.
 
@@ -683,18 +683,17 @@ def save_quarterly_forecast_data(simulated: pd.DataFrame):
 
     ret = api_writer._write_quarterly_ensemble_to_api(simulated)
     if ret:
-        logger.info("Quarterly ensemble forecasts written to API successfully.")
+        logger.info("Quarterly forecasts written to API successfully.")
     else:
         logger.warning(
-            "Quarterly ensemble forecasts API write returned False "
-            "(disabled, unavailable, or failed)."
+            "Quarterly forecasts API write returned False (disabled, unavailable, or failed)."
         )
 
     return None
 
 
 def save_seasonal_forecast_data(simulated: pd.DataFrame):
-    """Save seasonal combined forecasts (ensemble rows) to API.
+    """Save seasonal forecasts (individual models and ensembles) to API.
 
     API-only — no CSV output for seasonal forecasts.
 
@@ -716,11 +715,10 @@ def save_seasonal_forecast_data(simulated: pd.DataFrame):
 
     ret = api_writer._write_seasonal_ensemble_to_api(simulated)
     if ret:
-        logger.info("Seasonal ensemble forecasts written to API successfully.")
+        logger.info("Seasonal forecasts written to API successfully.")
     else:
         logger.warning(
-            "Seasonal ensemble forecasts API write returned False "
-            "(disabled, unavailable, or failed)."
+            "Seasonal forecasts API write returned False (disabled, unavailable, or failed)."
         )
 
     return None

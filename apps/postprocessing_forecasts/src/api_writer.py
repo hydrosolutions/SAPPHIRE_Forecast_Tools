@@ -294,6 +294,18 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             if qcol in df_rec.columns:
                 records_df[qcol] = df_rec[qcol]
 
+        # Drop rows where forecasted_discharge is NaN — writing null
+        # discharge creates phantom rows that mask real gaps.
+        n_before_null_filter = len(records_df)
+        records_df = records_df.dropna(subset=["forecasted_discharge"])
+        n_nulls = n_before_null_filter - len(records_df)
+        if n_nulls > 0:
+            logger.warning(
+                "Dropped %d null-discharge forecast records before API write (%s)",
+                n_nulls,
+                horizon_type,
+            )
+
         # Deduplicate on the unique constraint columns to prevent
         # CardinalityViolation ("cannot affect row a second time").
         unique_cols = ["horizon_type", "code", "model_type", "date", "target"]
@@ -805,7 +817,9 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
 
 
 def _write_quarterly_ensemble_to_api(data: pd.DataFrame) -> bool:
-    """Write quarterly ensemble forecasts to the SAPPHIRE long_forecasts table.
+    """Write quarterly forecasts to the SAPPHIRE long_forecasts table.
+
+    Writes both individual model aggregates and ensemble rows.
 
     Args:
         data: DataFrame with quarterly joint forecasts. Expects columns:
@@ -815,7 +829,7 @@ def _write_quarterly_ensemble_to_api(data: pd.DataFrame) -> bool:
     Returns:
         True if successful, False otherwise (never raises).
     """
-    return _write_aggregated_ensemble_to_api(
+    return _write_aggregated_forecasts_to_api(
         data,
         horizon_type="quarter",
         period_col="quarter_in_year",
@@ -824,7 +838,9 @@ def _write_quarterly_ensemble_to_api(data: pd.DataFrame) -> bool:
 
 
 def _write_seasonal_ensemble_to_api(data: pd.DataFrame) -> bool:
-    """Write seasonal ensemble forecasts to the SAPPHIRE long_forecasts table.
+    """Write seasonal forecasts to the SAPPHIRE long_forecasts table.
+
+    Writes both individual model aggregates and ensemble rows.
 
     Args:
         data: DataFrame with seasonal joint forecasts. Expects columns:
@@ -835,7 +851,7 @@ def _write_seasonal_ensemble_to_api(data: pd.DataFrame) -> bool:
     Returns:
         True if successful, False otherwise (never raises).
     """
-    return _write_aggregated_ensemble_to_api(
+    return _write_aggregated_forecasts_to_api(
         data,
         horizon_type="season",
         period_col="season_in_year",
@@ -843,29 +859,27 @@ def _write_seasonal_ensemble_to_api(data: pd.DataFrame) -> bool:
     )
 
 
-def _write_aggregated_ensemble_to_api(
+def _write_aggregated_forecasts_to_api(
     data: pd.DataFrame,
     horizon_type: str,
     period_col: str,
     label: str,
 ) -> bool:
-    """Shared implementation for writing quarterly/seasonal ensembles.
+    """Shared implementation for writing quarterly/seasonal forecasts.
 
-    Mirrors _write_monthly_ensemble_to_api() with parameterized columns.
+    Writes all model rows (individual models and ensembles) to the API.
     """
     import calendar
 
     from src.aggregation import QUARTER_MONTHS, get_season_months
 
-    ensemble_models = {"EM", "Naive Mean", "Skilled Mean"}
-
     if data is None or data.empty:
-        logger.info("No %s ensemble data to write to API", label)
+        logger.info("No %s forecast data to write to API", label)
         return False
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning(
-            "sapphire-api-client not installed, skipping %s ensemble API write",
+            "sapphire-api-client not installed, skipping %s API write",
             label,
         )
         return False
@@ -882,21 +896,14 @@ def _write_aggregated_ensemble_to_api(
 
         if not client.readiness_check():
             logger.warning(
-                "SAPPHIRE API at %s is not ready, skipping %s ensemble write",
+                "SAPPHIRE API at %s is not ready, skipping %s write",
                 api_url,
                 label,
             )
             return False
 
-        # Filter to ensemble rows only
-        ens_mask = data["model_short"].isin(ensemble_models)
-        ens_data = data[ens_mask].copy()
-        if ens_data.empty:
-            logger.info("No ensemble rows in %s forecast data", label)
-            return False
-
         records = []
-        for _, row in ens_data.iterrows():
+        for _, row in data.iterrows():
             code = str(row["code"]).replace(".0", "")
 
             # Map model_short to API model_type
@@ -963,22 +970,22 @@ def _write_aggregated_ensemble_to_api(
             records.append(record)
 
         if not records:
-            logger.info("No %s ensemble records to write to API", label)
+            logger.info("No %s forecast records to write to API", label)
             return False
 
-        logger.debug("Sample %s ensemble record: %s", label, records[0])
+        logger.debug("Sample %s forecast record: %s", label, records[0])
         count = client.write_long_forecasts(records)
         logger.info(
-            "Successfully wrote %d %s ensemble forecast records to SAPPHIRE API",
+            "Successfully wrote %d %s forecast records to SAPPHIRE API",
             count,
             label,
         )
-        print(f"SAPPHIRE API: Successfully wrote {count} {label} ensemble forecast records")
+        print(f"SAPPHIRE API: Successfully wrote {count} {label} forecast records")
         return True
 
     except Exception as e:
         logger.error(
-            "Failed to write %s ensemble forecasts to API: %s",
+            "Failed to write %s forecasts to API: %s",
             label,
             str(e),
         )

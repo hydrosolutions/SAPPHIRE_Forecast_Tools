@@ -161,6 +161,25 @@ def _setup_modules_with_real_io():
     data_reader._original_read_observed_and_modelled_data = _original_read
     data_reader.read_observed_and_modelled_data = _delegating_read
 
+    # PP-021: maintenance now calls read_individual_model_forecasts_for_dates.
+    # Delegate to the same sl reader and return only the modelled portion,
+    # filtered to the requested dates.
+    def _delegating_read_for_dates(horizon_type, dates, codes=None):
+        if horizon_type == "pentad":
+            _, modelled = real_sl.read_observed_and_modelled_data_pentade()
+        else:
+            _, modelled = real_sl.read_observed_and_modelled_data_decade()
+        if not modelled.empty and dates:
+            dates_ts = pd.to_datetime(list(dates))
+            if "date" in modelled.columns:
+                if not pd.api.types.is_datetime64_any_dtype(modelled["date"]):
+                    modelled = modelled.copy()
+                    modelled["date"] = pd.to_datetime(modelled["date"])
+                modelled = modelled[modelled["date"].isin(dates_ts)].copy()
+        return modelled, pd.DataFrame()
+
+    data_reader.read_individual_model_forecasts_for_dates = _delegating_read_for_dates
+
     # Inject into sys.modules so entry-point imports find them
     sys.modules["setup_library"] = real_sl
     sys.modules["tag_library"] = real_tl

@@ -101,6 +101,11 @@ def detect_missing_ensembles(
     if all_pairs.empty:
         return empty
 
+    # Treat null-discharge rows as missing — they are phantom records
+    # that should not count as valid forecasts.
+    if not recent_combined.empty and "forecasted_discharge" in recent_combined.columns:
+        recent_combined = recent_combined[recent_combined["forecasted_discharge"].notna()]
+
     # Check each ensemble model against combined (ensembles live there)
     missing_parts = []
     for model in sorted(ensemble_models):
@@ -159,6 +164,66 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
     from src import data_reader
 
     return data_reader.read_combined_forecasts(horizon_type)
+
+
+def detect_stale_quantiles(
+    combined_forecasts: pd.DataFrame,
+    max_lookback_months: int = 13,
+    horizon_type: str = "pentad",
+    quantile_col: str = "q05",
+) -> pd.DataFrame:
+    """Find (date, code, model_short) with a record but NULL quantiles.
+
+    These are PENTAD/DECADE rows written before quantile propagation was
+    implemented. They have ``forecasted_discharge`` but no uncertainty
+    bounds, so they need to be refreshed from the individual model data.
+
+    Excludes ENSEMBLE_MEAN (``model_short == 'EM'``) — those require skill
+    metrics and are handled separately in ``_fill_gaps_for_horizon``.
+
+    Args:
+        combined_forecasts: DataFrame with [date, code, model_short,
+            forecasted_discharge, q05, ...].
+        max_lookback_months: Months to scan back from most recent date.
+        horizon_type: 'pentad' or 'decad' (for logging).
+        quantile_col: Column to check for NULL (default 'q05').
+
+    Returns:
+        DataFrame with [date, code, model_short]. Empty if none found.
+    """
+    empty = pd.DataFrame(columns=["date", "code", "model_short"])
+
+    if combined_forecasts.empty:
+        return empty
+
+    if quantile_col not in combined_forecasts.columns:
+        # No quantile column present at all — nothing to check
+        return empty
+
+    df = combined_forecasts.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+        df["date"] = pd.to_datetime(df["date"])
+
+    max_date = df["date"].max()
+    cutoff = max_date - pd.DateOffset(months=max_lookback_months)
+    recent = df[df["date"] >= cutoff]
+
+    if recent.empty:
+        return empty
+
+    # Stale = has forecasted_discharge but no quantiles, and not EM
+    stale = recent[
+        recent["forecasted_discharge"].notna()
+        & recent[quantile_col].isna()
+        & (recent["model_short"] != "EM")
+    ][["date", "code", "model_short"]].drop_duplicates()
+
+    logger.info(
+        "Stale quantile detection (%s): %d records within lookback window",
+        horizon_type,
+        len(stale),
+    )
+    return stale.reset_index(drop=True)
 
 
 def detect_missing_monthly_ensembles(

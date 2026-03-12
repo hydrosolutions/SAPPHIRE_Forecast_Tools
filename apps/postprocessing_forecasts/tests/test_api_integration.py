@@ -344,17 +344,16 @@ class TestWriteCombinedForecastToApi:
         mock_client.write_forecasts.assert_not_called()
 
     @patch("src.api_writer.SapphirePostprocessingClient")
-    def test_nan_optional_values_converted_to_none(self, mock_client_class):
-        """Test that NaN optional values (forecasted_discharge) are converted to None."""
+    def test_nan_discharge_rows_are_dropped(self, mock_client_class):
+        """Test that rows with NaN forecasted_discharge are dropped, not written."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.write_forecasts.return_value = 1
         mock_client_class.return_value = mock_client
 
-        # Valid required fields, but NaN optional field
+        # All rows have NaN discharge — nothing should be written
         data = pd.DataFrame(
             {
                 "code": [12345],
@@ -366,16 +365,9 @@ class TestWriteCombinedForecastToApi:
             }
         )
 
-        _write_combined_forecast_to_api(data, "pentad")
-
-        call_args = mock_client.write_forecasts.call_args[0][0]
-        record = call_args[0]
-
-        # Optional field NaN should be converted to None
-        assert record["forecasted_discharge"] is None
-        # Required fields should have values
-        assert record["horizon_value"] == 2
-        assert record["horizon_in_year"] == 2
+        result = _write_combined_forecast_to_api(data, "pentad")
+        assert result is False
+        mock_client.write_forecasts.assert_not_called()
 
     @patch("src.api_writer.SapphirePostprocessingClient")
     def test_empty_data_returns_false(self, mock_client_class):

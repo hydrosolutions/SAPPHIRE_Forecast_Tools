@@ -161,7 +161,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pytz", specifier = ">=2024.1" },
-    { name = "sapphire-api-client", git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a457728fae1a270ae7b6932227c3bdb90a635900" },
+    { name = "sapphire-api-client", git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a196e1728f2447ec416c77cd54c9d6899a86d9e6" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
 ]
 provides-extras = ["dev"]
@@ -384,7 +384,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pytz", specifier = ">=2024.1" },
     { name = "requests", specifier = ">=2.32.0" },
-    { name = "sapphire-api-client", git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a457728fae1a270ae7b6932227c3bdb90a635900" },
+    { name = "sapphire-api-client", git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a196e1728f2447ec416c77cd54c9d6899a86d9e6" },
     { name = "scipy", specifier = ">=1.11.0" },
 ]
 provides-extras = ["dev"]
@@ -462,7 +462,7 @@ wheels = [
 [[package]]
 name = "sapphire-api-client"
 version = "0.1.0"
-source = { git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a457728fae1a270ae7b6932227c3bdb90a635900#a457728fae1a270ae7b6932227c3bdb90a635900" }
+source = { git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a196e1728f2447ec416c77cd54c9d6899a86d9e6#a196e1728f2447ec416c77cd54c9d6899a86d9e6" }
 dependencies = [
     { name = "pandas" },
     { name = "requests" },

@@ -751,6 +751,7 @@ def _read_daily_runoff_api(
                     break
                 skip += batch_size
 
+        all_records = [df.dropna(axis=1, how="all") for df in all_records if not df.empty]
         if not all_records:
             return pd.DataFrame()
 
@@ -908,6 +909,7 @@ def _read_long_forecasts_api(
                     break
                 skip += batch_size
 
+        all_records = [df.dropna(axis=1, how="all") for df in all_records if not df.empty]
         if not all_records:
             return pd.DataFrame()
 
@@ -1080,6 +1082,7 @@ def _read_monthly_combined_forecasts_api() -> pd.DataFrame | None:
                 break
             skip += batch_size
 
+        all_records = [df.dropna(axis=1, how="all") for df in all_records if not df.empty]
         if not all_records:
             return None
 
@@ -1649,6 +1652,40 @@ def _normalize_ml_forecasts(
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
 
+    # Filter daily targets to the forecast period boundary.
+    # The forecast date is the last day of the previous period;
+    # date+1 is the first day of the target period.
+    if TAG_LIBRARY_AVAILABLE and "target" in df.columns and "date" in df.columns:
+        df["target"] = pd.to_datetime(df["target"])
+
+        if horizon_type == "pentad":
+            period_func = tl.get_pentad_in_year
+        else:
+            period_func = tl.get_decad_in_year
+
+        expected_period = (df["date"] + pd.Timedelta(days=1)).apply(period_func)
+        target_period = df["target"].apply(period_func)
+
+        in_period = target_period == expected_period
+        n_dropped = (~in_period).sum()
+        if n_dropped > 0:
+            logger.info(
+                "Filtered %d/%d daily targets outside %s boundary for %s",
+                n_dropped,
+                len(df),
+                horizon_type,
+                model,
+            )
+        df = df[in_period].copy()
+
+        if df.empty:
+            logger.warning(
+                "No %s targets within period for model %s after filtering",
+                horizon_type,
+                model,
+            )
+            return pd.DataFrame()
+
     # Aggregate daily targets -> pentad/decad level
     numeric_cols = [
         "q05",
@@ -1892,6 +1929,64 @@ def read_individual_model_forecasts(
     else:
         forecasts = pd.DataFrame()
 
+    return forecasts, stats
+
+
+def read_individual_model_forecasts_for_dates(
+    horizon_type: str,
+    dates: list,
+    codes: list[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read LR + ML forecasts scoped to a specific set of dates.
+
+    More efficient than ``read_individual_model_forecasts()`` when only a
+    small number of gap or stale dates need to be filled. Calls the full
+    reader with year bounds derived from ``dates``, then filters in-memory
+    to exact dates.
+
+    Args:
+        horizon_type: 'pentad' or 'decad'.
+        dates: Boundary dates to fetch data for (Timestamp, date, or str).
+        codes: Station codes to filter. None reads all.
+
+    Returns:
+        Same tuple as ``read_individual_model_forecasts()``:
+        (forecasts_df, stats_df).
+
+    Raises:
+        ValueError: If horizon_type is invalid.
+    """
+    empty_stats = pd.DataFrame(columns=["date", "code", "q_mean", "q_std_sigma", "delta"])
+    if not dates:
+        return pd.DataFrame(), empty_stats
+
+    dates_ts = pd.to_datetime(list(dates))
+    min_year = int(dates_ts.year.min())
+    max_year = int(dates_ts.year.max())
+
+    forecasts, stats = read_individual_model_forecasts(
+        horizon_type,
+        codes=codes,
+        start_year=min_year,
+        end_year=max_year,
+    )
+
+    if forecasts.empty:
+        return forecasts, stats
+
+    if not pd.api.types.is_datetime64_any_dtype(forecasts["date"]):
+        forecasts = forecasts.copy()
+        forecasts["date"] = pd.to_datetime(forecasts["date"])
+
+    date_set = set(dates_ts)
+    forecasts = forecasts[forecasts["date"].isin(date_set)].copy()
+
+    logger.info(
+        "read_individual_model_forecasts_for_dates (%s): %d dates requested, %d rows returned",
+        horizon_type,
+        len(date_set),
+        len(forecasts),
+    )
     return forecasts, stats
 
 
