@@ -4,23 +4,24 @@ import logging
 logging.getLogger("graphviz").setLevel(logging.WARNING)
 
 
+import calendar
 import os
+from typing import Any
+
 import pandas as pd
 import requests
-from typing import List, Dict, Any
-import calendar
-
-# Import forecast models
-from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
-from lt_forecasting.forecast_models.SciRegressor import SciRegressor
+from __init__ import SAPPHIRE_API_AVAILABLE, get_today, logger
+from config_forecast import ForecastConfig
 from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger, SAPPHIRE_API_AVAILABLE, get_today
-from config_forecast import ForecastConfig
+# Import forecast models
+from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
+from lt_forecasting.forecast_models.SciRegressor import SciRegressor
+
 try:
-    from sapphire_api_client import SapphirePostprocessingClient, SapphireAPIError
+    from sapphire_api_client import SapphireAPIError, SapphirePostprocessingClient
 except ImportError:
     SapphirePostprocessingClient = None
     SapphireAPIError = Exception
@@ -31,15 +32,14 @@ logger_lt = logging.getLogger("lt_forecasting")
 logger_lt.setLevel(logging.DEBUG)
 
 
-
 def create_model_instance(
     model_type: str,
     model_name: str,
-    configs: Dict[str, Any],
+    configs: dict[str, Any],
     data: pd.DataFrame,
     static_data: pd.DataFrame,
     base_predictors: pd.DataFrame = None,
-    base_model_names: List[str] = None,
+    base_model_names: list[str] = None,
 ):
     """
     Create the appropriate model instance based on the model type.
@@ -122,16 +122,17 @@ def infer_q_columns(df: pd.DataFrame) -> list:
     q_columns = []
     for col in df.columns:
         # Match Q followed by digit (Q5, Q10, etc.) or Q_ prefix (Q_MC_ALD, Q_loc, etc.)
-        if col.startswith('Q') and (len(col) > 1 and (col[1].isdigit() or col[1] == '_')):
-            if col not in ("Q_obs",):
-                q_columns.append(col)
+        if (
+            col.startswith("Q")
+            and (len(col) > 1 and (col[1].isdigit() or col[1] == "_"))
+            and col not in ("Q_obs",)
+        ):
+            q_columns.append(col)
     return q_columns
 
 
 def nearest_scheduled_issue_date(
-    today: pd.Timestamp,
-    issue_day: int,
-    possible_forecast_months: List[int]
+    today: pd.Timestamp, issue_day: int, possible_forecast_months: list[int]
 ) -> pd.Timestamp:
     """Find the closest scheduled issue date in a valid forecast month.
 
@@ -172,29 +173,35 @@ def nearest_scheduled_issue_date(
 
     return min(candidates, key=lambda d: abs((today - d).days))
 
-def check_valid_forecast_issue_date(forecast_configs: ForecastConfig, model_name: str):
 
+def check_valid_forecast_issue_date(forecast_configs: ForecastConfig, model_name: str):
     # get the actual date - now - not the one in the init
-    now_date = pd.Timestamp.now()   
+    now_date = pd.Timestamp.now()
     now_date = now_date.normalize()  # only keep date part
     today = get_today()
 
     # Simple constraint: today can't be after now - we can not issue forecasts for a date in the future
-    assert today <= now_date, f"Forecast can not be issued for a future date. Forecast Issue Date: {today}, Now Date: {now_date}"
-    
+    assert today <= now_date, (
+        f"Forecast can not be issued for a future date. Forecast Issue Date: {today}, Now Date: {now_date}"
+    )
+
     # Compare when the forecast is issued and when it should be issued
     forecast_issue_day = forecast_configs.get_operational_issue_day()
     possible_forecast_months = forecast_configs.get_forecast_months(model_name=model_name)
-    scheduled_issue_date = nearest_scheduled_issue_date(today, forecast_issue_day, possible_forecast_months)
+    scheduled_issue_date = nearest_scheduled_issue_date(
+        today, forecast_issue_day, possible_forecast_months
+    )
     day_offset = (today - scheduled_issue_date).days  # negative = early, positive = late
 
-    # If more than 5 days off, don't run
+    # If more than 5 days off, skip gracefully (not an error)
     if abs(day_offset) > 5:
-        raise ValueError(
-            f"Forecast for model {model_name} is {abs(day_offset)} days away from the "
-            f"scheduled issue date ({scheduled_issue_date.date()}). This could can lead to wrong results or model performance which doesn't match historical one."
-            f" Refusing to run."
+        logger.info(
+            "Model %s not scheduled: %d days from issue date %s — skipping",
+            model_name,
+            abs(day_offset),
+            scheduled_issue_date.date(),
         )
+        return None
 
     # If late, snap back to the scheduled issue date
     if day_offset > 0:
@@ -214,6 +221,7 @@ def check_valid_forecast_issue_date(forecast_configs: ForecastConfig, model_name
             f"off-schedule runs may lead to degradation in forecast quality."
         )
     return today
+
 
 # ─────────────────────────────────────────────────────────────────
 # DATABASE WRITING FUNCTIONS FOR LONG-TERM FORECASTS
@@ -259,11 +267,8 @@ def map_model_name_to_model_type(model_name: str) -> str:
 
 
 def prepare_long_forecast_records(
-    forecast_df: pd.DataFrame,
-    model_name: str,
-    horizon_type: str = "month",
-    horizon_value: int = 1
-) -> List[Dict[str, Any]]:
+    forecast_df: pd.DataFrame, model_name: str, horizon_type: str = "month", horizon_value: int = 1
+) -> list[dict[str, Any]]:
     """
     Convert DataFrame to list of LongForecastCreate-compatible dictionaries.
 
@@ -322,9 +327,9 @@ def prepare_long_forecast_records(
 
     for _, row in forecast_df.iterrows():
         # Parse dates
-        date = pd.to_datetime(row['date'])
-        valid_from = pd.to_datetime(row['valid_from'])
-        valid_to = pd.to_datetime(row['valid_to'])
+        date = pd.to_datetime(row["date"])
+        valid_from = pd.to_datetime(row["valid_from"])
+        valid_to = pd.to_datetime(row["valid_to"])
 
         # Skip rows with NaT (missing) dates
         if pd.isna(date) or pd.isna(valid_from) or pd.isna(valid_to):
@@ -338,23 +343,23 @@ def prepare_long_forecast_records(
         record = {
             "horizon_type": horizon_type,
             "horizon_value": horizon_value,
-            "code": str(int(row['code'])),
-            "date": date.strftime('%Y-%m-%d'),
+            "code": str(int(row["code"])),
+            "date": date.strftime("%Y-%m-%d"),
             "model_type": model_type,
-            "valid_from": valid_from.strftime('%Y-%m-%d'),
-            "valid_to": valid_to.strftime('%Y-%m-%d'),
-            "flag": int(row['flag']) if pd.notna(row.get('flag')) else None,
+            "valid_from": valid_from.strftime("%Y-%m-%d"),
+            "valid_to": valid_to.strftime("%Y-%m-%d"),
+            "flag": int(row["flag"]) if pd.notna(row.get("flag")) else None,
         }
 
         # Main model output: Q_{model_name} -> q
         if q_model_col in row.index and pd.notna(row.get(q_model_col)):
             record["q"] = float(row[q_model_col])
         # Fallback to Q50 for uncertainty models
-        elif 'Q50' in row.index and pd.notna(row.get('Q50')):
-            record["q"] = float(row['Q50'])
+        elif "Q50" in row.index and pd.notna(row.get("Q50")):
+            record["q"] = float(row["Q50"])
         # Fallback to Q_loc
-        elif 'Q_loc' in row.index and pd.notna(row.get('Q_loc')):
-            record["q"] = float(row['Q_loc'])
+        elif "Q_loc" in row.index and pd.notna(row.get("Q_loc")):
+            record["q"] = float(row["Q_loc"])
 
         # Map static quantile columns (Q5, Q10, ..., Q95, Q_loc)
         for df_col, api_col in static_column_mapping.items():
@@ -373,10 +378,7 @@ def prepare_long_forecast_records(
 
 
 def save_forecast_to_db(
-    forecast_df: pd.DataFrame,
-    model_name: str,
-    horizon_type: str = "month",
-    horizon_value: int = 1
+    forecast_df: pd.DataFrame, model_name: str, horizon_type: str = "month", horizon_value: int = 1
 ) -> bool:
     """
     Write long-term forecast to database via SAPPHIRE API.
@@ -416,7 +418,7 @@ def save_forecast_to_db(
             forecast_df=forecast_df,
             model_name=model_name,
             horizon_type=horizon_type,
-            horizon_value=horizon_value
+            horizon_value=horizon_value,
         )
 
         if not records:
@@ -424,7 +426,7 @@ def save_forecast_to_db(
             return True
 
         # Write to API using the client's write_long_forecasts method if available
-        if hasattr(client, 'write_long_forecasts'):
+        if hasattr(client, "write_long_forecasts"):
             count = client.write_long_forecasts(records)
             logger.info(
                 f"Successfully wrote {count} long-term forecast records to DB "
@@ -433,9 +435,7 @@ def save_forecast_to_db(
         else:
             # Fallback: Direct API call if method not available in client
             response = requests.post(
-                f"{api_url}/api/postprocessing/long-forecast/",
-                json={"data": records},
-                timeout=60
+                f"{api_url}/api/postprocessing/long-forecast/", json={"data": records}, timeout=60
             )
             response.raise_for_status()
             count = len(response.json())
@@ -458,10 +458,7 @@ def save_forecast_to_db(
 
 
 def save_forecast_to_csv(
-    forecast_df: pd.DataFrame,
-    output_path: str,
-    model_name: str,
-    is_hindcast: bool = False
+    forecast_df: pd.DataFrame, output_path: str, model_name: str, is_hindcast: bool = False
 ) -> bool:
     """
     Write long-term forecast to CSV file.
@@ -492,8 +489,8 @@ def save_forecast_to_csv(
 
         # Format date columns for CSV
         df_to_save = forecast_df.copy()
-        if 'date' in df_to_save.columns:
-            df_to_save['date'] = pd.to_datetime(df_to_save['date']).dt.strftime('%Y-%m-%d')
+        if "date" in df_to_save.columns:
+            df_to_save["date"] = pd.to_datetime(df_to_save["date"]).dt.strftime("%Y-%m-%d")
 
         df_to_save.to_csv(output_file, index=False)
         logger.info(f"{suffix.capitalize()} for model {model_name} saved to {output_file}")
@@ -505,9 +502,7 @@ def save_forecast_to_csv(
 
 
 def append_forecast_to_hindcast(
-    forecast_df: pd.DataFrame,
-    output_path: str,
-    model_name: str
+    forecast_df: pd.DataFrame, output_path: str, model_name: str
 ) -> bool:
     """
     Append forecast to existing hindcast CSV file.
@@ -528,27 +523,23 @@ def append_forecast_to_hindcast(
 
         if os.path.exists(hindcast_file):
             df_hindcast = pd.read_csv(hindcast_file)
-            df_hindcast['date'] = pd.to_datetime(df_hindcast['date'], format='mixed')
-            df_hindcast['code'] = df_hindcast['code'].astype(int)
+            df_hindcast["date"] = pd.to_datetime(df_hindcast["date"], format="mixed")
+            df_hindcast["code"] = df_hindcast["code"].astype(int)
 
             forecast = forecast_df.copy()
-            forecast['date'] = pd.to_datetime(forecast['date'], format='mixed')
-            forecast['code'] = forecast['code'].astype(int)
+            forecast["date"] = pd.to_datetime(forecast["date"], format="mixed")
+            forecast["code"] = forecast["code"].astype(int)
 
             df_combined = pd.concat([df_hindcast, forecast], ignore_index=True)
             # Remove duplicates based on date and code, keep the last (most recent)
-            df_combined = df_combined.drop_duplicates(
-                subset=['date', 'code'], keep='last'
-            )
+            df_combined = df_combined.drop_duplicates(subset=["date", "code"], keep="last")
             # Format date to yyyy-mm-dd
-            df_combined['date'] = df_combined['date'].dt.strftime('%Y-%m-%d')
+            df_combined["date"] = df_combined["date"].dt.strftime("%Y-%m-%d")
             df_combined.to_csv(hindcast_file, index=False)
             logger.info(f"Appended forecast to hindcast file {hindcast_file}")
             return True
         else:
-            logger.warning(
-                f"Hindcast file {hindcast_file} does not exist. Cannot append forecast."
-            )
+            logger.warning(f"Hindcast file {hindcast_file} does not exist. Cannot append forecast.")
             return False
 
     except Exception as e:
@@ -562,7 +553,7 @@ def save_forecast(
     output_path: str,
     horizon_type: str = "month",
     horizon_value: int = 1,
-    is_hindcast: bool = False
+    is_hindcast: bool = False,
 ) -> bool:
     """
     Main save function - saves to BOTH DB and CSV for parallel tracking.
@@ -595,7 +586,7 @@ def save_forecast(
             forecast_df=forecast_df,
             model_name=model_name,
             horizon_type=horizon_type,
-            horizon_value=horizon_value
+            horizon_value=horizon_value,
         )
         if success_db:
             logger.info(f"DB save successful for {model_name}")
@@ -607,26 +598,21 @@ def save_forecast(
         forecast_df=forecast_df,
         output_path=output_path,
         model_name=model_name,
-        is_hindcast=is_hindcast
+        is_hindcast=is_hindcast,
     )
 
     # 3. If this is a forecast also append
     if not is_hindcast:
         append_success = append_forecast_to_hindcast(
-            forecast_df=forecast_df,
-            output_path=output_path,
-            model_name=model_name
+            forecast_df=forecast_df, output_path=output_path, model_name=model_name
         )
-        if append_success:
-            # Also write appended data to DB
-            if SAPPHIRE_API_AVAILABLE:
-                save_forecast_to_db(
-                    forecast_df=forecast_df,
-                    model_name=model_name,
-                    horizon_type=horizon_type,
-                    horizon_value=horizon_value
-                )
+        if append_success and SAPPHIRE_API_AVAILABLE:
+            save_forecast_to_db(
+                forecast_df=forecast_df,
+                model_name=model_name,
+                horizon_type=horizon_type,
+                horizon_value=horizon_value,
+            )
 
     # Return True if at least one save succeeded
     return success_db or success_csv
-

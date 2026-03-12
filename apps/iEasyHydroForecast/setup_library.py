@@ -33,6 +33,13 @@ except ImportError:
     SapphirePostprocessingClient = None
     SapphireAPIError = Exception  # Fallback for type hints
 
+try:
+    from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
+
+    IEASYHYDRO_HF_SDK_AVAILABLE = True
+except ImportError:
+    IEASYHYDRO_HF_SDK_AVAILABLE = False
+
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.WARNING)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -674,6 +681,178 @@ def _read_manual_entries_from_config() -> dict:
     return manual_entries
 
 
+def _sites_to_config_dict(fc_sites: list) -> dict:
+    """Convert Site objects to config_all JSON dict format.
+
+    Args:
+        fc_sites: List of Site objects from HF SDK.
+
+    Returns:
+        Dict mapping site_code (str) to dict of list-wrapped metadata
+        fields.
+    """
+    stations = {}
+    for site in fc_sites:
+        code_str = str(site.code)
+        stations[code_str] = {
+            "code": [int(site.code)],
+            "name_ru": [getattr(site, "name_nat", None) or getattr(site, "name", "") or ""],
+            "lat": [site.lat],
+            "long": [site.lon],
+            "basin": [getattr(site, "basin_nat", None) or getattr(site, "basin", "") or ""],
+            "region": [getattr(site, "region_nat", None) or getattr(site, "region", "") or ""],
+            "river_ru": [
+                getattr(site, "river_name_nat", None) or getattr(site, "river_name", "") or ""
+            ],
+            "punkt_ru": [
+                getattr(site, "punkt_name_nat", None) or getattr(site, "punkt_name", "") or ""
+            ],
+            "site_type": [getattr(site, "site_type", "")],
+            "id": [getattr(site, "iehhf_site_id", None)],
+            "header": [code_str],
+            "elevation": [None],
+            "organization_id": [None],
+            "country": [None],
+            "is_virtual": [getattr(site, "is_virtual", False)],
+            "data_source": ["ieh_hf"],
+        }
+    return stations
+
+
+def _write_config_all(stations_dict: dict, config_all_file: str | None = None) -> str:
+    """Write stations dict + manual entries to config_all_stations_library.json.
+
+    Reads existing manual entries, checks for collisions with SDK data,
+    merges them, backs up the existing file, and writes.
+
+    Args:
+        stations_dict: Dict mapping site_code to list-wrapped metadata.
+        config_all_file: Path to config file. Resolved from env vars
+            if None.
+
+    Returns:
+        Path to the written config file.
+    """
+    if config_all_file is None:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+
+    manual_entries = _read_manual_entries_from_config()
+
+    # Check for collisions: manual codes that now appear in SDK data
+    if manual_entries:
+        for code in list(manual_entries.keys()):
+            if code in stations_dict:
+                logger.warning(
+                    f"Site {code} exists in both SDK and manual config. "
+                    f"Preferring SDK data — remove from "
+                    f"GOOGLE_SHEETS_SITE_CODES."
+                )
+                del manual_entries[code]
+
+    json_dict = {"stations_available_for_forecast": stations_dict}
+
+    # Merge back manual site entries
+    if manual_entries:
+        json_dict["stations_available_for_forecast"].update(manual_entries)
+        logger.info(
+            f"Preserved {len(manual_entries)} manual site(s) in config: "
+            f"{list(manual_entries.keys())}"
+        )
+
+    # Back up existing config before overwriting
+    if os.path.exists(config_all_file):
+        shutil.copy2(config_all_file, config_all_file + ".bak")
+
+    # Write pretty-printed JSON
+    json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
+    with open(config_all_file, "w", encoding="utf-8") as f:
+        f.write(json_string_pretty)
+
+    logger.info(f"Wrote {len(stations_dict)} station(s) to {config_all_file}")
+    return config_all_file
+
+
+def write_config_all_stations(fc_sites: list, config_all_file: str | None = None) -> str:
+    """Write station metadata from Site objects to config_all_stations_library.json.
+
+    Converts Site objects to JSON format, preserves manual entries,
+    and writes.
+
+    Args:
+        fc_sites: List of Site objects with metadata (code, lat, lon,
+            etc.).
+        config_all_file: Path to config file. Resolved from env vars
+            if None.
+
+    Returns:
+        Path to the written config file.
+    """
+    stations_dict = _sites_to_config_dict(fc_sites)
+    return _write_config_all(stations_dict, config_all_file)
+
+
+def _try_bootstrap_from_hf_sdk(config_all_file: str) -> pd.DataFrame:
+    """Attempt to bootstrap config_all from HF SDK when config is missing.
+
+    Initializes IEasyHydroHFSDK, fetches all forecast sites, writes
+    config_all_stations_library.json, and returns the loaded DataFrame.
+
+    Args:
+        config_all_file: Path to config_all_stations_library.json.
+
+    Returns:
+        DataFrame with station metadata, or empty DataFrame if bootstrap
+        fails.
+    """
+    empty_cols = [
+        "site_code",
+        "code",
+        "name_ru",
+        "lat",
+        "long",
+        "basin",
+        "country",
+        "is_virtual",
+        "region",
+        "site_type",
+        "organization_id",
+        "elevation",
+        "river_ru",
+        "punkt_ru",
+    ]
+
+    if not IEASYHYDRO_HF_SDK_AVAILABLE:
+        logger.debug("ieasyhydro_sdk not installed — cannot bootstrap from HF SDK.")
+        return pd.DataFrame(columns=empty_cols)
+
+    try:
+        ieh_hf_sdk = IEasyHydroHFSDK()
+        has_access = check_database_access(ieh_hf_sdk)
+        if not has_access:
+            logger.info("HF SDK available but no database access — cannot bootstrap.")
+            return pd.DataFrame(columns=empty_cols)
+    except Exception as e:
+        logger.info(f"HF SDK initialization failed: {e} — cannot bootstrap.")
+        return pd.DataFrame(columns=empty_cols)
+
+    try:
+        fc_sites, _, _ = get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        if not fc_sites:
+            logger.info("HF SDK returned no forecast sites.")
+            return pd.DataFrame(columns=empty_cols)
+
+        write_config_all_stations(fc_sites, config_all_file)
+        config_all = fl.load_all_station_data_from_JSON(config_all_file)
+        logger.info(f"Bootstrapped {len(config_all)} station(s) from HF SDK into {config_all_file}")
+        return config_all
+    except Exception as e:
+        logger.warning(f"HF SDK bootstrap failed: {e}")
+        return pd.DataFrame(columns=empty_cols)
+
+
 # The functions below are required for the old iEasyHydro App.
 # For using the forecast tools with the new iEasyHydro HF App, we can read the
 # station metadata from the database directly through an API.
@@ -744,11 +923,23 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         os.getenv("ieasyforecast_config_file_all_stations"),
     )
 
-    config_all = fl.load_all_station_data_from_JSON(config_all_file)
-
-    logger.debug(
-        f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}"
-    )
+    try:
+        config_all = fl.load_all_station_data_from_JSON(config_all_file)
+        if config_all.empty:
+            raise ValueError("empty config")
+        logger.debug(
+            f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}"
+        )
+    except (FileNotFoundError, KeyError, ValueError):
+        logger.info(
+            "config_all_stations_library.json missing or empty — attempting HF SDK bootstrap."
+        )
+        config_all = _try_bootstrap_from_hf_sdk(config_all_file)
+        if config_all.empty:
+            logger.info(
+                "HF SDK bootstrap did not produce stations. "
+                "The file will be created at the end of this run."
+            )
 
     # Merge information from db_sites and config_all. Make sure that all sites
     # in config_all are present in db_sites.
@@ -812,53 +1003,31 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         )
 
     # Preserve manual site entries before overwriting
-    manual_entries = _read_manual_entries_from_config()
-
-    # Check for collisions: manual site codes that now appear in SDK data
-    if manual_entries:
-        sdk_codes = set(db_sites["site_code"].astype(str))
-        for manual_code in list(manual_entries.keys()):
-            if manual_code in sdk_codes:
-                logger.warning(
-                    f"Site {manual_code} exists in both SDK and manual config. "
-                    f"Preferring SDK data — remove from GOOGLE_SHEETS_SITE_CODES."
-                )
-                del manual_entries[manual_code]
-
-    # Save db_sites to a json file. This overwrites the existing file.
-    db_sites_to_json = db_sites.copy()
-    # Convert each column to a list
-    db_sites_to_json["code"] = db_sites_to_json["site_code"].astype(int)
-    for col in db_sites.columns:
-        if col != "site_code":
-            db_sites_to_json[col] = db_sites_to_json[col].apply(lambda x: [x])
-    db_sites_to_json = db_sites_to_json.set_index("site_code")
-    # Rename the site_name column to name_ru
-    db_sites_to_json.rename(
-        columns={"site_name": "name_ru", "latitude": "lat", "longitude": "long"}, inplace=True
-    )
-    json_string = db_sites_to_json.to_json(orient="index", force_ascii=False)
-    # Wrap the JSON string in another object
-    json_dict = {"stations_available_for_forecast": json.loads(json_string)}
-
-    # Merge back manual site entries
-    if manual_entries:
-        for code, entry in manual_entries.items():
-            json_dict["stations_available_for_forecast"][code] = entry
-        logger.info(
-            f"Preserved {len(manual_entries)} manual site(s) in config: "
-            f"{list(manual_entries.keys())}"
-        )
-
-    # Back up existing config before overwriting
-    if os.path.exists(config_all_file):
-        shutil.copy2(config_all_file, config_all_file + ".bak")
-
-    # Convert the dictionary to a pretty-printed JSON string
-    json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
-    # Write the JSON string to a file
-    with open(config_all_file, "w", encoding="utf-8") as f:
-        f.write(json_string_pretty)
+    # Build stations_dict from db_sites DataFrame
+    stations_dict = {}
+    for _, row in db_sites.iterrows():
+        code_str = str(row["site_code"])
+        stations_dict[code_str] = {
+            "code": [int(row["site_code"])],
+            "name_ru": [row.get("site_name", "")],
+            "lat": [row.get("latitude", None)],
+            "long": [row.get("longitude", None)],
+            "basin": [row.get("basin", "")],
+            "region": [row.get("region", "")],
+            "river_ru": [row.get("river_ru", "")],
+            "punkt_ru": [row.get("punkt_ru", "")],
+            "site_type": [row.get("site_type", "")],
+            "id": [row.get("id", None)],
+            "header": [code_str],
+            "elevation": [row.get("elevation", None)],
+            "organization_id": [row.get("organization_id", None)],
+            "country": [row.get("country", None)],
+            "is_virtual": [row.get("is_virtual", False)],
+            "data_source": row["data_source"]
+            if "data_source" in db_sites.columns and row.get("data_source") is not None
+            else ["ieh_hf"],
+        }
+    _write_config_all(stations_dict, config_all_file)
 
     # Filter db_sites for discharge sites
     # NOTE: Important assumption: All discharge sites have a code starting with
@@ -948,7 +1117,7 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     db_sites = db_sites.apply(lambda col: col.map(lambda x: x[0] if isinstance(x, list) else x))
 
     # Get the unique site codes
-    site_codes = db_sites["site_code"].unique()
+    site_codes = db_sites["site_code"].unique().tolist()
 
     # Create a list of Site objects
     fc_sites = fl.Site.from_dataframe(

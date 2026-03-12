@@ -8,8 +8,8 @@
 # ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=monthly python run_forecast.py
 
 
-from datetime import datetime
 import logging
+from datetime import datetime
 
 # Suppress graphviz debug warnings BEFORE importing any modules that use graphviz
 logging.getLogger("graphviz").setLevel(logging.WARNING)
@@ -17,26 +17,26 @@ logging.getLogger("graphviz").setLevel(logging.WARNING)
 import os
 import sys
 import time
-import glob
 import traceback
-import pandas as pd
+from typing import Any
+
 import numpy as np
-import json
-from typing import List, Dict, Any, Tuple, Union
+import pandas as pd
+from __init__ import (
+    SAPPHIRE_API_AVAILABLE,
+    initialize_today,
+    logger,
+)
+from config_forecast import ForecastConfig
+from data_interface import BasePredictorDataInterface, DataInterface, DataInterfaceDB
 
 # Import forecast models
-from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
-from lt_forecasting.forecast_models.SciRegressor import SciRegressor
-from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
-    UncertaintyMixtureModel,
+from lt_utils import (
+    check_valid_forecast_issue_date,
+    create_model_instance,
+    save_forecast,
 )
-
-from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS, SAPPHIRE_API_AVAILABLE
-from data_interface import DataInterface, DataInterfaceDB, BasePredictorDataInterface
-from config_forecast import ForecastConfig
 from post_process_lt_forecast import post_process_lt_forecast
-from lt_utils import create_model_instance, save_forecast, nearest_scheduled_issue_date, check_valid_forecast_issue_date
-
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
@@ -47,7 +47,7 @@ logger_lt.setLevel(logging.INFO)
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
@@ -56,14 +56,15 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
-                     forecast_configs: ForecastConfig,
-                     model_name: str,
-                     temporal_data: pd.DataFrame,
-                     static_data: pd.DataFrame,
-                     offset_base: int,
-                     offset_discharge: int) -> Dict[str, Any]:
-    
+def run_single_model(
+    data_interface: DataInterface | DataInterfaceDB,
+    forecast_configs: ForecastConfig,
+    model_name: str,
+    temporal_data: pd.DataFrame,
+    static_data: pd.DataFrame,
+    offset_base: int,
+    offset_discharge: int,
+) -> dict[str, Any]:
     """
     Run a single forecast model and return the results.
     """
@@ -95,7 +96,6 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         if not os.path.exists(dep_file_hindcast):
             logger.error(f"Dependency file {dep_file_hindcast} for model {model_name} not found.")
 
-        
         all_dependencies_forecast_paths.append(dep_file_forecast)
         all_dependencies_hindcast_paths.append(dep_file_hindcast)
 
@@ -110,22 +110,28 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         base_predictor_interface = BasePredictorDataInterface()
 
         if SAPPHIRE_API_AVAILABLE:
-            base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_database(
-                all_dependencies_models=all_dependencies_models,
-                horizon_type="month",
-                horizon_value=forecast_configs.get_operational_month_lead_time()
+            base_predictor_data, base_model_cols = (
+                base_predictor_interface.load_all_dependencies_database(
+                    all_dependencies_models=all_dependencies_models,
+                    horizon_type="month",
+                    horizon_value=forecast_configs.get_operational_month_lead_time(),
+                )
             )
             logger.info(f"Loaded base predictor data from database for model {model_name}")
         else:
-            base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_csv(
-                all_dependencies_models=all_dependencies_models,
-                all_dependencies_paths=all_dependencies_hindcast_paths
+            base_predictor_data, base_model_cols = (
+                base_predictor_interface.load_all_dependencies_csv(
+                    all_dependencies_models=all_dependencies_models,
+                    all_dependencies_paths=all_dependencies_hindcast_paths,
+                )
             )
             logger.info(f"Loaded base predictor data from CSV for model {model_name}")
 
         logger.info(f"Base predictor columns: {base_model_cols}")
         logger.info(f"Base predictor data shape: {base_predictor_data.shape}")
-        logger.info(f"Percentage of rows with NaN values in base predictor data: {base_predictor_data.isna().mean().mean() * 100:.2f}%")
+        logger.info(
+            f"Percentage of rows with NaN values in base predictor data: {base_predictor_data.isna().mean().mean() * 100:.2f}%"
+        )
 
         logger.info(f"Running model: {model_name} of type {model_type}")
 
@@ -135,37 +141,43 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
     can_be_run = True
-    
+
     for input_type, offset in data_dependencies.items():
         if input_type == "SnowMapper":
             # Extend base data with snow data
             snow_HRUs = configs["path_config"].get("snow_HRUs", [])
             snow_variables = configs["path_config"].get("snow_variables", [])
             snow_result = data_interface.extend_base_data_with_snow(
-                base_data=temporal_data,
-                HRUs_snow=snow_HRUs,
-                snow_variables=snow_variables
+                base_data=temporal_data, HRUs_snow=snow_HRUs, snow_variables=snow_variables
             )
             temporal_data = snow_result["temporal_data"]
             offset_snow = snow_result["offset_date_snow"]
             logger.info(f"Extended data with snow. Offset days: {offset_snow}")
             if offset_snow is not None and offset_snow > offset:
-                logger.warning(f"Snow data offset ({offset_snow}) is greater than required offset ({offset})")
+                logger.warning(
+                    f"Snow data offset ({offset_snow}) is greater than required offset ({offset})"
+                )
                 can_be_run = False
         elif input_type == "Discharge":
             # Here we could implement additional logic for discharge data if needed
             if offset_discharge > offset:
-                logger.warning(f"Discharge data offset ({offset_discharge}) is greater than required offset ({offset})")
+                logger.warning(
+                    f"Discharge data offset ({offset_discharge}) is greater than required offset ({offset})"
+                )
                 can_be_run = False
         elif input_type == "EMCWF_Forecast":
             # Here we could implement additional logic for EMCWF forecast data if needed
             if offset_base > offset:
-                logger.warning(f"Base data offset ({offset_base}) is greater than required offset ({offset})")
+                logger.warning(
+                    f"Base data offset ({offset_base}) is greater than required offset ({offset})"
+                )
                 can_be_run = False
         else:
             logger.warning(f"Unknown data dependency type: {input_type}")
 
-    logger.info(f"Head of temporal data after processing dependencies for model {model_name}:\n{temporal_data.head()}")
+    logger.info(
+        f"Head of temporal data after processing dependencies for model {model_name}:\n{temporal_data.head()}"
+    )
 
     """# get the actual date - now - not the one in the init
     now_date = pd.Timestamp.now()   
@@ -207,7 +219,14 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
             f"off-schedule runs may lead to degradation in forecast quality."
         )"""
 
-    today = check_valid_forecast_issue_date(forecast_configs=forecast_configs, model_name=model_name)
+    today = check_valid_forecast_issue_date(
+        forecast_configs=forecast_configs, model_name=model_name
+    )
+
+    # None means this model is not scheduled for today — skip gracefully
+    if today is None:
+        logger.info(f"Model {model_name} not scheduled for today, skipping")
+        return True  # skip is not a failure
 
     logger.info(f"Can model {model_name} be run? {'Yes' if can_be_run else 'No'}")
 
@@ -220,22 +239,21 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
             data=temporal_data,
             static_data=static_data,
             base_predictors=base_predictor_data,
-            base_model_names=base_model_cols
+            base_model_names=base_model_cols,
         )
-
 
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
         forecast = forecast.round(2)
-        forecast['flag'] = 0
+        forecast["flag"] = 0
         success = True
 
     else:
         logger.error(f"Cannot run model {model_name} due to missing or outdated data.")
         forecast = pd.DataFrame()  # Empty DataFrame as placeholder
-        forecast['flag'] = 2
+        forecast["flag"] = 2
         success = False
- 
+
     logger.info(f"Forecast head before post-processing for model {model_name}:\n{forecast.head()}")
     # Postprocess the forecasts to calendar months.
     forecast = post_process_lt_forecast(
@@ -246,7 +264,7 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
     # Round all numeric columns to 2 decimals after post-processing
     numeric_cols = forecast.select_dtypes(include=[np.number]).columns
     forecast[numeric_cols] = forecast[numeric_cols].round(2)
-    
+
     logger.info(f"Forecast head after post-processing for model {model_name}:\n{forecast.head()}")
     #################################################
     # Save Forecast to Database and CSV
@@ -262,7 +280,7 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         output_path=output_path,
         horizon_type=horizon_type,
         horizon_value=horizon_value,
-        is_hindcast=False
+        is_hindcast=False,
     )
 
     if not save_success:
@@ -271,12 +289,12 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
     # Return success
     return success
 
-def run_forecast(
-        forecast_all: bool = True,
-        models_to_run: List[str] = [],
-        forecast_mode: str = None,
-):
 
+def run_forecast(
+    forecast_all: bool = True,
+    models_to_run: list[str] | None = None,
+    forecast_mode: str = None,
+):
     # Setup Environment
     sl.load_environment()
 
@@ -284,19 +302,23 @@ def run_forecast(
     forecast_config = ForecastConfig()
 
     if forecast_mode is None:
-        forecast_mode = os.getenv('lt_forecast_mode')
-     
+        forecast_mode = os.getenv("lt_forecast_mode")
+
     forecast_config.load_forecast_config(forecast_mode=forecast_mode)
     forcing_HRU = forecast_config.get_forcing_HRU()
 
+    if models_to_run is None:
+        models_to_run = []
 
     if forecast_all:
         if len(models_to_run) > 0:
             raise ValueError("If forecast_all is True, models_to_run should be empty.")
 
         models_to_run = forecast_config.get_models_to_run()
-    
-    logger.info(f"Starting forecast run. Forecast all: {forecast_all}. Models to run: {models_to_run}")
+
+    logger.info(
+        f"Starting forecast run. Forecast all: {forecast_all}. Models to run: {models_to_run}"
+    )
 
     # Data Interface - use DB interface if SAPPHIRE API is available
     if SAPPHIRE_API_AVAILABLE:
@@ -305,8 +327,7 @@ def run_forecast(
     else:
         logger.info("Using DataInterface (CSV backend)")
         data_interface = DataInterface()
-    base_data_dict = data_interface.get_base_data(
-        forcing_HRU=forcing_HRU)
+    base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU)
 
     temporal_data = base_data_dict["temporal_data"]
     static_data = base_data_dict["static_data"]
@@ -325,16 +346,13 @@ def run_forecast(
     else:
         ignore_initial_dependencies = False
 
-    
-
-
     for model_name in ordered_models:
         # Wait 5 seconds between model runs to avoid potential file access conflicts
         time.sleep(5)
         dependencies = model_dependencies.get(model_name, [])
         # Check if dependencies were successful
         deps_success = all(execution_is_success.get(dep, False) for dep in dependencies)
-        
+
         if not deps_success and not ignore_initial_dependencies:
             logger.error(f"Skipping model {model_name} due to failed dependencies: {dependencies}")
             execution_is_success[model_name] = False
@@ -348,7 +366,7 @@ def run_forecast(
                 temporal_data=temporal_data.copy(),
                 static_data=static_data,
                 offset_base=offset_base,
-                offset_discharge=offset_discharge
+                offset_discharge=offset_discharge,
             )
             execution_is_success[model_name] = sucess
         except Exception as e:
@@ -359,21 +377,20 @@ def run_forecast(
             execution_is_success[model_name] = False
 
     # Print summary
-    logger.info("\n" + "="*50)
+    logger.info("\n" + "=" * 50)
     logger.info("FORECAST SUMMARY")
-    logger.info("="*50)
+    logger.info("=" * 50)
     for model_name, success in execution_is_success.items():
         status = "SUCCESS" if success else "FAILED"
         logger.info(f"{model_name}: {status}")
-    logger.info("="*50 + "\n")
+    logger.info("=" * 50 + "\n")
 
     logger.info("Forecast run completed.")
 
 
 if __name__ == "__main__":
-
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="Run forecasts for long-term models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -387,29 +404,22 @@ Examples:
   
   # With environment variables
   ieasyhydroforecast_env_file_path="path/to/.env" lt_forecast_mode=monthly python run_forecast.py --all
-        """
+        """,
     )
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--all", action="store_true", help="Run forecasts for all models")
     group.add_argument(
-        '--all',
-        action='store_true',
-        help='Run forecasts for all models'
-    )
-    group.add_argument(
-        '--models',
-        nargs='+',
-        metavar='MODEL_NAME',
-        help='List of model names to forecast'
+        "--models", nargs="+", metavar="MODEL_NAME", help="List of model names to forecast"
     )
 
     group.add_argument(
-        '--today',
+        "--today",
         type=str,
-        help='Override the "today" date for the forecast in YYYY-MM-DD format (useful for testing or backtesting)'
+        help='Override the "today" date for the forecast in YYYY-MM-DD format (useful for testing or backtesting)',
     )
-    
+
     args = parser.parse_args()
-    
+
     # Determine recalibrate_all flag and models to run
     recalibrate_all = args.all
     models_to_run = args.models if args.models else []
@@ -417,11 +427,8 @@ Examples:
     if args.today is None:
         today = datetime.now().date()
     else:
-        today = datetime.strptime(args.today, '%Y-%m-%d').date()
-    
+        today = datetime.strptime(args.today, "%Y-%m-%d").date()
+
     initialize_today(today)
 
-    run_forecast(
-        forecast_all=recalibrate_all,
-        models_to_run=models_to_run
-    )
+    run_forecast(forecast_all=recalibrate_all, models_to_run=models_to_run)

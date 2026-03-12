@@ -57,7 +57,7 @@ pytorch-lightning==2.5.6
 pytz==2025.2
 PyYAML==6.0.3
 requests==2.32.5
-sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@f70a83d6b092b7c616239f50d061f7f03eabcbb2
+sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a196e1728f2447ec416c77cd54c9d6899a86d9e6
 scikit-learn==1.4.0
 scipy==1.15.2
 seaborn==0.13.2

@@ -1,13 +1,16 @@
 """Tests for lt_utils module."""
-import pytest
-import pandas as pd
-import sys
+
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lt_utils import nearest_scheduled_issue_date
+from lt_utils import check_valid_forecast_issue_date, nearest_scheduled_issue_date
 
 
 class TestNearestScheduledIssueDate:
@@ -29,9 +32,7 @@ class TestNearestScheduledIssueDate:
 
     def test_all_months_valid(self):
         """Test default behavior when all months valid."""
-        result = nearest_scheduled_issue_date(
-            pd.Timestamp("2024-10-15"), 10, list(range(1, 13))
-        )
+        result = nearest_scheduled_issue_date(pd.Timestamp("2024-10-15"), 10, list(range(1, 13)))
         assert result == pd.Timestamp("2024-10-10")
 
     def test_picks_closest_valid(self):
@@ -75,3 +76,57 @@ class TestNearestScheduledIssueDate:
         result = nearest_scheduled_issue_date(today, 10, [4])
         # April 10 2024 is closer than April 10 2025
         assert result == pd.Timestamp("2024-04-10")
+
+
+class TestCheckValidForecastIssueDate:
+    """Tests for check_valid_forecast_issue_date."""
+
+    def _make_mock_config(self, issue_day, forecast_months=None):
+        """Create a mock ForecastConfig."""
+        config = MagicMock()
+        config.get_operational_issue_day.return_value = issue_day
+        config.get_forecast_months.return_value = forecast_months or list(range(1, 13))
+        return config
+
+    @patch("lt_utils.get_today")
+    def test_returns_none_when_outside_window(self, mock_get_today):
+        """When >5 days from issue date, returns None (not raises)."""
+        mock_get_today.return_value = pd.Timestamp("2024-03-20")
+        config = self._make_mock_config(issue_day=10)
+
+        result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result is None
+
+    @patch("lt_utils.get_today")
+    def test_returns_date_when_within_window(self, mock_get_today):
+        """When within 5 days of issue date, returns the adjusted date."""
+        mock_get_today.return_value = pd.Timestamp("2024-03-12")
+        config = self._make_mock_config(issue_day=10)
+
+        result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result is not None
+        # Should snap back to issue date since we're late
+        assert result == pd.Timestamp("2024-03-10")
+
+    @patch("lt_utils.get_today")
+    def test_returns_today_when_on_issue_day(self, mock_get_today):
+        """When exactly on issue day, returns today."""
+        mock_get_today.return_value = pd.Timestamp("2024-03-10")
+        config = self._make_mock_config(issue_day=10)
+
+        result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result == pd.Timestamp("2024-03-10")
+
+    @patch("lt_utils.get_today")
+    def test_returns_today_when_early(self, mock_get_today):
+        """When before issue day (within window), returns today unchanged."""
+        mock_get_today.return_value = pd.Timestamp("2024-03-07")
+        config = self._make_mock_config(issue_day=10)
+
+        result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        # Early runs keep their date (no snap-back)
+        assert result == pd.Timestamp("2024-03-07")

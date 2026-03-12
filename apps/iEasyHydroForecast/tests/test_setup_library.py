@@ -1115,6 +1115,46 @@ class TestModelLongDeprecation(unittest.TestCase):
         self.assertNotIn("model_long", result.columns)
 
 
+class TestGetPentadalForecastSitesReturnTypes(unittest.TestCase):
+    """Regression test: site_codes must be a Python list, not numpy.ndarray.
+
+    Before the fix, ``db_sites["site_code"].unique()`` returned a numpy
+    array, which caused ``ValueError: truth value of an array is ambiguous``
+    when the result was used in boolean context downstream.
+    """
+
+    @patch("iEasyHydroForecast.setup_library.fl.Site.from_dataframe")
+    @patch("iEasyHydroForecast.setup_library.get_pentadal_forecast_sites_complicated_method")
+    def test_site_codes_returns_list_not_numpy(self, mock_complicated, mock_from_df):
+        """Verify site_codes is a Python list to prevent numpy
+        truth-value errors."""
+        mock_complicated.return_value = pd.DataFrame(
+            {
+                "site_code": ["12345", "67890", "12345"],
+                "site_name": ["Site A", "Site B", "Site A"],
+                "river_ru": ["River1", "River2", "River1"],
+                "punkt_ru": ["Punkt1", "Punkt2", "Punkt1"],
+                "latitude": [42.0, 43.0, 42.0],
+                "longitude": [74.0, 75.0, 74.0],
+                "region": ["Region1", "Region2", "Region1"],
+                "basin": ["Basin1", "Basin2", "Basin1"],
+            }
+        )
+
+        mock_site_a = MagicMock(code="12345")
+        mock_site_b = MagicMock(code="67890")
+        mock_from_df.return_value = [mock_site_a, mock_site_b]
+
+        mock_sdk = MagicMock()
+        fc_sites, site_codes = sl.get_pentadal_forecast_sites(mock_sdk, False)
+
+        # The return type must be list, not numpy.ndarray, to avoid
+        # "ValueError: truth value of an array is ambiguous" downstream.
+        assert isinstance(site_codes, list)
+        assert not isinstance(site_codes, np.ndarray)
+        self.assertCountEqual(site_codes, ["12345", "67890"])
+
+
 class TestGetPentadalForecastSitesFromHFSdk(unittest.TestCase):
     def setUp(self):
         self.mock_ieh_hf_sdk = MagicMock()
@@ -1719,3 +1759,306 @@ class TestManualSiteProtection(unittest.TestCase):
         if isinstance(ds, list):
             ds = ds[0]
         self.assertEqual(ds, "manual")
+
+
+class TestWriteConfigAllStations(unittest.TestCase):
+    """Tests for write_config_all_stations and its helpers."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.config_all_file = os.path.join(self.tmpdir, "config_all_stations_library.json")
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                "ieasyforecast_configuration_path": self.tmpdir,
+                "ieasyforecast_config_file_all_stations": ("config_all_stations_library.json"),
+            },
+        )
+        self.env_patcher.start()
+
+    def tearDown(self):
+        self.env_patcher.stop()
+        shutil.rmtree(self.tmpdir)
+
+    def _make_site(
+        self,
+        code="12345",
+        name_nat="\u0440. \u0422\u0435\u0441\u0442 - \u0441. \u0421\u0435\u043b\u043e",
+        lat=42.5,
+        lon=74.5,
+        basin_nat="\u0427\u0443",
+        region_nat="\u0427\u0443\u0439\u0441\u043a\u0430\u044f",
+        river_name_nat="\u0440. \u0422\u0435\u0441\u0442",
+        punkt_name_nat="\u0441. \u0421\u0435\u043b\u043e",
+        site_type="automatic-discharge",
+        iehhf_site_id=99,
+    ):
+        """Create a mock Site object with the given attributes."""
+        site = MagicMock()
+        site.code = code
+        site.name = "r. Test - v. Village"
+        site.name_nat = name_nat
+        site.lat = lat
+        site.lon = lon
+        site.basin = "Chu"
+        site.basin_nat = basin_nat
+        site.region = "Chuy"
+        site.region_nat = region_nat
+        site.river_name = "r. Test"
+        site.river_name_nat = river_name_nat
+        site.punkt_name = "v. Village"
+        site.punkt_name_nat = punkt_name_nat
+        site.site_type = site_type
+        site.iehhf_site_id = iehhf_site_id
+        site.is_virtual = False
+        return site
+
+    def _read_config(self):
+        with open(self.config_all_file, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_manual_config(self, stations_dict):
+        """Write a config file with given stations."""
+        data = {"stations_available_for_forecast": stations_dict}
+        with open(self.config_all_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+    def test_writes_valid_json_from_site_objects(self):
+        """Two Site objects are serialised to correct list-wrapped JSON."""
+        site1 = self._make_site(code="12345", lat=42.5, lon=74.5)
+        site2 = self._make_site(
+            code="67890",
+            name_nat="\u0440. \u0414\u0440\u0443\u0433\u0430\u044f"
+            " - \u0441. \u0414\u0440\u0443\u0433\u043e\u0435",
+            lat=41.0,
+            lon=73.0,
+            iehhf_site_id=100,
+        )
+
+        sl.write_config_all_stations([site1, site2], self.config_all_file)
+
+        data = self._read_config()
+        self.assertIn("stations_available_for_forecast", data)
+        stations = data["stations_available_for_forecast"]
+        self.assertIn("12345", stations)
+        self.assertIn("67890", stations)
+
+        # Verify list-wrapped fields for site1
+        s1 = stations["12345"]
+        self.assertEqual(s1["code"], [12345])
+        self.assertEqual(s1["lat"], [42.5])
+        self.assertEqual(s1["long"], [74.5])
+        self.assertEqual(
+            s1["name_ru"],
+            ["\u0440. \u0422\u0435\u0441\u0442 - \u0441. \u0421\u0435\u043b\u043e"],
+        )
+        self.assertEqual(s1["basin"], ["\u0427\u0443"])
+        self.assertEqual(s1["river_ru"], ["\u0440. \u0422\u0435\u0441\u0442"])
+        self.assertEqual(s1["punkt_ru"], ["\u0441. \u0421\u0435\u043b\u043e"])
+        self.assertEqual(s1["data_source"], ["ieh_hf"])
+
+    def test_preserves_manual_entries(self):
+        """Manual entries from existing config survive a write."""
+        manual_entry = {
+            "code": [99999],
+            "name_ru": ["Manual Site"],
+            "lat": [40.0],
+            "long": [72.0],
+            "data_source": ["google_sheets"],
+            "river_ru": ["River"],
+            "punkt_ru": ["Point"],
+            "basin": ["Basin"],
+            "region": ["Region"],
+        }
+        self._write_manual_config({"99999": manual_entry})
+
+        with patch.object(
+            sl,
+            "_read_manual_entries_from_config",
+            return_value={"99999": manual_entry},
+        ):
+            sl.write_config_all_stations([self._make_site()], self.config_all_file)
+
+        stations = self._read_config()["stations_available_for_forecast"]
+        self.assertIn("12345", stations)
+        self.assertIn("99999", stations)
+        self.assertEqual(stations["99999"]["data_source"], ["google_sheets"])
+
+    def test_sdk_collision_removes_manual(self):
+        """SDK data wins when a manual entry has the same code."""
+        manual_entry = {
+            "code": [12345],
+            "name_ru": ["Manual Imposter"],
+            "lat": [40.0],
+            "long": [72.0],
+            "data_source": ["google_sheets"],
+            "river_ru": ["River"],
+            "punkt_ru": ["Point"],
+            "basin": ["Basin"],
+            "region": ["Region"],
+        }
+        self._write_manual_config({"12345": manual_entry})
+
+        with patch.object(
+            sl,
+            "_read_manual_entries_from_config",
+            return_value={"12345": manual_entry.copy()},
+        ):
+            sl.write_config_all_stations([self._make_site(code="12345")], self.config_all_file)
+
+        stations = self._read_config()["stations_available_for_forecast"]
+        self.assertIn("12345", stations)
+        self.assertEqual(stations["12345"]["data_source"], ["ieh_hf"])
+
+    def test_backs_up_existing_file(self):
+        """An existing config file is backed up before overwriting."""
+        self._write_manual_config({"11111": {"code": [11111], "name_ru": ["Old"]}})
+
+        sl.write_config_all_stations([self._make_site()], self.config_all_file)
+
+        self.assertTrue(os.path.exists(self.config_all_file + ".bak"))
+
+    def test_creates_file_when_missing(self):
+        """Config file is created from scratch when it does not exist."""
+        self.assertFalse(os.path.exists(self.config_all_file))
+
+        sl.write_config_all_stations([self._make_site()], self.config_all_file)
+
+        self.assertTrue(os.path.exists(self.config_all_file))
+        data = self._read_config()
+        self.assertIn("stations_available_for_forecast", data)
+        self.assertIn("12345", data["stations_available_for_forecast"])
+
+    def test_empty_site_list_writes_manual_only(self):
+        """An empty SDK list still preserves manual entries."""
+        manual_entry = {
+            "code": [99999],
+            "name_ru": ["Manual Only"],
+            "lat": [40.0],
+            "long": [72.0],
+            "data_source": ["google_sheets"],
+            "river_ru": ["River"],
+            "punkt_ru": ["Point"],
+            "basin": ["Basin"],
+            "region": ["Region"],
+        }
+
+        with patch.object(
+            sl,
+            "_read_manual_entries_from_config",
+            return_value={"99999": manual_entry},
+        ):
+            sl.write_config_all_stations([], self.config_all_file)
+
+        stations = self._read_config()["stations_available_for_forecast"]
+        self.assertIn("99999", stations)
+        self.assertEqual(len(stations), 1)
+
+
+class TestHfSdkBootstrapFallback(unittest.TestCase):
+    """Tests for _try_bootstrap_from_hf_sdk and the fallback path."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.config_all_file = os.path.join(self.tmpdir, "config_all_stations_library.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def _make_site(
+        self,
+        code="12345",
+        name_nat="\u0440. \u0422\u0435\u0441\u0442 - \u0441. \u0421\u0435\u043b\u043e",
+        lat=42.5,
+        lon=74.5,
+        basin_nat="\u0427\u0443",
+        region_nat="\u0427\u0443\u0439\u0441\u043a\u0430\u044f",
+        river_name_nat="\u0440. \u0422\u0435\u0441\u0442",
+        punkt_name_nat="\u0441. \u0421\u0435\u043b\u043e",
+        site_type="automatic-discharge",
+        iehhf_site_id=99,
+    ):
+        site = MagicMock()
+        site.code = code
+        site.name = "r. Test - v. Village"
+        site.name_nat = name_nat
+        site.lat = lat
+        site.lon = lon
+        site.basin = "Chu"
+        site.basin_nat = basin_nat
+        site.region = "Chuy"
+        site.region_nat = region_nat
+        site.river_name = "r. Test"
+        site.river_name_nat = river_name_nat
+        site.punkt_name = "v. Village"
+        site.punkt_name_nat = punkt_name_nat
+        site.site_type = site_type
+        site.iehhf_site_id = iehhf_site_id
+        site.is_virtual = False
+        return site
+
+    def test_bootstrap_succeeds_with_hf_sdk(self):
+        """When HF SDK is available and returns sites, config file is created."""
+        fake_sites = [
+            self._make_site(code="12176"),
+            self._make_site(code="12345"),
+        ]
+
+        with (
+            patch.object(sl, "IEASYHYDRO_HF_SDK_AVAILABLE", True),
+            patch.object(sl, "IEasyHydroHFSDK", create=True) as mock_sdk_cls,
+            patch.object(sl, "check_database_access", return_value=True),
+            patch.object(
+                sl,
+                "get_all_forecast_sites_from_HF_SDK",
+                return_value=(fake_sites, ["12176", "12345"], [42, 99]),
+            ),
+            patch.object(sl, "_read_manual_entries_from_config", return_value={}),
+        ):
+            result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
+
+        # Config file should exist with stations
+        assert os.path.exists(self.config_all_file)
+        with open(self.config_all_file, encoding="utf-8") as f:
+            data = json.load(f)
+        assert "12176" in data["stations_available_for_forecast"]
+        assert "12345" in data["stations_available_for_forecast"]
+
+        # Result should be a non-empty DataFrame
+        assert not result.empty
+        mock_sdk_cls.assert_called_once()
+
+    def test_bootstrap_returns_empty_when_sdk_unavailable(self):
+        """When ieasyhydro_sdk is not installed, returns empty DataFrame."""
+        with patch.object(sl, "IEASYHYDRO_HF_SDK_AVAILABLE", False):
+            result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
+
+        assert result.empty
+        assert not os.path.exists(self.config_all_file)
+
+    def test_bootstrap_returns_empty_on_sdk_init_failure(self):
+        """When HF SDK init raises, returns empty DataFrame gracefully."""
+        with (
+            patch.object(sl, "IEASYHYDRO_HF_SDK_AVAILABLE", True),
+            patch.object(
+                sl,
+                "IEasyHydroHFSDK",
+                create=True,
+                side_effect=ConnectionError("no server"),
+            ),
+        ):
+            result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
+
+        assert result.empty
+        assert not os.path.exists(self.config_all_file)
+
+    def test_bootstrap_returns_empty_when_no_db_access(self):
+        """When SDK connects but has no DB access, returns empty DataFrame."""
+        with (
+            patch.object(sl, "IEASYHYDRO_HF_SDK_AVAILABLE", True),
+            patch.object(sl, "IEasyHydroHFSDK", create=True),
+            patch.object(sl, "check_database_access", return_value=False),
+        ):
+            result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
+
+        assert result.empty

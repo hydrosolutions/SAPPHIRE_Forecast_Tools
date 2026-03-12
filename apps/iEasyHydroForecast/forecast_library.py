@@ -1252,7 +1252,13 @@ def get_pentadal_and_decadal_data(
 
     # Combine site lists for efficient API querying
     # Use list() to ensure numpy arrays don't cause string concatenation
-    all_site_codes = list(set(list(site_list_pentad or []) + list(site_list_decad or [])))
+    pentad_codes = (
+        list(site_list_pentad) if site_list_pentad is not None and len(site_list_pentad) > 0 else []
+    )
+    decad_codes = (
+        list(site_list_decad) if site_list_decad is not None and len(site_list_decad) > 0 else []
+    )
+    all_site_codes = list(set(pentad_codes + decad_codes))
 
     # Read discharge data (from API by default, or CSV if SAPPHIRE_API_ENABLED=false)
     discharge_all = read_daily_discharge_data(site_codes=all_site_codes)
@@ -1818,22 +1824,21 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
                 if "code" not in value:
                     raise ValueError(f'Station "{key}" does not have key "code"')
 
-            # Let's try another import of the json file.
             json_object = config_all["stations_available_for_forecast"]
 
-            # Create an empty DataFrame to store the station data
-            df = pd.DataFrame()
-
-            # Loop over the keys in the JSON object
-            for key in json_object.keys():
-                # Create a new DataFrame with the station data
-                station_df = pd.DataFrame.from_dict(json_object[key], orient="index").T
-
-                # Add a column to the DataFrame with the header string
-                station_df["header"] = key
-
-                # Append the station data to the main DataFrame
-                df = pd.concat([df, station_df], ignore_index=True)
+            # Build one row per station, unwrapping list-wrapped values
+            rows = []
+            for station_code, station_data in json_object.items():
+                row = {"header": station_code}
+                for field, value in station_data.items():
+                    if isinstance(value, list) and len(value) > 0:
+                        row[field] = value[0]
+                    elif isinstance(value, list):
+                        row[field] = None
+                    else:
+                        row[field] = value
+                rows.append(row)
+            df = pd.DataFrame(rows)
 
             # Filter for code starting with 1
             # Currently commented out to allow for the main code to update the
