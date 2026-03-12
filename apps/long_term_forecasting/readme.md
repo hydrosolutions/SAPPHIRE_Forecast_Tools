@@ -6,7 +6,7 @@ Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/l
 Use:
 ```bash
 pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
-````
+```
 
 or a specific version:
 ```bash
@@ -14,20 +14,83 @@ pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1
 ```
 
 ### Fast Development
-For fast development use the local code base - for this do:
+For fast development, install from a local clone of the `long-term-forecasting`
+repository:
+```bash
 pip uninstall -y lt-forecasting
+pip install -e "/path/to/local/long-term-forecasting"
+```
 
-pip install -e "/Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/code/machine_learning_hydrology/monthly_forecasting"
-
-and if ready for online:
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.0.0
-
-Change the version accordingly
+When ready to switch back to the released version:
+```bash
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+```
 
 Functions here act more like an interface.
 
-For more detailed implementation specifics refer to the [Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting) Documentation and code base.
+For more detailed implementation specifics refer to the
+[Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting)
+documentation and code base.
 
+## Operational Schedule
+
+### When Forecasts Run
+
+Long-term forecasts are issued once per month on a configured **issue day**
+(set by `operational_issue_day` in the mode config, typically day 25). The
+pipeline enforces a **±5 day tolerance window** around this date:
+
+- **On schedule** (day 25): runs normally.
+- **1–5 days late** (days 26–30): runs but snaps the internal forecast date
+  back to the scheduled issue day. A warning is logged.
+- **1–5 days early** (days 20–24): runs with a warning about potential quality
+  degradation.
+- **>5 days off**: the pipeline **refuses to run** and raises an error.
+
+This logic lives in `lt_utils.check_valid_forecast_issue_date()`.
+
+### Forecast Modes
+
+Each run uses a **forecast mode** (`lt_forecast_mode` env var) that selects a
+separate JSON config file. Modes represent different lead times:
+
+| Mode | Lead Time | Example (issued March 25) |
+|------|-----------|---------------------------|
+| `month_0` | Current month | March |
+| `month_1` | +1 month | April |
+| `month_2` | +2 months | May |
+| … | … | … |
+| `month_9` | +9 months | December |
+
+Each mode can also be configured for seasonal or multi-month targets (see
+[Multi-Month Forecast Modes](#multi-month-forecast-modes) below).
+
+### Full Operational Run
+
+In production, **all modes run sequentially** in a single pipeline invocation:
+
+```bash
+for month in 0 1 2 3 4 5 6 7 8 9; do
+    lt_forecast_mode=month_${month} python run_forecast.py --all
+done
+```
+
+See `apps/run_locally.sh` (`run_long_term_forecasting_operational()`) for the
+full orchestration, or the `LT_OPERATIONAL_MODES` env var to override which
+modes run.
+
+### Config File Resolution
+
+Each mode loads its config from:
+
+```
+{ieasyhydroforecast_configuration_path}/{ieasyhydroforecast_ml_long_term_configuration}/{mode}.json
+```
+
+For example, `lt_forecast_mode=month_1` loads `month_1.json` from the config
+directory. The in-repo `config_monthly.json` is an **example template** showing
+all supported parameters; actual deployment configs live in the external data
+repository.
 
 ## Run CLI Commands:
 
@@ -90,6 +153,38 @@ pip install -e "path/to/lt_forecasting/dir"
 pip install psycopg2-binary sqlalchemy
 ```
 If you work on macOS you might need to install lightgbm via homebrew. Or use conda to install the lightgbm package this should also handle the installation. On Windows and Linux system this should not be required.
+
+## Long-Term Environment Variables
+
+These variables are specific to the long-term forecasting module. They are
+typically set in the deployment `.env` file alongside the standard
+`ieasyhydroforecast_*` variables.
+
+### Runtime Variables
+
+| Variable | Set At | Description |
+|----------|--------|-------------|
+| `lt_forecast_mode` | CLI invocation | Which mode to run (e.g., `month_1`) |
+| `LT_OPERATIONAL_MODES` | Shell (optional) | Override which modes `run_locally.sh` runs (default: `0 1 2 3 4 5 6 7 8 9`) |
+| `LT_FORECAST_TODAY` | Shell (optional) | Override today's date for `run_forecast.py` (`YYYY-MM-DD`) |
+
+### Configuration Path Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ieasyhydroforecast_ml_long_term_configuration` | Relative path (from config root) to directory containing mode JSON configs |
+| `ieasyhydroforecast_ml_long_term_supported_modes` | Comma-separated list of supported modes (e.g., `month_0,month_1,...,month_9`) |
+| `ieasyhydroforecast_ml_long_term_output_path` | Output directory for forecast results (relative to intermediate data path) |
+| `ieasyhydroforecast_ml_long_term_path_to_static` | Path to static features CSV (relative to models/scalers path) |
+
+### Data Source Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ieasyhydroforecast_SNOW_VARS` | Available snow variables (e.g., `SWE,ROF,HS`) |
+| `ieasyhydroforecast_HRU_SNOW_DATA` | Available HRU codes for snow data |
+| `DB_POSTPROCESS_CONNECTION_STRING` | PostgreSQL connection string for `DataInterfaceDB` |
+| `ieasyhydroforecast_ECMWF_IFS_lead_time` | ECMWF IFS forecast lead time in days |
 
 ## Data Interface
 
@@ -158,6 +253,11 @@ config_<mode>.json                    # Main config
 ```
 
 ### Main Config Parameters (`config_<mode>.json`)
+
+> **Note:** The in-repo `config_monthly.json` is an example template. In
+> production, each mode has its own file (e.g., `month_0.json`, `month_1.json`)
+> loaded from the path configured by
+> `ieasyhydroforecast_ml_long_term_configuration`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

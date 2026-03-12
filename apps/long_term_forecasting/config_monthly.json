@@ -1,15 +1,33 @@
 {
-    "model_folder" : "models_and_scalers/long_term_forecasting/monthly/",
-    "models_to_use" : {
-        "Base" : ["LR_Base", "GBT_Base"]
+    "model_folder": "models_and_scalers/long_term_forecasting/monthly/",
+    "models_to_use": {
+        "Base": ["LR_Base", "GBT_Base"]
     },
-    "forecast_horizon" : 30,
-    "offset" : null,
-    "model_dependencies" : {
-        "SM_GBT_LR" : ["LR_Base", "LR_SM"]
+    "prediction_horizon": 30,
+    "offset": null,
+    "forecast_days": [5, 10, 15, 20, 25, "end"],
+    "operational_issue_day": 25,
+    "operational_month_lead_time": 1,
+    "allowable_missing_value_operational": 0,
+    "calendar_month_adjustment": true,
+    "target_start_month": null,
+    "target_end_month": null,
+    "forecast_horizon_months": null,
+    "horizon_type": "month",
+    "model_dependencies": {
+        "SM_GBT_LR": ["LR_Base", "LR_SM"]
     },
-    "data_dependencies" : {
-        "SM_GBT_LR" : {"SnowMapper": -5} 
+    "data_dependencies": {
+        "SM_GBT_LR": {"SnowMapper": -5}
     },
-    "forcing_HRU" :"00003"
+    "is_calibrated": {
+        "LR_Base": false,
+        "GBT_Base": false
+    },
+    "is_hyperparameter_tuned": {
+        "LR_Base": false,
+        "GBT_Base": false
+    },
+    "forcing_HRU": "00003",
+    "start_date": null
 }
