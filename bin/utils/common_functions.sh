@@ -342,3 +342,12 @@ cleanup_pentadal_forecasting_containers() {
     stop_and_remove_container postprocessing
 }
 
+cleanup_long_term_forecasting_containers() {
+    echo "|      "
+    echo "| ------"
+    echo "| Cleaning up long-term forecasting containers"
+    echo "| ------"
+    stop_and_remove_container lt_forecast
+    stop_and_remove_container lt-postprocessing
+}
+

@@ -206,6 +206,65 @@ def fetch_lr_forecasts(
     return df
 
 
+def fetch_long_forecasts(
+    api_base: str,
+    station: str,
+    horizon_type: str = "month",
+    horizon_value: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    models: list[str] | None = None,
+) -> pd.DataFrame:
+    """Fetch long-term forecasts from the postprocessing API.
+
+    Args:
+        api_base: API base URL (e.g. "http://localhost:8000/api")
+        station: Station code
+        horizon_type: "month", "quarter", or "season"
+        horizon_value: Lead time (1, 2, 3, …). None fetches all.
+        start_date: ISO date string — filters by forecast issue date
+        end_date: ISO date string — filters by forecast issue date
+        models: Optional list of model_type to filter
+
+    Returns:
+        DataFrame with long-term forecast records.
+    """
+    params: dict = {
+        "horizon_type": horizon_type,
+        "code": station,
+        "limit": 10000,
+    }
+    if horizon_value is not None:
+        params["horizon_value"] = horizon_value
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+
+    df = _read_data(api_base, "postprocessing", "long-forecast", params)
+    if df.empty:
+        return df
+
+    # Parse validity period dates
+    for col in ("valid_from", "valid_to"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col])
+
+    df.rename(
+        columns={
+            "model_type": "model_short",
+            "model_type_description": "model_long",
+            "q": "E[Q]",
+        },
+        inplace=True,
+    )
+    df.drop(columns=["id"], inplace=True, errors="ignore")
+
+    if models:
+        df = df[df["model_short"].isin(models)]
+    return df
+
+
 def fetch_skill_metrics(
     api_base: str,
     station: str,

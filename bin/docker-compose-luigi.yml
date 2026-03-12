@@ -127,6 +127,25 @@ services:
              '--task-type', '${MAINTENANCE_TASK_TYPE:-long_term}']
     container_name: sapphire-pipeline-periodic-maintenance
 
+  # Long-term forecast workflow
+  # Runs schedule query results passed via LT_ACTIVE_MODES env var
+  # Usage: LT_ACTIVE_MODES=month_0,quarter docker compose -f bin/docker-compose-luigi.yml run --rm long-term
+  long-term:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
+             '--scheduler-port', '8082',
+             '--resources', 'lt_memory=1',
+             '--module', 'apps.pipeline.pipeline_docker',
+             'RunLongTermWorkflow',
+             '--active-modes', '${LT_ACTIVE_MODES}',
+             '--skill-metric-types', '${LT_SKILL_METRIC_TYPES:-MONTHLY}']
+    container_name: sapphire-pipeline-long-term
+
   # Luigi scheduler daemon
   # This service should be running persistently in the background
   luigi-daemon:

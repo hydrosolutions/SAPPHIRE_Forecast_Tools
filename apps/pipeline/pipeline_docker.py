@@ -2107,5 +2107,173 @@ class RunPeriodicMaintenanceWorkflow(luigi.Task):
             )
 
 
+# --- Operational long-term forecasting tasks ---
+
+
+class RunLongTermForecast(DockerTaskBase):
+    """Run a single long-term forecast mode (e.g. month_0, quarter).
+
+    Parameterized per-mode task. The bash entry script determines which
+    modes are active via lt_schedule_query.py and passes them as Luigi
+    parameters.
+    """
+
+    forecast_mode = luigi.Parameter()  # e.g. "month_0", "quarter"
+
+    resources = {"lt_memory": 1}  # serialize long-term runs (memory)
+
+    @property
+    def docker_logs_file_path(self):
+        return (
+            f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+            f"/docker_logs/log_lt_forecast_{self.forecast_mode}_"
+            f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+
+    def requires(self):
+        return [PreprocessingRunoff(), get_gateway_dependency()]
+
+    def output(self):
+        return luigi.LocalTarget(f"/app/log_lt_forecast_{self.forecast_mode}.txt")
+
+    def run(self):
+        volumes = setup_docker_volumes(
+            env,
+            [
+                "ieasyforecast_configuration_path",
+                "ieasyforecast_intermediate_data_path",
+            ],
+        )
+
+        environment = [
+            f"ieasyhydroforecast_env_file_path={env_file_path}",
+            "IN_DOCKER=True",
+            f"lt_forecast_mode={self.forecast_mode}",
+            "RUN_MODE=forecast",
+        ]
+        environment.extend(get_docker_host_env_overrides())
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-lt-forecasting",
+                container_name=f"lt_forecast_{self.forecast_mode}_{attempt}",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="12g",
+                memswap_limit="16g",
+                network="host",
+            )
+        )
+
+
+class LongTermPostProcessing(DockerTaskBase):
+    """Operational postprocessing after all long-term forecast modes complete."""
+
+    active_modes = luigi.Parameter()  # comma-separated, e.g. "month_0,quarter"
+    skill_metric_types = luigi.Parameter(default="MONTHLY")
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_lt_postprocessing_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    def requires(self):
+        modes = [m.strip() for m in self.active_modes.split(",") if m.strip()]
+        return [RunLongTermForecast(forecast_mode=mode) for mode in modes]
+
+    def output(self):
+        return luigi.LocalTarget("/app/log_lt_postprocessing.txt")
+
+    def run(self):
+        volumes = _standard_maintenance_volumes()
+        environment = _common_maintenance_env()
+        environment.append(f"SAPPHIRE_SKILL_METRIC_TYPES={self.skill_metric_types}")
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-postprocessing",
+                container_name=f"lt-postprocessing_{attempt}",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="8g",
+                memswap_limit="12g",
+                command=[
+                    "uv",
+                    "run",
+                    "postprocessing_operational_long_term.py",
+                ],
+                network="host",
+            )
+        )
+
+
+class RunLongTermWorkflow(luigi.Task):
+    """Top-level orchestrator for operational long-term forecasting.
+
+    The bash entry script runs lt_schedule_query.py to determine which
+    modes are active, then passes them as the active_modes parameter.
+    """
+
+    active_modes = luigi.Parameter()  # comma-separated
+    skill_metric_types = luigi.Parameter(default="MONTHLY")
+    send_notifications = luigi.BoolParameter(default=True)
+    custom_message = luigi.Parameter(default="")
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_long_term_workflow_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    def requires(self):
+        modes = [m.strip() for m in self.active_modes.split(",") if m.strip()]
+
+        base_tasks = []
+
+        # Individual forecast tasks per mode
+        for mode in modes:
+            base_tasks.append(RunLongTermForecast(forecast_mode=mode))
+
+        # Postprocessing after all forecasts
+        base_tasks.append(
+            LongTermPostProcessing(
+                active_modes=self.active_modes,
+                skill_metric_types=self.skill_metric_types,
+            )
+        )
+
+        # Cleanup tasks
+        base_tasks.append(LogFileCleanup())
+        base_tasks.append(DeleteOldMarkerFiles())
+
+        # Wrap with notification if enabled
+        if self.send_notifications:
+            return SendPipelineCompletionNotification(
+                custom_message=f"LONG_TERM {self.custom_message}",
+                depends_on=base_tasks,
+            )
+        else:
+            return base_tasks
+
+    def output(self):
+        return luigi.LocalTarget("/app/log_long_term_workflow_complete.txt")
+
+    def run(self):
+        print("Long-term workflow completed.")
+
+        os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
+        with open(self.docker_logs_file_path, "w") as f:
+            f.write(
+                f"Long-term workflow for {ORGANIZATION} completed at "
+                f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+
+        with self.output().open("w") as f:
+            f.write("Long-term workflow completed")
+
+
 if __name__ == "__main__":
     luigi.build([RunWorkflow()])

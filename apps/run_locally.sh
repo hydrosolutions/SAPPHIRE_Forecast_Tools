@@ -265,6 +265,57 @@ is_lt_issue_window() {
     return 1
 }
 
+# Query the Python schedule helper to determine which long-term modes
+# are active today.  Sets LT_ACTIVE_MODES (space-separated mode names),
+# LT_SKILL_METRIC_TYPES (space-separated), and LT_ACTIVE_WINDOW (non-empty
+# if any modes are active).  Falls back to is_lt_issue_window() on failure.
+query_lt_schedule() {
+    local today_arg=""
+    if [ -n "${LT_FORECAST_TODAY:-}" ]; then
+        today_arg="--today ${LT_FORECAST_TODAY}"
+    fi
+
+    local json_output
+    json_output=$(run_in_venv long_term_forecasting lt_schedule_query.py \
+        -- $today_arg 2>/dev/null) || {
+        log WARN "lt_schedule_query.py failed, falling back to is_lt_issue_window"
+        if is_lt_issue_window; then
+            LT_ACTIVE_MODES="${LT_OPERATIONAL_MODES:-month_0 month_1 month_2 month_3 month_4 month_5 month_6 month_7 month_8 month_9}"
+            if [ "$LT_ACTIVE_WINDOW" = "25" ]; then
+                LT_SKILL_METRIC_TYPES="MONTHLY QUARTERLY SEASONAL"
+            else
+                LT_SKILL_METRIC_TYPES="MONTHLY"
+            fi
+        else
+            LT_ACTIVE_MODES=""
+            LT_SKILL_METRIC_TYPES=""
+            LT_ACTIVE_WINDOW=""
+        fi
+        return 0
+    }
+
+    # Parse JSON output (uses Python-style JSON, parse with simple extraction)
+    LT_ACTIVE_MODES=$(echo "$json_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(' '.join(d.get('active_modes', [])))
+" 2>/dev/null) || LT_ACTIVE_MODES=""
+
+    LT_SKILL_METRIC_TYPES=$(echo "$json_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(' '.join(d.get('skill_metric_types', [])))
+" 2>/dev/null) || LT_SKILL_METRIC_TYPES=""
+
+    if [ -n "$LT_ACTIVE_MODES" ]; then
+        LT_ACTIVE_WINDOW="active"  # non-empty signals active
+    else
+        LT_ACTIVE_WINDOW=""
+    fi
+
+    log INFO "Schedule query: active_modes=[${LT_ACTIVE_MODES}] skill_types=[${LT_SKILL_METRIC_TYPES}]"
+}
+
 record_result() {
     local module="$1"
     local status="$2"
@@ -569,7 +620,21 @@ run_long_term_forecasting_operational() {
     local rc=0
     local any_failed=false
 
-    local modes="${LT_OPERATIONAL_MODES:-0 1 2 3 4 5 6 7 8 9}"
+    # Prefer LT_ACTIVE_MODES (full mode names from query_lt_schedule),
+    # then LT_OPERATIONAL_MODES (escape hatch, bare numbers with month_ prefix),
+    # then default to all 10 months.
+    local modes=""
+    if [ -n "${LT_ACTIVE_MODES:-}" ]; then
+        modes="$LT_ACTIVE_MODES"
+    elif [ -n "${LT_OPERATIONAL_MODES:-}" ]; then
+        # Legacy: bare numbers like "0 1 2" — prefix with month_
+        for m in $LT_OPERATIONAL_MODES; do
+            modes="${modes:+$modes }month_${m}"
+        done
+    else
+        modes="month_0 month_1 month_2 month_3 month_4 month_5 month_6 month_7 month_8 month_9"
+    fi
+
     local run_args=(--all)
     if [ -n "${LT_FORECAST_TODAY:-}" ]; then
         run_args=(--today "${LT_FORECAST_TODAY}")
@@ -577,12 +642,12 @@ run_long_term_forecasting_operational() {
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting_operational.log"
     > "$CURRENT_MODULE_LOG"
-    for month in $modes; do
-        log INFO "  Month: month_${month} (operational)"
+    for mode in $modes; do
+        log INFO "  Mode: ${mode} (operational)"
         if ! run_in_venv long_term_forecasting run_forecast.py \
-            "lt_forecast_mode=month_${month}" \
+            "lt_forecast_mode=${mode}" \
             -- "${run_args[@]}"; then
-            log WARN "  month_${month} failed, continuing with next month"
+            log WARN "  ${mode} failed, continuing with next mode"
             any_failed=true
         fi
     done
@@ -982,9 +1047,9 @@ run_long_term_operational_pipeline() {
         return 0
     fi
 
-    # Determine which issue window we are in
+    # Determine which modes are active today (config-aware)
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
-        is_lt_issue_window || true
+        query_lt_schedule
     fi
 
     # Phase 1: Preprocessing (shared, runs once)
@@ -993,21 +1058,21 @@ run_long_term_operational_pipeline() {
     run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
-        log WARN "No active issue window (day ${LT_GATE_DAY}), skipping long-term pipeline"
+        log WARN "No active modes today, skipping long-term pipeline"
         return 0
     fi
 
-    log INFO "Active issue window: day ${LT_ACTIVE_WINDOW}"
+    log INFO "Active modes: ${LT_ACTIVE_MODES}"
 
-    # Phase 2: Generate forecasts (operational run_forecast.py, months 0-9)
+    # Phase 2: Generate forecasts (only active modes)
     run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
     # Phase 3: Operational postprocessing
     run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
-    # Phase 4: Skill metrics — 25th runs all horizons, 10th runs monthly only
-    if [ "$LT_ACTIVE_WINDOW" = "25" ]; then
-        run_recalculate_long_term_skill_metrics "MONTHLY QUARTERLY SEASONAL" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    # Phase 4: Skill metrics — driven by schedule query
+    if [ -n "${LT_SKILL_METRIC_TYPES:-}" ]; then
+        run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     else
         run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     fi
@@ -1125,21 +1190,24 @@ run_daily_pipeline() {
     # Restore original mode
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 
-    # --- Phase 5: Long-term forecasting (gated by day-of-month) ---
+    # --- Phase 5: Long-term forecasting (config-aware scheduling) ---
     if should_skip_module long_term_forecasting; then
         log INFO "Phase 5: Skipping long-term forecasting (not required for ${ORG} org)"
-    elif is_lt_issue_window; then
-        log INFO "Phase 5: Long-term forecasting (day ${LT_GATE_DAY} within ±5 of issue day ${LT_ACTIVE_WINDOW})"
-        run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        if [ "$LT_ACTIVE_WINDOW" = "25" ]; then
-            run_recalculate_long_term_skill_metrics "MONTHLY QUARTERLY SEASONAL" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        else
-            run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        fi
-        run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     else
-        log INFO "Phase 5: Skipping long-term forecasting — today (day ${LT_GATE_DAY}) is not within ±5 days of issue days (${LT_GATE_ISSUE_DAYS})"
+        query_lt_schedule
+        if [ -n "${LT_ACTIVE_WINDOW:-}" ]; then
+            log INFO "Phase 5: Long-term forecasting (active modes: ${LT_ACTIVE_MODES})"
+            run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            if [ -n "${LT_SKILL_METRIC_TYPES:-}" ]; then
+                run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            else
+                run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            fi
+            run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        else
+            log INFO "Phase 5: Skipping long-term forecasting — no modes active today"
+        fi
     fi
 
     run_api_validation "daily"

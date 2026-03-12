@@ -40,7 +40,7 @@ def _(mo):
     station = mo.ui.text(value="15102", label="Station code")
     horizon = mo.ui.dropdown(options=["pentad", "decade"], value="pentad", label="Horizon")
     start_date = mo.ui.text(value="2025-06-01", label="Start date")
-    end_date = mo.ui.text(value="2026-03-01", label="End date")
+    end_date = mo.ui.text(value="2026-04-01", label="End date")
 
     mo.hstack([api_url, station, horizon, start_date, end_date])
     return api_url, end_date, horizon, start_date, station

@@ -301,10 +301,10 @@ def run_tier1_short_term(
     # Query from boundary date to today to find forecasts issued
     # on the most recent boundary day.
     model_modules = {
-        "LR": "linear_regression",
-        "TFT": "machine_learning",
-        "TiDE": "machine_learning",
-        "TSMixer": "machine_learning",
+        "LR": "postprocessing_forecasts",
+        "TFT": "postprocessing_forecasts",
+        "TiDE": "postprocessing_forecasts",
+        "TSMixer": "postprocessing_forecasts",
         "EM": "postprocessing_forecasts",
         "NE": "postprocessing_forecasts",
     }
@@ -635,8 +635,9 @@ def run_tier2(
     results.append(check_quantile_ordering(tier1_results))
 
     # "All models present" is a cross-module check — skip when
-    # validating a single module (same rationale as Tier 3).
-    if not module_filter:
+    # validating a single module (same rationale as Tier 3) or when
+    # the horizon is not short-term (long-term has different models).
+    if not module_filter and horizon in ("pentad", "decade"):
         forecast_results = [r for r in tier1_results if r.name.startswith("Forecasts (")]
         results.append(check_expected_models(forecast_results, horizon))
 
@@ -790,14 +791,18 @@ def print_summary(all_results: list[CheckResult]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def resolve_horizons(horizon_arg: str | None) -> list[str]:
+def resolve_horizons(horizon_arg: str | None, target: str = "short-term") -> list[str]:
     """Resolve horizon argument into a list of API horizon strings.
 
-    Falls back to SAPPHIRE_PREDICTION_MODE env var, then defaults to
-    ["pentad"].
+    For long-term targets, defaults to ["month"].
+    For short-term, falls back to SAPPHIRE_PREDICTION_MODE env var,
+    then defaults to ["pentad"].
     """
     if horizon_arg:
         return [horizon_arg]
+
+    if target == "long-term":
+        return ["month"]
 
     mode = os.getenv("SAPPHIRE_PREDICTION_MODE", "").upper()
     return MODE_TO_HORIZONS.get(mode, ["pentad"])
@@ -984,9 +989,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--horizon",
-        choices=["pentad", "decade"],
+        choices=["pentad", "decade", "month"],
         default=None,
-        help="Override horizon (default: from SAPPHIRE_PREDICTION_MODE).",
+        help="Override horizon (default: from SAPPHIRE_PREDICTION_MODE or target).",
     )
     parser.add_argument(
         "--module",
@@ -1009,7 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
             target = "short-term"
 
     forecast_date = args.forecast_date or date.today()
-    horizons = resolve_horizons(args.horizon)
+    horizons = resolve_horizons(args.horizon, target)
 
     # --- Early-exit checks ---
     if not SAPPHIRE_API_AVAILABLE:

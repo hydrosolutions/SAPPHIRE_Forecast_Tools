@@ -313,6 +313,12 @@ def main():
                 fc_sites, site_codes, site_ids = sl.get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk)
                 logger.debug("[CONFIG] Forecast sites loaded from iEasyHydro HF SDK")
 
+                # Write config_all_stations_library.json so downstream modules
+                # (linear_regression, etc.) have station metadata available.
+                if fc_sites:
+                    sl.write_config_all_stations(fc_sites)
+                    logger.info("[CONFIG] Updated config_all_stations_library.json from HF SDK")
+
                 # If SDK returned None (no DB access), fall back to config file
                 if site_codes is None:
                     config_path = os.path.join(
