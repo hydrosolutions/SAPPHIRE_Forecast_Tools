@@ -5,25 +5,20 @@
 
 import os
 import sys
-import glob
 from time import time
-import pandas as pd
+from typing import Any
+
 import numpy as np
-import json
-from typing import List, Dict, Any, Optional, Tuple
-
-import requests
+import pandas as pd
+from __init__ import get_today, logger
 from sqlalchemy import create_engine, text
-
-from __init__ import logger, initialize_today, get_today, SAPPHIRE_API_AVAILABLE
-
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
@@ -33,21 +28,26 @@ import setup_library as sl
 
 class DataInterfaceDB:
     """SQL-based data interface using PostgreSQL."""
-    
-    def __init__(self, connection_string: Optional[str] = None):
+
+    def __init__(
+        self,
+        connection_string: str | None = None,
+        station_codes=None,
+    ):
         sl.load_environment()
-        
-        self.connection_string = connection_string or os.getenv(
-            'DB_POSTPROCESS_CONNECTION_STRING'
-        )
+
+        self.connection_string = connection_string or os.getenv("DB_POSTPROCESS_CONNECTION_STRING")
         self.engine = create_engine(self.connection_string)
+        self.station_codes = station_codes
         self._get_paths()
 
     def _get_paths(self):
         """Retrieve necessary file paths for static features (still CSV-based)."""
-        MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
-        PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_ml_long_term_path_to_static')
-        self.PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
+        MODELS_AND_SCALERS_PATH = os.getenv("ieasyhydroforecast_models_and_scalers_path")
+        PATH_TO_STATIC_FEATURES = os.getenv("ieasyhydroforecast_ml_long_term_path_to_static")
+        self.PATH_TO_STATIC_FEATURES = os.path.join(
+            MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES
+        )
 
     def _execute_query(self, query: str, params: dict = None) -> pd.DataFrame:
         """Execute SQL query and return DataFrame."""
@@ -57,14 +57,27 @@ class DataInterfaceDB:
         logger.debug(f"Query executed in {time() - start:.3f}s")
         return df
 
+    def _add_station_filter(self, conditions: list, params: dict) -> None:
+        """Append station_codes IN clause if instance has station_codes set.
+
+        Treats None and empty list as "no filter" (returns all stations).
+        """
+        if self.station_codes is not None and len(self.station_codes) > 0:
+            placeholders = ", ".join(f":sc_{i}" for i in range(len(self.station_codes)))
+            conditions.append(f"code IN ({placeholders})")
+            for i, c in enumerate(self.station_codes):
+                params[f"sc_{i}"] = str(c)
+
     # ─────────────────────────────────────────────────────────────
     # METEO DATA (Precipitation & Temperature)
     # ─────────────────────────────────────────────────────────────
-    def get_meteo_data(self,
-                       meteo_type: str,
-                       code: Optional[str] = None,
-                       start_date: Optional[str] = None,
-                       end_date: Optional[str] = None) -> pd.DataFrame:
+    def get_meteo_data(
+        self,
+        meteo_type: str,
+        code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
         """
         Load meteo data (P or T) from the database.
 
@@ -87,6 +100,8 @@ class DataInterfaceDB:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
 
+        self._add_station_filter(conditions, params)
+
         where_clause = " AND ".join(conditions)
         query = f"""
             SELECT date, code, value as {meteo_type}
@@ -96,27 +111,26 @@ class DataInterfaceDB:
         """
 
         df = self._execute_query(query, params)
-        df['date'] = pd.to_datetime(df['date'])
-        df['code'] = df['code'].astype(int)
+        df["date"] = pd.to_datetime(df["date"])
+        df["code"] = df["code"].astype(int)
         return df
 
-    def get_rain(self, station: Optional[str] = None) -> pd.DataFrame:
+    def get_rain(self, station: str | None = None) -> pd.DataFrame:
         """Get precipitation data."""
         df = self.get_meteo_data(meteo_type="P", code=station)
         df.rename(columns={"P": "Precipitation"}, inplace=True)
         return df
 
-    def get_temperature(self, station: Optional[str] = None) -> pd.DataFrame:
+    def get_temperature(self, station: str | None = None) -> pd.DataFrame:
         """Get temperature data."""
         return self.get_meteo_data(meteo_type="T", code=station)
 
     # ─────────────────────────────────────────────────────────────
     # RUNOFF / DISCHARGE DATA
     # ─────────────────────────────────────────────────────────────
-    def get_runoff_data(self,
-                        code: Optional[str] = None,
-                        start_date: Optional[str] = None,
-                        end_date: Optional[str] = None) -> pd.DataFrame:
+    def get_runoff_data(
+        self, code: str | None = None, start_date: str | None = None, end_date: str | None = None
+    ) -> pd.DataFrame:
         """
         Load runoff/discharge data from the database.
 
@@ -138,6 +152,8 @@ class DataInterfaceDB:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
 
+        self._add_station_filter(conditions, params)
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"""
             SELECT date, code, discharge
@@ -147,18 +163,20 @@ class DataInterfaceDB:
         """
 
         df = self._execute_query(query, params)
-        df['date'] = pd.to_datetime(df['date'])
-        df['code'] = df['code'].astype(int)
+        df["date"] = pd.to_datetime(df["date"])
+        df["code"] = df["code"].astype(int)
         return df
 
     # ─────────────────────────────────────────────────────────────
     # SNOW DATA
     # ─────────────────────────────────────────────────────────────
-    def get_snow_data(self,
-                      variable: str,
-                      code: Optional[str] = None,
-                      start_date: Optional[str] = None,
-                      end_date: Optional[str] = None) -> pd.DataFrame:
+    def get_snow_data(
+        self,
+        variable: str,
+        code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
         """
         Load snow data from the database.
 
@@ -182,10 +200,12 @@ class DataInterfaceDB:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
 
+        self._add_station_filter(conditions, params)
+
         where_clause = " AND ".join(conditions)
-        
+
         query = f"""
-            SELECT date, code, 
+            SELECT date, code,
             value as {variable_caps},
             value1   AS {variable_caps}_1,
             value2   AS {variable_caps}_2,
@@ -207,23 +227,21 @@ class DataInterfaceDB:
         """
 
         df = self._execute_query(query, params)
-        
-        df['date'] = pd.to_datetime(df['date'])
-        df['code'] = df['code'].astype(int)
+
+        df["date"] = pd.to_datetime(df["date"])
+        df["code"] = df["code"].astype(int)
 
         return df
 
-    def load_snow_data(self,
-                       HRU: str,
-                       variable: str) -> Tuple[pd.DataFrame, pd.Timestamp]:
+    def load_snow_data(self, HRU: str, variable: str) -> tuple[pd.DataFrame, pd.Timestamp]:
         """Load snow data for a specific HRU and variable.
 
         Note: HRU is used for validation only (to match CSV-based interface).
         The database stores snow data by station codes, not HRU codes.
         We load ALL snow data for the variable (no code filter).
         """
-        available_snow_vars = os.getenv('ieasyhydroforecast_SNOW_VARS', '').split(',')
-        available_snow_hrus = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA', '').split(',')
+        available_snow_vars = os.getenv("ieasyhydroforecast_SNOW_VARS", "").split(",")
+        available_snow_hrus = os.getenv("ieasyhydroforecast_HRU_SNOW_DATA", "").split(",")
 
         assert variable in available_snow_vars, f"Variable {variable} not in {available_snow_vars}"
         assert HRU in available_snow_hrus, f"HRU {HRU} not in {available_snow_hrus}"
@@ -246,13 +264,13 @@ class DataInterfaceDB:
                     new_col_name = var_upper + "_" + "_".join(splitted_col[1:])
                     df.rename(columns={col: new_col_name}, inplace=True)
 
-
-        has_elevation_bands = os.getenv(f'ieasyhydroforecast_{HRU}_has_elevation_bands', 'False').lower() == 'true'
+        has_elevation_bands = (
+            os.getenv(f"ieasyhydroforecast_{HRU}_has_elevation_bands", "False").lower() == "true"
+        )
         if not has_elevation_bands:
             print(f"HRU {HRU} does not have elevation bands, keeping only main variable column.")
-            columns_expected = ['date', 'code', var_upper]
+            columns_expected = ["date", "code", var_upper]
             df = df[columns_expected]
-
 
         max_date = df["date"].max()
 
@@ -265,7 +283,7 @@ class DataInterfaceDB:
         """
         Load combined forcing data (P and T) from the database.
         Replaces the CSV-based hindcast + operational merge.
-        """        
+        """
         # Get precipitation
         df_p = self.get_meteo_data(meteo_type="P")
         # ensure P is named "P" capital
@@ -275,8 +293,8 @@ class DataInterfaceDB:
                 df_p.rename(columns={p_col[0]: "P"}, inplace=True)
             else:
                 raise ValueError("Precipitation column not found or ambiguous in meteo data.")
-        
-        # Get temperature  
+
+        # Get temperature
         df_t = self.get_meteo_data(meteo_type="T")
         # ensure T is named "T" capital
         if "T" not in df_t.columns:
@@ -285,12 +303,12 @@ class DataInterfaceDB:
                 df_t.rename(columns={t_col[0]: "T"}, inplace=True)
             else:
                 raise ValueError("Temperature column not found or ambiguous in meteo data.")
-        
+
         # Merge P and T on date and code
         combined_df = pd.merge(df_p, df_t, on=["date", "code"], how="outer")
         combined_df = combined_df.sort_values(by=["code", "date"]).reset_index(drop=True)
-        combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep='last')
-        
+        combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep="last")
+
         return combined_df
 
     # ─────────────────────────────────────────────────────────────
@@ -301,39 +319,47 @@ class DataInterfaceDB:
         static_features = pd.read_csv(self.PATH_TO_STATIC_FEATURES)
         if "CODE" in static_features.columns:
             static_features.rename(columns={"CODE": "code"}, inplace=True)
+        if (
+            self.station_codes is not None
+            and len(self.station_codes) > 0
+            and "code" in static_features.columns
+        ):
+            static_features = static_features[
+                static_features["code"].astype(str).isin(self.station_codes)
+            ].reset_index(drop=True)
         return static_features
 
     # ─────────────────────────────────────────────────────────────
     # BASE DATA ASSEMBLY
     # ─────────────────────────────────────────────────────────────
-    def get_base_data(self,
-                      forcing_HRU: str,
-                      start_date: Optional[str] = None) -> Dict[str, Any]:
+    def get_base_data(self, forcing_HRU: str, start_date: str | None = None) -> dict[str, Any]:
         """
         Retrieve the base dataset for long-term forecasting.
-        
+
         Returns:
             Dict with temporal_data, static_data, and offset information
         """
         today = get_today()
-        
+
         # Load discharge from database
         discharge = self.get_runoff_data(end_date=today.strftime("%Y-%m-%d"))
         # max date where discharge is not nan
         max_date_discharge = discharge[discharge["discharge"].notna()]["date"].max()
-        
+
         # Load forcing data from database
         forcing_data = self._load_forcing_data(HRU=forcing_HRU)
-        
+
         # Merge discharge and forcing
         temporal_data = pd.merge(discharge, forcing_data, on=["date", "code"], how="outer")
-        
+
         if start_date is not None:
             start_date_pd = pd.to_datetime(start_date, format="%Y-%m-%d")
-            temporal_data = temporal_data[temporal_data["date"] >= start_date_pd].reset_index(drop=True)
-        
+            temporal_data = temporal_data[temporal_data["date"] >= start_date_pd].reset_index(
+                drop=True
+            )
+
         static_data = self._prepare_static_data()
-        
+
         temporal_data = self._clean_data(temporal_data)
 
         # Calculate time offsets
@@ -345,56 +371,55 @@ class DataInterfaceDB:
             "temporal_data": temporal_data,
             "static_data": static_data,
             "offset_date_base": offset_base,
-            "offset_date_discharge": offset_discharge
+            "offset_date_discharge": offset_discharge,
         }
 
-    def extend_base_data_with_snow(self,
-                                   base_data: pd.DataFrame,
-                                   HRUs_snow: List[str],
-                                   snow_variables: List[str]) -> Dict[str, Any]:
+    def extend_base_data_with_snow(
+        self, base_data: pd.DataFrame, HRUs_snow: list[str], snow_variables: list[str]
+    ) -> dict[str, Any]:
         """Extend base data with snow variables."""
         assert len(HRUs_snow) == len(snow_variables), "Length mismatch"
-        
+
         temporal_data = base_data.copy()
         today = get_today()
         offset_snow = None
-        
-        for HRU, variable in zip(HRUs_snow, snow_variables):
+
+        for HRU, variable in zip(HRUs_snow, snow_variables, strict=True):
             snow_data, max_date = self.load_snow_data(HRU=HRU, variable=variable)
             offset_snow = (today - max_date).days
             snow_data = snow_data.drop_duplicates(subset=["date", "code"])
             temporal_data = pd.merge(temporal_data, snow_data, on=["date", "code"], how="left")
-        
+
         return {"temporal_data": temporal_data, "offset_date_snow": offset_snow}
 
     def _clean_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Clean and ensure continuous time series."""
         data = data.sort_values(by=["code", "date"]).reset_index(drop=True)
-        data = data.drop_duplicates(subset=["code", "date"], keep='last').reset_index(drop=True)
-        
-        emcwf_forecast_days = int(os.getenv('ieasyhydroforecast_ECMWF_IFS_lead_time', 15))
+        data = data.drop_duplicates(subset=["code", "date"], keep="last").reset_index(drop=True)
+
+        emcwf_forecast_days = int(os.getenv("ieasyhydroforecast_ECMWF_IFS_lead_time", 15))
         today = get_today()
         end_date = today + pd.Timedelta(days=emcwf_forecast_days)
         data = data[data["date"] <= end_date].reset_index(drop=True)
-        
+
         max_date_data = data["date"].max()
         if end_date > max_date_data:
             logger.warning(f"Data ends at {max_date_data}, expected up to {end_date}")
-        
+
         full_end_date = max(end_date, max_date_data)
         all_codes = data["code"].unique()
-        full_date_range = pd.date_range(start=data["date"].min(), end=full_end_date, freq='D')
-        
-        full_index = pd.MultiIndex.from_product([all_codes, full_date_range], names=["code", "date"])
-        data = data.set_index(["code", "date"]).reindex(full_index).reset_index()
-        
-        return data
+        full_date_range = pd.date_range(start=data["date"].min(), end=full_end_date, freq="D")
 
+        full_index = pd.MultiIndex.from_product(
+            [all_codes, full_date_range], names=["code", "date"]
+        )
+        data = data.set_index(["code", "date"]).reindex(full_index).reset_index()
+
+        return data
 
 
 class DataInterface:
     def __init__(self):
-        
         sl.load_environment()
 
         self._get_paths()
@@ -404,27 +429,30 @@ class DataInterface:
         Retrieve necessary file paths.
         """
         # Access the environment variables
-        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
-        MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
-        PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_ml_long_term_path_to_static')
+        intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+        MODELS_AND_SCALERS_PATH = os.getenv("ieasyhydroforecast_models_and_scalers_path")
+        PATH_TO_STATIC_FEATURES = os.getenv("ieasyhydroforecast_ml_long_term_path_to_static")
 
         # Static Features
-        self.PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
+        self.PATH_TO_STATIC_FEATURES = os.path.join(
+            MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES
+        )
 
         # Read in the ERA5 Reanalysis Data
-        PATH_ERA5_REANALYSIS = os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS')
+        PATH_ERA5_REANALYSIS = os.getenv("ieasyhydroforecast_OUTPUT_PATH_REANALYSIS")
         self.PATH_ERA5_REANALYSIS = os.path.join(intermediate_data_path, PATH_ERA5_REANALYSIS)
 
         # Read in The Operational Forcing Data
-        PATH_OPERATIONAL_CONTROL_MEMBER = os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM')
-        self.PATH_OPERATIONAL_CONTROL_MEMBER = os.path.join(intermediate_data_path, PATH_OPERATIONAL_CONTROL_MEMBER)
-    
-        PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
+        PATH_OPERATIONAL_CONTROL_MEMBER = os.getenv("ieasyhydroforecast_OUTPUT_PATH_CM")
+        self.PATH_OPERATIONAL_CONTROL_MEMBER = os.path.join(
+            intermediate_data_path, PATH_OPERATIONAL_CONTROL_MEMBER
+        )
+
+        PATH_TO_PAST_DISCHARGE = os.getenv("ieasyforecast_daily_discharge_file")
         self.PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
 
-        PATH_SNOW_DATA = os.getenv('ieasyhydroforecast_OUTPUT_PATH_SNOW')
+        PATH_SNOW_DATA = os.getenv("ieasyhydroforecast_OUTPUT_PATH_SNOW")
         self.PATH_SNOW_DATA = os.path.join(intermediate_data_path, PATH_SNOW_DATA)
-
 
     def _prepare_static_data(self) -> pd.DataFrame:
         """
@@ -438,14 +466,13 @@ class DataInterface:
             static_features.rename(columns={"CODE": "code"}, inplace=True)
 
         return static_features
-    
-    def _load_forcing_data_db(self,
-                              HRU: str):
-        raise NotImplementedError("This method is not implemented in DataInterface. Use DataInterfaceDB instead.")
 
+    def _load_forcing_data_db(self, HRU: str):
+        raise NotImplementedError(
+            "This method is not implemented in DataInterface. Use DataInterfaceDB instead."
+        )
 
-    def _load_forcing_data(self,
-                          HRU: str):
+    def _load_forcing_data(self, HRU: str):
         """
         Load in the forcing file:
         Names:
@@ -505,7 +532,9 @@ class DataInterface:
         combined_df = pd.concat([hindcast_merged, operational_merged], ignore_index=True)
 
         # Drop duplicates based on date and code
-        combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep='last').reset_index(drop=True)
+        combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep="last").reset_index(
+            drop=True
+        )
 
         # drop columns if "day_of_year" in columns
         cols_to_drop = [col for col in combined_df.columns if "dayofyear" in col]
@@ -513,10 +542,7 @@ class DataInterface:
 
         return combined_df
 
-
-    def get_base_data(self,
-                      forcing_HRU: str,
-                      start_date: Optional[str]=None) -> dict[str, Any]:
+    def get_base_data(self, forcing_HRU: str, start_date: str | None = None) -> dict[str, Any]:
         """
         Retrieve the base dataset for long-term forecasting.
 
@@ -526,53 +552,59 @@ class DataInterface:
 
         today = get_today()
 
-        discharge = pd.read_csv(self.PATH_TO_PAST_DISCHARGE, parse_dates=['date'])
+        discharge = pd.read_csv(self.PATH_TO_PAST_DISCHARGE, parse_dates=["date"])
         # filter discharge to only include dates before today
         discharge = discharge[discharge["date"] <= today].reset_index(drop=True)
-        
+
         max_date_discharge = discharge["date"].max()
         discharge["code"] = discharge["code"].astype(int)
 
         forcing_data = self._load_forcing_data(HRU=forcing_HRU)
 
         # Use outer merge to ensure all dates from both datasets are included
-        temporal_data  = pd.merge(discharge, forcing_data, on=["date", "code"], how="outer")
+        temporal_data = pd.merge(discharge, forcing_data, on=["date", "code"], how="outer")
 
         if start_date is not None:
             start_date_pd = pd.to_datetime(start_date, format="%Y-%m-%d")
-            temporal_data = temporal_data[temporal_data["date"] >= start_date_pd].reset_index(drop=True)
+            temporal_data = temporal_data[temporal_data["date"] >= start_date_pd].reset_index(
+                drop=True
+            )
 
         static_data = self._prepare_static_data()
 
         # Calculate Time Offsets
         # This is usefull to check if we can run the forecast or if we are missing data
         max_date_temporal = temporal_data["date"].max()
-        offset_base = (today - max_date_temporal).days # we expect max_date_temporal to be in the future as we have forecasting data
-        offset_discharge = (today - max_date_discharge).days # we expect max_date_discharge to be in the past as we do not have todays discharge yet
+        offset_base = (
+            today - max_date_temporal
+        ).days  # we expect max_date_temporal to be in the future as we have forecasting data
+        offset_discharge = (
+            today - max_date_discharge
+        ).days  # we expect max_date_discharge to be in the past as we do not have todays discharge yet
 
         temporal_data = self._clean_data(temporal_data)
 
+        return {
+            "temporal_data": temporal_data,
+            "static_data": static_data,
+            "offset_date_base": offset_base,
+            "offset_date_discharge": offset_discharge,
+        }
 
-        return {"temporal_data": temporal_data, "static_data": static_data, 
-                "offset_date_base": offset_base, "offset_date_discharge": offset_discharge}
-    
-    def extend_base_data_with_snow(self,
-                                  base_data: pd.DataFrame,
-                                  HRUs_snow: List[str],
-                                  snow_variables: List[str]) -> dict[str, Any]:
-        
-        assert len(HRUs_snow) == len(snow_variables), "Length of HRUs_snow must match length of snow_variables"
+    def extend_base_data_with_snow(
+        self, base_data: pd.DataFrame, HRUs_snow: list[str], snow_variables: list[str]
+    ) -> dict[str, Any]:
+        assert len(HRUs_snow) == len(snow_variables), (
+            "Length of HRUs_snow must match length of snow_variables"
+        )
 
         temporal_data = base_data.copy()
         today = get_today()
 
         if len(HRUs_snow) > 0:
-            for HRU, variable in zip(HRUs_snow, snow_variables):
-                snow_data, max_date = self.load_snow_data(
-                    HRU=HRU,
-                    variable=variable
-                    )
-                
+            for HRU, variable in zip(HRUs_snow, snow_variables, strict=True):
+                snow_data, max_date = self.load_snow_data(HRU=HRU, variable=variable)
+
                 offset_snow = (today - max_date).days
 
                 # remove duplicates based on date and code
@@ -584,23 +616,25 @@ class DataInterface:
 
         return {"temporal_data": temporal_data, "offset_date_snow": offset_snow}
 
-    def load_snow_data(self, 
-                       HRU : str,
-                       variable: str) -> Tuple[pd.DataFrame, pd.Timestamp]:
+    def load_snow_data(self, HRU: str, variable: str) -> tuple[pd.DataFrame, pd.Timestamp]:
         """
         Load the snow data from a csv file from the data-gateway
         """
-        available_snow_vars = os.getenv('ieasyhydroforecast_SNOW_VARS').split(',')
-        available_snow_hrus = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA').split(',')
+        available_snow_vars = os.getenv("ieasyhydroforecast_SNOW_VARS").split(",")
+        available_snow_hrus = os.getenv("ieasyhydroforecast_HRU_SNOW_DATA").split(",")
 
-        assert variable in available_snow_vars, f"Variable {variable} not in available snow variables: {available_snow_vars}"
-        assert HRU in available_snow_hrus, f"HRU {HRU} not in available snow HRUs: {available_snow_hrus}"
+        assert variable in available_snow_vars, (
+            f"Variable {variable} not in available snow variables: {available_snow_vars}"
+        )
+        assert HRU in available_snow_hrus, (
+            f"HRU {HRU} not in available snow HRUs: {available_snow_hrus}"
+        )
 
         # add snow variable to file name
         snow_path = os.path.join(self.PATH_SNOW_DATA, variable)
         file_path = os.path.join(snow_path, f"{HRU}_{variable}.csv")
         df = pd.read_csv(file_path)
-        
+
         df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
         df["code"] = df["code"].astype(int)
 
@@ -612,9 +646,7 @@ class DataInterface:
 
         return df, max_date
 
-
-    def _clean_data(self, 
-                   data: pd.DataFrame) -> pd.DataFrame:
+    def _clean_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Clean the dataset.
 
@@ -624,44 +656,49 @@ class DataInterface:
         Returns:
             pd.DataFrame: The cleaned dataset.
         """
-        
+
         # Step one - sort by date and code
         data = data.sort_values(by=["code", "date"]).reset_index(drop=True)
 
         # Step two drop duplicates
-        data = data.drop_duplicates(subset=["code", "date"], keep='last').reset_index(drop=True)
+        data = data.drop_duplicates(subset=["code", "date"], keep="last").reset_index(drop=True)
 
         # Step three - ensure time series is continuous - reindex
         # We expect that the data has EMCWF IFS Forecasts up to 15 days ahead
-        emcwf_forecast_days_ahead = int(os.getenv('ieasyhydroforecast_ECMWF_IFS_lead_time'))
+        emcwf_forecast_days_ahead = int(os.getenv("ieasyhydroforecast_ECMWF_IFS_lead_time"))
         today = get_today()
         end_date = today + pd.Timedelta(days=emcwf_forecast_days_ahead)
         data = data[data["date"] <= end_date].reset_index(drop=True)
 
         max_date_data = data["date"].max()
         if end_date > max_date_data:
-            logger.warning(f"Data ends at {max_date_data}, but with EMCWF forecasts we expect data up to {end_date}. This indicates some missing data.")
-        
-        full_end_date = max(end_date, max_date_data)
-                
-        all_codes = data["code"].unique()
-        full_date_range = pd.date_range(start=data["date"].min(), end=full_end_date, freq='D')
+            logger.warning(
+                f"Data ends at {max_date_data}, but with EMCWF forecasts we expect data up to {end_date}. This indicates some missing data."
+            )
 
-        full_index = pd.MultiIndex.from_product([all_codes, full_date_range], names=["code", "date"])
+        full_end_date = max(end_date, max_date_data)
+
+        all_codes = data["code"].unique()
+        full_date_range = pd.date_range(start=data["date"].min(), end=full_end_date, freq="D")
+
+        full_index = pd.MultiIndex.from_product(
+            [all_codes, full_date_range], names=["code", "date"]
+        )
         data = data.set_index(["code", "date"]).reindex(full_index).reset_index()
 
         return data
-    
+
 
 class BasePredictorDataInterface:
-    def __init__(self):
+    def __init__(self, station_codes=None):
         logger.info("Initialized BasePredictorDataInterface")
         sl.load_environment()
+        self.station_codes = station_codes  # list[str] | None
 
         # Postprocessing DB connection (port 5434 externally, 5432 in Docker)
         self.postprocessing_connection_string = os.getenv(
-            'POSTPROCESSING_DB_CONNECTION_STRING',
-            "postgresql://postgres:password@localhost:5434/postprocessing_db"
+            "POSTPROCESSING_DB_CONNECTION_STRING",
+            "postgresql://postgres:password@localhost:5434/postprocessing_db",
         )
         self._postprocessing_engine = None
 
@@ -669,26 +706,20 @@ class BasePredictorDataInterface:
     def postprocessing_engine(self):
         """Lazy initialization of the database engine."""
         if self._postprocessing_engine is None:
-            self._postprocessing_engine = create_engine(
-                self.postprocessing_connection_string
-            )
+            self._postprocessing_engine = create_engine(self.postprocessing_connection_string)
         return self._postprocessing_engine
 
-    def _execute_postprocessing_query(
-        self,
-        query: str,
-        params: dict = None
-    ) -> pd.DataFrame:
+    def _execute_postprocessing_query(self, query: str, params: dict = None) -> pd.DataFrame:
         """Execute SQL query against the postprocessing database."""
         start = time()
         with self.postprocessing_engine.connect() as conn:
             df = pd.read_sql(text(query), conn, params=params)
         logger.debug(f"Postprocessing query executed in {time() - start:.3f}s")
         return df
-        
-    def get_base_predictor_data_csv(self, 
-                                    model_name: str,
-                                    data_path: str) -> Tuple[pd.DataFrame, List[str]]:
+
+    def get_base_predictor_data_csv(
+        self, model_name: str, data_path: str
+    ) -> tuple[pd.DataFrame, list[str]]:
         """
         Retrieve the base predictor dataset.
 
@@ -696,7 +727,7 @@ class BasePredictorDataInterface:
             pd.DataFrame: The base predictor dataset.
         """
         base_data = pd.read_csv(data_path)
-        
+
         base_data["date"] = pd.to_datetime(base_data["date"], format="%Y-%m-%d")
         base_data["code"] = base_data["code"].astype(int)
 
@@ -735,13 +766,9 @@ class BasePredictorDataInterface:
 
         return base_data, base_models_cols
 
-        
     def get_base_predictor_data_database(
-        self,
-        model_name: str,
-        horizon_type: str = "month",
-        horizon_value: int = 1
-    ) -> Tuple[pd.DataFrame, List[str]]:
+        self, model_name: str, horizon_type: str = "month", horizon_value: int = 1
+    ) -> tuple[pd.DataFrame, list[str]]:
         """
         Retrieve the base predictor dataset from the postprocessing API.
 
@@ -771,23 +798,33 @@ class BasePredictorDataInterface:
 
         # Cast enum columns to text and use UPPER for case-insensitive comparison
         # DB stores enums in uppercase (e.g., LR_BASE, MONTH)
-        query = """
-            SELECT
-                date, code, q, q_xgb, q_lgbm, q_catboost, q_loc
-            FROM long_forecasts
-            WHERE UPPER(model_type::text) = UPPER(:model_type)
-              AND UPPER(horizon_type::text) = UPPER(:horizon_type)
-              AND horizon_value = :horizon_value
-              AND date <= :today
-            ORDER BY code, date
-        """
-
+        conditions = [
+            "UPPER(model_type::text) = UPPER(:model_type)",
+            "UPPER(horizon_type::text) = UPPER(:horizon_type)",
+            "horizon_value = :horizon_value",
+            "date <= :today",
+        ]
         params = {
             "model_type": model_name,
             "horizon_type": horizon_type,
             "horizon_value": horizon_value,
-            "today": today.strftime("%Y-%m-%d")
+            "today": today.strftime("%Y-%m-%d"),
         }
+
+        # Add org-scoping filter
+        if self.station_codes is not None and len(self.station_codes) > 0:
+            placeholders = ", ".join(f":sc_{i}" for i in range(len(self.station_codes)))
+            conditions.append(f"code IN ({placeholders})")
+            for i, c in enumerate(self.station_codes):
+                params[f"sc_{i}"] = str(c)
+
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            SELECT date, code, q, q_xgb, q_lgbm, q_catboost, q_loc
+            FROM long_forecasts
+            WHERE {where_clause}
+            ORDER BY code, date
+        """
 
         df = self._execute_postprocessing_query(query, params)
 
@@ -799,17 +836,17 @@ class BasePredictorDataInterface:
             return df, []
 
         # Convert types
-        df['date'] = pd.to_datetime(df['date'])
-        df['code'] = df['code'].astype(int)
+        df["date"] = pd.to_datetime(df["date"])
+        df["code"] = df["code"].astype(int)
 
         # Determine which model columns have data and build column mapping
         # Maps DB column -> DataFrame column name
         potential_columns = {
-            'q': model_name,
-            'q_xgb': f"{model_name}_xgb",
-            'q_lgbm': f"{model_name}_lgbm",
-            'q_catboost': f"{model_name}_catboost",
-            'q_loc': f"{model_name}_loc"
+            "q": model_name,
+            "q_xgb": f"{model_name}_xgb",
+            "q_lgbm": f"{model_name}_lgbm",
+            "q_catboost": f"{model_name}_catboost",
+            "q_loc": f"{model_name}_loc",
         }
 
         model_cols = []
@@ -824,53 +861,51 @@ class BasePredictorDataInterface:
         df = df.rename(columns=rename_mapping)
 
         # Keep only date, code, and model columns
-        cols_to_keep = ['date', 'code'] + model_cols
+        cols_to_keep = ["date", "code"] + model_cols
         df = df[cols_to_keep]
 
         # Drop rows where all model columns are NaN
         if model_cols:
-            df = df.dropna(subset=model_cols, how='all').reset_index(drop=True)
+            df = df.dropna(subset=model_cols, how="all").reset_index(drop=True)
 
         return df, model_cols
 
-    def load_all_dependencies_csv(self,
-                            all_dependencies_models: List[str],
-                            all_dependencies_paths: List[str],
-                              ) -> Tuple[pd.DataFrame, List[str]]:
+    def load_all_dependencies_csv(
+        self,
+        all_dependencies_models: list[str],
+        all_dependencies_paths: list[str],
+    ) -> tuple[pd.DataFrame, list[str]]:
         """
         Loads all dependencies data from the provided paths.
         """
 
         all_predictions = None
         all_model_cols = []
-        
-        for model_name, model_path in zip(all_dependencies_models, all_dependencies_paths):
 
+        for model_name, model_path in zip(
+            all_dependencies_models, all_dependencies_paths, strict=True
+        ):
             base_data, base_models_cols = self.get_base_predictor_data_csv(
-                model_name=model_name,
-                data_path=model_path
+                model_name=model_name, data_path=model_path
             )
 
             if all_predictions is None:
                 all_predictions = base_data
             else:
                 all_predictions = pd.merge(
-                    all_predictions,
-                    base_data,
-                    on=["date", "code"],
-                    how="inner"
+                    all_predictions, base_data, on=["date", "code"], how="inner"
                 )
-            
+
             all_model_cols.extend(base_models_cols)
-            
+
         return all_predictions, all_model_cols
 
     def load_all_dependencies_database(
         self,
-        all_dependencies_models: List[str],
+        all_dependencies_models: list[str],
         horizon_type: str = "month",
-        horizon_value: int = 1
-    ) -> Tuple[pd.DataFrame, List[str]]:
+        horizon_value: int = 1,
+    ) -> tuple[pd.DataFrame, list[str]]:
         """
         Loads all dependencies data from the database.
 
@@ -891,25 +926,18 @@ class BasePredictorDataInterface:
 
         for model_name in all_dependencies_models:
             base_data, base_model_cols = self.get_base_predictor_data_database(
-                model_name=model_name,
-                horizon_type=horizon_type,
-                horizon_value=horizon_value
+                model_name=model_name, horizon_type=horizon_type, horizon_value=horizon_value
             )
 
             if base_data.empty:
-                logger.warning(
-                    f"No database data found for dependency model {model_name}"
-                )
+                logger.warning(f"No database data found for dependency model {model_name}")
                 continue
 
             if all_predictions is None:
                 all_predictions = base_data
             else:
                 all_predictions = pd.merge(
-                    all_predictions,
-                    base_data,
-                    on=["date", "code"],
-                    how="inner"
+                    all_predictions, base_data, on=["date", "code"], how="inner"
                 )
 
             all_model_cols.extend(base_model_cols)
@@ -919,7 +947,8 @@ class BasePredictorDataInterface:
             all_predictions = pd.DataFrame()
 
         return all_predictions, all_model_cols
-    
+
+
 def convert_na_to_nan(df):
     """Convert pd.NA to np.nan and revert to numpy dtypes."""
     result = df.copy()
@@ -940,40 +969,40 @@ if __name__ == "__main__":
     # print("=" * 60)
     # print("Testing DataInterfaceDB")
     # print("=" * 60)
-    
+
     # Test meteo data
     print("\n1. Testing get_meteo_data (Precipitation)...")
     t0 = time()
     rain = di.get_meteo_data(meteo_type="P")
-    print(f"   Loaded {len(rain)} rows in {time()-t0:.3f}s")
+    print(f"   Loaded {len(rain)} rows in {time() - t0:.3f}s")
     print(rain.head())
-    
+
     # Test temperature
     print("\n2. Testing get_meteo_data (Temperature)...")
     t0 = time()
     temp = di.get_meteo_data(meteo_type="T")
-    print(f"   Loaded {len(temp)} rows in {time()-t0:.3f}s")
+    print(f"   Loaded {len(temp)} rows in {time() - t0:.3f}s")
     print(temp.head())
-    
+
     # Test runoff
     print("\n3. Testing get_runoff_data...")
     t0 = time()
     runoff = di.get_runoff_data()
-    print(f"   Loaded {len(runoff)} rows in {time()-t0:.3f}s")
+    print(f"   Loaded {len(runoff)} rows in {time() - t0:.3f}s")
     print(runoff.head())
-    
+
     # Test forcing data
     print("\n4. Testing _load_forcing_data...")
     t0 = time()
     forcing = di._load_forcing_data(HRU="00003")
-    print(f"   Loaded {len(forcing)} rows in {time()-t0:.3f}s")
+    print(f"   Loaded {len(forcing)} rows in {time() - t0:.3f}s")
     print(forcing.head())
-    
+
     # Test full base data
     print("\n5. Testing get_base_data...")
     t0 = time()
     base_data = di.get_base_data(forcing_HRU="00003")
-    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Loaded in {time() - t0:.3f}s")
     print(f"   Temporal shape: {base_data['temporal_data'].shape}")
     print(f"   Static shape: {base_data['static_data'].shape}")
     print(f"   Offset base: {base_data['offset_date_base']}")
@@ -983,28 +1012,24 @@ if __name__ == "__main__":
     print("\n6. Testing extend_base_data_with_snow...")
     t0 = time()
     extended_data = di.extend_base_data_with_snow(
-        base_data=base_data['temporal_data'],
-        HRUs_snow=["00003"],
-        snow_variables=["RoF"]
+        base_data=base_data["temporal_data"], HRUs_snow=["00003"], snow_variables=["RoF"]
     )
 
-    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Loaded in {time() - t0:.3f}s")
     print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
-    print(f" Head of extended data:")
-    print(extended_data['temporal_data'].head())
+    print(" Head of extended data:")
+    print(extended_data["temporal_data"].head())
 
     print("\n7. Testing extend_base_data_with_snow and elevation bands...")
     t0 = time()
     extended_data = di.extend_base_data_with_snow(
-        base_data=base_data['temporal_data'],
-        HRUs_snow=["KGZ500m"],
-        snow_variables=["RoF"]
+        base_data=base_data["temporal_data"], HRUs_snow=["KGZ500m"], snow_variables=["RoF"]
     )
 
-    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Loaded in {time() - t0:.3f}s")
     print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
-    print(f" Head of extended data:")
-    print(extended_data['temporal_data'].head())
+    print(" Head of extended data:")
+    print(extended_data["temporal_data"].head())
 
     # Just test different snow variable
     print("\n8. Testing extend_base_data_with_snow with different variable...")
@@ -1012,7 +1037,7 @@ if __name__ == "__main__":
     swe = di.get_snow_data(
         variable="RoF",
     )
-    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Loaded in {time() - t0:.3f}s")
     print(f"   SWE shape: {swe.shape}")
     print(swe.head())
     print("Swe columns: ", swe.columns)
@@ -1036,7 +1061,7 @@ if __name__ == "__main__":
             LIMIT 20
         """
         diag_df = bpi._execute_postprocessing_query(diag_query)
-        print(f"   Query executed in {time()-t0:.3f}s")
+        print(f"   Query executed in {time() - t0:.3f}s")
         print(diag_df)
     except Exception as e:
         print(f"   Error: {e}")
@@ -1046,11 +1071,9 @@ if __name__ == "__main__":
     t0 = time()
     try:
         lr_data, lr_cols = bpi.get_base_predictor_data_database(
-            model_name="LR_Base",
-            horizon_type="month",
-            horizon_value=1
+            model_name="LR_Base", horizon_type="month", horizon_value=1
         )
-        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Loaded in {time() - t0:.3f}s")
         print(f"   Shape: {lr_data.shape}")
         print(f"   Columns: {lr_cols}")
         if not lr_data.empty:
@@ -1067,11 +1090,9 @@ if __name__ == "__main__":
     t0 = time()
     try:
         mc_data, mc_cols = bpi.get_base_predictor_data_database(
-            model_name="MC_ALD",
-            horizon_type="month",
-            horizon_value=1
+            model_name="MC_ALD", horizon_type="month", horizon_value=1
         )
-        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Loaded in {time() - t0:.3f}s")
         print(f"   Shape: {mc_data.shape}")
         print(f"   Columns: {mc_cols}")
         if not mc_data.empty:
@@ -1088,11 +1109,9 @@ if __name__ == "__main__":
     t0 = time()
     try:
         all_data, all_cols = bpi.load_all_dependencies_database(
-            all_dependencies_models=["LR_Base", "MC_ALD"],
-            horizon_type="month",
-            horizon_value=1
+            all_dependencies_models=["LR_Base", "MC_ALD"], horizon_type="month", horizon_value=1
         )
-        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Loaded in {time() - t0:.3f}s")
         print(f"   Shape: {all_data.shape}")
         print(f"   All columns: {all_cols}")
         if not all_data.empty:

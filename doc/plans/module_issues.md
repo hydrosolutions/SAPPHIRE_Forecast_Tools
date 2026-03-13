@@ -108,7 +108,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **LTF-001** | `--today` flag in `run_forecast.py` runs zero models | **Medium** | Review | [`review_gi_draft_lt_today_flag_runs_no_models.md`](issues/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
-| **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Draft | [`high_prio_gi_draft_ltf_sql_org_scoping.md`](issues/high_prio_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
+| **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Review | [`review_gi_draft_ltf_sql_org_scoping.md`](issues/review_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -281,4 +281,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-13 (status audit: INFRA-009/010/012→Review, PP-022/024/025→Review, PREPG-001→Review, PP-026 added)*
+*Last updated: 2026-03-13 (status audit: INFRA-009/010/012→Review, PP-022/024/025→Review, PREPG-001→Review, PP-026 added; LTF-002→Review)*

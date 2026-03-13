@@ -8,6 +8,7 @@
 # ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=monthly python run_forecast.py
 
 
+import json
 import logging
 from datetime import datetime
 
@@ -56,6 +57,31 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
+def _read_station_codes():
+    """Read station codes from the station selection config file.
+
+    Handles both list format ([12345, 67890]) and dict format
+    ({"12345": {...}, "67890": {...}}). The dict format is used by
+    some ML configs — iterating a dict yields its keys.
+    """
+    config_path = os.path.join(
+        os.getenv("ieasyforecast_configuration_path", ""),
+        os.getenv("ieasyforecast_config_file_station_selection", ""),
+    )
+    with open(config_path) as f:
+        config = json.load(f)
+    raw = config.get("stationsID", [])
+    codes = [str(c) for c in raw]
+    if not codes:
+        logger.warning(
+            "No station codes found in %s — no org filter applied",
+            config_path,
+        )
+    else:
+        logger.info("Read %d station codes for org-scoped filtering", len(codes))
+    return codes
+
+
 def run_single_model(
     data_interface: DataInterface | DataInterfaceDB,
     forecast_configs: ForecastConfig,
@@ -64,6 +90,7 @@ def run_single_model(
     static_data: pd.DataFrame,
     offset_base: int,
     offset_discharge: int,
+    station_codes: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run a single forecast model and return the results.
@@ -107,7 +134,7 @@ def run_single_model(
 
     #################################################
     if len(all_dependencies_models) > 0:
-        base_predictor_interface = BasePredictorDataInterface()
+        base_predictor_interface = BasePredictorDataInterface(station_codes=station_codes)
 
         if SAPPHIRE_API_AVAILABLE:
             base_predictor_data, base_model_cols = (
@@ -297,6 +324,7 @@ def run_forecast(
 ):
     # Setup Environment
     sl.load_environment()
+    station_codes = _read_station_codes()
 
     # Now we setup the configurations
     forecast_config = ForecastConfig()
@@ -323,7 +351,7 @@ def run_forecast(
     # Data Interface - use DB interface if SAPPHIRE API is available
     if SAPPHIRE_API_AVAILABLE:
         logger.info("Using DataInterfaceDB (database backend)")
-        data_interface = DataInterfaceDB()
+        data_interface = DataInterfaceDB(station_codes=station_codes)
     else:
         logger.info("Using DataInterface (CSV backend)")
         data_interface = DataInterface()
@@ -367,6 +395,7 @@ def run_forecast(
                 static_data=static_data,
                 offset_base=offset_base,
                 offset_discharge=offset_discharge,
+                station_codes=station_codes,
             )
             execution_is_success[model_name] = sucess
         except Exception as e:
@@ -421,7 +450,7 @@ Examples:
     args = parser.parse_args()
 
     # Determine recalibrate_all flag and models to run
-    recalibrate_all = args.all
+    recalibrate_all = args.all or args.today is not None
     models_to_run = args.models if args.models else []
 
     if args.today is None:

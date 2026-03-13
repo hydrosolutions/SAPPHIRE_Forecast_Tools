@@ -1,6 +1,6 @@
 # Plan: Long-Term Forecasting SQL Org-Scoping (LTF-ORG-001)
 
-**Status**: Draft (v4 — simplified type handling, orchestration protocol)
+**Status**: Review (implemented — all 16 tests passing, pending pipeline verification)
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 **Module**: `long_term_forecasting`
 **Depends on**: INFRA-009 (complete), INFRA-012 (complete)
