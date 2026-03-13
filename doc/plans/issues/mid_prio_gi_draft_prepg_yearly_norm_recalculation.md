@@ -1,6 +1,6 @@
 # Yearly Snow Norm Recalculation
 
-**Status**: Draft
+**Status**: In Progress — recalculate_snow_norms.py and helper functions exist; needs verification
 **Module**: preprocessing_gateway
 **Priority**: Medium
 **Labels**: `enhancement`, `cron`, `snow-data`, `maintenance`, `pipeline`

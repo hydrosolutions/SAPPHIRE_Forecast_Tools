@@ -178,8 +178,9 @@ Before moving to review, check for documentation impact:
    - [ ] Publish to GitHub Issues (if still draft)
    ```
 
-4. **If issue is still a draft** (`gi_draft_*.md`):
-   - Remind user: "This issue is ready to publish to GitHub. After creating the GitHub issue, rename the file to `gi_<id>_<desc>.md`"
+4. **If issue is still a draft** (`*_gi_draft_*.md`):
+   - Rename the file: replace the priority prefix with `review_` (e.g., `high_prio_gi_draft_foo.md` → `review_gi_draft_foo.md`)
+   - Remind user: "This issue is ready to publish to GitHub. After creating the GitHub issue, rename the file to `<priority>_gi_<id>_<desc>.md` and move to `archive/` when done."
 
 ---
 

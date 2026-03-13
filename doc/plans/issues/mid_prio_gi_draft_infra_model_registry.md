@@ -1,6 +1,6 @@
 # INFRA-005: Remove `model_long` from app pipeline
 
-**Status**: Draft
+**Status**: In Progress — deprecation warnings added for model_long; full removal pending
 **Module**: infra (cross-module)
 **Priority**: Medium
 **Labels**: `refactoring`, `cross-module`, `maintainability`, `incremental`

@@ -1,6 +1,6 @@
 # Plan: Org-Scoped Data Readers (PP-025)
 
-**Status**: In Progress — long-term readers have codes param; short-term read_skill_metrics/read_combined_forecasts still missing it
+**Status**: Complete — all phases verified 2026-03-13 (codes param on all data_reader functions, all call sites wired, ML module org-scoped)
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 **Module**: postprocessing_forecasts, machine_learning
 **Depends on**: INFRA-009 (Phases 3-4 must be complete before Phases 2-3 here)

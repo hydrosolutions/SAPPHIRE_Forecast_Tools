@@ -1,6 +1,6 @@
 # Plan: Upstream Module Org-Scoped API Reads (INFRA-011)
 
-**Status**: draft
+**Status**: In Progress — Phase 1 audit complete; Phases 2-3 deferred
 **Branch**: TBD
 **Module**: linear_regression, preprocessing_gateway, preprocessing_runoff, iEasyHydroForecast, validate_pipeline
 **Depends on**: PP-025 (establishes the pattern), INFRA-009 (station filtering)

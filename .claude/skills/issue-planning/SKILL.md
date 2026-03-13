@@ -103,13 +103,22 @@ Example:
 
 **Draft** (before GitHub publication):
 ```
-doc/plans/issues/gi_draft_<module>_<short_description>.md
+doc/plans/issues/<priority>_gi_draft_<module>_<short_description>.md
+```
+Where `<priority>` is one of: `high_prio`, `mid_prio`, `low_prio`.
+
+**Ready for review** (implementation complete):
+```
+doc/plans/issues/review_gi_draft_<module>_<short_description>.md
 ```
 
 **Published** (after GitHub issue created):
 ```
-doc/plans/issues/gi_<github_id>_<short_description>.md
+doc/plans/issues/<priority>_gi_<github_id>_<short_description>.md
+doc/plans/issues/review_gi_<github_id>_<short_description>.md
 ```
+
+**Lifecycle**: `high_prio_gi_draft_*.md` → `review_gi_draft_*.md` → `archive/`
 
 ### Module abbreviations
 

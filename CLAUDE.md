@@ -142,7 +142,7 @@ When refactoring a module:
 - Remove existing `model_long` assignments if the code is being touched
 - Presentation boundaries (CSV output, dashboard display) should resolve long names
   from the API response field `model_type_description`, not from local dicts
-- See `doc/plans/issues/gi_draft_infra_model_registry.md` for the per-module checklist
+- See `doc/plans/issues/mid_prio_gi_draft_infra_model_registry.md` for the per-module checklist
 
 ### API Patterns
 
@@ -386,5 +386,7 @@ SAPPHIRE_forecast_tools/
 See `doc/plans/module_issues.md` for the index of planned issues.
 
 Issue files are stored in `doc/plans/issues/` with naming convention:
-- Draft: `gi_draft_<module>_<description>.md`
-- Published: `gi_<github_id>_<description>.md`
+- Draft: `<priority>_gi_draft_<module>_<description>.md` — where `<priority>` is `high_prio`, `mid_prio`, or `low_prio`
+- Review: `review_gi_draft_<module>_<description>.md` — implementation complete, awaiting user review
+- Published: `<priority>_gi_<github_id>_<description>.md`
+- Lifecycle: `<priority>_gi_draft_*.md` → `review_gi_draft_*.md` → `archive/`

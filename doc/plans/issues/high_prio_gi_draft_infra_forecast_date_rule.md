@@ -1,6 +1,6 @@
 # INFRA-004: Enforce Forecast Date Rule — eliminate scattered `date.today()` calls
 
-**Status**: Draft
+**Status**: In Progress — Phase 1 implemented (2026-03-13); Phases 2-4 pending
 **Module**: infra (cross-module)
 **Priority**: High
 **Labels**: `bug`, `testing`, `cross-module`, `date-handling`

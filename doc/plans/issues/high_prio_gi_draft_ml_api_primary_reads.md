@@ -1,6 +1,6 @@
 # ML-003: Migrate ML Maintenance Scripts to API-Primary Reads
 
-**Status**: Ready for Review
+**Status**: Draft — foundation function exists (_read_ml_forecasts_from_api) but none of the 3 maintenance scripts updated yet
 **Module**: machine_learning
 **Priority**: High
 **Labels**: `api-migration`, `gap-detection`, `maintenance`, `reliability`

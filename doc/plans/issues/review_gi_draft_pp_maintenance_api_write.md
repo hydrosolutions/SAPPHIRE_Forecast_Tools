@@ -1,6 +1,6 @@
 # PP-024: Write maintenance gap-fill records directly to API
 
-**Status**: Draft
+**Status**: Closed — absorbed into PP-022 (gi_draft_pp_maintenance_stale_refresh_fix.md), lines 351-364 in postprocessing_maintenance.py
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `bug`, `maintenance`, `data-quality`

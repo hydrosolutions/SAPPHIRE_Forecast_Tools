@@ -3,7 +3,7 @@
 **Module:** `long_term_forecasting`
 **File:** `apps/long_term_forecasting/run_forecast.py`
 **Severity:** Medium — blocks date-override functionality; workaround exists (`--all`)
-**Status:** Draft
+**Status:** Implemented (2026-03-13)
 
 ## Summary
 
