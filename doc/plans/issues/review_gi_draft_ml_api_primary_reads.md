@@ -1,6 +1,6 @@
 # ML-003: Migrate ML Maintenance Scripts to API-Primary Reads
 
-**Status**: Draft — foundation function exists (_read_ml_forecasts_from_api) but none of the 3 maintenance scripts updated yet
+**Status**: Review — All 5 steps implemented. All 3 maintenance scripts (fill_ml_gaps.py, recalculate_nan_forecasts.py, add_new_station.py) now read from API first with CSV fallback. Verified via audit 2026-03-13.
 **Module**: machine_learning
 **Priority**: High
 **Labels**: `api-migration`, `gap-detection`, `maintenance`, `reliability`

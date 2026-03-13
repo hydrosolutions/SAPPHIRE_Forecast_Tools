@@ -1,6 +1,6 @@
 # ML maintenance mode: hindcast subprocess failure not handled, causes FileNotFoundError
 
-**Status**: Draft
+**Status**: Review — Steps 1-4 implemented (commit 639aaca, 2026-03-13). Step 5 (investigate hindcast subprocess failure with Sandro) remains open as a separate task.
 **Module**: machine_learning
 **Priority**: High
 **Labels**: `bug`, `maintenance-mode`, `error-handling`
@@ -98,11 +98,11 @@ Minimal fix: raise an exception from `call_hindcast_script()` when the subproces
 
 ### Implementation Steps
 
-- [ ] Step 1: In `call_hindcast_script()` (line 103-107), raise an exception when `result.returncode != 0` instead of just printing
-- [ ] Step 2: In `recalculate_nan_forecasts()` (line 251-256), catch the exception from step 1, log the error, and exit gracefully (return without crashing)
-- [ ] Step 3: In `daily_ml_maintenance.sh`, add a failure counter that increments when a container exits non-zero (around line 290), and use it to set the final exit message and exit code (line 300-312)
-- [ ] Step 4: Write tests for `call_hindcast_script()` failure path
-- [ ] Step 5: (Separate investigation with Sandro) Determine why `hindcast_ML_models.py` itself is failing — is it a data issue, model issue, or environment issue?
+- [x] Step 1: In `call_hindcast_script()`, raise RuntimeError when `result.returncode != 0` instead of just printing (commit 639aaca)
+- [x] Step 2: In `recalculate_nan_forecasts()`, catch the exception, log the error, and exit gracefully (pre-existing, commit 0adf23b)
+- [x] Step 3: In `daily_ml_maintenance.sh`, add failure counter and conditional exit code (commit 639aaca)
+- [x] Step 4: Tests for `call_hindcast_script()` failure path — 2 new tests in test_recalculate_nan_api_write.py (commit 639aaca)
+- [ ] Step 5: (Separate investigation with Sandro) Determine why `hindcast_ML_models.py` itself is failing
 
 ### Code Examples
 
