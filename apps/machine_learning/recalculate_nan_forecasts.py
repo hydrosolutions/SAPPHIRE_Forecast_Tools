@@ -211,6 +211,31 @@ def recalculate_nan_forecasts():
         )
         return
 
+    # Filter to current org's stations (org-scoped reads)
+    try:
+        import json
+
+        config_path = os.path.join(
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_config_file_station_selection", ""),
+        )
+        with open(config_path) as f:
+            permitted_codes = {str(c) for c in json.load(f).get("stationsID", [])}
+        decad_file = os.getenv("ieasyforecast_config_file_station_selection_decad", "")
+        if decad_file:
+            decad_path = os.path.join(os.getenv("ieasyforecast_configuration_path", ""), decad_file)
+            if os.path.exists(decad_path):
+                with open(decad_path) as f:
+                    permitted_codes |= {str(c) for c in json.load(f).get("stationsID", [])}
+        if permitted_codes and not forecast.empty:
+            before_count = len(forecast)
+            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
+            filtered = before_count - len(forecast)
+            if filtered:
+                logger.info("Org-scoped filter: removed %d rows from other orgs", filtered)
+    except Exception:
+        logger.debug("Could not apply org-scoped filter — config unavailable")
+
     unique_codes = forecast["code"].unique()
 
     codes_with_nan = []
@@ -286,6 +311,10 @@ def recalculate_nan_forecasts():
             max_date,
             exc,
         )
+        return
+
+    if hindcast.empty or "date" not in hindcast.columns:
+        logger.warning("Hindcast returned empty — skipping")
         return
 
     print("Hindcast shape:", hindcast.shape)

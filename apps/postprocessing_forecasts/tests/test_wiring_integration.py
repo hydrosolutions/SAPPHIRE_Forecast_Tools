@@ -10,6 +10,7 @@ together - a class of defect that all-mock workflow tests miss.
 """
 
 import importlib.util
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -269,6 +270,11 @@ def _setup_real_internal_mocks(
 @pytest.fixture
 def env_setup(tmp_path):
     """Set env vars pointing to tmp_path for CSV reads."""
+    # Write station selection files so _read_station_codes() doesn't raise
+    station_config = {"stationsID": ["15001"]}
+    (tmp_path / "config_station_selection.json").write_text(json.dumps(station_config))
+    (tmp_path / "config_station_selection_decad.json").write_text(json.dumps(station_config))
+
     overrides = {
         "ieasyforecast_intermediate_data_path": str(tmp_path),
         "ieasyforecast_pentadal_skill_metrics_file": "skill_pentad.csv",
@@ -281,6 +287,9 @@ def env_setup(tmp_path):
         "SAPPHIRE_API_ENABLED": "false",
         "SAPPHIRE_CONSISTENCY_CHECK": "false",
         "SAPPHIRE_TEST_ENV": "True",
+        "ieasyforecast_configuration_path": str(tmp_path),
+        "ieasyforecast_config_file_station_selection": "config_station_selection.json",
+        "ieasyforecast_config_file_station_selection_decad": "config_station_selection_decad.json",
     }
     with patch.dict(os.environ, overrides):
         yield tmp_path
@@ -2119,3 +2128,203 @@ class TestLogMostRecentForecasts:
         result = pt.log_most_recent_forecasts(DECAD, modelled)
         assert isinstance(result, pd.DataFrame)
         assert not result.empty
+
+
+# ===================================================================
+# TestCodesPassthrough — verify codes= is forwarded to data_reader
+# ===================================================================
+class TestCodesPassthrough:
+    """Verify station codes are passed through to data_reader calls."""
+
+    def test_operational_pentad_passes_codes_to_reader(self, env_setup):
+        """Operational PENTAD: read_observed_and_modelled_data called with codes=['15001'].
+
+        The env_setup fixture writes a station selection file containing
+        station '15001'. This test asserts that codes= is extracted from
+        that file and forwarded to the data reader call.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, "pentad")
+
+        observed = _make_observed_df()
+        modelled = _make_modelled_df(discharge_values={"LR": 100.0, "TFT": 110.0})
+
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "PENTAD",
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_operational()
+                spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+
+                # Verify codes= was passed to data reader
+                call_kwargs = mocks["data_reader"].read_observed_and_modelled_data.call_args
+                assert call_kwargs is not None, "read_observed_and_modelled_data was not called"
+                codes_arg = call_kwargs[1].get("codes") if call_kwargs[1] else None
+                assert codes_arg == ["15001"], f"Expected codes=['15001'], got {codes_arg!r}"
+
+    def test_operational_both_passes_separate_codes_per_horizon(self, env_setup):
+        """BOTH mode: each horizon reads codes from its own station selection file.
+
+        PENTAD uses config_station_selection.json (codes=['15001']).
+        DECAD uses config_station_selection_decad.json (codes=['25001']).
+        Both are passed as codes= to their respective data reader calls.
+        """
+        tmp_path = env_setup
+        # Override decad station selection to use a different station
+        decad_config = {"stationsID": ["25001"]}
+        (tmp_path / "config_station_selection_decad.json").write_text(json.dumps(decad_config))
+        # Write skill CSVs for both horizons (station 15001 for pentad, 25001 for decad)
+        _make_skill_csv(tmp_path, "pentad", stations=["15001"])
+        _make_skill_csv(tmp_path, "decad", stations=["25001"])
+
+        observed_pentad = _make_observed_df(stations=["15001"])
+        modelled_pentad = _make_modelled_df(
+            stations=["15001"],
+            horizon_type="pentad",
+            discharge_values={"LR": 100.0, "TFT": 110.0},
+        )
+        observed_decad = _make_observed_df(
+            stations=["25001"],
+            dates=[pd.Timestamp("2024-01-10")],
+        )
+        modelled_decad = _make_modelled_df(
+            stations=["25001"],
+            horizon_type="decad",
+            dates=[pd.Timestamp("2024-01-10")],
+            discharge_values={"LR": 200.0, "TFT": 220.0},
+        )
+
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path,
+                    "BOTH",
+                    observed_pentad=observed_pentad,
+                    modelled_pentad=modelled_pentad,
+                    observed_decad=observed_decad,
+                    modelled_decad=modelled_decad,
+                )
+
+                module, spec = _import_operational()
+                spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+
+                # data reader should have been called twice (once per horizon)
+                calls = mocks["data_reader"].read_observed_and_modelled_data.call_args_list
+                assert len(calls) == 2, f"Expected 2 data reader calls, got {len(calls)}"
+
+                codes_by_horizon = {}
+                for call in calls:
+                    horizon = call[0][0]  # first positional arg is horizon_type
+                    codes = call[1].get("codes") if call[1] else None
+                    codes_by_horizon[horizon] = codes
+
+                assert codes_by_horizon.get("pentad") == ["15001"], (
+                    f"PENTAD codes wrong: {codes_by_horizon.get('pentad')!r}"
+                )
+                assert codes_by_horizon.get("decad") == ["25001"], (
+                    f"DECAD codes wrong: {codes_by_horizon.get('decad')!r}"
+                )
+
+    def test_recalc_passes_codes_to_reader(self, env_setup):
+        """recalculate_skill_metrics passes station codes to read_observed_and_modelled_data.
+
+        The env_setup fixture writes a station selection file with '15001'.
+        The recalc script reads these codes and forwards them as codes= to
+        the data reader. This test verifies that wiring is intact.
+
+        Uses fully-mocked skill_metrics and file_writer so the test focuses
+        only on the codes= passthrough contract, not skill calculation.
+        """
+        _ = env_setup  # triggers fixture side-effects (env vars, config files)
+        mock_data = _make_modelled_df(discharge_values={"LR": 100.0, "TFT": 110.0})
+        mock_skill = pd.DataFrame({"pentad_in_year": [1], "code": ["15001"], "sdivsigma": [0.3]})
+
+        mock_sl = MagicMock()
+        mock_skill_metrics = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_pt_module = MagicMock()
+        mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_sl.calculate_virtual_stations_data.side_effect = lambda x: x
+        mock_sl.calculate_neural_ensemble_forecast.side_effect = lambda x: x
+        mock_sl.calculate_neural_ensemble_forecast_decade.side_effect = lambda x: x
+
+        mock_data_reader.read_observed_and_modelled_data.return_value = (mock_data, mock_data)
+        mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
+        mock_file_writer.save_forecast_data.return_value = None
+        mock_file_writer.save_skill_metrics.return_value = None
+        mock_data_reader.read_quarterly_observations.return_value = pd.DataFrame()
+        mock_data_reader.read_quarterly_forecasts.return_value = pd.DataFrame()
+        mock_data_reader.read_seasonal_observations.return_value = pd.DataFrame()
+        mock_data_reader.read_seasonal_forecasts.return_value = pd.DataFrame()
+        mock_skill_metrics.calculate_quarterly_skill_metrics.return_value = (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            None,
+        )
+        mock_skill_metrics.calculate_seasonal_skill_metrics.return_value = (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            None,
+        )
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+        mock_file_writer.save_quarterly_skill_metrics.return_value = None
+        mock_file_writer.save_seasonal_forecast_data.return_value = None
+        mock_file_writer.save_seasonal_skill_metrics.return_value = None
+
+        import tag_library as real_tl
+
+        mock_src = MagicMock()
+        mock_src.skill_metrics = mock_skill_metrics
+        mock_src.file_writer = mock_file_writer
+        mock_src.data_reader = mock_data_reader
+        mock_src.postprocessing_tools = mock_pt_module
+
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
+            with patch.dict(
+                sys.modules,
+                {
+                    "setup_library": mock_sl,
+                    "tag_library": real_tl,
+                    "src": mock_src,
+                    "src.skill_metrics": mock_skill_metrics,
+                    "src.file_writer": mock_file_writer,
+                    "src.data_reader": mock_data_reader,
+                    "src.postprocessing_tools": mock_pt_module,
+                    "src.horizon_config": _real_horizon_config,
+                },
+            ):
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+                # Verify codes= was passed to data reader — the station selection
+                # file (written by env_setup) contains ["15001"]
+                call_kwargs = mock_data_reader.read_observed_and_modelled_data.call_args
+                assert call_kwargs is not None, "read_observed_and_modelled_data was not called"
+                codes_arg = call_kwargs[1].get("codes") if call_kwargs[1] else None
+                assert codes_arg == ["15001"], f"Expected codes=['15001'], got {codes_arg!r}"

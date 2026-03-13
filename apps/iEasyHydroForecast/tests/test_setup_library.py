@@ -1811,6 +1811,7 @@ class TestWriteConfigAllStations(unittest.TestCase):
         site.site_type = site_type
         site.iehhf_site_id = iehhf_site_id
         site.is_virtual = False
+        site.organization = None
         return site
 
     def _read_config(self):
@@ -1995,6 +1996,7 @@ class TestHfSdkBootstrapFallback(unittest.TestCase):
         site.site_type = site_type
         site.iehhf_site_id = iehhf_site_id
         site.is_virtual = False
+        site.organization = None
         return site
 
     def test_bootstrap_succeeds_with_hf_sdk(self):
@@ -2036,6 +2038,14 @@ class TestHfSdkBootstrapFallback(unittest.TestCase):
         assert result.empty
         assert not os.path.exists(self.config_all_file)
 
+    def test_bootstrap_empty_df_includes_organization_column(self):
+        """Empty DataFrame returned when SDK unavailable includes organization column."""
+        with patch.object(sl, "IEASYHYDRO_HF_SDK_AVAILABLE", False):
+            result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
+
+        assert result.empty
+        assert "organization" in result.columns
+
     def test_bootstrap_returns_empty_on_sdk_init_failure(self):
         """When HF SDK init raises, returns empty DataFrame gracefully."""
         with (
@@ -2062,3 +2072,286 @@ class TestHfSdkBootstrapFallback(unittest.TestCase):
             result = sl._try_bootstrap_from_hf_sdk(self.config_all_file)
 
         assert result.empty
+
+
+class TestSitesToConfigDict(unittest.TestCase):
+    """Tests for _sites_to_config_dict — the helper that converts Site objects
+    to the list-wrapped JSON dict format used by config_all_stations_library.json.
+    """
+
+    def _make_site(
+        self,
+        code="12345",
+        name_nat="\u0440. \u0422\u0435\u0441\u0442 - \u0441. \u0421\u0435\u043b\u043e",
+        lat=42.5,
+        lon=74.5,
+        basin_nat="\u0427\u0443",
+        region_nat="\u0427\u0443\u0439\u0441\u043a\u0430\u044f",
+        river_name_nat="\u0440. \u0422\u0435\u0441\u0442",
+        punkt_name_nat="\u0441. \u0421\u0435\u043b\u043e",
+        site_type="automatic-discharge",
+        iehhf_site_id=99,
+    ):
+        """Create a mock Site object with the given attributes."""
+        site = MagicMock()
+        site.code = code
+        site.name = "r. Test - v. Village"
+        site.name_nat = name_nat
+        site.lat = lat
+        site.lon = lon
+        site.basin = "Chu"
+        site.basin_nat = basin_nat
+        site.region = "Chuy"
+        site.region_nat = region_nat
+        site.river_name = "r. Test"
+        site.river_name_nat = river_name_nat
+        site.punkt_name = "v. Village"
+        site.punkt_name_nat = punkt_name_nat
+        site.site_type = site_type
+        site.iehhf_site_id = iehhf_site_id
+        site.is_virtual = False
+        site.organization = None
+        return site
+
+    def test_organization_field_present(self):
+        """organization is passed through when set on the site object."""
+        site = self._make_site(code="12345")
+        site.organization = "kghm"
+
+        result = sl._sites_to_config_dict([site])
+
+        self.assertEqual(result["12345"]["organization"], ["kghm"])
+
+    def test_organization_field_none_when_not_set(self):
+        """organization is [None] when site.organization is None."""
+        site = self._make_site(code="12345")
+        # _make_site sets site.organization = None by default
+
+        result = sl._sites_to_config_dict([site])
+
+        self.assertEqual(result["12345"]["organization"], [None])
+
+    def test_organization_field_default_via_getattr(self):
+        """organization falls back to [None] via getattr when attribute is absent."""
+        site = MagicMock(
+            spec=[
+                "code",
+                "name_nat",
+                "lat",
+                "lon",
+                "basin_nat",
+                "region_nat",
+                "river_name_nat",
+                "punkt_name_nat",
+            ]
+        )
+        site.code = "55555"
+        site.name_nat = "\u0440. \u0422\u0435\u0441\u0442 - \u0441. \u0422\u0435\u0441\u0442"
+        site.lat = 40.0
+        site.lon = 73.0
+        site.basin_nat = "\u041d\u0430\u0440\u044b\u043d"
+        site.region_nat = "\u041d\u0430\u0440\u044b\u043d\u0441\u043a\u0430\u044f"
+        site.river_name_nat = "\u0440. \u0422\u0435\u0441\u0442"
+        site.punkt_name_nat = "\u0441. \u0422\u0435\u0441\u0442"
+
+        result = sl._sites_to_config_dict([site])
+
+        self.assertEqual(result["55555"]["organization"], [None])
+
+    def test_organization_id_unchanged(self):
+        """organization_id field still exists and equals [None] after adding organization."""
+        site = self._make_site(code="12345")
+
+        result = sl._sites_to_config_dict([site])
+
+        self.assertIn("organization_id", result["12345"])
+        self.assertEqual(result["12345"]["organization_id"], [None])
+
+    def test_organization_propagated_from_site_init(self):
+        """organization set via Site.__init__ is correctly serialised."""
+        from iEasyHydroForecast import forecast_library as fl
+
+        site = fl.Site(
+            code="77777",
+            name="r. River - v. Village",
+            river_name="r. River",
+            punkt_name="v. Village",
+            lat=41.5,
+            lon=72.5,
+            organization="tjhm",
+        )
+
+        result = sl._sites_to_config_dict([site])
+
+        self.assertEqual(result["77777"]["organization"], ["tjhm"])
+
+
+class TestFilterSitesByOrg:
+    """Tests for filter_sites_by_org and _get_current_org."""
+
+    def test_matching_org_filters_correctly(self):
+        """Rows matching the requested org are kept; others are dropped."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B", "C"],
+                "organization": ["kghm", "tjhm", "kghm"],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert list(result["code"]) == ["A", "C"]
+        assert len(result) == 2
+
+    def test_non_matching_org_returns_empty(self):
+        """No rows match the requested org; result is an empty DataFrame."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B"],
+                "organization": ["tjhm", "tjhm"],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert len(result) == 0
+
+    def test_org_none_env_unset_returns_passthrough(self, monkeypatch):
+        """Passthrough when org arg is None and env var is not set."""
+        monkeypatch.delenv("ieasyhydroforecast_organization", raising=False)
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B"],
+                "organization": ["kghm", "tjhm"],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df)
+
+        assert len(result) == 2
+
+    def test_missing_org_column_returns_passthrough(self):
+        """Passthrough when DataFrame has no organization column."""
+        df = pd.DataFrame({"code": ["A", "B", "C"]})
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert len(result) == 3
+
+    def test_all_none_org_column_returns_passthrough(self):
+        """Passthrough when all organization values are None (migration safety)."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B"],
+                "organization": [None, None],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert len(result) == 2
+
+    def test_list_wrapped_values_unwrapped(self):
+        """List-wrapped org values like ['kghm'] are unwrapped before filtering."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B"],
+                "organization": [["kghm"], ["tjhm"]],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert list(result["code"]) == ["A"]
+
+    def test_mixed_none_and_string_keeps_none_rows(self):
+        """Rows with org=None are kept alongside matching rows (Decision D1)."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B", "C"],
+                "organization": ["kghm", None, "tjhm"],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert set(result["code"]) == {"A", "B"}
+        assert "C" not in result["code"].values
+
+    def test_mixed_orgs_with_none(self):
+        """None rows and matching-org rows are kept; non-matching are excluded."""
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B", "C", "D"],
+                "organization": ["kghm", None, "tjhm", None],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        assert len(result) == 3
+        assert set(result["code"]) == {"A", "B", "D"}
+
+    def test_get_current_org_returns_env_value(self, monkeypatch):
+        """_get_current_org returns the value of the env var when set."""
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+
+        result = sl._get_current_org()
+
+        assert result == "kghm"
+
+    def test_get_current_org_returns_none_when_unset(self, monkeypatch):
+        """_get_current_org returns None when the env var is not set."""
+        monkeypatch.delenv("ieasyhydroforecast_organization", raising=False)
+
+        result = sl._get_current_org()
+
+        assert result is None
+
+    def test_org_from_env_var(self, monkeypatch):
+        """filter_sites_by_org reads org from env var when no arg is given."""
+        monkeypatch.setenv("ieasyhydroforecast_organization", "tjhm")
+        df = pd.DataFrame(
+            {
+                "code": ["A", "B"],
+                "organization": ["kghm", "tjhm"],
+            }
+        )
+
+        result = sl.filter_sites_by_org(df)
+
+        assert list(result["code"]) == ["B"]
+
+    def test_missing_org_column_triggers_passthrough_condition(self):
+        """When org column is absent and org is set, all rows are returned unchanged.
+
+        This is the condition that triggers a caller-side warning in
+        get_pentadal_forecast_sites_complicated_method (len unchanged after filter).
+        """
+        df = pd.DataFrame({"code": ["A", "B"], "name": ["River A", "River B"]})
+
+        result = sl.filter_sites_by_org(df, org="kghm")
+
+        # All rows returned — same as pre-filter count
+        assert len(result) == len(df)
+        pd.testing.assert_frame_equal(result.reset_index(drop=True), df.reset_index(drop=True))
+
+    def test_org_filter_independent_of_code_prefix(self):
+        """Org filter is based on organization column, not station code prefix.
+
+        Regression test: the old startswith hack would filter by code prefix
+        (e.g. codes starting with "1" for kghm). The correct implementation
+        uses the organization column regardless of station code prefix.
+        """
+        df = pd.DataFrame(
+            {
+                "code": ["15001", "15002", "25001", "25002"],
+                "organization": ["kghm", "kghm", "tjhm", "tjhm"],
+            }
+        )
+
+        result_kghm = sl.filter_sites_by_org(df, org="kghm")
+        assert list(result_kghm["code"]) == ["15001", "15002"]
+
+        result_tjhm = sl.filter_sites_by_org(df, org="tjhm")
+        assert list(result_tjhm["code"]) == ["25001", "25002"]

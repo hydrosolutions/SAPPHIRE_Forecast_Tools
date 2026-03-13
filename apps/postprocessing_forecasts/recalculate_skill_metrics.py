@@ -68,6 +68,7 @@ PENTAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
     api_horizon_type="pentad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast,
+    station_selection_env="ieasyforecast_config_file_station_selection",
 )
 DECAD = ShortTermHorizonConfig(
     name="decad",
@@ -78,6 +79,7 @@ DECAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
     api_horizon_type="decad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast_decade,
+    station_selection_env="ieasyforecast_config_file_station_selection_decad",
 )
 
 VALID_MODES = [
@@ -92,30 +94,36 @@ VALID_MODES = [
 ]
 
 
-def _read_station_codes():
-    """Read station codes from the station selection config file.
+def _read_station_codes(config):
+    """Read station codes from the horizon's station selection config file.
+
+    Args:
+        config: ShortTermHorizonConfig with station_selection_env field.
 
     Returns:
-        list[str]: Station codes for which to recalculate metrics.
+        list[str]: Station codes for the given horizon.
     """
     config_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path", ""),
-        os.getenv("ieasyforecast_config_file_station_selection", ""),
+        os.getenv(config.station_selection_env, ""),
     )
     with open(config_path) as f:
-        config = json.load(f)
-    codes = [str(c) for c in config.get("stationsID", [])]
-    logger.info("Read %d station codes for monthly recalculation", len(codes))
+        station_config = json.load(f)
+    codes = [str(c) for c in station_config.get("stationsID", [])]
+    logger.info("Read %d station codes for %s", len(codes), config.name)
     return codes
 
 
-def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_):
+def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, codes=None):
     """Read data, recalculate skill metrics, save results for one horizon."""
     label = config.name.upper()
 
     with timer(timing_stats_, f"reading {config.name} data"):
         logger.info(f"\n\n------ Reading {config.name} observed and modelled data -------")
-        observed, modelled = data_reader.read_observed_and_modelled_data(config.name)
+        observed, modelled = data_reader.read_observed_and_modelled_data(
+            config.name,
+            codes=codes,
+        )
         modelled = sl.calculate_virtual_stations_data(modelled)
         modelled = config.neural_ensemble_func(modelled)
 
@@ -175,10 +183,28 @@ def recalculate_skill_metrics():
         logger.info(f"Skill metrics target year: {skill_metrics_year}")
 
         if prediction_mode in ["PENTAD", "BOTH", "ALL"]:
-            timing_stats = _run_short_term_recalc(PENTAD, skill_metrics_year, errors, timing_stats)
+            codes = _read_station_codes(PENTAD)
+            if not codes:
+                logger.warning("No station codes for pentad — selection file may be empty")
+            timing_stats = _run_short_term_recalc(
+                PENTAD,
+                skill_metrics_year,
+                errors,
+                timing_stats,
+                codes=codes,
+            )
 
         if prediction_mode in ["DECAD", "BOTH", "ALL"]:
-            timing_stats = _run_short_term_recalc(DECAD, skill_metrics_year, errors, timing_stats)
+            codes = _read_station_codes(DECAD)
+            if not codes:
+                logger.warning("No station codes for decad — selection file may be empty")
+            timing_stats = _run_short_term_recalc(
+                DECAD,
+                skill_metrics_year,
+                errors,
+                timing_stats,
+                codes=codes,
+            )
 
         if prediction_mode in ["MONTHLY", "ALL"]:
             current_year = dt.date.today().year
@@ -189,7 +215,7 @@ def recalculate_skill_metrics():
                 )
             )
             end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
-            codes = _read_station_codes()
+            codes = _read_station_codes(PENTAD)
 
             with timer(timing_stats, "reading monthly data"):
                 logger.info("\n\n------ Reading monthly observed and forecast data -------")
@@ -236,7 +262,7 @@ def recalculate_skill_metrics():
                 )
             )
             end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
-            codes = _read_station_codes()
+            codes = _read_station_codes(PENTAD)
 
             with timer(timing_stats, "reading quarterly data"):
                 logger.info("\n\n------ Reading quarterly data (aggregated from monthly) -------")
@@ -283,7 +309,7 @@ def recalculate_skill_metrics():
                 )
             )
             end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
-            codes = _read_station_codes()
+            codes = _read_station_codes(PENTAD)
 
             with timer(timing_stats, "reading seasonal data"):
                 logger.info("\n\n------ Reading seasonal data (aggregated from monthly) -------")
@@ -330,7 +356,7 @@ def recalculate_skill_metrics():
                 )
             )
             end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
-            codes = _read_station_codes()
+            codes = _read_station_codes(PENTAD)
 
             with timer(timing_stats, "reading daily data"):
                 logger.info("\n\n------ Reading daily observed and forecast data -------")

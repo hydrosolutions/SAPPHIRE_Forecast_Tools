@@ -51,6 +51,7 @@ class TestConfigAllBootstrapFromHFSdk:
         site.site_type = site_type
         site.iehhf_site_id = iehhf_site_id
         site.is_virtual = False
+        site.organization = None
         return site
 
     def test_hf_sdk_sites_produce_valid_config(self):

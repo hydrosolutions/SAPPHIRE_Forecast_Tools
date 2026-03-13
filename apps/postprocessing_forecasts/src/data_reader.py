@@ -28,11 +28,17 @@ except ImportError:
     SAPPHIRE_API_AVAILABLE = False
 
 
-def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
+def read_skill_metrics(
+    horizon_type: str,
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read pre-calculated skill metrics from API (primary) or CSV (fallback).
 
     Args:
         horizon_type: 'pentad', 'decad', 'month', 'quarter', or 'season'
+        codes: Optional list of station codes to filter. When provided,
+            only skill metrics for those codes are returned. When None,
+            all codes are returned.
 
     Returns:
         DataFrame with columns: [pentad_in_year|decad_in_year|
@@ -47,14 +53,14 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
         raise ValueError(f"horizon_type must be one of {valid}, got: {horizon_type}")
 
     if horizon_type == "month":
-        return read_monthly_skill_metrics()
+        return read_monthly_skill_metrics(codes)
     if horizon_type == "quarter":
-        return read_quarterly_skill_metrics()
+        return read_quarterly_skill_metrics(codes)
     if horizon_type == "season":
-        return read_seasonal_skill_metrics()
+        return read_seasonal_skill_metrics(codes)
 
     # API-first: try the authoritative source
-    df = _read_skill_metrics_api(horizon_type)
+    df = _read_skill_metrics_api(horizon_type, codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d skill metric rows from API (%s)",
@@ -68,7 +74,7 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
         "API skill metrics unavailable for %s, falling back to CSV",
         horizon_type,
     )
-    df = _read_skill_metrics_csv(horizon_type)
+    df = _read_skill_metrics_csv(horizon_type, codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d skill metric rows from CSV (%s)",
@@ -81,7 +87,10 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _read_skill_metrics_csv(horizon_type: str) -> pd.DataFrame | None:
+def _read_skill_metrics_csv(
+    horizon_type: str,
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read skill metrics from CSV file.
 
     Returns None if the file doesn't exist or can't be read.
@@ -107,13 +116,18 @@ def _read_skill_metrics_csv(horizon_type: str) -> pd.DataFrame | None:
         # Ensure code is string
         if "code" in df.columns:
             df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+        if codes is not None and not df.empty and "code" in df.columns:
+            df = df[df["code"].astype(str).isin(codes)]
         return df
     except Exception as e:
         logger.error("Failed to read skill metrics CSV %s: %s", filepath, e)
         return None
 
 
-def _read_skill_metrics_api(horizon_type: str) -> pd.DataFrame | None:
+def _read_skill_metrics_api(
+    horizon_type: str,
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read skill metrics from SAPPHIRE postprocessing API.
 
     Returns None if the API is unavailable or returns no data.
@@ -139,23 +153,48 @@ def _read_skill_metrics_api(horizon_type: str) -> pd.DataFrame | None:
         # Internal uses 'decad', API expects 'decade'
         api_horizon = "decade" if horizon_type == "decad" else horizon_type
 
-        # Read all skill metrics for this horizon; paginate if needed
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_skill_metrics(horizon=api_horizon, skip=skip, limit=batch_size)
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_skill_metrics(
+                        horizon=api_horizon,
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            # Read all skill metrics for this horizon; paginate if needed
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_skill_metrics(
+                    horizon=api_horizon, skip=skip, limit=batch_size
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        if not all_records:
-            return None
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_api_skill_metrics(df, horizon_type)
 
     except Exception as e:
@@ -194,22 +233,29 @@ def _normalize_api_skill_metrics(df: pd.DataFrame, horizon_type: str) -> pd.Data
 # ===================================================================
 
 
-def read_monthly_skill_metrics() -> pd.DataFrame:
+def read_monthly_skill_metrics(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read pre-calculated monthly skill metrics from API or CSV.
+
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only skill metrics for those codes are returned. When None,
+            all codes are returned.
 
     Returns:
         DataFrame with columns: [month_in_year, code, model_short,
         sdivsigma, nse, delta, accuracy, mae, n_pairs]
     """
     # API-first: try the authoritative source
-    df = _read_monthly_skill_metrics_api()
+    df = _read_monthly_skill_metrics_api(codes)
     if df is not None and not df.empty:
         logger.info("Read %d monthly skill metric rows from API", len(df))
         return df
 
     # CSV fallback (deprecated)
     logger.info("API monthly skill metrics unavailable, falling back to CSV")
-    df = _read_monthly_skill_metrics_csv()
+    df = _read_monthly_skill_metrics_csv(codes)
     if df is not None and not df.empty:
         logger.info("Read %d monthly skill metric rows from CSV", len(df))
         return df
@@ -218,8 +264,15 @@ def read_monthly_skill_metrics() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _read_monthly_skill_metrics_csv() -> pd.DataFrame | None:
+def _read_monthly_skill_metrics_csv(
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read monthly skill metrics from CSV file.
+
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only skill metrics for those codes are returned. When None,
+            all codes are returned.
 
     Returns None if the file doesn't exist or can't be read.
     """
@@ -239,6 +292,8 @@ def _read_monthly_skill_metrics_csv() -> pd.DataFrame | None:
         df = pd.read_csv(filepath)
         if "code" in df.columns:
             df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+        if codes is not None and not df.empty and "code" in df.columns:
+            df = df[df["code"].astype(str).isin(codes)]
         return df
     except Exception as e:
         logger.error(
@@ -249,7 +304,9 @@ def _read_monthly_skill_metrics_csv() -> pd.DataFrame | None:
         return None
 
 
-def _read_monthly_skill_metrics_api() -> pd.DataFrame | None:
+def _read_monthly_skill_metrics_api(
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read monthly skill metrics from SAPPHIRE postprocessing API.
 
     Returns None if the API is unavailable or returns no data.
@@ -271,22 +328,45 @@ def _read_monthly_skill_metrics_api() -> pd.DataFrame | None:
             logger.warning("Postprocessing API not ready at %s", api_url)
             return None
 
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_skill_metrics(horizon="month", skip=skip, limit=batch_size)
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_skill_metrics(
+                        horizon="month",
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_skill_metrics(horizon="month", skip=skip, limit=batch_size)
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        if not all_records:
-            return None
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_api_monthly_skill_metrics(df)
 
     except Exception as e:
@@ -323,7 +403,10 @@ def _normalize_api_monthly_skill_metrics(
 # ===================================================================
 
 
-def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
+def read_combined_forecasts(
+    horizon_type: str,
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read combined forecasts from API (primary) or CSV (fallback).
 
     Used by the maintenance entry point for gap detection and
@@ -331,6 +414,9 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
 
     Args:
         horizon_type: 'pentad' or 'decad'.
+        codes: Optional list of station codes to filter. When provided,
+            only forecasts for those codes are returned. When None,
+            all codes are returned.
 
     Returns:
         DataFrame with combined forecasts (all models + ensembles),
@@ -343,7 +429,7 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
         raise ValueError(f"horizon_type must be 'pentad' or 'decad', got: {horizon_type}")
 
     # API-first: try the authoritative source
-    df = _read_combined_forecasts_api(horizon_type)
+    df = _read_combined_forecasts_api(horizon_type, codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d combined forecast rows from API (%s)",
@@ -357,7 +443,7 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
         "API combined forecasts unavailable for %s, falling back to CSV",
         horizon_type,
     )
-    df = _read_combined_forecasts_csv(horizon_type)
+    df = _read_combined_forecasts_csv(horizon_type, codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d combined forecast rows from CSV (%s)",
@@ -372,6 +458,7 @@ def read_combined_forecasts(horizon_type: str) -> pd.DataFrame:
 
 def _read_combined_forecasts_api(
     horizon_type: str,
+    codes: list[str] | None = None,
 ) -> pd.DataFrame | None:
     """Read combined forecasts from SAPPHIRE postprocessing API.
 
@@ -397,24 +484,47 @@ def _read_combined_forecasts_api(
         # Map internal horizon names to API horizon names
         api_horizon = "decade" if horizon_type == "decad" else horizon_type
 
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_short_term_forecasts(
-                horizon=api_horizon, skip=skip, limit=batch_size
-            )
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_short_term_forecasts(
+                        horizon=api_horizon,
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_short_term_forecasts(
+                    horizon=api_horizon, skip=skip, limit=batch_size
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        if not all_records:
-            return None
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_api_combined_forecasts(df, horizon_type)
 
     except Exception as e:
@@ -466,6 +576,7 @@ def _normalize_api_combined_forecasts(df: pd.DataFrame, horizon_type: str) -> pd
 
 def _read_combined_forecasts_csv(
     horizon_type: str,
+    codes: list[str] | None = None,
 ) -> pd.DataFrame | None:
     """Read combined forecasts from CSV file.
 
@@ -496,6 +607,8 @@ def _read_combined_forecasts_csv(
             df["date"] = pd.to_datetime(df["date"])
         if "code" in df.columns:
             df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+        if codes is not None and not df.empty and "code" in df.columns:
+            df = df[df["code"].astype(str).isin([str(c) for c in codes])]
         return df
     except Exception as e:
         logger.error(
@@ -1012,19 +1125,26 @@ def read_latest_monthly_forecasts(
     return df
 
 
-def read_monthly_combined_forecasts() -> pd.DataFrame:
+def read_monthly_combined_forecasts(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read monthly combined forecasts from API (primary) or CSV
     (fallback).
 
     Used by the maintenance entry point for gap detection and
     merge-back after filling missing ensembles.
 
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only forecasts for those codes are returned. When None,
+            all codes are returned.
+
     Returns:
         DataFrame with combined forecasts (all models + ensembles),
         or empty DataFrame if no data available.
     """
     # API-first: try the authoritative source
-    df = _read_monthly_combined_forecasts_api()
+    df = _read_monthly_combined_forecasts_api(codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d monthly combined forecast rows from API",
@@ -1034,7 +1154,7 @@ def read_monthly_combined_forecasts() -> pd.DataFrame:
 
     # CSV fallback (deprecated)
     logger.info("API monthly combined forecasts unavailable, falling back to CSV")
-    df = _read_monthly_combined_forecasts_csv()
+    df = _read_monthly_combined_forecasts_csv(codes)
     if df is not None and not df.empty:
         logger.info(
             "Read %d monthly combined forecast rows from CSV",
@@ -1046,7 +1166,9 @@ def read_monthly_combined_forecasts() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _read_monthly_combined_forecasts_api() -> pd.DataFrame | None:
+def _read_monthly_combined_forecasts_api(
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read monthly combined forecasts from SAPPHIRE postprocessing API.
 
     Returns None if the API is unavailable or returns no data.
@@ -1068,25 +1190,49 @@ def _read_monthly_combined_forecasts_api() -> pd.DataFrame | None:
             logger.warning("Postprocessing API not ready at %s", api_url)
             return None
 
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_long_term_forecasts(
-                horizon_type="month", skip=skip, limit=batch_size
-            )
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_long_term_forecasts(
+                        horizon_type="month",
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            frames = [df.dropna(axis=1, how="all") for df in frames if not df.empty]
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_long_term_forecasts(
+                    horizon_type="month", skip=skip, limit=batch_size
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        all_records = [df.dropna(axis=1, how="all") for df in all_records if not df.empty]
-        if not all_records:
-            return None
+            all_records = [df.dropna(axis=1, how="all") for df in all_records if not df.empty]
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_monthly_combined_forecasts(df)
 
     except Exception as e:
@@ -1126,7 +1272,9 @@ def _normalize_monthly_combined_forecasts(
     return df
 
 
-def _read_monthly_combined_forecasts_csv() -> pd.DataFrame | None:
+def _read_monthly_combined_forecasts_csv(
+    codes: list[str] | None = None,
+) -> pd.DataFrame | None:
     """Read monthly combined forecasts from CSV file.
 
     Returns None if the file doesn't exist or can't be read.
@@ -1147,6 +1295,8 @@ def _read_monthly_combined_forecasts_csv() -> pd.DataFrame | None:
         df = pd.read_csv(filepath)
         if "code" in df.columns:
             df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+        if codes is not None and not df.empty and "code" in df.columns:
+            df = df[df["code"].astype(str).isin([str(c) for c in codes])]
         return df
     except Exception as e:
         logger.error(
@@ -2058,16 +2208,23 @@ def read_observed_and_modelled_data(
 # ===================================================================
 
 
-def read_quarterly_skill_metrics() -> pd.DataFrame:
+def read_quarterly_skill_metrics(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read pre-calculated quarterly skill metrics from API.
 
     API-only (no CSV fallback for new horizons).
+
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only skill metrics for those codes are returned. When None,
+            all codes are returned.
 
     Returns:
         DataFrame with columns: [quarter_in_year, code, model_short,
         sdivsigma, nse, delta, accuracy, mae, n_pairs, ...]
     """
-    df = _read_horizon_skill_metrics_api("quarter")
+    df = _read_horizon_skill_metrics_api("quarter", codes)
     if df is not None and not df.empty:
         logger.info("Read %d quarterly skill metric rows from API", len(df))
         return df
@@ -2075,16 +2232,23 @@ def read_quarterly_skill_metrics() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def read_seasonal_skill_metrics() -> pd.DataFrame:
+def read_seasonal_skill_metrics(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read pre-calculated seasonal skill metrics from API.
 
     API-only (no CSV fallback for new horizons).
+
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only skill metrics for those codes are returned. When None,
+            all codes are returned.
 
     Returns:
         DataFrame with columns: [season_in_year, code, model_short,
         sdivsigma, nse, delta, accuracy, mae, n_pairs, ...]
     """
-    df = _read_horizon_skill_metrics_api("season")
+    df = _read_horizon_skill_metrics_api("season", codes)
     if df is not None and not df.empty:
         logger.info("Read %d seasonal skill metric rows from API", len(df))
         return df
@@ -2094,6 +2258,7 @@ def read_seasonal_skill_metrics() -> pd.DataFrame:
 
 def _read_horizon_skill_metrics_api(
     horizon_type: str,
+    codes: list[str] | None = None,
 ) -> pd.DataFrame | None:
     """Read skill metrics from API for an arbitrary horizon type.
 
@@ -2116,22 +2281,47 @@ def _read_horizon_skill_metrics_api(
             logger.warning("Postprocessing API not ready at %s", api_url)
             return None
 
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_skill_metrics(horizon=horizon_type, skip=skip, limit=batch_size)
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_skill_metrics(
+                        horizon=horizon_type,
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_skill_metrics(
+                    horizon=horizon_type, skip=skip, limit=batch_size
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        if not all_records:
-            return None
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_horizon_skill_metrics(df, horizon_type)
 
     except Exception as e:
@@ -2428,15 +2618,22 @@ def read_latest_seasonal_forecasts(
 # -------------------------------------------------------------------
 
 
-def read_quarterly_combined_forecasts() -> pd.DataFrame:
+def read_quarterly_combined_forecasts(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read quarterly combined forecasts from API.
 
     API-only — no CSV fallback for new horizons.
 
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only forecasts for those codes are returned. When None,
+            all codes are returned.
+
     Returns:
         DataFrame with combined quarterly forecasts, or empty DataFrame.
     """
-    df = _read_long_combined_forecasts_api("quarter")
+    df = _read_long_combined_forecasts_api("quarter", codes)
     if df is not None and not df.empty:
         logger.info("Read %d quarterly combined forecast rows from API", len(df))
         return df
@@ -2444,15 +2641,22 @@ def read_quarterly_combined_forecasts() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def read_seasonal_combined_forecasts() -> pd.DataFrame:
+def read_seasonal_combined_forecasts(
+    codes: list[str] | None = None,
+) -> pd.DataFrame:
     """Read seasonal combined forecasts from API.
 
     API-only — no CSV fallback for new horizons.
 
+    Args:
+        codes: Optional list of station codes to filter. When provided,
+            only forecasts for those codes are returned. When None,
+            all codes are returned.
+
     Returns:
         DataFrame with combined seasonal forecasts, or empty DataFrame.
     """
-    df = _read_long_combined_forecasts_api("season")
+    df = _read_long_combined_forecasts_api("season", codes)
     if df is not None and not df.empty:
         logger.info("Read %d seasonal combined forecast rows from API", len(df))
         return df
@@ -2462,6 +2666,7 @@ def read_seasonal_combined_forecasts() -> pd.DataFrame:
 
 def _read_long_combined_forecasts_api(
     horizon_type: str,
+    codes: list[str] | None = None,
 ) -> pd.DataFrame | None:
     """Read long-term combined forecasts from API for a given horizon type.
 
@@ -2484,24 +2689,47 @@ def _read_long_combined_forecasts_api(
             logger.warning("Postprocessing API not ready at %s", api_url)
             return None
 
-        all_records = []
-        skip = 0
         batch_size = 1000
-        while True:
-            df_batch = client.read_long_term_forecasts(
-                horizon_type=horizon_type, skip=skip, limit=batch_size
-            )
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        if codes is not None:
+            # Per-code loop: API supports code= but not batch code__in
+            frames = []
+            for code in codes:
+                skip = 0
+                while True:
+                    df_batch = client.read_long_term_forecasts(
+                        horizon_type=horizon_type,
+                        code=code,
+                        skip=skip,
+                        limit=batch_size,
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    frames.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            all_records = []
+            skip = 0
+            while True:
+                df_batch = client.read_long_term_forecasts(
+                    horizon_type=horizon_type, skip=skip, limit=batch_size
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
 
-        if not all_records:
-            return None
+            if not all_records:
+                return None
 
-        df = pd.concat(all_records, ignore_index=True)
+            df = pd.concat(all_records, ignore_index=True)
+
         return _normalize_combined_forecasts(df, horizon_type)
 
     except Exception as e:

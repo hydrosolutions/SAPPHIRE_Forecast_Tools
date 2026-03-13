@@ -1,6 +1,6 @@
 # Plan: Org-Scoped Data Readers (PP-025)
 
-**Status**: draft
+**Status**: In Progress — long-term readers have codes param; short-term read_skill_metrics/read_combined_forecasts still missing it
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 **Module**: postprocessing_forecasts, machine_learning
 **Depends on**: INFRA-009 (Phases 3-4 must be complete before Phases 2-3 here)
@@ -401,29 +401,55 @@ api_data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 #### 4b. `fill_ml_gaps.py` and `recalculate_nan_forecasts.py` (2 call sites)
 
 Both files call `_read_ml_forecasts_from_api()` at line 187 without `code=`.
-The function already accepts `code` (`_read_ml_forecasts_from_api()` near line 533 of utils_ml_forecast.py).
 
-**Fix**: Both scripts process stations in a loop. Pass the current station's code:
+**Important**: Neither script has a per-station loop enclosing this call. Both
+read ALL forecasts first, then iterate over `forecast["code"].unique()`. The
+variable `river_code` does not exist in either file.
 
-In `fill_ml_gaps.py` (~line 187):
+**Fix**: Add `get_hydroposts_for_pentadal_and_decadal_forecasts()` call at the
+top of each script's main function to establish the permitted code set, then
+post-filter the API results:
+
+In both `fill_ml_gaps.py` and `recalculate_nan_forecasts.py` (after line 187):
 ```python
+# Get permitted codes from org-scoped config
+rivers_pentad, rivers_decad, _ = get_hydroposts_for_pentadal_and_decadal_forecasts()
+permitted_codes = set(str(c) for c in rivers_pentad + rivers_decad)
+
 forecast = _read_ml_forecasts_from_api(
     model_type=MODEL_TO_USE,
     horizon_type=prefix,
     start_date=api_start,
-    code=river_code,  # from enclosing station loop
 )
+# Filter to current org's stations only
+if permitted_codes:
+    forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
 ```
 
-Same pattern for `recalculate_nan_forecasts.py`.
+Additionally, in `recalculate_nan_forecasts.py`, add an empty-DataFrame guard
+before `hindcast["date"]` access (~line 298):
+```python
+if hindcast.empty or "date" not in hindcast.columns:
+    logger.warning("Hindcast returned empty — skipping codes %s", codes_with_nan)
+    return
+hindcast["date"] = pd.to_datetime(hindcast["date"])
+```
 
-**Investigation needed**: Trace the call chain to find the exact variable name
-for the station code in the enclosing scope of each file.
-
-#### 4c. `add_new_station.py` (2 call sites)
+#### 4c. `add_new_station.py` (2 call sites — LOW RISK, defer)
 
 Lines 154 and 158 call `_read_ml_forecasts_from_api()` without `code=`.
-The station code should be available from the new station being added.
+However, these reads serve **date-range discovery** — they determine `start_date`
+and `end_date` across all existing forecasts. Filtering by a single code here
+would return only that station's range (likely empty for a new station), breaking
+the date window calculation.
+
+The "new codes" detection (lines 201-223) is already gated by the org-scoped
+config intersection via `get_hydroposts_for_pentadal_and_decadal_forecasts()`.
+Cross-org codes in the API response don't leak into `new_codes_*`.
+
+**Recommendation**: Defer. The cross-org data in these reads is harmless — it
+only affects the date range (making it wider, not narrower). The new-station
+detection is correctly scoped by config.
 
 **Test requirements**:
 - Verify `read_forecasts` / `read_short_term_forecasts` is called with `code=`

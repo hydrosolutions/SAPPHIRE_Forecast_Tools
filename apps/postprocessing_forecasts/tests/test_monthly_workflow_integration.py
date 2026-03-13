@@ -296,6 +296,7 @@ def monthly_integration_env(tmp_path):
         "ieasyforecast_combined_forecast_decad_file": "combined_forecasts_decad.csv",
         "ieasyforecast_pentadal_skill_metrics_file": "skill_metrics_pentad.csv",
         "ieasyforecast_decadal_skill_metrics_file": "skill_metrics_decad.csv",
+        "ieasyforecast_config_file_station_selection_decad": "config_station_selection.json",
         "ieasyhydroforecast_run_ML_models": "True",
         "ieasyhydroforecast_available_ML_models": "TFT,TIDE,TSMIXER",
         "ieasyhydroforecast_run_CM_models": "False",

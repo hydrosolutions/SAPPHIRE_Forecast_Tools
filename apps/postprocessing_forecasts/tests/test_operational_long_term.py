@@ -213,7 +213,9 @@ class TestOperationalLongTerm:
 
             # Verify the full pipeline was executed
             mocks["sl"].load_environment.assert_called_once()
-            mocks["data_reader"].read_skill_metrics.assert_any_call("month")
+            mocks["data_reader"].read_skill_metrics.assert_any_call(
+                "month", codes=["10001", "10002"]
+            )
             call_args = mocks["data_reader"].read_latest_monthly_forecasts.call_args
             assert call_args[0][0] == ["10001", "10002"]
             assert "forecast_date" in call_args[1]
@@ -230,7 +232,9 @@ class TestOperationalLongTerm:
             assert exc_info.value.code == 0
 
             # Skill metrics read for month (and quarter/season)
-            mocks["data_reader"].read_skill_metrics.assert_any_call("month")
+            mocks["data_reader"].read_skill_metrics.assert_any_call(
+                "month", codes=["10001", "10002"]
+            )
             mocks["data_reader"].read_latest_monthly_forecasts.assert_not_called()
             mocks["ensemble_calc"].create_monthly_ensemble_forecasts.assert_not_called()
             mocks["file_writer"].save_monthly_forecast_data.assert_not_called()

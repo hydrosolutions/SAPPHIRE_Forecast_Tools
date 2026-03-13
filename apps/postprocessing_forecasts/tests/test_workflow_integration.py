@@ -100,6 +100,7 @@ def integration_env(tmp_path):
         "ieasyforecast_configuration_path": os.path.join(dst, "config"),
         "ieasyforecast_config_file_all_stations": "config_all_stations_library.json",
         "ieasyforecast_config_file_station_selection": "config_station_selection.json",
+        "ieasyforecast_config_file_station_selection_decad": "config_station_selection.json",
         "ieasyforecast_config_file_output": "config_output.json",
         "ieasyhydroforecast_run_ML_models": "True",
         "ieasyhydroforecast_available_ML_models": "TFT,TIDE,TSMIXER",
@@ -258,6 +259,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -323,6 +325,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     # Override boundary check so decad processes
                     module.is_decad_boundary = lambda d: True
 
@@ -351,6 +354,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     # Override boundary checks so both horizons process
                     module.is_pentad_boundary = lambda d: True
                     module.is_decad_boundary = lambda d: True
@@ -399,6 +403,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -421,6 +426,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -454,6 +460,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -766,6 +773,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -799,6 +807,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -822,6 +831,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -850,6 +860,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -879,6 +890,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -897,6 +909,7 @@ class TestRecalcIntegration:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -920,6 +933,7 @@ class TestRecalcIntegration:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -964,6 +978,7 @@ class TestEdgeCases:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -1000,6 +1015,7 @@ class TestEdgeCases:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()
@@ -1034,6 +1050,7 @@ class TestEdgeCases:
                 module, spec = _import_operational()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = lambda config: ["99001", "99002", "99003"]
                     module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -1119,6 +1136,7 @@ class TestEdgeCases:
                 module, spec = _import_recalc()
                 with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module._read_station_codes = MagicMock(return_value=["99001", "99002", "99003"])
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.recalculate_skill_metrics()

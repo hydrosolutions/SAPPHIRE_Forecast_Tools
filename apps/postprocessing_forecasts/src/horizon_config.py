@@ -24,3 +24,4 @@ class ShortTermHorizonConfig:
     skill_csv_env: str  # env var name for skill metrics CSV
     api_horizon_type: str  # "pentad" or "decad"
     neural_ensemble_func: Callable  # sl.calculate_neural_ensemble_forecast[_decade]
+    station_selection_env: str  # env var for station selection config file

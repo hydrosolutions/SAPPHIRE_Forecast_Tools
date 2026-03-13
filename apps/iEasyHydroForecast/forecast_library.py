@@ -5654,6 +5654,7 @@ class Site:
         monthly_forecast=False,
         seasonal_forecast=False,
         site_type="default",
+        organization=None,
     ):
         """
         Initializes a new Site object.
@@ -5707,6 +5708,7 @@ class Site:
         self.monthlly_forecast = monthly_forecast if monthly_forecast is not False else False
         self.seasonal_forecast = seasonal_forecast if seasonal_forecast is not False else False
         self.site_type = site_type if site_type is not None else "default"
+        self.organization = organization
         # Dynamic attributes
         self.predictor = predictor if predictor is not None else -10000.0
         self.fc_qmin = fc_qmin if fc_qmin is not None else -10000.0
@@ -6935,6 +6937,7 @@ class Site:
                         decadal_forecast=row["enabled_forecasts"].values[0]["decadal_forecast"],
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
             # Get the basin and bulletin order for each site
@@ -7044,6 +7047,7 @@ class Site:
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
                         site_type=row["site_type"].values[0],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
                 elif row["enabled_forecasts"].values[0]["pentad_forecast"] == True:
@@ -7078,6 +7082,7 @@ class Site:
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
                         site_type=row["site_type"].values[0],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
 
@@ -7198,6 +7203,7 @@ class Site:
                     monthly_forecast=enabled.get("monthly_forecast", False),
                     seasonal_forecast=enabled.get("seasonal_forecast", False),
                     site_type=row["site_type"].values[0],
+                    organization=os.getenv("ieasyhydroforecast_organization"),
                 )
                 site_list.append(site)
 
@@ -7295,6 +7301,7 @@ class Site:
                         decadal_forecast=row["enabled_forecasts"].values[0]["decadal_forecast"],
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
 
@@ -7404,6 +7411,7 @@ class Site:
                         decadal_forecast=row["enabled_forecasts"].values[0]["decadal_forecast"],
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
                 elif row["enabled_forecasts"].values[0]["pentad_forecast"] == True:
@@ -7438,6 +7446,7 @@ class Site:
                         decadal_forecast=row["enabled_forecasts"].values[0]["decadal_forecast"],
                         monthly_forecast=row["enabled_forecasts"].values[0]["monthly_forecast"],
                         seasonal_forecast=row["enabled_forecasts"].values[0]["seasonal_forecast"],
+                        organization=os.getenv("ieasyhydroforecast_organization"),
                     )
                     sites.append(site)
             # Get the basin and bulletin order for each site
@@ -7558,6 +7567,7 @@ class Site:
                     decadal_forecast=enabled.get("decadal_forecast", False),
                     monthly_forecast=enabled.get("monthly_forecast", False),
                     seasonal_forecast=enabled.get("seasonal_forecast", False),
+                    organization=os.getenv("ieasyhydroforecast_organization"),
                 )
                 site_list.append(site)
 

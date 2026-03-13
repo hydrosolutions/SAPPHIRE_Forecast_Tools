@@ -109,6 +109,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -128,6 +129,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -148,6 +150,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 # Override boundary checks so both horizons process
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
@@ -170,6 +173,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -187,6 +191,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -203,6 +208,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
 
@@ -223,6 +229,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 # Override boundary checks so both horizons process
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
@@ -246,6 +253,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
 
@@ -273,6 +281,7 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
 
@@ -294,6 +303,7 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
 
@@ -315,6 +325,7 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: True
 
@@ -336,6 +347,7 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(FileNotFoundError, match="missing .env"):
@@ -354,6 +366,7 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -371,6 +384,7 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -397,6 +411,7 @@ class TestBoundaryDaySkipBehavior:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 # Force non-pentad day
                 module.is_pentad_boundary = lambda d: False
 
@@ -417,6 +432,7 @@ class TestBoundaryDaySkipBehavior:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_decad_boundary = lambda d: False
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -438,6 +454,7 @@ class TestBoundaryDaySkipBehavior:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: False
                 module.is_decad_boundary = lambda d: False
 
@@ -463,6 +480,7 @@ class TestBoundaryDaySkipBehavior:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: True
                 module.is_decad_boundary = lambda d: False
 
@@ -491,6 +509,7 @@ class TestBoundaryDaySkipBehavior:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = lambda config: ["10001"]
                 module.is_pentad_boundary = lambda d: False
                 module.is_decad_boundary = lambda d: True
 

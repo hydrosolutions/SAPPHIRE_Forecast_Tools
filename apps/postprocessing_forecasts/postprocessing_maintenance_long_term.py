@@ -87,7 +87,7 @@ def postprocessing_maintenance_long_term():
         # 1. Read monthly combined forecasts for gap detection
         with timer(timing_stats, "reading monthly combined forecasts"):
             logger.info("\n\n------ Reading monthly combined forecasts ---------")
-            combined = data_reader.read_monthly_combined_forecasts()
+            combined = data_reader.read_monthly_combined_forecasts(codes=codes)
 
         if combined.empty:
             logger.info("No monthly combined forecasts found. Skipping gap detection.")
@@ -115,7 +115,7 @@ def postprocessing_maintenance_long_term():
         # 3. Read skill metrics
         with timer(timing_stats, "reading monthly skill metrics"):
             logger.info("\n\n------ Reading pre-calculated monthly skill metrics -----")
-            skill_stats = data_reader.read_skill_metrics("month")
+            skill_stats = data_reader.read_skill_metrics("month", codes=codes)
 
         if skill_stats.empty:
             logger.warning("No monthly skill metrics available. Cannot create ensembles.")
@@ -242,7 +242,7 @@ def postprocessing_maintenance_long_term():
         with timer(timing_stats, "quarterly gap-fill"):
             logger.info("\n\n------ Quarterly gap-fill -------------------------")
             lookback_q = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_QUARTERS", "2"))
-            q_combined = data_reader.read_quarterly_combined_forecasts()
+            q_combined = data_reader.read_quarterly_combined_forecasts(codes=codes)
             if not q_combined.empty:
                 q_gaps = gap_detector.detect_missing_quarterly_ensembles(
                     q_combined,
@@ -250,7 +250,7 @@ def postprocessing_maintenance_long_term():
                     ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
                 )
                 if not q_gaps.empty:
-                    q_skill = data_reader.read_skill_metrics("quarter")
+                    q_skill = data_reader.read_skill_metrics("quarter", codes=codes)
                     if not q_skill.empty:
                         q_years = q_gaps["year"].unique()
                         q_fc = data_reader.read_quarterly_forecasts(
@@ -300,7 +300,7 @@ def postprocessing_maintenance_long_term():
         with timer(timing_stats, "seasonal gap-fill"):
             logger.info("\n\n------ Seasonal gap-fill --------------------------")
             lookback_s = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_SEASONS", "1"))
-            s_combined = data_reader.read_seasonal_combined_forecasts()
+            s_combined = data_reader.read_seasonal_combined_forecasts(codes=codes)
             if not s_combined.empty:
                 s_gaps = gap_detector.detect_missing_seasonal_ensembles(
                     s_combined,
@@ -308,7 +308,7 @@ def postprocessing_maintenance_long_term():
                     ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
                 )
                 if not s_gaps.empty:
-                    s_skill = data_reader.read_skill_metrics("season")
+                    s_skill = data_reader.read_skill_metrics("season", codes=codes)
                     if not s_skill.empty:
                         s_years = s_gaps["season_year"].unique()
                         s_fc = data_reader.read_seasonal_forecasts(

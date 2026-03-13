@@ -9,6 +9,7 @@
 
 import calendar
 import datetime as dt
+import json
 import logging
 import os
 import sys
@@ -71,6 +72,7 @@ PENTAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
     api_horizon_type="pentad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast,
+    station_selection_env="ieasyforecast_config_file_station_selection",
 )
 DECAD = ShortTermHorizonConfig(
     name="decad",
@@ -81,17 +83,46 @@ DECAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
     api_horizon_type="decad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast_decade,
+    station_selection_env="ieasyforecast_config_file_station_selection_decad",
 )
+
+
+def _read_station_codes(config):
+    """Read station codes from the horizon's station selection config file.
+
+    Args:
+        config: ShortTermHorizonConfig with station_selection_env field.
+
+    Returns:
+        List of station code strings.
+    """
+    config_path = os.path.join(
+        os.getenv("ieasyforecast_configuration_path", ""),
+        os.getenv(config.station_selection_env, ""),
+    )
+    with open(config_path) as f:
+        station_config = json.load(f)
+    codes = [str(c) for c in station_config.get("stationsID", [])]
+    logger.info("Read %d station codes for %s", len(codes), config.name)
+    return codes
 
 
 def _run_short_term_postprocessing(config, today, errors, timing_stats_):
     """Read data, create ensembles, save results for one horizon type."""
     label = config.name.upper()
 
+    codes = _read_station_codes(config)
+    if not codes:
+        logger.warning(
+            "No station codes for %s — station selection file may be empty",
+            config.name,
+        )
+
     with timer(timing_stats_, f"reading {config.name} data"):
         logger.info(f"\n\n------ Reading {config.name} observed and modelled data -------")
         _, modelled = data_reader.read_observed_and_modelled_data(
             config.name,
+            codes=codes,
             start_year=today.year,
             end_year=today.year,
         )
@@ -100,7 +131,7 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
 
     with timer(timing_stats_, f"reading {config.name} skill metrics"):
         logger.info(f"\n\n------ Reading pre-calculated {config.name} skill metrics ----")
-        skill_stats = data_reader.read_skill_metrics(config.name)
+        skill_stats = data_reader.read_skill_metrics(config.name, codes=codes)
 
     if skill_stats.empty:
         logger.warning(

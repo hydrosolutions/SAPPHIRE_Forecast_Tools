@@ -69,6 +69,7 @@ PENTAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
     api_horizon_type="pentad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast,
+    station_selection_env="ieasyforecast_config_file_station_selection",
 )
 DECAD_CONFIG = ShortTermHorizonConfig(
     name="decad",
@@ -79,6 +80,7 @@ DECAD_CONFIG = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
     api_horizon_type="decad",
     neural_ensemble_func=sl.calculate_neural_ensemble_forecast_decade,
+    station_selection_env="ieasyforecast_config_file_station_selection_decad",
 )
 
 

@@ -263,6 +263,97 @@ def check_organization():
     return None
 
 
+def check_station_code_collisions() -> None:
+    """Warn if config contains stations from a different organization.
+
+    Reads config_all_stations_library.json, navigates to the
+    stations_available_for_forecast wrapper, and checks that no station
+    is tagged with an organization other than the current one. Gracefully
+    skips if the organization field is not yet populated.
+    """
+    try:
+        config_path = os.path.join(
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_config_file_all_stations", ""),
+        )
+        with open(config_path) as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return  # Config unavailable — skip silently
+
+    # Navigate to stations wrapper
+    stations = raw.get("stations_available_for_forecast", raw)
+    current_org = os.getenv("ieasyhydroforecast_organization")
+    if not current_org:
+        return  # No org configured — can't check
+
+    # Check each station's org tag
+    foreign_stations: dict[str, str] = {}
+    has_any_org = False
+    for code, metadata in stations.items():
+        if code in ("comment", "metadata"):  # Skip non-station keys
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        org_value = metadata.get("organization", [None])
+        if isinstance(org_value, list):
+            org_value = org_value[0] if org_value else None
+        if org_value is None:
+            continue  # Pre-INFRA-009 data — can't check this entry
+        has_any_org = True
+        if org_value != current_org:
+            foreign_stations[str(code)] = org_value
+
+    if not has_any_org:
+        logger.debug(
+            "Organization field not available in station config — skipping collision check"
+        )
+        return
+
+    if foreign_stations:
+        logger.warning(
+            "FOREIGN ORG CONTAMINATION: %d station(s) in config are tagged "
+            "with a different organization than '%s': %s. This may indicate "
+            "a config file copied between orgs or a shared config directory.",
+            len(foreign_stations),
+            current_org,
+            dict(list(foreign_stations.items())[:5]),  # Show max 5
+        )
+
+
+def _get_current_org() -> str | None:
+    """Return ieasyhydroforecast_organization from env, or None."""
+    return os.getenv("ieasyhydroforecast_organization")
+
+
+def filter_sites_by_org(df: pd.DataFrame, org: str | None = None) -> pd.DataFrame:
+    """Filter station DataFrame by organization name.
+
+    Graceful degradation: returns df unfiltered if org is None,
+    column is missing, or all values are None.
+
+    Migration safety (Decision D1): rows with organization=None are
+    treated as "belongs to current org" and kept.
+
+    Args:
+        df: DataFrame with optional 'organization' column.
+        org: Organization name to filter by. If None, reads from
+            ieasyhydroforecast_organization env var.
+
+    Returns:
+        Filtered DataFrame copy, or original if no filtering possible.
+    """
+    if org is None:
+        org = _get_current_org()
+    if org is None or "organization" not in df.columns:
+        return df
+    col = df["organization"].apply(lambda v: v[0] if isinstance(v, list) else v)
+    if not col.notna().any():
+        return df
+    # Keep rows that match current org OR have None (migration safety)
+    return df[col.isna() | (col == org)].copy()
+
+
 def check_connect_to_iEH_and_ssh():
     """Currently connection to iEH is only possible for kghm and through ssh tunnel."""
     # Check if the environment variable ieasyhydroforecast_connect_to_iEH is set
@@ -305,6 +396,7 @@ def validate_environment_variables():
         check_organization()
     except OSError as e:
         raise e
+    check_station_code_collisions()
     try:
         check_connect_to_iEH_and_ssh()
     except OSError as e:
@@ -712,6 +804,7 @@ def _sites_to_config_dict(fc_sites: list) -> dict:
             "header": [code_str],
             "elevation": [None],
             "organization_id": [None],
+            "organization": [getattr(site, "organization", None)],
             "country": [None],
             "is_virtual": [getattr(site, "is_virtual", False)],
             "data_source": ["ieh_hf"],
@@ -819,6 +912,7 @@ def _try_bootstrap_from_hf_sdk(config_all_file: str) -> pd.DataFrame:
         "region",
         "site_type",
         "organization_id",
+        "organization",
         "elevation",
         "river_ru",
         "punkt_ru",
@@ -965,6 +1059,7 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
                 "site_name": new_sites["name_ru"],
                 "organization_id": new_sites["organization_id"],
                 "elevation": new_sites["elevation"],
+                "organization": new_sites["organization"],
             }
         )
         logger.debug("Adding new sites to the list of stations available for forecasting, namely")
@@ -975,7 +1070,7 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         # Add information from config_all to db_sites
         db_sites = pd.merge(
             db_sites,
-            config_all[["site_code", "river_ru", "punkt_ru", "lat", "long"]],
+            config_all[["site_code", "river_ru", "punkt_ru", "lat", "long", "organization"]],
             left_on="site_code",
             right_on="site_code",
             how="left",
@@ -1029,10 +1124,15 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         }
     _write_config_all(stations_dict, config_all_file)
 
-    # Filter db_sites for discharge sites
-    # NOTE: Important assumption: All discharge sites have a code starting with
-    # 1. This is true in Kyrgyz Hydromet at the time of writing.
-    db_sites = db_sites[db_sites["site_code"].astype(str).str.startswith("1")]
+    # Filter db_sites by organization
+    pre_filter_count = len(db_sites)
+    db_sites = filter_sites_by_org(db_sites)
+    if len(db_sites) == pre_filter_count and pre_filter_count > 0:
+        logger.warning(
+            "filter_sites_by_org returned all %d rows unchanged — "
+            "organization column may be missing or all-None",
+            pre_filter_count,
+        )
 
     # Read stations for forecasting
     logger.debug("-Reading stations for forecasting ...")

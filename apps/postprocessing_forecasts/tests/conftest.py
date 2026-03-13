@@ -23,6 +23,7 @@ PENTAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_pentadal_skill_metrics_file",
     api_horizon_type="pentad",
     neural_ensemble_func=lambda x: x,  # placeholder for unit tests
+    station_selection_env="ieasyforecast_config_file_station_selection",
 )
 DECAD = ShortTermHorizonConfig(
     name="decad",
@@ -33,6 +34,7 @@ DECAD = ShortTermHorizonConfig(
     skill_csv_env="ieasyforecast_decadal_skill_metrics_file",
     api_horizon_type="decad",
     neural_ensemble_func=lambda x: x,  # placeholder for unit tests
+    station_selection_env="ieasyforecast_config_file_station_selection_decad",
 )
 
 

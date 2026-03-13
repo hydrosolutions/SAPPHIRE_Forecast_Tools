@@ -186,6 +186,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -224,6 +225,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -264,6 +266,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -300,6 +303,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 # Re-add caplog handler (exec_module replaces root handlers)
                 logging.getLogger().addHandler(caplog.handler)
@@ -328,6 +332,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -343,6 +348,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -371,6 +377,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -403,6 +410,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -442,6 +450,7 @@ class TestMaintenanceWorkflow:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -474,6 +483,7 @@ class TestMaintenanceEarlyExitAndStaleDetection:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -515,6 +525,7 @@ class TestMaintenanceEarlyExitAndStaleDetection:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -547,6 +558,7 @@ class TestMaintenanceEarlyExitAndStaleDetection:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -584,6 +596,7 @@ class TestMaintenanceEarlyExitAndStaleDetection:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -636,6 +649,7 @@ class TestMaintenanceConcurrentErrors:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -655,6 +669,7 @@ class TestMaintenanceConcurrentErrors:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -707,6 +722,7 @@ class TestMaintenanceEdgeCases:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -751,6 +767,7 @@ class TestMaintenanceEdgeCases:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -790,6 +807,7 @@ class TestMaintenanceEdgeCases:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -863,6 +881,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -906,6 +925,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -972,6 +992,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1032,6 +1053,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1076,6 +1098,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1116,6 +1139,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1156,6 +1180,7 @@ class TestPP022StaleRefreshFixes:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1203,6 +1228,7 @@ class TestPP024DirectAPIWrite:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1227,6 +1253,7 @@ class TestPP024DirectAPIWrite:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_maintenance()
@@ -1247,6 +1274,7 @@ class TestPP024DirectAPIWrite:
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
                 logging.getLogger().addHandler(caplog.handler)
                 caplog.set_level(logging.WARNING)

@@ -1,6 +1,6 @@
 # Plan: Organization-Based Station Filtering (Option A — App-Side)
 
-**Status**: draft
+**Status**: Implemented (all 4 phases verified 2026-03-13)
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 **Module**: cross-cutting (iEasyHydroForecast, postprocessing_forecasts, config)
 
@@ -45,12 +45,12 @@ time. Each SDK instance only returns its own org's sites.
 | `ieasyhydroforecast_organization` | **Primary org identifier**: "demo", "kghm", "tjhm" |
 | `ORGANIZATION_ID` env var | Integer `1` for all orgs — useless for differentiation |
 | `config_all_stations_library.json` | Has `organization_id` field (list-wrapped `[1]`) — will add `organization` field with org name |
-| `_sites_to_config_dict()` line 730 | Hardcodes `organization_id: [None]` — loses org info |
-| `startswith("1")` filter in `get_pentadal_forecast_sites_complicated_method()` (near line 1054) | Kyrgyz-specific hack — see "Why replacing startswith is safe" below |
+| `_sites_to_config_dict()` line 714 | Hardcodes `organization_id: [None]` — loses org info |
+| `startswith("1")` filter in `get_pentadal_forecast_sites_complicated_method()` (near line 1035) | Kyrgyz-specific hack — see "Why replacing startswith is safe" below |
 | `read_observed_and_modelled_data()` | Already accepts `codes` param — postprocessing passes `None` |
 | HF SDK | Already org-scoped via UUID — returned sites belong to current org |
 | Site class | No `organization` attribute — needs adding |
-| Old SDK write path in `get_pentadal_forecast_sites_complicated_method()` (lines 1028-1048) | Also lacks `organization` — **deprecated, will not be updated** |
+| Old SDK write path in `get_pentadal_forecast_sites_complicated_method()` (lines 1009-1029) | Also lacks `organization` — **deprecated, will not be updated** |
 
 ---
 
@@ -61,7 +61,7 @@ time. Each SDK instance only returns its own org's sites.
 | D1 | **Migration: treat `None` as "matches current org"** | During transition, stations written before Phase 1 have `organization=None`. Dropping them silently would lose stations. Treat `None` as "belongs to current org" so old config files work until regenerated. |
 | D2 | **Per-horizon station selection files** | DECAD uses `ieasyforecast_config_file_station_selection_decad` in upstream modules. Phase 3 must read the horizon-appropriate file via `ShortTermHorizonConfig`. |
 | D3 | **`recalculate_skill_metrics.py` short-term path in scope** | Its `_run_short_term_recalc()` also calls `read_observed_and_modelled_data()` without `codes=`. Add as Phase 4. |
-| D4 | **Old SDK write path (lines 1028-1048) is deprecated** | No need to add `organization` to the old-SDK `stations_dict` block. It will be removed in a future cleanup. |
+| D4 | **Old SDK write path (lines 1009-1029) is deprecated** | No need to add `organization` to the old-SDK `stations_dict` block. It will be removed in a future cleanup. |
 
 ---
 
@@ -130,12 +130,12 @@ to the data reader.
 
 ## Why Replacing `startswith("1")` with Org Filtering Is Safe
 
-The `startswith("1")` filter at line 1054 in `get_pentadal_forecast_sites_complicated_method()`
+The `startswith("1")` filter at line 1035 in `get_pentadal_forecast_sites_complicated_method()`
 appears to filter for discharge-only sites, but investigation shows it actually
 guards against a **different problem**: stations from other orgs leaking in via
 the config_all merge.
 
-### What happens at line 1054
+### What happens at line 1035
 
 1. **`ieh_sdk.get_discharge_sites()`** (line 914) returns only hydrological
    stations — the SDK endpoint is `/stations/{uuid}/hydrological` (HF SDK) or
@@ -146,7 +146,7 @@ the config_all merge.
    multi-org deployment, config_all could contain other orgs' stations if the
    file is shared across org runs.
 
-3. **Line 1054**: `startswith("1")` catches those leaked entries — but only
+3. **Line 1035**: `startswith("1")` catches those leaked entries — but only
    because Kyrgyz station codes happen to start with "1". It's a proxy for
    "belongs to this org" based on a naming convention, not a general-purpose
    filter.
@@ -185,21 +185,21 @@ endpoints (`get_meteo_sites()`, `get_virtual_sites()`) — they do NOT appear in
 **Files to modify**:
 
 1. `apps/iEasyHydroForecast/forecast_library.py`
-   - `Site.__init__` (line 5613): Add `organization=None` param + `self.organization = organization`
+   - `Site.__init__` (line 5617): Add `organization=None` param + `self.organization = organization`
    - All HF SDK classmethods that create Site objects:
-     - `pentad_forecast_sites_from_iEH_HF_SDK` (line 6973)
-     - `decad_forecast_sites_from_iEH_HF_SDK` (line 6868)
-     - `all_forecast_sites_from_iEH_HF_SDK` (line 7120)
-     - `virtual_decad_forecast_sites_from_iEH_HF_SDK` (line 7229)
-     - `virtual_pentad_forecast_sites_from_iEH_HF_SDK` (line 7334)
-     - `virtual_all_forecast_sites_from_iEH_HF_SDK` (line 7476)
+     - `pentad_forecast_sites_from_iEH_HF_SDK` (line 6977)
+     - `decad_forecast_sites_from_iEH_HF_SDK` (line 6872)
+     - `all_forecast_sites_from_iEH_HF_SDK` (line 7124)
+     - `virtual_decad_forecast_sites_from_iEH_HF_SDK` (line 7233)
+     - `virtual_pentad_forecast_sites_from_iEH_HF_SDK` (line 7338)
+     - `virtual_all_forecast_sites_from_iEH_HF_SDK` (line 7480)
    - In each classmethod: `organization=os.getenv("ieasyhydroforecast_organization")`
-   - **Note**: `Site.from_dataframe()` (line 6820) does NOT need updating — it creates
+   - **Note**: `Site.from_dataframe()` (line 6825) does NOT need updating — it creates
      Site objects from `db_sites` after the org filter has already run. Leaving
      `organization=None` on these objects is acceptable.
 
 2. `apps/iEasyHydroForecast/setup_library.py`
-   - `_sites_to_config_dict()` (def at line 684, target statement at line 730):
+   - `_sites_to_config_dict()` (def at line 684, target statement at line 714):
      Add `"organization": [getattr(site, "organization", None)]`.
      Keep `"organization_id"` as-is for backward compat.
    - `_try_bootstrap_from_hf_sdk()` (def at line 821):
@@ -220,16 +220,16 @@ endpoints (`get_meteo_sites()`, `get_virtual_sites()`) — they do NOT appear in
 
 ### Phase 1b: Propagate Organization Through DataFrame Flow
 
-**Goal**: The `organization` column reaches `db_sites` at line 1054 so Phase 2
+**Goal**: The `organization` column reaches `db_sites` at line 1035 so Phase 2
 can filter on it.
 
 **Files to modify**:
 
 1. `apps/iEasyHydroForecast/setup_library.py`
-   - `new_sites_forecast` construction (lines 976-990): Add `"organization"` column
+   - `new_sites_forecast` construction (lines 955-969): Add `"organization"` column
      sourced from `config_all["organization"]` so virtual/manual entries from config_all
-     carry their org tag into `db_sites` after the `pd.concat` at line 993.
-   - Merge at line 997: Add `"organization"` to the column list:
+     carry their org tag into `db_sites` after the `pd.concat` at line 972.
+   - Merge at line 976: Add `"organization"` to the column list:
      `config_all[["site_code", "river_ru", "punkt_ru", "lat", "long", "organization"]]`
      so SDK-sourced rows in `db_sites` also get their org from config_all.
 
@@ -240,7 +240,7 @@ scalar column in the loaded DataFrame. No changes needed to this function.
 
 **Test requirements** (in `apps/iEasyHydroForecast/tests/test_setup_library.py`):
 - Test that `db_sites` DataFrame at the point of the `startswith("1")` filter
-  (line 1054) has an `"organization"` column after the config_all merge.
+  (line 1035) has an `"organization"` column after the config_all merge.
 - **Warning**: `test_forecast_library.py:425-429` uses `assertCountEqual` on exact
   columns from `load_all_station_data_from_JSON()` against a test fixture that lacks
   `"organization"`. This test reads its own fixture file and is unaffected unless the
@@ -288,7 +288,7 @@ def filter_sites_by_org(df: pd.DataFrame, org: str | None = None) -> pd.DataFram
 ```
 
 **Modify** `get_pentadal_forecast_sites_complicated_method()`:
-- **Line 1054**: Replace
+- **Line 1035**: Replace
   `db_sites = db_sites[db_sites["site_code"].astype(str).str.startswith("1")]`
   with `db_sites = filter_sites_by_org(db_sites)`.
   Log a warning if filter returns all rows unchanged (means org field missing).
@@ -462,9 +462,9 @@ file and is not used for short-term recalculation.
   reads forecasts without station code filter (only horizon + model + date range).
   Used for ML consistency checks. Could compare against wrong org's data. Track
   separately.
-- Old SDK write path (lines 1028-1048 in `get_pentadal_forecast_sites_complicated_method()`)
+- Old SDK write path (lines 1009-1029 in `get_pentadal_forecast_sites_complicated_method()`)
   does not include `organization` — deprecated per Decision D4, will be removed.
-- `Site.from_dataframe()` (line 6820) does not propagate `organization` into Site
+- `Site.from_dataframe()` (line 6825) does not propagate `organization` into Site
   objects — acceptable because org filtering occurs before Site construction.
 - Extraction of `_read_station_codes()` into a shared utility — 5 copies will
   exist after all plans complete: `postprocessing_operational.py` (INFRA-009
@@ -519,7 +519,7 @@ file and is not used for short-term recalculation.
     "phase_1a": {
       "name": "Tag Site objects with organization + update _sites_to_config_dict",
       "depends_on": ["INFRA-010 Phase 1"],
-      "note": "INFRA-010 extracts _sites_to_config_dict() into a standalone helper. Phase 1a adds the organization field to the dict returned by that helper. If INFRA-010 is not yet complete, the modification targets the inline dict construction at line 730 instead.",
+      "note": "INFRA-010 extracts _sites_to_config_dict() into a standalone helper. Phase 1a adds the organization field to the dict returned by that helper. If INFRA-010 is not yet complete, the modification targets the inline dict construction at line 714 instead.",
       "files": [
         "apps/iEasyHydroForecast/forecast_library.py (Site.__init__, 6 HF SDK classmethods)",
         "apps/iEasyHydroForecast/setup_library.py (_sites_to_config_dict, _try_bootstrap_from_hf_sdk)",
@@ -537,7 +537,7 @@ file and is not used for short-term recalculation.
       "name": "Add filter_sites_by_org helper + replace startswith filter",
       "depends_on": ["phase_1b"],
       "files": [
-        "apps/iEasyHydroForecast/setup_library.py (filter_sites_by_org, _get_current_org, line 1054)",
+        "apps/iEasyHydroForecast/setup_library.py (filter_sites_by_org, _get_current_org, line 1035)",
         "apps/iEasyHydroForecast/tests/test_setup_library.py"
       ]
     },

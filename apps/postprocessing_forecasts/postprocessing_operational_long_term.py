@@ -85,7 +85,7 @@ def postprocessing_operational_long_term():
         # 1. Read pre-calculated monthly skill metrics
         with timer(timing_stats, "reading monthly skill metrics"):
             logger.info("\n\n------ Reading pre-calculated monthly skill metrics -----")
-            skill_stats = data_reader.read_skill_metrics("month")
+            skill_stats = data_reader.read_skill_metrics("month", codes=codes)
 
         if skill_stats.empty:
             logger.warning(
@@ -117,7 +117,7 @@ def postprocessing_operational_long_term():
 
         # 3.5. Merge into existing combined forecasts
         with timer(timing_stats, "merging with existing data"):
-            existing = data_reader.read_monthly_combined_forecasts()
+            existing = data_reader.read_monthly_combined_forecasts(codes=codes)
             if not existing.empty:
                 joint = pd.concat(
                     [existing, joint],
@@ -150,7 +150,7 @@ def postprocessing_operational_long_term():
         # ----- QUARTERLY ENSEMBLES -----
         with timer(timing_stats, "quarterly processing"):
             logger.info("\n\n------ Quarterly ensemble processing -------------")
-            quarterly_skill = data_reader.read_skill_metrics("quarter")
+            quarterly_skill = data_reader.read_skill_metrics("quarter", codes=codes)
             if not quarterly_skill.empty:
                 quarterly_fc = data_reader.read_latest_quarterly_forecasts(
                     codes,
@@ -161,7 +161,7 @@ def postprocessing_operational_long_term():
                         quarterly_fc,
                         quarterly_skill,
                     )
-                    existing_q = data_reader.read_quarterly_combined_forecasts()
+                    existing_q = data_reader.read_quarterly_combined_forecasts(codes=codes)
                     if not existing_q.empty:
                         quarterly_joint = pd.concat(
                             [existing_q, quarterly_joint],
@@ -186,7 +186,7 @@ def postprocessing_operational_long_term():
         # ----- SEASONAL ENSEMBLES -----
         with timer(timing_stats, "seasonal processing"):
             logger.info("\n\n------ Seasonal ensemble processing --------------")
-            seasonal_skill = data_reader.read_skill_metrics("season")
+            seasonal_skill = data_reader.read_skill_metrics("season", codes=codes)
             if not seasonal_skill.empty:
                 seasonal_fc = data_reader.read_latest_seasonal_forecasts(
                     codes,
@@ -197,7 +197,7 @@ def postprocessing_operational_long_term():
                         seasonal_fc,
                         seasonal_skill,
                     )
-                    existing_s = data_reader.read_seasonal_combined_forecasts()
+                    existing_s = data_reader.read_seasonal_combined_forecasts(codes=codes)
                     if not existing_s.empty:
                         seasonal_joint = pd.concat(
                             [existing_s, seasonal_joint],

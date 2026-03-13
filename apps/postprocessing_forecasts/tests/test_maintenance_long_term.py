@@ -330,7 +330,9 @@ class TestMaintenanceLongTerm:
             # Verify the full call chain
             mock_data_reader.read_monthly_combined_forecasts.assert_called_once()
             mock_gap_detector.detect_missing_monthly_ensembles.assert_called_once()
-            mock_data_reader.read_skill_metrics.assert_called_once_with("month")
+            mock_data_reader.read_skill_metrics.assert_called_once_with(
+                "month", codes=["10001", "10002"]
+            )
             mock_data_reader.read_monthly_forecasts.assert_called_once_with(
                 ["10001", "10002"],
                 2025,
@@ -576,7 +578,9 @@ class TestMaintenanceLongTerm:
                 module.postprocessing_maintenance_long_term()
 
             assert exc_info.value.code == 0
-            mock_data_reader.read_skill_metrics.assert_called_once_with("month")
+            mock_data_reader.read_skill_metrics.assert_called_once_with(
+                "month", codes=["10001", "10002"]
+            )
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
 
     def test_empty_forecasts_for_gaps_exits_zero(

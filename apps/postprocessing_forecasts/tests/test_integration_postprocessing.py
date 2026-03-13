@@ -2946,6 +2946,10 @@ class TestRecalculateSkillMetricsIntegration:
         with (
             patch("setup_library.load_environment") as mock_load,
             patch(
+                "postprocessing_forecasts.recalculate_skill_metrics._read_station_codes",
+                return_value=["15001"],
+            ),
+            patch(
                 "src.data_reader.read_observed_and_modelled_data",
                 return_value=(
                     pd.DataFrame(
@@ -3018,6 +3022,10 @@ class TestRecalculateSkillMetricsIntegration:
         """save returning error string -> exit(1)."""
         with (
             patch("setup_library.load_environment"),
+            patch(
+                "postprocessing_forecasts.recalculate_skill_metrics._read_station_codes",
+                return_value=["15001"],
+            ),
             patch(
                 "src.data_reader.read_observed_and_modelled_data",
                 return_value=(

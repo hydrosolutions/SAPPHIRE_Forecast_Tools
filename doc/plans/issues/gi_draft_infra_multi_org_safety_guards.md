@@ -135,11 +135,11 @@ codes from the records list and call the guard:
 
 | Function | Line (approx) | Code to add before `client.write_*()` |
 |----------|---------------|---------------------------------------|
-| `_write_combined_forecast_to_api()` | Before line 333 | `_check_write_codes({r["code"] for r in records}, "combined_forecast")` |
-| `_write_skill_metrics_to_api()` | Before line 567 | `_check_write_codes({r["code"] for r in records}, "skill_metrics")` |
-| `_write_threshold_skill_metrics_to_api()` | Before line 668 | `_check_write_codes({r["code"] for r in records}, "threshold_skill_metrics")` |
-| `_write_monthly_ensemble_to_api()` | Before line 803 | `_check_write_codes({r["code"] for r in records}, "monthly_ensemble")` |
-| `_write_aggregated_forecasts_to_api()` | Before line 977 | `_check_write_codes({r["code"] for r in records}, "aggregated_forecasts")` |
+| `_write_combined_forecast_to_api()` | Before line 102 | `_check_write_codes({r["code"] for r in records}, "combined_forecast")` |
+| `_write_skill_metrics_to_api()` | Before line 352 | `_check_write_codes({r["code"] for r in records}, "skill_metrics")` |
+| `_write_threshold_skill_metrics_to_api()` | Before line 578 | `_check_write_codes({r["code"] for r in records}, "threshold_skill_metrics")` |
+| `_write_monthly_ensemble_to_api()` | Before line 698 | `_check_write_codes({r["code"] for r in records}, "monthly_ensemble")` |
+| `_write_aggregated_forecasts_to_api()` | Before line 862 | `_check_write_codes({r["code"] for r in records}, "aggregated_forecasts")` |
 
 **Note**: `_write_quarterly_ensemble_to_api()` and `_write_seasonal_ensemble_to_api()`
 delegate to `_write_aggregated_forecasts_to_api()`, so only the aggregated helper

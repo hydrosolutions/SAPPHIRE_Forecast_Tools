@@ -172,6 +172,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -188,6 +189,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -203,6 +205,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -219,6 +222,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -233,6 +237,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -249,6 +254,7 @@ class TestRecalcWorkflow:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -270,6 +276,7 @@ class TestRecalcEdgeCases:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(FileNotFoundError, match="missing .env"):
                     module.recalculate_skill_metrics()
@@ -282,6 +289,7 @@ class TestRecalcEdgeCases:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -394,6 +402,7 @@ class TestRecalcMonthly:
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()

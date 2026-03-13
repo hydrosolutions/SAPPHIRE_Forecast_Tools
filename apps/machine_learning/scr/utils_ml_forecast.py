@@ -861,14 +861,33 @@ def _check_ml_forecast_consistency(
     csv_data["forecast_date"] = pd.to_datetime(csv_data["forecast_date"])
     latest_date = csv_data["forecast_date"].max()
 
-    # Read from API - only latest forecast date
+    # Read from API - only latest forecast date, scoped to org's station codes
     try:
-        api_data = client.read_forecasts(
-            horizon=horizon_type,
-            model=api_model_type,
-            start_date=latest_date.strftime("%Y-%m-%d"),
-            end_date=latest_date.strftime("%Y-%m-%d"),
-        )
+        codes = csv_data["code"].unique().tolist() if "code" in csv_data.columns else []
+        if codes:
+            frames = []
+            for code in codes:
+                try:
+                    page = client.read_forecasts(
+                        horizon=horizon_type,
+                        code=code,
+                        model=api_model_type,
+                        start_date=latest_date.strftime("%Y-%m-%d"),
+                        end_date=latest_date.strftime("%Y-%m-%d"),
+                    )
+                    if not page.empty:
+                        frames.append(page)
+                except Exception as e:
+                    logger.warning("Failed to read forecasts for code %s: %s", code, e)
+            api_data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            # Fallback: no codes available, read all (original behavior)
+            api_data = client.read_forecasts(
+                horizon=horizon_type,
+                model=api_model_type,
+                start_date=latest_date.strftime("%Y-%m-%d"),
+                end_date=latest_date.strftime("%Y-%m-%d"),
+            )
     except Exception as e:
         logger.warning(f"Failed to read from API for consistency check: {e}")
         return True  # Don't fail on read errors
