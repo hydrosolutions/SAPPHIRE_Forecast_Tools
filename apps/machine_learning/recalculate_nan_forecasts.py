@@ -98,13 +98,17 @@ def call_hindcast_script(
 
     # Check if the script ran successfully
     if result.returncode == 0:
-        print("Hindcast ran successfully!")
-        print()
+        logger.info("Hindcast ran successfully")
     else:
-        print("Hindcast failed with return code", result.returncode)
-        print("Error output:")
-        print(result.stderr)
-        print()
+        logger.error(
+            "Hindcast failed with return code %s. Stderr: %s",
+            result.returncode,
+            result.stderr,
+        )
+        raise RuntimeError(
+            f"Hindcast subprocess failed with return code "
+            f"{result.returncode} for {MODEL_TO_USE} {PREDICTION_MODE}"
+        )
 
     # --------------------------------------------------------------------
     # GET THE HINDCAST

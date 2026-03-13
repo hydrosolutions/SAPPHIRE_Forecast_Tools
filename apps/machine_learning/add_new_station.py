@@ -42,7 +42,11 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 from scr import utils_ml_forecast
-from scr.utils_ml_forecast import _read_ml_forecasts_from_api
+from scr.utils_ml_forecast import (
+    SAPPHIRE_API_AVAILABLE,
+    _read_ml_forecasts_from_api,
+    _write_ml_forecast_to_api,
+)
 
 
 def call_hindcast_script(
@@ -253,6 +257,16 @@ def main():
             OUTPUT_PATH_DISCHARGE, f"pentad_{MODEL_TO_USE}_forecast.csv"
         )
         pentad_forecast.to_csv(path_pentad_out_daily, index=False)
+        # API write (primary) — CSV above is deprecated fallback
+        if SAPPHIRE_API_AVAILABLE:
+            try:
+                ok = _write_ml_forecast_to_api(pentad_hindcast_daily, "pentad", MODEL_TO_USE)
+                if ok:
+                    logger.info("Wrote %d pentad hindcast rows to API", len(pentad_hindcast_daily))
+                else:
+                    logger.warning("API write returned failure for pentad %s", MODEL_TO_USE)
+            except Exception as e:
+                logger.error("Failed to write pentad hindcast to API: %s", e)
         print(
             f"The forecast files for model pentadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}"
         )
@@ -284,6 +298,16 @@ def main():
             OUTPUT_PATH_DISCHARGE, f"decad_{MODEL_TO_USE}_forecast.csv"
         )
         decad_forecast.to_csv(path_decad_out_daily, index=False)
+        # API write (primary) — CSV above is deprecated fallback
+        if SAPPHIRE_API_AVAILABLE:
+            try:
+                ok = _write_ml_forecast_to_api(decad_hindcast_daily, "decade", MODEL_TO_USE)
+                if ok:
+                    logger.info("Wrote %d decad hindcast rows to API", len(decad_hindcast_daily))
+                else:
+                    logger.warning("API write returned failure for decad %s", MODEL_TO_USE)
+            except Exception as e:
+                logger.error("Failed to write decad hindcast to API: %s", e)
         print(
             f"The forecast files for model decadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}"
         )

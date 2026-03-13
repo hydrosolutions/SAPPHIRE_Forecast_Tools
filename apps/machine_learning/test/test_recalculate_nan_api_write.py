@@ -361,3 +361,70 @@ class TestCodeTypeMismatchFix:
         assert mock_write_api.called, (
             "API write was not called — type mismatch may still be present"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test class: call_hindcast_script() raises on subprocess failure
+# ---------------------------------------------------------------------------
+
+
+class TestCallHindcastScriptRaisesOnFailure:
+    """Regression: call_hindcast_script raises RuntimeError on non-zero exit."""
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    def test_raises_runtime_error_on_nonzero_returncode(self, mock_run):
+        """When subprocess returns non-zero, RuntimeError is raised."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="Model checkpoint not found",
+        )
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="Hindcast subprocess failed"):
+            recalculate_nan_forecasts.call_hindcast_script(
+                min_missing_date="2024-06-01",
+                max_missing_date="2024-06-10",
+                MODEL_TO_USE="TFT",
+                intermediate_data_path="/tmp/test",
+                codes_with_nan=[12345],
+                PREDICTION_MODE="PENTAD",
+            )
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    @patch("recalculate_nan_forecasts.pd.read_csv")
+    def test_success_reads_csv(self, mock_read_csv, mock_run):
+        """When subprocess succeeds, the hindcast CSV is read and returned."""
+        mock_run.return_value = MagicMock(returncode=0)
+        expected_df = pd.DataFrame({"code": [12345], "Q50": [10.0]})
+        mock_read_csv.return_value = expected_df
+
+        result = recalculate_nan_forecasts.call_hindcast_script(
+            min_missing_date="2024-06-01",
+            max_missing_date="2024-06-10",
+            MODEL_TO_USE="TFT",
+            intermediate_data_path="/tmp/test",
+            codes_with_nan=[12345],
+            PREDICTION_MODE="PENTAD",
+        )
+
+        assert result.equals(expected_df)
+        mock_read_csv.assert_called_once()
