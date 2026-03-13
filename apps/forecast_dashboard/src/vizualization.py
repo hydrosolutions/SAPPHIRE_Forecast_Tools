@@ -3257,50 +3257,71 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
         (linreg_predictor[horizon_in_year] == horizon_value)
         ].copy().reset_index(drop=True)
 
-    # Check if the saved CSV file exists
-    if os.path.exists(save_file_path):
-        # Read the saved CSV file
-        saved_forecast_table = pd.read_csv(save_file_path)
+    # Derive month and horizon_value_in_month (mirrors the logic in save_to_database)
+    periods_per_month = 6 if horizon == "pentad" else 3
+    month_for_horizon = math.ceil(horizon_value / periods_per_month)
+    horizon_value_in_month = horizon_value % periods_per_month or periods_per_month
+
+    # --- Replace pd.read_csv with a DB read ---
+    try:
+        from . import db as _db
+        saved_forecast_table = _db._read_data(
+            "postprocessing",
+            "lr-visibility",
+            {
+                "horizon_type": horizon,
+                "code": station_code,
+                "month": month_for_horizon,
+                "horizon_value": horizon_value_in_month,
+            },
+        )
+    except Exception as e:
+        logger.warning("Could not load lr-visibility from database: %s", e)
+        saved_forecast_table = pd.DataFrame()
+
+    if not saved_forecast_table.empty:
         # Ensure 'visible' is boolean
-        saved_forecast_table['visible'] = saved_forecast_table['visible'].astype(bool)
+        saved_forecast_table["visible"] = saved_forecast_table["visible"].astype(bool)
+
         # Merge the 'visible' column into forecast_table based on 'year'
         forecast_table = forecast_table.merge(
-            saved_forecast_table[['year', 'visible']],
-            on='year',
-            how='left',
-            suffixes=('', '_saved')
+            saved_forecast_table[["year", "visible"]],
+            on="year",
+            how="left",
+            suffixes=("", "_saved"),
         )
-        # Fill any missing 'visible' values with True
-        forecast_table['visible'] = forecast_table['visible'].fillna(True)
+        # Fill any missing 'visible' values with True (new years not yet saved)
+        forecast_table["visible"] = forecast_table["visible"].fillna(True)
+
         # Store the initial visible data points
-        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
-        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
-        # Load the initial regression parameters if they exist
-        if 'slope' in saved_forecast_table.columns and 'intercept' in saved_forecast_table.columns and 'rsquared' in saved_forecast_table.columns:
-            initial_slope = saved_forecast_table['slope'].iloc[0]
-            initial_intercept = saved_forecast_table['intercept'].iloc[0]
-            initial_rsquared = saved_forecast_table['rsquared'].iloc[0]
-        else:
-            # Compute initial regression parameters based on saved visible data
-            if len(initial_visible_data) > 1:
-                initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
-                    initial_visible_data['predictor'], initial_visible_data['discharge_avg']
-                )
-                initial_rsquared = r_value ** 2
-    else:
-        # Initialize 'visible' column as before
-        forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
-        # Store the initial visible data points
-        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
-        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
-        # Compute initial regression parameters based on all data
+        initial_visible_data = forecast_table[forecast_table["visible"] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=["predictor", "discharge_avg"])
+
+        # Compute initial regression parameters from the saved visible data
         if len(initial_visible_data) > 1:
             initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
-                initial_visible_data['predictor'], initial_visible_data['discharge_avg']
+                initial_visible_data["predictor"], initial_visible_data["discharge_avg"]
             )
             initial_rsquared = r_value ** 2
+        else:
+            initial_slope = initial_intercept = initial_rsquared = None
 
-    forecast_table = forecast_table.drop(columns=['index', 'level_0'], errors='ignore')
+    else:
+        # No saved visibility data — fall back to showing all non-NaN rows
+        forecast_table["visible"] = (
+            (~forecast_table["predictor"].isna()) & (~forecast_table["discharge_avg"].isna())
+        )
+        initial_visible_data = forecast_table[forecast_table["visible"] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=["predictor", "discharge_avg"])
+
+        if len(initial_visible_data) > 1:
+            initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
+                initial_visible_data["predictor"], initial_visible_data["discharge_avg"]
+            )
+            initial_rsquared = r_value ** 2
+        else:
+            initial_slope = initial_intercept = initial_rsquared = None
+
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True]  # Initialize the visible data
@@ -3686,8 +3707,8 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
     # Create a save button
     save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
 
-    # Function to save table data to CSV and run Docker containers
-    def save_to_csv(event):
+    # Function to save visibility data to the database via API and run Docker containers
+    def save_to_database(event):
         # Disable the save button and show the progress bar and message
         save_button.disabled = True
         progress_bar.visible = True
@@ -3707,15 +3728,39 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             _('index'): 'index'
         })
 
-        # Explicitly reset the index before saving, so it becomes a column
-        updated_forecast_table = updated_forecast_table.reset_index(drop=True)
+        # Derive month and horizon_value_in_month from the pentad/decad in year
+        if horizon == "pentad":
+            periods_per_month = 6
+        else:
+            periods_per_month = 3
 
-        # Add the selected pentad information
-        updated_forecast_table[horizon] = horizon_value
+        month_for_horizon = math.ceil(horizon_value / periods_per_month)
+        horizon_value_in_month = horizon_value % periods_per_month or periods_per_month
 
-        # Save DataFrame to CSV, ensuring the index is saved
-        updated_forecast_table[['index', 'year', 'visible']].to_csv(save_file_path, index=False)
-        print(f"Data saved to {save_file_path}")
+        # Build records for the lr-visibility API
+        records = []
+        for _idx, row in updated_forecast_table.iterrows():
+            records.append({
+                "horizon_type": horizon,
+                "code": station_code,
+                "month": month_for_horizon,
+                "horizon_value": horizon_value_in_month,
+                "year": int(row["year"]),
+                "visible": bool(row["visible"]),
+            })
+
+        # POST records to the lr-visibility endpoint
+        try:
+            from . import db as _db
+            _db._save_data("postprocessing", "lr-visibility", records)
+            logger.info("Saved %d lr-visibility records for code=%s", len(records), station_code)
+        except Exception as api_err:
+            logger.error("Failed to save lr-visibility records: %s", api_err)
+            progress_message.object = _(f"Error saving to database: {api_err}")
+            progress_message.visible = True
+            save_button.disabled = False
+            progress_bar.visible = False
+            return
 
         # Show the pop-up notification
         popup.visible = True
@@ -3735,7 +3780,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             bind_volume_path_bin = get_bind_path(env.get('ieasyhydroforecast_bin_path'))
 
             # Initialize Docker client
-            print("In save_to_csv: Initializing Docker client...")
+            print("In save_to_database: Initializing Docker client...")
             try: 
                 print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
                 client = docker.from_env()
@@ -3811,8 +3856,8 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
         pn.state.onload(
             lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))
 
-    # Attach the save_to_csv function to the button's click event
-    save_button.on_click(save_to_csv)
+    # Attach the save_to_database function to the button's click event
+    save_button.on_click(save_to_database)
 
     # **Bind the Save Changes button's disabled property to the shared state**
     def update_save_button(event):
