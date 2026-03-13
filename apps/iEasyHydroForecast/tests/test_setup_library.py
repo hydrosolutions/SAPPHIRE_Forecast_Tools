@@ -2355,3 +2355,188 @@ class TestFilterSitesByOrg:
 
         result_tjhm = sl.filter_sites_by_org(df, org="tjhm")
         assert list(result_tjhm["code"]) == ["25001", "25002"]
+
+
+class TestCheckStationCodeCollisions:
+    """Tests for check_station_code_collisions() (INFRA-012 Phase 2b)."""
+
+    def test_no_foreign_stations(self, tmp_path, caplog):
+        """All stations match the current org — no warning should be emitted.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "99001": {"organization": "kghm"},
+                "99002": {"organization": "kghm"},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+    def test_detects_foreign_org(self, tmp_path, caplog):
+        """Station tagged with a different org triggers a WARNING.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "99001": {"organization": "kghm"},
+                "25001": {"organization": "tjhm"},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("FOREIGN ORG CONTAMINATION" in m for m in warning_messages)
+        assert any("25001" in m for m in warning_messages)
+
+    def test_skips_when_no_org_field(self, tmp_path, caplog):
+        """Stations with organization=[null] trigger a debug message, not a warning.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "99001": {"organization": [None]},
+                "99002": {"organization": [None]},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.DEBUG):
+            sl.check_station_code_collisions()
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("not available" in m for m in debug_messages)
+
+    def test_skips_when_file_missing(self, tmp_path, caplog):
+        """Missing config file is silently ignored — no crash, no warning.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "nonexistent_config.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+    def test_handles_list_wrapped_org(self, tmp_path, caplog):
+        """List-wrapped organization values like ["kghm"] are correctly unwrapped.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "99001": {"organization": ["kghm"]},
+                "99002": {"organization": ["kghm"]},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+    def test_ignores_metadata_keys(self, tmp_path, caplog):
+        """Top-level keys like "comment" in the station dict are silently ignored.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "comment": "some descriptive text",
+                "99001": {"organization": "kghm"},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+    def test_navigates_wrapper(self, tmp_path, caplog):
+        """stations_available_for_forecast wrapper is navigated correctly.
+
+        Foreign station inside the wrapper triggers the warning, confirming
+        the wrapper key is traversed rather than the top-level dict.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        config = {
+            "stations_available_for_forecast": {
+                "99001": {"organization": "kghm"},
+                "25001": {"organization": "tjhm"},
+            }
+        }
+        config_file = tmp_path / "config_all.json"
+        config_file.write_text(json.dumps(config))
+
+        env = {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_config_file_all_stations": "config_all.json",
+            "ieasyhydroforecast_organization": "kghm",
+        }
+        with patch.dict(os.environ, env), caplog.at_level(logging.WARNING):
+            sl.check_station_code_collisions()
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("FOREIGN ORG CONTAMINATION" in m for m in warning_messages)

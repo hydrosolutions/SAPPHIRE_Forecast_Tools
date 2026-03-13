@@ -1,6 +1,6 @@
 # Plan: Multi-Org Safety Guards (INFRA-012)
 
-**Status**: draft
+**Status**: Complete — All phases implemented (2026-03-13)
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 **Module**: postprocessing_forecasts, iEasyHydroForecast, pipeline
 **Depends on**: None (all phases are independent of INFRA-009 and PP-025)
@@ -554,7 +554,7 @@ out-of-scope modules.
     "phase_3": {
       "name": "Multi-org isolation integration test",
       "depends_on": ["phase_1a"],
-      "note": "10 test cases. Read isolation tests serve as spec for PP-025 (may fail until PP-025 implemented). Write guard tests verify Phase 1. Mark with @pytest.mark.multi_org.",
+      "note": "10 test cases. Read isolation tests pass (PP-025 complete). Write guard tests verify Phase 1.",
       "files": [
         "apps/postprocessing_forecasts/tests/test_multi_org_isolation.py (new)"
       ]
@@ -572,9 +572,9 @@ out-of-scope modules.
   ],
   "notes": [
     "Phase 1a and 2a touch different modules (postprocessing vs iEasyHydroForecast) — safe to parallelize.",
-    "Phase 3 read isolation tests will XFAIL until PP-025 is implemented. This is intentional — they serve as the acceptance spec. Mark with @pytest.mark.xfail(reason='Requires PP-025'). When PP-025 lands, they flip to XPASS — remove the marker then.",
-    "Phase 3 write guard tests will PASS immediately (they test Phase 1a).",
-    "All phases are independent of INFRA-009 and PP-025 — can be implemented now.",
+    "Phase 3 read isolation tests PASS — PP-025 is fully implemented.",
+    "Phase 3 write guard tests PASS (they test Phase 1a).",
+    "All phases complete as of 2026-03-13.",
     "Phase 2a gracefully degrades pre-INFRA-009 (skips check if org field missing)."
   ]
 }
