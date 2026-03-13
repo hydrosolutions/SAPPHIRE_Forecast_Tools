@@ -208,7 +208,7 @@ class BulletinBase(BaseModel):
 
     basin_name: Optional[str] = None
     station_label: Optional[str] = None
-    forecated_discharge: Optional[float] = None
+    forecasted_discharge: Optional[float] = None
     fc_lower: Optional[float] = None
     fc_upper: Optional[float] = None
     delta: Optional[float] = None

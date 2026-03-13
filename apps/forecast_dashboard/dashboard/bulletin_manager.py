@@ -49,7 +49,7 @@ def _site_to_records(horizon_type: str, year: int, horizon_value: int, site) -> 
             "model_type":          model,
             "basin_name":          getattr(site, 'basin_ru', ''),
             "station_label":       site.station_label,
-            "forecated_discharge": row.get(_('Forecasted discharge')),
+            "forecasted_discharge": row.get(_('Forecasted discharge')),
             "fc_lower":            row.get(_('Forecast lower bound')),
             "fc_upper":            row.get(_('Forecast upper bound')),
             "delta":               row.get(_('δ')),
@@ -86,7 +86,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
             site.forecasts = pd.DataFrame([
                 {
                     _('Model'):                row["model_type"],
-                    _('Forecasted discharge'): row.get("forecated_discharge"),
+                    _('Forecasted discharge'): row.get("forecasted_discharge"),
                     _('Forecast lower bound'): row.get("fc_lower"),
                     _('Forecast upper bound'): row.get("fc_upper"),
                     _('δ'):                    row.get("delta"),

@@ -341,7 +341,7 @@ def test_local(page: Page):
             ui_basin   = normalize_spaces(f_value[2])
             if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
                 count += 1
-                _compare_numeric(rec.get("forecated_discharge"), f_value[3])  # forecasted discharge
+                _compare_numeric(rec.get("forecasted_discharge"), f_value[3])  # forecasted discharge
                 _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
                 _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
                 if rec.get("delta") is not None:
