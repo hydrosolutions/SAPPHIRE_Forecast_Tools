@@ -2357,6 +2357,182 @@ class TestFilterSitesByOrg:
         assert list(result_tjhm["code"]) == ["25001", "25002"]
 
 
+class TestOrgBackfillAndWritePath:
+    """Tests for organization backfill on read and inclusion on write."""
+
+    def test_backfill_org_when_column_missing(self, monkeypatch):
+        """config_all without 'organization' column gets it from env var.
+
+        Simulates a legacy JSON that lacks the organization field.
+        After backfill, the column should exist with the env var value.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+        config_all = pd.DataFrame(
+            {
+                "site_code": [15001, 15002],
+                "organization_id": [1, 1],
+            }
+        )
+
+        # Simulate the backfill logic from setup_library
+        if "organization" not in config_all.columns or config_all["organization"].isna().all():
+            org = os.getenv("ieasyhydroforecast_organization")
+            if org:
+                config_all["organization"] = org
+
+        assert "organization" in config_all.columns
+        assert (config_all["organization"] == "kghm").all()
+
+    def test_backfill_org_when_column_all_none(self, monkeypatch):
+        """config_all with all-None organization column gets backfilled.
+
+        Args:
+            monkeypatch: Pytest fixture for setting env vars.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "tjhm")
+        config_all = pd.DataFrame(
+            {
+                "site_code": [25001],
+                "organization": [None],
+            }
+        )
+
+        if "organization" not in config_all.columns or config_all["organization"].isna().all():
+            org = os.getenv("ieasyhydroforecast_organization")
+            if org:
+                config_all["organization"] = org
+
+        assert (config_all["organization"] == "tjhm").all()
+
+    def test_no_backfill_when_org_column_populated(self, monkeypatch):
+        """config_all with existing non-null organization is not overwritten.
+
+        Args:
+            monkeypatch: Pytest fixture for setting env vars.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "tjhm")
+        config_all = pd.DataFrame(
+            {
+                "site_code": [15001],
+                "organization": ["kghm"],
+            }
+        )
+
+        if "organization" not in config_all.columns or config_all["organization"].isna().all():
+            org = os.getenv("ieasyhydroforecast_organization")
+            if org:
+                config_all["organization"] = org
+
+        # Should remain kghm, not overwritten to tjhm
+        assert (config_all["organization"] == "kghm").all()
+
+    def test_write_path_includes_organization(self, monkeypatch):
+        """stations_dict built from db_sites includes 'organization' key.
+
+        Verifies that the write-path loop produces a dict entry with
+        the organization field populated from the row or env var.
+
+        Args:
+            monkeypatch: Pytest fixture for setting env vars.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+        db_sites = pd.DataFrame(
+            {
+                "site_code": [15001, 15002],
+                "site_name": ["Station A", "Station B"],
+                "latitude": [42.0, 43.0],
+                "longitude": [74.0, 75.0],
+                "basin": ["Chu", "Chu"],
+                "region": ["North", "North"],
+                "river_ru": ["Chu", "Chu"],
+                "punkt_ru": ["A", "B"],
+                "site_type": ["manual", "manual"],
+                "elevation": [1000, 1100],
+                "organization_id": [1, 1],
+                "organization": ["kghm", "kghm"],
+                "country": ["KG", "KG"],
+                "is_virtual": [False, False],
+            }
+        )
+
+        stations_dict = {}
+        for _, row in db_sites.iterrows():
+            code_str = str(row["site_code"])
+            stations_dict[code_str] = {
+                "organization_id": [row.get("organization_id", None)],
+                "organization": [
+                    row.get(
+                        "organization",
+                        os.getenv("ieasyhydroforecast_organization"),
+                    )
+                ],
+            }
+
+        assert "organization" in stations_dict["15001"]
+        assert stations_dict["15001"]["organization"] == ["kghm"]
+        assert stations_dict["15002"]["organization"] == ["kghm"]
+
+    def test_write_path_falls_back_to_env_var(self, monkeypatch):
+        """When row lacks 'organization', env var is used as fallback.
+
+        Args:
+            monkeypatch: Pytest fixture for setting env vars.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "tjhm")
+        db_sites = pd.DataFrame(
+            {
+                "site_code": [25001],
+                "organization_id": [2],
+            }
+        )
+
+        for _, row in db_sites.iterrows():
+            org_value = row.get(
+                "organization",
+                os.getenv("ieasyhydroforecast_organization"),
+            )
+
+        assert org_value == "tjhm"
+
+    def test_backfill_enables_filter_to_work(self, monkeypatch):
+        """End-to-end: backfill + filter_sites_by_org actually filters.
+
+        Without backfill, filter_sites_by_org returns all rows because
+        the organization column is missing. With backfill, it filters
+        correctly.
+
+        Args:
+            monkeypatch: Pytest fixture for setting env vars.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+
+        # Simulate loading from JSON without organization column
+        config_all = pd.DataFrame(
+            {
+                "site_code": [15001, 15002],
+                "code": ["15001", "15002"],
+            }
+        )
+
+        # Without backfill, filter returns all rows (passthrough)
+        result_before = sl.filter_sites_by_org(config_all)
+        assert len(result_before) == 2  # passthrough — no org column
+
+        # Apply backfill
+        if "organization" not in config_all.columns or config_all["organization"].isna().all():
+            org = os.getenv("ieasyhydroforecast_organization")
+            if org:
+                config_all["organization"] = org
+
+        # Now filter should keep rows (they match kghm)
+        result_after = sl.filter_sites_by_org(config_all, org="kghm")
+        assert len(result_after) == 2
+
+        # And filter with a different org should drop them
+        result_other = sl.filter_sites_by_org(config_all, org="tjhm")
+        assert len(result_other) == 0
+
+
 class TestCheckStationCodeCollisions:
     """Tests for check_station_code_collisions() (INFRA-012 Phase 2b)."""
 

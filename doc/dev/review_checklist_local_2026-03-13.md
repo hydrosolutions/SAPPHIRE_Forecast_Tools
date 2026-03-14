@@ -130,6 +130,8 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - No errors about unknown station codes from other orgs
 - Station count matches expected for your configured org
 **Pass criteria**: Pipeline completes without cross-org station errors.
+**Result (run 1)**: PARTIAL — ML org-filter removed 210-280 cross-org rows. LR returned all 62 rows unchanged (missing `organization` column in JSON). **Fix applied**: backfill from env var + write path now includes `organization`.
+**Result (run 2)**: **PASS** — JSON now has `organization: ["kghm"]` for all 62 stations. Filter correctly keeps all 62 (single-org config = no rows to remove). Warning is a false positive for single-org deployments; true multi-org filtering verified by unit tests (1a).
 
 ### 2b — Date Mismatch & Sentinel (Phase 1: Sentinel)
 
@@ -138,6 +140,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - LR module: no `-1.0` values in forecast output (should be NaN for insufficient data)
 - Grep pipeline output/CSV for `-1.0` sentinel values
 **Pass criteria**: No `-1.0` sentinel values in LR forecast output.
+**Result (run 1)**: PASS — no `-1.0` sentinel values detected.
 
 ### 2c — Date Mismatch & Sentinel (Phase 2: Boundary Guard)
 
@@ -146,6 +149,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - No spurious records with wrong issue dates in output
 **Pass criteria**: Only pentad records written on non-decad days.
 **Note**: If today IS a boundary day, defer this check or use `LT_FORECAST_TODAY` override.
+**Result (run 1)**: PASS — day 13 correctly suppressed both pentad and decad forecasts ("No pentadal/decadal forecast for 2026-03-13").
 
 ### 2d — Date Mismatch & Sentinel (Phase 3: Ensemble groupby)
 
@@ -153,6 +157,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - Ensemble calculation includes `period_col` in grouping key
 - No duplicate or malformed ensemble rows in output
 **Pass criteria**: Ensemble output has one EM row per (code, date, period).
+**Result (run 1)**: PASS — 37 duplicates removed cleanly, no malformed EM rows.
 
 ### 2e — PP-021: Maintenance Efficiency
 
@@ -161,6 +166,8 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - If no gaps/stale: maintenance completes in <30 seconds (just detection, no heavy reads)
 - Timing logs show fast-path taken when no work needed
 **Pass criteria**: Maintenance phase duration reasonable (<30s when clean).
+**Result (run 1)**: NOT TESTED — pipeline crashed at ML maintenance before reaching postprocessing maintenance.
+**Result (run 2)**: **TESTED** — Pentad: 1m32s, Decad: 43s. Both ran gap-fill path (not fast-path, gaps existed). Acceptable for gap-fill runs; fast-path (<30s) expected only when DB is clean.
 
 ### 2f — PP-022: Stale Refresh (End-to-End)
 
@@ -168,6 +175,8 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - After maintenance, previously stale records (q05=NULL) now have q05 populated
 - Check via API query or DB inspection
 **Pass criteria**: Stale records refreshed. If no stale records exist locally, Phase 1b coverage is sufficient.
+**Result (run 1)**: NOT TESTED — maintenance never reached.
+**Result (run 2)**: **NOT TRIGGERED** — no stale records (q05=NULL) exist in local DB. Phase 1b unit test coverage is sufficient.
 
 ### 2g — PP-019: Quantiles (End-to-End)
 
@@ -176,6 +185,8 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - EM rows have non-null quantile values (if ML models ran)
 **Pass criteria**: Quantile fields present in API write logs.
 **Note**: Demo org skips ML, so quantiles may all be NaN — acceptable for demo.
+**Result (run 1)**: NOT FOUND — no q05/q25/q75/q95 in API write logs.
+**Result (run 2)**: **PARTIAL** — Quantiles present in preprocessing output and validation passes "Quantile ordering: all valid". Not explicitly visible in postprocessing API write logs (may need debug-level logging to confirm payloads).
 
 ---
 
@@ -216,6 +227,7 @@ ieasyhydroforecast_env_file_path=<path> \
 - `validate_pipeline` queries handle boundary dates correctly
 - "Discharge non-negative" check passes
 **Pass criteria**: Validation module reports PASS for all checks after daily run.
+**Result (run 2)**: **PASS** — 16 passed, 0 failed, 3 warnings (expected: skill n_pairs<=0 for new stations, 2 forecast codes not in runoff, 18 missing EM tuples), 1 skipped (not a pentad forecast day).
 
 ---
 

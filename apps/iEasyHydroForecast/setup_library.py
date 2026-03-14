@@ -1035,6 +1035,16 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
                 "The file will be created at the end of this run."
             )
 
+    # Backfill organization from env var for JSON files that predate org-scoping
+    if "organization" not in config_all.columns or config_all["organization"].isna().all():
+        org = os.getenv("ieasyhydroforecast_organization")
+        if org:
+            config_all["organization"] = org
+            logger.debug(
+                "Backfilled organization='%s' from env var into config_all",
+                org,
+            )
+
     # Merge information from db_sites and config_all. Make sure that all sites
     # in config_all are present in db_sites.
     if backend_has_access_to_db:
@@ -1116,6 +1126,12 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
             "header": [code_str],
             "elevation": [row.get("elevation", None)],
             "organization_id": [row.get("organization_id", None)],
+            "organization": [
+                row.get(
+                    "organization",
+                    os.getenv("ieasyhydroforecast_organization"),
+                )
+            ],
             "country": [row.get("country", None)],
             "is_virtual": [row.get("is_virtual", False)],
             "data_source": row["data_source"]

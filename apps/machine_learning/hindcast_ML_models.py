@@ -264,8 +264,6 @@ def main():
 
     era5_data_transformed = read_meteo_data_combined(
         site_codes=[str(c) for c in rivers_to_predict],
-        start_date=start_date,
-        end_date=end_date,
         csv_path_t=csv_path_t,
         csv_path_p=csv_path_p,
     )
