@@ -24,15 +24,15 @@ services:
     image: postgres:15
     container_name: sapphire-preprocessing-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: preprocessing_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PREPROCESSING_DB}
     ports:
       - "5433:5432"
     volumes:
       - preprocessing-data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,15 +44,15 @@ services:
     image: postgres:15
     container_name: sapphire-postprocessing-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: postprocessing_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTPROCESSING_DB}
     ports:
       - "5434:5432"
     volumes:
       - postprocessing-data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -64,9 +64,9 @@ services:
     image: postgres:15
     container_name: sapphire-user-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: user_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${USER_DB}
     ports:
       - "5435:5432"
     volumes:
@@ -84,9 +84,9 @@ services:
     image: postgres:15
     container_name: sapphire-auth-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${AUTH_DB}
     ports:
       - "5436:5432"
     volumes:
@@ -112,6 +112,17 @@ services:
       - preprocessing-api
       - postprocessing-api
       - user-api
+    environment:
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT}
+      HEALTH_CHECK_TIMEOUT: ${HEALTH_CHECK_TIMEOUT}
+      API_KEY_ENABLED: ${API_KEY_ENABLED}
+      API_KEY: ${API_KEY}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED}
+      RATE_LIMIT: ${RATE_LIMIT}
+      PREPROCESSING_API_URL: ${PREPROCESSING_API_URL}
+      POSTPROCESSING_API_URL: ${POSTPROCESSING_API_URL}
+      USER_API_URL: ${USER_API_URL}
+      AUTH_API_URL: ${AUTH_API_URL}
     networks:
       - sapphire-network
     restart: unless-stopped
@@ -152,17 +163,19 @@ services:
       preprocessing-db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:password@preprocessing-db:5432/preprocessing_db
-#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/preprocessing_db_test
+      DATABASE_URL: ${PREPROCESSING_DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL}
+      API_BASE_URL: ${PREPROCESSING_API_URL}
+      BATCH_SIZE: ${BATCH_SIZE}
+      CSV_FOLDER: ${CSV_FOLDER}
       PYTHONPATH: /code
-      LOG_LEVEL: INFO
     networks:
       - sapphire-network
     restart: unless-stopped
     # For development: mount code as volume
     volumes:
       - ./services/preprocessing:/code
-      - /Users/bea/Documents/GitHub/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
 
   postprocessing-api:
     build:
@@ -175,17 +188,19 @@ services:
       postprocessing-db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:password@postprocessing-db:5432/postprocessing_db
-#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/postprocessing_db_test
+      DATABASE_URL: ${POSTPROCESSING_DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL}
+      API_BASE_URL: ${POSTPROCESSING_API_URL}
+      BATCH_SIZE: ${BATCH_SIZE}
+      CSV_FOLDER: ${CSV_FOLDER}
       PYTHONPATH: /code
-      LOG_LEVEL: INFO
     networks:
       - sapphire-network
     restart: unless-stopped
     # For development: mount code as volume
     volumes:
       - ./services/postprocessing:/code
-      - /Users/bea/Documents/GitHub/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
 
   user-api:
     build:
@@ -197,6 +212,9 @@ services:
     depends_on:
       user-db:
         condition: service_healthy
+    environment:
+      DATABASE_URL: ${USER_DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL}
     networks:
       - sapphire-network
     restart: unless-stopped
@@ -215,15 +233,14 @@ services:
         condition: service_healthy
       user-api:
         condition: service_started
-    # environment:
-    #   DATABASE_URL: postgresql://postgres:password@auth-db:5432/auth_db
-    #   USER_SERVICE_URL: http://user-api:8004
-    #   JWT_SECRET_KEY: your-super-secret-key-change-in-production
-    #   JWT_ALGORITHM: HS256
-    #   ACCESS_TOKEN_EXPIRE_MINUTES: 30
-    #   REFRESH_TOKEN_EXPIRE_DAYS: 7
-    #   PYTHONPATH: /code
-    #   LOG_LEVEL: INFO
+    environment:
+      DATABASE_URL: ${AUTH_DATABASE_URL}
+      USER_SERVICE_URL: ${USER_API_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS}
+      LOG_LEVEL: ${LOG_LEVEL}
     networks:
       - sapphire-network
     restart: unless-stopped
