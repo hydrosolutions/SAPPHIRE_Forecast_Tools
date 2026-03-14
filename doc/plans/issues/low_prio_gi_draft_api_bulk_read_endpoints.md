@@ -5,7 +5,7 @@
 
 **Status**: Draft
 **Module**: infra
-**Priority**: High
+**Priority**: Low
 **Labels**: `api`, `performance`, `long-term-forecasting`
 
 ---

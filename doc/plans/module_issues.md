@@ -52,7 +52,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Module | Priority | Status | File | Blocked By |
 |----|-------|--------|----------|--------|------|------------|
-| **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | **High** | Draft | [`high_prio_gi_draft_api_bulk_read_endpoints.md`](issues/high_prio_gi_draft_api_bulk_read_endpoints.md) | Colleague (sapphire/services/) |
+| **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | Low | Draft | [`low_prio_gi_draft_api_bulk_read_endpoints.md`](issues/low_prio_gi_draft_api_bulk_read_endpoints.md) | Colleague (sapphire/services/) |
 | ~~**API-002**~~ | ~~Add missing params to sapphire-api-client (model, target, dates)~~ | ~~infra~~ | | Complete | [`review_gi_draft_api_client_missing_params.md`](issues/review_gi_draft_api_client_missing_params.md) | — |
 | **API-003** | Define CSV removal acceptance criteria per module | infra | **Medium** | Open | — (needs D-002 decision) | D-002 |
 | **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | — |
