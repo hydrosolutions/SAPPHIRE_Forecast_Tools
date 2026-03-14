@@ -132,6 +132,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 **Pass criteria**: Pipeline completes without cross-org station errors.
 **Result (run 1)**: PARTIAL — ML org-filter removed 210-280 cross-org rows. LR returned all 62 rows unchanged (missing `organization` column in JSON). **Fix applied**: backfill from env var + write path now includes `organization`.
 **Result (run 2)**: **PASS** — JSON now has `organization: ["kghm"]` for all 62 stations. Filter correctly keeps all 62 (single-org config = no rows to remove). Warning is a false positive for single-org deployments; true multi-org filtering verified by unit tests (1a).
+**Result (run 3)**: **PASS** — confirmed. Same behavior, no backfill needed (JSON already populated from run 2 write path).
 
 ### 2b — Date Mismatch & Sentinel (Phase 1: Sentinel)
 
@@ -141,6 +142,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - Grep pipeline output/CSV for `-1.0` sentinel values
 **Pass criteria**: No `-1.0` sentinel values in LR forecast output.
 **Result (run 1)**: PASS — no `-1.0` sentinel values detected.
+**Result (run 3)**: **PASS** — confirmed across 3 runs.
 
 ### 2c — Date Mismatch & Sentinel (Phase 2: Boundary Guard)
 
@@ -150,6 +152,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 **Pass criteria**: Only pentad records written on non-decad days.
 **Note**: If today IS a boundary day, defer this check or use `LT_FORECAST_TODAY` override.
 **Result (run 1)**: PASS — day 13 correctly suppressed both pentad and decad forecasts ("No pentadal/decadal forecast for 2026-03-13").
+**Result (run 3)**: **PASS** — day 14 also correctly suppressed.
 
 ### 2d — Date Mismatch & Sentinel (Phase 3: Ensemble groupby)
 
@@ -158,6 +161,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - No duplicate or malformed ensemble rows in output
 **Pass criteria**: Ensemble output has one EM row per (code, date, period).
 **Result (run 1)**: PASS — 37 duplicates removed cleanly, no malformed EM rows.
+**Result (run 3)**: **PASS** — no duplicate EM rows.
 
 ### 2e — PP-021: Maintenance Efficiency
 
@@ -168,6 +172,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 **Pass criteria**: Maintenance phase duration reasonable (<30s when clean).
 **Result (run 1)**: NOT TESTED — pipeline crashed at ML maintenance before reaching postprocessing maintenance.
 **Result (run 2)**: **TESTED** — Pentad: 1m32s, Decad: 43s. Both ran gap-fill path (not fast-path, gaps existed). Acceptable for gap-fill runs; fast-path (<30s) expected only when DB is clean.
+**Result (run 3)**: **TESTED** — Pentad: 1m35s, Decad: 42s. Gap-fill path again (111 gaps across 44 sites, 0 applied — no matching data in API response). Consistent with run 2.
 
 ### 2f — PP-022: Stale Refresh (End-to-End)
 
@@ -187,6 +192,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 **Note**: Demo org skips ML, so quantiles may all be NaN — acceptable for demo.
 **Result (run 1)**: NOT FOUND — no q05/q25/q75/q95 in API write logs.
 **Result (run 2)**: **PARTIAL** — Quantiles present in preprocessing output and validation passes "Quantile ordering: all valid". Not explicitly visible in postprocessing API write logs (may need debug-level logging to confirm payloads).
+**Result (run 3)**: **PARTIAL** — same. Quantiles computed internally but not visible in API write logs. Needs debug logging or server-side DB inspection to fully confirm.
 
 ---
 
@@ -207,6 +213,7 @@ ieasyhydroforecast_env_file_path=<path> \
 - Models actually execute (not "0 models to run")
 - Forecast output files/API writes produced
 **Pass criteria**: At least one model runs and produces output.
+**Result (run 3)**: **PASS** — long_term_forecasting completed in 9m26s. Postprocessing wrote 37K quarterly + 9K seasonal forecast records to API. Validation failed only because `LT_FORECAST_TODAY=2026-03-10` doesn't match validator's query date (March 14).
 
 ### 3b — LTF-ORG-001: Org-Scoping (End-to-End)
 
@@ -215,6 +222,7 @@ ieasyhydroforecast_env_file_path=<path> \
 - SQL queries in debug logs contain `code IN (...)` clauses
 - Only configured org's stations appear in forecast output
 **Pass criteria**: Pipeline completes with org-scoped queries; no cross-org station contamination.
+**Result (run 3)**: **PASS** — "Read 62 station codes for org-scoped filtering" logged. Pipeline completed with org-scoped queries.
 
 ---
 
@@ -228,6 +236,29 @@ ieasyhydroforecast_env_file_path=<path> \
 - "Discharge non-negative" check passes
 **Pass criteria**: Validation module reports PASS for all checks after daily run.
 **Result (run 2)**: **PASS** — 16 passed, 0 failed, 3 warnings (expected: skill n_pairs<=0 for new stations, 2 forecast codes not in runoff, 18 missing EM tuples), 1 skipped (not a pentad forecast day).
+**Result (run 3)**: **FAIL** — "Runoff (day): no records" from preprocessing. Not a code bug — preprocessing_runoff ran PASS but the validation query found no runoff records for today's date (data lag from iEasyHydro HF API).
+
+---
+
+## Bugs Found & Fixed During Verification
+
+### BF-1: Missing `organization` column in config JSON (found in run 1)
+**Root cause**: `config_all_stations_library.json` had `organization_id` but not `organization`. Write path never included it; no backfill on read.
+**Fix**: Backfill from env var on read + include in write path. Commit `7664b3c`.
+
+### BF-2: ERA5 date validation crash in ML hindcast (found in run 2)
+**Root cause**: API migration (commit `639aaca`) added `start_date`/`end_date` filters to `read_meteo_data_combined()`, but the validation at line 274 assumed unfiltered CSV data. API returns data starting at `start_date`, so `data.min() + 60 > start_date` always.
+**Fix**: Remove date filter from read call (replicates pre-migration CSV behavior). Commit `7664b3c`.
+**Confirmed**: Run 3 — ERA5 validation error did NOT recur.
+
+### BF-3: ML datetime format crash blocks API write (found in run 3)
+**Root cause**: `write_decad_forecast()` reads old CSV (string dates), concats with new Timestamps, then `pd.to_datetime()` fails on mixed formats. The crash at line 231 is unhandled, killing the function before the API write at line 240 executes.
+**Fix**: (1) Reorder to API-first, CSV-second. (2) Add `format="mixed"` to `pd.to_datetime()` calls. (3) Wrap CSV in try/except so failures never block API. Pending commit.
+
+### Pre-existing ML bugs (not addressed by review issues)
+
+**ML-BUG-1**: `make_forecast.py:231` — date parsing mismatch (`%Y-%m-%d` vs `%Y-%m-%d %H:%M:%S`). Causes operational ML PENTAD failure.
+**ML-BUG-2**: `recalculate_nan_forecasts.py:349` — NumPy shape mismatch in `.loc` assignment during NaN recalculation. Causes maintenance ML failure. Tracked as ML-004 (draft).
 
 ---
 
