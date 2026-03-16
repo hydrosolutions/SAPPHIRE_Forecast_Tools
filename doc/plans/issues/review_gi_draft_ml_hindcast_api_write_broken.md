@@ -1,6 +1,6 @@
 # ML-004: Hindcast gap-fill never persists to API — silent write failure
 
-**Status**: Draft — bugs confirmed but no fixes applied (status audit 2026-03-13)
+**Status**: Review — Bugs A-D fixed in fill_ml_gaps.py and recalculate_nan_forecasts.py. Bug E tracked separately as ML-007. Verified by 3 pipeline runs (2026-03-13/14).
 **Module**: machine_learning
 **Priority**: Critical
 **Labels**: `bug`, `api-integration`, `maintenance-mode`, `data-loss`

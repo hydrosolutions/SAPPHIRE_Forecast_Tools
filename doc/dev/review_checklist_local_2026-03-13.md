@@ -253,7 +253,7 @@ ieasyhydroforecast_env_file_path=<path> \
 
 ### BF-3: ML datetime format crash blocks API write (found in run 3)
 **Root cause**: `write_decad_forecast()` reads old CSV (string dates), concats with new Timestamps, then `pd.to_datetime()` fails on mixed formats. The crash at line 231 is unhandled, killing the function before the API write at line 240 executes.
-**Fix**: (1) Reorder to API-first, CSV-second. (2) Add `format="mixed"` to `pd.to_datetime()` calls. (3) Wrap CSV in try/except so failures never block API. Pending commit.
+**Fix**: (1) Reorder to API-first, CSV-second. (2) Add `format="mixed"` to `pd.to_datetime()` calls. (3) Wrap CSV in try/except so failures never block API. Commit `73c000b`.
 
 ### Pre-existing ML bugs (not addressed by review issues)
 

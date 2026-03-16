@@ -43,6 +43,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Review | [`high_prio_gi_draft_ml_api_primary_reads.md`](issues/high_prio_gi_draft_ml_api_primary_reads.md) |
 | **ML-004** | Hindcast gap-fill never persists to API — silent write failure (3 bugs) | ml | **Critical** | Review | [`review_gi_draft_ml_hindcast_api_write_broken.md`](issues/review_gi_draft_ml_hindcast_api_write_broken.md) |
 | **ML-005** | ML consistency check reads forecasts without station code filter | ml | **Medium** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) (Phase 4) |
+| **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Draft | [`high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md) |
+| **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Draft | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Colleague (sapphire/services/) |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
@@ -218,6 +220,12 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-017 | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 | PP-018 | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 
+### Machine Learning (`ml`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| ML-BF3 | ML datetime format crash blocks API write (BF-3) | 2026-03-14 | See `review_checklist_local_2026-03-13.md` BF-3 |
+
 ### API (`api`)
 
 | ID | Title | Resolved | File |
@@ -281,4 +289,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-13 (status audit: INFRA-009/010/012→Review, PP-022/024/025→Review, PREPG-001→Review, PP-026 added; LTF-002→Review)*
+*Last updated: 2026-03-16 (ML-006, ML-007 added as Draft; ML-BF3 completed; ML-004 status confirmed Review)*
