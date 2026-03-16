@@ -193,6 +193,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 **Result (run 1)**: NOT FOUND — no q05/q25/q75/q95 in API write logs.
 **Result (run 2)**: **PARTIAL** — Quantiles present in preprocessing output and validation passes "Quantile ordering: all valid". Not explicitly visible in postprocessing API write logs (may need debug-level logging to confirm payloads).
 **Result (run 3)**: **PARTIAL** — same. Quantiles computed internally but not visible in API write logs. Needs debug logging or server-side DB inspection to fully confirm.
+**Result (DB query, 2026-03-16)**: **PASS** — Direct DB query confirms 409 ENSEMBLE_MEAN rows (March 2026) all have non-null q05/q25/q75/q95. 404/409 have strictly correct ordering (q05 < q25 < Q50 < q75 < q95); remaining 5 have collapsed quantiles (low-variance stations, valid).
 
 ---
 
