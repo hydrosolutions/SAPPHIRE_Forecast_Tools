@@ -663,7 +663,7 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     # Get API URL from environment
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
 
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = SapphirePostprocessingClient(base_url=api_url, batch_size=1)
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -757,7 +757,7 @@ def _write_ml_daily_forecast_to_api(data: pd.DataFrame, model_type: str) -> bool
         return False
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = SapphirePostprocessingClient(base_url=api_url, batch_size=1)
 
     if not client.readiness_check():
         logger.warning(

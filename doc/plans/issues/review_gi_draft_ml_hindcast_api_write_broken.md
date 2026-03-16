@@ -1,6 +1,6 @@
 # ML-004: Hindcast gap-fill never persists to API — silent write failure
 
-**Status**: Review — Bugs A-D fixed in fill_ml_gaps.py and recalculate_nan_forecasts.py. Bug E tracked separately as ML-007. Verified by 3 pipeline runs (2026-03-13/14).
+**Status**: Review — Bugs A-D fixed in fill_ml_gaps.py and recalculate_nan_forecasts.py. Bug E tracked separately as ML-007. Bug F (server-side: postprocessing API crashes on bulk writes) tracked as INFRA-013. Verified by 3 pipeline runs (2026-03-13/14), but API writes still fail due to Bug F.
 **Module**: machine_learning
 **Priority**: Critical
 **Labels**: `bug`, `api-integration`, `maintenance-mode`, `data-loss`
@@ -463,7 +463,11 @@ dependency gate).
 - Read-back verification after write (deferred — adds latency and complexity;
   the observability fixes here will reveal whether writes succeed or fail)
 - Bug E: Non-deterministic API pagination in `_read_ml_forecasts_from_api()`
-  (requires `sapphire/services/` coordination — tracked separately)
+  (requires `sapphire/services/` coordination — tracked separately as ML-007)
+- **Bug F**: Postprocessing API container crashes on bulk forecast writes
+  (uvicorn worker disconnects under bulk upsert load). Tracked as **INFRA-013**.
+  This is the server-side root cause for why gap-fill API writes fail even after
+  Bugs A-D were fixed. See `high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`.
 
 ## Related Issues
 

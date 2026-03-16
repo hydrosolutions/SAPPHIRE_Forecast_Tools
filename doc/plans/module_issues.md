@@ -78,6 +78,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-010** | Bootstrap config_all_stations_library.json from HF SDK | infra | **High** | Review | [`review_gi_draft_infra_config_all_stations_bootstrap.md`](issues/review_gi_draft_infra_config_all_stations_bootstrap.md) | — |
 | **INFRA-011** | Upstream module org-scoped API reads (audit + deferred fixes) | infra | **Low** | In Progress | [`low_prio_gi_draft_infra_upstream_org_scoped_reads.md`](issues/low_prio_gi_draft_infra_upstream_org_scoped_reads.md) | PP-025, INFRA-009 |
 | **INFRA-012** | Multi-org safety guards (write guard, collision check, isolation test) | infra | **High** | Review | [`review_gi_draft_infra_multi_org_safety_guards.md`](issues/review_gi_draft_infra_multi_org_safety_guards.md) | — |
+| **INFRA-013** | Postprocessing API container crashes on bulk forecast writes (118 restarts) | infra | **Critical** | Draft | [`high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | Colleague (sapphire/services/) |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
@@ -104,6 +105,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`low_prio_gi_draft_LR_cleanup_dead_run_date_code.md`](issues/low_prio_gi_draft_LR_cleanup_dead_run_date_code.md) | — |
 | **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
+| **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Draft | [`high_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/high_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
 
 ### Long-Term Forecasting (`ltf`)
 
