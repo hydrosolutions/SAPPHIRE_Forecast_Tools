@@ -113,7 +113,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
@@ -186,7 +186,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
       - name: Build preprocessing runoff image
         run: |
@@ -234,7 +234,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
@@ -292,7 +292,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
@@ -350,7 +350,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
@@ -395,7 +395,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
@@ -436,6 +436,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
@@ -479,7 +485,7 @@ jobs:
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -t "${{ env.BASE_IMAGE_NAME }}:latest" \
           -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
