@@ -1,10 +1,14 @@
-from sqlalchemy import Column, Integer, String, Date, Float, Enum as SQLEnum, Index, UniqueConstraint, Boolean
-from app.database import Base
 from enum import Enum
+
+from sqlalchemy import Boolean, Column, Date, Float, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
+
+from app.database import Base
 
 
 class HorizonType(str, Enum):
     """Enumeration of supported horizon types"""
+
     DAY = "day"
     PENTAD = "pentad"
     DECADE = "decade"
@@ -15,7 +19,8 @@ class HorizonType(str, Enum):
 
 class ModelType(str, Enum):
     """Enum for different model types"""
-    TSMIXER = "TSMixer" # TSMIXER(how it is stored in PostgreSQL), TSMixer(how it is passed in API)
+
+    TSMIXER = "TSMixer"  # TSMIXER(how it is stored in PostgreSQL), TSMixer(how it is passed in API)
     TIDE = "TiDE"
     TFT = "TFT"
     ENSEMBLE_MEAN = "EM"
@@ -44,7 +49,7 @@ class ModelType(str, Enum):
             "EM": "Ens. Mean with LR, TFT, TIDE (EM)",
             "NE": "Neural Ensemble with TIDE, TFT, TSMixer (NE)",
             "RRAM": "Rainfall runoff assimilation model",
-            "LR": "Linear Regression"
+            "LR": "Linear Regression",
         }
         return descriptions.get(self.value, self.value)
 
@@ -77,9 +82,23 @@ class Forecast(Base):
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_forecasts_horizon_code_date_target', 'horizon_type', 'code', 'date', 'target'),
-        Index('ix_forecasts_horizon_code_model_date_target', 'horizon_type', 'code', 'model_type', 'date', 'target'),
-        UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'target', name='uq_forecasts_horizon_code_model_date_target')
+        Index("ix_forecasts_horizon_code_date_target", "horizon_type", "code", "date", "target"),
+        Index(
+            "ix_forecasts_horizon_code_model_date_target",
+            "horizon_type",
+            "code",
+            "model_type",
+            "date",
+            "target",
+        ),
+        UniqueConstraint(
+            "horizon_type",
+            "code",
+            "model_type",
+            "date",
+            "target",
+            name="uq_forecasts_horizon_code_model_date_target",
+        ),
     )
 
 
@@ -115,8 +134,26 @@ class LongForecast(Base):
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_long_forecasts_horizon_type_value_code_date_model_from_to', 'horizon_type', 'horizon_value', 'code', 'date', 'model_type', 'valid_from', 'valid_to'),
-        UniqueConstraint('horizon_type', 'horizon_value', 'code', 'date', 'model_type', 'valid_from', 'valid_to', name='uq_long_forecasts_horizon_type_value_code_date_model_from_to')
+        Index(
+            "ix_long_forecasts_horizon_type_value_code_date_model_from_to",
+            "horizon_type",
+            "horizon_value",
+            "code",
+            "date",
+            "model_type",
+            "valid_from",
+            "valid_to",
+        ),
+        UniqueConstraint(
+            "horizon_type",
+            "horizon_value",
+            "code",
+            "date",
+            "model_type",
+            "valid_from",
+            "valid_to",
+            name="uq_long_forecasts_horizon_type_value_code_date_model_from_to",
+        ),
     )
 
 
@@ -151,8 +188,8 @@ class LRForecast(Base):
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_lr_forecasts_horizon_code_date', 'horizon_type', 'code', 'date'),
-        UniqueConstraint('horizon_type', 'code', 'date', name='uq_lr_forecasts_horizon_code_date')
+        Index("ix_lr_forecasts_horizon_code_date", "horizon_type", "code", "date"),
+        UniqueConstraint("horizon_type", "code", "date", name="uq_lr_forecasts_horizon_code_date"),
     )
 
 
@@ -176,17 +213,26 @@ class SkillMetric(Base):
     accuracy = Column(Float)
     mae = Column(Float)
     n_pairs = Column(Integer)
-    crps = Column(Float) # Continuous Ranked Probability Score
-    pbias = Column(Float) # Percent Bias
-    kgelf = Column(Float) # low flow Kling-Gupta Efficiency
-    nse_log = Column(Float) # NSE on log-transformed flows
-    fhv = Column(Float) # Peak flow bias (%), top 2% of flow duration curve
-    flv = Column(Float) # Low-flow volume bias (%), bottom 30% of FDC
+    crps = Column(Float)  # Continuous Ranked Probability Score
+    pbias = Column(Float)  # Percent Bias
+    kgelf = Column(Float)  # low flow Kling-Gupta Efficiency
+    nse_log = Column(Float)  # NSE on log-transformed flows
+    fhv = Column(Float)  # Peak flow bias (%), top 2% of flow duration curve
+    flv = Column(Float)  # Low-flow volume bias (%), bottom 30% of FDC
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_skill_metrics_horizon_code_model_date', 'horizon_type', 'code', 'model_type', 'date'),
-        UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'horizon_in_year', name='uq_skill_metrics_horizon_code_model_date_horizon')
+        Index(
+            "ix_skill_metrics_horizon_code_model_date", "horizon_type", "code", "model_type", "date"
+        ),
+        UniqueConstraint(
+            "horizon_type",
+            "code",
+            "model_type",
+            "date",
+            "horizon_in_year",
+            name="uq_skill_metrics_horizon_code_model_date_horizon",
+        ),
     )
 
 
@@ -213,11 +259,17 @@ class Bulletin(Base):
     mae = Column(Float)
     accuracy = Column(Float)
 
-
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_bulletins_horizon_year_number', 'horizon_type', 'year', 'horizon_value'),
-        UniqueConstraint('horizon_type', 'year', 'horizon_value', 'code', 'model_type', name='uq_bulletins_horizon_year_number_code_model')
+        Index("ix_bulletins_horizon_year_number", "horizon_type", "year", "horizon_value"),
+        UniqueConstraint(
+            "horizon_type",
+            "year",
+            "horizon_value",
+            "code",
+            "model_type",
+            name="uq_bulletins_horizon_year_number_code_model",
+        ),
     )
 
 
@@ -237,6 +289,19 @@ class LRVisibility(Base):
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
-        Index('ix_lr_visibility_horizon_code_month_number', 'horizon_type', 'code', 'month', 'horizon_value'),
-        UniqueConstraint('horizon_type', 'code', 'month', 'horizon_value', 'year', name='uq_lr_visibility_horizon_code_month_number_year')
+        Index(
+            "ix_lr_visibility_horizon_code_month_number",
+            "horizon_type",
+            "code",
+            "month",
+            "horizon_value",
+        ),
+        UniqueConstraint(
+            "horizon_type",
+            "code",
+            "month",
+            "horizon_value",
+            "year",
+            name="uq_lr_visibility_horizon_code_month_number_year",
+        ),
     )

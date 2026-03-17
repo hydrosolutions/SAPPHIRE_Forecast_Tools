@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Dict
 
 
@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     Gateway configuration settings
     Load from environment variables
     """
+    model_config = SettingsConfigDict(env_file=".env")
 
     # Gateway settings
     gateway_title: str = "SAPPHIRE API Gateway"

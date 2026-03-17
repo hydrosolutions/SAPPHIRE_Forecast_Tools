@@ -1,5 +1,6 @@
 ---
 name: executing-plans
+model: opus
 description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
 ---
 
@@ -34,15 +35,48 @@ For each task:
 When batch complete:
 - Show what was implemented
 - Show verification output
+- Update the plan file: set the status of completed items to **Review**
 - Say: "Ready for feedback."
 
 ### Step 4: Continue
 Based on feedback:
+- If approved: update the plan file — set reviewed items to **Done**
 - Apply changes if needed
 - Execute next batch
 - Repeat until complete
 
-### Step 5: Complete Development
+### Step 5: Verify Test Completeness
+
+Cross-reference what was written against the CLAUDE.md test categories:
+
+| Category | Required when | Check |
+|----------|---------------|-------|
+| **Unit tests** | Always | Every new/modified public function has happy-path + error-path tests |
+| **Edge case tests** | Code touches DataFrames, dates, or numerics | Empty data, NaN, date boundaries, value boundaries covered |
+| **Integration tests** | Multi-step workflows or pipelines | Real logic tested end-to-end, only external boundaries mocked |
+| **API failure tests** | Code uses `sapphire_api_client` | API unavailable, disabled, not ready, CSV fallback all tested |
+
+**If gaps exist:** Write the missing tests before proceeding. Follow TDD — write the failing test first.
+
+### Step 6: Update Documentation
+
+Before moving to completion, check for documentation impact.
+Search each file for references to changed/removed functionality:
+
+1. Did inputs/outputs/usage change? → Update module README (`apps/<module>/README.md`)
+2. Were modules added/removed or folder structure changed? → Update `README.md` (root)
+3. Did module tables, architecture, or conventions change? → Update `CLAUDE.md`
+4. Did configuration or env vars change? → Update `doc/configuration.md`
+5. Did pipeline behavior change? → Update `doc/data_flow_*.md`
+6. Did user-facing behavior change? → Update `doc/user_guide.md`
+7. Did dev workflows or setup change? → Update `doc/development.md`
+8. Did deployment procedures change? → Update `doc/deployment.md`, `doc/prod/`
+9. Did stable patterns or project knowledge change? → Update Claude memory files
+10. Is this fixing a known issue? → Update `doc/plans/module_issues.md`
+
+**If no docs need updating:** State "No documentation impact" with brief rationale.
+
+### Step 7: Complete Development
 
 After all tasks complete and verified:
 - Announce: "All tasks complete. Running pre-deployment validation."

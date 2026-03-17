@@ -1,0 +1,99 @@
+# MkDocs configuration for SAPPHIRE Forecast Tools
+# Documentation: https://www.mkdocs.org/
+
+site_name: SAPPHIRE Forecast Tools
+site_description: Open-source operational runoff forecasting toolkit
+site_url: https://hydrosolutions.github.io/SAPPHIRE_forecast_tools/
+repo_url: https://github.com/hydrosolutions/SAPPHIRE_forecast_tools
+repo_name: hydrosolutions/SAPPHIRE_forecast_tools
+
+# Use the doc/ folder as the source (where existing docs live)
+docs_dir: doc
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    # Light mode
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+# Navigation structure
+nav:
+  - Home: index.md
+  - Getting Started:
+      - User Guide: user_guide.md
+      - Configuration: configuration.md
+      - Deployment: deployment.md
+  - Operations:
+      - Workflows: workflows.md
+      - Dashboard: dashboard.md
+      - Bulletin Templates: bulletin_template_tags.md
+      - Monitoring: monitoring/forecast_tools_monitoring.md
+  - Luigi Pipeline:
+      - Overview: luigi_daemon/description.md
+      - Ubuntu Setup: luigi_daemon/ubuntu_setup.md
+      - Development: luigi_daemon/dev_instructions.md
+  - Development:
+      - Development Guide: development.md
+  - Maintenance:
+      - Docker Security: maintenance/docker-security-maintenance.md
+
+# Plugins
+plugins:
+  - search:
+      lang: en
+  - tags
+
+# Extensions for better markdown support
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+# Extra configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/hydrosolutions/SAPPHIRE_forecast_tools
+  generator: false
+
+# Copyright
+copyright: Copyright &copy; 2024-2025 hydrosolutions GmbH

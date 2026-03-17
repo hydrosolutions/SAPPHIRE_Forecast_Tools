@@ -20,10 +20,12 @@ docker pull mabesa/sapphire-rerun:$TAG
 if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
+      docker pull mabesa/sapphire-lt-forecasting:$TAG
       docker pull mabesa/sapphire-conceptmod:$TAG
 elif [ "$ieasyhydroforecast_organization" = "tjhm" ]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
+      docker pull mabesa/sapphire-lt-forecasting:$TAG
 else
       echo "No further images to pull for this organization"
 fi

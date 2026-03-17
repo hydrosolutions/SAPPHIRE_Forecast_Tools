@@ -20,6 +20,10 @@ docker build --no-cache -t mabesa/sapphire-rerun:$TAG -f ./apps/rerun/Dockerfile
 docker pull mabesa/sapphire-configuration:$TAG
 docker pull mabesa/sapphire-conceptmod:$TAG
 
-if ["$ieasyhydroforecast_organization" = "kghm"]; then
+if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
       docker build --no-cache -t mabesa/sapphire-prepgateway:$TAG -f ./apps/preprocessing_gateway/Dockerfile .
+fi
+
+if [ "$ieasyhydroforecast_organization" != "demo" ]; then
+      docker build --no-cache -t mabesa/sapphire-lt-forecasting:$TAG -f ./apps/long_term_forecasting/Dockerfile .
 fi

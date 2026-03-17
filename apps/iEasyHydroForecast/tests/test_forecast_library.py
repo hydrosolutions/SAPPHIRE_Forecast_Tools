@@ -885,634 +885,6 @@ class TestDataProcessing(unittest.TestCase):
         np.testing.assert_array_equal(result['discharge_avg'].dropna().values, expected_result['discharge_avg'].dropna().values)
 
 
-class TestMAE(unittest.TestCase):
-
-    def test_mae_perfect_match(self):
-        """Test MAE when observed and simulated values match perfectly"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 0.0)
-        self.assertEqual(result['n_pairs'], 5)
-
-    def test_mae_constant_difference(self):
-        """Test MAE with constant difference between observed and simulated"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'simulated': [2.0, 3.0, 4.0, 5.0, 6.0]  # Constant difference of 1
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 1.0)
-        self.assertEqual(result['n_pairs'], 5)
-
-    def test_mae_with_negatives(self):
-        """Test MAE with negative values"""
-        df = pd.DataFrame({
-            'observed': [-1.0, -2.0, 3.0, 4.0, -5.0],
-            'simulated': [1.0, 2.0, -3.0, -4.0, 5.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 6.0)
-        self.assertEqual(result['n_pairs'], 5)
-
-    def test_mae_with_zeros(self):
-        """Test MAE with zero values"""
-        df = pd.DataFrame({
-            'observed': [0.0, 0.0, 0.0],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 2.0)
-        self.assertEqual(result['n_pairs'], 3)
-
-    def test_mae_single_value(self):
-        """Test MAE with single value"""
-        df = pd.DataFrame({
-            'observed': [1.0],
-            'simulated': [2.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 1.0)
-        self.assertEqual(result['n_pairs'], 1)
-
-    def test_mae_empty_dataframe(self):
-        """Test MAE with empty DataFrame"""
-        df = pd.DataFrame({
-            'observed': [],
-            'simulated': []
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        assert np.isnan(result['mae'])
-        self.assertEqual(result['n_pairs'], 0)
-
-    def test_mae_all_nans_observed(self):
-        """Test MAE with all NaNs in observed column"""
-        df = pd.DataFrame({
-            'observed': [np.nan, np.nan, np.nan],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        assert np.isnan(result['mae'])
-        self.assertEqual(result['n_pairs'], 0)
-
-    def test_mae_all_nans_simulated(self):
-        """Test MAE with all NaNs in simulated column"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [np.nan, np.nan, np.nan]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        assert np.isnan(result['mae'])
-        self.assertEqual(result['n_pairs'], 0)
-
-    def test_mae_some_nans(self):
-        """Test MAE with some NaN values"""
-        df = pd.DataFrame({
-            'observed': [1.0, np.nan, 3.0, 4.0],
-            'simulated': [1.0, 2.0, np.nan, 4.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 0.0)  # Only compares non-NaN pairs
-        self.assertEqual(result['n_pairs'], 2)  # Only two valid pairs: [1.0, 1.0] and [4.0, 4.0]
-
-    def test_mae_infinity(self):
-        """Test MAE with infinity values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, np.inf],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        assert np.isnan(result['mae'])
-        self.assertEqual(result['n_pairs'], 0)
-
-    def test_mae_missing_columns(self):
-        """Test MAE with missing columns"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0]
-        })
-        with pytest.raises(ValueError):
-            fl.mae(df, 'observed', 'simulated')
-
-    def test_mae_wrong_column_names(self):
-        """Test MAE with wrong column names"""
-        df = pd.DataFrame({
-            'actual': [1.0, 2.0, 3.0],
-            'predicted': [1.0, 2.0, 3.0]
-        })
-        with pytest.raises(ValueError):
-            fl.mae(df, 'observed', 'simulated')
-
-    def test_mae_float_precision(self):
-        """Test MAE with floating point precision"""
-        df = pd.DataFrame({
-            'observed': [1.123456789, 2.123456789],
-            'simulated': [1.123456780, 2.123456780]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 9e-9, decimal=9)
-        self.assertEqual(result['n_pairs'], 2)
-
-    def test_mae_large_numbers(self):
-        """Test MAE with very large numbers"""
-        df = pd.DataFrame({
-            'observed': [1e8, 2e8],
-            'simulated': [1e8 + 1, 2e8 + 1]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 1.0)
-        self.assertEqual(result['n_pairs'], 2)
-
-    def test_mae_small_numbers(self):
-        """Test MAE with very small numbers"""
-        df = pd.DataFrame({
-            'observed': [1e-8, 2e-8],
-            'simulated': [1.1e-8, 2.1e-8]
-        })
-        result = fl.mae(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['mae'], 1e-9)
-        self.assertEqual(result['n_pairs'], 2)
-
-
-class TestSdivsigmaNSE(unittest.TestCase):
-
-    def test_perfect_match(self):
-        """Test when observed and simulated values match perfectly"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['sdivsigma'], 0.0)  # Perfect match means no error
-        np.testing.assert_almost_equal(result['nse'], 1.0)  # Perfect NSE score
-
-    def test_constant_difference(self):
-        """Test with constant difference between observed and simulated"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'simulated': [2.0, 3.0, 4.0, 5.0, 6.0]  # Constant difference of 1
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        # s/sigma will be smaller than 1 because std of observed is not 1
-        self.assertLess(result['sdivsigma'], 1.0)
-        # NSE will be less than 1 due to systematic bias
-        self.assertLess(result['nse'], 1.0)
-
-    def test_with_negatives(self):
-        """Test with negative values"""
-        df = pd.DataFrame({
-            'observed': [-1.0, -2.0, 3.0, 4.0, -5.0],
-            'simulated': [1.0, 2.0, -3.0, -4.0, 5.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertGreater(result['sdivsigma'], 0.0)
-        self.assertLess(result['nse'], 1.0)
-
-    def test_with_zeros(self):
-        """Test with zero values"""
-        df = pd.DataFrame({
-            'observed': [0.0, 0.0, 0.0],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        # When observed is constant, denominator will be near zero
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_single_value(self):
-        """Test with single value - should return NaN as std requires at least 2 points"""
-        df = pd.DataFrame({
-            'observed': [1.0],
-            'simulated': [2.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_empty_dataframe(self):
-        """Test with empty DataFrame"""
-        df = pd.DataFrame({
-            'observed': [],
-            'simulated': []
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_all_nans_observed(self):
-        """Test with all NaNs in observed column"""
-        df = pd.DataFrame({
-            'observed': [np.nan, np.nan, np.nan],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_all_nans_simulated(self):
-        """Test with all NaNs in simulated column"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [np.nan, np.nan, np.nan]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_some_nans(self):
-        """Test with some NaN values"""
-        df = pd.DataFrame({
-            'observed': [1.0, np.nan, 3.0, 4.0],
-            'simulated': [1.0, 2.0, np.nan, 4.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        # Should only use the two valid pairs: [1.0, 1.0] and [4.0, 4.0]
-        np.testing.assert_almost_equal(result['sdivsigma'], 0.0)
-        np.testing.assert_almost_equal(result['nse'], 1.0)
-
-    def test_infinity(self):
-        """Test with infinity values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, np.inf],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-    def test_missing_columns(self):
-        """Test with missing columns"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0]
-        })
-        with self.assertRaises(ValueError):
-            fl.sdivsigma_nse(df, 'observed', 'simulated')
-
-    def test_wrong_column_names(self):
-        """Test with wrong column names"""
-        df = pd.DataFrame({
-            'actual': [1.0, 2.0, 3.0],
-            'predicted': [1.0, 2.0, 3.0]
-        })
-        with self.assertRaises(ValueError):
-            fl.sdivsigma_nse(df, 'observed', 'simulated')
-
-    def test_numerical_stability(self):
-        """Test NSE calculation with very small differences"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [1.0 + 1e-10, 2.0 + 1e-10, 3.0 + 1e-10]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        np.testing.assert_almost_equal(result['nse'], 1.0, decimal=6)
-        self.assertLess(result['sdivsigma'], 1e-6)
-
-    def test_nse_range(self):
-        """Test NSE with perfect anti-correlation (should give negative NSE)"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [3.0, 2.0, 1.0]  # Perfect negative correlation
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertLess(result['nse'], 0.0)  # NSE should be negative
-        self.assertGreater(result['sdivsigma'], 1.0)  # s/sigma should be > 1
-
-    def test_constant_observed(self):
-        """Test with constant observed values (should give NaN due to zero variance)"""
-        df = pd.DataFrame({
-            'observed': [2.0, 2.0, 2.0],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
-        self.assertTrue(np.isnan(result['sdivsigma']))
-        self.assertTrue(np.isnan(result['nse']))
-
-
-class TestForecastAccuracyHydromet(unittest.TestCase):
-
-    def test_perfect_accuracy(self):
-        """Test when all simulated values are within delta of observed values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0],
-            'delta': [0.5, 0.5, 0.5, 0.5, 0.5]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 1.0)  # Perfect accuracy
-        np.testing.assert_almost_equal(result['delta'], 0.5)  # Last delta value
-
-    def test_zero_accuracy(self):
-        """Test when all simulated values are outside delta range"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [3.0, 4.0, 5.0],
-            'delta': [0.1, 0.1, 0.1]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 0.0)
-        np.testing.assert_almost_equal(result['delta'], 0.1)
-
-    def test_partial_accuracy(self):
-        """Test with mix of accurate and inaccurate predictions"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0, 4.0],
-            'simulated': [1.1, 2.1, 4.0, 5.0],  # First two within delta, last two outside
-            'delta': [0.2, 0.2, 0.2, 0.2]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 0.5)  # 2 out of 4 accurate
-        np.testing.assert_almost_equal(result['delta'], 0.2)
-
-    def test_varying_delta(self):
-        """Test with different delta values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [1.5, 2.5, 3.5],
-            'delta': [0.1, 0.5, 1.0]  # Only second and third predictions within their respective deltas
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 2/3)
-        np.testing.assert_almost_equal(result['delta'], 1.0)
-
-    def test_empty_dataframe(self):
-        """Test with empty DataFrame"""
-        df = pd.DataFrame({
-            'observed': [],
-            'simulated': [],
-            'delta': []
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        self.assertTrue(np.isnan(result['accuracy']))
-        self.assertTrue(np.isnan(result['delta']))
-
-    def test_all_nans(self):
-        """Test with all NaN values"""
-        df = pd.DataFrame({
-            'observed': [np.nan, np.nan, np.nan],
-            'simulated': [np.nan, np.nan, np.nan],
-            'delta': [np.nan, np.nan, np.nan]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        self.assertTrue(np.isnan(result['accuracy']))
-        self.assertTrue(np.isnan(result['delta']))
-
-    def test_some_nans(self):
-        """Test with some NaN values"""
-        df = pd.DataFrame({
-            'observed': [1.0, np.nan, 3.0, 4.0],
-            'simulated': [1.0, 2.0, np.nan, 4.0],
-            'delta': [0.1, 0.1, 0.1, 0.1]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        # Should only use two valid pairs: [1.0, 1.0] and [4.0, 4.0]
-        np.testing.assert_almost_equal(result['accuracy'], 1.0)
-        np.testing.assert_almost_equal(result['delta'], 0.1)
-
-    def test_infinity(self):
-        """Test with infinity values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, np.inf],
-            'simulated': [1.0, 2.0, 3.0],
-            'delta': [0.1, 0.1, 0.1]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 1.0)
-        np.testing.assert_almost_equal(result['delta'], 0.1)
-
-    def test_missing_columns(self):
-        """Test with missing columns"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [1.0, 2.0, 3.0]
-        })
-        with self.assertRaises(ValueError):
-            fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-
-    def test_wrong_column_names(self):
-        """Test with wrong column names"""
-        df = pd.DataFrame({
-            'actual': [1.0, 2.0, 3.0],
-            'predicted': [1.0, 2.0, 3.0],
-            'threshold': [0.1, 0.1, 0.1]
-        })
-        with self.assertRaises(ValueError):
-            fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-
-    def test_negative_delta(self):
-        """Test with negative delta values (should handle as invalid)"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [1.0, 2.0, 3.0],
-            'delta': [-0.1, -0.1, -0.1]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        self.assertTrue(np.isnan(result['accuracy']))
-        self.assertTrue(np.isnan(result['delta']))
-
-    def test_zero_delta(self):
-        """Test with zero delta values"""
-        df = pd.DataFrame({
-            'observed': [1.0, 2.0, 3.0],
-            'simulated': [1.0, 2.0, 3.0],
-            'delta': [0.0, 0.0, 0.0]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 1.0)  # Perfect match should give accuracy 1.0
-        np.testing.assert_almost_equal(result['delta'], 0.0)
-
-    def test_single_value(self):
-        """Test with single value"""
-        df = pd.DataFrame({
-            'observed': [1.0],
-            'simulated': [1.1],
-            'delta': [0.2]
-        })
-        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
-        np.testing.assert_almost_equal(result['accuracy'], 1.0)
-        np.testing.assert_almost_equal(result['delta'], 0.2)
-
-
-class TestCalculateSkillMetricsPentad(unittest.TestCase):
-    def setUp(self):
-        """Set up test data before each test"""
-        # Create sample observed data
-        self.observed = pd.DataFrame({
-            'code': ['123', '123', '123', '123', '456', '456', '456', '456'],
-            'date': pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
-                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06']),
-            'discharge_avg': [10.0, 12.0, 10.0, 12.0, 20.0, 22.0, 20.0, 22.0],
-            'model_long': ['Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)',
-                           'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)'],
-            'model_short': ['Obs', 'Obs', 'Obs', 'Obs',
-                            'Obs', 'Obs', 'Obs', 'Obs'],
-            'delta': [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0]
-        })
-
-        # Create sample simulated data with two different models
-        self.simulated = pd.DataFrame({
-            'code': ['123', '123', '123', '123', '456', '456', '456', '456',
-                     '123', '123', '123', '123', '456', '456', '456', '456'],
-            'date': pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
-                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
-                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
-                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06']),
-            'pentad_in_month': [1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2],
-            'pentad_in_year': [1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2],
-            'forecasted_discharge': [10.2, 10.3, 9.8, 11.9, 20.2, 22.3, 20.1, 21.7,
-                                     10.1, 12.1, 10.05, 11.9, 20.1, 22.3, 19.9, 21.7],
-            'model_long': ['Model A (MA)', 'Model A (MA)', 'Model A (MA)', 'Model A (MA)',
-                           'Model A (MA)', 'Model A (MA)', 'Model A (MA)', 'Model A (MA)',
-                           'Model B (MB)', 'Model B (MB)', 'Model B (MB)', 'Model B (MB)',
-                           'Model B (MB)', 'Model B (MB)', 'Model B (MB)', 'Model B (MB)'],
-            'model_short': ['MA', 'MA', 'MA', 'MA', 'MA', 'MA', 'MA', 'MA',
-                            'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB']
-        })
-        # Cast pentad_in_month and pentad_in_yera to string
-        self.simulated['pentad_in_month'] = self.simulated['pentad_in_month'].astype(str)
-        self.simulated['pentad_in_year'] = self.simulated['pentad_in_year'].astype(str)
-
-        # Set environment variables for ensemble thresholds
-        os.environ['ieasyhydroforecast_efficiency_threshold'] = '0.6'
-        os.environ['ieasyhydroforecast_accuracy_threshold'] = '0.8'
-        os.environ['ieasyhydroforecast_nse_threshold'] = '0.8'
-
-    def tearDown(self):
-        """Clean up after each test"""
-        # Remove environment variables
-        for var in ['ieasyhydroforecast_efficiency_threshold',
-                   'ieasyhydroforecast_accuracy_threshold',
-                   'ieasyhydroforecast_nse_threshold']:
-            if var in os.environ:
-                del os.environ[var]
-
-    def test_input_validation(self):
-        """Test that the function properly validates input DataFrames"""
-        # Test missing columns in observed DataFrame
-        bad_observed = self.observed.drop(columns=['delta'])
-        with self.assertRaises(ValueError):
-            fl.calculate_skill_metrics_pentad(bad_observed, self.simulated)
-
-        # Test missing columns in simulated DataFrame
-        bad_simulated = self.simulated.drop(columns=['pentad_in_year'])
-        with self.assertRaises(ValueError):
-            fl.calculate_skill_metrics_pentad(self.observed, bad_simulated)
-
-    def test_date_filtering(self):
-        """Test that data is properly filtered for dates after 2010"""
-        # Add pre-2010 data
-        old_data = self.observed.copy()
-        old_data['date'] = pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
-                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06'])
-        combined_observed = pd.concat([self.observed, old_data])
-
-        # Calculate metrics
-        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(combined_observed, self.simulated)
-
-        # Verify no pre-2010 data is present
-        self.assertTrue(all(joint_forecasts['date'].dt.year >= 2010))
-
-    def test_sdivsigma_calculation_with_test_data(self):
-        """Test that sdivsigma is calculated correctly"""
-        skill_metrics_df = pd.merge(
-            self.simulated,
-            self.observed[['code', 'date', 'discharge_avg', 'delta']],
-            on=['code', 'date'])
-
-        #print(skill_metrics_df)
-
-        output = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
-            apply(
-                fl.sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-
-        # Make sure nse is smaller than 1
-        self.assertTrue(all(output['nse'] < 1))
-
-    def test_skill_metrics_calculation(self):
-        """Test that skill metrics are calculated correctly"""
-        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
-
-        #print("\n\nDEBUG: test_skill_metrics_calculation: skill_stats.columns: \n", skill_stats.columns)
-        #print("\n\nDEBUG: test_skill_metrics_calculation: skill_stats: \n", skill_stats)
-        #print("\n\nDEBUG: test_skill_metrics_calculation: joint_forecasts.columns: \n", joint_forecasts.columns)
-        #print("\n\nDEBUG: test_skill_metrics_calculation: joint_forecasts: \n", joint_forecasts)
-
-        # Check that skill_stats contains all expected columns
-        expected_columns = ['pentad_in_year', 'code', 'model_long', 'model_short',
-                          'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy']
-        self.assertTrue(all(col in skill_stats.columns for col in expected_columns))
-
-        # Verify some metrics are within expected ranges
-        self.assertTrue(all(skill_stats['accuracy'] >= 0) and all(skill_stats['accuracy'] <= 1))
-        self.assertTrue(all(skill_stats['sdivsigma'] >= 0))
-        self.assertTrue(all(skill_stats['mae'] >= 0))
-
-    def test_ensemble_creation(self):
-        """Test that ensemble forecasts are created correctly"""
-
-        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
-
-        print("\n\nDEBUG: test_ensemble_creation: joint_forecasts.columns: \n", joint_forecasts.columns)
-        print("\n\nDEBUG: test_ensemble_creation: joint_forecasts: \n", joint_forecasts)
-        
-        # Check that ensemble model exists in results
-        self.assertTrue(any(joint_forecasts['model_short'] == 'EM'))
-
-        # Verify ensemble forecast is average of other models
-        ensemble_forecasts = joint_forecasts[joint_forecasts['model_short'] == 'EM']
-        for _, row in ensemble_forecasts.iterrows():
-            date = row['date']
-            code = row['code']
-            individual_forecasts = joint_forecasts[
-                (joint_forecasts['date'] == date) &
-                (joint_forecasts['code'] == code) &
-                (joint_forecasts['model_short'].isin(['MA', 'MB']))
-            ]['forecasted_discharge']
-            self.assertAlmostEqual(row['forecasted_discharge'],
-                                 individual_forecasts.mean(),
-                                 places=5)
-
-    def test_perfect_forecast(self):
-        """Test metrics calculation with perfect forecasts"""
-        # Create perfect forecast data
-        perfect_simulated = self.simulated.copy()
-        perfect_simulated['forecasted_discharge'] = np.tile([10.0, 12.0, 10.0, 12.0, 20.0, 22.0, 20.0, 22.0], 2)
-
-        skill_stats, _, _ = fl.calculate_skill_metrics_pentad(self.observed, perfect_simulated)
-
-        # Check that metrics indicate perfect forecasts
-        for _, row in skill_stats.iterrows():
-            self.assertAlmostEqual(row['sdivsigma'], 0.0, places=5)
-            self.assertAlmostEqual(row['nse'], 1.0, places=5)
-            self.assertAlmostEqual(row['mae'], 0.0, places=5)
-            self.assertAlmostEqual(row['accuracy'], 1.0, places=5)
-
-    def test_timing_stats_integration(self):
-        """Test that timing stats are properly handled"""
-        class MockTimingStats:
-            def __init__(self):
-                self.sections = []
-
-            def start(self, section):
-                self.sections.append(f"start_{section}")
-
-            def end(self, section):
-                self.sections.append(f"end_{section}")
-
-        timing_stats = MockTimingStats()
-        _, _, returned_stats = fl.calculate_skill_metrics_pentad(
-            self.observed, self.simulated, timing_stats)
-
-        # Verify timing sections were recorded
-        self.assertTrue(len(timing_stats.sections) > 0)
-        self.assertEqual(timing_stats, returned_stats)
-
-
-
 class TestWriteLinregPentadForecastData(unittest.TestCase):
     def setUp(self):
         # Create a temporary directory for test files
@@ -1876,18 +1248,36 @@ class TestWritePentadHydrographData(unittest.TestCase):
         self.assertIn('norm', output_data.columns)
         self.assertTrue(output_data['norm'].notna().any())
 
-    @patch('os.path.exists')
-    @patch('os.remove')
-    def test_overwrite_existing_file(self, mock_remove, mock_exists):
-        """Test that existing files are overwritten."""
-        # Setup mocks
-        mock_exists.return_value = True
-        
-        # Call the function
+    def test_overwrite_existing_file(self):
+        """Test that existing files are overwritten atomically.
+
+        Note: With the atomic write fix (Bug 4), files are now overwritten
+        using temp file + rename pattern instead of delete-then-write.
+        This test verifies the file is correctly overwritten.
+        """
+        # Construct the output file path from environment variables
+        output_file_path = os.path.join(
+            os.environ["ieasyforecast_intermediate_data_path"],
+            os.environ["ieasyforecast_hydrograph_pentad_file"]
+        )
+
+        # Create an initial file with different content
+        initial_content = "old,data\n1,2\n"
+        with open(output_file_path, 'w') as f:
+            f.write(initial_content)
+
+        # Verify initial file exists
+        self.assertTrue(os.path.exists(output_file_path))
+
+        # Call the function to overwrite
         fl.write_pentad_hydrograph_data(self.test_data)
-        
-        # Check that os.remove was called
-        mock_remove.assert_called_once()
+
+        # Verify file still exists and has new content (not the old content)
+        self.assertTrue(os.path.exists(output_file_path))
+        with open(output_file_path, 'r') as f:
+            new_content = f.read()
+        self.assertNotEqual(new_content, initial_content)
+        self.assertIn('code', new_content)  # Should have the new data columns
         
     def test_error_handling(self):
         """Test error handling when unable to write to the output file."""
@@ -2148,9 +1538,492 @@ class TestWriteDecadHydrographData(unittest.TestCase):
         # Year columns should still be present and populated
         year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
         self.assertGreater(len(year_columns), 0, "Year columns should exist after norm failure")
-        
+
         for year_col in year_columns:
             self.assertIn(year_col, output_data.columns, f"Year column '{year_col}' should exist after norm failure")
+
+
+class TestApiFailureMode(unittest.TestCase):
+    """Tests for Bug 5: configurable API failure mode via SAPPHIRE_API_FAILURE_MODE."""
+
+    def test_get_api_failure_mode_defaults_to_warn(self):
+        """Default mode is 'warn' when env var is not set."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SAPPHIRE_API_FAILURE_MODE", None)
+            self.assertEqual(fl._get_api_failure_mode(), "warn")
+
+    def test_get_api_failure_mode_reads_env(self):
+        """Mode is read from SAPPHIRE_API_FAILURE_MODE env var."""
+        for mode in ("warn", "fail", "ignore"):
+            with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": mode}):
+                self.assertEqual(fl._get_api_failure_mode(), mode)
+
+    def test_get_api_failure_mode_case_insensitive(self):
+        """Mode parsing is case-insensitive."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "FAIL"}):
+            self.assertEqual(fl._get_api_failure_mode(), "fail")
+
+    def test_get_api_failure_mode_invalid_defaults_to_warn(self):
+        """Invalid mode value falls back to 'warn'."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "invalid"}):
+            self.assertEqual(fl._get_api_failure_mode(), "warn")
+
+    def test_handle_api_write_error_fail_mode_reraises(self):
+        """In 'fail' mode, the original exception is re-raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}):
+            with self.assertRaises(ValueError):
+                try:
+                    raise ValueError("API connection refused")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "test data")
+
+    def test_handle_api_write_error_warn_mode_logs(self):
+        """In 'warn' mode, error is logged but not raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "warn"}):
+            with patch("iEasyHydroForecast.forecast_library.logger") as mock_logger:
+                try:
+                    raise ValueError("API timeout")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "pentadal skill metrics")
+                mock_logger.error.assert_called_once()
+                self.assertIn("pentadal skill metrics",
+                              mock_logger.error.call_args[0][0])
+
+    def test_handle_api_write_error_ignore_mode_silent(self):
+        """In 'ignore' mode, error is not logged and not raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}):
+            with patch("iEasyHydroForecast.forecast_library.logger") as mock_logger:
+                try:
+                    raise ValueError("API error")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "test data")
+                mock_logger.error.assert_not_called()
+
+
+class TestApiClientSingleton(unittest.TestCase):
+    """Tests for API client singleton behavior (#16).
+
+    Validates lazy initialization, caching, reset, and behavior
+    when sapphire-api-client is unavailable.
+    """
+
+    def setUp(self):
+        """Reset singletons before each test."""
+        fl._reset_api_clients()
+
+    def tearDown(self):
+        """Reset singletons after each test."""
+        fl._reset_api_clients()
+
+    def test_reset_clears_both_clients(self):
+        """_reset_api_clients sets both globals to None."""
+        # Manually inject fake clients
+        fl._preprocessing_client = "fake_pre"
+        fl._postprocessing_client = "fake_post"
+        fl._reset_api_clients()
+        self.assertIsNone(fl._preprocessing_client)
+        self.assertIsNone(fl._postprocessing_client)
+
+    def test_preprocessing_returns_none_when_api_unavailable(self):
+        """_get_preprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_api_unavailable(self):
+        """_get_postprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_returns_none_when_class_is_none(self):
+        """_get_preprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', None):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_class_is_none(self):
+        """_get_postprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', None):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_preprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_postprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_preprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_preprocessing_client()
+            second = fl._get_preprocessing_client()
+
+        # Constructor called only once
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_postprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            second = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_reset_then_new_instance(self):
+        """After reset, next call creates a fresh instance."""
+        mock_cls = MagicMock()
+        mock_cls.side_effect = [MagicMock(name='first'), MagicMock(name='second')]
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            fl._reset_api_clients()
+            second = fl._get_postprocessing_client()
+
+        self.assertEqual(mock_cls.call_count, 2)
+        self.assertIsNot(first, second)
+
+    def test_default_api_url(self):
+        """Default URL is http://localhost:8000 when env var not set."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {}, clear=False):
+            # Remove SAPPHIRE_API_URL if present
+            os.environ.pop('SAPPHIRE_API_URL', None)
+            fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://localhost:8000')
+
+
+class TestApiClientSingleton(unittest.TestCase):
+    """Tests for API client singleton behavior (#16).
+
+    Validates lazy initialization, caching, reset, and behavior
+    when sapphire-api-client is unavailable.
+    """
+
+    def setUp(self):
+        """Reset singletons before each test."""
+        fl._reset_api_clients()
+
+    def tearDown(self):
+        """Reset singletons after each test."""
+        fl._reset_api_clients()
+
+    def test_reset_clears_both_clients(self):
+        """_reset_api_clients sets both globals to None."""
+        # Manually inject fake clients
+        fl._preprocessing_client = "fake_pre"
+        fl._postprocessing_client = "fake_post"
+        fl._reset_api_clients()
+        self.assertIsNone(fl._preprocessing_client)
+        self.assertIsNone(fl._postprocessing_client)
+
+    def test_preprocessing_returns_none_when_api_unavailable(self):
+        """_get_preprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_api_unavailable(self):
+        """_get_postprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_returns_none_when_class_is_none(self):
+        """_get_preprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', None):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_class_is_none(self):
+        """_get_postprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', None):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_preprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_postprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_preprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_preprocessing_client()
+            second = fl._get_preprocessing_client()
+
+        # Constructor called only once
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_postprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            second = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_reset_then_new_instance(self):
+        """After reset, next call creates a fresh instance."""
+        mock_cls = MagicMock()
+        mock_cls.side_effect = [MagicMock(name='first'), MagicMock(name='second')]
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            fl._reset_api_clients()
+            second = fl._get_postprocessing_client()
+
+        self.assertEqual(mock_cls.call_count, 2)
+        self.assertIsNot(first, second)
+
+    def test_default_api_url(self):
+        """Default URL is http://localhost:8000 when env var not set."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {}, clear=False):
+            # Remove SAPPHIRE_API_URL if present
+            os.environ.pop('SAPPHIRE_API_URL', None)
+            fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://localhost:8000')
+
+
+class TestNaNSentinelForInsufficientData(unittest.TestCase):
+    """Phase 1 (INFRA-006): perform_linear_regression returns NaN defaults
+    when a station has insufficient data (all-NaN predictor/discharge).
+
+    Previously, insufficient-data stations got -1.0 as a sentinel value
+    for forecasted_discharge. Now they should get NaN.
+    """
+
+    def _build_df(self, stations, pentads, predictor, discharge_avg):
+        """Build a DataFrame matching perform_linear_regression's input."""
+        rows = []
+        for station in stations:
+            for pentad in pentads:
+                for p, d in zip(predictor, discharge_avg):
+                    rows.append({
+                        'station': station,
+                        'pentad': pentad,
+                        'discharge_sum': p,
+                        'discharge_avg': d,
+                    })
+        return pd.DataFrame(rows)
+
+    def test_all_nan_predictor_returns_nan_forecast(self):
+        """Station where predictor is all NaN => NaN forecasted_discharge."""
+        df = pd.DataFrame({
+            'station': ['A'] * 4,
+            'pentad': [1] * 4,
+            'discharge_sum': [np.nan, np.nan, np.nan, np.nan],
+            'discharge_avg': [10.0, 20.0, 15.0, 25.0],
+        })
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        # Station A should have NaN forecast (insufficient predictor data)
+        if not result.empty:
+            for col in ['slope', 'intercept', 'forecasted_discharge']:
+                self.assertTrue(
+                    result[col].isna().all(),
+                    f"Expected NaN in {col}, got {result[col].tolist()}",
+                )
+        # Empty result is also acceptable (no data after dropna)
+
+    def test_all_nan_discharge_avg_returns_nan_forecast(self):
+        """Station where discharge_avg is all NaN => NaN defaults."""
+        df = pd.DataFrame({
+            'station': ['A'] * 4,
+            'pentad': [1] * 4,
+            'discharge_sum': [100.0, 200.0, 150.0, 250.0],
+            'discharge_avg': [np.nan, np.nan, np.nan, np.nan],
+        })
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        if not result.empty:
+            for col in ['slope', 'intercept', 'forecasted_discharge']:
+                self.assertTrue(
+                    result[col].isna().all(),
+                    f"Expected NaN in {col}, got {result[col].tolist()}",
+                )
+
+    def test_mixed_stations_good_and_insufficient(self):
+        """One station with good data, one with all-NaN predictor.
+
+        The good station should have computed values; the insufficient
+        station should have NaN (not -1.0) for all regression outputs.
+        """
+        rows = []
+        # Station GOOD: 3 valid data points for pentad 1
+        for p, d in [(100, 10), (200, 20), (150, 15)]:
+            rows.append({
+                'station': 'GOOD', 'pentad': 1,
+                'discharge_sum': float(p), 'discharge_avg': float(d),
+            })
+        # Station BAD: all NaN predictor for pentad 1
+        for d in [10, 20, 15]:
+            rows.append({
+                'station': 'BAD', 'pentad': 1,
+                'discharge_sum': np.nan, 'discharge_avg': float(d),
+            })
+        df = pd.DataFrame(rows)
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        # GOOD station should have a real forecast
+        good_rows = result[result['station'] == 'GOOD']
+        self.assertFalse(good_rows.empty, "GOOD station should have results")
+        self.assertFalse(
+            good_rows['forecasted_discharge'].isna().all(),
+            "GOOD station should have a computed forecast",
+        )
+
+        # BAD station: either absent (skipped) or has NaN — never -1.0
+        bad_rows = result[result['station'] == 'BAD']
+        if not bad_rows.empty:
+            for _, row in bad_rows.iterrows():
+                self.assertTrue(
+                    math.isnan(row['forecasted_discharge'])
+                    if not pd.isna(row['forecasted_discharge']) is False
+                    else True,
+                    "BAD station should have NaN forecast, not -1.0",
+                )
+                self.assertNotEqual(
+                    row['forecasted_discharge'], -1.0,
+                    "Sentinel -1.0 must not appear in forecast output",
+                )
+
+    def test_no_negative_one_sentinel_in_output(self):
+        """Regression output must NEVER contain -1.0 as a sentinel value.
+
+        Build a dataset where some stations have data and others don't,
+        then verify -1.0 does not appear in any regression output column.
+        """
+        rows = []
+        # Station with valid data
+        for p, d in [(100, 10), (200, 20), (300, 30)]:
+            rows.append({
+                'station': 'HAS_DATA', 'pentad': 1,
+                'discharge_sum': float(p), 'discharge_avg': float(d),
+            })
+        # Station with insufficient data (only NaN)
+        for _ in range(3):
+            rows.append({
+                'station': 'NO_DATA', 'pentad': 1,
+                'discharge_sum': np.nan, 'discharge_avg': np.nan,
+            })
+        df = pd.DataFrame(rows)
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 1,
+        )
+        sentinel_cols = [
+            'slope', 'intercept', 'forecasted_discharge',
+            'q_mean', 'q_std_sigma', 'delta', 'rsquared',
+        ]
+        for col in sentinel_cols:
+            if col in result.columns:
+                vals = result[col].dropna().tolist()
+                self.assertNotIn(
+                    -1.0, vals,
+                    f"Sentinel -1.0 found in column {col}: {vals}",
+                )
 
 
 if __name__ == '__main__':

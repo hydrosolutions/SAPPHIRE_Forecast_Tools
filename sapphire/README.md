@@ -131,9 +131,11 @@ python app/data_migrator.py --type skillmetric --batch-size 1
 python app/data_migrator.py --type lrforecast
 python app/data_migrator.py --type combinedforecast
 python app/data_migrator.py --type forecast
+python app/data_migrator.py --type longforecast
 ```
 
 **Note:** The `--batch-size 1` flag for skill metrics is needed due to duplicate entry handling.
+**Note 2** `python app/data_migrator.py --type longforecast --modes month_1 --model-filter LR_Base,GBT` only migrates month_1 and filter for the selected models.  
 
 ### Migration Options
 
@@ -213,7 +215,7 @@ from sapphire_api_client import SapphirePreprocessingClient
 client = SapphirePreprocessingClient(base_url="http://localhost:8000")
 
 # Prepare records from DataFrame
-records = client.prepare_runoff_records(df, horizon_type="day", code="15013")
+records = client.prepare_runoff_records(df, horizon_type="day", code="<station_code>")
 
 # Write to API
 client.write_runoff(records)
@@ -223,16 +225,16 @@ client.write_runoff(records)
 
 ```bash
 # Get runoff data (via API gateway)
-curl "http://localhost:8000/api/preprocessing/runoff/?code=15013&horizon=day&limit=5"
+curl "http://localhost:8000/api/preprocessing/runoff/?code=<station_code>&horizon=day&limit=5"
 
 # Get hydrograph data
-curl "http://localhost:8000/api/preprocessing/hydrograph/?code=15013&horizon=day&limit=5"
+curl "http://localhost:8000/api/preprocessing/hydrograph/?code=<station_code>&horizon=day&limit=5"
 
 # Get meteo data
-curl "http://localhost:8000/api/preprocessing/meteo/?code=38457&meteo_type=T&limit=5"
+curl "http://localhost:8000/api/preprocessing/meteo/?code=<station_code>&meteo_type=T&limit=5"
 
 # Get snow data
-curl "http://localhost:8000/api/preprocessing/snow/?code=15013&snow_type=SWE&limit=5"
+curl "http://localhost:8000/api/preprocessing/snow/?code=<station_code>&snow_type=SWE&limit=5"
 ```
 
 ## Development
@@ -461,13 +463,13 @@ Model performance metrics for forecast verification.
 ```sql
 -- Get latest runoff data for a station
 SELECT * FROM runoffs
-WHERE code = '15013'
+WHERE code = '<station_code>'
 ORDER BY date DESC
 LIMIT 10;
 
 -- Get all pentad runoffs for a station in a year
 SELECT * FROM runoffs
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND horizon_type = 'PENTAD'
   AND date >= '2024-01-01'
 ORDER BY date;
@@ -481,7 +483,7 @@ WHERE horizon_type = 'PENTAD'
 -- Get temperature data for a station
 SELECT date, value, norm, value - norm as anomaly
 FROM meteo
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND meteo_type = 'T'
 ORDER BY date DESC
 LIMIT 30;
@@ -489,7 +491,7 @@ LIMIT 30;
 -- Get snow water equivalent across elevation zones
 SELECT date, value, value1, value2, value3, value4, value5
 FROM snow
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND snow_type = 'SWE'
 ORDER BY date DESC
 LIMIT 10;
@@ -507,28 +509,28 @@ ORDER BY records DESC;
 -- Get latest forecasts for a station
 SELECT date, target, model_type, q50, forecasted_discharge
 FROM forecasts
-WHERE code = '15013'
+WHERE code = '<station_code>'
 ORDER BY date DESC, target
 LIMIT 20;
 
 -- Compare forecasts across models for a specific date
 SELECT model_type, q05, q25, q50, q75, q95
 FROM forecasts
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND date = '2024-06-01'
   AND horizon_type = 'PENTAD';
 
 -- Get linear regression forecast with model parameters
 SELECT date, predictor, slope, intercept, forecasted_discharge, rsquared
 FROM lr_forecasts
-WHERE code = '15013'
+WHERE code = '<station_code>'
 ORDER BY date DESC
 LIMIT 10;
 
 -- Compare skill metrics across models
 SELECT model_type, AVG(nse) as avg_nse, AVG(accuracy) as avg_accuracy, AVG(mae) as avg_mae
 FROM skill_metrics
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND horizon_type = 'PENTAD'
 GROUP BY model_type
 ORDER BY avg_nse DESC;
@@ -542,7 +544,7 @@ ORDER BY code, nse DESC;
 -- Get skill metrics trend over time
 SELECT date, model_type, nse, accuracy
 FROM skill_metrics
-WHERE code = '15013'
+WHERE code = '<station_code>'
   AND model_type = 'TFT'
 ORDER BY date;
 ```

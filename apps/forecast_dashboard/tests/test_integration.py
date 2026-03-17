@@ -6,11 +6,17 @@ import pandas as pd
 from playwright.sync_api import Page, expect
 import tag_library as tl
 import datetime as dt
+import os
+import re
+import time
 
+import pandas as pd
+import tag_library as tl
+from playwright.sync_api import Page, expect
 
-TEST_PENTAD = False
-TEST_DECAD = False
-TEST_LOCAL = True
+TEST_PENTAD = os.getenv("TEST_PENTAD", "").lower() == "true"
+TEST_DECAD = os.getenv("TEST_DECAD", "").lower() == "true"
+TEST_LOCAL = os.getenv("TEST_LOCAL", "").lower() == "true"
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
@@ -43,8 +49,9 @@ if len(str(horizon_value)) == 1:
     horizon_value = "0" + str(horizon_value)
 # horizon_value = "14"
 
+
 def normalize_spaces(s):
-    return re.sub(r'\s+', ' ', s).strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def normalize_comma(s):
@@ -105,7 +112,7 @@ def test_pentad(page: Page):
 
     # Testing Pentad.png being loaded
     content = page.content()
-    assert 'DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==' in content
+    assert "DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==" in content
     print("#### Pentad.png is shown.")
     time.sleep(SLEEP)
 
@@ -133,12 +140,14 @@ def test_decad(page: Page):
 
     # Testing Decad.png being loaded
     content = page.content()
-    assert '8tYYd0q55fCZAgMBYAv8DTUYpzxgsaeEAAAAASUVORK5CYII=' in content
+    assert "8tYYd0q55fCZAgMBYAv8DTUYpzxgsaeEAAAAASUVORK5CYII=" in content
     print("#### Decad.png is shown.")
     time.sleep(SLEEP)
 
     # Testing the page is in Russian
-    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами"))
+    expect(page).to_have_title(
+        re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами")
+    )
     expect(page.get_by_text("Войти")).to_be_visible()
     expect(page.get_by_text("Имя пользователя")).to_be_visible()
     expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
@@ -226,7 +235,9 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.locator("select#input").nth(1).select_option(value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
+    page.locator("select#input").nth(1).select_option(
+        value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000
+    )
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
 
@@ -239,7 +250,16 @@ def test_local(page: Page):
         """Find selected models in Summary table"""
         selected_div = page.locator("div.tabulator-selected")
         model_values = []
-        for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
+        for div in [
+            "Модель",
+            "Прогн. расх. воды",
+            "Прогн. нижн. гран.",
+            "Прогн. верхн. гран.",
+            "δ",
+            "s/σ",
+            "Средняя абсолютная ошибка",
+            "Оправдываемость",
+        ]:
             model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
             model_values.append(model_div.inner_text())
         return model_values
@@ -262,7 +282,7 @@ def test_local(page: Page):
         "15013 - Джыргалан-с.Советское",
         # "15016 - Тургень-Ак-Суу - пос.лесозавода",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
-        #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        # "15194 - р.Ала-Арча-у.р.Кашка-Суу",
         "15212 - Ак-Суу - с.Чон-Арык",
         "15256 - Талас -  с.Ак-Таш",
     ]
@@ -365,7 +385,9 @@ def test_local(page: Page):
             basins.add(basin)
             path = f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
             excel_file_paths.append(path)
-    excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
+    excel_file_paths.append(
+        f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx"
+    )
 
     print("#### Excel file paths:")
     for path in excel_file_paths:

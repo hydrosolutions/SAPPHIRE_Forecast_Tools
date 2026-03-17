@@ -1,0 +1,58 @@
+[project]
+name = "postprocessing-forecasts"
+version = "0.1.0"
+description = "Postprocessing module for forecast results in SAPPHIRE forecast tools"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+]
+dependencies = [
+    # Core data processing
+    "pandas>=2.2.2",
+    "numpy>=1.26.4",
+    # Excel support (required by pandas for .xlsx files)
+    "openpyxl>=3.1.2",
+    # Date/time handling
+    "DateTime>=5.5",
+    "python-dateutil>=2.9.0",
+    "pytz>=2024.1",
+    # Configuration
+    "python-dotenv>=1.0.1",
+    # HTTP requests
+    "requests>=2.32.0",
+    # Scientific computing (GEV distribution for return period thresholds)
+    "scipy>=1.11.0",
+    # SAPPHIRE API client for database-backed I/O
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a196e1728f2447ec416c77cd54c9d6899a86d9e6",
+    # Local library dependency
+    "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[tool.uv]
+# Allow git and local path dependencies
+allow-insecure-host = []
+
+[tool.uv.sources]
+# Use local iEasyHydroForecast from sibling directory
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+# Tests are in the tests/ directory
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "benchmark: performance benchmarks (run explicitly, skipped by default)",
+]
+filterwarnings = [
+    # Tests in test_error_accumulation.py and test_mock_postprocessing_forecasts.py
+    # intentionally exercise the deprecated postprocessing_forecasts() entry point.
+    "ignore:postprocessing_forecasts.py is deprecated:DeprecationWarning",
+]

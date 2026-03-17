@@ -21,30 +21,23 @@
 # --------------------------------------------------------------------
 # Load Libraries
 # --------------------------------------------------------------------
-import os
-import glob
-import json
-import pandas as pd
-import numpy as np
-import darts
-from darts import TimeSeries, concatenate
-from darts.utils.timeseries_generation import datetime_attribute_timeseries
-import matplotlib.pyplot as plt
-from pe_oudin.PE_Oudin import PE_Oudin
-from suntime import Sun, SunTimeException
-
-from darts.models import TFTModel, TiDEModel
-from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.callbacks import EarlyStopping
-import pytorch_lightning as pl
-from pytorch_lightning import Trainer
-import torch
 import datetime
+import json
 import logging
+import os
+
+import numpy as np
+import pandas as pd
+import pytorch_lightning as pl
+from pe_oudin.PE_Oudin import PE_Oudin
+from pytorch_lightning.callbacks import Callback
+from suntime import Sun
+
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 logging.getLogger().setLevel(logging.WARNING)
 import warnings
+
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -54,10 +47,11 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------
 try:
     from sapphire_api_client import (
+        SapphireAPIError,
         SapphirePostprocessingClient,
         SapphirePreprocessingClient,
-        SapphireAPIError
     )
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -67,9 +61,9 @@ except ImportError:
 
 # Import forecast_library for API data reading
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast'))
-import forecast_library as fl
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
+import forecast_library as fl
 
 
 # --------------------------------------------------------------------
@@ -85,7 +79,9 @@ class LossLogger(Callback):
     def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.train_loss.append(float(trainer.callback_metrics["train_loss"]))
 
-    def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_validation_epoch_end(
+        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
+    ) -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
 
 
@@ -134,32 +130,32 @@ def read_meteo_data_combined(
     """
     # Read temperature data
     t_data = fl.read_meteo_data(
-        meteo_type='T',
+        meteo_type="T",
         site_codes=site_codes,
         start_date=start_date,
         end_date=end_date,
         csv_path=csv_path_t,
     )
     # Rename 'value' column to 'T'
-    t_data = t_data.rename(columns={'value': 'T'})
+    t_data = t_data.rename(columns={"value": "T"})
 
     # Read precipitation data
     p_data = fl.read_meteo_data(
-        meteo_type='P',
+        meteo_type="P",
         site_codes=site_codes,
         start_date=start_date,
         end_date=end_date,
         csv_path=csv_path_p,
     )
     # Rename 'value' column to 'P'
-    p_data = p_data.rename(columns={'value': 'P'})
+    p_data = p_data.rename(columns={"value": "P"})
 
     # Merge temperature and precipitation data on code and date
     # Use inner join to only keep rows where both T and P have data
-    merged_data = pd.merge(t_data, p_data, on=['code', 'date'], how='inner')
+    merged_data = pd.merge(t_data, p_data, on=["code", "date"], how="inner")
 
     # Sort by code and date
-    merged_data = merged_data.sort_values(by=['code', 'date'])
+    merged_data = merged_data.sort_values(by=["code", "date"])
 
     logger.info(f"Combined meteo data loaded: {len(merged_data)} records")
     logger.info(f"Date range: {merged_data['date'].min()} to {merged_data['date'].max()}")
@@ -184,72 +180,90 @@ def get_hydroposts_for_pentadal_and_decadal_forecasts():
     """
     # Create path to rivers available for ML predictions json file from environment variables
     rivers_to_predict_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts')
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts"),
     )
     # Test if file exists
     if not os.path.exists(rivers_to_predict_file):
         raise FileNotFoundError(f"File {rivers_to_predict_file} not found.")
 
     # Read hydroposts_available_for_ml_forecasting from json file and store them in a list
-    with open(rivers_to_predict_file, "r") as json_file:
+    with open(rivers_to_predict_file) as json_file:
         config = json.load(json_file)
         # Normalize the nested JSON data
         stations_data = []
-        for station_id, attributes in config['stationsID'].items():
-            attributes['code'] = station_id
+        for station_id, attributes in config["stationsID"].items():
+            attributes["code"] = station_id
             stations_data.append(attributes)
         # Convert the list of dictionaries to a pandas DataFrame
         hydroposts_available_for_ml_forecasting = pd.DataFrame(stations_data)
         # Move the 'code' column to the first position
         hydroposts_available_for_ml_forecasting = hydroposts_available_for_ml_forecasting[
-            ['code'] + [col for col in hydroposts_available_for_ml_forecasting.columns if col != 'code']
+            ["code"]
+            + [col for col in hydroposts_available_for_ml_forecasting.columns if col != "code"]
         ]
-        logger.debug('hydroposts_available_for_ml_forecasting[code]: %s', hydroposts_available_for_ml_forecasting['code'])
+        logger.debug(
+            "hydroposts_available_for_ml_forecasting[code]: %s",
+            hydroposts_available_for_ml_forecasting["code"],
+        )
 
     # Get gauges selected for pentadal forecasts
     rivers_selected_for_pentadal_forecasts_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyforecast_config_file_station_selection')
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection"),
     )
     # Read rivers_selected_for_pentadal_forecasts from json file and store them in a list
-    with open(rivers_selected_for_pentadal_forecasts_file, "r") as json_file:
+    with open(rivers_selected_for_pentadal_forecasts_file) as json_file:
         config = json.load(json_file)
         rivers_selected_for_pentadal_forecasts = config["stationsID"]
-        logger.debug('rivers_selected_for_pentadal_forecasts: %s', rivers_selected_for_pentadal_forecasts)
+        logger.debug(
+            "rivers_selected_for_pentadal_forecasts: %s", rivers_selected_for_pentadal_forecasts
+        )
 
     # Now filter the rivers availabale for forecasting for the ones that are selected for forecasting and write them to a list
-    rivers_to_predict_pentad = list(set(hydroposts_available_for_ml_forecasting['code']) & set(rivers_selected_for_pentadal_forecasts))
-    logger.debug('rivers_to_predict_pentad: %s', rivers_to_predict_pentad)
+    rivers_to_predict_pentad = list(
+        set(hydroposts_available_for_ml_forecasting["code"])
+        & set(rivers_selected_for_pentadal_forecasts)
+    )
+    logger.debug("rivers_to_predict_pentad: %s", rivers_to_predict_pentad)
 
     # Get gauges selected for decadal forecasts
     rivers_selected_for_decadal_forecasts_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyforecast_config_file_station_selection_decad')
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection_decad"),
     )
     # Read rivers_selected_for_decadal_forecasts from json file and store them in a list
-    with open(rivers_selected_for_decadal_forecasts_file, "r") as json_file:
+    with open(rivers_selected_for_decadal_forecasts_file) as json_file:
         config = json.load(json_file)
         rivers_selected_for_decadal_forecasts = config["stationsID"]
-        logger.debug('rivers_selected_for_decadal_forecasts: %s', rivers_selected_for_decadal_forecasts)
+        logger.debug(
+            "rivers_selected_for_decadal_forecasts: %s", rivers_selected_for_decadal_forecasts
+        )
 
     # Now filter the rivers availabale for forecasting for the ones that are selected for forecasting and write them to a list
-    rivers_to_predict_decad = list(set(hydroposts_available_for_ml_forecasting['code']) & set(rivers_selected_for_decadal_forecasts))
-    logger.debug('rivers_to_predict_decad: %s', rivers_to_predict_decad)
+    rivers_to_predict_decad = list(
+        set(hydroposts_available_for_ml_forecasting["code"])
+        & set(rivers_selected_for_decadal_forecasts)
+    )
+    logger.debug("rivers_to_predict_decad: %s", rivers_to_predict_decad)
 
-    return rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting
+    return (
+        rivers_to_predict_pentad,
+        rivers_to_predict_decad,
+        hydroposts_available_for_ml_forecasting,
+    )
 
 
 # --------------------------------------------------------------------
 # PET OUDIN
 # --------------------------------------------------------------------
 def calculate_pet_oudin(df_era5: pd.DataFrame, lat: float) -> np.array:
-    #calculate the PET using the PE Oudin method
+    # calculate the PET using the PE Oudin method
     df_era5 = df_era5.copy()
-    temp = df_era5['T']
-    date = df_era5['date']
-    lat_unit = 'deg'
-    out_units = 'mm/day'
+    temp = df_era5["T"]
+    date = df_era5["date"]
+    lat_unit = "deg"
+    out_units = "mm/day"
     pet_oudin = PE_Oudin.pe_oudin(temp, date, lat, lat_unit, out_units)
 
     return pet_oudin
@@ -258,32 +272,36 @@ def calculate_pet_oudin(df_era5: pd.DataFrame, lat: float) -> np.array:
 # --------------------------------------------------------------------
 # DAYLIGHT HOURS
 # --------------------------------------------------------------------
-def get_daylight_hours(sun: Sun,  date: pd.Timestamp)-> float:
-    #get sunrise and sunset time
+def get_daylight_hours(sun: Sun, date: pd.Timestamp) -> float:
+    # get sunrise and sunset time
     sunrise = sun.get_sunrise_time(date)
     sunset = sun.get_sunset_time(date)
-    #calculate the daylight hours
+    # calculate the daylight hours
     daylight_hours = (sunset - sunrise).seconds / 3600
 
     return daylight_hours
 
+
 def calculate_daylight_hours(lat: float, lon: float, df_era5: pd.DataFrame) -> pd.DataFrame:
     df_era5 = df_era5.copy()
-    #create sun object
+    # create sun object
     sun = Sun(lat, lon)
-    #apply the function to get the daylight hours
-    daylight_hours = df_era5['date'].apply(lambda x: get_daylight_hours(sun, x))
+    # apply the function to get the daylight hours
+    daylight_hours = df_era5["date"].apply(lambda x: get_daylight_hours(sun, x))
 
     return daylight_hours
+
 
 # --------------------------------------------------------------------
 # HELPER FUNCTIONS
 # --------------------------------------------------------------------
-def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_features: pd.DataFrame) -> list:
+def get_codes_to_use(
+    past_discharge: pd.DataFrame, era5: pd.DataFrame, static_features: pd.DataFrame
+) -> list:
     # Extract unique codes from each DataFrame column
-    codes_rivers = set(past_discharge['code'].unique())
-    codes_era5 = set(era5['code'].unique())
-    codes_static = set(static_features['code'].unique())
+    codes_rivers = set(past_discharge["code"].unique())
+    codes_era5 = set(era5["code"].unique())
+    codes_static = set(static_features["code"].unique())
 
     # Find intersection of all three sets
     common_codes = codes_rivers & codes_era5 & codes_static
@@ -291,11 +309,11 @@ def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_fe
     # Convert the set back to a list
     return list(common_codes)
 
- 
 
-#--------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
 # MISSING DATA IMPUTATION
-#--------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
+
 
 def gaps_imputation(df_discharge_org: pd.DataFrame) -> pd.DataFrame:
     """
@@ -308,12 +326,13 @@ def gaps_imputation(df_discharge_org: pd.DataFrame) -> pd.DataFrame:
     """
 
     df_discharge_interp = df_discharge_org.copy()
-    #interpolate the missing values
-    df_discharge_interp['discharge'] = df_discharge_interp['discharge'].interpolate(method='linear')
+    # interpolate the missing values
+    df_discharge_interp["discharge"] = df_discharge_interp["discharge"].interpolate(method="linear")
 
     return df_discharge_interp
 
-def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], int] :
+
+def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], int]:
     """
     Check if there are any missing values in the dataframe and determine what type of missing values are present
     Args:
@@ -330,14 +349,14 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
     int: number of missing values at the end of the dataframe
     """
 
-    sum_of_nans = df['discharge'].isnull().sum()
+    sum_of_nans = df["discharge"].isnull().sum()
 
     exceeds_threshold = sum_of_nans > threshhold
 
     nans_at_at_end = 0
-    #iterate over the last values of the dataframe
-    for i in range(1, threshhold+1):
-        if np.isnan(df['discharge'].iloc[-i]):
+    # iterate over the last values of the dataframe
+    for i in range(1, threshhold + 1):
+        if np.isnan(df["discharge"].iloc[-i]):
             nans_at_at_end += 1
         else:
             break
@@ -348,13 +367,24 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
 
     has_nan_in_between = missing_values_in_between > 0
 
-    return {'exceeds_threshold': exceeds_threshold, 'nans_in_between': has_nan_in_between, 'nans_at_end': has_nan_at_the_end}, nans_at_at_end
+    return {
+        "exceeds_threshold": exceeds_threshold,
+        "nans_in_between": has_nan_in_between,
+        "nans_at_end": has_nan_at_the_end,
+    }, nans_at_at_end
 
 
 # --------------------------------------------------------------------
 # WRITE OUTPUT TXT FILE
 # --------------------------------------------------------------------
-def write_output_txt(output_path: str, pentad_no_success: list[int], decadal_no_success:list[int], missing_values: dict, exceeds_threshhold:dict, nans_at_end: dict):
+def write_output_txt(
+    output_path: str,
+    pentad_no_success: list[int],
+    decadal_no_success: list[int],
+    missing_values: dict,
+    exceeds_threshhold: dict,
+    nans_at_end: dict,
+):
     """
     Write a summary of possible errors in the forecast to a txt file
     """
@@ -363,25 +393,41 @@ def write_output_txt(output_path: str, pentad_no_success: list[int], decadal_no_
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
+    output_path = os.path.join(output_path, "response_ml_forecast.txt")
 
-    output_path = os.path.join(output_path, 'response_ml_forecast.txt')
+    with open(output_path, "w") as f:
+        f.write(
+            "Pentad Forecast was not successful for following codes: "
+            + str(pentad_no_success)
+            + "\n"
+        )
+        f.write("-----------------------------" + "\n")
+        f.write(
+            "Decadal Forecast was not successful for following codes: "
+            + str(decadal_no_success)
+            + "\n"
+        )
+        f.write("-----------------------------" + "\n")
+        f.write("Input Contained Missing Values for following Codes: " + str(missing_values) + "\n")
+        f.write("-----------------------------" + "\n")
+        f.write(
+            "Input Exceeded tolerated Number of Missing Values for following codes: "
+            + str(exceeds_threshhold)
+            + "\n"
+        )
+        f.write("-----------------------------" + "\n")
+        f.write(
+            "Following Codes have Nan-Values at the end -> Forecast will not be as accurate: "
+            + str(nans_at_end)
+            + "\n"
+        )
+        f.write("-----------------------------" + "\n")
 
-    with open(output_path, 'w') as f:
-        f.write('Pentad Forecast was not successful for following codes: ' + str(pentad_no_success) + '\n')
-        f.write("-----------------------------" + '\n')
-        f.write('Decadal Forecast was not successful for following codes: ' + str(decadal_no_success) + '\n')
-        f.write("-----------------------------" + '\n')
-        f.write('Input Contained Missing Values for following Codes: ' + str(missing_values) + '\n')
-        f.write("-----------------------------" + '\n')
-        f.write('Input Exceeded tolerated Number of Missing Values for following codes: ' + str(exceeds_threshhold) + '\n')
-        f.write("-----------------------------" + '\n')
-        f.write('Following Codes have Nan-Values at the end -> Forecast will not be as accurate: ' + str(nans_at_end) + '\n')
-        f.write("-----------------------------" + '\n')
 
 # --------------------------------------------------------------------
 # SAVE PENTAD FORECAST
 # --------------------------------------------------------------------
-def save_pentad_forecast()-> bool:
+def save_pentad_forecast() -> bool:
     """
     This function returns a boolean value, showing if the 5 day forecast should be saved or not
     """
@@ -390,16 +436,17 @@ def save_pentad_forecast()-> bool:
     today = datetime.datetime.now()
     today = today.date()
 
-    #check if today is the last day of the month
+    # check if today is the last day of the month
     tomorrow = today + datetime.timedelta(days=1)
     is_last_day_of_month = tomorrow.month != today.month
 
-    #check if today is in the list of days to save
+    # check if today is in the list of days to save
     is_day_to_save = today.day in days_to_save
 
     return is_last_day_of_month or is_day_to_save
 
-def save_decadal_forecast()-> bool:
+
+def save_decadal_forecast() -> bool:
     """
     This function returns a boolean value, showing if the 10 day forecast should be saved or not
     """
@@ -408,11 +455,11 @@ def save_decadal_forecast()-> bool:
     today = datetime.datetime.now()
     today = today.date()
 
-    #check if today is the last day of the month
+    # check if today is the last day of the month
     tomorrow = today + datetime.timedelta(days=1)
     is_last_day_of_month = tomorrow.month != today.month
 
-    #check if today is in the list of days to save
+    # check if today is in the list of days to save
     is_day_to_save = today.day in days_to_save
 
     return is_last_day_of_month or is_day_to_save
@@ -421,6 +468,7 @@ def save_decadal_forecast()-> bool:
 # --------------------------------------------------------------------
 # SAPPHIRE API INTEGRATION
 # --------------------------------------------------------------------
+
 
 def calculate_pentad_from_date(date) -> tuple:
     """
@@ -470,9 +518,123 @@ def calculate_decad_from_date(date) -> tuple:
     return decad_in_month, decad_in_year
 
 
+# Maps internal model names (uppercase) to API ModelType values.
+# Shared by _read_ml_forecasts_from_api() and _write_ml_forecast_to_api().
+ML_MODEL_TYPE_MAP = {"TFT": "TFT", "TIDE": "TiDE", "TSMIXER": "TSMixer"}
+
+_API_PAGE_SIZE = 5000  # rows per page; balances request count vs. payload size
+
+
+def _read_ml_forecasts_from_api(
+    model_type: str,
+    horizon_type: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    code: str | None = None,
+) -> pd.DataFrame:
+    """Read ML forecasts from the SAPPHIRE postprocessing API.
+
+    Paginates automatically — safe for large result sets.
+
+    Returns a DataFrame with columns matching the CSV schema:
+        code, date (target), forecast_date, flag, Q5, Q25, Q50, Q75, Q95.
+    Returns an empty DataFrame if the API is unavailable or returns no records.
+
+    Args:
+        model_type: "TFT", "TIDE", or "TSMIXER"
+        horizon_type: "pentad" or "decade" — used only for log messages
+            (API query always uses horizon="day" since ML stores daily targets)
+        start_date: ISO date string for forecast_date (issue date) filter
+        end_date: ISO date string for forecast_date (issue date) filter
+        code: station code to filter; None means all codes
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed; cannot read ML forecasts from API")
+        return pd.DataFrame()
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        return pd.DataFrame()
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    try:
+        if not client.readiness_check():
+            logger.warning(
+                "SAPPHIRE API at %s is not ready; cannot read ML forecasts",
+                api_url,
+            )
+            return pd.DataFrame()
+    except Exception as exc:
+        logger.warning("SAPPHIRE API readiness check failed: %s", exc)
+        return pd.DataFrame()
+
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
+
+    # Paginate to avoid silent truncation
+    pages: list[pd.DataFrame] = []
+    skip = 0
+    try:
+        while True:
+            page = client.read_short_term_forecasts(
+                horizon="day",
+                model=api_model_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=_API_PAGE_SIZE,
+            )
+            if page.empty:
+                break
+            pages.append(page)
+            if len(page) < _API_PAGE_SIZE:
+                break  # last page
+            skip += _API_PAGE_SIZE
+    except Exception as exc:
+        logger.warning("Failed to read ML forecasts from API: %s", exc)
+        return pd.DataFrame()
+
+    if not pages:
+        return pd.DataFrame()
+
+    df = pd.concat(pages, ignore_index=True)
+    logger.info(
+        "Read %d %s %s forecast rows from API",
+        len(df),
+        model_type,
+        horizon_type,
+    )
+
+    # Rename API columns → CSV schema.
+    # CSV convention: "forecast_date" = issue date, "date" = target date.
+    # API convention: "date" = issue date, "target" = target date.
+    df = df.rename(
+        columns={
+            "date": "forecast_date",
+            "target": "date",
+            "q05": "Q5",
+            "q25": "Q25",
+            "forecasted_discharge": "Q50",
+            "q75": "Q75",
+            "q95": "Q95",
+        }
+    )
+    df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
     """
     Write ML forecasts to SAPPHIRE postprocessing API.
+
+    All daily forecasts are stored with horizon_type="day" regardless of
+    the caller's horizon_type. The horizon_type parameter is retained for
+    backward compatibility but is informational only — it indicates whether
+    the caller is producing pentad or decade forecasts, but storage always
+    uses "day" with day-of-year horizon values.
 
     Args:
         data: DataFrame with ML forecast data. Expected columns:
@@ -481,14 +643,12 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
             - forecast_date: when the forecast was made
             - flag: quality flag (0=ok, 1=NaN, 2=error)
             - Q5, Q25, Q50, Q75, Q95: quantile predictions
-        horizon_type: Either "pentad" or "decade"
+        horizon_type: Informational only. Indicates whether the caller is
+            producing pentad or decade forecasts. Storage always uses "day".
         model_type: ML model name (TFT, TIDE, TSMIXER)
 
     Returns:
         bool: True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping ML forecast API write")
@@ -505,64 +665,168 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
 
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping ML forecast write")
+        return False
 
-    # Map model type to API format
-    model_type_map = {
-        "TFT": "TFT",
-        "TIDE": "TiDE",
-        "TSMIXER": "TSMixer"
-    }
-    api_model_type = model_type_map.get(model_type.upper(), model_type)
+    # Map model type to API format (shared constant)
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
 
-    # Prepare records for API
+    # Deduplicate by the DB unique key (horizon_type, code, model_type, date,
+    # target) before building records.  Within a single call horizon_type and
+    # model_type are constant, so (code, forecast_date, date) is sufficient.
+    # Keeps last occurrence so the most-recent data wins — matching the CSV
+    # dedup convention used elsewhere (e.g. make_forecast.py:190).
+    n_before = len(data)
+    data = data.drop_duplicates(subset=["code", "forecast_date", "date"], keep="last")
+    n_dropped = n_before - len(data)
+    if n_dropped > 0:
+        logger.warning(
+            "Dropped %d duplicate rows before API write (%s, %s)",
+            n_dropped,
+            model_type,
+            horizon_type,
+        )
+
+    # Prepare records for API — always stored as horizon_type="day"
     records = []
     for _, row in data.iterrows():
         # Get dates
-        target_date = pd.to_datetime(row['date'])
-        forecast_date = pd.to_datetime(row['forecast_date'])
+        target_date = pd.to_datetime(row["date"])
+        forecast_date = pd.to_datetime(row["forecast_date"])
 
-        # Calculate horizon values from target date
-        if horizon_type == "pentad":
-            horizon_value, horizon_in_year = calculate_pentad_from_date(target_date)
-        elif horizon_type == "decade":
-            horizon_value, horizon_in_year = calculate_decad_from_date(target_date)
-        else:
-            raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+        # Day-of-year for horizon values (1-366)
+        day_of_year = target_date.timetuple().tm_yday
 
         # Map quantile columns (ML uses Q5, Q25, etc.; API uses q05, q25, etc.)
         record = {
-            "horizon_type": horizon_type,
-            "code": str(int(row['code'])),
+            "horizon_type": "day",
+            "code": str(int(row["code"])),
             "model_type": api_model_type,
-            "date": forecast_date.strftime('%Y-%m-%d'),
-            "target": target_date.strftime('%Y-%m-%d'),
-            "flag": int(row['flag']) if pd.notna(row.get('flag')) else None,
-            "horizon_value": horizon_value,
-            "horizon_in_year": horizon_in_year,
-            "q05": float(row['Q5']) if pd.notna(row.get('Q5')) else None,
-            "q25": float(row['Q25']) if pd.notna(row.get('Q25')) else None,
-            "q50": float(row['Q50']) if pd.notna(row.get('Q50')) else None,
-            "q75": float(row['Q75']) if pd.notna(row.get('Q75')) else None,
-            "q95": float(row['Q95']) if pd.notna(row.get('Q95')) else None,
-            "forecasted_discharge": float(row['Q50']) if pd.notna(row.get('Q50')) else None,
+            "date": forecast_date.strftime("%Y-%m-%d"),
+            "target": target_date.strftime("%Y-%m-%d"),
+            "flag": int(row["flag"]) if pd.notna(row.get("flag")) else None,
+            "horizon_value": day_of_year,
+            "horizon_in_year": day_of_year,
+            "q05": float(row["Q5"]) if pd.notna(row.get("Q5")) else None,
+            "q25": float(row["Q25"]) if pd.notna(row.get("Q25")) else None,
+            "q75": float(row["Q75"]) if pd.notna(row.get("Q75")) else None,
+            "q95": float(row["Q95"]) if pd.notna(row.get("Q95")) else None,
+            "forecasted_discharge": float(row["Q50"]) if pd.notna(row.get("Q50")) else None,
         }
         records.append(record)
 
     # Write to API
     if records:
         count = client.write_forecasts(records)
-        logger.info(f"Successfully wrote {count} ML forecast records to SAPPHIRE API ({model_type}, {horizon_type})")
-        print(f"SAPPHIRE API: Successfully wrote {count} ML forecast records ({model_type}, {horizon_type})")
+        logger.info(
+            f"Successfully wrote {count} ML forecast records to SAPPHIRE API ({model_type}, {horizon_type})"
+        )
+        print(
+            f"SAPPHIRE API: Successfully wrote {count} ML forecast records ({model_type}, {horizon_type})"
+        )
         return True
     else:
         logger.info("No ML forecast records to write to API")
         return False
 
 
-def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
+def _write_ml_daily_forecast_to_api(data: pd.DataFrame, model_type: str) -> bool:
+    """Write daily-resolution forecasts to API with horizon_type='day'.
+
+    Used by the decad pipeline to write 11 daily predictions as
+    day-level records for Tier 2 skill metric computation.
+
+    Args:
+        data: DataFrame with ML forecast data. Expected columns:
+            code, date (target date), forecast_date, flag,
+            Q5, Q25, Q50, Q75, Q95.
+        model_type: ML model name (TFT, TIDE, TSMIXER).
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed, skipping ML daily forecast API write")
+        return False
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    if not client.readiness_check():
+        logger.warning(
+            "SAPPHIRE API at %s is not ready, skipping ML daily forecast write",
+            api_url,
+        )
+        return False
+
+    model_type_map = {
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer",
+    }
+    api_model_type = model_type_map.get(model_type.upper(), model_type)
+
+    # Deduplicate by the DB unique key before building records.
+    n_before = len(data)
+    data = data.drop_duplicates(subset=["code", "forecast_date", "date"], keep="last")
+    n_dropped = n_before - len(data)
+    if n_dropped > 0:
+        logger.warning(
+            "Dropped %d duplicate rows before daily API write (%s)",
+            n_dropped,
+            model_type,
+        )
+
+    records = []
+    for _, row in data.iterrows():
+        target_date = pd.to_datetime(row["date"])
+        forecast_date = pd.to_datetime(row["forecast_date"])
+        day_of_year = target_date.timetuple().tm_yday
+
+        record = {
+            "horizon_type": "day",
+            "code": str(int(row["code"])),
+            "model_type": api_model_type,
+            "date": forecast_date.strftime("%Y-%m-%d"),
+            "target": target_date.strftime("%Y-%m-%d"),
+            "flag": (int(row["flag"]) if pd.notna(row.get("flag")) else None),
+            "horizon_value": day_of_year,
+            "horizon_in_year": day_of_year,
+            "q05": (float(row["Q5"]) if pd.notna(row.get("Q5")) else None),
+            "q25": (float(row["Q25"]) if pd.notna(row.get("Q25")) else None),
+            "q75": (float(row["Q75"]) if pd.notna(row.get("Q75")) else None),
+            "q95": (float(row["Q95"]) if pd.notna(row.get("Q95")) else None),
+            "forecasted_discharge": (float(row["Q50"]) if pd.notna(row.get("Q50")) else None),
+        }
+        # Skip records where Q50 is NaN — writing null discharge
+        # creates phantom rows that mask real gaps in gap detectors.
+        if pd.isna(row.get("Q50")):
+            continue
+        records.append(record)
+
+    if records:
+        count = client.write_forecasts(records)
+        logger.info(
+            "Successfully wrote %d ML daily forecast records to SAPPHIRE API (%s)",
+            count,
+            model_type,
+        )
+        return True
+    else:
+        logger.info("No ML daily forecast records to write to API")
+        return False
+
+
+def _check_ml_forecast_consistency(
+    csv_data: pd.DataFrame, horizon_type: str, model_type: str
+) -> bool:
     """
     Check consistency between ML forecast data in CSV and API.
 
@@ -589,27 +853,41 @@ def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, mo
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Map model type to API format
-    model_type_map = {
-        "TFT": "TFT",
-        "TIDE": "TiDE",
-        "TSMIXER": "TSMixer"
-    }
-    api_model_type = model_type_map.get(model_type.upper(), model_type)
+    # Map model type to API format (shared constant)
+    api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
 
     # Get the date range from CSV data
     csv_data = csv_data.copy()
-    csv_data['forecast_date'] = pd.to_datetime(csv_data['forecast_date'])
-    latest_date = csv_data['forecast_date'].max()
+    csv_data["forecast_date"] = pd.to_datetime(csv_data["forecast_date"])
+    latest_date = csv_data["forecast_date"].max()
 
-    # Read from API - only latest forecast date
+    # Read from API - only latest forecast date, scoped to org's station codes
     try:
-        api_data = client.read_forecasts(
-            horizon=horizon_type,
-            model=api_model_type,
-            start_date=latest_date.strftime('%Y-%m-%d'),
-            end_date=latest_date.strftime('%Y-%m-%d')
-        )
+        codes = csv_data["code"].unique().tolist() if "code" in csv_data.columns else []
+        if codes:
+            frames = []
+            for code in codes:
+                try:
+                    page = client.read_forecasts(
+                        horizon=horizon_type,
+                        code=code,
+                        model=api_model_type,
+                        start_date=latest_date.strftime("%Y-%m-%d"),
+                        end_date=latest_date.strftime("%Y-%m-%d"),
+                    )
+                    if not page.empty:
+                        frames.append(page)
+                except Exception as e:
+                    logger.warning("Failed to read forecasts for code %s: %s", code, e)
+            api_data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            # Fallback: no codes available, read all (original behavior)
+            api_data = client.read_forecasts(
+                horizon=horizon_type,
+                model=api_model_type,
+                start_date=latest_date.strftime("%Y-%m-%d"),
+                end_date=latest_date.strftime("%Y-%m-%d"),
+            )
     except Exception as e:
         logger.warning(f"Failed to read from API for consistency check: {e}")
         return True  # Don't fail on read errors
@@ -622,7 +900,7 @@ def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, mo
     is_consistent = True
 
     # Filter CSV to latest forecast date for comparison
-    csv_latest = csv_data[csv_data['forecast_date'] == latest_date].copy()
+    csv_latest = csv_data[csv_data["forecast_date"] == latest_date].copy()
 
     # Check row counts
     if len(api_data) != len(csv_latest):
@@ -633,62 +911,63 @@ def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, mo
         is_consistent = False
 
     # Convert API data for comparison
-    api_data['code'] = api_data['code'].astype(str)
-    csv_latest['code'] = csv_latest['code'].astype(str)
-    api_data['target'] = pd.to_datetime(api_data['target'])
-    csv_latest['date'] = pd.to_datetime(csv_latest['date'])
+    api_data["code"] = api_data["code"].astype(str)
+    csv_latest["code"] = csv_latest["code"].astype(str)
+    api_data["target"] = pd.to_datetime(api_data["target"])
+    csv_latest["date"] = pd.to_datetime(csv_latest["date"])
 
     # Merge on code and target date
     merged = csv_latest.merge(
         api_data,
-        left_on=['code', 'date'],
-        right_on=['code', 'target'],
-        how='outer',
-        suffixes=('_csv', '_api'),
-        indicator=True
+        left_on=["code", "date"],
+        right_on=["code", "target"],
+        how="outer",
+        suffixes=("_csv", "_api"),
+        indicator=True,
     )
 
     # Check for rows only in CSV
-    only_csv = merged[merged['_merge'] == 'left_only']
+    only_csv = merged[merged["_merge"] == "left_only"]
     if len(only_csv) > 0:
-        logger.warning(
-            f"ML forecast consistency check: {len(only_csv)} rows in CSV but not in API"
-        )
+        logger.warning(f"ML forecast consistency check: {len(only_csv)} rows in CSV but not in API")
         is_consistent = False
 
     # Check for rows only in API
-    only_api = merged[merged['_merge'] == 'right_only']
+    only_api = merged[merged["_merge"] == "right_only"]
     if len(only_api) > 0:
-        logger.warning(
-            f"ML forecast consistency check: {len(only_api)} rows in API but not in CSV"
-        )
+        logger.warning(f"ML forecast consistency check: {len(only_api)} rows in API but not in CSV")
         is_consistent = False
 
     # Check value mismatches for matching rows
-    both = merged[merged['_merge'] == 'both']
+    both = merged[merged["_merge"] == "both"]
     if len(both) > 0:
-        # Compare Q50 values (main forecast)
+        # Compare forecasted_discharge (median forecast value)
         mismatches = []
         for _, row in both.iterrows():
-            csv_q50 = row.get('Q50')
-            api_q50 = row.get('q50')
-            if pd.notna(csv_q50) and pd.notna(api_q50):
-                if abs(csv_q50 - api_q50) > 0.001:  # Allow small floating point differences
-                    # Get the target date from either merged column
-                    target_date = row.get('target') if pd.notna(row.get('target')) else row.get('date_csv')
-                    mismatches.append({
-                        'code': row['code'],
-                        'target_date': target_date,
-                        'csv_q50': csv_q50,
-                        'api_q50': api_q50
-                    })
+            csv_q50 = row.get("Q50")
+            api_fd = row.get("forecasted_discharge")
+            if pd.notna(csv_q50) and pd.notna(api_fd) and abs(csv_q50 - api_fd) > 0.001:
+                # Get the target date from either merged column
+                target_date = (
+                    row.get("target") if pd.notna(row.get("target")) else row.get("date_csv")
+                )
+                mismatches.append(
+                    {
+                        "code": row["code"],
+                        "target_date": target_date,
+                        "csv_q50": csv_q50,
+                        "api_fd": api_fd,
+                    }
+                )
 
         if mismatches:
             logger.warning(
                 f"ML forecast consistency check: {len(mismatches)} value mismatches found"
             )
             for m in mismatches[:5]:  # Log first 5
-                logger.warning(f"  Code {m['code']}, target {m['target_date']}: CSV={m['csv_q50']}, API={m['api_q50']}")
+                logger.warning(
+                    f"  Code {m['code']}, target {m['target_date']}: CSV={m['csv_q50']}, API={m['api_fd']}"
+                )
             is_consistent = False
 
     if is_consistent:

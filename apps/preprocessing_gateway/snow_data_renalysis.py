@@ -1,9 +1,9 @@
-#USAGE: SAPPHIRE_OPDEV_ENV=True python snow_data_renalysis.py
+# USAGE: SAPPHIRE_OPDEV_ENV=True python snow_data_renalysis.py
 
 
 # --------------------------------------------------------------------
 # Snow Data Reanalysis
-# This script downloads snow data from the Sapphire Data Gateway 
+# This script downloads snow data from the Sapphire Data Gateway
 # for the defined HRU's and variables.
 # The data is then transformed and saved to a csv file.
 # The data is downloaded from 2000-01-01 to the current date - 180 days.
@@ -12,19 +12,15 @@
 # --------------------------------------------------------------------
 # Import Libraries
 # --------------------------------------------------------------------
+import logging
 import os
 import sys
-import json
-import pandas as pd
-import numpy as np
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
-import logging
 from logging.handlers import TimedRotatingFileHandler
-import traceback
 
 # Custom Script for Data Gateway
 import dg_utils
+import pandas as pd
 
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
@@ -32,17 +28,14 @@ import dg_utils
 # client. The API key is stored in a .env file in the root directory of the project.
 # The forecast tools can be used without access to the sapphire data gateay but
 # the full power of the tools is only available with access to the data gateway.
-#pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
-import sapphire_dg_client
-from sapphire_dg_client import SapphireDGClient, snow_model
+# pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
+from sapphire_dg_client import snow_model
 
 # SAPPHIRE API client for writing processed data to the API
 # Optional - if not installed, API writing is skipped
 try:
-    from sapphire_api_client import (
-        SapphirePreprocessingClient,
-        SapphireAPIError
-    )
+    from sapphire_api_client import SapphireAPIError, SapphirePreprocessingClient
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -55,9 +48,9 @@ except ImportError:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
-#print(script_dir)
-#print(forecast_dir)
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
+# print(script_dir)
+# print(forecast_dir)
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
@@ -65,19 +58,18 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
-
 # Set up logging
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # Create the logs directory if it doesn't exist
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 # Create a file handler to write logs to a file
 # A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
+file_handler = TimedRotatingFileHandler("logs/log", when="midnight", interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
 
 # Create a stream handler to print logs to the console
@@ -89,419 +81,365 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
 
 
-def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
+def _check_snow_consistency(csv_data: pd.DataFrame, snow_type: str, hru_code: str) -> bool:
     """
-    Write snow data to SAPPHIRE preprocessing API.
+    Check consistency between CSV data and API data for snow
+    (reanalysis/maintenance mode).
 
-    This function writes the last 30 days of data (maintenance mode behavior).
-    The snow_data_reanalysis module processes historical data which should be
-    synced in maintenance batches.
-
-    Args:
-        data: DataFrame with snow data. Expected columns:
-            - date: date
-            - code: station code
-            - {snow_type}: value (e.g., SWE, HS, RoF)
-            - {snow_type}_1, {snow_type}_2, ... : optional elevation band values
-        snow_type: Type of snow data (SWE, HS, RoF)
-
-    Returns:
-        True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
-    """
-    if not SAPPHIRE_API_AVAILABLE:
-        logger.warning("sapphire-api-client not installed, skipping snow API write")
-        return False
-
-    # Check if API writing is enabled (default: enabled)
-    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
-    if not api_enabled:
-        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
-        return False
-
-    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
-
-    # Health check first - fail fast if API unavailable
-    if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
-
-    if data.empty:
-        logger.info(f"No snow data to write to API ({snow_type})")
-        return False
-
-    # Ensure date column is datetime
-    data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
-
-    # Maintenance mode: write the last 30 days of data
-    cutoff_date = data['date'].max() - timedelta(days=30)
-    data_to_write = data[data['date'] >= cutoff_date]
-    logger.info(f"Writing {len(data_to_write)} snow records for last 30 days ({snow_type})")
-
-    if data_to_write.empty:
-        logger.info(f"No snow data to write ({snow_type})")
-        return False
-
-    # Identify elevation band columns (e.g., SWE_1, SWE_2, ...)
-    value_columns = {}
-    main_value_col = snow_type if snow_type in data_to_write.columns else None
-    for col in data_to_write.columns:
-        if col.startswith(f"{snow_type}_") and col != snow_type:
-            # Extract elevation band number
-            try:
-                band_num = int(col.split("_")[-1])
-                value_columns[band_num] = col
-            except ValueError:
-                pass
-
-    # Prepare records for API
-    records = []
-    for _, row in data_to_write.iterrows():
-        # Parse date
-        date_obj = pd.to_datetime(row['date']) if pd.notna(row.get('date')) else None
-        if date_obj is None:
-            logger.warning(f"Skipping snow row with missing date: {row.to_dict()}")
-            continue
-
-        record = {
-            "snow_type": snow_type.upper(),  # API expects uppercase
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "value": float(row[main_value_col]) if main_value_col and pd.notna(row.get(main_value_col)) else None,
-            "norm": float(row['norm']) if 'norm' in row and pd.notna(row.get('norm')) else None,
-        }
-
-        # Add elevation band values (value1-value14)
-        for band_num, col_name in value_columns.items():
-            if band_num <= 14:  # API supports value1-value14
-                record[f"value{band_num}"] = float(row[col_name]) if pd.notna(row.get(col_name)) else None
-
-        records.append(record)
-
-    # Write to API
-    if records:
-        count = client.write_snow(records)
-        logger.info(f"Successfully wrote {count} snow records to SAPPHIRE API ({snow_type})")
-        print(f"SAPPHIRE API: Successfully wrote {count} snow records ({snow_type})")
-        return True
-    else:
-        logger.info(f"No snow records to write to API ({snow_type})")
-        return False
-
-
-def _check_snow_consistency(csv_data: pd.DataFrame, snow_type: str) -> bool:
-    """
-    Check consistency between CSV data and API data for snow.
-
-    Reads back from the API and compares with the CSV data that was written.
-    Enabled via SAPPHIRE_CONSISTENCY_CHECK=true environment variable.
+    Reads back from the API and compares with the CSV data that was
+    written. Enabled via SAPPHIRE_CONSISTENCY_CHECK=true environment
+    variable.
 
     Args:
         csv_data: DataFrame that was written to CSV
         snow_type: Type of snow data (SWE, HS, RoF)
+        hru_code: HRU code for logging context
 
     Returns:
-        True if consistent (or check disabled), False if inconsistencies found
+        True if consistent (or check disabled), False if
+        inconsistencies found
     """
-    # Check if consistency check is enabled
+    tag = f"CONSISTENCY_CHECK [{snow_type}, HRU {hru_code}]"
+
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if not consistency_check:
         return True
 
     if not SAPPHIRE_API_AVAILABLE:
-        logger.warning("sapphire-api-client not installed, skipping consistency check")
+        logger.warning("%s: sapphire-api-client not installed, skipping", tag)
         return True
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    logger.info(f"SAPPHIRE_CONSISTENCY_CHECK: Comparing API and CSV data for snow ({snow_type})...")
-
-    # Track whether any inconsistencies are found
-    is_consistent = True
-
-    # Get the date range from CSV data
     csv_data = csv_data.copy()
-    csv_data['date'] = pd.to_datetime(csv_data['date'])
+    csv_data["date"] = pd.to_datetime(csv_data["date"])
 
-    # For maintenance mode, we wrote the last 30 days
-    cutoff_date = csv_data['date'].max() - timedelta(days=30)
-    csv_recent = csv_data[csv_data['date'] >= cutoff_date].copy()
+    # Match the write function's 30-day window
+    cutoff_date = csv_data["date"].max() - timedelta(days=30)
+    csv_recent = csv_data[csv_data["date"] >= cutoff_date].copy()
 
     if csv_recent.empty:
-        logger.info(f"No recent data to check consistency for {snow_type}")
+        logger.info("%s: No recent data to check consistency", tag)
         return True
 
-    # Get unique codes
-    codes = csv_recent['code'].unique()
-    min_date = csv_recent['date'].min()
-    max_date = csv_recent['date'].max()
+    codes = csv_recent["code"].unique()
+    min_date = csv_recent["date"].min()
+    max_date = csv_recent["date"].max()
+    csv_val_col = snow_type if snow_type in csv_recent.columns else None
 
-    # Read from API for each code
+    logger.info(
+        "%s: Verifying API data for %s to %s, codes=%s, api_url=%s",
+        tag,
+        min_date.date(),
+        max_date.date(),
+        list(codes),
+        api_url,
+    )
+    if csv_val_col:
+        for code in codes:
+            csv_vals = csv_recent.loc[csv_recent["code"] == code, csv_val_col].tolist()
+            logger.info(
+                "%s: CSV values for code=%s (%d values, last 5): %s",
+                tag,
+                code,
+                len(csv_vals),
+                csv_vals[-5:],
+            )
+
     all_api_data = []
     for code in codes:
         try:
             api_df = client.read_snow(
                 snow_type=snow_type.upper(),
                 code=str(code),
-                start_date=min_date.strftime('%Y-%m-%d'),
-                end_date=max_date.strftime('%Y-%m-%d'),
-                limit=10000
+                start_date=min_date.strftime("%Y-%m-%d"),
+                end_date=max_date.strftime("%Y-%m-%d"),
+                limit=10000,
             )
-            if not api_df.empty:
+            if api_df.empty:
+                logger.warning("%s: API returned 0 rows for code=%s", tag, code)
+            else:
+                val_col = "value" if "value" in api_df.columns else None
+                if val_col:
+                    vals = api_df[val_col].tolist()
+                    logger.info(
+                        "%s: API returned %d rows for code=%s, values (last 5)=%s",
+                        tag,
+                        len(api_df),
+                        code,
+                        vals[-5:],
+                    )
+                else:
+                    logger.info(
+                        "%s: API returned %d rows for code=%s, columns=%s",
+                        tag,
+                        len(api_df),
+                        code,
+                        list(api_df.columns),
+                    )
                 all_api_data.append(api_df)
         except Exception as e:
-            logger.error(f"Error reading snow data from API for code {code}: {e}")
+            logger.error("%s: Error reading from API for code=%s: %s", tag, code, e)
             return False
 
     if not all_api_data:
-        logger.warning(f"SAPPHIRE_CONSISTENCY_CHECK: No data returned from API for {snow_type}")
+        # Diagnostic: check if ANY data exists
+        try:
+            any_data = client.read_snow(snow_type=snow_type.upper(), limit=5)
+            if any_data.empty:
+                logger.warning(
+                    "%s: FAILED - API has NO %s data at all. Check the preprocessing API logs.",
+                    tag,
+                    snow_type.upper(),
+                )
+            else:
+                dates_in_api = sorted(pd.to_datetime(any_data["date"]).dt.date.unique())
+                logger.warning(
+                    "%s: FAILED - No data for %s to %s but API has %s data for other dates: %s",
+                    tag,
+                    min_date.date(),
+                    max_date.date(),
+                    snow_type.upper(),
+                    dates_in_api[:5],
+                )
+        except Exception as e:
+            logger.warning("%s: FAILED - Diagnostic read also failed: %s", tag, e)
         return False
 
     api_data = pd.concat(all_api_data, ignore_index=True)
-    api_data['date'] = pd.to_datetime(api_data['date'])
-    api_data['code'] = api_data['code'].astype(str)
-    csv_recent['code'] = csv_recent['code'].astype(str)
+    api_data["date"] = pd.to_datetime(api_data["date"])
+    api_data["code"] = api_data["code"].astype(str)
+    csv_recent["code"] = csv_recent["code"].astype(str)
 
-    # Compare row counts
+    is_consistent = True
+
     if len(api_data) != len(csv_recent):
         logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: Row count mismatch for {snow_type} - "
-            f"API: {len(api_data)}, CSV: {len(csv_recent)}"
+            "%s: Row count mismatch - API: %d, CSV: %d", tag, len(api_data), len(csv_recent)
         )
         is_consistent = False
 
-    # Compare values
-    # Merge on code and date
     merged = csv_recent.merge(
-        api_data,
-        on=['code', 'date'],
-        how='outer',
-        suffixes=('_csv', '_api'),
-        indicator=True
+        api_data, on=["code", "date"], how="outer", suffixes=("_csv", "_api"), indicator=True
     )
 
-    # Check for rows only in one source
-    only_csv = merged[merged['_merge'] == 'left_only']
-    only_api = merged[merged['_merge'] == 'right_only']
+    only_csv = merged[merged["_merge"] == "left_only"]
+    only_api = merged[merged["_merge"] == "right_only"]
 
     if len(only_csv) > 0:
-        logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: {len(only_csv)} rows in CSV but not in API for {snow_type}"
-        )
+        logger.warning("%s: %d rows in CSV but not in API", tag, len(only_csv))
         is_consistent = False
 
     if len(only_api) > 0:
-        logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: {len(only_api)} rows in API but not in CSV for {snow_type}"
-        )
+        logger.warning("%s: %d rows in API but not in CSV", tag, len(only_api))
         is_consistent = False
 
-    # Compare value column
-    both = merged[merged['_merge'] == 'both']
+    both = merged[merged["_merge"] == "both"]
     if len(both) > 0:
-        # The CSV has the value in a column named by snow_type (e.g., 'SWE')
-        # The API returns it as 'value'
         csv_val_col = snow_type if snow_type in csv_recent.columns else None
-
-        if csv_val_col and 'value' in api_data.columns:
-            csv_values = both[f'{csv_val_col}_csv'] if f'{csv_val_col}_csv' in both.columns else both.get(csv_val_col)
-            api_values = both['value_api'] if 'value_api' in both.columns else both.get('value')
+        if csv_val_col and "value" in api_data.columns:
+            csv_values = both.get(f"{csv_val_col}_csv", both.get(csv_val_col))
+            api_values = both.get("value_api", both.get("value"))
 
             if csv_values is not None and api_values is not None:
-                # Convert to numeric
-                csv_values = pd.to_numeric(csv_values, errors='coerce')
-                api_values = pd.to_numeric(api_values, errors='coerce')
-
-                # Check for value mismatches (tolerance 0.01 for rounding)
+                csv_values = pd.to_numeric(csv_values, errors="coerce")
+                api_values = pd.to_numeric(api_values, errors="coerce")
                 diff = (csv_values - api_values).abs()
                 mismatches = diff[diff > 0.01]
 
                 if len(mismatches) > 0:
                     logger.warning(
-                        f"SAPPHIRE_CONSISTENCY_CHECK: {len(mismatches)} value mismatches for {snow_type} "
-                        f"(max diff: {diff.max():.4f})"
+                        "%s: %d value mismatches (max diff: %.4f)", tag, len(mismatches), diff.max()
                     )
                     is_consistent = False
 
     if is_consistent:
-        logger.info(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED for {snow_type} - API matches CSV")
+        logger.info("%s: PASSED - API matches CSV", tag)
+        print(f"CONSISTENCY_CHECK: PASSED ({snow_type}, HRU {hru_code})")
     else:
-        logger.error(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED for {snow_type} - inconsistencies found")
+        logger.error("%s: FAILED - inconsistencies found", tag)
+        print(f"CONSISTENCY_CHECK: FAILED ({snow_type}, HRU {hru_code}) - see log for details")
 
     return is_consistent
 
 
-def get_snow_data_reanalysis(client, 
-                  hru, 
-                  variable,
-                  start_date, 
-                  end_date,
-                  dg_path, 
-                  save_path):
+def get_snow_data_reanalysis(client, hru, variable, start_date, end_date, dg_path, save_path):
     """
-    Get the snow data for a given HRU and variable from the Sapphire Data Gateway.
-    The snow data is then transformed in a file with following format:
-    |date|variable|code|name|
-    Variables can be SWE, HS, RoF
-    The code is the unique basin identifier, and the name can be code_numhru,
-    for shapefiles with different elevation bands.
+    Get snow data for a given HRU and variable from the Sapphire Data
+    Gateway (reanalysis/historical mode).
 
-    This file will then be saved in the path specified by save_path/variable/HRU_variable.csv
-    There might be already a file with the same name, read it and append  the new file to the old file
-    remove duplicates and sort the file by date and code.
+    The snow data is transformed into a file with format:
+    |date|variable|code|name|
+
+    Variables can be SWE, HS, RoF. If a file already exists, new data
+    is appended and duplicates removed (keeping the latest value).
     """
+    logger.info(
+        "Processing snow reanalysis: HRU %s, %s (%s to %s)", hru, variable, start_date, end_date
+    )
+    print(f"Processing snow reanalysis: HRU {hru}, {variable}")
+
     file_path = os.path.join(save_path, variable, f"{hru}_{variable}.csv")
 
-    # Check if the file already exists
     if os.path.exists(file_path):
         try:
             old_dataframe = pd.read_csv(file_path)
-            old_dataframe['date'] = pd.to_datetime(old_dataframe['date'])
-            old_dataframe = old_dataframe.sort_values(by=['date', 'code'])
+            old_dataframe["date"] = pd.to_datetime(old_dataframe["date"])
+            old_dataframe["code"] = old_dataframe["code"].astype(str)
+            old_dataframe = old_dataframe.sort_values(by=["date", "code"])
+            logger.info(
+                "  Existing CSV: %d rows, dates %s to %s",
+                len(old_dataframe),
+                old_dataframe["date"].min().date(),
+                old_dataframe["date"].max().date(),
+            )
         except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
+            logger.error("Error reading file %s: %s", file_path, e)
             return False
     else:
         old_dataframe = pd.DataFrame()
+        logger.info("  No existing CSV, starting fresh")
 
     try:
         outpath = client.get_snow_reanalysis(
-                hru_code=hru, date=start_date, end_date=end_date,
-                  parameter=variable, 
-                directory = dg_path)
+            hru_code=hru, date=start_date, end_date=end_date, parameter=variable, directory=dg_path
+        )
     except Exception as e:
-        logger.error(f"Error getting snow data for {hru} {variable}: {e}")
+        logger.error(
+            "Error getting reanalysis data from Data Gateway for HRU %s, %s: %s", hru, variable, e
+        )
         return False
-    
-    # Read the data from the file
+
     try:
         df = pd.read_csv(outpath)
     except Exception as e:
-        logger.error(f"Error reading file {outpath}: {e}")
+        logger.error("Error reading downloaded file %s: %s", outpath, e)
         return False
-    
-    # Transform the data
+
     df_transformed = dg_utils.transform_snow_data(df, variable)
+    df_transformed["date"] = pd.to_datetime(df_transformed["date"])
+    logger.info(
+        "  Data Gateway returned %d rows, dates %s to %s",
+        len(df_transformed),
+        df_transformed["date"].min().date(),
+        df_transformed["date"].max().date(),
+    )
 
-    logger.debug(f"Head of transformed data:\n{df_transformed.head()}")
+    logger.debug("Head of transformed data:\n%s", df_transformed.head())
 
-    # Sort the data by date and code
-    df_transformed = df_transformed.sort_values(by=['date', 'code'])
+    df_transformed = df_transformed.sort_values(by=["date", "code"])
 
     df_combined = pd.concat([old_dataframe, df_transformed], ignore_index=True)
-    # Remove duplicates and keep the last value
-    df_combined = df_combined.drop_duplicates(subset=['date', 'code'], keep='last')
-
-    # Sort the data by date and code
-    df_combined = df_combined.sort_values(by=['date', 'code'])
-
-    #round data to 2 decimal places
+    df_combined = df_combined.drop_duplicates(subset=["date", "code"], keep="last")
+    df_combined = df_combined.sort_values(by=["date", "code"])
     df_combined = df_combined.round(2)
 
-    # Save the data to the file
+    logger.info(
+        "  Combined CSV: %d rows, dates %s to %s",
+        len(df_combined),
+        df_combined["date"].min().date(),
+        df_combined["date"].max().date(),
+    )
+
     try:
         df_combined.to_csv(file_path, index=False)
     except Exception as e:
-        logger.error(f"Error saving file {file_path}: {e}")
+        logger.error("Error saving file %s: %s", file_path, e)
         return False
 
-    # Write to SAPPHIRE API (if enabled) - maintenance mode: last 30 days
+    # Write to SAPPHIRE API (if enabled) - maintenance mode: last 30
+    # days
     try:
-        _write_snow_to_api(df_combined, variable)
-        # Run consistency check if enabled
-        _check_snow_consistency(df_combined, variable)
+        written = dg_utils.write_snow_to_api(
+            df_combined,
+            variable,
+            hru,
+            mode="maintenance",
+            reference_date=df_combined["date"].max(),
+        )
+        if written:
+            _check_snow_consistency(df_combined, variable, hru)
     except Exception as e:
-        logger.error(f"Failed to write snow data to SAPPHIRE API for {hru} {variable}: {e}")
-        # Don't fail the entire process - CSV was already written
+        logger.error("Error writing snow data to API (HRU %s, %s): %s", hru, variable, e)
 
     return True
 
 
-
-
 def main():
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
     # SETUP ENVIRONMENT
-    #--------------------------------------------------------------------
+    # --------------------------------------------------------------------
 
     # Specify the path to the .env file
     # Loads the environment variables from the .env file
     sl.load_environment()
 
     # Test if an API key is available and exit the program if it isn't
-    if not os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY'):
-        logger.warning("No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run.")
+    if not os.getenv("ieasyhydroforecast_API_KEY_GATEAWAY"):
+        logger.warning(
+            "No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run."
+        )
         sys.exit(1)
     else:
-        API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
+        API_KEY = os.getenv("ieasyhydroforecast_API_KEY_GATEAWAY")
 
-    API_HOST = os.getenv('SAPPHIRE_DG_HOST')
+    API_HOST = os.getenv("SAPPHIRE_DG_HOST")
 
-    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
-    #output_path for the data from the data gateaway
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    # output_path for the data from the data gateaway
     OUTPUT_PATH_DG = os.path.join(
-        intermediate_data_path,
-        os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG'))
+        intermediate_data_path, os.getenv("ieasyhydroforecast_OUTPUT_PATH_DG")
+    )
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DG):
         os.makedirs(OUTPUT_PATH_DG, exist_ok=True)
 
-    snow_data_path = os.getenv('ieasyhydroforecast_OUTPUT_PATH_SNOW')
-    #OUTPUT_PATH for snow data
-    OUTPUT_PATH_SNOW = os.path.join(
-        intermediate_data_path,
-        snow_data_path)
+    snow_data_path = os.getenv("ieasyhydroforecast_OUTPUT_PATH_SNOW")
+    # OUTPUT_PATH for snow data
+    OUTPUT_PATH_SNOW = os.path.join(intermediate_data_path, snow_data_path)
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_SNOW):
         os.makedirs(OUTPUT_PATH_SNOW, exist_ok=True)
-    
+
     # Get the HRUs for the snow data
-    SNOW_HRUS = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA')
-    SNOW_HRUS = [str(x) for x in SNOW_HRUS.split(',')]
+    SNOW_HRUS = os.getenv("ieasyhydroforecast_HRU_SNOW_DATA")
+    SNOW_HRUS = [str(x) for x in SNOW_HRUS.split(",")]
 
     # Get the snow vars
-    SNOW_VARS = os.getenv('ieasyhydroforecast_SNOW_VARS')
-    SNOW_VARS = [str(x) for x in SNOW_VARS.split(',')]
+    SNOW_VARS = os.getenv("ieasyhydroforecast_SNOW_VARS")
+    SNOW_VARS = [str(x) for x in SNOW_VARS.split(",")]
 
-    logger.debug(f"Extracting snow data for HRUs: {SNOW_HRUS}")
-    logger.debug(f"Extracting snow data for variables: {SNOW_VARS}")
+    logger.info("Snow reanalysis configuration:")
+    logger.info("  HRUs: %s", SNOW_HRUS)
+    logger.info("  Variables: %s", SNOW_VARS)
+    logger.info("  Output path (DG): %s", OUTPUT_PATH_DG)
+    logger.info("  Output path (snow): %s", OUTPUT_PATH_SNOW)
 
-    logger.debug(f"Output path of DG data: {OUTPUT_PATH_DG}")
-    logger.debug(f"Output path of snow data: {OUTPUT_PATH_SNOW}")
-    #iterate through the snow vars and check if a directory exists
-    # if not, create it
+    # Ensure variable directories exist
     for snow_var in SNOW_VARS:
         snow_var_dir = os.path.join(OUTPUT_PATH_SNOW, snow_var)
         if not os.path.exists(snow_var_dir):
             os.makedirs(snow_var_dir, exist_ok=True)
-            logger.debug(f"Creating directory for snow var: {snow_var_dir}")
-        else:
-            logger.debug(f"Directory for snow var already exists: {snow_var_dir}")
+            logger.info("  Created directory: %s", snow_var_dir)
 
-    client = snow_model.SapphireSnowModelClient(
-        api_key=API_KEY,
-        host = API_HOST)
-    
+    client = snow_model.SapphireSnowModelClient(api_key=API_KEY, host=API_HOST)
+
     # today - 180 days
     start_date = "2000-01-01"
-    start_date_dt = datetime.strptime(start_date, '%Y-%m-%d')
+    start_date_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_date_dt = datetime.today() - timedelta(days=180)
-    end_date = end_date_dt.strftime('%Y-%m-%d')
-    
-    logger.debug(f"Date for snow data from: {start_date} to {end_date}")
+    end_date = end_date_dt.strftime("%Y-%m-%d")
+
+    logger.info("Date range: %s to %s", start_date, end_date)
 
     # Define 5 year intervals between the start and end date
     date_intervals = []
     year_start = start_date_dt.year
     year_end = end_date_dt.year
-
-    logger.debug(f"Batches of 5 years {date_intervals}")
 
     this_start = year_start
     while this_start <= year_end:
@@ -513,27 +451,38 @@ def main():
         date_intervals.append((f"{this_start}-01-01", f"{this_end}-01-01"))
         this_start = this_end
 
-    # Iterate through the HRUs and get the snow data
-    for start_date, end_date in date_intervals:
-        logger.debug(f"Batch {start_date} to {end_date}")
+    logger.info(
+        "Processing %d date batches x %d HRUs x %d variables",
+        len(date_intervals),
+        len(SNOW_HRUS),
+        len(SNOW_VARS),
+    )
+
+    total = len(date_intervals) * len(SNOW_HRUS) * len(SNOW_VARS)
+    count = 0
+    for batch_idx, (start_date, end_date) in enumerate(date_intervals, 1):
+        logger.info(
+            "=== Batch %d/%d: %s to %s ===", batch_idx, len(date_intervals), start_date, end_date
+        )
         for hru in SNOW_HRUS:
             for snow_var in SNOW_VARS:
-                logger.debug(f"Getting snow data for HRU: {hru} and variable: {snow_var}")
-                # Get the snow data
+                count += 1
+                logger.info("--- [%d/%d] HRU %s, %s ---", count, total, hru, snow_var)
                 success = get_snow_data_reanalysis(
                     client=client,
-                    hru= hru, 
-                    variable= snow_var,
-                    start_date= start_date,
-                    end_date= end_date,
-                    dg_path= OUTPUT_PATH_DG,
-                    save_path= OUTPUT_PATH_SNOW)
+                    hru=hru,
+                    variable=snow_var,
+                    start_date=start_date,
+                    end_date=end_date,
+                    dg_path=OUTPUT_PATH_DG,
+                    save_path=OUTPUT_PATH_SNOW,
+                )
                 if not success:
-                    logger.error(f"Error getting snow data for HRU: {hru} and variable: {snow_var}")
+                    logger.error("Failed to get reanalysis data for HRU %s, %s", hru, snow_var)
 
-    logger.info('Finished getting snow data')
+    logger.info("Snow reanalysis processing complete (%d tasks)", total)
 
-    
+
 if __name__ == "__main__":
     # Run the main function
     main()

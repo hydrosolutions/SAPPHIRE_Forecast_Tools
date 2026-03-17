@@ -201,6 +201,7 @@ services:
     volumes:
       - ./services/postprocessing:/code
       - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
+      - ${DATA_PATH}/config:/config
 
   user-api:
     build:

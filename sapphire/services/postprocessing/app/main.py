@@ -1,14 +1,26 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List
+from sqlalchemy.orm import Session
 
 from app import crud
-from app.database import engine, Base, get_db
-from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate, BulletinResponse, BulletinBulkCreate, LRVisibilityResponse, LRVisibilityBulkCreate
-from app.logger import logger
 from app.config import settings
+from app.database import Base, engine, get_db
+from app.logger import logger
+from app.schemas import (
+    BulletinBulkCreate,
+    BulletinResponse,
+    ForecastBulkCreate,
+    ForecastResponse,
+    LongForecastBulkCreate,
+    LongForecastResponse,
+    LRForecastBulkCreate,
+    LRForecastResponse,
+    LRVisibilityBulkCreate,
+    LRVisibilityResponse,
+    SkillMetricBulkCreate,
+    SkillMetricResponse,
+)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -18,7 +30,7 @@ app = FastAPI(
     version=settings.version,
     description="API for postprocessing forecast data and skill metrics for SAPPHIRE Forecast Tools",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 
@@ -27,7 +39,7 @@ def root():
     return {
         "message": "Welcome to the Postprocessing Service API",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
 
 
@@ -43,35 +55,32 @@ def readiness_check(db: Session = Depends(get_db)):
     try:
         # Try to execute a simple query
         db.execute(text("SELECT 1"))
-        return {
-            "status": "ready",
-            "service": "Postprocessing Service API",
-            "database": "connected"
-        }
+        return {"status": "ready", "service": "Postprocessing Service API", "database": "connected"}
     except Exception as e:
         logger.error(f"Readiness check failed: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service not ready"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service not ready"
         )
 
 
-@app.post("/forecast/",
-          response_model=List[ForecastResponse],
-          status_code=status.HTTP_201_CREATED,
-          tags=["Forecast"])
+@app.post(
+    "/forecast/",
+    response_model=list[ForecastResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["Forecast"],
+)
 def create_forecast(bulk_data: ForecastBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple forecasts in bulk"""
     try:
         return crud.create_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update forecasts in bulk"
+            detail=f"Failed to create or update forecasts in bulk: {str(e)}",
         )
 
 
-@app.get("/forecast/", response_model=List[ForecastResponse], tags=["Forecast"])
+@app.get("/forecast/", response_model=list[ForecastResponse], tags=["Forecast"])
 def read_forecast(
     horizon: str = None,
     code: str = None,
@@ -83,7 +92,7 @@ def read_forecast(
     target: str = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve forecasts with optional filtering by horizon_type, code, model_type, date range"""
     try:
@@ -98,32 +107,33 @@ def read_forecast(
             end_target=end_target,
             target=target,
             skip=skip,
-            limit=limit
+            limit=limit,
         )
         return forecasts
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve forecasts"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve forecasts"
         )
 
 
-@app.post("/long-forecast/",
-          response_model=List[LongForecastResponse],
-          status_code=status.HTTP_201_CREATED,
-          tags=["LongForecast"])
+@app.post(
+    "/long-forecast/",
+    response_model=list[LongForecastResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["LongForecast"],
+)
 def create_long_forecast(bulk_data: LongForecastBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple long forecasts in bulk"""
     try:
         return crud.create_long_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update long forecasts in bulk"
+            detail=f"Failed to create or update long forecasts in bulk: {str(e)}",
         )
 
 
-@app.get("/long-forecast/", response_model=List[LongForecastResponse], tags=["LongForecast"])
+@app.get("/long-forecast/", response_model=list[LongForecastResponse], tags=["LongForecast"])
 def read_long_forecast(
     horizon_type: str = None,
     horizon_value: int = None,
@@ -135,7 +145,7 @@ def read_long_forecast(
     valid_to: str = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve long forecasts with optional filtering by horizon type and value, code, model_type, date range, valid_from and valid_to"""
     try:
@@ -150,32 +160,34 @@ def read_long_forecast(
             valid_from=valid_from,
             valid_to=valid_to,
             skip=skip,
-            limit=limit
+            limit=limit,
         )
         return long_forecasts
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve long forecasts"
+            detail="Failed to retrieve long forecasts",
         )
 
 
-@app.post("/lr-forecast/",
-          response_model=List[LRForecastResponse],
-          status_code=status.HTTP_201_CREATED,
-          tags=["LRForecast"])
+@app.post(
+    "/lr-forecast/",
+    response_model=list[LRForecastResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["LRForecast"],
+)
 def create_lr_forecast(bulk_data: LRForecastBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple LR forecasts in bulk"""
     try:
         return crud.create_lr_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update LR forecasts in bulk"
+            detail=f"Failed to create or update LR forecasts in bulk: {str(e)}",
         )
 
 
-@app.get("/lr-forecast/", response_model=List[LRForecastResponse], tags=["LRForecast"])
+@app.get("/lr-forecast/", response_model=list[LRForecastResponse], tags=["LRForecast"])
 def read_lr_forecast(
     horizon: str = None,
     code: str = None,
@@ -183,7 +195,7 @@ def read_lr_forecast(
     end_date: str = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve LR forecasts with optional filtering by horizon_type, code, date range"""
     try:
@@ -194,32 +206,34 @@ def read_lr_forecast(
             start_date=start_date,
             end_date=end_date,
             skip=skip,
-            limit=limit
+            limit=limit,
         )
         return lr_forecasts
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve LR forecasts"
+            detail="Failed to retrieve LR forecasts",
         )
 
 
-@app.post("/skill-metric/",
-          response_model=List[SkillMetricResponse],
-          status_code=status.HTTP_201_CREATED,
-          tags=["SkillMetric"])
+@app.post(
+    "/skill-metric/",
+    response_model=list[SkillMetricResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["SkillMetric"],
+)
 def create_skill_metric(bulk_data: SkillMetricBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple skill metrics in bulk"""
     try:
         return crud.create_skill_metric(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update skill metrics in bulk"
+            detail=f"Failed to create or update skill metrics in bulk: {str(e)}",
         )
 
 
-@app.get("/skill-metric/", response_model=List[SkillMetricResponse], tags=["SkillMetric"])
+@app.get("/skill-metric/", response_model=list[SkillMetricResponse], tags=["SkillMetric"])
 def read_skill_metric(
     horizon: str = None,
     code: str = None,
@@ -228,7 +242,7 @@ def read_skill_metric(
     end_date: str = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve skill metrics with optional filtering by horizon_type, code, model_type, date range"""
     try:
@@ -240,17 +254,22 @@ def read_skill_metric(
             start_date=start_date,
             end_date=end_date,
             skip=skip,
-            limit=limit
+            limit=limit,
         )
         return skill_metrics
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve skill metrics"
+            detail="Failed to retrieve skill metrics",
         )
 
 
-@app.post("/bulletin/", response_model=List[BulletinResponse], status_code=status.HTTP_201_CREATED, tags=["Bulletin"])
+@app.post(
+    "/bulletin/",
+    response_model=list[BulletinResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["Bulletin"],
+)
 def create_bulletin(bulk_data: BulletinBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple bulletins in bulk"""
     try:
@@ -258,34 +277,28 @@ def create_bulletin(bulk_data: BulletinBulkCreate, db: Session = Depends(get_db)
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update bulletins in bulk"
+            detail="Failed to create or update bulletins in bulk",
         )
 
 
-@app.get("/bulletin/", response_model=List[BulletinResponse], tags=["Bulletin"])
+@app.get("/bulletin/", response_model=list[BulletinResponse], tags=["Bulletin"])
 def read_bulletin(
     horizon: str = None,
     year: int = None,
     horizon_value: int = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve bulletins with optional filtering by horizon type and value, year, code, model_type, date range"""
     try:
         bulletins = crud.get_bulletin(
-            db=db,
-            horizon=horizon,
-            year=year,
-            horizon_value=horizon_value,
-            skip=skip,
-            limit=limit
+            db=db, horizon=horizon, year=year, horizon_value=horizon_value, skip=skip, limit=limit
         )
         return bulletins
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve bulletins"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve bulletins"
         )
 
 
@@ -331,11 +344,11 @@ def create_lr_visibility(bulk_data: LRVisibilityBulkCreate, db: Session = Depend
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update LR visibility records in bulk"
+            detail="Failed to create or update LR visibility records in bulk",
         )
 
 
-@app.get("/lr-visibility/", response_model=List[LRVisibilityResponse], tags=["LRVisibility"])
+@app.get("/lr-visibility/", response_model=list[LRVisibilityResponse], tags=["LRVisibility"])
 def read_lr_visibility(
     horizon: str = None,
     code: str = None,
@@ -343,7 +356,7 @@ def read_lr_visibility(
     horizon_value: int = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Retrieve LR visibility records with optional filtering by horizon_type, code, month, horizon_value, year"""
     try:
@@ -354,11 +367,11 @@ def read_lr_visibility(
             month=month,
             horizon_value=horizon_value,
             skip=skip,
-            limit=limit
+            limit=limit,
         )
         return lr_visibility_records
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve LR visibility records"
+            detail="Failed to retrieve LR visibility records",
         )
