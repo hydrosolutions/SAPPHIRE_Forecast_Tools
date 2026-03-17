@@ -1,10 +1,9 @@
 # INFRA-013: Postprocessing API container crashes on bulk forecast writes
 
-**Status**: Draft — Root cause identified (2026-03-16), fix not yet implemented.
+**Status**: Complete — Client-side workaround (batch_size=1) verified 2026-03-17. 892,381 ML gap-fill records written successfully. Server-side root cause documented for colleague.
 **Module**: infra (sapphire/services/postprocessing)
 **Priority**: Critical
 **Labels**: `bug`, `api-integration`, `infrastructure`, `data-loss`
-**Blocked By**: Colleague (sapphire/services/ ownership boundary)
 
 ---
 
