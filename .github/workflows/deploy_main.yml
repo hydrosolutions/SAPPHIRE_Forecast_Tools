@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "maxat_sapphire_2" ]
+    branches: [ "maxat_sapphire_2_temp" ]
   #pull_request:
   #  branches: [ "main" ]
 
