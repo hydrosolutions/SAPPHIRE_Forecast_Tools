@@ -285,6 +285,7 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
       - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
+      - ${ieasyhydroforecast_data_ref_dir}/SAPPHIRE_Forecast_Tools/sapphire:/SAPPHIRE_Forecast_Tools/sapphire
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
       - com.centurylinklabs.watchtower.enable=true
