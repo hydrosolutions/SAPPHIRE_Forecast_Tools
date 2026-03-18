@@ -207,15 +207,15 @@ class BulletinBase(BaseModel):
     code: str
     model_type: ModelType
 
-    basin_name: Optional[str] = None
-    station_label: Optional[str] = None
-    forecasted_discharge: Optional[float] = None
-    fc_lower: Optional[float] = None
-    fc_upper: Optional[float] = None
-    delta: Optional[float] = None
-    sdivsigma: Optional[float] = None
-    mae: Optional[float] = None
-    accuracy: Optional[float] = None
+    basin_name: str | None = None
+    station_label: str | None = None
+    forecasted_discharge: float | None = None
+    fc_lower: float | None = None
+    fc_upper: float | None = None
+    delta: float | None = None
+    sdivsigma: float | None = None
+    mae: float | None = None
+    accuracy: float | None = None
 
 
 class BulletinCreate(BulletinBase):
