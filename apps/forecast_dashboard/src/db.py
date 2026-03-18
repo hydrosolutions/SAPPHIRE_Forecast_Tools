@@ -65,7 +65,7 @@ def _read_data(service_type: str, data_type: str, params: dict = None) -> pd.Dat
     Args:
         service_type: 'preprocessing' or 'postprocessing'
         data_type: 'runoff', 'hydrograph', 'meteo', 'forecast',
-                   'lr-forecast', 'skill-metric', 'snow'
+                   'lr-forecast', 'skill-metric', 'snow', 'bulletin'
         params: Query parameters forwarded to the API.
     """
     url = f"{API_BASE}/{service_type}/{data_type}/"
@@ -77,6 +77,63 @@ def _read_data(service_type: str, data_type: str, params: dict = None) -> pd.Dat
         df["date"] = pd.to_datetime(df["date"])
     # print("### dbg: _read_data:", df)
     return df.convert_dtypes()
+
+
+def _sanitize_records(records: list[dict]) -> list[dict]:
+    """Replace float NaN / ±Inf with None so records are JSON-serializable."""
+    import math
+    def _clean(v):
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+    return [{k: _clean(v) for k, v in rec.items()} for rec in records]
+
+
+def _save_data(service_type: str, data_type: str, records: list[dict]) -> None:
+    """Upsert a list of records via POST to the backend API.
+
+    Args:
+        service_type: 'preprocessing' or 'postprocessing'
+        data_type: API resource name, e.g. 'bulletin'
+        records: List of dicts to send as {"data": records}
+    """
+    if not records:
+        logger.info("_save_data called with empty records — nothing to send.")
+        return
+
+    records = _sanitize_records(records)
+    url = f"{API_BASE}/{service_type}/{data_type}/"
+    try:
+        resp = requests.post(url, json={"data": records}, timeout=API_TIMEOUT)
+        resp.raise_for_status()
+        logger.info("Saved %d records to %s/%s/", len(records), service_type, data_type)
+    except Exception as e:
+        logger.error("Error saving records to %s/%s/: %s", service_type, data_type, e)
+        raise
+
+
+def _delete_data(service_type: str, data_type: str, params: dict) -> None:
+    """Delete a single record via DELETE from the backend API.
+
+    Treats HTTP 204 (deleted) and 404 (already gone) as success.
+
+    Args:
+        service_type: 'preprocessing' or 'postprocessing'
+        data_type: API resource name, e.g. 'bulletin'
+        params: Query parameters that identify the record to delete.
+    """
+    url = f"{API_BASE}/{service_type}/{data_type}/"
+    try:
+        resp = requests.delete(url, params=params, timeout=API_TIMEOUT)
+        if resp.status_code not in (204, 404):
+            resp.raise_for_status()
+        logger.info("Deleted record from %s/%s/ params=%s", service_type, data_type, params)
+    except Exception as e:
+        logger.error(
+            "Error deleting record from %s/%s/ params=%s: %s",
+            service_type, data_type, params, e,
+        )
+        raise
 
 # ---------------------------------------------------------------------------
 # Individual data fetchers

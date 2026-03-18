@@ -1,132 +1,48 @@
-from sqlalchemy import and_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from typing import List, Optional
 
+from app.models import Forecast, LongForecast, LRForecast, SkillMetric, Bulletin, LRVisibility
+from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate, BulletinBulkCreate, LRVisibilityBulkCreate
 from app.logger import logger
-from app.models import Bulletin, Forecast, LongForecast, LRForecast, LRVisibility, SkillMetric
-from app.schemas import (
-    BulletinBulkCreate,
-    ForecastBulkCreate,
-    LongForecastBulkCreate,
-    LRForecastBulkCreate,
-    LRVisibilityBulkCreate,
-    SkillMetricBulkCreate,
-)
-
-try:
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-    PG_AVAILABLE = True
-except ImportError:
-    PG_AVAILABLE = False
 
 
-def _bulk_upsert(db: Session, model, bulk_items, unique_keys, constraint_name):
-    """Generic batch upsert using PostgreSQL ON CONFLICT DO UPDATE.
+def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> List[Forecast]:
+    """Create or update multiple forecasts in bulk (upsert based on horizon_type, code, model_type, date)"""
+    try:
+        db_forecasts = []
 
-    Falls back to N+1 ORM pattern if PostgreSQL dialect is not available.
+        for item in bulk_data.data:
+            # Check if a record with the same (horizon_type, code, model_type, date) exists
+            existing_forecast = db.query(Forecast).filter(
+                Forecast.horizon_type == item.horizon_type,
+                Forecast.code == item.code,
+                Forecast.model_type == item.model_type,
+                Forecast.date == item.date,
+                Forecast.target == item.target
+            ).first()
 
-    Args:
-        db: SQLAlchemy session.
-        model: ORM model class (e.g. Forecast).
-        bulk_items: List of Pydantic schema objects with .model_dump().
-        unique_keys: List of column names forming the unique constraint.
-        constraint_name: Name of the unique constraint in the DB.
+            if existing_forecast:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_forecast, key, value)
+                db_forecasts.append(existing_forecast)
+                logger.info(f"Updated forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
+            else:
+                # Create new record
+                new_forecast = Forecast(**item.model_dump())
+                db.add(new_forecast)
+                db_forecasts.append(new_forecast)
+                logger.info(f"Created forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
 
-    Returns:
-        List of ORM objects (freshly queried after upsert).
-    """
-    if not bulk_items:
-        return []
-
-    records = [item.model_dump() for item in bulk_items]
-
-    # Determine which columns to update (all except the unique keys and 'id')
-    all_keys = set(records[0].keys())
-    update_cols = all_keys - set(unique_keys) - {"id"}
-
-    use_pg = PG_AVAILABLE and "postgresql" in str(db.bind.url)
-
-    if use_pg:
-        # PostgreSQL batch upsert: 1 INSERT + 1 SELECT instead of N+1
-        stmt = pg_insert(model).values(records)
-        if update_cols:
-            stmt = stmt.on_conflict_do_update(
-                constraint=constraint_name,
-                set_={col: stmt.excluded[col] for col in update_cols},
-            )
-        else:
-            stmt = stmt.on_conflict_do_nothing()
-        db.execute(stmt)
         db.commit()
 
-        # Bulk SELECT to return the upserted objects
-        # Build filter for all unique key combinations
-        if len(records) == 1:
-            r = records[0]
-            conditions = and_(*[getattr(model, k) == r[k] for k in unique_keys])
-            results = db.query(model).filter(conditions).all()
-        else:
-            # For large batches, query all matching records efficiently
-            # Use IN-list filtering on the first unique key, then filter in Python
-            first_key = unique_keys[0]
-            first_key_values = list({r[first_key] for r in records})
-            candidates = (
-                db.query(model).filter(getattr(model, first_key).in_(first_key_values)).all()
-            )
+        # Refresh all forecasts to get updated state
+        for forecast in db_forecasts:
+            db.refresh(forecast)
 
-            # Build a set of unique key tuples for fast lookup
-            record_keys = {tuple(r[k] for k in unique_keys) for r in records}
-            results = [
-                obj
-                for obj in candidates
-                if tuple(getattr(obj, k) for k in unique_keys) in record_keys
-            ]
-
-        logger.info(f"Batch upserted {len(records)} {model.__tablename__} records")
-        return results
-    else:
-        # Fallback: N+1 ORM pattern (for SQLite tests or non-PG backends)
-        return _fallback_upsert(db, model, bulk_items, unique_keys)
-
-
-def _fallback_upsert(db, model, bulk_items, unique_keys):
-    """Original N+1 upsert pattern for non-PostgreSQL backends."""
-    db_objects = []
-    for item in bulk_items:
-        data = item.model_dump()
-        filters = [getattr(model, k) == data[k] for k in unique_keys]
-        existing = db.query(model).filter(*filters).first()
-
-        if existing:
-            for key, value in data.items():
-                setattr(existing, key, value)
-            db_objects.append(existing)
-        else:
-            new_obj = model(**data)
-            db.add(new_obj)
-            db.flush()
-            db_objects.append(new_obj)
-
-    db.commit()
-    for obj in db_objects:
-        db.refresh(obj)
-    return db_objects
-
-
-def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> list[Forecast]:
-    """Create or update multiple forecasts in bulk (upsert based on horizon_type, code, model_type, date, target)"""
-    try:
-        unique_keys = ["horizon_type", "code", "model_type", "date", "target"]
-        results = _bulk_upsert(
-            db,
-            Forecast,
-            bulk_data.data,
-            unique_keys,
-            "uq_forecasts_horizon_code_model_date_target",
-        )
-        logger.info(f"Processed {len(results)} forecasts in bulk")
-        return results
+        logger.info(f"Processed {len(db_forecasts)} forecasts in bulk")
+        return db_forecasts
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error creating/updating forecasts in bulk: {str(e)}", exc_info=True)
@@ -135,17 +51,17 @@ def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> list[Forecast
 
 def get_forecast(
     db: Session,
-    horizon: str | None = None,
-    code: str | None = None,
-    model: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    start_target: str | None = None,
-    end_target: str | None = None,
-    target: str | None = None,
+    horizon: Optional[str] = None,
+    code: Optional[str] = None,
+    model: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_target: Optional[str] = None,
+    end_target: Optional[str] = None,
+    target: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[Forecast]:
+    limit: int = 100
+) -> List[Forecast]:
     """Retrieve forecasts with optional filtering by horizon_type, code, model_type, date range, and target range"""
     try:
         query = db.query(Forecast)
@@ -174,27 +90,44 @@ def get_forecast(
         raise
 
 
-def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> list[LongForecast]:
+def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> List[LongForecast]:
     """Create or update multiple long forecasts in bulk (upsert based on horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)"""
     try:
-        unique_keys = [
-            "horizon_type",
-            "horizon_value",
-            "code",
-            "date",
-            "model_type",
-            "valid_from",
-            "valid_to",
-        ]
-        results = _bulk_upsert(
-            db,
-            LongForecast,
-            bulk_data.data,
-            unique_keys,
-            "uq_long_forecasts_horizon_type_value_code_date_model_from_to",
-        )
-        logger.info(f"Processed {len(results)} long forecasts in bulk")
-        return results
+        db_long_forecasts = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same (horizon_type, horizon_value, code, date, model_type, valid_from, valid_to) exists
+            existing_long_forecast = db.query(LongForecast).filter(
+                LongForecast.horizon_type == item.horizon_type,
+                LongForecast.horizon_value == item.horizon_value,
+                LongForecast.code == item.code,
+                LongForecast.date == item.date,
+                LongForecast.model_type == item.model_type,
+                LongForecast.valid_from == item.valid_from,
+                LongForecast.valid_to == item.valid_to
+            ).first()
+
+            if existing_long_forecast:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_long_forecast, key, value)
+                db_long_forecasts.append(existing_long_forecast)
+                logger.info(f"Updated long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+            else:
+                # Create new record
+                new_long_forecast = LongForecast(**item.model_dump())
+                db.add(new_long_forecast)
+                db_long_forecasts.append(new_long_forecast)
+                logger.info(f"Created long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+
+        db.commit()
+
+        # Refresh all long forecasts to get updated state
+        for long_forecast in db_long_forecasts:
+            db.refresh(long_forecast)
+
+        logger.info(f"Processed {len(db_long_forecasts)} long forecasts in bulk")
+        return db_long_forecasts
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error creating/updating long forecasts in bulk: {str(e)}", exc_info=True)
@@ -203,17 +136,17 @@ def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> list
 
 def get_long_forecast(
     db: Session,
-    horizon_type: str | None = None,
-    horizon_value: int | None = None,
-    code: str | None = None,
-    model: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    valid_from: str | None = None,
-    valid_to: str | None = None,
+    horizon_type: Optional[str] = None,
+    horizon_value: Optional[int] = None,
+    code: Optional[str] = None,
+    model: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    valid_from: Optional[str] = None,
+    valid_to: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[LongForecast]:
+    limit: int = 100
+) -> List[LongForecast]:
     """Retrieve long forecasts with optional filtering by horizon type and value, code, model_type, date range, valid_from and valid_to"""
     try:
         query = db.query(LongForecast)
@@ -235,28 +168,47 @@ def get_long_forecast(
             query = query.filter(LongForecast.valid_to <= valid_to)
 
         results = query.offset(skip).limit(limit).all()
-        logger.info(
-            f"Fetched {len(results)} long forecasts (code={code}, skip={skip}, limit={limit})"
-        )
+        logger.info(f"Fetched {len(results)} long forecasts (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching long forecasts: {str(e)}", exc_info=True)
         raise
 
 
-def create_lr_forecast(db: Session, bulk_data: LRForecastBulkCreate) -> list[LRForecast]:
+def create_lr_forecast(db: Session, bulk_data: LRForecastBulkCreate) -> List[LRForecast]:
     """Create or update multiple LR forecasts in bulk (upsert based on horizon_type, code, date)"""
     try:
-        unique_keys = ["horizon_type", "code", "date"]
-        results = _bulk_upsert(
-            db,
-            LRForecast,
-            bulk_data.data,
-            unique_keys,
-            "uq_lr_forecasts_horizon_code_date",
-        )
-        logger.info(f"Processed {len(results)} LR forecasts in bulk")
-        return results
+        db_lr_forecasts = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same (horizon_type, code, date) exists
+            existing_lr_forecast = db.query(LRForecast).filter(
+                LRForecast.horizon_type == item.horizon_type,
+                LRForecast.code == item.code,
+                LRForecast.date == item.date
+            ).first()
+
+            if existing_lr_forecast:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_lr_forecast, key, value)
+                db_lr_forecasts.append(existing_lr_forecast)
+                logger.info(f"Updated LR forecast: {item.horizon_type}, {item.code}, {item.date}")
+            else:
+                # Create new record
+                new_lr_forecast = LRForecast(**item.model_dump())
+                db.add(new_lr_forecast)
+                db_lr_forecasts.append(new_lr_forecast)
+                logger.info(f"Created LR forecast: {item.horizon_type}, {item.code}, {item.date}")
+
+        db.commit()
+
+        # Refresh all LR forecasts to get updated state
+        for lr_forecast in db_lr_forecasts:
+            db.refresh(lr_forecast)
+
+        logger.info(f"Processed {len(db_lr_forecasts)} LR forecasts in bulk")
+        return db_lr_forecasts
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error creating/updating LR forecasts in bulk: {str(e)}", exc_info=True)
@@ -265,13 +217,13 @@ def create_lr_forecast(db: Session, bulk_data: LRForecastBulkCreate) -> list[LRF
 
 def get_lr_forecast(
     db: Session,
-    horizon: str | None = None,
-    code: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
+    horizon: Optional[str] = None,
+    code: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[LRForecast]:
+    limit: int = 100
+) -> List[LRForecast]:
     """Retrieve LR forecasts with optional filtering by horizon_type, code, and date range"""
     try:
         query = db.query(LRForecast)
@@ -285,28 +237,51 @@ def get_lr_forecast(
             query = query.filter(LRForecast.date <= end_date)
 
         results = query.offset(skip).limit(limit).all()
-        logger.info(
-            f"Fetched {len(results)} LR forecasts (code={code}, skip={skip}, limit={limit})"
-        )
+        logger.info(f"Fetched {len(results)} LR forecasts (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching LR forecasts: {str(e)}", exc_info=True)
         raise
 
 
-def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> list[SkillMetric]:
+def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[SkillMetric]:
     """Create or update multiple skill metrics in bulk (upsert based on horizon_type, code, model_type, date, horizon_in_year)"""
     try:
-        unique_keys = ["horizon_type", "code", "model_type", "date", "horizon_in_year"]
-        results = _bulk_upsert(
-            db,
-            SkillMetric,
-            bulk_data.data,
-            unique_keys,
-            "uq_skill_metrics_horizon_code_model_date_horizon",
-        )
-        logger.info(f"Processed {len(results)} skill metrics in bulk")
-        return results
+        db_skill_metrics = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same unique constraint fields exists
+            # Note: We flush after each add so queries find pending records in the same batch
+            existing_skill_metric = db.query(SkillMetric).filter(
+                SkillMetric.horizon_type == item.horizon_type,
+                SkillMetric.code == item.code,
+                SkillMetric.model_type == item.model_type,
+                SkillMetric.date == item.date,
+                SkillMetric.horizon_in_year == item.horizon_in_year
+            ).first()
+
+            if existing_skill_metric:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_skill_metric, key, value)
+                db_skill_metrics.append(existing_skill_metric)
+                logger.info(f"Updated skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
+            else:
+                # Create new record
+                new_skill_metric = SkillMetric(**item.model_dump())
+                db.add(new_skill_metric)
+                db.flush()  # Flush so subsequent queries find this pending record
+                db_skill_metrics.append(new_skill_metric)
+                logger.info(f"Created skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
+
+        db.commit()
+
+        # Refresh all skill metrics to get updated state
+        for skill_metric in db_skill_metrics:
+            db.refresh(skill_metric)
+
+        logger.info(f"Processed {len(db_skill_metrics)} skill metrics in bulk")
+        return db_skill_metrics
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error creating/updating skill metrics in bulk: {str(e)}", exc_info=True)
@@ -315,14 +290,14 @@ def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> list[S
 
 def get_skill_metric(
     db: Session,
-    horizon: str | None = None,
-    code: str | None = None,
-    model: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
+    horizon: Optional[str] = None,
+    code: Optional[str] = None,
+    model: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[SkillMetric]:
+    limit: int = 100
+) -> List[SkillMetric]:
     """Retrieve skill metrics with optional filtering by horizon_type, code, model_type, and date range"""
     try:
         query = db.query(SkillMetric)
@@ -338,51 +313,41 @@ def get_skill_metric(
             query = query.filter(SkillMetric.date <= end_date)
 
         results = query.offset(skip).limit(limit).all()
-        logger.info(
-            f"Fetched {len(results)} skill metrics (code={code}, skip={skip}, limit={limit})"
-        )
+        logger.info(f"Fetched {len(results)} skill metrics (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching skill metrics: {str(e)}", exc_info=True)
         raise
 
 
-def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> list[Bulletin]:
+def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin]:
     """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code, model_type)"""
     try:
         db_bulletins = []
 
         for item in bulk_data.data:
             # Check if a record with the same unique constraint fields exists
-            existing_bulletin = (
-                db.query(Bulletin)
-                .filter(
-                    Bulletin.horizon_type == item.horizon_type,
-                    Bulletin.year == item.year,
-                    Bulletin.horizon_value == item.horizon_value,
-                    Bulletin.code == item.code,
-                    Bulletin.model_type == item.model_type,
-                )
-                .first()
-            )
+            existing_bulletin = db.query(Bulletin).filter(
+                Bulletin.horizon_type == item.horizon_type,
+                Bulletin.year == item.year,
+                Bulletin.horizon_value == item.horizon_value,
+                Bulletin.code == item.code,
+                Bulletin.model_type == item.model_type
+            ).first()
 
             if existing_bulletin:
                 # Update existing record
                 for key, value in item.model_dump().items():
                     setattr(existing_bulletin, key, value)
                 db_bulletins.append(existing_bulletin)
-                logger.info(
-                    f"Updated bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}"
-                )
+                logger.info(f"Updated bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
             else:
                 # Create new record
                 new_bulletin = Bulletin(**item.model_dump())
                 db.add(new_bulletin)
                 db.flush()  # Flush so subsequent queries find this pending record
                 db_bulletins.append(new_bulletin)
-                logger.info(
-                    f"Created bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}"
-                )
+                logger.info(f"Created bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
 
         db.commit()
 
@@ -400,12 +365,12 @@ def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> list[Bulletin
 
 def get_bulletin(
     db: Session,
-    horizon: str | None = None,
-    year: int | None = None,
-    horizon_value: int | None = None,
+    horizon: Optional[str] = None,
+    year: Optional[int] = None,
+    horizon_value: Optional[int] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[Bulletin]:
+    limit: int = 100
+) -> List[Bulletin]:
     """Retrieve bulletins with optional filtering by horizon_type, year, horizon_value, code, and model_type"""
     try:
         query = db.query(Bulletin)
@@ -424,42 +389,65 @@ def get_bulletin(
         raise
 
 
-def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> list[LRVisibility]:
+def delete_bulletin(
+    db: Session,
+    horizon: str,
+    year: int,
+    horizon_value: int,
+    code: str,
+    model: str,
+) -> bool:
+    """Delete a bulletin by its unique constraint fields. Returns True if deleted, False if not found."""
+    try:
+        existing_bulletin = db.query(Bulletin).filter(
+            Bulletin.horizon_type == horizon,
+            Bulletin.year == year,
+            Bulletin.horizon_value == horizon_value,
+            Bulletin.code == code,
+            Bulletin.model_type == model
+        ).first()
+
+        if not existing_bulletin:
+            return False
+
+        db.delete(existing_bulletin)
+        db.commit()
+        logger.info(f"Deleted bulletin: {horizon}, {year}, {horizon_value}, {code}, {model}")
+        return True
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error deleting bulletin: {str(e)}", exc_info=True)
+        raise
+
+
+def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> List[LRVisibility]:
     """Create or update multiple LR visibility records in bulk (upsert based on horizon_type, code, month, horizon_value)"""
     try:
         db_lr_visibility = []
 
         for item in bulk_data.data:
             # Check if a record with the same unique constraint fields exists
-            existing_record = (
-                db.query(LRVisibility)
-                .filter(
-                    LRVisibility.horizon_type == item.horizon_type,
-                    LRVisibility.code == item.code,
-                    LRVisibility.month == item.month,
-                    LRVisibility.horizon_value == item.horizon_value,
-                    LRVisibility.year == item.year,
-                )
-                .first()
-            )
+            existing_record = db.query(LRVisibility).filter(
+                LRVisibility.horizon_type == item.horizon_type,
+                LRVisibility.code == item.code,
+                LRVisibility.month == item.month,
+                LRVisibility.horizon_value == item.horizon_value,
+                LRVisibility.year == item.year
+            ).first()
 
             if existing_record:
                 # Update existing record
                 for key, value in item.model_dump().items():
                     setattr(existing_record, key, value)
                 db_lr_visibility.append(existing_record)
-                logger.info(
-                    f"Updated LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}"
-                )
+                logger.info(f"Updated LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
             else:
                 # Create new record
                 new_record = LRVisibility(**item.model_dump())
                 db.add(new_record)
                 db.flush()  # Flush so subsequent queries find this pending record
                 db_lr_visibility.append(new_record)
-                logger.info(
-                    f"Created LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}"
-                )
+                logger.info(f"Created LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
 
         db.commit()
 
@@ -471,21 +459,19 @@ def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> list
         return db_lr_visibility
     except SQLAlchemyError as e:
         db.rollback()
-        logger.error(
-            f"Error creating/updating LR visibility records in bulk: {str(e)}", exc_info=True
-        )
+        logger.error(f"Error creating/updating LR visibility records in bulk: {str(e)}", exc_info=True)
         raise
 
 
 def get_lr_visibility(
     db: Session,
-    horizon: str | None = None,
-    code: str | None = None,
-    month: int | None = None,
-    horizon_value: int | None = None,
+    horizon: Optional[str] = None,
+    code: Optional[str] = None,
+    month: Optional[int] = None,
+    horizon_value: Optional[int] = None,
     skip: int = 0,
-    limit: int = 100,
-) -> list[LRVisibility]:
+    limit: int = 100
+) -> List[LRVisibility]:
     """Retrieve LR visibility records with optional filtering by horizon_type, code, month, horizon_value, and year"""
     try:
         query = db.query(LRVisibility)
@@ -499,9 +485,7 @@ def get_lr_visibility(
             query = query.filter(LRVisibility.horizon_value == horizon_value)
 
         results = query.offset(skip).limit(limit).all()
-        logger.info(
-            f"Fetched {len(results)} LR visibility records (code={code}, month={month}, horizon_value={horizon_value}, skip={skip}, limit={limit})"
-        )
+        logger.info(f"Fetched {len(results)} LR visibility records (code={code}, month={month}, horizon_value={horizon_value}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching LR visibility records: {str(e)}", exc_info=True)

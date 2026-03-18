@@ -251,7 +251,7 @@ class Bulletin(Base):
 
     basin_name = Column(String(100))
     station_label = Column(String(100))
-    forecated_discharge = Column(Float)
+    forecasted_discharge = Column(Float)
     fc_lower = Column(Float)
     fc_upper = Column(Float)
     delta = Column(Float)
