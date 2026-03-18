@@ -8,6 +8,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+import requests
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 from sklearn.linear_model import LinearRegression
 
@@ -1410,6 +1411,64 @@ def split_name(name: str):
 # region forecasting
 
 
+def _read_lr_visibility(
+    horizon_type: str,
+    code: str,
+    month: int,
+    horizon_value: int,
+) -> pd.DataFrame | None:
+    """Read LR visibility data from the postprocessing API.
+
+    Calls GET /api/postprocessing/lr-visibility/ with the given filters.
+    Returns a DataFrame on success, or None if any error occurs. An empty
+    response list returns an empty DataFrame (not None).
+
+    Args:
+        horizon_type: Forecast horizon type, e.g. "pentad" or "decade".
+        code: Station code to filter by.
+        month: Month number (1-12) to filter by.
+        horizon_value: Horizon value (e.g. pentad-in-month 1-6) to filter by.
+
+    Returns:
+        DataFrame with columns ``year``, ``visible`` (plus ``id``,
+        ``horizon_type``, ``code``, ``month``, ``horizon_value``) on
+        success, or None if the request fails.
+    """
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    url = f"{api_url}/api/postprocessing/lr-visibility/"
+    params = {
+        "horizon": horizon_type,
+        "code": code,
+        "month": month,
+        "horizon_value": horizon_value,
+        "limit": 1000,
+    }
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        logger.info(
+            "Read %d lr-visibility records for code=%s month=%d horizon=%s/%d",
+            len(data),
+            code,
+            month,
+            horizon_type,
+            horizon_value,
+        )
+        return pd.DataFrame(data)
+    except requests.exceptions.ConnectionError as exc:
+        logger.warning("lr-visibility API connection error: %s", exc)
+    except requests.exceptions.Timeout as exc:
+        logger.warning("lr-visibility API request timed out: %s", exc)
+    except requests.exceptions.HTTPError as exc:
+        logger.warning("lr-visibility API HTTP error: %s", exc)
+    except requests.exceptions.RequestException as exc:
+        logger.warning("lr-visibility API request failed: %s", exc)
+    except ValueError as exc:
+        logger.warning("lr-visibility API returned invalid JSON: %s", exc)
+    return None
+
+
 def perform_linear_regression(
     data_df: pd.DataFrame,
     station_col: str,
@@ -1613,62 +1672,64 @@ def perform_linear_regression(
             logger.info(f"No data for station {station} in {horizon_flag} {forecast_horizon_int}")
             continue
 
-        # Check if there is a point selection file for the current pentad and month
-        # in ieasyforecast_linreg_point_selection
-        # Test if a variable ieasyforecast_linreg_point_selection is set. If not,
-        # no need to check for a point selection file.
-        logger.info("Checking for point selection file.")
-        if os.getenv("ieasyforecast_linreg_point_selection") is None:
-            logger.info("No point selection files available. Skipping point selection.")
-        else:
-            # Define the directory to save the data
-            SAVE_DIRECTORY = os.path.join(
-                os.getenv("ieasyforecast_configuration_path"),
-                os.getenv("ieasyforecast_linreg_point_selection", "linreg_point_selection"),
-            )
-            # Define the file name
-            logger.debug(f"forecast_horizon_int: {forecast_horizon_int}")
-            # logger.debug(f"columns of station_data: {station_data.columns}")
-            # logger.debug(f"station_data: {station_data}")
-            first_day_of_forecast_horizon = pd.to_datetime(
-                forecast_date_str
-            ).date() + pd.DateOffset(days=1)
-            logger.debug(f"forecast_date_str: {forecast_date_str}")
-            if horizon_flag == "pentad":
-                pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
-                logger.debug(f"pentad_in_month: {pentad_in_month}")
-            elif horizon_flag == "decad":
-                pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
-                logger.debug(f"decad_in_month: {pentad_in_month}")
-            else:
-                raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
-            title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
-            logger.debug(f"title_month: {title_month}")
-            save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
-            save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
-            logger.debug(f"save_file_path: {save_file_path}")
+        # --- Point selection: filter years based on visibility ---
+        logger.info("Checking point selection for station %s.", station)
 
-            # Check if the file exists
-            if os.path.exists(save_file_path):
-                logger.info(f"Point selection file {save_file_path} exists. Reading the file.")
-                # Read the file into a DataFrame
-                point_selection = pd.read_csv(save_file_path)
-                # Temporarily add column year to station_data
-                station_data["year"] = station_data["date"].dt.year
-                # Merge the column 'visible' from point selection into data_dfp
-                station_data = station_data.merge(
-                    point_selection[["year", "visible"]], on="year", how="left"
+        # Compute date components needed by both API and CSV paths
+        first_day_of_forecast_horizon = pd.to_datetime(forecast_date_str).date() + pd.DateOffset(
+            days=1
+        )
+        if horizon_flag == "pentad":
+            pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
+        elif horizon_flag == "decad":
+            pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
+        else:
+            raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
+        month_int = first_day_of_forecast_horizon.month
+
+        # Map internal horizon_flag to API enum value
+        api_horizon = "decade" if horizon_flag == "decad" else horizon_flag
+
+        point_selection = None
+
+        # Try API first
+        api_result = _read_lr_visibility(api_horizon, station, month_int, int(pentad_in_month))
+        if api_result is not None and not api_result.empty:
+            point_selection = api_result[["year", "visible"]]
+            logger.info("Using API point selection for station %s.", station)
+        else:
+            # Fall back to CSV
+            if os.getenv("ieasyforecast_linreg_point_selection") is not None:
+                SAVE_DIRECTORY = os.path.join(
+                    os.getenv("ieasyforecast_configuration_path"),
+                    os.getenv(
+                        "ieasyforecast_linreg_point_selection",
+                        "linreg_point_selection",
+                    ),
                 )
-                # Filter for rows where 'visible' is True
-                station_data = station_data[station_data["visible"] == True]
-                # Drop the 'visible' and 'year' columns
-                station_data.drop(columns=["visible", "year"], inplace=True)
-                # logger.debug(f"station_data after point selection: {station_data}")
-            else:
-                if station == "15013":
+                title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
+                save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
+                save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
+                if os.path.exists(save_file_path):
+                    logger.info("Using CSV point selection: %s", save_file_path)
+                    point_selection = pd.read_csv(save_file_path)
+                else:
                     logger.debug(
-                        f"No point selection file {save_file_path} available for site {station}. Skipping point selection."
+                        "No point selection CSV %s for station %s.",
+                        save_file_path,
+                        station,
                     )
+            else:
+                logger.debug("No point selection configured. Skipping.")
+
+        # Apply point selection filter if we have visibility data
+        if point_selection is not None and not point_selection.empty:
+            station_data["year"] = station_data["date"].dt.year
+            station_data = station_data.merge(
+                point_selection[["year", "visible"]], on="year", how="left"
+            )
+            station_data = station_data[station_data["visible"] == True]
+            station_data.drop(columns=["visible", "year"], inplace=True)
 
         # if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
