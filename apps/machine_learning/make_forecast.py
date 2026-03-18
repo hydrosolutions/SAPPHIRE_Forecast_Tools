@@ -446,7 +446,7 @@ def get_rivers_to_predict(
     # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
     rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
     # select only codes which the model can predict.
-    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] is True
+    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True  # noqa: E712 — pandas Series needs == not `is`
     codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable][
         "code"
     ].tolist()
