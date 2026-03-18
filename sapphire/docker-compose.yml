@@ -249,7 +249,7 @@ services:
       - ./services/auth:/code
 
   dashboard:
-    # image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
