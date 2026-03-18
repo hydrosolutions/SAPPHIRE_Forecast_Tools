@@ -110,20 +110,15 @@ read_configuration(){
     # if they are 'tjhm', we assume taj.
     env_ending=${env_file_path: -4}
     tag=${ieasyhydroforecast_frontend_docker_image_tag}
-    if [ "$tag" == "local" ]; then
-        export ieasyhydroforecast_url_pentad=$ieasyhydroforecast_url
-        export ieasyhydroforecast_url_decad=$ieasyhydroforecast_url
+    if [ "$env_ending" == "kghm" ]; then
+        export ieasyhydroforecast_url_pentad=kyg.fc.pentad.$ieasyhydroforecast_url
+        export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
+    elif [ "$env_ending" == "tjhm" ]; then
+        export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
+        export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
     else
-        if [ "$env_ending" == "kghm" ]; then
-            export ieasyhydroforecast_url_pentad=kyg.fc.pentad.$ieasyhydroforecast_url
-            export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
-        elif [ "$env_ending" == "tjhm" ]; then
-            export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
-            export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
-        else
-            echo "| Error: Unknown hm in env_file_path: $env_file_path"
-            exit 1
-        fi
+        echo "| Error: Unknown hm in env_file_path: $env_file_path"
+        exit 1
     fi
     
     # If the env. varialbe ieasyhydroforecast_organization is not set, assume "demo"
