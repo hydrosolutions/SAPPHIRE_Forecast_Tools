@@ -333,27 +333,42 @@ def recalculate_nan_forecasts():
     hindcast["code"] = hindcast["code"].astype(str)
 
     def update_forecast(forecast_code, hindcast_code):
-        # Fix the syntax error in value_cols definition
         value_cols = [col for col in forecast_code.columns if "Q" in col]
-
         forecast_code = forecast_code.copy()
         hindcast_code = hindcast_code.copy()
 
-        # Get dates where flag is 1
         forecast_dates_flag1 = forecast_code[forecast_code["flag"].isin([1, 2])][
             "forecast_date"
         ].unique()
 
-        # Only update those specific dates
         for forecast_date in forecast_dates_flag1:
-            mask = forecast_code["forecast_date"] == forecast_date
-            hindcast_mask = hindcast_code["forecast_date"] == forecast_date
+            fc_mask = forecast_code["forecast_date"] == forecast_date
+            hc_mask = hindcast_code["forecast_date"] == forecast_date
 
-            if hindcast_mask.any():  # Check if we have matching hindcast data
-                forecast_code.loc[mask, value_cols] = hindcast_code.loc[
-                    hindcast_mask, value_cols
-                ].values
-                forecast_code.loc[mask, "flag"] = hindcast_code.loc[hindcast_mask, "flag"].values
+            if not hc_mask.any():
+                continue
+
+            fc_rows = forecast_code.loc[fc_mask].copy()
+            hc_rows = hindcast_code.loc[hc_mask][["date"] + value_cols + ["flag"]].copy()
+
+            # Align on target date — left join so only matching rows update
+            merged = fc_rows[["date"]].merge(hc_rows, on="date", how="left", suffixes=("", "_hc"))
+            merged = merged.set_index(fc_rows.index)
+
+            for col in value_cols:
+                hc_col = col + "_hc" if col + "_hc" in merged.columns else col
+                valid = merged[hc_col].notna()
+                forecast_code.loc[
+                    fc_mask & valid.reindex(forecast_code.index, fill_value=False),
+                    col,
+                ] = merged.loc[valid, hc_col].values
+
+            flag_col = "flag_hc" if "flag_hc" in merged.columns else "flag"
+            valid_flag = merged[flag_col].notna()
+            forecast_code.loc[
+                fc_mask & valid_flag.reindex(forecast_code.index, fill_value=False),
+                "flag",
+            ] = merged.loc[valid_flag, flag_col].values
 
         return forecast_code
 
@@ -362,10 +377,17 @@ def recalculate_nan_forecasts():
         forecast_code = forecast[forecast["code"] == code].copy()
         hindcast_code = hindcast[hindcast["code"] == code].copy()
         try:
-            forecast[forecast["code"] == code] = update_forecast(forecast_code, hindcast_code)
+            updated = update_forecast(forecast_code, hindcast_code)
+            forecast[forecast["code"] == code] = updated
         except Exception as e:
-            logger.error("Error updating forecast for code %s: %s", code, e)
-            raise e
+            logger.error(
+                "recalculate_nan_forecasts: update_forecast failed for "
+                "code=%s: %s — skipping code, NaN records preserved.",
+                code,
+                e,
+            )
+            # Do NOT re-raise; allow remaining codes to be processed
+            # and the API write to execute
 
     # Save the updated forecast
     forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
