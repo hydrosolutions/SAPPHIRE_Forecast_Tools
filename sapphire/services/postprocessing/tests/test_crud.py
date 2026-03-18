@@ -2,7 +2,7 @@
 CRUD tests for the postprocessing service.
 
 Tests the SQLAlchemy CRUD functions directly (no HTTP layer) using
-SQLite in-memory via the _fallback_upsert path.
+SQLite in-memory databases.
 """
 
 from datetime import date
@@ -469,137 +469,6 @@ class TestCRUDEdgeCases:
         )
         # If fallback path works, we get results with valid IDs
         assert len(results) == 1
-        assert results[0].id >= 1
-
-
-# -------------------------------------------------------------------
-# _fallback_upsert direct tests
-# -------------------------------------------------------------------
-
-class TestFallbackUpsertDirect:
-    """Test _fallback_upsert function directly (bypassing create_* wrappers)."""
-
-    def test_insert_only_batch(self, db_session):
-        """Batch of new records — all inserts, no updates."""
-        items = [
-            make_forecast(code="15013"),
-            make_forecast(code="15014"),
-            make_forecast(code="15015"),
-        ]
-        unique_keys = ['horizon_type', 'code', 'model_type', 'date', 'target']
-        results = crud._fallback_upsert(
-            db_session, Forecast, items, unique_keys
-        )
-        assert len(results) == 3
-        assert db_session.query(Forecast).count() == 3
-        codes = {r.code for r in results}
-        assert codes == {"15013", "15014", "15015"}
-
-    def test_update_only_batch(self, db_session):
-        """Batch where ALL records already exist — all updates."""
-        # Pre-populate
-        items_v1 = [
-            make_forecast(code="15013", forecasted_discharge=100.0),
-            make_forecast(code="15014", forecasted_discharge=200.0),
-        ]
-        crud._fallback_upsert(
-            db_session, Forecast, items_v1,
-            ['horizon_type', 'code', 'model_type', 'date', 'target'],
-        )
-        assert db_session.query(Forecast).count() == 2
-
-        # Update both with new values
-        items_v2 = [
-            make_forecast(code="15013", forecasted_discharge=999.0),
-            make_forecast(code="15014", forecasted_discharge=888.0),
-        ]
-        results = crud._fallback_upsert(
-            db_session, Forecast, items_v2,
-            ['horizon_type', 'code', 'model_type', 'date', 'target'],
-        )
-        assert len(results) == 2
-        # Still only 2 rows — no duplicates
-        assert db_session.query(Forecast).count() == 2
-        by_code = {r.code: r for r in results}
-        assert by_code["15013"].forecasted_discharge == 999.0
-        assert by_code["15014"].forecasted_discharge == 888.0
-
-    def test_mixed_insert_and_update(self, db_session):
-        """Batch with one existing (update) and one new (insert)."""
-        crud._fallback_upsert(
-            db_session, Forecast,
-            [make_forecast(code="15013", forecasted_discharge=100.0)],
-            ['horizon_type', 'code', 'model_type', 'date', 'target'],
-        )
-
-        items = [
-            make_forecast(code="15013", forecasted_discharge=999.0),  # update
-            make_forecast(code="15014", forecasted_discharge=200.0),  # insert
-        ]
-        results = crud._fallback_upsert(
-            db_session, Forecast, items,
-            ['horizon_type', 'code', 'model_type', 'date', 'target'],
-        )
-        assert len(results) == 2
-        assert db_session.query(Forecast).count() == 2
-        by_code = {r.code: r for r in results}
-        assert by_code["15013"].forecasted_discharge == 999.0
-        assert by_code["15014"].forecasted_discharge == 200.0
-
-    def test_empty_batch(self, db_session):
-        """Empty list — no crash, returns empty."""
-        results = crud._fallback_upsert(
-            db_session, Forecast, [],
-            ['horizon_type', 'code', 'model_type', 'date', 'target'],
-        )
-        # _fallback_upsert is only called when bulk_items is non-empty
-        # but it should handle empty gracefully
-        assert results == []
-
-    def test_skill_metric_upsert(self, db_session):
-        """Verify _fallback_upsert works for SkillMetric model."""
-        items = [
-            make_skill_metric(code="15013", nse=0.7),
-            make_skill_metric(code="15014", nse=0.8, horizon_in_year=34),
-        ]
-        unique_keys = ['horizon_type', 'code', 'model_type', 'date',
-                       'horizon_in_year']
-        results = crud._fallback_upsert(
-            db_session, SkillMetric, items, unique_keys,
-        )
-        assert len(results) == 2
-        by_code = {r.code: r for r in results}
-        assert by_code["15013"].nse == 0.7
-        assert by_code["15014"].nse == 0.8
-
-        # Now update one
-        items_v2 = [make_skill_metric(code="15013", nse=0.99)]
-        results = crud._fallback_upsert(
-            db_session, SkillMetric, items_v2, unique_keys,
-        )
-        assert len(results) == 1
-        assert results[0].nse == 0.99
-        # Still 2 rows total
-        assert db_session.query(SkillMetric).count() == 2
-
-    def test_returned_objects_are_refreshed(self, db_session):
-        """Verify returned objects reflect committed state (not stale)."""
-        items = [make_forecast(code="15013", forecasted_discharge=100.0)]
-        unique_keys = ['horizon_type', 'code', 'model_type', 'date', 'target']
-        results = crud._fallback_upsert(
-            db_session, Forecast, items, unique_keys,
-        )
-        # Object should have a valid ID (assigned by DB, refreshed)
-        assert results[0].id is not None
-        assert results[0].id >= 1
-
-        # Update and verify the returned object is fresh
-        items_v2 = [make_forecast(code="15013", forecasted_discharge=999.0)]
-        results = crud._fallback_upsert(
-            db_session, Forecast, items_v2, unique_keys,
-        )
-        assert results[0].forecasted_discharge == 999.0
-        # Same ID (same row, updated in-place)
         assert results[0].id >= 1
 
 
