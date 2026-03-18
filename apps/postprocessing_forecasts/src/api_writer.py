@@ -7,6 +7,7 @@ Follows the same singleton pattern as data_reader.py.
 """
 
 import datetime as dt_module
+import json
 import logging
 import os
 
@@ -70,6 +71,63 @@ except ImportError:
 # Singleton client
 # ---------------------------------------------------------------------------
 _postprocessing_client = None
+_configured_codes: set[str] | None = None
+
+
+def _load_configured_codes() -> set[str]:
+    """Load station codes from config_station_selection.json.
+
+    Returns empty set if config is unavailable (non-blocking).
+    """
+    global _configured_codes
+    if _configured_codes is not None:
+        return _configured_codes
+    try:
+        config_path = os.path.join(
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_config_file_station_selection", ""),
+        )
+        if not config_path.strip("/"):
+            _configured_codes = set()
+            return _configured_codes
+        with open(config_path) as f:
+            data = json.load(f)
+        _configured_codes = {str(c) for c in data.get("stationsID", [])}
+        decad_file = os.getenv("ieasyforecast_config_file_station_selection_decad", "")
+        if decad_file:
+            decad_path = os.path.join(
+                os.getenv("ieasyforecast_configuration_path", ""),
+                decad_file,
+            )
+            if os.path.exists(decad_path):
+                with open(decad_path) as f:
+                    decad_data = json.load(f)
+                _configured_codes |= {str(c) for c in decad_data.get("stationsID", [])}
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        logger.debug("Could not load station selection config for write guard")
+        _configured_codes = set()
+    return _configured_codes
+
+
+def _check_write_codes(batch_codes: set[str], context: str) -> None:
+    """Warn if batch contains codes outside the configured station list.
+
+    Non-blocking: logs warning only, never raises.
+    """
+    configured = _load_configured_codes()
+    if not configured:
+        return
+    unexpected = batch_codes - configured
+    if unexpected:
+        logger.warning(
+            "WRITE GUARD [%s]: batch contains %d code(s) not in station "
+            "selection config: %s (configured: %d codes). This may indicate "
+            "cross-org data leakage.",
+            context,
+            len(unexpected),
+            sorted(unexpected)[:5],
+            len(configured),
+        )
 
 
 def _get_postprocessing_client():
@@ -90,8 +148,9 @@ def _get_postprocessing_client():
 
 def _reset_api_client():
     """Reset cached API client (for testing)."""
-    global _postprocessing_client
+    global _postprocessing_client, _configured_codes
     _postprocessing_client = None
+    _configured_codes = None
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +387,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     # Write to API
     if records:
+        _check_write_codes({str(r["code"]) for r in records}, "combined_forecast")
         logger.debug(f"Sample record being sent to API ({horizon_type}): {records[0]}")
         try:
             count = client.write_forecasts(records)
@@ -564,6 +624,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
 
     # Write to API
     if records:
+        _check_write_codes({str(r["code"]) for r in records}, "skill_metrics")
         count = client.write_skill_metrics(records)
         logger.info(
             f"Successfully wrote {count} skill metric records to SAPPHIRE API ({horizon_type})"
@@ -661,6 +722,7 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
             logger.info("No threshold skill metric records to write")
             return False
 
+        _check_write_codes({str(r["code"]) for r in records}, "threshold_skill_metrics")
         logger.debug("Sample threshold skill metric record: %s", records[0])
         # Use write_threshold_skill_metrics if client supports it;
         # gracefully no-op if endpoint doesn't exist yet (Stage 2).
@@ -799,6 +861,7 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
             logger.info("No monthly ensemble records to write to API")
             return False
 
+        _check_write_codes({str(r["code"]) for r in records}, "monthly_ensemble")
         logger.debug("Sample monthly ensemble record: %s", records[0])
         count = client.write_long_forecasts(records)
         logger.info(
@@ -973,6 +1036,7 @@ def _write_aggregated_forecasts_to_api(
             logger.info("No %s forecast records to write to API", label)
             return False
 
+        _check_write_codes({str(r["code"]) for r in records}, "aggregated_forecasts")
         logger.debug("Sample %s forecast record: %s", label, records[0])
         count = client.write_long_forecasts(records)
         logger.info(

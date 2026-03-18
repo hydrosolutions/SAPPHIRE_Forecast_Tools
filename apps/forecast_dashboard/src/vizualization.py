@@ -3833,7 +3833,7 @@ def select_and_plot_data(
         partial_file_name = f"{pentad_in_month}_pentad_of_{title_month}"
 
         horizon_value = selected_pentad
-        add_date_column = lambda horizon_value: tl.get_date_for_pentad(horizon_value)
+        add_date_column = lambda horizon_value: tl.get_date_for_pentad(horizon_value, year=dt.datetime.now().year)
 
     else:
         horizon_in_year = "decad_in_year"
@@ -3853,7 +3853,7 @@ def select_and_plot_data(
         partial_file_name = f"{decad_in_month}_decad_of_{title_month}"
 
         horizon_value = selected_decad
-        add_date_column = lambda horizon_value: tl.get_date_for_decad(horizon_value)
+        add_date_column = lambda horizon_value: tl.get_date_for_decad(horizon_value, year=dt.datetime.now().year)
 
     if isinstance(station_widget, str):
         station_code = station_widget.split(" - ")[0]

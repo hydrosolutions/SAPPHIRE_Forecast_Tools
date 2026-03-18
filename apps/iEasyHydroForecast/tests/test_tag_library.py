@@ -1,37 +1,39 @@
-import unittest
 import datetime as dt
-from iEasyHydroForecast import tag_library as tl
+import unittest
+
 import pandas as pd
+
+from iEasyHydroForecast import tag_library as tl
 
 
 class TestTagLibrary(unittest.TestCase):
     def test_is_gregorian_date_valid_date(self):
-        self.assertTrue(tl.is_gregorian_date('2022-05-15'))
-        self.assertTrue(tl.is_gregorian_date('1583-10-04'))
-        self.assertTrue(tl.is_gregorian_date('1583-10-15'))
-        self.assertTrue(tl.is_gregorian_date('1583-12-31'))
+        self.assertTrue(tl.is_gregorian_date("2022-05-15"))
+        self.assertTrue(tl.is_gregorian_date("1583-10-04"))
+        self.assertTrue(tl.is_gregorian_date("1583-10-15"))
+        self.assertTrue(tl.is_gregorian_date("1583-12-31"))
         self.assertTrue(tl.is_gregorian_date(dt.datetime(2022, 5, 15)))
 
     def test_is_gregorian_date_invalid_date(self):
-        self.assertFalse(tl.is_gregorian_date('not a date'))
-        self.assertFalse(tl.is_gregorian_date('2022-02-29'))
-        self.assertFalse(tl.is_gregorian_date('1581-12-31'))
+        self.assertFalse(tl.is_gregorian_date("not a date"))
+        self.assertFalse(tl.is_gregorian_date("2022-02-29"))
+        self.assertFalse(tl.is_gregorian_date("1581-12-31"))
 
 
 class TestAddPentadInYearColumn(unittest.TestCase):
     def test_add_pentad_in_year_column(self):
         # Create a test DataFrame
-        df = pd.DataFrame({'Date': ['2022-05-15', '2022-05-16']})
+        df = pd.DataFrame({"Date": ["2022-05-15", "2022-05-16"]})
 
         # Call the method to add the 'pentad' column
         df_with_pentad = tl.add_pentad_in_year_column(df)
 
         # Check that the 'pentad' column was added correctly
-        self.assertEqual(df_with_pentad['pentad'].tolist(), ['27', '28'])
+        self.assertEqual(df_with_pentad["pentad"].tolist(), ["27", "28"])
 
     def test_add_pentad_in_year_column_with_missing_date_column(self):
         # Create a test DataFrame without a 'Date' column
-        df = pd.DataFrame({'Value': [1, 2]})
+        df = pd.DataFrame({"Value": [1, 2]})
 
         # Call the method and check that it raises a ValueError
         with self.assertRaises(ValueError):
@@ -39,7 +41,7 @@ class TestAddPentadInYearColumn(unittest.TestCase):
 
     def test_add_pentad_in_year_column_with_invalid_date(self):
         # Create a test DataFrame with an invalid date
-        df = pd.DataFrame({'Date': ['2022-05-15', 'invalid date']})
+        df = pd.DataFrame({"Date": ["2022-05-15", "invalid date"]})
 
         # Call the method and check that it raises a ValueError
         with self.assertRaises(ValueError):
@@ -49,30 +51,30 @@ class TestAddPentadInYearColumn(unittest.TestCase):
 class TestGetPentadInYear(unittest.TestCase):
     def test_valid_date(self):
         # Test a valid date
-        result = tl.get_pentad_in_year('2022-05-15')
-        self.assertEqual(result, '27')
-        self.assertEqual(tl.get_pentad_in_year('2022-01-01'), '1')
-        self.assertEqual(tl.get_pentad_in_year('2022-01-06'), '2')
-        self.assertEqual(tl.get_pentad_in_year('2022-01-30'), '6')
-        self.assertEqual(tl.get_pentad_in_year('2022-02-02'), '7')
-        self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '72')
-        self.assertEqual(tl.get_pentad_in_year(dt.datetime(2022, 12, 31)), '72')
+        result = tl.get_pentad_in_year("2022-05-15")
+        self.assertEqual(result, "27")
+        self.assertEqual(tl.get_pentad_in_year("2022-01-01"), "1")
+        self.assertEqual(tl.get_pentad_in_year("2022-01-06"), "2")
+        self.assertEqual(tl.get_pentad_in_year("2022-01-30"), "6")
+        self.assertEqual(tl.get_pentad_in_year("2022-02-02"), "7")
+        self.assertEqual(tl.get_pentad_in_year("2022-12-29"), "72")
+        self.assertEqual(tl.get_pentad_in_year(dt.datetime(2022, 12, 31)), "72")
 
     def test_invalid_date(self):
         # Test an invalid date
-        result = tl.get_pentad_in_year('not a date')
+        result = tl.get_pentad_in_year("not a date")
         self.assertIsNone(result)
 
     def test_non_gregorian_date(self):
         # Test a non-Gregorian date
-        result = tl.get_pentad_in_year('1581-12-31')
+        result = tl.get_pentad_in_year("1581-12-31")
         self.assertIsNone(result)
 
     def test_datetime_input(self):
         # Test a datetime input
         date = dt.datetime(2022, 5, 15)
         result = tl.get_pentad_in_year(date)
-        self.assertEqual(result, '27')
+        self.assertEqual(result, "27")
 
     def test_invalid_input(self):
         # Test an invalid input
@@ -82,84 +84,86 @@ class TestGetPentadInYear(unittest.TestCase):
 
 class TestGetPentadFirstDayOfYear(unittest.TestCase):
     def test_valid_date(self):
-        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-01'), '1')
-        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-05'), '1')
-        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-06'), '6')
-        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-07'), '6')
+        self.assertEqual(tl.get_pentad_first_day_of_year("2022-01-01"), "1")
+        self.assertEqual(tl.get_pentad_first_day_of_year("2022-01-05"), "1")
+        self.assertEqual(tl.get_pentad_first_day_of_year("2022-01-06"), "6")
+        self.assertEqual(tl.get_pentad_first_day_of_year("2022-01-07"), "6")
 
     def test_invalid_date(self):
-        self.assertIsNone(tl.get_pentad_first_day_of_year('2022-02-30'))
-        self.assertIsNone(tl.get_pentad_first_day_of_year('2022-13-01'))
+        self.assertIsNone(tl.get_pentad_first_day_of_year("2022-02-30"))
+        self.assertIsNone(tl.get_pentad_first_day_of_year("2022-13-01"))
 
     def test_non_gregorian_date(self):
         # Assuming is_gregorian_date returns False for dates before 1582
-        self.assertIsNone(tl.get_pentad_first_day_of_year('1581-12-31'))
+        self.assertIsNone(tl.get_pentad_first_day_of_year("1581-12-31"))
+
 
 class TestGetDecad(unittest.TestCase):
-
     def test_valid_date(self):
         date = dt.date(2022, 1, 1)
         decad = tl.get_decad_in_month(date)
-        self.assertEqual(decad, '1')
-        self.assertEqual(tl.get_decad_in_month('2022-01-10'), '1')
-        self.assertEqual(tl.get_decad_in_month('2022-01-11'), '2')
-        self.assertEqual(tl.get_decad_in_month('2022-01-20'), '2')
-        self.assertEqual(tl.get_decad_in_month('2022-01-21'), '3')
-        self.assertEqual(tl.get_decad_in_month('2022-01-30'), '3')
+        self.assertEqual(decad, "1")
+        self.assertEqual(tl.get_decad_in_month("2022-01-10"), "1")
+        self.assertEqual(tl.get_decad_in_month("2022-01-11"), "2")
+        self.assertEqual(tl.get_decad_in_month("2022-01-20"), "2")
+        self.assertEqual(tl.get_decad_in_month("2022-01-21"), "3")
+        self.assertEqual(tl.get_decad_in_month("2022-01-30"), "3")
+
 
 class TestGetDecadInYear(unittest.TestCase):
     def test_get_decad_in_year_with_string_date(self):
-        self.assertEqual(tl.get_decad_in_year('2022-01-15'), '2')
-        self.assertEqual(tl.get_decad_in_year('2022-05-15'), '14')
-        self.assertEqual(tl.get_decad_in_year('2022-12-31'), '36')
-        self.assertEqual(tl.get_decad_in_year('2022-12-31'), '36')
+        self.assertEqual(tl.get_decad_in_year("2022-01-15"), "2")
+        self.assertEqual(tl.get_decad_in_year("2022-05-15"), "14")
+        self.assertEqual(tl.get_decad_in_year("2022-12-31"), "36")
+        self.assertEqual(tl.get_decad_in_year("2022-12-31"), "36")
 
     def test_get_decad_in_year_with_datetime_date(self):
-        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 1, 15)), '2')
-        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 5, 15)), '14')
-        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 12, 31)), '36')
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 1, 15)), "2")
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 5, 15)), "14")
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 12, 31)), "36")
 
     def test_get_decad_in_year_with_invalid_date(self):
-        self.assertIsNone(tl.get_decad_in_year('not a date'))
+        self.assertIsNone(tl.get_decad_in_year("not a date"))
 
     def test_get_decad_in_year_with_non_gregorian_date(self):
-        self.assertIsNone(tl.get_decad_in_year('1581-12-31'))
+        self.assertIsNone(tl.get_decad_in_year("1581-12-31"))
+
 
 class TestAddDecadInYearColumn(unittest.TestCase):
     def test_add_decad_in_year_column(self):
-        df = pd.DataFrame({'Date': ['2022-01-01', '2022-12-31']})
+        df = pd.DataFrame({"Date": ["2022-01-01", "2022-12-31"]})
         result = tl.add_decad_in_year_column(df)
-        self.assertIn('decad_in_year', result.columns)
-        self.assertEqual(result.loc[0, 'decad_in_year'], '1')
-        self.assertEqual(result.loc[1, 'decad_in_year'], '36')
+        self.assertIn("decad_in_year", result.columns)
+        self.assertEqual(result.loc[0, "decad_in_year"], "1")
+        self.assertEqual(result.loc[1, "decad_in_year"], "36")
 
     def test_add_pentad_in_year_column_no_date_column(self):
-        df = pd.DataFrame({'NotDate': ['2022-01-01', '2022-12-31']})
-        with self.assertRaises(ValueError, msg='DataFrame does not have a \'Date\' column'):
+        df = pd.DataFrame({"NotDate": ["2022-01-01", "2022-12-31"]})
+        with self.assertRaises(ValueError, msg="DataFrame does not have a 'Date' column"):
             tl.add_decad_in_year_column(df)
 
     def test_add_pentad_in_year_column_invalid_date(self):
-        df = pd.DataFrame({'Date': ['2022-01-01', 'not a date']})
-        with self.assertRaises(ValueError, msg='DataFrame contains invalid date\(s\)'):
+        df = pd.DataFrame({"Date": ["2022-01-01", "not a date"]})
+        with self.assertRaises(ValueError, msg="DataFrame contains invalid date\(s\)"):
             tl.add_decad_in_year_column(df)
 
     def test_add_pentad_in_year_column_empty_dataframe(self):
         df = pd.DataFrame()
-        with self.assertRaises(ValueError, msg='DataFrame does not have a \'Date\' column'):
+        with self.assertRaises(ValueError, msg="DataFrame does not have a 'Date' column"):
             tl.add_decad_in_year_column(df)
 
-class TestGetPentad(unittest.TestCase):
 
+class TestGetPentad(unittest.TestCase):
     def test_valid_date(self):
         # Test with a valid date
         date = dt.date(2022, 1, 1)
         pentad = tl.get_pentad_in_year(date)
-        self.assertEqual(pentad, '1')
-        self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '72')
+        self.assertEqual(pentad, "1")
+        self.assertEqual(tl.get_pentad_in_year("2022-12-29"), "72")
 
     def test_invalid_date(self):
         # Test with an invalid date
-        date = '2022-13-01'
+        date = "2022-13-01"
         pentad = tl.get_pentad_in_year(date)
         self.assertIsNone(pentad)
 
@@ -171,111 +175,153 @@ class TestGetPentad(unittest.TestCase):
 
     def test_string_input(self):
         # Test with a string input
-        date = '2022-01-01'
+        date = "2022-01-01"
         pentad = tl.get_pentad_in_year(date)
-        self.assertEqual(pentad, '1')
+        self.assertEqual(pentad, "1")
 
     def test_valid_date_some_more(self):
-        self.assertEqual(tl.get_pentad(dt.datetime(2022, 5, 15)), '3')
-        self.assertEqual(tl.get_pentad('2022-05-15'), '3')
-        self.assertEqual(tl.get_pentad('2022-05-01'), '1')
-        self.assertEqual(tl.get_pentad('2022-05-31'), '6')
-        self.assertEqual(tl.get_pentad('2022-02-28'), '6')
-        self.assertEqual(tl.get_pentad('2022-02-01'), '1')
-        self.assertEqual(tl.get_pentad('2022-02-05'), '1')
-        self.assertEqual(tl.get_pentad('2022-02-06'), '2')
-        self.assertEqual(tl.get_pentad('2022-02-10'), '2')
-        self.assertEqual(tl.get_pentad('2022-02-11'), '3')
-        self.assertEqual(tl.get_pentad('2022-02-15'), '3')
-        self.assertEqual(tl.get_pentad('2022-02-16'), '4')
-        self.assertEqual(tl.get_pentad('2022-02-20'), '4')
-        self.assertEqual(tl.get_pentad('2022-02-21'), '5')
-        self.assertEqual(tl.get_pentad('2022-02-25'), '5')
-        self.assertEqual(tl.get_pentad('2022-02-26'), '6')
+        self.assertEqual(tl.get_pentad(dt.datetime(2022, 5, 15)), "3")
+        self.assertEqual(tl.get_pentad("2022-05-15"), "3")
+        self.assertEqual(tl.get_pentad("2022-05-01"), "1")
+        self.assertEqual(tl.get_pentad("2022-05-31"), "6")
+        self.assertEqual(tl.get_pentad("2022-02-28"), "6")
+        self.assertEqual(tl.get_pentad("2022-02-01"), "1")
+        self.assertEqual(tl.get_pentad("2022-02-05"), "1")
+        self.assertEqual(tl.get_pentad("2022-02-06"), "2")
+        self.assertEqual(tl.get_pentad("2022-02-10"), "2")
+        self.assertEqual(tl.get_pentad("2022-02-11"), "3")
+        self.assertEqual(tl.get_pentad("2022-02-15"), "3")
+        self.assertEqual(tl.get_pentad("2022-02-16"), "4")
+        self.assertEqual(tl.get_pentad("2022-02-20"), "4")
+        self.assertEqual(tl.get_pentad("2022-02-21"), "5")
+        self.assertEqual(tl.get_pentad("2022-02-25"), "5")
+        self.assertEqual(tl.get_pentad("2022-02-26"), "6")
 
     def test_invalid_date_some_more(self):
-        self.assertIsNone(tl.get_pentad('2022-02-29'))
-        self.assertIsNone(tl.get_pentad('2022-13-01'))
-        self.assertIsNone(tl.get_pentad('2022-00-01'))
-        self.assertIsNone(tl.get_pentad('2022-01-00'))
-        self.assertIsNone(tl.get_pentad('2022-01-32'))
-        self.assertIsNone(tl.get_pentad('1581-10-04'))
-        self.assertIsNone(tl.get_pentad('1581-10-15'))
-        self.assertIsNone(tl.get_pentad('2100-01-01'))
-        self.assertIsNone(tl.get_pentad('not a date'))
+        self.assertIsNone(tl.get_pentad("2022-02-29"))
+        self.assertIsNone(tl.get_pentad("2022-13-01"))
+        self.assertIsNone(tl.get_pentad("2022-00-01"))
+        self.assertIsNone(tl.get_pentad("2022-01-00"))
+        self.assertIsNone(tl.get_pentad("2022-01-32"))
+        self.assertIsNone(tl.get_pentad("1581-10-04"))
+        self.assertIsNone(tl.get_pentad("1581-10-15"))
+        self.assertIsNone(tl.get_pentad("2100-01-01"))
+        self.assertIsNone(tl.get_pentad("not a date"))
+
 
 class TestGetDateForPentad(unittest.TestCase):
     def test_get_date_for_pentad(self):
-        pentad = '1'
-        year = '2022'
-        expected_date = '2022-01-01'
+        pentad = "1"
+        year = "2022"
+        expected_date = "2022-01-01"
         returned_date = tl.get_date_for_pentad(pentad, year)
         self.assertEqual(returned_date, expected_date)
 
+
 class TestGetDateForLastDayInPentad(unittest.TestCase):
     def test_get_date_for_last_day_in_pentad(self):
-        pentad = '1'
-        year = '2022'
-        expected_date = '2022-01-05'
+        pentad = "1"
+        year = "2022"
+        expected_date = "2022-01-05"
         returned_date = tl.get_date_for_last_day_in_pentad(pentad, year)
         self.assertEqual(returned_date, expected_date)
-        self.assertEqual(tl.get_date_for_last_day_in_pentad('72', '2022'), '2022-12-31')
+        self.assertEqual(tl.get_date_for_last_day_in_pentad("72", "2022"), "2022-12-31")
+
+
+class TestGetDateForPentadBoundary(unittest.TestCase):
+    """Boundary-date tests for pentad/decad date functions."""
+
+    def test_pentad_year_transition(self):
+        """Pentad 72 of 2025 is Dec 26 (last pentad of the year)."""
+        self.assertEqual(tl.get_date_for_pentad(72, 2025), "2025-12-26")
+
+    def test_pentad_different_years(self):
+        """Same pentad, different years — verifies no stale year cache."""
+        self.assertEqual(tl.get_date_for_pentad(1, 2025), "2025-01-01")
+        self.assertEqual(tl.get_date_for_pentad(1, 2026), "2026-01-01")
+
+    def test_decad_year_end(self):
+        """Decad 36 of 2024 is Dec 21."""
+        self.assertEqual(tl.get_date_for_decad(36, 2024), "2024-12-21")
+
+    def test_last_day_pentad_leap_year(self):
+        """Last day of pentad 12 in leap year 2024 includes Feb 29."""
+        result = tl.get_date_for_last_day_in_pentad(12, 2024)
+        self.assertIsNotNone(result)
+
+    def test_last_day_pentad_year_end(self):
+        """Last day of pentad 72 is Dec 31."""
+        self.assertEqual(tl.get_date_for_last_day_in_pentad(72, 2024), "2024-12-31")
+        self.assertEqual(tl.get_date_for_last_day_in_pentad(72, 2025), "2025-12-31")
+
+    def test_last_day_decad_year_end(self):
+        """Last day of decad 36 is Dec 31."""
+        self.assertEqual(tl.get_date_for_last_day_in_decad(36, 2024), "2024-12-31")
+        self.assertEqual(tl.get_date_for_last_day_in_decad(36, 2025), "2025-12-31")
+
+    def test_default_year_is_current(self):
+        """When year is omitted, defaults to current year (call-time, not import-time)."""
+        import datetime
+
+        current_year = datetime.datetime.now().year
+        result = tl.get_date_for_pentad(1)
+        self.assertTrue(result.startswith(str(current_year)))
+
 
 class TestGetStuffForBulletinWriting(unittest.TestCase):
-
     def test_get_pentad_first_day(self):
-        self.assertEqual(tl.get_pentad_first_day('2022-05-15'), '11')
-        self.assertEqual(tl.get_pentad_first_day('2022-05-01'), '1')
-        self.assertEqual(tl.get_pentad_first_day('2022-05-31'), '26')
-        self.assertEqual(tl.get_pentad_first_day('2022-02-28'), '26')
-        self.assertIsNone(tl.get_pentad_first_day('2022-02-29'))
+        self.assertEqual(tl.get_pentad_first_day("2022-05-15"), "11")
+        self.assertEqual(tl.get_pentad_first_day("2022-05-01"), "1")
+        self.assertEqual(tl.get_pentad_first_day("2022-05-31"), "26")
+        self.assertEqual(tl.get_pentad_first_day("2022-02-28"), "26")
+        self.assertIsNone(tl.get_pentad_first_day("2022-02-29"))
 
     def test_get_pentad_last_day(self):
-        self.assertEqual(tl.get_pentad_last_day('2022-05-15'), '15')
-        self.assertEqual(tl.get_pentad_last_day('2022-01-15'), '15')
-        self.assertEqual(tl.get_pentad_last_day('2022-05-01'), '5')
-        self.assertEqual(tl.get_pentad_last_day('2022-05-31'), '31')
-        self.assertEqual(tl.get_pentad_last_day('2022-05-16'), '20')
-        self.assertEqual(tl.get_pentad_last_day('2022-02-14'), '15')
-        self.assertIsNone(tl.get_pentad_last_day('2022-02-30'))
-        self.assertEqual(tl.get_pentad_last_day('2024-10-26'), '31')
-        self.assertEqual(tl.get_pentad_last_day('2024-11-26'), '30')
+        self.assertEqual(tl.get_pentad_last_day("2022-05-15"), "15")
+        self.assertEqual(tl.get_pentad_last_day("2022-01-15"), "15")
+        self.assertEqual(tl.get_pentad_last_day("2022-05-01"), "5")
+        self.assertEqual(tl.get_pentad_last_day("2022-05-31"), "31")
+        self.assertEqual(tl.get_pentad_last_day("2022-05-16"), "20")
+        self.assertEqual(tl.get_pentad_last_day("2022-02-14"), "15")
+        self.assertIsNone(tl.get_pentad_last_day("2022-02-30"))
+        self.assertEqual(tl.get_pentad_last_day("2024-10-26"), "31")
+        self.assertEqual(tl.get_pentad_last_day("2024-11-26"), "30")
 
     def test_get_year(self):
-        self.assertEqual(tl.get_year('2022-05-15'), '2022')
-        self.assertEqual(tl.get_year('2021-12-31'), '2021')
-        self.assertIsNone(tl.get_year('2022-02-30'))
+        self.assertEqual(tl.get_year("2022-05-15"), "2022")
+        self.assertEqual(tl.get_year("2021-12-31"), "2021")
+        self.assertIsNone(tl.get_year("2022-02-30"))
 
     def test_get_month_str_case1(self):
-        self.assertEqual(tl.get_month_str_case1('2022-01-15'), 'январь')
-        self.assertEqual(tl.get_month_str_case1('2022-02-28'), 'февраль')
-        self.assertEqual(tl.get_month_str_case1('2022-03-31'), 'март')
-        self.assertEqual(tl.get_month_str_case1('2022-04-15'), 'апрель')
-        self.assertEqual(tl.get_month_str_case1('2022-05-01'), 'май')
-        self.assertEqual(tl.get_month_str_case1('2022-06-15'), 'июнь')
-        self.assertEqual(tl.get_month_str_case1('2022-07-31'), 'июль')
-        self.assertEqual(tl.get_month_str_case1('2022-08-15'), 'август')
-        self.assertEqual(tl.get_month_str_case1('2022-09-30'), 'сентябрь')
-        self.assertEqual(tl.get_month_str_case1('2022-10-15'), 'октябрь')
-        self.assertEqual(tl.get_month_str_case1('2022-11-30'), 'ноябрь')
-        self.assertEqual(tl.get_month_str_case1('2022-12-15'), 'декабрь')
-        self.assertIsNone(tl.get_month_str_case1('2022-02-30'))
+        self.assertEqual(tl.get_month_str_case1("2022-01-15"), "январь")
+        self.assertEqual(tl.get_month_str_case1("2022-02-28"), "февраль")
+        self.assertEqual(tl.get_month_str_case1("2022-03-31"), "март")
+        self.assertEqual(tl.get_month_str_case1("2022-04-15"), "апрель")
+        self.assertEqual(tl.get_month_str_case1("2022-05-01"), "май")
+        self.assertEqual(tl.get_month_str_case1("2022-06-15"), "июнь")
+        self.assertEqual(tl.get_month_str_case1("2022-07-31"), "июль")
+        self.assertEqual(tl.get_month_str_case1("2022-08-15"), "август")
+        self.assertEqual(tl.get_month_str_case1("2022-09-30"), "сентябрь")
+        self.assertEqual(tl.get_month_str_case1("2022-10-15"), "октябрь")
+        self.assertEqual(tl.get_month_str_case1("2022-11-30"), "ноябрь")
+        self.assertEqual(tl.get_month_str_case1("2022-12-15"), "декабрь")
+        self.assertIsNone(tl.get_month_str_case1("2022-02-30"))
 
     def test_get_month_str_case2(self):
-        self.assertEqual(tl.get_month_str_case2('2022-01-15'), 'января')
-        self.assertEqual(tl.get_month_str_case2('2022-02-28'), 'февраля')
-        self.assertEqual(tl.get_month_str_case2('2022-03-31'), 'марта')
-        self.assertEqual(tl.get_month_str_case2('2022-04-15'), 'апреля')
-        self.assertEqual(tl.get_month_str_case2('2022-05-01'), 'мая')
-        self.assertEqual(tl.get_month_str_case2('2022-06-15'), 'июня')
-        self.assertEqual(tl.get_month_str_case2('2022-07-31'), 'июля')
-        self.assertEqual(tl.get_month_str_case2('2022-08-15'), 'августа')
-        self.assertEqual(tl.get_month_str_case2('2022-09-30'), 'сентября')
-        self.assertEqual(tl.get_month_str_case2('2022-10-15'), 'октября')
-        self.assertEqual(tl.get_month_str_case2('2022-11-30'), 'ноября')
-        self.assertEqual(tl.get_month_str_case2('2022-12-15'), 'декабря')
-        self.assertIsNone(tl.get_month_str_case2('2022-02-30'))
+        self.assertEqual(tl.get_month_str_case2("2022-01-15"), "января")
+        self.assertEqual(tl.get_month_str_case2("2022-02-28"), "февраля")
+        self.assertEqual(tl.get_month_str_case2("2022-03-31"), "марта")
+        self.assertEqual(tl.get_month_str_case2("2022-04-15"), "апреля")
+        self.assertEqual(tl.get_month_str_case2("2022-05-01"), "мая")
+        self.assertEqual(tl.get_month_str_case2("2022-06-15"), "июня")
+        self.assertEqual(tl.get_month_str_case2("2022-07-31"), "июля")
+        self.assertEqual(tl.get_month_str_case2("2022-08-15"), "августа")
+        self.assertEqual(tl.get_month_str_case2("2022-09-30"), "сентября")
+        self.assertEqual(tl.get_month_str_case2("2022-10-15"), "октября")
+        self.assertEqual(tl.get_month_str_case2("2022-11-30"), "ноября")
+        self.assertEqual(tl.get_month_str_case2("2022-12-15"), "декабря")
+        self.assertIsNone(tl.get_month_str_case2("2022-02-30"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

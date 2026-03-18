@@ -969,8 +969,8 @@ def main():
 
     if args.type in ["combinedforecast", "all"]:
         horizons = {
-            "pentad": "combined_forecasts_pentad_latest.csv",
-            "decade": "combined_forecasts_decad_latest.csv",
+            "pentad": "combined_forecasts_pentad.csv",
+            "decade": "combined_forecasts_decad.csv",
         }
         migrators_to_run.append(
             CombinedForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast")
@@ -978,8 +978,8 @@ def main():
 
     if args.type in ["lrforecast", "all"]:
         horizons = {
-            "pentad": "forecast_pentad_linreg_latest.csv",
-            "decade": "forecast_decad_linreg_latest.csv",
+            "pentad": "forecast_pentad_linreg.csv",
+            "decade": "forecast_decad_linreg.csv",
         }
         migrators_to_run.append(
             LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecast")
@@ -995,9 +995,9 @@ def main():
             # },
             # the horizon would be 'day', 'pentad' and 'decade' values come from combined forecast csv files
             "decade": {
-                "TFT": "predictions/TFT/decad_TFT_forecast_latest.csv",
-                "TiDE": "predictions/TIDE/decad_TIDE_forecast_latest.csv",
-                "TSMixer": "predictions/TSMIXER/decad_TSMIXER_forecast_latest.csv",
+                "TFT": "predictions/TFT/decad_TFT_forecast.csv",
+                "TiDE": "predictions/TIDE/decad_TIDE_forecast.csv",
+                "TSMixer": "predictions/TSMIXER/decad_TSMIXER_forecast.csv",
             }
         }
         migrators_to_run.append(
