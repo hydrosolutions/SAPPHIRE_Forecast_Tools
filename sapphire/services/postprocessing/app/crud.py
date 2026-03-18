@@ -455,7 +455,7 @@ def delete_bulletin(
         raise
 
 
-def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> List[LRVisibility]:
+def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> list[LRVisibility]:
     """Create or update multiple LR visibility records in bulk (upsert based on horizon_type, code, month, horizon_value)"""
     try:
         db_lr_visibility = []
