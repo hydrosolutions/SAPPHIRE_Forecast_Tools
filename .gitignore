@@ -247,3 +247,7 @@ temp_luigi.cfg
 .claude/settings.local.json
 
 /apps/logs
+
+# Sensitive deployment docs (contain server IPs and connection details)
+doc/prod/ssh_tunnel_tajhm_ieh_hf.md
+doc/prod/ssh_tunnel_tajhm_handover.md

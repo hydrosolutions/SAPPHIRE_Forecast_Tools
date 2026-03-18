@@ -12,6 +12,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
   - [Deployment with private data on a server](#deployment-with-private-data-on-a-server)
     - [Configuring your server](#configuring-your-server)
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
+      - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -117,6 +118,27 @@ For a production environment, the Luigi scheduler daemon (`luigid`) must be runn
     docker ps | grep luigi-daemon
     ```
     You should see the `sapphire-luigi-daemon` container with a status of `Up`. You can access the Luigi web interface at `http://<your-server-ip>:8082`.
+
+#### Set up SSH tunnel to iEasyHydro HF (if required)
+
+If the SAPPHIRE forecast tools need to access an iEasyHydro High Frequency (HF) database that is not directly reachable from the server (e.g., on a different network or behind a firewall), you must set up a persistent SSH tunnel using `autossh` and `systemd`.
+
+**When is this needed?**
+- The iEasyHydro HF server is on a different network than the SAPPHIRE server
+- The iEasyHydro HF API listens only on `localhost` on its host machine (common security configuration)
+
+**When is this NOT needed?**
+- The iEasyHydro HF API is directly reachable from the SAPPHIRE server (same network, API bound to network interface)
+- You are using the iEasyHydro HF cloud version (configure the cloud endpoint in `.env` instead)
+
+**Setup summary:**
+1. Install `autossh` on the SAPPHIRE server
+2. Generate a dedicated SSH key pair
+3. Install the public key on the iEasyHydro HF server (coordinate with the remote IT team)
+4. Create a `systemd` service that maintains the tunnel automatically (auto-start on boot, auto-reconnect on drop)
+5. Configure your `.env` to point at `localhost:<tunnel-port>`
+
+For the full step-by-step instructions with all commands, see the [Update Deployment Checklist — Section 1.2, Option B or C](prod/update_deployment_checklist.md#12-ieasyhydro-hf-connectivity-if-applicable).
 
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.

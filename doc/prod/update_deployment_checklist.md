@@ -59,12 +59,13 @@ If iEasyHydro HF API only listens on localhost (common security configuration):
 - [ ] Verify ping works but direct API access fails
 - [ ] Test manual SSH tunnel:
   ```bash
-  ssh -f -N -L 5555:localhost:5555 <user>@<ieasyhydro-server-ip>
-  curl -s http://localhost:5555/api/v1/ | head
+  ssh -f -N -L <local-port>:localhost:<remote-port> <user>@<ieasyhydro-server-ip>
+  curl -s http://localhost:<local-port>/api/v1/ | head
   ```
+  Where `<remote-port>` is the port iEasyHydro HF listens on (typically 5555) and `<local-port>` is the port you want to use locally (can be the same or different, e.g., 5554 if 5555 is already in use by another tunnel).
 - [ ] Configure `.env` to use localhost:
   ```
-  IEASYHYDROHF_HOST=http://localhost:5555
+  IEASYHYDROHF_HOST=http://localhost:<local-port>
   ```
 - [ ] **Set up permanent tunnel with autossh + systemd:**
 
@@ -89,7 +90,7 @@ If iEasyHydro HF API only listens on localhost (common security configuration):
      Type=simple
      User=<your-user>
      Environment="AUTOSSH_GATETIME=0"
-     ExecStart=/usr/bin/autossh -M 0 -N -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L 5555:localhost:5555 <user>@<ieasyhydro-server-ip>
+     ExecStart=/usr/bin/autossh -M 0 -N -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L <local-port>:localhost:<remote-port> <user>@<ieasyhydro-server-ip>
      Restart=always
      RestartSec=10
 
@@ -107,18 +108,150 @@ If iEasyHydro HF API only listens on localhost (common security configuration):
 - [ ] Verify permanent tunnel:
   ```bash
   sudo systemctl status ieasyhydro-tunnel.service
-  curl -s http://localhost:5555/api/v1/ | head
+  curl -s http://localhost:<local-port>/api/v1/ | head
   ```
 
-**Option C: Different Networks with Local iEasyHydro HF Installation**
+**Option C: Different Networks (SSH Tunnel with Port Forwarding)**
 
-If iEasyHydro HF is on a different network:
+If the SAPPHIRE server and iEasyHydro HF are on different networks (e.g., AWS server connecting to a local installation at a hydromet service), an SSH tunnel with port forwarding is required.
 
-- [ ] Configure SSH tunnel to iEasyHydro HF server (with port forwarding if needed)
-- [ ] Set up automatic SSH tunnel keepalive (e.g., via systemd service or autossh)
-- [ ] Verify the tunnel is active and data can be retrieved
+**Prerequisites:**
+- SSH access to the iEasyHydro HF server (username, IP, port)
+- The remote server's IT team must allow inbound SSH from the SAPPHIRE server IP
+- The iEasyHydro HF API must be listening on a known port on the remote server (typically 5555)
 
-**Option C: iEasyHydro HF Cloud Version**
+**Step 1: Install autossh**
+
+- [ ] Install autossh on the SAPPHIRE server:
+  ```bash
+  sudo apt-get update && sudo apt-get install -y autossh
+  ```
+
+**Step 2: Generate SSH key**
+
+- [ ] Generate a dedicated SSH key for the tunnel:
+  ```bash
+  ssh-keygen -t ed25519 -f ~/.ssh/<remote-name>_ieh_key -N ""
+  ```
+  Replace `<remote-name>` with a short identifier (e.g., `tajhm`, `kghm`).
+
+**Step 3: Install public key on remote server**
+
+- [ ] Copy the public key to the remote server:
+  ```bash
+  ssh-copy-id -i ~/.ssh/<remote-name>_ieh_key.pub -p <ssh-port> <user>@<remote-ip>
+  ```
+  If `ssh-copy-id` is not available, use the manual approach:
+  ```bash
+  cat ~/.ssh/<remote-name>_ieh_key.pub | ssh -p <ssh-port> <user>@<remote-ip> \
+    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+  ```
+  > **Note:** This step requires either the current password for the remote user, or coordination with the remote IT team to add the key manually.
+
+**Step 4: Add remote server to known_hosts**
+
+- [ ] Add the remote server's host key:
+  ```bash
+  ssh-keyscan -p <ssh-port> <remote-ip> >> ~/.ssh/known_hosts
+  ```
+
+**Step 5: Test the connection**
+
+- [ ] Verify key-based SSH login works:
+  ```bash
+  ssh -i ~/.ssh/<remote-name>_ieh_key -p <ssh-port> <user>@<remote-ip>
+  ```
+
+- [ ] Test port forwarding manually:
+  ```bash
+  ssh -i ~/.ssh/<remote-name>_ieh_key -p <ssh-port> -L <local-port>:localhost:<remote-port> -N <user>@<remote-ip>
+  ```
+  In a second terminal, verify the local port is listening:
+  ```bash
+  ss -tlnp | grep <local-port>
+  curl -s http://localhost:<local-port>/api/v1/ | head
+  ```
+  Press `Ctrl+C` to stop the manual tunnel.
+
+**Step 6: Create systemd service**
+
+- [ ] Create the service file `/etc/systemd/system/<remote-name>-ieh-hf-ssh-tunnel.service`:
+  ```bash
+  sudo tee /etc/systemd/system/<remote-name>-ieh-hf-ssh-tunnel.service << 'EOF'
+  [Unit]
+  Description=AutoSSH tunnel to <remote-name> iEH HF
+  After=network-online.target
+  Wants=network-online.target
+
+  [Service]
+  User=<local-user>
+  Environment="AUTOSSH_GATETIME=0"
+  ExecStart=/usr/bin/autossh -M 0 \
+    -o "ServerAliveInterval 30" \
+    -o "ServerAliveCountMax 3" \
+    -o "ExitOnForwardFailure=yes" \
+    -o "StrictHostKeyChecking=no" \
+    -N \
+    -p <ssh-port> \
+    -L <local-port>:localhost:<remote-port> \
+    -i /home/<local-user>/.ssh/<remote-name>_ieh_key \
+    <user>@<remote-ip>
+  Restart=always
+  RestartSec=10
+
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+  ```
+
+  Replace all `<placeholders>` with your actual values. Common configurations:
+
+  | Placeholder | Example (same network, non-standard port) | Example (different network) |
+  |---|---|---|
+  | `<remote-name>` | `kghm` | `tajhm` |
+  | `<remote-ip>` | `192.168.1.50` | `195.7.15.46` |
+  | `<ssh-port>` | `22` | `56222` |
+  | `<user>` | `imomo` | `ieasyhydro` |
+  | `<local-port>` | `5555` | `5554` |
+  | `<remote-port>` | `5555` | `5555` |
+  | `<local-user>` | `ubuntu` | `ubuntu` |
+
+**Step 7: Enable and start the service**
+
+- [ ] Enable and start:
+  ```bash
+  sudo systemctl daemon-reload
+  sudo systemctl enable <remote-name>-ieh-hf-ssh-tunnel
+  sudo systemctl start <remote-name>-ieh-hf-ssh-tunnel
+  ```
+
+- [ ] Configure `.env` to use the local tunnel port:
+  ```
+  IEASYHYDROHF_HOST=http://localhost:<local-port>
+  ```
+
+**Step 8: Verify**
+
+- [ ] Check service status:
+  ```bash
+  sudo systemctl status <remote-name>-ieh-hf-ssh-tunnel
+  ```
+- [ ] Verify tunnel is listening:
+  ```bash
+  ss -tlnp | grep <local-port>
+  ```
+- [ ] Test API access:
+  ```bash
+  curl -s http://localhost:<local-port>/api/v1/ | head
+  ```
+- [ ] View logs if needed:
+  ```bash
+  sudo journalctl -u <remote-name>-ieh-hf-ssh-tunnel -f
+  ```
+
+> **Troubleshooting:** If the tunnel fails, check: (1) port reachability with `nc -zv <remote-ip> <ssh-port>`, (2) key is in remote `authorized_keys`, (3) no port conflicts with `ss -tlnp | grep <local-port>`, (4) logs with `journalctl -u <remote-name>-ieh-hf-ssh-tunnel --since "1 hour ago"`.
+
+**Option D: iEasyHydro HF Cloud Version**
 
 If using the iEasyHydro HF cloud version:
 
