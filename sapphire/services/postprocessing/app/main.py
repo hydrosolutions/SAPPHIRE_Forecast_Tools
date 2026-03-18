@@ -336,7 +336,7 @@ def delete_bulletin(
         )
 
 
-@app.post("/lr-visibility/", response_model=List[LRVisibilityResponse], status_code=status.HTTP_201_CREATED, tags=["LRVisibility"])
+@app.post("/lr-visibility/", response_model=list[LRVisibilityResponse], status_code=status.HTTP_201_CREATED, tags=["LRVisibility"])
 def create_lr_visibility(bulk_data: LRVisibilityBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple LR visibility records in bulk"""
     try:
