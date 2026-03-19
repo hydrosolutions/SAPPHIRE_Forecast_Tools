@@ -9,6 +9,9 @@ FROM mabesa/sapphire-pythonbaseimage:latest AS base
 # Run as root to allow running of containers from within dashboard
 USER root
 
+# Install uv (not present in base image)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Set environment variables
 ENV SAPPHIRE_OPDEV_ENV=True
 ENV PATH="/root/.local/bin:${PATH}"
