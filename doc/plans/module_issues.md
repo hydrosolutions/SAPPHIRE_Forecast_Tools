@@ -60,6 +60,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | — |
 | **API-005** | Migrate long_term_forecasting from direct SQL to API client | infra | **Medium** | Open | — | API-001 |
 | **API-006** | Support flag field on long-term forecasts (operational vs hindcast) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_long_forecast_flag_support.md`](issues/mid_prio_gi_draft_infra_long_forecast_flag_support.md) | Colleague (sapphire/services/) |
+| **ML-008** | Replace hindcast subprocess+CSV IPC with direct function call | ml | **Low** | Draft | [`low_prio_gi_draft_ml_hindcast_api_io.md`](issues/low_prio_gi_draft_ml_hindcast_api_io.md) | ML-003 (CSV corruption fix), `mid_prio_gi_draft_ml_hindcast_api_consistency.md` |
 
 ---
 
