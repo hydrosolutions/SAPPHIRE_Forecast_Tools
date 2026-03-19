@@ -46,6 +46,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    normalize_ml_csv_columns,
 )
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -202,6 +203,7 @@ def recalculate_nan_forecasts():
         )
         try:
             forecast = pd.read_csv(forecast_path)
+            forecast = normalize_ml_csv_columns(forecast)
         except FileNotFoundError:
             logger.error("No forecast file found (API and CSV both empty)")
             return
@@ -412,6 +414,7 @@ def recalculate_nan_forecasts():
 
     # CSV write (deprecated fallback)
     csv_path = os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv")
+    forecast = normalize_ml_csv_columns(forecast)
     forecast.to_csv(csv_path, index=False)
 
     if not api_write_ok:

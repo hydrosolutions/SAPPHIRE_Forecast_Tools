@@ -522,6 +522,38 @@ def calculate_decad_from_date(date) -> tuple:
 # Shared by _read_ml_forecasts_from_api() and _write_ml_forecast_to_api().
 ML_MODEL_TYPE_MAP = {"TFT": "TFT", "TIDE": "TiDE", "TSMIXER": "TSMixer"}
 
+ML_CANONICAL_CSV_COLUMNS = [
+    "Q5",
+    "Q10",
+    "Q15",
+    "Q20",
+    "Q25",
+    "Q30",
+    "Q35",
+    "Q40",
+    "Q45",
+    "Q50",
+    "Q55",
+    "Q60",
+    "Q65",
+    "Q70",
+    "Q75",
+    "Q80",
+    "Q85",
+    "Q90",
+    "Q95",
+    "date",
+    "code",
+    "forecast_date",
+    "flag",
+]
+
+
+def normalize_ml_csv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter DataFrame to canonical ML CSV columns, preserving column order."""
+    return df[[c for c in ML_CANONICAL_CSV_COLUMNS if c in df.columns]]
+
+
 _API_PAGE_SIZE = 5000  # rows per page; balances request count vs. payload size
 
 
@@ -623,6 +655,8 @@ def _read_ml_forecasts_from_api(
     )
     df["forecast_date"] = pd.to_datetime(df["forecast_date"])
     df["date"] = pd.to_datetime(df["date"])
+    canonical = [c for c in ML_CANONICAL_CSV_COLUMNS if c in df.columns]
+    df = df[canonical]
     return df
 
 

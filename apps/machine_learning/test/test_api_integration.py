@@ -620,6 +620,9 @@ def _make_api_response(n_rows=3):
             "forecasted_discharge": [100.0] * n_rows,
             "q75": [120.0] * n_rows,
             "q95": [150.0] * n_rows,
+            "horizon_type": ["day"] * n_rows,
+            "model_type": ["TFT"] * n_rows,
+            "id": list(range(n_rows)),
         }
     )
 
@@ -703,6 +706,19 @@ class TestReadMLForecastsFromAPI:
             # Verify datetime conversion
             assert pd.api.types.is_datetime64_any_dtype(result["forecast_date"])
             assert pd.api.types.is_datetime64_any_dtype(result["date"])
+            # Verify API-only columns are filtered out
+            api_only_cols = {
+                "horizon_type",
+                "model_type",
+                "id",
+                "model_type_description",
+                "composition",
+                "horizon_value",
+                "horizon_in_year",
+            }
+            assert api_only_cols.isdisjoint(set(result.columns)), (
+                f"API-only columns leaked: {api_only_cols & set(result.columns)}"
+            )
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 

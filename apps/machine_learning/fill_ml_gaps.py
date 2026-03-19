@@ -47,6 +47,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    normalize_ml_csv_columns,
 )
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -200,6 +201,7 @@ def fill_ml_gaps():
             forecast = pd.read_csv(forecast_path)
             forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
             forecast["date"] = pd.to_datetime(forecast["date"])
+            forecast = normalize_ml_csv_columns(forecast)
         except FileNotFoundError:
             logger.warning(
                 "fill_ml_gaps: No CSV found at %s either — no gap detection possible",
@@ -391,6 +393,7 @@ def fill_ml_gaps():
                 )
 
         # CSV write (deprecated fallback — will be removed once API is sole store)
+        forecast = normalize_ml_csv_columns(forecast)
         forecast.to_csv(
             os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv"),
             index=False,

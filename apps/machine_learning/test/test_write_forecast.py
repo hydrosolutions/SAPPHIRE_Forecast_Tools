@@ -223,6 +223,51 @@ class TestWritePentadForecast:
 
         mock_api_write.assert_called_once_with(new_data, "pentad", "TFT")
 
+    def test_csv_output_has_only_canonical_columns(self, tmp_path):
+        """When the old CSV contains API-only columns, the output must strip them.
+
+        If a corrupted/legacy CSV on disk carries extra columns like
+        ``horizon_type`` or ``model_type``, those must not propagate into
+        the combined CSV that write_pentad_forecast() writes.
+        """
+        import os as _os
+        import sys
+
+        sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "scr"))
+        from utils_ml_forecast import ML_CANONICAL_CSV_COLUMNS
+
+        out_dir = str(tmp_path)
+        csv_path = _os.path.join(out_dir, "pentad_TFT_forecast.csv")
+
+        # Old CSV has API-only extra columns (simulating a corrupted archive)
+        corrupted_csv = (
+            "code,forecast_date,date,Q5,Q25,Q50,Q75,Q95,flag,horizon_type,model_type,id\n"
+            "12345,2024-03-19,2024-03-20,5.0,15.0,25.0,35.0,45.0,0,day,TFT,1\n"
+            "12345,2024-03-19,2024-03-21,6.0,16.0,26.0,36.0,46.0,0,day,TFT,2\n"
+        )
+        with open(csv_path, "w") as f:
+            f.write(corrupted_csv)
+
+        new_data = _new_forecast_df()
+
+        with patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", False):
+            make_forecast.write_pentad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        result = pd.read_csv(csv_path)
+        api_only = {
+            "horizon_type",
+            "model_type",
+            "id",
+            "model_type_description",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+        leaked = api_only & set(result.columns)
+        assert not leaked, f"API-only columns leaked into output CSV: {leaked}"
+        non_canonical = set(result.columns) - set(ML_CANONICAL_CSV_COLUMNS)
+        assert not non_canonical, f"Non-canonical columns in output CSV: {non_canonical}"
+
     def test_deduplication_keeps_latest(self, tmp_path):
         """When old and new data share keys, the latest value wins."""
         out_dir = str(tmp_path)

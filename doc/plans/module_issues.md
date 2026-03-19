@@ -41,6 +41,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
 | **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Review | [`high_prio_gi_draft_ml_api_primary_reads.md`](issues/high_prio_gi_draft_ml_api_primary_reads.md) |
+| **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`high_prio_gi_draft_ml_csv_schema_corruption_fix.md`](issues/high_prio_gi_draft_ml_csv_schema_corruption_fix.md) |
 | **ML-004** | Hindcast gap-fill never persists to API — silent write failure (3 bugs) | ml | **Critical** | Review | [`review_gi_draft_ml_hindcast_api_write_broken.md`](issues/review_gi_draft_ml_hindcast_api_write_broken.md) |
 | **ML-005** | ML consistency check reads forecasts without station code filter | ml | **Medium** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) (Phase 4) |
 | **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Draft | [`high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md) |
@@ -60,7 +61,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | — |
 | **API-005** | Migrate long_term_forecasting from direct SQL to API client | infra | **Medium** | Open | — | API-001 |
 | **API-006** | Support flag field on long-term forecasts (operational vs hindcast) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_long_forecast_flag_support.md`](issues/mid_prio_gi_draft_infra_long_forecast_flag_support.md) | Colleague (sapphire/services/) |
-| **ML-008** | Replace hindcast subprocess+CSV IPC with direct function call | ml | **Low** | Draft | [`low_prio_gi_draft_ml_hindcast_api_io.md`](issues/low_prio_gi_draft_ml_hindcast_api_io.md) | ML-003 (CSV corruption fix), `mid_prio_gi_draft_ml_hindcast_api_consistency.md` |
+| **ML-008** | Replace hindcast subprocess+CSV IPC with direct function call | ml | **Low** | Draft | [`low_prio_gi_draft_ml_hindcast_api_io.md`](issues/low_prio_gi_draft_ml_hindcast_api_io.md) | ML-009, `mid_prio_gi_draft_ml_hindcast_api_consistency.md` |
 
 ---
 

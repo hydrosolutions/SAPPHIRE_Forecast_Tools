@@ -1,6 +1,6 @@
 # Fix ML Forecast CSV Schema Corruption & Restore Historical Data
 
-**Status**: Draft
+**Status**: Review (Phases 1-2 implemented; Phase 3 is server-side data restoration)
 **Module**: `machine_learning`
 **Priority**: Critical (blocks DB reset & migration)
 **Labels**: `bug`, `data-integrity`, `csv-corruption`, `api-migration`

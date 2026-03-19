@@ -110,6 +110,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _check_ml_forecast_consistency,
     _write_ml_forecast_to_api,
+    normalize_ml_csv_columns,
 )
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -191,6 +192,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
         forecast_combined = forecast_combined.drop_duplicates(
             subset=["forecast_date", "date", "code"], keep="last"
         )
+        forecast_combined = normalize_ml_csv_columns(forecast_combined)
         forecast_combined.to_csv(forecast_file_path, index=False)
     except Exception as e:
         logger.error(f"Failed to write pentad forecast to CSV: {e}")
@@ -241,6 +243,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         forecast_combined = forecast_combined.drop_duplicates(
             subset=["forecast_date", "date", "code"], keep="last"
         )
+        forecast_combined = normalize_ml_csv_columns(forecast_combined)
         forecast_combined.to_csv(forecast_file_path, index=False)
     except Exception as e:
         logger.error(f"Failed to write decad forecast to CSV: {e}")

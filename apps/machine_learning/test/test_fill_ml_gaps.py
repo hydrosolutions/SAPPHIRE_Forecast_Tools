@@ -435,6 +435,72 @@ class TestApiFirstWrite:
         },
     )
     @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    def test_csv_write_has_only_canonical_columns(
+        self, mock_read_api, mock_hindcast, mock_write_api, tmp_path
+    ):
+        """CSV written after gap-fill must contain only canonical columns.
+
+        When the gap-filled data carries API-only columns (e.g., from a
+        hindcast that added ``horizon_type``, ``model_type``, or ``id``),
+        those columns must be stripped before the CSV is written to disk.
+        """
+        from scr.utils_ml_forecast import ML_CANONICAL_CSV_COLUMNS
+
+        # Arrange — forecast with a 3-day gap to trigger hindcast path
+        forecast_with_gap = _make_forecast_df(n_days=2)
+        forecast_with_gap.loc[1, "forecast_date"] = pd.Timestamp("2024-01-05")
+        mock_read_api.return_value = forecast_with_gap
+
+        # Hindcast returns a DataFrame that includes API-only extra columns
+        hindcast = _make_hindcast_df(start_date="2024-01-02", n_days=3)
+        hindcast["horizon_type"] = "day"
+        hindcast["model_type"] = "TFT"
+        hindcast["id"] = range(len(hindcast))
+        mock_hindcast.return_value = hindcast
+
+        mock_write_api.return_value = True
+
+        csv_dir = tmp_path / "output" / "TFT"
+        csv_dir.mkdir(parents=True)
+
+        with patch.dict(
+            os.environ,
+            {"ieasyforecast_intermediate_data_path": str(tmp_path)},
+        ):
+            with patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True):
+                fill_ml_gaps.fill_ml_gaps()
+
+        # Assert — read back the CSV and check column names
+        csv_path = csv_dir / "pentad_TFT_forecast.csv"
+        assert csv_path.exists(), "Expected CSV file was not written"
+        written = __import__("pandas").read_csv(csv_path)
+        api_only = {
+            "horizon_type",
+            "model_type",
+            "id",
+            "model_type_description",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+        leaked = api_only & set(written.columns)
+        assert not leaked, f"API-only columns leaked into CSV: {leaked}"
+        # All written columns must be from the canonical set
+        non_canonical = set(written.columns) - set(ML_CANONICAL_CSV_COLUMNS)
+        assert not non_canonical, f"Non-canonical columns in CSV: {non_canonical}"
+
+    @patch.dict(
+        os.environ,
+        {
+            "SAPPHIRE_MODEL_TO_USE": "TFT",
+            "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+            "ieasyforecast_intermediate_data_path": "/tmp/test_ml004",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+    )
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
     @patch("fill_ml_gaps._read_ml_forecasts_from_api")
     def test_no_gaps_skips_api_write(self, mock_read_api, mock_write_api, caplog, tmp_path):
         """When there are no gaps (all_filled_forecasts is empty), no

@@ -258,6 +258,72 @@ class TestApiWriteReturnsFailure:
         )
 
 
+class TestCsvColumnsAreCanonical:
+    """Phase 2 (ML-003): CSV written by recalculate_nan_forecasts must
+    contain only canonical ML columns — no API-only columns allowed.
+    """
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("recalculate_nan_forecasts.SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_nan_forecasts._write_ml_forecast_to_api")
+    @patch("recalculate_nan_forecasts.call_hindcast_script")
+    @patch("recalculate_nan_forecasts._read_ml_forecasts_from_api")
+    @patch("recalculate_nan_forecasts.sl")
+    def test_csv_write_has_only_canonical_columns(
+        self,
+        mock_sl,
+        mock_read_api,
+        mock_call_hindcast,
+        mock_write_api,
+        tmp_path,
+    ):
+        """API-only columns (horizon_type, model_type, id) must not appear
+        in the CSV file written by recalculate_nan_forecasts.
+        """
+        from scr.utils_ml_forecast import ML_CANONICAL_CSV_COLUMNS
+
+        # Arrange — forecast from the API that carries extra API-only columns
+        forecast = _make_forecast_df_with_nans()
+        forecast["horizon_type"] = "day"
+        forecast["model_type"] = "TFT"
+        forecast["id"] = range(len(forecast))
+        mock_sl.load_environment.return_value = None
+        mock_read_api.return_value = forecast
+
+        # Hindcast replaces the NaN rows (clean, no extra columns)
+        mock_call_hindcast.return_value = _make_hindcast_df()
+        mock_write_api.return_value = True
+
+        forecast_dir = tmp_path / "output" / "TFT"
+        forecast_dir.mkdir(parents=True)
+        env_override = {
+            **_BASE_ENV,
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+        }
+
+        # Act
+        with patch.dict(os.environ, env_override, clear=False):
+            recalculate_nan_forecasts.recalculate_nan_forecasts()
+
+        # Assert — read the CSV and verify no API-only columns are present
+        csv_path = forecast_dir / "pentad_TFT_forecast.csv"
+        assert csv_path.exists(), "Expected CSV file was not written"
+        written = pd.read_csv(csv_path)
+        api_only = {
+            "horizon_type",
+            "model_type",
+            "id",
+            "model_type_description",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+        leaked = api_only & set(written.columns)
+        assert not leaked, f"API-only columns leaked into CSV: {leaked}"
+        non_canonical = set(written.columns) - set(ML_CANONICAL_CSV_COLUMNS)
+        assert not non_canonical, f"Non-canonical columns in CSV: {non_canonical}"
+
+
 class TestApiUnavailableFallback:
     """Phase 2b: SAPPHIRE_API_AVAILABLE is False — CSV-only warning."""
 
