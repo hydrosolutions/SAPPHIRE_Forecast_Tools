@@ -1,6 +1,6 @@
 # ML make_forecast: Read Historical Forecasts from API with CSV Fallback
 
-**Status**: Draft
+**Status**: Review (implemented)
 **Module**: `machine_learning`
 **Priority**: High (data flow consistency)
 **Labels**: `enhancement`, `api-migration`, `data-flow`
