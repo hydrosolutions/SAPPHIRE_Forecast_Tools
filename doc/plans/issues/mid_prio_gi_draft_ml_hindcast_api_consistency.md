@@ -1,6 +1,6 @@
 # ML hindcast_ML_models: API Write Order & Cleanup
 
-**Status**: Draft
+**Status**: Review (implemented)
 **Module**: `machine_learning`
 **Priority**: Mid (consistency, not blocking operations)
 **Labels**: `enhancement`, `api-migration`, `cleanup`

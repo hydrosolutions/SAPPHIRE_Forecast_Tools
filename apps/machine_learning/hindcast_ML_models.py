@@ -53,6 +53,7 @@ from pytorch_lightning.callbacks import Callback
 from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _write_ml_forecast_to_api,
+    normalize_ml_csv_columns,
     read_meteo_data_combined,
 )
 
@@ -172,12 +173,6 @@ def main():
     # --------------------------------------------------------------------
 
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
-    PATH_TO_PAST_DISCHARGE = os.getenv("ieasyforecast_daily_discharge_file")
-    PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
-    logger.debug("PATH_TO_PAST_DISCHARGE: %s", PATH_TO_PAST_DISCHARGE)
-    # Test if file exists
-    if not os.path.exists(PATH_TO_PAST_DISCHARGE):
-        raise FileNotFoundError(f"File {PATH_TO_PAST_DISCHARGE} not found.")
 
     MODELS_AND_SCALERS_PATH = os.getenv("ieasyhydroforecast_models_and_scalers_path")
     PATH_TO_STATIC_FEATURES = os.getenv("ieasyhydroforecast_PATH_TO_STATIC_FEATURES")
@@ -457,9 +452,12 @@ def main():
 
     timer_end = datetime.datetime.now()
 
-    # Flagging:
-    # if the forecast is nan -> flag = 3
-    # if there is a value in the forecast: -> flag = 4
+    # Flag convention for hindcast:
+    #   3 = NaN in any quantile column (forecast failed for this date)
+    #   4 = valid forecast (all quantiles present)
+    # Note: make_forecast.py uses 0 (ok), 1 (NaN), 2 (error).
+    # Hindcast uses 3/4 to distinguish hindcast rows from operational rows
+    # when both are stored in the same API table.
     hindecast_daily_df["flag"] = 4
     pred_cols = [col for col in hindecast_daily_df.columns if "Q" in col]
     hindecast_daily_df.loc[hindecast_daily_df[pred_cols].isna().any(axis=1), "flag"] = 3
@@ -480,20 +478,14 @@ def main():
     end_date = end_date.strftime("%Y-%m-%d")
 
     # hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
-    hindecast_daily_df.to_csv(
-        os.path.join(
-            OUTPUT_PATH_DISCHARGE,
-            f"{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv",
-        ),
-        index=False,
-    )
 
-    # API write (primary) — CSV above is deprecated fallback
+    # --- 1. Write to SAPPHIRE API (primary path) ---
+    horizon = "pentad" if HINDCAST_MODE == "PENTAD" else "decade"
+    api_ok = False
     if SAPPHIRE_API_AVAILABLE:
         try:
-            horizon = "pentad" if HINDCAST_MODE == "PENTAD" else "decade"
-            ok = _write_ml_forecast_to_api(hindecast_daily_df, horizon, MODEL_TO_USE)
-            if ok:
+            api_ok = _write_ml_forecast_to_api(hindecast_daily_df, horizon, MODEL_TO_USE)
+            if api_ok:
                 logger.info(
                     "Wrote %d hindcast rows to API for %s %s",
                     len(hindecast_daily_df),
@@ -508,6 +500,23 @@ def main():
                 )
         except Exception as e:
             logger.error("Failed to write hindcast to API: %s", e)
+
+    # --- 2. Write to CSV (archive/fallback) ---
+    hindecast_daily_df = normalize_ml_csv_columns(hindecast_daily_df)
+    hindecast_daily_df.to_csv(
+        os.path.join(
+            OUTPUT_PATH_DISCHARGE,
+            f"{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv",
+        ),
+        index=False,
+    )
+
+    if not api_ok:
+        logger.warning(
+            "Hindcast data for %s/%s exists only in CSV — API write failed or unavailable",
+            MODEL_TO_USE,
+            HINDCAST_MODE,
+        )
 
     logger.info("Hindcast Done!")
 
