@@ -266,6 +266,7 @@ services:
       - ieasyhydroforecast_url_pentad=${ieasyhydroforecast_url_pentad}
       - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url_pentad}
       - sapphire_forecast_horizon=pentad
+      - API_GATEWAY_URL=${API_GATEWAY_URL}
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
