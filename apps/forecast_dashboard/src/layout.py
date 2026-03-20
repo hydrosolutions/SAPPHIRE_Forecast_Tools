@@ -1,14 +1,10 @@
 # functions to create the layout of the dashboard
-import os
-import param
-import panel as pn
 import datetime as dt
+import os
+
+import panel as pn
+
 from .vizualization import update_sidepane_card_visibility
-from .gettext_config import translation_manager, _
-
-import param
-
-
 
 # region Widget update functions
 
@@ -46,6 +42,7 @@ import param
 #         #            width_policy='fit', width=station.width)),
 #     )
 
+
 def define_sidebar_2(_, wm):
     return pn.Column(
         pn.Row(wm.horizon_card),
@@ -56,313 +53,328 @@ def define_sidebar_2(_, wm):
         pn.Row(wm.reload_card),
     )
 
+
 def get_logos(in_docker_flag):
     # overwrite in_docker_flag
     in_docker_flag = "False"
     if in_docker_flag == "True":
         return pn.Row(
-            pn.pane.Image(os.path.join(
-                "apps", "forecast_dashboard", "www", "sapphire_project_logo.jpg"),
-                width=70),
-            pn.pane.Image(os.path.join(
-                "apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
-                width=100),
-            pn.pane.Image(os.path.join(
-                "apps", "forecast_dashboard", "www", "sdc.jpeg"),
-                width=150))
+            pn.pane.Image(
+                os.path.join("apps", "forecast_dashboard", "www", "sapphire_project_logo.jpg"),
+                width=70,
+            ),
+            pn.pane.Image(
+                os.path.join("apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
+                width=100,
+            ),
+            pn.pane.Image(os.path.join("apps", "forecast_dashboard", "www", "sdc.jpeg"), width=150),
+        )
     else:
         return pn.Row(
-            pn.pane.Image(os.path.join(
-                "www", "sapphire_project_logo.jpg"),
-                width=70),
-            pn.pane.Image(os.path.join(
-                "www", "hydrosolutionsLogo.jpg"),
-                width=100),
-            pn.pane.Image(os.path.join(
-                "www", "sdc.jpeg"),
-                width=150))
+            pn.pane.Image(os.path.join("www", "sapphire_project_logo.jpg"), width=70),
+            pn.pane.Image(os.path.join("www", "hydrosolutionsLogo.jpg"), width=100),
+            pn.pane.Image(os.path.join("www", "sdc.jpeg"), width=150),
+        )
+
 
 def define_disclaimer(_, in_docker_flag):
     logos = get_logos(in_docker_flag)
     return pn.Column(
-        pn.pane.HTML(_('disclaimer_who')),
+        pn.pane.HTML(_("disclaimer_who")),
         pn.pane.HTML("<p> </p>"),
         logos,
         pn.pane.HTML("<p> </p>"),
         pn.pane.Markdown(_("disclaimer_waranty")),
-        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
+        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + "."),
     )
+
 
 def _create_snow_card(_, snow_plot_panes):
     """Create a card with all available snow plots in a specific order."""
-    preferred_order = ['SWE', 'HS', 'RoF']
-    
+    preferred_order = ["SWE", "HS", "RoF"]
+
     valid_plots = [
-        snow_plot_panes[var] 
-        for var in preferred_order 
+        snow_plot_panes[var]
+        for var in preferred_order
         if var in snow_plot_panes and snow_plot_panes[var].object is not None
     ]
-    
+
     if not valid_plots:
         return pn.Card(
             pn.pane.Markdown(_("No snow data available")),
             title=_("Snow Data (SnowMapper)"),
-            collapsed=False
+            collapsed=False,
         )
-    
+
     # Calculate height: e.g., 400px per plot + some padding
     card_height = len(valid_plots) * 400 + 100
-    
+
     return pn.Card(
         *valid_plots,
         title=_("Snow Data"),
         collapsed=False,
         collapsible=True,
-        sizing_mode='stretch_both',
-        min_height=card_height
+        sizing_mode="stretch_both",
+        min_height=card_height,
     )
 
-def define_tabs(_, predictors_warning, forecast_warning,
-                daily_hydrograph_plot, rainfall_plot, temperature_plot, daily_snow_plot,
-                #daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
-                forecast_data_and_plot,
-                forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
-                bulletin_table,
-                write_bulletin_button, bulletin_download_panel, disclaimer,
-                station_card, forecast_card, add_to_bulletin_button, basin_card,
-                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
-                skill_table, skill_metrics_download_filename, skill_metrics_download_button):
 
+def define_tabs(
+    _,
+    predictors_warning,
+    forecast_warning,
+    daily_hydrograph_plot,
+    rainfall_plot,
+    temperature_plot,
+    daily_snow_plot,
+    # daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
+    forecast_data_and_plot,
+    forecast_summary_table,
+    pentad_forecast_plot,
+    effectiveness_plot,
+    bulletin_table,
+    write_bulletin_button,
+    bulletin_download_panel,
+    disclaimer,
+    station_card,
+    forecast_card,
+    add_to_bulletin_button,
+    basin_card,
+    pentad_card,
+    reload_card,
+    add_to_bulletin_popup,
+    show_daily_data_widget,
+    skill_table,
+    skill_metrics_download_filename,
+    skill_metrics_download_button,
+):
     # Organize the panes in tabs
     no_date_overlap_flag = True
     if no_date_overlap_flag == False:
         tabs = pn.Tabs(
             # Predictors tab
-            (_('Predictors'),
-            pn.Column(
-                 pn.Row(
-                     pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))
+            (
+                _("Predictors"),
+                pn.Column(
+                    pn.Row(pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))),
+                    pn.Row(pn.Card(rainfall_plot, title=_("Precipitation"))),
+                    pn.Row(pn.Card(temperature_plot, title=_("Temperature"))),
+                    pn.Row(_create_snow_card(_, daily_snow_plot)),
                 ),
-                pn.Row(
-                    pn.Card(rainfall_plot, title=_("Precipitation"))
-                ),  
-                pn.Row(
-                    pn.Card(temperature_plot, title=_("Temperature"))
-                ), 
-                pn.Row(
-                    _create_snow_card(_, daily_snow_plot)
-                )
             ),
-            ), 
-            (_('Forecast'),
-             pn.Column(
-            #     pn.Row(
-            #        pn.Card(data_table, title=_('Data table'), collapsed=True),
-            #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
-            #        ),
-            #     pn.Row(
-            #         pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
-            #     pn.Row(
-            #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
-                     pn.Card(
-                         pentad_forecast_plot,
-                         title=_('Hydrograph'),
-                     ),
-                     pn.Card(
-                         forecast_summary_table,
-                         title=_('Summary table'),
-                     ),
-                     pn.Card(
-                         daily_hydrograph_plot,
-                         title=_('Analysis of the forecast')
-                     )
-                     
-            #     pn.Row(
-            #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
-            #     pn.Row(
-            #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
-            )
+            (
+                _("Forecast"),
+                pn.Column(
+                    #     pn.Row(
+                    #        pn.Card(data_table, title=_('Data table'), collapsed=True),
+                    #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
+                    #        ),
+                    #     pn.Row(
+                    #         pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
+                    #     pn.Row(
+                    #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
+                    pn.Card(
+                        pentad_forecast_plot,
+                        title=_("Hydrograph"),
+                    ),
+                    pn.Card(
+                        forecast_summary_table,
+                        title=_("Summary table"),
+                    ),
+                    pn.Card(daily_hydrograph_plot, title=_("Analysis of the forecast")),
+                    #     pn.Row(
+                    #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
+                    #     pn.Row(
+                    #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
+                ),
             ),
-            (_('Disclaimer'), disclaimer),
+            (_("Disclaimer"), disclaimer),
             dynamic=True,
-            sizing_mode='stretch_both'
+            sizing_mode="stretch_both",
         )
-    else: # If no_date_overlap_flag == True
+    else:  # If no_date_overlap_flag == True
         tabs = pn.Tabs(
             # Predictors tab
-            (_('Predictors'),
-            pn.Column(
-                predictors_warning,
-                pn.Row(
-                     pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
-                     #pn.Card(daily_rel_norm_runoff, title=_("Relative to norm runoff")),
-                     sizing_mode='stretch_width',
-                     min_height=400,
-                 ),
-                 pn.Row(
-                     pn.Card(rainfall_plot, title=_("Precipitation")),
-                     #pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
-                     sizing_mode='stretch_width',
-                     min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
-                 ),  
-                 pn.Row(
-                     pn.Card(temperature_plot, title=_("Temperature")),
-                     sizing_mode='stretch_width',
-                     min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
-                 ), 
-                 pn.Row(
-                     _create_snow_card(_, daily_snow_plot), 
-                     sizing_mode='stretch_both',
-                 )
-             ),
+            (
+                _("Predictors"),
+                pn.Column(
+                    predictors_warning,
+                    pn.Row(
+                        pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
+                        # pn.Card(daily_rel_norm_runoff, title=_("Relative to norm runoff")),
+                        sizing_mode="stretch_width",
+                        min_height=400,
+                    ),
+                    pn.Row(
+                        pn.Card(rainfall_plot, title=_("Precipitation")),
+                        # pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
+                        sizing_mode="stretch_width",
+                        min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    ),
+                    pn.Row(
+                        pn.Card(temperature_plot, title=_("Temperature")),
+                        sizing_mode="stretch_width",
+                        min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    ),
+                    pn.Row(
+                        _create_snow_card(_, daily_snow_plot),
+                        sizing_mode="stretch_both",
+                    ),
+                ),
             ),
-            (_('Forecast'),
-             pn.Column(
-                forecast_warning,
-                pn.Card(
-                    pn.Row(
-                        forecast_data_and_plot
+            (
+                _("Forecast"),
+                pn.Column(
+                    forecast_warning,
+                    pn.Card(
+                        pn.Row(forecast_data_and_plot),
+                        title=_("Linear regression"),
+                        sizing_mode="stretch_width",
+                        collapsible=True,
+                        collapsed=False,
+                        min_height=560,
+                        max_height=560,
                     ),
-                    title=_('Linear regression'),
-                    sizing_mode='stretch_width',
-                    collapsible=True,
-                    collapsed=False,
-                    min_height=560,
-                    max_height=560,
-                ),
-                pn.Card(
-                    pn.Row(
-                        add_to_bulletin_button, add_to_bulletin_popup
+                    pn.Card(
+                        pn.Row(add_to_bulletin_button, add_to_bulletin_popup),
+                        forecast_summary_table,
+                        title=_("Summary table"),
+                        sizing_mode="stretch_both",
+                        min_height=500 if len(forecast_summary_table.value) > 1 else 240,
                     ),
-                    forecast_summary_table,
-                    title=_('Summary table'),
-                    sizing_mode='stretch_both',
-                    min_height=500 if len(forecast_summary_table.value) > 1 else 240,
-
-                ),
-                pn.Card(
-                    pn.Column(
-                        pn.Row(
-                            pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
-                            show_daily_data_widget
+                    pn.Card(
+                        pn.Column(
+                            pn.Row(
+                                pn.pane.Markdown(
+                                    _("Show forecasts aggregated to pentadal values:")
+                                ),
+                                show_daily_data_widget,
+                            ),
+                            pentad_forecast_plot,
                         ),
-                        pentad_forecast_plot,
+                        title=_("Hydrograph"),
+                        height=600,
+                        # height=None,
+                        collapsible=True,
+                        collapsed=False,
                     ),
-                    title=_('Hydrograph'),
-                    height=600,
-                    #height=None,
-                    collapsible=True,
-                    collapsed=False
-                ),
-                #pn.Card(
-                #    skill_table,
-                #    title = 'test card',
-                #    height=600,
-                #),
-                pn.Card(
-                    pn.Row(
-                     effectiveness_plot,
+                    # pn.Card(
+                    #    skill_table,
+                    #    title = 'test card',
+                    #    height=600,
+                    # ),
+                    pn.Card(
+                        pn.Row(
+                            effectiveness_plot,
+                        ),
+                        title=_("Forecast skill metrics"),
+                        height=800,
+                        collapsible=True,
                     ),
-                    title=_("Forecast skill metrics"),
-                    height=800,
-                    collapsible=True,
-                ),
-                pn.Card(
-                    pn.Column(
-                        skill_table,
-                        skill_metrics_download_filename,
-                        skill_metrics_download_button,
+                    pn.Card(
+                        pn.Column(
+                            skill_table,
+                            skill_metrics_download_filename,
+                            skill_metrics_download_button,
+                        ),
+                        title=_("Table of forecast skill metrics"),
+                        height=600,
+                        collapsible=True,
+                        # sizing_mode='stretch_width',
                     ),
-                    title=_("Table of forecast skill metrics"),
-                    height=600 ,
-                    collapsible=True,
-                    #sizing_mode='stretch_width',
                 ),
-            ),
             ),  # end of Forecast tab
-            (_('Bulletin'),
-             pn.Column(
+            (
+                _("Bulletin"),
+                pn.Column(
                     pn.Card(
                         pn.Column(
                             bulletin_table,
                             write_bulletin_button,
                         ),
-                        title=_('Forecast bulletin'),
-                        sizing_mode='stretch_width',
+                        title=_("Forecast bulletin"),
+                        sizing_mode="stretch_width",
                     ),
                     pn.Card(
                         pn.Row(
                             bulletin_download_panel,
                         ),
-                        title=_('Download bulletin'),
-                        sizing_mode='stretch_width',
+                        title=_("Download bulletin"),
+                        sizing_mode="stretch_width",
                         collapsed=True,
                     ),
-             )
+                ),
             ),
-            (_('Disclaimer'), disclaimer),
+            (_("Disclaimer"), disclaimer),
             dynamic=True,
-            sizing_mode='stretch_both'
+            sizing_mode="stretch_both",
         )
-    tabs.param.watch(lambda event: update_sidepane_card_visibility(
-    tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
+    tabs.param.watch(
+        lambda event: update_sidepane_card_visibility(
+            tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event
+        ),
+        "active",
+    )
     return tabs
 
 
 def define_tabs_2(_, wm, pm, disclaimer):
     tabs = pn.Tabs(
-        (_('Predictors'),
+        (
+            _("Predictors"),
             pn.Column(
                 wm.predictors_warning,
                 pn.Row(
-                    pn.Card(pm.daily_hydrograph, title=_("Hydrograph")), sizing_mode='stretch_width',
+                    pn.Card(pm.daily_hydrograph, title=_("Hydrograph")),
+                    sizing_mode="stretch_width",
                     min_height=400 if pm.daily_hydrograph.object is not None else 0,
                 ),
                 pn.Row(
-                    pn.Card(pm.daily_rainfall, title=_("Precipitation")), sizing_mode='stretch_width',
+                    pn.Card(pm.daily_rainfall, title=_("Precipitation")),
+                    sizing_mode="stretch_width",
                     min_height=400 if pm.daily_rainfall.object is not None else 0,
-                ),  
+                ),
                 pn.Row(
-                    pn.Card(pm.daily_temperature, title=_("Temperature")), sizing_mode='stretch_width',
+                    pn.Card(pm.daily_temperature, title=_("Temperature")),
+                    sizing_mode="stretch_width",
                     min_height=400 if pm.daily_temperature.object is not None else 0,
-                ), 
-                pn.Row(_create_snow_card(_, pm.snow_plots), sizing_mode='stretch_both')
+                ),
+                pn.Row(_create_snow_card(_, pm.snow_plots), sizing_mode="stretch_both"),
             ),
         ),
-        (_('Forecast'),
+        (
+            _("Forecast"),
             pn.Column(
                 wm.forecast_warning,
                 pn.Card(
                     pn.Row(pm.forecast_data_and_plot),
-                    title=_('Linear regression'),
-                    sizing_mode='stretch_width',
+                    title=_("Linear regression"),
+                    sizing_mode="stretch_width",
                     collapsible=True,
                     collapsed=False,
                     min_height=560,
                     max_height=560,
                 ),
                 pn.Card(
-                    pn.Row(
-                        wm.add_to_bulletin_button, wm.add_to_bulletin_popup
-                    ),
+                    pn.Row(wm.add_to_bulletin_button, wm.add_to_bulletin_popup),
                     wm.forecast_summary_table,
-                    title=_('Summary table'),
-                    sizing_mode='stretch_both',
+                    title=_("Summary table"),
+                    sizing_mode="stretch_both",
                     min_height=500 if len(wm.forecast_summary_table.value) > 1 else 240,
                 ),
                 pn.Card(
                     pn.Column(
                         pn.Row(
                             pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
-                            wm.aggregate_radiobutton
+                            wm.aggregate_radiobutton,
                         ),
                         pm.pentad_forecast,
                     ),
-                    title=_('Hydrograph'),
+                    title=_("Hydrograph"),
                     height=600,
-                    #height=None,
+                    # height=None,
                     collapsible=True,
-                    collapsed=False
+                    collapsed=False,
                 ),
                 pn.Card(
                     pn.Row(
@@ -379,34 +391,35 @@ def define_tabs_2(_, wm, pm, disclaimer):
                         pm.skill_download_button,
                     ),
                     title=_("Table of forecast skill metrics"),
-                    height=600 ,
+                    height=600,
                     collapsible=True,
-                    #sizing_mode='stretch_width',
+                    # sizing_mode='stretch_width',
                 ),
             ),
         ),  # end of Forecast tab
-        (_('Bulletin'),
+        (
+            _("Bulletin"),
             pn.Column(
                 pn.Card(
                     pn.Column(
                         wm.bulletin_table,
                         wm.write_bulletin_button,
                     ),
-                    title=_('Forecast bulletin'),
-                    sizing_mode='stretch_width',
+                    title=_("Forecast bulletin"),
+                    sizing_mode="stretch_width",
                 ),
                 pn.Card(
                     pn.Row(
                         wm.bulletin_download_panel,
                     ),
-                    title=_('Download bulletin'),
-                    sizing_mode='stretch_width',
+                    title=_("Download bulletin"),
+                    sizing_mode="stretch_width",
                     collapsed=True,
                 ),
-            )
+            ),
         ),
-        (_('Disclaimer'), disclaimer),
+        (_("Disclaimer"), disclaimer),
         dynamic=True,
-        sizing_mode='stretch_both'
+        sizing_mode="stretch_both",
     )
     return tabs

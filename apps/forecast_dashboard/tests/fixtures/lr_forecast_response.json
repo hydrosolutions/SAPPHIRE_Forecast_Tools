@@ -1,0 +1,53 @@
+[
+  {
+    "id": null,
+    "horizon_type": "pentad",
+    "horizon_value": 1,
+    "horizon_in_year": 13,
+    "code": "99001",
+    "date": "2026-03-01",
+    "discharge_avg": 9.0,
+    "predictor": 8.5,
+    "slope": 1.1,
+    "intercept": 0.5,
+    "forecasted_discharge": 9.5,
+    "q_mean": 9.3,
+    "q_std_sigma": 1.5,
+    "delta": 1.0,
+    "rsquared": 0.85
+  },
+  {
+    "id": null,
+    "horizon_type": "pentad",
+    "horizon_value": 1,
+    "horizon_in_year": 13,
+    "code": "99002",
+    "date": "2026-03-01",
+    "discharge_avg": 18.5,
+    "predictor": 18.0,
+    "slope": 1.1,
+    "intercept": 0.5,
+    "forecasted_discharge": 19.0,
+    "q_mean": 18.8,
+    "q_std_sigma": 1.5,
+    "delta": 1.0,
+    "rsquared": 0.85
+  },
+  {
+    "id": null,
+    "horizon_type": "pentad",
+    "horizon_value": 1,
+    "horizon_in_year": 13,
+    "code": "99003",
+    "date": "2026-03-01",
+    "discharge_avg": 14.5,
+    "predictor": 14.0,
+    "slope": 1.1,
+    "intercept": 0.5,
+    "forecasted_discharge": 15.0,
+    "q_mean": 14.8,
+    "q_std_sigma": 1.5,
+    "delta": 1.0,
+    "rsquared": 0.85
+  }
+]

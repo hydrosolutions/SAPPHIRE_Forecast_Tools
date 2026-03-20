@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import date as DateType
 from typing import List, Optional
 from app.models import HorizonType, MeteoType, SnowType
@@ -33,10 +33,9 @@ class RunoffUpdate(BaseModel):
 
 
 class RunoffResponse(RunoffBase):
-    id: int
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: int
 
 
 class HydrographBase(BaseModel):
@@ -66,10 +65,9 @@ class HydrographCreate(HydrographBase):
 
 
 class HydrographResponse(HydrographBase):
-    id: int
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: int
 
 
 class HydrographBulkCreate(BaseModel):
@@ -90,10 +88,9 @@ class MeteoCreate(MeteoBase):
 
 
 class MeteoResponse(MeteoBase):
-    id: int
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: int
 
 
 class MeteoBulkCreate(BaseModel):
@@ -125,10 +122,9 @@ class SnowCreate(SnowBase):
     pass
 
 class SnowResponse(SnowBase):
-    id: int
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: int
 
 class SnowBulkCreate(BaseModel):
     data: List[SnowCreate]

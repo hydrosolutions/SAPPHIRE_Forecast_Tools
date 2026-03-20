@@ -1,5 +1,6 @@
 ---
 name: test-driven-development
+model: opus
 description: Use when implementing any feature or bugfix, before writing implementation code
 ---
 
@@ -73,34 +74,33 @@ digraph tdd_cycle {
 Write one minimal test showing what should happen.
 
 <Good>
-```typescript
-test('retries failed operations 3 times', async () => {
-  let attempts = 0;
-  const operation = () => {
-    attempts++;
-    if (attempts < 3) throw new Error('fail');
-    return 'success';
-  };
+```python
+def test_retries_failed_operations_3_times():
+    attempts = 0
 
-  const result = await retryOperation(operation);
+    def operation():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("fail")
+        return "success"
 
-  expect(result).toBe('success');
-  expect(attempts).toBe(3);
-});
+    result = retry_operation(operation)
+
+    assert result == "success"
+    assert attempts == 3
 ```
 Clear name, tests real behavior, one thing
 </Good>
 
 <Bad>
-```typescript
-test('retry works', async () => {
-  const mock = jest.fn()
-    .mockRejectedValueOnce(new Error())
-    .mockRejectedValueOnce(new Error())
-    .mockResolvedValueOnce('success');
-  await retryOperation(mock);
-  expect(mock).toHaveBeenCalledTimes(3);
-});
+```python
+def test_retry_works(mocker):
+    mock_fn = mocker.MagicMock(
+        side_effect=[RuntimeError(), RuntimeError(), "success"]
+    )
+    retry_operation(mock_fn)
+    assert mock_fn.call_count == 3
 ```
 Vague name, tests mock not code
 </Bad>
@@ -115,7 +115,7 @@ Vague name, tests mock not code
 **MANDATORY. Never skip.**
 
 ```bash
-npm test path/to/test.test.ts
+pytest path/to/test_module.py -v
 ```
 
 Confirm:
@@ -132,33 +132,29 @@ Confirm:
 Write simplest code to pass the test.
 
 <Good>
-```typescript
-async function retryOperation<T>(fn: () => Promise<T>): Promise<T> {
-  for (let i = 0; i < 3; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      if (i === 2) throw e;
-    }
-  }
-  throw new Error('unreachable');
-}
+```python
+def retry_operation(fn, max_retries: int = 3):
+    for i in range(max_retries):
+        try:
+            return fn()
+        except Exception:
+            if i == max_retries - 1:
+                raise
 ```
 Just enough to pass
 </Good>
 
 <Bad>
-```typescript
-async function retryOperation<T>(
-  fn: () => Promise<T>,
-  options?: {
-    maxRetries?: number;
-    backoff?: 'linear' | 'exponential';
-    onRetry?: (attempt: number) => void;
-  }
-): Promise<T> {
-  // YAGNI
-}
+```python
+def retry_operation(
+    fn,
+    max_retries: int = 3,
+    backoff: str = "exponential",
+    on_retry: Callable | None = None,
+    jitter: bool = True,
+):
+    # YAGNI
+    ...
 ```
 Over-engineered
 </Bad>
@@ -170,7 +166,7 @@ Don't add features, refactor other code, or "improve" beyond the test.
 **MANDATORY.**
 
 ```bash
-npm test path/to/test.test.ts
+pytest path/to/test_module.py -v
 ```
 
 Confirm:
@@ -199,8 +195,8 @@ Next failing test for next feature.
 
 | Quality | Good | Bad |
 |---------|------|-----|
-| **Minimal** | One thing. "and" in name? Split it. | `test('validates email and domain and whitespace')` |
-| **Clear** | Name describes behavior | `test('test1')` |
+| **Minimal** | One thing. "and" in name? Split it. | `test_validates_email_and_domain_and_whitespace` |
+| **Clear** | Name describes behavior | `test_1` |
 | **Shows intent** | Demonstrates desired API | Obscures what code should do |
 
 ## Why Order Matters
@@ -221,7 +217,7 @@ Manual testing is ad-hoc. You think you tested everything but:
 - No record of what you tested
 - Can't re-run when code changes
 - Easy to forget cases under pressure
-- "It worked when I tried it" ≠ comprehensive
+- "It worked when I tried it" != comprehensive
 
 Automated tests are systematic. They run the same way every time.
 
@@ -251,7 +247,7 @@ Tests-after are biased by your implementation. You test what you built, not what
 
 Tests-first force edge case discovery before implementing. Tests-after verify you remembered everything (you didn't).
 
-30 minutes of tests after ≠ TDD. You get coverage, lose proof tests work.
+30 minutes of tests after != TDD. You get coverage, lose proof tests work.
 
 ## Common Rationalizations
 
@@ -260,7 +256,7 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 | "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
 | "I'll test after" | Tests passing immediately prove nothing. |
 | "Tests after achieve same goals" | Tests-after = "what does this do?" Tests-first = "what should this do?" |
-| "Already manually tested" | Ad-hoc ≠ systematic. No record, can't re-run. |
+| "Already manually tested" | Ad-hoc != systematic. No record, can't re-run. |
 | "Deleting X hours is wasteful" | Sunk cost fallacy. Keeping unverified code is technical debt. |
 | "Keep as reference, write tests first" | You'll adapt it. That's testing after. Delete means delete. |
 | "Need to explore first" | Fine. Throw away exploration, start with TDD. |
@@ -292,33 +288,30 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 **Bug:** Empty email accepted
 
 **RED**
-```typescript
-test('rejects empty email', async () => {
-  const result = await submitForm({ email: '' });
-  expect(result.error).toBe('Email required');
-});
+```python
+def test_rejects_empty_email():
+    result = submit_form({"email": ""})
+    assert result["error"] == "Email required"
 ```
 
 **Verify RED**
 ```bash
-$ npm test
-FAIL: expected 'Email required', got undefined
+$ pytest test_forms.py::test_rejects_empty_email -v
+FAILED: AssertionError: assert None == 'Email required'
 ```
 
 **GREEN**
-```typescript
-function submitForm(data: FormData) {
-  if (!data.email?.trim()) {
-    return { error: 'Email required' };
-  }
-  // ...
-}
+```python
+def submit_form(data: dict) -> dict:
+    if not data.get("email", "").strip():
+        return {"error": "Email required"}
+    # ...
 ```
 
 **Verify GREEN**
 ```bash
-$ npm test
-PASS
+$ pytest test_forms.py -v
+PASSED
 ```
 
 **REFACTOR**
@@ -364,8 +357,8 @@ When adding mocks or test utilities, read @testing-anti-patterns.md to avoid com
 ## Final Rule
 
 ```
-Production code → test exists and failed first
-Otherwise → not TDD
+Production code -> test exists and failed first
+Otherwise -> not TDD
 ```
 
 No exceptions without your human partner's permission.

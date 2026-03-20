@@ -6,6 +6,41 @@ TODO: UPDATE FIGURE ...
 
 <img src="www/io.png" alt="IO" width="700"/>
 
+## New deployment setup
+
+To set up a new SAPPHIRE deployment, create a **data folder** outside the code repository with the following structure. The name convention is `<country_code>_data_forecast_tools` (e.g., `uzb_data_forecast_tools`).
+
+```
+<country>_data_forecast_tools/
+├── config/                    # Station config and .env files
+│   ├── .env_develop_<country> # Environment configuration (see sections below)
+│   ├── config_all_stations_library.json
+│   ├── config_station_selection.json
+│   ├── config_output.json
+│   ├── config_development_restrict_station_selection.json
+│   └── locale/                # Copy from apps/config/locale/ for dashboard translations
+├── daily_runoff/              # Excel files with historical discharge (one per station)
+├── intermediate_data/         # Pipeline writes output here (created automatically)
+├── GIS/                       # Administrative boundary shapefiles (for dashboard map)
+├── templates/                 # Forecast bulletin Excel templates
+└── reports/                   # Generated forecast bulletins (created automatically)
+```
+
+**Path convention**: All paths in the `.env` file are relative to the module working directory (`apps/<module>/`). For an external data folder at `../<country>_data_forecast_tools/`, use `../../../<country>_data_forecast_tools/` (three levels up from `apps/<module>/` to reach the parent of the repo root).
+
+TODO: Document the minimal set of required .env variables for a deployment that only uses linear regression with manual sites (no iEasyHydro HF, no data gateway, no ML models, no conceptual models). Many variables in the current .env examples are only needed for specific modules.
+
+### Connecting to iEasyHydro HF
+
+The `ieasyhydroforecast_connect_to_iEH` variable controls whether the pipeline attempts to connect to the iEasyHydro High Frequency database. Set to `True` to enable the iEH HF connection (requires `IEASYHYDROHF_HOST`, `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD`). Set to `False` for deployments without an iEH HF database — the pipeline will use config JSON files for site discovery and skip all SDK fetch calls.
+
+```
+# Set to True to connect to iEasyHydro HF, False for config-file-only mode
+ieasyhydroforecast_connect_to_iEH=False
+```
+
+TODO: Document `IEASYHYDROHF_HOST`, `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD` (the iEasyHydro HF SDK variables, distinct from the legacy `IEASYHYDRO_HOST` etc.). These are used by `preprocessing_runoff` and are separate from the legacy iEasyHydro SDK variables documented below.
+
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
 ```
@@ -17,21 +52,51 @@ ieasyforecast_config_file_output=config_output.json
 ```
 
 ### The config all stations library file
-The SAPPHIRE forecast tools need to have an overview over which stations are available for forecasting. This information is stored in the config_all_stations_library.json file. The file is a list of dictionaries, where each dictionary contains information about one station. The station code is used as the key of the dictionary. Please note that the present version of the software it is assumed that gauge stations start with the character '1'. Currently, only the Russian river and site names are used in the forecast dashboard. Please refer to the file config/config_all_station_library.json for a working example. All entries marked with an * are exported by the iEasyHydro SKD library from the iEasyHydro database by default but the values are not used in the Forecast Tools. If you have to set up the all stations configuration file manually, you may use dummy data for the entries marked with *. The following information is stored for each station:
-- *id (float): Site identifier exported from iEasyHydro SKD. Example value: 1.0
-- basin (string): Name of the river basin. Example value: "Sihl"
+The SAPPHIRE forecast tools need to have an overview over which stations are available for forecasting. This information is stored in the config_all_stations_library.json file. The file is a dictionary of station entries, where each station code is used as the key. Station codes must be numeric strings starting with the digit `1` (e.g., `12176`, `10001`).
+
+Currently, only the Russian river and site names are used in the forecast dashboard. Please refer to the file config/config_all_station_library.json for a working example. All entries marked with an * are exported by the iEasyHydro SDK library from the iEasyHydro database by default but the values are not used in the Forecast Tools. If you have to set up the all stations configuration file manually, you may use dummy data for the entries marked with *.
+
+**All values are stored as single-element lists** (e.g., `"lat": [47.37]`, `"name_ru": ["Station Name"]`). This is a convention used throughout the config system.
+
+The following information is stored for each station:
+
+**Required fields** (pipeline raises `ValueError` if missing):
+- code (int): Gauge station code. Example value: 12176
+- name_ru (string): Name of the gauge. Example value: "Зиль - Цюрих, Зильхёльцли"
+- river_ru (string): Name of the river. Example value: "Зиль"
+- punkt_ru (string): Name of the gauge location. Example value: "Цюрих, Зильхёльцли"
 - lat (float): Latitude of station. Example value: 47.368327
 - long (float): Longitude of station. Example value: 8.527410
-- *country (string): Name of the country the gauge is located. Example value: "Switzerland"
-- *is_virtual (bool): Whether the station is a virtual station. Example value: false
-- region (string): Name of the region the gauge is attributed to. Example value: "Mittelland"
-- *site_type (string): Type of site. Example value: "automatic-discharge". Example value: "automatic-discharge"
-- name_ru (string): Name of the gauge in Russian language. Example value: "Зиль - Цюрих, Зильхёльцли"
-- *organization_id (int): Identifyer of organization. Example value: 1
-- *elevation (float): Elevation in meters above mean sea level of gauge. Example value: 0.0
-- river_ru (string): Name of the river in Russian. Example value: "Зиль"
-- punkt_ru (string): Name of the gauge location in Russian. Example value: "Цюрих, Зильхёльцли"
-- code (int): Gauge station code. Example value: 12176
+- region (string): Name of the region. Example value: "Mittelland"
+- basin (string): Name of the river basin. Example value: "Rhein"
+
+**Optional fields** (exported by iEasyHydro SDK — use dummy values if setting up manually):
+- *id (float): Site identifier from iEasyHydro. Example value: 1.0
+- *country (string): Country name. Example value: "Switzerland"
+- *is_virtual (bool): Whether the station is virtual. Example value: false
+- *site_type (string): Type of site. Example value: "automatic-discharge"
+- *organization_id (int): Organization identifier. Example value: 1
+- *elevation (float): Elevation in meters above sea level. Example value: 0.0
+
+**Data source field** (for manual sites):
+- data_source (string): Controls how the pipeline manages this station. Values:
+  - `"ieh_hf"` or absent: Station is managed by iEasyHydro HF SDK (normal behavior)
+  - `"manual"`: Station is protected from config refresh overwrites and its discharge data comes from Google Sheets (if configured) rather than the iEH HF database
+
+Example manual site entry:
+```json
+"10001": {
+    "data_source": ["manual"],
+    "code": [10001],
+    "name_ru": ["Test River - Test Location"],
+    "river_ru": ["Test River"],
+    "punkt_ru": ["Test Location"],
+    "lat": [41.3],
+    "long": [69.3],
+    "basin": ["Syrdarya"],
+    "region": ["Tashkent"]
+}
+```
 
 ### Intermediate results of the forecast tools
 Intermediate results are written by the linear regression tool and read by the forecast dashboard. We recommend not changing the path ieasyforecast_intermediate_data_path nor the names of the intermediate files and we further recommend not manually editing any files in the path ieasyforecast_intermediate_data_path. The files are written by the backend tool and read by the forecast dashboard.
@@ -78,6 +143,24 @@ IEASYHYDRO_PASSWORD=<password>
 ORGANIZATION_ID=1
 ```
 You will need to adapt the port, user_name and password.
+
+### Google Sheets integration (optional, for manual sites)
+For sites not in the iEasyHydro HF database, discharge data can be ingested from a private Google Sheet. This is optional — omit all variables to disable the feature.
+```
+# Optional: Google Sheets discharge data for manual sites
+GOOGLE_SHEETS_ENABLED=true
+GOOGLE_SHEETS_DISCHARGE_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+GOOGLE_SHEETS_CREDENTIALS_PATH=/etc/sapphire/google_credentials.json
+GOOGLE_SHEETS_SITE_CODES=10001,10002
+```
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GOOGLE_SHEETS_ENABLED` | No | `false` | Set to `true` to enable |
+| `GOOGLE_SHEETS_DISCHARGE_ID` | If enabled | — | Spreadsheet ID from the Google Sheets URL |
+| `GOOGLE_SHEETS_CREDENTIALS_PATH` | If enabled | — | Path to Google service account JSON key file |
+| `GOOGLE_SHEETS_SITE_CODES` | If enabled | — | Comma-separated site codes; each must match a worksheet tab name |
+
+Sites listed in `GOOGLE_SHEETS_SITE_CODES` must also be marked with `"data_source": "manual"` in `config_all_stations_library.json`. See the [external site data ingestion plan](plans/external_site_data_ingestion_plan.md) for full deployment setup instructions.
 
 ### Configuration of the iEasyReports library
 The ieasyreports library reads a template file for a report, fills in the data for the current forecast and stores the data in a file. The path to the template directory is given in ieasyreports_templates_directory_path. The template for the traditional forecast bulletin with the overview over the rivers in one or several basins is given in ieasyforecast_template_pentad_bulletin_file. The template for the traditional forecast sheet with the detailed forecast for one station is given in ieasyforecast_template_pentad_sheet_file. Please consult the example files provided in the data/templates folder for guidance.
@@ -126,6 +209,10 @@ ieasyforecast_locale_dir=../config/locale
 # Set the locale for the dashboard. Available locales are ru_KG and en_CH.
 ieasyforecast_locale=ru_KG
 ```
+
+For new deployments, copy the `locale/` directory from `apps/config/locale/` into your data folder's `config/` directory. The locale files contain `.mo` and `.po` translation files required by the forecast dashboard.
+
+TODO: Document the contents of the locale directory and what is needed for adding a new language (e.g., Uzbek).
 
 ### Configuration to facilitate testing of the tools
 During development or deployment, you may want to focus only on selected stations. While all stations can be selected in the forecast configuration dashboard, you may want to limit the stations for which the actual forecast is produced. We use this option during the development of the forecast tools where we focus on a few stations for the implementation of the backend and the forecast dashboard. List the stations you wish to produce forecasts for in the file config_development_restrict_station_selection.json. The file has the same format as config_station_selection.json.

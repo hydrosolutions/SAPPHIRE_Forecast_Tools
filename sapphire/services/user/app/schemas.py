@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -14,11 +14,10 @@ class RoleBulkCreate(BaseModel):
     roles: List[RoleCreate]
 
 class RoleResponse(RoleBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 # ============== USER SCHEMAS ==============
 class UserBase(BaseModel):
@@ -37,6 +36,8 @@ class UserUpdate(BaseModel):
     password: Optional[str] = Field(None, min_length=8)
 
 class UserResponse(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     is_active: bool
     is_superuser: bool
@@ -44,12 +45,7 @@ class UserResponse(UserBase):
     updated_at: Optional[datetime] = None
     roles: List[RoleResponse] = []
 
-    class Config:
-        from_attributes = True
 
 class UserInDB(UserResponse):
     """User model with hashed password (for internal service communication)"""
     hashed_password: str
-
-    class Config:
-        from_attributes = True

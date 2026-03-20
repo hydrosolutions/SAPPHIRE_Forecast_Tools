@@ -2,15 +2,19 @@
 A collection of methods in python that are used by several apps in the SAPPHIRE Forecast Tools.
 
 ## Installation
-To install the package, run the following command:
+
+Install dependencies and the package in editable mode using uv:
 ```bash
-pip install -e .
+cd apps/iEasyHydroForecast
+uv sync --all-extras
 ```
+
+This uses `pyproject.toml` and `uv.lock` for reproducible dependency management.
 
 ## Usage
 To use the package, import the desired methods in your python script. For example:
 ```python
-# Local libraries, installed with pip install -e ./iEasyHydroForecast
+# Local libraries, installed with uv sync (see Installation above)
 # Get the absolute path of the directory containing the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,14 +31,21 @@ import tag_library as tl
 ```
 
 ## Testing
-To run the tests, run the following command from the apps directory:
+
+Tests are run from the `iEasyHydroForecast` directory using pytest.
+
+Run all tests:
 ```bash
-SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
+cd apps/iEasyHydroForecast
+SAPPHIRE_TEST_ENV=True uv run pytest tests/ -v
 ```
 
-To test a specific method in a class:
+Run tests for a specific file:
 ```bash
-SAPPHIRE_TEST_ENV=True python -m unittest iEasyHydroForecast.tests.test_forecast_library.TestCalculateSkillMetricsPentad.test_skill_metrics_calculation
+SAPPHIRE_TEST_ENV=True uv run pytest tests/test_forecast_library.py -v
 ```
 
-
+Run a specific test class or method:
+```bash
+SAPPHIRE_TEST_ENV=True uv run pytest tests/test_forecast_library.py::TestCalculateSkillMetricsPentad::test_skill_metrics_calculation -v
+```

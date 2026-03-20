@@ -1,5 +1,6 @@
 ---
 name: documentation
+model: sonnet
 description: Guide for maintaining documentation across the SAPPHIRE repository. Use when auditing docs, identifying gaps or redundancies, writing new documentation, updating stale content, or planning documentation improvements. References the existing documentation_improvement_plan.md for ongoing work.
 ---
 
@@ -168,9 +169,20 @@ Common issues and solutions.
 ## Task 4: Maintenance Routines
 
 ### On code changes
-- [ ] Does this change affect any documentation?
+
+Search each file for references to changed/removed functionality:
+
+- [ ] Module README (`apps/<module>/README.md`) — if inputs, outputs, or usage changed
+- [ ] Root README (`README.md`) — if modules added/removed or folder structure changed
+- [ ] `CLAUDE.md` — if module tables, architecture, or conventions changed
+- [ ] `doc/configuration.md` — if env vars or config changed
+- [ ] `doc/data_flow_*.md` — if pipeline behavior changed
+- [ ] `doc/user_guide.md` — if user-facing behavior changed
+- [ ] `doc/development.md` — if dev workflows or setup changed
+- [ ] `doc/deployment.md`, `doc/prod/` — if deployment procedures changed
+- [ ] Claude memory files — if stable patterns or project knowledge changed
 - [ ] Update relevant docs in same PR/commit
-- [ ] If larger doc update needed, create separate issue
+- [ ] If larger doc update needed, create separate issue with specific file list
 
 ### Periodic review
 - [ ] Check documentation_improvement_plan.md for pending items

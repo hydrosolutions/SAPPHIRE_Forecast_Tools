@@ -563,7 +563,7 @@ When enabled:
 #### 4.3 Machine Learning Forecasts API Integration (COMPLETE)
 
 **Overview:**
-Integrate SAPPHIRE API writing into the machine_learning module for ML model forecasts (TFT, TIDE, TSMIXER, RRMAMBA).
+Integrate SAPPHIRE API writing into the machine_learning module for ML model forecasts (TFT, TIDE, TSMIXER).
 
 **Scripts to modify:**
 | Script | Mode | Behavior |
@@ -605,7 +605,7 @@ Integrate SAPPHIRE API writing into the machine_learning module for ML model for
 |-------|------|-------------|
 | horizon_type | string | "pentad" or "decade" |
 | code | string | Station code |
-| model_type | string | "TFT", "TiDE", "TSMixer", "RRMAMBA" |
+| model_type | string | "TFT", "TiDE", "TSMixer" |
 | date | date | When forecast was made (forecast_date) |
 | target | date | Target date (date column) |
 | flag | int | Quality flag |
@@ -1120,7 +1120,7 @@ Uses the established pattern from `read_daily_discharge_data()`:
 - `apps/postprocessing_forecasts/tests/test_api_read.py` - 45 unit tests for API read functions
 
 **Model Type Support:**
-- TFT, TiDE, TSMixer, ARIMA, RRMAMBA models are supported
+- TFT, TiDE, TSMixer, ARIMA models are supported
 - Model type mapping handles case differences (API uses mixed case: TiDE, TSMixer)
 
 ---

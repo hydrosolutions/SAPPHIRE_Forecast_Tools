@@ -1,8 +1,13 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+    )
+
     # Application
     app_name: str = "Task Management Service"
     version: str = "1.0.0"
@@ -36,10 +41,6 @@ class Settings(BaseSettings):
     # Security
     api_key_header: str = "X-API-Key"
     rate_limit_per_minute: int = 60
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
     def get_database_url(self, is_test: bool = False) -> str:
         """Get the appropriate database URL"""

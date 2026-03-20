@@ -66,10 +66,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [1],
             "pentad_in_month": [1],
             "pentad_in_year": [1],
-            "Q5": [80.0],
-            "Q25": [90.0],
-            "Q75": [110.0],
-            "Q95": [120.0],
+            "q05": [80.0],
+            "q25": [90.0],
+            "q75": [110.0],
+            "q95": [120.0],
             "forecasted_discharge": [100.0],
         })
 
@@ -85,11 +85,11 @@ class TestCombinedForecastDataMigrator:
         assert records[0]["horizon_in_year"] == 1
         assert records[0]["q05"] == 80.0
         assert records[0]["q25"] == 90.0
-        assert records[0]["q50"] is None  # Always None per implementation
+        assert "q50" not in records[0]  # q50 dropped, use forecasted_discharge
         assert records[0]["q75"] == 110.0
         assert records[0]["q95"] == 120.0
         assert records[0]["forecasted_discharge"] == 100.0
-        assert records[0]["target"] is None
+        assert records[0]["target"] == "2024-01-06"  # date + 1 day
 
     def test_prepare_pentad_data_skips_lr_model(self):
         """Test that LR model records are skipped."""
@@ -100,10 +100,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [1, 1],
             "pentad_in_month": [1, 1],
             "pentad_in_year": [1, 1],
-            "Q5": [80.0, 85.0],
-            "Q25": [90.0, 95.0],
-            "Q75": [110.0, 115.0],
-            "Q95": [120.0, 125.0],
+            "q05": [80.0, 85.0],
+            "q25": [90.0, 95.0],
+            "q75": [110.0, 115.0],
+            "q95": [120.0, 125.0],
             "forecasted_discharge": [100.0, 105.0],
         })
 
@@ -122,10 +122,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [1, 1],
             "pentad_in_month": [1, 2],
             "pentad_in_year": [1, None],
-            "Q5": [80.0, 85.0],
-            "Q25": [90.0, 95.0],
-            "Q75": [110.0, 115.0],
-            "Q95": [120.0, 125.0],
+            "q05": [80.0, 85.0],
+            "q25": [90.0, 95.0],
+            "q75": [110.0, 115.0],
+            "q95": [120.0, 125.0],
             "forecasted_discharge": [100.0, 105.0],
         })
 
@@ -143,10 +143,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [None],
             "pentad_in_month": [1],
             "pentad_in_year": [1],
-            "Q5": [None],
-            "Q25": [float("nan")],
-            "Q75": [None],
-            "Q95": [None],
+            "q05": [None],
+            "q25": [float("nan")],
+            "q75": [None],
+            "q95": [None],
             "forecasted_discharge": [None],
         })
 
@@ -166,10 +166,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [1],
             "decad": [1],
             "decad_in_year": [1],
-            "Q5": [80.0],
-            "Q25": [90.0],
-            "Q75": [110.0],
-            "Q95": [120.0],
+            "q05": [80.0],
+            "q25": [90.0],
+            "q75": [110.0],
+            "q95": [120.0],
             "forecasted_discharge": [100.0],
         })
 
@@ -190,10 +190,10 @@ class TestCombinedForecastDataMigrator:
             "flag": [1],
             "decad": [1],
             "decad_in_year": [1],
-            "Q5": [80.0],
-            "Q25": [90.0],
-            "Q75": [110.0],
-            "Q95": [120.0],
+            "q05": [80.0],
+            "q25": [90.0],
+            "q75": [110.0],
+            "q95": [120.0],
             "forecasted_discharge": [100.0],
         })
 
@@ -573,10 +573,10 @@ class TestRecordSchemaCompliance:
             "flag": [1],
             "pentad_in_month": [1],
             "pentad_in_year": [1],
-            "Q5": [80.0],
-            "Q25": [90.0],
-            "Q75": [110.0],
-            "Q95": [120.0],
+            "q05": [80.0],
+            "q25": [90.0],
+            "q75": [110.0],
+            "q95": [120.0],
             "forecasted_discharge": [100.0],
         })
 
@@ -586,7 +586,7 @@ class TestRecordSchemaCompliance:
         required_fields = [
             "horizon_type", "code", "model_type", "date", "target", "flag",
             "horizon_value", "horizon_in_year",
-            "q05", "q25", "q50", "q75", "q95", "forecasted_discharge"
+            "q05", "q25", "q75", "q95", "forecasted_discharge"
         ]
         for field in required_fields:
             assert field in record, f"Missing required field: {field}"

@@ -1,0 +1,862 @@
+"""
+Tests for data transformation functions in dg_utils.py.
+
+These functions have zero test coverage. Covers:
+- ptf (power transform function)
+- quantile_mapping_ptf (quantile mapping with wet-day masking)
+- do_quantile_mapping (per-station quantile mapping loop)
+- transform_data_file_control_member (ECMWF control member CSV transform)
+- transform_snow_data (snow model data transform)
+"""
+
+import os
+import sys
+from unittest.mock import MagicMock
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
+
+# Mock the sapphire_dg_client module before importing
+sys.modules["sapphire_dg_client"] = MagicMock()
+sys.modules["sapphire_dg_client.SapphireDGClient"] = MagicMock()
+sys.modules["sapphire_dg_client.snow_model"] = MagicMock()
+
+import dg_utils
+
+# =====================================================================
+# ptf (power transform function)
+# =====================================================================
+
+
+class TestPtf:
+    """Tests for dg_utils.ptf: y = a * x^b."""
+
+    def test_basic_transform(self):
+        """ptf([1, 2, 3], a=2, b=1) -> [2, 4, 6]."""
+        result = dg_utils.ptf(np.array([1.0, 2.0, 3.0]), a=2.0, b=1.0)
+        np.testing.assert_array_almost_equal(result, [2.0, 4.0, 6.0])
+
+    def test_zero_input(self):
+        """ptf([0], a=5, b=2) -> [0] (0 raised to any power is 0)."""
+        result = dg_utils.ptf(np.array([0.0]), a=5.0, b=2.0)
+        np.testing.assert_array_almost_equal(result, [0.0])
+
+    def test_power_zero(self):
+        """ptf([1], a=1, b=0) -> [1] (anything^0 = 1)."""
+        result = dg_utils.ptf(np.array([1.0]), a=1.0, b=0.0)
+        np.testing.assert_array_almost_equal(result, [1.0])
+
+
+# =====================================================================
+# quantile_mapping_ptf
+# =====================================================================
+
+
+class TestQuantileMappingPtf:
+    """Tests for dg_utils.quantile_mapping_ptf."""
+
+    def test_wet_days_true_zeroes_dry_days(self):
+        """With wet_days=True, values <= threshold are set to 0 before transform."""
+        data = np.array([0.0, 0.5, 1.0, 2.0])
+        result = dg_utils.quantile_mapping_ptf(
+            data, a=2.0, b=1.0, wet_days=True, wet_day_threshold=0.5
+        )
+        # 0.0 and 0.5 <= threshold -> set to 0, then ptf(0)=0
+        # 1.0 -> ptf(1.0, 2, 1) = 2.0
+        # 2.0 -> ptf(2.0, 2, 1) = 4.0
+        assert result[0] == 0.0
+        assert result[1] == 0.0
+        assert result[2] == 2.0
+        assert result[3] == 4.0
+
+    def test_wet_days_false_transforms_all(self):
+        """With wet_days=False, all values are transformed."""
+        data = np.array([0.0, 1.0, 2.0])
+        result = dg_utils.quantile_mapping_ptf(
+            data, a=1.0, b=2.0, wet_days=False, wet_day_threshold=0
+        )
+        # ptf(x, 1, 2) = x^2 -> [0, 1, 4]
+        np.testing.assert_array_almost_equal(result, [0.0, 1.0, 4.0])
+
+    def test_rounds_to_2_decimals(self):
+        """Output is rounded to 2 decimal places."""
+        data = np.array([1.5])
+        dg_utils.quantile_mapping_ptf(data, a=1.0, b=1.0, wet_days=False)
+        # 1.5 * 1.5^0 ... wait, ptf(1.5, 1, 1) = 1*1.5^1 = 1.5
+        # Let's use values that produce non-round results
+        data2 = np.array([1.111])
+        result2 = dg_utils.quantile_mapping_ptf(data2, a=1.0, b=3.0, wet_days=False)
+        # 1.111^3 = 1.371330631 -> rounded to 1.37
+        assert result2[0] == round(1.111**3, 2)
+
+    def test_all_zero_input(self):
+        """All-zero input produces all-zero output."""
+        data = np.array([0.0, 0.0, 0.0])
+        result = dg_utils.quantile_mapping_ptf(
+            data, a=5.0, b=2.0, wet_days=True, wet_day_threshold=0
+        )
+        np.testing.assert_array_almost_equal(result, [0.0, 0.0, 0.0])
+
+
+# =====================================================================
+# do_quantile_mapping
+# =====================================================================
+
+
+class TestDoQuantileMapping:
+    """Tests for dg_utils.do_quantile_mapping."""
+
+    def test_single_code_transforms_correctly(self):
+        """Single code with known params transforms P and T correctly."""
+        era5_data = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                "P": [10.0, 20.0],
+                "T": [5.0, 10.0],
+                "code": ["12345", "12345"],
+            }
+        )
+
+        P_param = pd.DataFrame(
+            {
+                "code": ["12345"],
+                "a": [1.0],
+                "b": [1.0],
+                "wet_day": [0.0],
+            }
+        )
+        T_param = pd.DataFrame(
+            {
+                "code": ["12345"],
+                "a": [1.0],
+                "b": [1.0],
+            }
+        )
+
+        P_data, T_data = dg_utils.do_quantile_mapping(era5_data, P_param, T_param, ensemble=False)
+
+        assert list(P_data.columns) == ["date", "P", "code"]
+        assert list(T_data.columns) == ["date", "T", "code"]
+        assert len(P_data) == 2
+        assert len(T_data) == 2
+
+    def test_multiple_codes_each_gets_own_params(self):
+        """Multiple codes use their own parameter rows."""
+        era5_data = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                "P": [10.0, 10.0],
+                "T": [5.0, 5.0],
+                "code": ["AAA", "BBB"],
+            }
+        )
+
+        P_param = pd.DataFrame(
+            {
+                "code": ["AAA", "BBB"],
+                "a": [2.0, 3.0],
+                "b": [1.0, 1.0],
+                "wet_day": [0.0, 0.0],
+            }
+        )
+        T_param = pd.DataFrame(
+            {
+                "code": ["AAA", "BBB"],
+                "a": [1.0, 1.0],
+                "b": [1.0, 1.0],
+            }
+        )
+
+        P_data, T_data = dg_utils.do_quantile_mapping(era5_data, P_param, T_param, ensemble=False)
+
+        # Code AAA: P = ptf(10, 2, 1) = 20 -> rounded to 20.0
+        # Code BBB: P = ptf(10, 3, 1) = 30 -> rounded to 30.0
+        aaa_p = P_data[P_data["code"] == "AAA"]["P"].values[0]
+        bbb_p = P_data[P_data["code"] == "BBB"]["P"].values[0]
+        assert aaa_p == 20.0
+        assert bbb_p == 30.0
+
+    def test_ensemble_true_includes_ensemble_member_column(self):
+        """When ensemble=True, output includes ensemble_member column."""
+        era5_data = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "P": [10.0],
+                "T": [5.0],
+                "code": ["12345"],
+                "ensemble_member": [1],
+            }
+        )
+
+        P_param = pd.DataFrame(
+            {
+                "code": ["12345"],
+                "a": [1.0],
+                "b": [1.0],
+                "wet_day": [0.0],
+            }
+        )
+        T_param = pd.DataFrame(
+            {
+                "code": ["12345"],
+                "a": [1.0],
+                "b": [1.0],
+            }
+        )
+
+        P_data, T_data = dg_utils.do_quantile_mapping(era5_data, P_param, T_param, ensemble=True)
+
+        assert "ensemble_member" in P_data.columns
+        assert "ensemble_member" in T_data.columns
+
+
+# =====================================================================
+# transform_data_file_control_member
+# =====================================================================
+
+
+class TestTransformDataFileControlMember:
+    """Tests for dg_utils.transform_data_file_control_member."""
+
+    def test_basic_transformation_columns(self):
+        """Output has columns ['date', 'T', 'P', 'code']."""
+        # Simulate DG output: first 7 rows are headers, then data
+        # Columns: Station, 12345 (T), 12345.1 (P), 12345.2 (SD, ignored)
+        header_rows = [
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+            ["header"] + ["h"] * 3,
+        ]
+        data_rows = [
+            ["01/01/2024", "5.0", "10.0", "1.0"],
+            ["02/01/2024", "6.0", "12.0", "2.0"],
+        ]
+
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Station", "12345", "12345.1", "12345.2"])
+
+        result = dg_utils.transform_data_file_control_member(df)
+
+        assert "date" in result.columns
+        assert "T" in result.columns
+        assert "P" in result.columns
+        assert "code" in result.columns
+        assert len(result) == 2
+
+    def test_multiple_station_columns_multiply_rows(self):
+        """3 station codes produce 3x rows (one per code per date)."""
+        header_rows = [["h"] * 7] * 7
+        data_rows = [
+            ["01/01/2024", "5", "10", "sd", "7", "15", "sd2"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Station", "AAA", "AAA.1", "AAA.2", "BBB", "BBB.1", "BBB.2"],
+        )
+
+        result = dg_utils.transform_data_file_control_member(df)
+        # 2 codes (AAA, BBB) x 1 date = 2 rows
+        assert len(result) == 2
+        codes = sorted(result["code"].unique())
+        assert codes == ["AAA", "BBB"]
+
+    def test_first_7_rows_dropped(self):
+        """First 7 rows (headers) are dropped via .iloc[7:]."""
+        # First 7 rows are headers (non-date), remaining 3 are parseable dates
+        header_rows = [["header"] + ["0"] * 2 for _ in range(7)]
+        data_rows = [
+            ["01/01/2024", "1.0", "2.0"],
+            ["02/01/2024", "3.0", "4.0"],
+            ["03/01/2024", "5.0", "6.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Station", "12345", "12345.1"])
+
+        result = dg_utils.transform_data_file_control_member(df)
+        # Only the 3 data rows remain
+        assert len(result) == 3
+
+    def test_non_numeric_values_coerced_to_nan(self):
+        """Non-numeric T/P values are coerced to NaN."""
+        header_rows = [["h"] * 3] * 7
+        data_rows = [
+            ["01/01/2024", "abc", "xyz"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Station", "12345", "12345.1"])
+
+        result = dg_utils.transform_data_file_control_member(df)
+        assert pd.isna(result["T"].iloc[0])
+        assert pd.isna(result["P"].iloc[0])
+
+
+# =====================================================================
+# transform_snow_data
+# =====================================================================
+
+
+class TestTransformSnowData:
+    """Tests for dg_utils.transform_snow_data."""
+
+    def test_single_code_single_variable(self):
+        """Single code, single variable produces correct columns."""
+        # First 4 rows are headers, then data
+        header_rows = [["h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "100.5"],
+            ["02/01/2024", "110.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "12345"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert "date" in result.columns
+        assert "SWE" in result.columns
+        assert "code" in result.columns
+        assert len(result) == 2
+        assert result["code"].iloc[0] == "12345"
+
+    def test_elevation_bands(self):
+        """Columns 12345_1, 12345_2 produce SWE_1, SWE_2."""
+        header_rows = [["h", "h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "100.0", "80.0", "90.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "12345", "12345_1", "12345_2"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert "SWE" in result.columns
+        assert "SWE_1" in result.columns
+        assert "SWE_2" in result.columns
+        assert result["SWE"].iloc[0] == 100.0
+        assert result["SWE_1"].iloc[0] == 80.0
+        assert result["SWE_2"].iloc[0] == 90.0
+
+    def test_multiple_codes(self):
+        """Multiple codes produce separate rows per code."""
+        header_rows = [["h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "100.0", "200.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "11111", "22222"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 2
+        codes = sorted(result["code"].unique())
+        assert codes == ["11111", "22222"]
+
+    def test_alphanumeric_codes(self):
+        """Alphanumeric codes (e.g., KGZ500) are preserved as strings."""
+        header_rows = [["h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "50.0", "60.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "KGZ500", "KGZ500_1"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 1
+        assert result["code"].iloc[0] == "KGZ500"
+        assert "SWE" in result.columns
+        assert "SWE_1" in result.columns
+        assert result["SWE"].iloc[0] == 50.0
+        assert result["SWE_1"].iloc[0] == 60.0
+
+    def test_mixed_numeric_and_alphanumeric_codes(self):
+        """Numeric and alphanumeric codes coexist as strings."""
+        header_rows = [["h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "100.0", "200.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "12345", "KGZ500"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 2
+        codes = sorted(result["code"].unique())
+        assert codes == ["12345", "KGZ500"]
+
+    def test_code_with_underscore_and_elevation_band(self):
+        """Code containing underscore (KGZ_500_1) is split correctly
+        using rsplit: code='KGZ_500', band=1."""
+        header_rows = [["h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "50.0", "60.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "KGZ_500", "KGZ_500_1"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 1
+        assert result["code"].iloc[0] == "KGZ_500"
+        assert "SWE" in result.columns
+        assert "SWE_1" in result.columns
+        assert result["SWE"].iloc[0] == 50.0
+        assert result["SWE_1"].iloc[0] == 60.0
+
+    def test_non_numeric_suffix_treated_as_code(self):
+        """Column like 'KGZ500_High' is treated as a plain code, not
+        split into code + elevation band."""
+        header_rows = [["h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "75.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "KGZ500_High"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 1
+        assert result["code"].iloc[0] == "KGZ500_High"
+        assert "SWE" in result.columns
+        assert result["SWE"].iloc[0] == 75.0
+
+    def test_large_numeric_suffix_treated_as_code(self):
+        """Suffix > 14 is not an elevation band. E.g., 'KGZ_500' is a
+        single code, not code='KGZ' with band=500."""
+        header_rows = [["h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "33.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "KGZ_500"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 1
+        assert result["code"].iloc[0] == "KGZ_500"
+        assert "SWE" in result.columns
+        assert result["SWE"].iloc[0] == 33.0
+
+    def test_no_base_column_computes_mean_from_bands(self):
+        """When DG CSV has only elevation band columns (no base/mean
+        column), the base variable is computed as the mean across bands.
+
+        This is the KGZ500m scenario: the DG returns columns like
+        15013_3, 15013_6, 15013_4 (only bands, no bare 15013).
+        """
+        header_rows = [["h", "h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "80.0", "100.0", "120.0"],
+            ["02/01/2024", "90.0", "110.0", "130.0"],
+        ]
+        all_rows = header_rows + data_rows
+        # No bare '15013' column — only bands
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Timestamp", "15013_3", "15013_6", "15013_4"],
+        )
+
+        result = dg_utils.transform_snow_data(df, "RoF")
+
+        assert len(result) == 2
+        assert result["code"].iloc[0] == "15013"
+        # Elevation bands preserved
+        assert "RoF_3" in result.columns
+        assert "RoF_6" in result.columns
+        assert "RoF_4" in result.columns
+        # Base variable computed as mean of bands
+        assert "RoF" in result.columns
+        expected_mean_row1 = (80.0 + 100.0 + 120.0) / 3
+        assert abs(result["RoF"].iloc[0] - expected_mean_row1) < 0.01
+        expected_mean_row2 = (90.0 + 110.0 + 130.0) / 3
+        assert abs(result["RoF"].iloc[1] - expected_mean_row2) < 0.01
+
+    def test_no_base_column_multiple_codes(self):
+        """Mean is computed per-code when multiple codes lack base
+        columns."""
+        header_rows = [["h", "h", "h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "10.0", "20.0", "50.0", "70.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Timestamp", "15013_3", "15013_6", "17462_9", "17462_10"],
+        )
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 2
+        codes = sorted(result["code"].unique())
+        assert codes == ["15013", "17462"]
+        assert "SWE" in result.columns
+
+        row_15013 = result[result["code"] == "15013"]
+        assert abs(row_15013["SWE"].iloc[0] - 15.0) < 0.01  # (10+20)/2
+
+        row_17462 = result[result["code"] == "17462"]
+        assert abs(row_17462["SWE"].iloc[0] - 60.0) < 0.01  # (50+70)/2
+
+    def test_base_column_present_not_overwritten(self):
+        """When DG CSV includes a base column, it is NOT overwritten
+        by the computed mean."""
+        header_rows = [["h", "h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "100.0", "80.0", "120.0"],
+        ]
+        all_rows = header_rows + data_rows
+        # Has bare '12345' (base) plus bands
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Timestamp", "12345", "12345_1", "12345_2"],
+        )
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert "SWE" in result.columns
+        # Base value comes from the DG (100.0), not mean of bands (100.0)
+        assert result["SWE"].iloc[0] == 100.0
+
+    def test_first_4_rows_dropped(self):
+        """First 4 rows (headers) are dropped via .iloc[4:]."""
+        # First 4 rows are headers, remaining 3 are parseable dates
+        header_rows = [["header", "0"] for _ in range(4)]
+        data_rows = [
+            ["01/01/2024", "100.0"],
+            ["02/01/2024", "110.0"],
+            ["03/01/2024", "120.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "12345"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+        # 3 data rows remain
+        assert len(result) == 3
+
+
+# =====================================================================
+# End-to-end transform → API record structure verification
+# =====================================================================
+
+
+class TestEndToEndTransformToApiRecords:
+    """Verifies that transform functions produce DataFrames with
+    correct dtypes, schemas, and values ready for API consumption."""
+
+    def test_control_member_transform_schema_and_values(self):
+        """Build 7-header-row DG fixture with known P/T values.
+        After transform: correct dtypes and exact values."""
+        header_rows = [["h"] * 3] * 7
+        data_rows = [
+            ["01/01/2024", "12.3", "5.2"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(all_rows, columns=["Station", "12104", "12104.1"])
+
+        result = dg_utils.transform_data_file_control_member(df)
+
+        # Schema check
+        assert list(result.columns) == ["date", "T", "P", "code"]
+        assert pd.api.types.is_datetime64_any_dtype(result["date"])
+        assert result["P"].dtype == np.float64
+        assert result["T"].dtype == np.float64
+        assert result["code"].dtype == object
+
+        # Value check
+        assert result["P"].iloc[0] == 5.2
+        assert result["T"].iloc[0] == 12.3
+        assert result["code"].iloc[0] == "12104"
+        assert result["date"].iloc[0] == pd.Timestamp("2024-01-01")
+
+    def test_snow_transform_schema_and_values(self):
+        """Build 4-header-row snow fixture with known SWE value.
+        After transform: correct dtypes and exact values.
+        Single band column (suffix 1-14) → code extracted, base
+        variable computed as mean of bands."""
+        header_rows = [["h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "15.5"],
+        ]
+        all_rows = header_rows + data_rows
+        # Use band suffix 1 (valid 1-14 range)
+        df = pd.DataFrame(all_rows, columns=["Timestamp", "12104_1"])
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert "date" in result.columns
+        assert "SWE" in result.columns
+        assert "code" in result.columns
+        assert pd.api.types.is_datetime64_any_dtype(result["date"])
+        assert result["code"].iloc[0] == "12104"
+        assert result["date"].iloc[0] == pd.Timestamp("2024-01-01")
+        # Single band → base variable computed as mean (= band value)
+        assert abs(result["SWE"].iloc[0] - 15.5) < 0.01
+
+    def test_snow_transform_elevation_bands_produce_correct_values(
+        self,
+    ):
+        """Snow with 3 elevation bands: value1=10, value2=20,
+        value3=30, mean=20."""
+        header_rows = [["h", "h", "h", "h"]] * 4
+        data_rows = [
+            ["01/01/2024", "10.0", "20.0", "30.0"],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Timestamp", "12104_1", "12104_2", "12104_3"],
+        )
+
+        result = dg_utils.transform_snow_data(df, "SWE")
+
+        assert len(result) == 1
+        assert result["SWE_1"].iloc[0] == 10.0
+        assert result["SWE_2"].iloc[0] == 20.0
+        assert result["SWE_3"].iloc[0] == 30.0
+        # No base column → mean computed
+        expected_mean = (10.0 + 20.0 + 30.0) / 3
+        assert abs(result["SWE"].iloc[0] - expected_mean) < 0.01
+
+    def test_control_member_transform_preserves_all_dates(self):
+        """10-day DG fixture for 2 codes → exactly 10 rows per code,
+        all 10 dates present."""
+        header_rows = [["h"] * 5] * 7
+        dates = [f"{d:02d}/01/2024" for d in range(1, 11)]
+        data_rows = [
+            [d, str(i + 1.0), str(i + 10.0), str(i + 1.0), str(i + 10.0)]
+            for i, d in enumerate(dates)
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=["Station", "AAA", "AAA.1", "BBB", "BBB.1"],
+        )
+
+        result = dg_utils.transform_data_file_control_member(df)
+
+        # 2 codes x 10 dates = 20 rows
+        assert len(result) == 20
+        for code in ["AAA", "BBB"]:
+            code_rows = result[result["code"] == code]
+            assert len(code_rows) == 10
+            assert code_rows["date"].nunique() == 10
+
+
+# =====================================================================
+# calculate_snow_norms
+# =====================================================================
+
+
+class TestCalculateSnowNorms:
+    """Tests for dg_utils.calculate_snow_norms."""
+
+    def _write_snow_csv(self, tmp_path, variable, hru, df):
+        """Helper: write a snow CSV into the expected directory layout."""
+        var_dir = tmp_path / variable
+        var_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = var_dir / f"{hru}_{variable}.csv"
+        df.to_csv(csv_path, index=False)
+        return csv_path
+
+    def test_basic_mean_single_hru(self, tmp_path):
+        """Mean across 3 years for a single HRU, single variable."""
+        dates = (
+            pd.date_range("2020-01-01", "2020-12-31")
+            .append(pd.date_range("2021-01-01", "2021-12-31"))
+            .append(pd.date_range("2022-01-01", "2022-12-31"))
+        )
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "SWE": range(len(dates)),
+                "code": "15013",
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert set(result.columns) == {
+            "snow_type",
+            "code",
+            "dayofyear",
+            "norm",
+        }
+        assert len(result) > 0
+        assert (result["snow_type"] == "SWE").all()
+        assert (result["code"] == "15013").all()
+        # Day 1 should have a computed mean
+        day1 = result[result["dayofyear"] == 1]
+        assert len(day1) == 1
+        assert pd.notna(day1["norm"].iloc[0])
+
+    def test_multiple_hrus_and_variables(self, tmp_path):
+        """Multiple HRUs and variables each produce rows."""
+        dates = pd.date_range("2020-01-01", "2020-01-10")
+        for var in ["SWE", "HS"]:
+            for hru in ["HRU01", "HRU02"]:
+                df = pd.DataFrame(
+                    {
+                        "date": dates,
+                        var: [10.0] * len(dates),
+                        "code": "CODE1",
+                    }
+                )
+                self._write_snow_csv(tmp_path, var, hru, df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE", "HS"], ["HRU01", "HRU02"])
+
+        # Should have rows for both SWE and HS
+        assert set(result["snow_type"].unique()) == {"SWE", "HS"}
+
+    def test_missing_csv_skipped_gracefully(self, tmp_path):
+        """Missing CSV file produces no rows (no crash)."""
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["MISSING_HRU"])
+
+        assert len(result) == 0
+        assert set(result.columns) == {
+            "snow_type",
+            "code",
+            "dayofyear",
+            "norm",
+        }
+
+    def test_missing_variable_column_skipped(self, tmp_path):
+        """CSV without the expected variable column is skipped."""
+        dates = pd.date_range("2020-01-01", "2020-01-05")
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "OTHER": [1.0] * len(dates),
+                "code": "15013",
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert len(result) == 0
+
+    def test_empty_csv_skipped(self, tmp_path):
+        """Empty CSV file produces no rows."""
+        df = pd.DataFrame(columns=["date", "SWE", "code"])
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert len(result) == 0
+
+    def test_leap_year_day_366(self, tmp_path):
+        """Day 366 (Dec 31 of leap year) appears in output."""
+        # Use 2020 (leap year) and 2024 (leap year)
+        dates_2020 = pd.date_range("2020-01-01", "2020-12-31")
+        dates_2024 = pd.date_range("2024-01-01", "2024-12-31")
+        dates = dates_2020.append(dates_2024)
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "SWE": [50.0] * len(dates),
+                "code": "15013",
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert 366 in result["dayofyear"].values
+
+    def test_nan_values_excluded_from_mean(self, tmp_path):
+        """NaN values are excluded from norm computation."""
+        dates = pd.date_range("2020-01-01", "2020-01-03")
+        df = pd.DataFrame(
+            {
+                "date": list(dates) + list(dates),
+                "SWE": [10.0, np.nan, 30.0, 20.0, 40.0, np.nan],
+                "code": ["15013"] * 6,
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        # Day 1: mean(10.0, 20.0) = 15.0
+        day1 = result[result["dayofyear"] == 1]
+        assert abs(day1["norm"].iloc[0] - 15.0) < 0.01
+
+        # Day 2: mean(40.0) = 40.0 (NaN excluded)
+        day2 = result[result["dayofyear"] == 2]
+        assert abs(day2["norm"].iloc[0] - 40.0) < 0.01
+
+        # Day 3: mean(30.0) = 30.0 (NaN excluded)
+        day3 = result[result["dayofyear"] == 3]
+        assert abs(day3["norm"].iloc[0] - 30.0) < 0.01
+
+    def test_single_year_produces_norms(self, tmp_path):
+        """A single year of data is sufficient to compute norms."""
+        dates = pd.date_range("2023-01-01", "2023-01-10")
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "SWE": [float(i) for i in range(10)],
+                "code": "15013",
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert len(result) == 10
+        # Day 1 (Jan 1) → value 0.0
+        day1 = result[result["dayofyear"] == 1]
+        assert abs(day1["norm"].iloc[0] - 0.0) < 0.01
+
+    def test_output_format_columns_and_types(self, tmp_path):
+        """Output has exactly 4 columns with correct dtypes."""
+        dates = pd.date_range("2020-01-01", "2020-01-05")
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "SWE": [10.0] * 5,
+                "code": "15013",
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert list(result.columns) == [
+            "snow_type",
+            "code",
+            "dayofyear",
+            "norm",
+        ]
+        assert result["snow_type"].dtype == object
+        assert result["code"].dtype == object
+        assert result["norm"].dtype == np.float64
+
+    def test_multiple_codes_in_same_csv(self, tmp_path):
+        """Multiple codes within one CSV are each normed separately."""
+        dates = pd.date_range("2020-01-01", "2020-01-03")
+        df = pd.DataFrame(
+            {
+                "date": list(dates) * 2,
+                "SWE": [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+                "code": ["A"] * 3 + ["B"] * 3,
+            }
+        )
+        self._write_snow_csv(tmp_path, "SWE", "HRU01", df)
+
+        result = dg_utils.calculate_snow_norms(str(tmp_path), ["SWE"], ["HRU01"])
+
+        assert set(result["code"].unique()) == {"A", "B"}
+        a_day1 = result[(result["code"] == "A") & (result["dayofyear"] == 1)]
+        assert abs(a_day1["norm"].iloc[0] - 10.0) < 0.01
+        b_day1 = result[(result["code"] == "B") & (result["dayofyear"] == 1)]
+        assert abs(b_day1["norm"].iloc[0] - 100.0) < 0.01

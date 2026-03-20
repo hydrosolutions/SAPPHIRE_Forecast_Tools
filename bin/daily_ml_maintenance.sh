@@ -58,6 +58,7 @@ HORIZON_OPTIONS=("PENTAD" "DECAD")
 log_message "Starting ML maintenance run on Mac M2 Max with 64GB RAM"
 log_message "Model options: ${MODEL_OPTIONS[*]}"
 log_message "Horizon options: ${HORIZON_OPTIONS[*]}"
+FAILURE_COUNT=0
 
 # Determine optimal number of parallel jobs based on system memory and models
 # On your 64GB system, we can comfortably run 4 containers in parallel
@@ -288,6 +289,9 @@ for ((i=0; i<TOTAL_SERVICES; i+=$MAX_PARALLEL_JOBS)); do
             # Add container exit code to main log
             exit_code=$(docker inspect $container_id --format='{{.State.ExitCode}}')
             log_message "$service completed with exit code: $exit_code"
+            if [ "$exit_code" -ne 0 ]; then
+                FAILURE_COUNT=$((FAILURE_COUNT + 1))
+            fi
 
             # Summary in main log
             log_message "Log file for $service: $service_log_file"
@@ -309,4 +313,9 @@ log_message "Removing old log files"
 # Find all files in the log directory older than 15 days and delete them
 find $LOG_DIR -type f -mtime +15 -delete
 
-log_message "ML maintenance run completed successfully"
+if [ $FAILURE_COUNT -gt 0 ]; then
+    log_message "WARNING: ML maintenance completed with $FAILURE_COUNT failure(s) out of $TOTAL_SERVICES services"
+    exit 1
+else
+    log_message "ML maintenance run completed successfully"
+fi

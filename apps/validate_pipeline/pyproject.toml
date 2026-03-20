@@ -1,0 +1,17 @@
+[project]
+name = "validate_pipeline"
+version = "0.1.0"
+description = "API data validation for SAPPHIRE forecast pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["test"]
