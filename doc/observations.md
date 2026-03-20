@@ -50,3 +50,9 @@ owned by a colleague and should not be edited without coordination.
    pass count and masks the fact that no integration testing actually ran.
    The recommended fix is to replace the early-return pattern with
    `pytest.skip("TEST_PENTAD not set")` so pytest reports them honestly.
+
+## Forecast dashboard
+Linear regression card in Forecast tab only shows data up to 2014. We should have data up to 2025 in the linear regression card. -> check if data is missing in the database or if data is not being retrieved correctly.
+Summary table in Forecast tab only shows LR forecast, and only shows forecasted discharge. All other columns are empty. We should also see the ML forecasts and entries for all columns in the summary table. -> check if data is missing in the database or if data is not being retrieved correctly.
+Hydrograph figure does not show LR forecast at all. this leads me to wonder what forecast is displayed in the table above. 
+No skill metrics are displayed. 

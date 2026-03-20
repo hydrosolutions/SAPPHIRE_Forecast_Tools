@@ -403,6 +403,103 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## 2026-03-19
+
+### Machine Learning: Recurring Gap-Fill Between 2024 and 2026 on Every Run
+
+**Source**: Local pipeline run (`run_locally.sh machine_learning` with `SAPPHIRE_PREDICTION_MODE=DECAD`)
+**Date**: 2026-03-19
+
+`fill_ml_gaps.py` detects a large gap in ML forecasts between ~2024-03 and
+~2026-03 and triggers `hindcast_ML_models.py` to fill it on every operational
+run. This makes the ML module extremely slow (hindcasting ~2 years of data)
+and should not be necessary — the gap has been "filled" in previous runs but
+keeps reappearing.
+
+**Likely causes**:
+1. The hindcast rows may be written to the API but the gap detection reads from
+   a different source (CSV vs API) or with a different date/code filter, so it
+   never "sees" the filled data.
+2. The API read in `fill_ml_gaps.py` uses a 730-day lookback
+   (`_read_ml_forecasts_from_api` with `start_date = today - 730 days`). If the
+   filled rows are outside this window or the API pagination doesn't return them
+   all, the gap persists.
+3. The CSV schema corruption (ML-009, now fixed) may have caused previous gap-fill
+   writes to produce corrupted rows that are silently dropped on re-read.
+4. Org-scoped filtering in `fill_ml_gaps.py` (lines 220-242) may be excluding
+   hindcast rows written by a different org context.
+
+**Impact**: Every ML run takes much longer than necessary. On the server this
+blocks the entire daily pipeline for hours.
+
+**Relation to existing issues**:
+- ML-009 (CSV schema corruption) — now fixed, but previously corrupted CSVs may
+  still trigger the gap detection
+- `review_gi_draft_ml_hindcast_api_write_broken.md` (ML-004) — hindcast API write
+  bugs were fixed, but the gap recurrence suggests data isn't persisting correctly
+- `mid_prio_gi_draft_ml_hindcast_api_consistency.md` — write order was just fixed
+  (API first, CSV second)
+
+**Investigation results (2026-03-20)**:
+
+After implementing ML-007 (per-code API reads), the pagination non-determinism
+is resolved. However, the gaps persist and are now confirmed to be **real data
+gaps** — not phantom artifacts from pagination.
+
+For station 15189 TFT (730-day window): 8,041 total rows, of which **2,563 have
+`forecasted_discharge=null` (flag=3)**. After excluding nulls (as `fill_ml_gaps`
+does), 3 genuine gaps remain:
+- 2024-09-16 to 2024-10-21 (35 days)
+- 2024-12-02 to 2025-01-03 (32 days)
+- 2025-08-14 to 2026-01-30 (169 days)
+
+**Root cause**: The hindcast runs for these gap periods but produces null output
+(flag=3 = NaN). On the next run, `fill_ml_gaps` excludes null-discharge rows
+(correctly), sees the same gaps again, and re-triggers the hindcast — which
+again produces nulls. This is an infinite loop: hindcast writes null -> gap
+detection excludes nulls -> gap detected -> hindcast writes null.
+
+**The fix is NOT in gap detection** — it's in the hindcast trigger logic. The
+code should recognize that flag=3 rows already exist for those dates and not
+re-trigger a hindcast that will produce the same null output.
+
+**Related issues**:
+- PP-026 (clean null-discharge phantom forecasts from DB)
+- ML-007 (pagination non-determinism — now resolved)
+- ML-009 (CSV schema corruption — resolved)
+
+**Assessment**: Confirmed as a hindcast trigger logic bug, not a data read bug.
+The hindcast should skip date ranges where previous runs produced flag=3 output.
+**Status**: Needs draft issue — new issue for "fill_ml_gaps should not re-trigger
+hindcast for periods with existing flag=3 (null) forecasts"
+
+---
+
+### Preprocessing Gateway: Snow SWE Data Not Updated by Operational Run
+
+**Source**: Local pipeline run (`run_locally.sh preprocessing_gateway`), API query for stations 15189 and 16059
+**Date**: 2026-03-19
+
+After running `preprocessing_gateway` operationally, the SWE snow data in the preprocessing API only contains climatological norm records (day-of-year indexed with year-2000 dates, e.g. `2000-01-01`, `2000-01-02`). No current-year snow observations appear for 2026.
+
+**Verification commands used**:
+```bash
+curl -s "http://localhost:8000/api/preprocessing/snow/?code=15189&snow_type=SWE&limit=5" | python3 -m json.tool
+curl -s "http://localhost:8000/api/preprocessing/snow/?code=16059&snow_type=SWE&limit=5" | python3 -m json.tool
+```
+
+Both stations return only norm data (dates starting at 2000-01-01). Expected: current-year SWE observations for 2026 should also be present after an operational run of `snow_data_operational.py`.
+
+**Possible causes**:
+- Snow data ingestion from the Data Gateway may not be returning data for these stations (similar to the KGZ500 issue from 2026-02-18)
+- The API write for snow data may not be wired up in `snow_data_operational.py`
+- The SWE endpoint may only store norms, not operational observations
+
+**Assessment**: Needs investigation. Snow data may only contain norms by design, or operational snow ingestion may be broken. Check `snow_data_operational.py` and the Data Gateway response for these stations.
+**Status**: Needs investigation
+
+---
+
 ## Template
 
 ```markdown
@@ -427,4 +524,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-02-18 (KGZ500 snow data issues, code-as-string convention)*
+*Last updated: 2026-03-19 (ML recurring gap-fill, SWE snow data not updated)*
