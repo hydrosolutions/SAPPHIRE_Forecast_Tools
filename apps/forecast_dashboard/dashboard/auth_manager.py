@@ -29,9 +29,8 @@ class AuthManager:
         )
 
         # Auth microservice base URL (through API gateway)
-        self._auth_base_url = os.getenv(
-            "SAPPHIRE_AUTH_SERVICE_URL", "http://localhost:8000/api/auth"
-        )
+        api_gateway_url = os.getenv("API_GATEWAY_URL", "http://localhost:8000")
+        self._auth_base_url = f"{api_gateway_url}/api/auth"
 
         # In-memory token storage (per-session, backed by cookies)
         self._access_token: str | None = None

@@ -227,11 +227,11 @@ class PlotManager:
         active = dashboard_tabs.active  # 0 = Predictors, 1 = Forecast
         wm, dm, viz = self._wm, self._dm, self._cfg.viz
 
-        with pn.io.hold(pn.state.curdoc):
-            if active == 0 and dm.should_render_predictors(wm.station_selector.value):
-                self._render_predictors_tab(viz, dm, wm)
-            elif active == 1 and dm.should_render_forecast(wm.station_selector.value):
-                self._render_forecast_tab(viz, dm, wm)
+        # with pn.io.hold(pn.state.curdoc):
+        if active == 0 and dm.should_render_predictors(wm.station_selector.value):
+            self._render_predictors_tab(viz, dm, wm)
+        elif active == 1 and dm.should_render_forecast(wm.station_selector.value):
+            self._render_forecast_tab(viz, dm, wm)
 
     def _render_predictors_tab(self, viz, dm, wm):
         self.daily_hydrograph.object = viz.plot_daily_hydrograph_data(
