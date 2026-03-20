@@ -269,7 +269,7 @@ services:
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
       --port=5006
       $${ORIGINS_ARGS}
