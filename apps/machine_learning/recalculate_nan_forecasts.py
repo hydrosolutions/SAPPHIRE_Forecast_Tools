@@ -46,6 +46,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    get_permitted_station_codes,
     normalize_ml_csv_columns,
 )
 
@@ -188,13 +189,35 @@ def recalculate_nan_forecasts():
     from datetime import timedelta
 
     api_start = (datetime.date.today() - timedelta(days=730)).isoformat()
+    permitted_codes = get_permitted_station_codes()
 
-    forecast = _read_ml_forecasts_from_api(
-        model_type=MODEL_TO_USE,
-        horizon_type=prefix,
-        start_date=api_start,
-    )
+    if permitted_codes is not None and len(permitted_codes) > 0:
+        # Per-code reads — each query ≤730 rows, fits in one page,
+        # avoiding non-deterministic pagination (ML-007).
+        frames = []
+        for code in sorted(permitted_codes):
+            df = _read_ml_forecasts_from_api(
+                model_type=MODEL_TO_USE,
+                horizon_type=prefix,
+                start_date=api_start,
+                code=code,
+            )
+            if not df.empty:
+                frames.append(df)
+        forecast = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    else:
+        # Config unavailable — fall back to all-codes query (existing behavior)
+        logger.warning(
+            "recalculate_nan_forecasts: org config unavailable — falling back "
+            "to all-codes read (non-deterministic pagination may affect results)"
+        )
+        forecast = _read_ml_forecasts_from_api(
+            model_type=MODEL_TO_USE,
+            horizon_type=prefix,
+            start_date=api_start,
+        )
 
+    # CSV fallback — triggers if API returned empty for all codes
     if forecast.empty:
         logger.warning(
             "recalculate_nan_forecasts: API returned no %s %s forecasts — falling back to CSV",
@@ -207,7 +230,11 @@ def recalculate_nan_forecasts():
         except FileNotFoundError:
             logger.error("No forecast file found (API and CSV both empty)")
             return
+        # CSV contains all orgs' data — re-apply org-filter
+        if permitted_codes is not None and len(permitted_codes) > 0 and not forecast.empty:
+            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
 
+    # Second emptiness guard (preserved from original lines 211-218)
     if forecast.empty:
         logger.warning(
             "recalculate_nan_forecasts: Both API and CSV empty for %s %s. "
@@ -216,31 +243,6 @@ def recalculate_nan_forecasts():
             prefix,
         )
         return
-
-    # Filter to current org's stations (org-scoped reads)
-    try:
-        import json
-
-        config_path = os.path.join(
-            os.getenv("ieasyforecast_configuration_path", ""),
-            os.getenv("ieasyforecast_config_file_station_selection", ""),
-        )
-        with open(config_path) as f:
-            permitted_codes = {str(c) for c in json.load(f).get("stationsID", [])}
-        decad_file = os.getenv("ieasyforecast_config_file_station_selection_decad", "")
-        if decad_file:
-            decad_path = os.path.join(os.getenv("ieasyforecast_configuration_path", ""), decad_file)
-            if os.path.exists(decad_path):
-                with open(decad_path) as f:
-                    permitted_codes |= {str(c) for c in json.load(f).get("stationsID", [])}
-        if permitted_codes and not forecast.empty:
-            before_count = len(forecast)
-            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
-            filtered = before_count - len(forecast)
-            if filtered:
-                logger.info("Org-scoped filter: removed %d rows from other orgs", filtered)
-    except Exception:
-        logger.debug("Could not apply org-scoped filter — config unavailable")
 
     unique_codes = forecast["code"].unique()
 

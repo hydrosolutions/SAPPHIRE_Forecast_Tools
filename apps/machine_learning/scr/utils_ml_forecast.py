@@ -554,6 +554,37 @@ def normalize_ml_csv_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[[c for c in ML_CANONICAL_CSV_COLUMNS if c in df.columns]]
 
 
+def get_permitted_station_codes() -> set[str] | None:
+    """Load org-scoped station codes from config files.
+
+    Reads station codes from the pentad and decad config files
+    specified by environment variables. Returns the union of both.
+
+    Returns:
+        Set of station code strings, or None if config is unavailable
+        (missing env vars, missing files, malformed JSON). None signals
+        "no filter available" — callers should fall back to reading all
+        codes. An empty set means "org has no stations configured".
+    """
+    try:
+        config_path = os.path.join(
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_config_file_station_selection", ""),
+        )
+        with open(config_path) as f:
+            permitted_codes: set[str] = {str(c) for c in json.load(f).get("stationsID", [])}
+        decad_file = os.getenv("ieasyforecast_config_file_station_selection_decad", "")
+        if decad_file:
+            decad_path = os.path.join(os.getenv("ieasyforecast_configuration_path", ""), decad_file)
+            if os.path.exists(decad_path):
+                with open(decad_path) as f:
+                    permitted_codes |= {str(c) for c in json.load(f).get("stationsID", [])}
+        return permitted_codes
+    except Exception:
+        logger.debug("Could not load org-scoped station config")
+        return None
+
+
 _API_PAGE_SIZE = 5000  # rows per page; balances request count vs. payload size
 
 

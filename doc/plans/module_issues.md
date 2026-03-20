@@ -46,7 +46,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-004** | Hindcast gap-fill never persists to API — silent write failure (3 bugs) | ml | **Critical** | Review | [`review_gi_draft_ml_hindcast_api_write_broken.md`](issues/review_gi_draft_ml_hindcast_api_write_broken.md) |
 | **ML-005** | ML consistency check reads forecasts without station code filter | ml | **Medium** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) (Phase 4) |
 | **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Draft | [`high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md) |
-| **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Draft | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Colleague (sapphire/services/) |
+| **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Review | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Option 1 (ORDER BY): colleague; Option 2 (per-code reads): done |
+| **ML-011** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Draft | [`high_prio_gi_draft_ml_fill_gaps_null_loop.md`](issues/high_prio_gi_draft_ml_fill_gaps_null_loop.md) | — |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
@@ -294,4 +295,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-16 (ML-006, ML-007 added as Draft; ML-BF3 completed; ML-004 status confirmed Review)*
+*Last updated: 2026-03-20 (ML-007 Option 2 implemented — per-code reads in fill_ml_gaps.py and recalculate_nan_forecasts.py)*
