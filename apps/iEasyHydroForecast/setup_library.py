@@ -1,30 +1,31 @@
-import os
-import logging
-import pandas as pd
-import numpy as np
-import json
 import datetime as dt
 import fnmatch
+import json
+import logging
+import os
 import re
-import subprocess
+import shutil
 import socket
+import subprocess
 import urllib.parse
-import platform
-import pytz
-
-from dotenv import load_dotenv
+import warnings
 
 # Import iEasyHydroForecast libraries
 import forecast_library as fl
+import numpy as np
+import pandas as pd
+import pytz
 import tag_library as tl
+from dotenv import load_dotenv
 
 # SAPPHIRE API client for database operations
 try:
     from sapphire_api_client import (
-        SapphirePreprocessingClient,
+        SapphireAPIError,
         SapphirePostprocessingClient,
-        SapphireAPIError
+        SapphirePreprocessingClient,
     )
+
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
@@ -32,9 +33,16 @@ except ImportError:
     SapphirePostprocessingClient = None
     SapphireAPIError = Exception  # Fallback for type hints
 
+try:
+    from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
+
+    IEASYHYDRO_HF_SDK_AVAILABLE = True
+except ImportError:
+    IEASYHYDRO_HF_SDK_AVAILABLE = False
+
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.WARNING)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # Create a stream handler to print logs to the console
 console_handler = logging.StreamHandler()
@@ -50,8 +58,9 @@ logger.addHandler(console_handler)
 # --- Load runtime environment ---------------------------------------------------
 # region environment
 
-def store_last_successful_run_date(date, prediction_mode='BOTH'):
-    '''
+
+def store_last_successful_run_date(date, prediction_mode="BOTH"):
+    """
     Store the last successful run date in a file.
 
     Args:
@@ -67,7 +76,7 @@ def store_last_successful_run_date(date, prediction_mode='BOTH'):
 
     Example:
         store_last_successful_run_date(dt.date(2022, 1, 1)) # Stores the date January 1, 2022
-    '''
+    """
     # Check environment variables
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
     last_successful_run_file = os.getenv("ieasyforecast_last_successful_run_file")
@@ -78,12 +87,9 @@ def store_last_successful_run_date(date, prediction_mode='BOTH'):
     logger.info("Storing last successful run date")
 
     # Path to the file
-    last_run_file = os.path.join(
-        intermediate_data_path,
-        last_successful_run_file
-    )
+    last_run_file = os.path.join(intermediate_data_path, last_successful_run_file)
     # add _<prediction_mode> to the file name if prediction_mode is not BOTH
-    if prediction_mode not in ['BOTH']:
+    if prediction_mode not in ["BOTH"]:
         last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
 
     # Convert to datetime object if date is a string or a datetime object
@@ -99,15 +105,16 @@ def store_last_successful_run_date(date, prediction_mode='BOTH'):
 
     # Overwrite the file with the current date
     with open(last_run_file, "w") as f1:
-        ret = f1.write(date.strftime('%Y-%m-%d'))
+        ret = f1.write(date.strftime("%Y-%m-%d"))
 
     # Check if the write was successful
     if ret is None:
-        raise IOError(f"Could not store last successful run date in {last_run_file}")
+        raise OSError(f"Could not store last successful run date in {last_run_file}")
 
     return None
 
-def get_last_run_date(prediction_mode='BOTH'):
+
+def get_last_run_date(prediction_mode="BOTH"):
     """
     Read the date of the last successful run of the linear regression forecast
     from the file ieasyforecast_last_successful_run_file. If the file is not
@@ -118,19 +125,21 @@ def get_last_run_date(prediction_mode='BOTH'):
     """
     last_run_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_last_successful_run_file")
-        )
+        os.getenv("ieasyforecast_last_successful_run_file"),
+    )
     # add _<prediction_mode> to the file name if prediction_mode is not BOTH
-    if prediction_mode not in ['BOTH']:
+    if prediction_mode not in ["BOTH"]:
         last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
     try:
-        with open(last_run_file, "r") as file:
+        with open(last_run_file) as file:
             last_successful_run_date = file.read()
             # We expect the date to be in the format YYYY-MM-DD. Let's allow dates
             # in the format YYYY_MM_DD as well.
             # If the date is in the format YYYY_MM_DD, replace the _ with -
             last_successful_run_date = last_successful_run_date.replace("_", "-")
-            last_successful_run_date = dt.datetime.strptime(last_successful_run_date, "%Y-%m-%d").date()
+            last_successful_run_date = dt.datetime.strptime(
+                last_successful_run_date, "%Y-%m-%d"
+            ).date()
     except FileNotFoundError:
         last_successful_run_date = dt.date.today() - dt.timedelta(days=1)
 
@@ -138,7 +147,8 @@ def get_last_run_date(prediction_mode='BOTH'):
 
     return last_successful_run_date
 
-def define_run_dates(prediction_mode='BOTH'):
+
+def define_run_dates(prediction_mode="BOTH"):
     """
     Identifies the start and end dates for the current call to the linear
     regression tool.
@@ -159,7 +169,7 @@ def define_run_dates(prediction_mode='BOTH'):
     # setting the last successful run date to a date in the past. In this case,
     # the forecast is produced for the day after the last successful run date.
     date_start = last_successful_run_date + dt.timedelta(days=1)
-    #date_start = dt.date.today()
+    # date_start = dt.date.today()
 
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
@@ -167,9 +177,11 @@ def define_run_dates(prediction_mode='BOTH'):
 
     # Basic sanity check in case the script is run multiple times.
     if date_end == last_successful_run_date:
-        logger.info("The forecasts have allready been produced for today.\n"
-                       "No forecast will be produced.\n"
-                       "Please use the re-run forecast tool to re-run the forecast for today.")
+        logger.info(
+            "The forecasts have allready been produced for today.\n"
+            "No forecast will be produced.\n"
+            "Please use the re-run forecast tool to re-run the forecast for today."
+        )
         return None, None, None
 
     # The bulletin date is one day after the forecast date. It is the first day
@@ -177,16 +189,18 @@ def define_run_dates(prediction_mode='BOTH'):
     bulletin_date = date_start + dt.timedelta(days=1)
 
     logger.info("Running the forecast script for the following dates:")
-    #logger.info(f"Last successful run date: {last_successful_run_date}")
+    # logger.info(f"Last successful run date: {last_successful_run_date}")
     logger.info(f"Current forecast start date for forecast iteration: {date_start}")
     logger.info(f"End date for forecast iteration: {date_end}")
     logger.info(f"Current forecast bulletin date: {bulletin_date}")
 
     return date_start, date_end, bulletin_date
 
+
 # Methods to check on which system the docker container is running
 def check_users_mount():
     return os.path.exists("/Users") and os.listdir("/Users")
+
 
 def check_hypervisor():
     try:
@@ -199,13 +213,15 @@ def check_hypervisor():
     except Exception as e:
         return f"Error: {e}"
 
+
 def check_os_release():
     try:
-        with open("/proc/sys/kernel/osrelease", "r") as f:
+        with open("/proc/sys/kernel/osrelease") as f:
             os_release = f.read().strip()
         return os_release
     except Exception as e:
         return f"Error: {e}"
+
 
 def identify_host_system():
     os_release = check_os_release()
@@ -226,10 +242,7 @@ def identify_host_system():
         else:
             logger.info(f"Could not identify os_release from {os_release}. Defaulting to Linux.")
             system_id = "Linux"
-    elif users_mount:
-        logger.info("Likely running on a macOS system.")
-        system_id = "macOS"
-    elif hypervisor and "apple" in hypervisor.lower():
+    elif users_mount or hypervisor and "apple" in hypervisor.lower():
         logger.info("Likely running on a macOS system.")
         system_id = "macOS"
     else:
@@ -238,6 +251,7 @@ def identify_host_system():
 
     return system_id
 
+
 def check_organization():
     """
     Check the organization for which the forecast is produced.
@@ -245,8 +259,100 @@ def check_organization():
     org = os.getenv("ieasyhydroforecast_organization")
     if org is None:
         logger.error("Environment variable ieasyhydroforecast_organization not set.")
-        raise EnvironmentError("Environment variable ieasyhydroforecast_organization not set.")
+        raise OSError("Environment variable ieasyhydroforecast_organization not set.")
     return None
+
+
+def check_station_code_collisions() -> None:
+    """Warn if config contains stations from a different organization.
+
+    Reads config_all_stations_library.json, navigates to the
+    stations_available_for_forecast wrapper, and checks that no station
+    is tagged with an organization other than the current one. Gracefully
+    skips if the organization field is not yet populated.
+    """
+    try:
+        config_path = os.path.join(
+            os.getenv("ieasyforecast_configuration_path", ""),
+            os.getenv("ieasyforecast_config_file_all_stations", ""),
+        )
+        with open(config_path) as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return  # Config unavailable — skip silently
+
+    # Navigate to stations wrapper
+    stations = raw.get("stations_available_for_forecast", raw)
+    current_org = os.getenv("ieasyhydroforecast_organization")
+    if not current_org:
+        return  # No org configured — can't check
+
+    # Check each station's org tag
+    foreign_stations: dict[str, str] = {}
+    has_any_org = False
+    for code, metadata in stations.items():
+        if code in ("comment", "metadata"):  # Skip non-station keys
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        org_value = metadata.get("organization", [None])
+        if isinstance(org_value, list):
+            org_value = org_value[0] if org_value else None
+        if org_value is None:
+            continue  # Pre-INFRA-009 data — can't check this entry
+        has_any_org = True
+        if org_value != current_org:
+            foreign_stations[str(code)] = org_value
+
+    if not has_any_org:
+        logger.debug(
+            "Organization field not available in station config — skipping collision check"
+        )
+        return
+
+    if foreign_stations:
+        logger.warning(
+            "FOREIGN ORG CONTAMINATION: %d station(s) in config are tagged "
+            "with a different organization than '%s': %s. This may indicate "
+            "a config file copied between orgs or a shared config directory.",
+            len(foreign_stations),
+            current_org,
+            dict(list(foreign_stations.items())[:5]),  # Show max 5
+        )
+
+
+def _get_current_org() -> str | None:
+    """Return ieasyhydroforecast_organization from env, or None."""
+    return os.getenv("ieasyhydroforecast_organization")
+
+
+def filter_sites_by_org(df: pd.DataFrame, org: str | None = None) -> pd.DataFrame:
+    """Filter station DataFrame by organization name.
+
+    Graceful degradation: returns df unfiltered if org is None,
+    column is missing, or all values are None.
+
+    Migration safety (Decision D1): rows with organization=None are
+    treated as "belongs to current org" and kept.
+
+    Args:
+        df: DataFrame with optional 'organization' column.
+        org: Organization name to filter by. If None, reads from
+            ieasyhydroforecast_organization env var.
+
+    Returns:
+        Filtered DataFrame copy, or original if no filtering possible.
+    """
+    if org is None:
+        org = _get_current_org()
+    if org is None or "organization" not in df.columns:
+        return df
+    col = df["organization"].apply(lambda v: v[0] if isinstance(v, list) else v)
+    if not col.notna().any():
+        return df
+    # Keep rows that match current org OR have None (migration safety)
+    return df[col.isna() | (col == org)].copy()
+
 
 def check_connect_to_iEH_and_ssh():
     """Currently connection to iEH is only possible for kghm and through ssh tunnel."""
@@ -257,33 +363,47 @@ def check_connect_to_iEH_and_ssh():
 
     if connect_to_iEH and connect_to_iEH.lower() == "true":
         if org != "kghm":
-            logger.error("Connection to iEH is currently only possible for organization 'kghm'.\n    Please connect to iEH HF, to data files or select a different organization.")
-            raise EnvironmentError("Environment variable ieasyhydroforecast_connect_to_iEH is not consistent with ieasyhydroforecast_organization.")
+            logger.error(
+                "Connection to iEH is currently only possible for organization 'kghm'.\n    Please connect to iEH HF, to data files or select a different organization."
+            )
+            raise OSError(
+                "Environment variable ieasyhydroforecast_connect_to_iEH is not consistent with ieasyhydroforecast_organization."
+            )
         if require_ssh and require_ssh.lower() == "false":
-            logger.error("SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_ssh_to_iEH to True.")
-            raise EnvironmentError("Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH.")
+            logger.error(
+                "SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_ssh_to_iEH to True."
+            )
+            raise OSError(
+                "Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH."
+            )
 
-    if require_ssh and require_ssh.lower() == "true":
-        if connect_to_iEH.lower() == "false":
-            logger.error("SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_connect_to_iEH to True.")
-            raise EnvironmentError("Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH.")
+    if require_ssh and require_ssh.lower() == "true" and connect_to_iEH.lower() == "false":
+        logger.error(
+            "SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_connect_to_iEH to True."
+        )
+        raise OSError(
+            "Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH."
+        )
 
     return None
 
-def validate_environment_variables(): 
+
+def validate_environment_variables():
     """
     Validate consistency of the environment variables.
     """
     try:
         check_organization()
-    except EnvironmentError as e:
+    except OSError as e:
         raise e
+    check_station_code_collisions()
     try:
         check_connect_to_iEH_and_ssh()
-    except EnvironmentError as e:
+    except OSError as e:
         raise e
-    
+
     return None
+
 
 def load_environment():
     """
@@ -339,7 +459,6 @@ def load_environment():
     hostport = os.getenv("IEASYHYDRO_HOST")
     # Separate host from port by :
     if hostport is not None:
-        host = hostport.split(":")[1]
         port = hostport.split(":")[2]
         # Set the environment variable IEASYHYDRO_PORT
         os.environ["IEASYHYDRO_PORT"] = port
@@ -347,17 +466,17 @@ def load_environment():
         # Make sure we have system-consistent host names. In a docker container,
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
-        if os.getenv('IN_DOCKER_CONTAINER') == "True":
+        if os.getenv("IN_DOCKER_CONTAINER") == "True":
             host_system = identify_host_system()
             logger.info("Running in a Docker container.")
             # If run on Ubuntu.
             # As Docker containers run on Ubuntu, this will always return to 'Linux'
-            #system = platform.system()
+            # system = platform.system()
             if host_system == "Linux":
                 os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
             elif host_system == "macOS":
                 os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
-            #os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            # os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
             logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
@@ -367,16 +486,19 @@ def load_environment():
 
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
-        logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
-    
+        logger.error(
+            "config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set"
+        )
+
     logger.debug("Validating environment variables ...")
     validation = validate_environment_variables()
     if validation is not None:
         logger.error("Environment variables are not valid.")
-        raise EnvironmentError("Environment variables are not valid.")
+        raise OSError("Environment variables are not valid.")
     logger.debug("Environment variables validated.")
-    
+
     return env_file_path
+
 
 def get_local_timezone_from_env(organization=None):
     """
@@ -393,6 +515,7 @@ def get_local_timezone_from_env(organization=None):
     else:
         logger.warning(f"Unknown organization: {organization}. Defaulting to UTC.")
         return pytz.utc  # Default to UTC if organization is unknown
+
 
 # endregion
 
@@ -432,20 +555,28 @@ def get_local_timezone_from_env(organization=None):
         print(f"Error running netstat: {e}")
         return []'''
 
-def check_if_ssh_tunnel_is_required(): 
+
+def check_if_ssh_tunnel_is_required():
     """
     Check if SSH tunnel is required based on the environment variable.
     """
     var = os.getenv("ieasyhydroforecast_ssh_to_iEH")
     if var is None:
-        logger.info("Environment variable ieasyhydroforecast_ssh_to_iEH not set. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_ssh_to_iEH not set. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF."
+        )
         return False
     elif var.lower() == "true":
-        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to True. \n      Assuming that ssh tunnel is required for connection with iEH or iEH HF.")
+        logger.debug(
+            "Environment variable ieasyhydroforecast_ssh_to_iEH is set to True. \n      Assuming that ssh tunnel is required for connection with iEH or iEH HF."
+        )
         return True
     elif var.lower() == "false":
-        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to False. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        logger.debug(
+            "Environment variable ieasyhydroforecast_ssh_to_iEH is set to False. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF."
+        )
         return False
+
 
 def check_local_ssh_tunnels(addresses=None, port=None):
     """
@@ -474,7 +605,13 @@ def check_local_ssh_tunnels(addresses=None, port=None):
                     tunnel_port = parsed_url.port
                 else:
                     # If no port is explicitly in the URL, assume default based on scheme
-                    tunnel_port = 443 if parsed_url.scheme == 'https' else 80 if parsed_url.scheme == 'http' else 8881
+                    tunnel_port = (
+                        443
+                        if parsed_url.scheme == "https"
+                        else 80
+                        if parsed_url.scheme == "http"
+                        else 8881
+                    )
             except Exception as e:
                 logger.error(f"Error parsing IEASYHYDRO_HOST: {e}")
                 return []
@@ -483,7 +620,7 @@ def check_local_ssh_tunnels(addresses=None, port=None):
 
         # Use default addresses if none are provided
         if addresses is None:
-            addresses = ['localhost', '127.0.0.1', 'host.docker.internal']
+            addresses = ["localhost", "127.0.0.1", "host.docker.internal"]
 
         for address in addresses:
             try:
@@ -491,19 +628,26 @@ def check_local_ssh_tunnels(addresses=None, port=None):
                 sock.settimeout(2)  # 2 second timeout
                 result = sock.connect_ex((address, tunnel_port))
                 if result == 0:
-                    tunnels.append({'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on {address}'})
+                    tunnels.append(
+                        {
+                            "port": tunnel_port,
+                            "line": f"Port {tunnel_port} is listening on {address}",
+                        }
+                    )
                     logger.info(f"SSH tunnel found on {address}:{tunnel_port}")
                 else:
                     logger.debug(f"No SSH tunnel found on {address}:{tunnel_port}")
             except socket.gaierror as e:
                 logger.warning(f"Address resolution error for {address}: {e}")
-            except socket.error as e:
+            except OSError as e:
                 logger.warning(f"Socket error while checking {address}:{tunnel_port}: {e}")
             finally:
                 sock.close()
 
         if not tunnels:
-            logger.info(f"No listening service found on any of the tested addresses for port {tunnel_port}")
+            logger.info(
+                f"No listening service found on any of the tested addresses for port {tunnel_port}"
+            )
 
     except Exception as e:
         logger.error(f"Error checking SSH tunnels: {e}")
@@ -514,7 +658,7 @@ def check_local_ssh_tunnels(addresses=None, port=None):
 # region iEH_DB
 def check_database_access(ieh_sdk):
     """
-    Check if the backend has access to an iEasyHydro database. Also works for 
+    Check if the backend has access to an iEasyHydro database. Also works for
     testing access to iEasyHydro HF database.
 
     Args:
@@ -533,30 +677,275 @@ def check_database_access(ieh_sdk):
 
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
-        test = ieh_sdk.get_discharge_sites()
-        logger.info(f"Access to iEasyHydro database.")
+        ieh_sdk.get_discharge_sites()
+        logger.info("Access to iEasyHydro database.")
         return True
     except (ConnectionError, TimeoutError) as e:
         logger.error(f"Error connecting to DB: {e}")
-        if os.getenv("ieasyhydroforecast_organization") == "demo": 
-            logger.info(f"No access to iEasyHydro database but running forecast tools in demo mode.\n        Looking for runoff data files in the ieasyforecast_daily_discharge_path directory.")
+        if os.getenv("ieasyhydroforecast_organization") == "demo":
+            logger.info(
+                "No access to iEasyHydro database but running forecast tools in demo mode.\n        Looking for runoff data files in the ieasyforecast_daily_discharge_path directory."
+            )
             discharge_path = os.getenv("ieasyforecast_daily_discharge_path")
-            try: 
+            try:
                 if os.listdir(discharge_path):
-                    logger.info("No access to iEasyHydro database. Will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
+                    logger.info(
+                        "No access to iEasyHydro database. Will use data from the ieasyforecast_daily_discharge_path for forecasting only."
+                    )
                     return False
-                else: 
+                else:
                     logger.error(f"No data in the {discharge_path} directory.")
                     return False
             except FileNotFoundError:
                 logger.error(f"Directory {discharge_path} not found.")
                 return False
-        else: 
+        else:
             logger.error("SAPPHIRE tools do not have access to the iEasyHydro database.")
             raise
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         raise
+
+
+def _get_manual_site_codes() -> list[str]:
+    """Return site codes marked as manual in config_all_stations_library.json.
+
+    A site is considered manual if its ``data_source`` field is present and
+    not equal to ``"ieh_hf"``. The field may be list-wrapped (``["manual"]``)
+    per the JSON convention used by ``get_pentadal_forecast_sites_complicated_method``.
+
+    Returns:
+        List of site code strings that are manually managed.
+    """
+    try:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+        with open(config_all_file) as f:
+            data = json.load(f)
+    except Exception:
+        logger.debug("Could not read config for manual site codes — assuming none.")
+        return []
+
+    manual_codes = []
+    stations = data.get("stations_available_for_forecast", {})
+    for code, entry in stations.items():
+        ds = entry.get("data_source")
+        if ds is None:
+            continue
+        # Unwrap list-wrapped value
+        if isinstance(ds, list):
+            ds = ds[0] if ds else None
+        if ds is not None and ds != "ieh_hf":
+            manual_codes.append(str(code))
+    return manual_codes
+
+
+def _read_manual_entries_from_config() -> dict:
+    """Read the full JSON entries for manual sites from the config file.
+
+    Returns:
+        Dict mapping site code (str) to the full JSON entry dict for sites
+        where ``data_source`` is present and != ``"ieh_hf"``.
+    """
+    try:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+        with open(config_all_file) as f:
+            data = json.load(f)
+    except Exception:
+        logger.debug("Could not read config for manual site entries — assuming none.")
+        return {}
+
+    manual_entries = {}
+    stations = data.get("stations_available_for_forecast", {})
+    for code, entry in stations.items():
+        ds = entry.get("data_source")
+        if ds is None:
+            continue
+        if isinstance(ds, list):
+            ds = ds[0] if ds else None
+        if ds is not None and ds != "ieh_hf":
+            manual_entries[str(code)] = entry
+    return manual_entries
+
+
+def _sites_to_config_dict(fc_sites: list) -> dict:
+    """Convert Site objects to config_all JSON dict format.
+
+    Args:
+        fc_sites: List of Site objects from HF SDK.
+
+    Returns:
+        Dict mapping site_code (str) to dict of list-wrapped metadata
+        fields.
+    """
+    stations = {}
+    for site in fc_sites:
+        code_str = str(site.code)
+        stations[code_str] = {
+            "code": [int(site.code)],
+            "name_ru": [getattr(site, "name_nat", None) or getattr(site, "name", "") or ""],
+            "lat": [site.lat],
+            "long": [site.lon],
+            "basin": [getattr(site, "basin_nat", None) or getattr(site, "basin", "") or ""],
+            "region": [getattr(site, "region_nat", None) or getattr(site, "region", "") or ""],
+            "river_ru": [
+                getattr(site, "river_name_nat", None) or getattr(site, "river_name", "") or ""
+            ],
+            "punkt_ru": [
+                getattr(site, "punkt_name_nat", None) or getattr(site, "punkt_name", "") or ""
+            ],
+            "site_type": [getattr(site, "site_type", "")],
+            "id": [getattr(site, "iehhf_site_id", None)],
+            "header": [code_str],
+            "elevation": [None],
+            "organization_id": [None],
+            "organization": [getattr(site, "organization", None)],
+            "country": [None],
+            "is_virtual": [getattr(site, "is_virtual", False)],
+            "data_source": ["ieh_hf"],
+        }
+    return stations
+
+
+def _write_config_all(stations_dict: dict, config_all_file: str | None = None) -> str:
+    """Write stations dict + manual entries to config_all_stations_library.json.
+
+    Reads existing manual entries, checks for collisions with SDK data,
+    merges them, backs up the existing file, and writes.
+
+    Args:
+        stations_dict: Dict mapping site_code to list-wrapped metadata.
+        config_all_file: Path to config file. Resolved from env vars
+            if None.
+
+    Returns:
+        Path to the written config file.
+    """
+    if config_all_file is None:
+        config_all_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_config_file_all_stations"),
+        )
+
+    manual_entries = _read_manual_entries_from_config()
+
+    # Check for collisions: manual codes that now appear in SDK data
+    if manual_entries:
+        for code in list(manual_entries.keys()):
+            if code in stations_dict:
+                logger.warning(
+                    f"Site {code} exists in both SDK and manual config. "
+                    f"Preferring SDK data — remove from "
+                    f"GOOGLE_SHEETS_SITE_CODES."
+                )
+                del manual_entries[code]
+
+    json_dict = {"stations_available_for_forecast": stations_dict}
+
+    # Merge back manual site entries
+    if manual_entries:
+        json_dict["stations_available_for_forecast"].update(manual_entries)
+        logger.info(
+            f"Preserved {len(manual_entries)} manual site(s) in config: "
+            f"{list(manual_entries.keys())}"
+        )
+
+    # Back up existing config before overwriting
+    if os.path.exists(config_all_file):
+        shutil.copy2(config_all_file, config_all_file + ".bak")
+
+    # Write pretty-printed JSON
+    json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
+    with open(config_all_file, "w", encoding="utf-8") as f:
+        f.write(json_string_pretty)
+
+    logger.info(f"Wrote {len(stations_dict)} station(s) to {config_all_file}")
+    return config_all_file
+
+
+def write_config_all_stations(fc_sites: list, config_all_file: str | None = None) -> str:
+    """Write station metadata from Site objects to config_all_stations_library.json.
+
+    Converts Site objects to JSON format, preserves manual entries,
+    and writes.
+
+    Args:
+        fc_sites: List of Site objects with metadata (code, lat, lon,
+            etc.).
+        config_all_file: Path to config file. Resolved from env vars
+            if None.
+
+    Returns:
+        Path to the written config file.
+    """
+    stations_dict = _sites_to_config_dict(fc_sites)
+    return _write_config_all(stations_dict, config_all_file)
+
+
+def _try_bootstrap_from_hf_sdk(config_all_file: str) -> pd.DataFrame:
+    """Attempt to bootstrap config_all from HF SDK when config is missing.
+
+    Initializes IEasyHydroHFSDK, fetches all forecast sites, writes
+    config_all_stations_library.json, and returns the loaded DataFrame.
+
+    Args:
+        config_all_file: Path to config_all_stations_library.json.
+
+    Returns:
+        DataFrame with station metadata, or empty DataFrame if bootstrap
+        fails.
+    """
+    empty_cols = [
+        "site_code",
+        "code",
+        "name_ru",
+        "lat",
+        "long",
+        "basin",
+        "country",
+        "is_virtual",
+        "region",
+        "site_type",
+        "organization_id",
+        "organization",
+        "elevation",
+        "river_ru",
+        "punkt_ru",
+    ]
+
+    if not IEASYHYDRO_HF_SDK_AVAILABLE:
+        logger.debug("ieasyhydro_sdk not installed — cannot bootstrap from HF SDK.")
+        return pd.DataFrame(columns=empty_cols)
+
+    try:
+        ieh_hf_sdk = IEasyHydroHFSDK()
+        has_access = check_database_access(ieh_hf_sdk)
+        if not has_access:
+            logger.info("HF SDK available but no database access — cannot bootstrap.")
+            return pd.DataFrame(columns=empty_cols)
+    except Exception as e:
+        logger.info(f"HF SDK initialization failed: {e} — cannot bootstrap.")
+        return pd.DataFrame(columns=empty_cols)
+
+    try:
+        fc_sites, _, _ = get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        if not fc_sites:
+            logger.info("HF SDK returned no forecast sites.")
+            return pd.DataFrame(columns=empty_cols)
+
+        write_config_all_stations(fc_sites, config_all_file)
+        config_all = fl.load_all_station_data_from_JSON(config_all_file)
+        logger.info(f"Bootstrapped {len(config_all)} station(s) from HF SDK into {config_all_file}")
+        return config_all
+    except Exception as e:
+        logger.warning(f"HF SDK bootstrap failed: {e}")
+        return pd.DataFrame(columns=empty_cols)
+
 
 # The functions below are required for the old iEasyHydro App.
 # For using the forecast tools with the new iEasyHydro HF App, we can read the
@@ -580,7 +969,9 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     Returns:
         db_sites (pandas.DataFrame): The filtered list of stations required to produce forecasts.
     """
-    logger.debug("Validating station metadata and filtering for stations required to produce forecasts.")
+    logger.debug(
+        "Validating station metadata and filtering for stations required to produce forecasts."
+    )
     # Read station metadata from the DB and store it in a list of Site objects
     logger.debug("-Reading station metadata from the DB ...")
 
@@ -600,23 +991,59 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
                 raise e
             db_sites = pd.DataFrame.from_dict(db_sites)
 
-            logger.debug(f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}")
+            logger.debug(
+                f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}"
+            )
         else:
             # If we don't have access to the database, create an empty dataframe.
             db_sites = pd.DataFrame(
-                columns=['site_code', 'site_name', 'river_name', 'punkt_name',
-                         'latitude', 'longitude', 'region', 'basin'])
+                columns=[
+                    "site_code",
+                    "site_name",
+                    "river_name",
+                    "punkt_name",
+                    "latitude",
+                    "longitude",
+                    "region",
+                    "basin",
+                ]
+            )
 
     # Read station information of all available discharge stations
     logger.debug("-Reading information about all stations from JSON...")
 
     config_all_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_all_stations"))
+        os.getenv("ieasyforecast_config_file_all_stations"),
+    )
 
-    config_all = fl.load_all_station_data_from_JSON(config_all_file)
+    try:
+        config_all = fl.load_all_station_data_from_JSON(config_all_file)
+        if config_all.empty:
+            raise ValueError("empty config")
+        logger.debug(
+            f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}"
+        )
+    except (FileNotFoundError, KeyError, ValueError):
+        logger.info(
+            "config_all_stations_library.json missing or empty — attempting HF SDK bootstrap."
+        )
+        config_all = _try_bootstrap_from_hf_sdk(config_all_file)
+        if config_all.empty:
+            logger.info(
+                "HF SDK bootstrap did not produce stations. "
+                "The file will be created at the end of this run."
+            )
 
-    logger.debug(f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}")
+    # Backfill organization from env var for JSON files that predate org-scoping
+    if "organization" not in config_all.columns or config_all["organization"].isna().all():
+        org = os.getenv("ieasyhydroforecast_organization")
+        if org:
+            config_all["organization"] = org
+            logger.debug(
+                "Backfilled organization='%s' from env var into config_all",
+                org,
+            )
 
     # Merge information from db_sites and config_all. Make sure that all sites
     # in config_all are present in db_sites.
@@ -625,24 +1052,27 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
 
         # Find sites in config_all which are not present in db_sites.
         # This is a special case for Kygryz Hydromet.
-        new_sites = config_all[~config_all['site_code'].isin(db_sites['site_code'])]
+        new_sites = config_all[~config_all["site_code"].isin(db_sites["site_code"])]
 
         # Add new sites (e.g. virtual station for inflow reservoirс) to forecast_sites.
         # Edit here if there is need to add new sites for short-term forecasting.
-        new_sites_forecast = pd.DataFrame({
-            'site_code': new_sites['site_code'],
-            'basin': new_sites['basin'],
-            'latitude': new_sites['lat'],
-            'longitude': new_sites['long'],
-            'country': new_sites['country'],
-            'is_virtual': new_sites['is_virtual'],
-            'region': new_sites['region'],
-            'site_type': new_sites['site_type'],
-            'site_name': new_sites['name_ru'],
-            'organization_id': new_sites['organization_id'],
-            'elevation': new_sites['elevation'],
-        })
-        logger.debug(f"Adding new sites to the list of stations available for forecasting, namely")
+        new_sites_forecast = pd.DataFrame(
+            {
+                "site_code": new_sites["site_code"],
+                "basin": new_sites["basin"],
+                "latitude": new_sites["lat"],
+                "longitude": new_sites["long"],
+                "country": new_sites["country"],
+                "is_virtual": new_sites["is_virtual"],
+                "region": new_sites["region"],
+                "site_type": new_sites["site_type"],
+                "site_name": new_sites["name_ru"],
+                "organization_id": new_sites["organization_id"],
+                "elevation": new_sites["elevation"],
+                "organization": new_sites["organization"],
+            }
+        )
+        logger.debug("Adding new sites to the list of stations available for forecasting, namely")
         logger.debug(f"{new_sites_forecast['site_code'].values}")
         db_sites = pd.concat([db_sites, new_sites_forecast])
 
@@ -650,65 +1080,85 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         # Add information from config_all to db_sites
         db_sites = pd.merge(
             db_sites,
-            config_all[['site_code', 'river_ru', 'punkt_ru', 'lat', 'long']],
-            left_on='site_code',
-            right_on='site_code',
-            how='left'
+            config_all[["site_code", "river_ru", "punkt_ru", "lat", "long", "organization"]],
+            left_on="site_code",
+            right_on="site_code",
+            how="left",
         )
         # We give precedence to the information from db_sites (from the iEasyHydro
         # database) over the information read from the
         # .env_develop/<ieasyforecast_config_file_all_stations> file.
         # Where lat is not equal to latitude, replace latitude with lat
-        db_sites['latitude'] = np.where(db_sites['latitude'] != db_sites['lat'], db_sites['lat'],
-                                        db_sites['latitude'])
+        db_sites["latitude"] = np.where(
+            db_sites["latitude"] != db_sites["lat"], db_sites["lat"], db_sites["latitude"]
+        )
         # Where long is not equal to longitude, replace longitude with long
-        db_sites['longitude'] = np.where(db_sites['longitude'] != db_sites['long'], db_sites['long'],
-                                         db_sites['longitude'])
+        db_sites["longitude"] = np.where(
+            db_sites["longitude"] != db_sites["long"], db_sites["long"], db_sites["longitude"]
+        )
 
         # Drop the lat and long columns
-        db_sites.drop(columns=['lat', 'long'], inplace=True)
+        db_sites.drop(columns=["lat", "long"], inplace=True)
     else:
         # If we don't have access to the database, we use the information from config_all
         db_sites = config_all
         # Rename lat to latitude, long to longitude
         db_sites.rename(
-            columns={'name_ru': 'site_name', 'lat': 'latitude', 'long': 'longitude'},
-            inplace=True)
+            columns={"name_ru": "site_name", "lat": "latitude", "long": "longitude"}, inplace=True
+        )
 
-    # Save db_sites to a json file. This overwrites the existing file.
-    db_sites_to_json = db_sites
-    # Convert each column to a list
-    db_sites_to_json['code'] = db_sites_to_json['site_code'].astype(int)
-    for col in db_sites.columns:
-        if col != 'site_code':
-            db_sites_to_json[col] = db_sites_to_json[col].apply(lambda x: [x])
-    db_sites_to_json = db_sites_to_json.set_index('site_code')
-    # Rename the site_name column to name_ru
-    db_sites_to_json.rename(columns={'site_name': 'name_ru',
-                                     'latitude': 'lat',
-                                     'longitude': 'long'}, inplace=True)
-    json_string = db_sites_to_json.to_json(orient='index', force_ascii=False)
-    # Wrap the JSON string in another object
-    json_dict = {"stations_available_for_forecast": json.loads(json_string)}
-    # Convert the dictionary to a pretty-printed JSON string
-    json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
-    # Write the JSON string to a file
-    with open(config_all_file, 'w', encoding='utf-8') as f:
-        f.write(json_string_pretty)
+    # Preserve manual site entries before overwriting
+    # Build stations_dict from db_sites DataFrame
+    stations_dict = {}
+    for _, row in db_sites.iterrows():
+        code_str = str(row["site_code"])
+        stations_dict[code_str] = {
+            "code": [int(row["site_code"])],
+            "name_ru": [row.get("site_name", "")],
+            "lat": [row.get("latitude", None)],
+            "long": [row.get("longitude", None)],
+            "basin": [row.get("basin", "")],
+            "region": [row.get("region", "")],
+            "river_ru": [row.get("river_ru", "")],
+            "punkt_ru": [row.get("punkt_ru", "")],
+            "site_type": [row.get("site_type", "")],
+            "id": [row.get("id", None)],
+            "header": [code_str],
+            "elevation": [row.get("elevation", None)],
+            "organization_id": [row.get("organization_id", None)],
+            "organization": [
+                row.get(
+                    "organization",
+                    os.getenv("ieasyhydroforecast_organization"),
+                )
+            ],
+            "country": [row.get("country", None)],
+            "is_virtual": [row.get("is_virtual", False)],
+            "data_source": row["data_source"]
+            if "data_source" in db_sites.columns and row.get("data_source") is not None
+            else ["ieh_hf"],
+        }
+    _write_config_all(stations_dict, config_all_file)
 
-    # Filter db_sites for discharge sites
-    # NOTE: Important assumption: All discharge sites have a code starting with
-    # 1. This is true in Kyrgyz Hydromet at the time of writing.
-    db_sites = db_sites[db_sites['site_code'].astype(str).str.startswith('1')]
+    # Filter db_sites by organization
+    pre_filter_count = len(db_sites)
+    db_sites = filter_sites_by_org(db_sites)
+    if len(db_sites) == pre_filter_count and pre_filter_count > 0:
+        logger.warning(
+            "filter_sites_by_org returned all %d rows unchanged — "
+            "organization column may be missing or all-None",
+            pre_filter_count,
+        )
 
     # Read stations for forecasting
     logger.debug("-Reading stations for forecasting ...")
 
     config_selection_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection"))
+        os.getenv("ieasyforecast_config_file_station_selection"),
+    )
 
-    with open(config_selection_file, "r") as json_file:
+    with open(config_selection_file) as json_file:
         config = json.load(json_file)
         stations = config["stationsID"]
 
@@ -723,31 +1173,41 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         # Read the stations filter from the file
         config_restrict_station_file = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
-            os.getenv("ieasyforecast_restrict_stations_file"))
-        try: 
-            with open(config_restrict_station_file, "r") as json_file:
+            os.getenv("ieasyforecast_restrict_stations_file"),
+        )
+        try:
+            with open(config_restrict_station_file) as json_file:
                 restrict_stations_config = json.load(json_file)
                 restrict_stations = restrict_stations_config["stationsID"]
-                logger.warning(f"Station selection for pentadal forecasting restricted to: ...")
+                logger.warning("Station selection for pentadal forecasting restricted to: ...")
                 logger.warning(f"{restrict_stations}.")
-                logger.warning(f" To remove restriction set ieasyforecast_restrict_stations_file in your .env file to null.")
+                logger.warning(
+                    " To remove restriction set ieasyforecast_restrict_stations_file in your .env file to null."
+                )
         except FileNotFoundError:
-            logger.warning(f"File {config_restrict_station_file} not found. No restriction on stations for forecasting.")
+            logger.warning(
+                f"File {config_restrict_station_file} not found. No restriction on stations for forecasting."
+            )
             restrict_stations = []
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
     if restrict_stations != []:
         stations = [station for station in stations if station in restrict_stations]
 
-    logger.debug(f"   {len(stations)} station(s) selected for pentadal forecasting, namely: {stations}")
+    logger.debug(
+        f"   {len(stations)} station(s) selected for pentadal forecasting, namely: {stations}"
+    )
 
     # Filter db_sites for stations
     logger.debug("-Filtering db_sites for stations ...")
     stations_str = [str(station) for station in stations]
     db_sites = db_sites[db_sites["site_code"].isin(stations_str)]
-    logger.debug(f"   Producing forecasts for {len(db_sites)} station(s), namely\n: {db_sites['site_code'].values}")
+    logger.debug(
+        f"   Producing forecasts for {len(db_sites)} station(s), namely\n: {db_sites['site_code'].values}"
+    )
 
     return db_sites
+
 
 def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     """
@@ -773,13 +1233,26 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     db_sites = db_sites.apply(lambda col: col.map(lambda x: x[0] if isinstance(x, list) else x))
 
     # Get the unique site codes
-    site_codes = db_sites["site_code"].unique()
+    site_codes = db_sites["site_code"].unique().tolist()
 
     # Create a list of Site objects
     fc_sites = fl.Site.from_dataframe(
-        db_sites[["site_code", "site_name", "river_ru", "punkt_ru", "latitude", "longitude", "region", "basin"]]
+        db_sites[
+            [
+                "site_code",
+                "site_name",
+                "river_ru",
+                "punkt_ru",
+                "latitude",
+                "longitude",
+                "region",
+                "basin",
+            ]
+        ]
     )
-    logger.info(f' {len(fc_sites)} Site object(s) created for forecasting, namely:\n{[site.code for site in fc_sites]}')
+    logger.info(
+        f" {len(fc_sites)} Site object(s) created for forecasting, namely:\n{[site.code for site in fc_sites]}"
+    )
 
     # Sort the fc_sites list by descending site code. They will then be sorted in
     # ascending order in the forecast bulletins and sheets.
@@ -793,15 +1266,20 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
         for site in fc_sites:
             fl.Site.from_DB_get_dangerous_discharge(ieh_sdk, site)
 
-        logger.debug(f"   {len(fc_sites)} Dangerous discharge gotten from DB, namely:\n"
-                       f"{[site.qdanger for site in fc_sites]}")
+        logger.debug(
+            f"   {len(fc_sites)} Dangerous discharge gotten from DB, namely:\n"
+            f"{[site.qdanger for site in fc_sites]}"
+        )
     else:
         # Assign " " to qdanger for each site
         for site in fc_sites:
             site.qdanger = " "
-        logger.info("No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
+        logger.info(
+            "No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites."
+        )
 
     return fc_sites, site_codes
+
 
 def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     """
@@ -819,13 +1297,17 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     """
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_sdk.get_discharge_sites()
-    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    logger.debug(
+        f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}"
+    )
     # Get the list of Site objects for pentadal or decadal forecasting
     fc_sites = fl.Site.decad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
 
     # Read virtual stations to the list
     virtual_sites = ieh_sdk.get_virtual_sites()
-    logger.debug(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    logger.debug(
+        f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}"
+    )
     # Get list of virtual Site objects for pentadal or decadal forecasting
     virtual_sites = fl.Site.virtual_decad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
     fc_sites.extend(virtual_sites)
@@ -838,26 +1320,33 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     site_codes = list(set(site_codes))
     fc_sites = [site for site in fc_sites if site.code in site_codes]
 
-    logger.info(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+    logger.info(
+        f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}"
+    )
 
     # Get unique site IDs
     site_ids = [site.iehhf_site_id for site in fc_sites]
 
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in site_codes:
+            site_codes.append(mc)
+
     # Write the updated site selection to the config file
-    json_file = os.path.join(
+    json_file_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection_decad")
+        os.getenv("ieasyforecast_config_file_station_selection_decad"),
     )
     # Create a dictionary with the key "stationsID" and the list of sites as the value
-    data = {
-        "stationsID": site_codes
-    }
+    data = {"stationsID": site_codes}
 
     # Write the dictionary to a JSON file
-    with open(json_file, 'w') as json_file:
-        json.dump(data, json_file, indent=2)
+    with open(json_file_path, "w") as f:
+        json.dump(data, f, indent=2)
 
     return fc_sites, site_codes, site_ids
+
 
 def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_list_decad=None):
     """
@@ -876,9 +1365,10 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
     # decadal forecasts.
     station_selection_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection_decad"))
+        os.getenv("ieasyforecast_config_file_station_selection_decad"),
+    )
 
-    with open(station_selection_file, "r") as json_file:
+    with open(station_selection_file) as json_file:
         config = json.load(json_file)
         stations = config["stationsID"]
 
@@ -893,16 +1383,21 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
         # Read the stations filter from the file
         config_restrict_station_file = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
-            os.getenv("ieasyforecast_restrict_stations_decad_file"))
-        try: 
-            with open(config_restrict_station_file, "r") as json_file:
+            os.getenv("ieasyforecast_restrict_stations_decad_file"),
+        )
+        try:
+            with open(config_restrict_station_file) as json_file:
                 restrict_stations_config = json.load(json_file)
                 restrict_stations = restrict_stations_config["stationsID"]
-                logger.warning(f"Station selection for decadal forecasting restricted to: ...")
+                logger.warning("Station selection for decadal forecasting restricted to: ...")
                 logger.warning(f"{restrict_stations}")
-                logger.warning(f"To remove restriction set ieasyforecast_restrict_stations_decad_file in your .env file to null.")
+                logger.warning(
+                    "To remove restriction set ieasyforecast_restrict_stations_decad_file in your .env file to null."
+                )
         except FileNotFoundError:
-            logger.warning(f"File {config_restrict_station_file} not found. No restriction on stations for forecasting.")
+            logger.warning(
+                f"File {config_restrict_station_file} not found. No restriction on stations for forecasting."
+            )
             restrict_stations = []
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
@@ -915,19 +1410,28 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
     for station in stations:
         if station not in site_list_decad:
             logger.error(f"Hydropost {station} selected for decadal forecasting but ...")
-            logger.error(f"   ... not found in the list of stations for pentadal forecasting. ...")
-            logger.error(f"   ... Please add station ID to the station selection config file and ...")
-            logger.error(f"   ... make sure it is not filtered in the restrict station selection file. ")
+            logger.error("   ... not found in the list of stations for pentadal forecasting. ...")
+            logger.error(
+                "   ... Please add station ID to the station selection config file and ..."
+            )
+            logger.error(
+                "   ... make sure it is not filtered in the restrict station selection file. "
+            )
 
-    logger.debug(f"   {len(stations)} station(s) selected for decadal forecasting, namely: {stations}")
+    logger.debug(
+        f"   {len(stations)} station(s) selected for decadal forecasting, namely: {stations}"
+    )
 
     # Filter fc_sites_pentad for stations
     logger.debug("-Filtering fc_sites_pentad for stations for decadal forecasting ...")
     fc_sites_decad = [site for site in fc_sites_pentad if site.code in stations]
     stations_decad = [site.code for site in fc_sites_decad]
-    logger.debug(f"   Producing decadal forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
+    logger.debug(
+        f"   Producing decadal forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}"
+    )
 
     return fc_sites_decad, stations_decad
+
 
 def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     """
@@ -939,27 +1443,31 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     Returns:
     fc_sites (list): A list of Site objects for which to produce forecasts.
     site_codes (list): A list of strings for site CODEs for which to produce forecasts.
-    site_ids (list): A list of strings for iEH HF site IDs for which to produce 
-        forecasts. Required for iEH HF SDK. 
+    site_ids (list): A list of strings for iEH HF site IDs for which to produce
+        forecasts. Required for iEH HF SDK.
     """
     # Check if the ieh_hf_sdk object is None
     if ieh_hf_sdk is None:
         # TODO implement get discharge sites from config yaml files
         return None, None, None
-    
+
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_hf_sdk.get_discharge_sites()
-    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
-    
+    logger.debug(
+        f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}"
+    )
+
     # Get the list of Site objects for pentadal or decadal forecasting
     # Note that this only returns manual stations
     # Includes dangerous discharge
     fc_sites = fl.Site.pentad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
     logger.debug(f"  First fc_sites object: \n{fc_sites[0]}")
-    
+
     # Read virtual stations to the list
     virtual_sites = ieh_hf_sdk.get_virtual_sites()
-    logger.debug(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    logger.debug(
+        f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}"
+    )
     # Get list of virtual Site objects for pentadal or decadal forecasting
     virtual_sites = fl.Site.virtual_pentad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
     fc_sites.extend(virtual_sites)
@@ -970,26 +1478,106 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     # Remove duplicates
     site_codes = list(set(site_codes))
     fc_sites = [site for site in fc_sites if site.code in site_codes]
-    logger.info(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+    logger.info(
+        f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}"
+    )
 
     # Get the unique site IDs
     site_ids = [site.iehhf_site_id for site in fc_sites]
 
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in site_codes:
+            site_codes.append(mc)
+
     # Write the updated site selection to the config file
-    json_file = os.path.join(
+    json_file_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection")
+        os.getenv("ieasyforecast_config_file_station_selection"),
     )
     # Create a dictionary with the key "stationsID" and the list of sites as the value
-    data = {
-        "stationsID": site_codes
-    }
+    data = {"stationsID": site_codes}
 
     # Write the dictionary to a JSON file
-    with open(json_file, 'w') as json_file:
-        json.dump(data, json_file, indent=2)
+    with open(json_file_path, "w") as f:
+        json.dump(data, f, indent=2)
 
     return fc_sites, site_codes, site_ids
+
+
+def get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk):
+    """
+    Gets ALL sites with ANY forecast type enabled from iEH HF API.
+
+    Returns sites where any of these flags are True:
+    - daily_forecast
+    - pentad_forecast
+    - decadal_forecast
+    - monthly_forecast
+    - seasonal_forecast
+
+    Args:
+        ieh_hf_sdk: The iEasyHydro HF SDK object.
+
+    Returns:
+        fc_sites (list): Site objects for all forecast-enabled sites.
+        site_codes (list): Site codes (strings) for API queries.
+        site_ids (list): iEH HF site IDs.
+    """
+    if ieh_hf_sdk is None:
+        return None, None, None
+
+    # Get discharge sites from SDK
+    discharge_sites = ieh_hf_sdk.get_discharge_sites()
+    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK")
+
+    # Get Site objects for ALL forecast-enabled sites (any forecast type)
+    fc_sites = fl.Site.all_forecast_sites_from_iEH_HF_SDK(discharge_sites)
+    logger.debug(f" {len(fc_sites)} Site object(s) created for forecasting (any type)")
+
+    # Get virtual sites with any forecast enabled
+    virtual_sites = ieh_hf_sdk.get_virtual_sites()
+    logger.debug(f" {len(virtual_sites)} virtual site(s) found in iEH HF SDK")
+    virtual_fc_sites = fl.Site.virtual_all_forecast_sites_from_iEH_HF_SDK(virtual_sites)
+    fc_sites.extend(virtual_fc_sites)
+
+    # Get unique site codes and IDs
+    site_codes = [site.code for site in fc_sites]
+    site_ids = [site.iehhf_site_id for site in fc_sites]
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_fc_sites = []
+    unique_codes = []
+    unique_ids = []
+    for site, code, site_id in zip(fc_sites, site_codes, site_ids, strict=False):
+        if code not in seen:
+            seen.add(code)
+            unique_fc_sites.append(site)
+            unique_codes.append(code)
+            unique_ids.append(site_id)
+
+    logger.info(
+        f" {len(unique_fc_sites)} unique Site object(s) for all forecasts: {[s.code for s in unique_fc_sites]}"
+    )
+
+    # Append manual site codes before writing
+    manual_codes = _get_manual_site_codes()
+    for mc in manual_codes:
+        if mc not in unique_codes:
+            unique_codes.append(mc)
+
+    # Write the updated site selection to the config file
+    json_file_path = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection"),
+    )
+    data = {"stationsID": unique_codes}
+    with open(json_file_path, "w") as f:
+        json.dump(data, f, indent=2)
+
+    return unique_fc_sites, unique_codes, unique_ids
 
 
 # endregion
@@ -998,6 +1586,7 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
 # region Reading_forecast_results
 
 # --- API Helper Functions for Postprocessing Data ---
+
 
 def _read_lr_forecasts_from_api(
     horizon_type: str,
@@ -1024,7 +1613,7 @@ def _read_lr_forecasts_from_api(
     pandas.DataFrame
         The LR forecast data with columns: code, date, forecasted_discharge,
         predictor, slope, intercept, horizon_value, horizon_in_year,
-        discharge_avg, q_mean, q_std_sigma, delta, rsquared, model_long, model_short.
+        discharge_avg, q_mean, q_std_sigma, delta, rsquared, model_short.
 
     Raises:
     -------
@@ -1035,7 +1624,7 @@ def _read_lr_forecasts_from_api(
     ValueError
         If horizon_type is invalid.
     """
-    if horizon_type not in ('pentad', 'decade'):
+    if horizon_type not in ("pentad", "decade"):
         raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
 
     if not SAPPHIRE_API_AVAILABLE:
@@ -1089,23 +1678,27 @@ def _read_lr_forecasts_from_api(
         logger.warning(f"No LR forecast data ({horizon_type}) returned from API")
         return pd.DataFrame()
 
-    # Combine all pages
+    # Combine all pages (drop all-NA columns from each frame to avoid FutureWarning)
+    all_data = [df.dropna(how="all", axis=1) for df in all_data]
+    all_data = [df for df in all_data if not df.empty]
+    if not all_data:
+        logger.warning(f"No non-empty LR forecast data ({horizon_type}) after filtering")
+        return pd.DataFrame()
     forecast_data = pd.concat(all_data, ignore_index=True)
 
     # Remove duplicates (defensive)
-    forecast_data = forecast_data.drop_duplicates(subset=['code', 'date'], keep='last')
+    forecast_data = forecast_data.drop_duplicates(subset=["code", "date"], keep="last")
 
     # Convert types
-    if 'date' in forecast_data.columns:
-        forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
-    forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in forecast_data.columns:
+        forecast_data["date"] = fl.parse_dates_robust(forecast_data["date"], "date")
+    forecast_data["code"] = forecast_data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
-    # Add model columns
-    forecast_data["model_long"] = "Linear regression (LR)"
+    # Add model column
     forecast_data["model_short"] = "LR"
 
     # Sort by code and date
-    forecast_data = forecast_data.sort_values(by=['code', 'date'])
+    forecast_data = forecast_data.sort_values(by=["code", "date"])
 
     logger.info(f"LR forecast data ({horizon_type}) read from API: {len(forecast_data)} records")
     logger.info(f"Date range: {forecast_data['date'].min()} to {forecast_data['date'].max()}")
@@ -1141,7 +1734,7 @@ def _read_ml_forecasts_from_api(
     --------
     pandas.DataFrame
         The ML forecast data with columns: code, date, forecasted_discharge,
-        flag, q05, q25, q50, q75, q95, model_long, model_short.
+        flag, q05, q25, q75, q95, forecasted_discharge, model_short.
 
     Raises:
     -------
@@ -1152,25 +1745,22 @@ def _read_ml_forecasts_from_api(
     ValueError
         If horizon_type or model is invalid.
     """
-    if horizon_type not in ('pentad', 'decade'):
+    if horizon_type not in ("pentad", "decade"):
         raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
 
-    # Model type mapping: API model_type -> (model_long, model_short)
-    # - model_long: Full descriptive name for display
-    # - model_short: Abbreviated name for column headers and compact display
+    # Model type mapping: API model_type -> model_short
     model_mapping = {
-        'TFT': ('Temporal Fusion Transformer (TFT)', 'TFT'),
-        'TIDE': ('Time-series Dense Encoder (TiDE)', 'TiDE'),
-        'TSMIXER': ('Time-Series Mixer (TSMixer)', 'TSMixer'),
-        'ARIMA': ('AutoRegressive Integrated Moving Average (ARIMA)', 'ARIMA'),
-        'RRMAMBA': ('Rainfall-Runoff Mamba (RRMAMBA)', 'RRMAMBA'),
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer",
+        "ARIMA": "ARIMA",
     }
 
     model_upper = model.upper()
     if model_upper not in model_mapping:
         raise ValueError(f"model must be one of {list(model_mapping.keys())}, got: {model}")
 
-    model_long, model_short = model_mapping[model_upper]
+    model_short = model_mapping[model_upper]
 
     if not SAPPHIRE_API_AVAILABLE:
         raise RuntimeError(
@@ -1187,70 +1777,125 @@ def _read_ml_forecasts_from_api(
 
     logger.info(f"Reading {model} forecasts ({horizon_type}) from SAPPHIRE API at {api_url}")
 
-    # Collect all data with pagination
-    all_data = []
+    # Pagination settings
     page_size = 10000
 
     # If site_codes provided, query per code for efficiency
     codes_to_query = site_codes if site_codes else [None]
 
-    for code in codes_to_query:
-        skip = 0
-        while True:
-            df_page = client.read_forecasts(
-                horizon=horizon_type,
-                code=code,
-                start_date=start_date,
-                end_date=end_date,
-                skip=skip,
-                limit=page_size,
-            )
+    # Try "day" horizon first (target architecture), fall back to
+    # pentad/decade (legacy) if no day-level records exist yet.
+    horizons_to_try = ["day"]
+    if horizon_type != "day":
+        horizons_to_try.append(horizon_type)
 
-            # Store original page length before filtering for pagination check
-            original_page_len = len(df_page)
-
-            if df_page.empty:
-                break
-
-            # Filter by model type if the API returns multiple models
-            # (Note: The API may or may not support model filtering directly)
-            if 'model_type' in df_page.columns:
-                df_page = df_page[df_page['model_type'].str.upper() == model_upper]
-
-            if not df_page.empty:
-                all_data.append(df_page)
-                logger.debug(
-                    f"Read {len(df_page)} {model} forecast records for horizon={horizon_type}, code={code} (skip={skip})"
+    for query_horizon in horizons_to_try:
+        all_data = []
+        for code in codes_to_query:
+            skip = 0
+            while True:
+                df_page = client.read_short_term_forecasts(
+                    horizon=query_horizon,
+                    code=code,
+                    model=model_short,
+                    start_date=start_date,
+                    end_date=end_date,
+                    skip=skip,
+                    limit=page_size,
                 )
 
-            if original_page_len < page_size:
-                break
+                # Store original page length before filtering for pagination
+                original_page_len = len(df_page)
 
-            skip += page_size
+                if df_page.empty:
+                    break
+
+                # Defensive client-side model filter (server already filtered,
+                # but guard against API versions that don't support model param)
+                if "model_type" in df_page.columns:
+                    df_page = df_page[df_page["model_type"].str.upper() == model_upper]
+
+                if not df_page.empty:
+                    all_data.append(df_page)
+                    logger.debug(
+                        f"Read {len(df_page)} {model} forecast records "
+                        f"for horizon={query_horizon}, code={code} "
+                        f"(skip={skip})"
+                    )
+
+                if original_page_len < page_size:
+                    break
+
+                skip += page_size
+
+        if all_data:
+            logger.info(f"Found {model} forecast data using horizon={query_horizon}")
+            break
+    else:
+        logger.warning(f"No {model} forecast data ({horizon_type}) returned from API")
+        return pd.DataFrame()
 
     if not all_data:
         logger.warning(f"No {model} forecast data ({horizon_type}) returned from API")
         return pd.DataFrame()
 
-    # Combine all pages
+    # Combine all pages (drop all-NA columns from each frame to avoid FutureWarning)
+    all_data = [df.dropna(how="all", axis=1) for df in all_data]
+    all_data = [df for df in all_data if not df.empty]
+    if not all_data:
+        logger.warning(f"No non-empty {model} forecast data ({horizon_type}) after filtering")
+        return pd.DataFrame()
     forecast_data = pd.concat(all_data, ignore_index=True)
 
-    # Remove duplicates (defensive)
-    forecast_data = forecast_data.drop_duplicates(subset=['code', 'date'], keep='last')
+    # Convert types before aggregation
+    if "date" in forecast_data.columns:
+        forecast_data["date"] = fl.parse_dates_robust(forecast_data["date"], "date")
+    forecast_data["code"] = forecast_data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
-    # Convert types
-    if 'date' in forecast_data.columns:
-        forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
-    forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # --- Aggregate daily targets to pentad/decad level ---
+    # The API stores one row per daily target within each forecast run.
+    # Downstream code expects one row per (code, pentad/decad_boundary)
+    # with averaged quantile values across daily targets.
+    numeric_cols = ["q05", "q25", "q75", "q95", "forecasted_discharge"]
+    agg_dict = {}
+    for col in numeric_cols:
+        if col in forecast_data.columns:
+            agg_dict[col] = "mean"
+    if "flag" in forecast_data.columns:
+        agg_dict["flag"] = "max"  # worst quality flag
+    for col in ["horizon_value", "horizon_in_year"]:
+        if col in forecast_data.columns:
+            agg_dict[col] = "first"  # identical within group
 
-    # Add model columns
-    forecast_data["model_long"] = model_long
+    if agg_dict:
+        forecast_data = forecast_data.groupby(["code", "date"], as_index=False).agg(agg_dict)
+
+    # Add model column
     forecast_data["model_short"] = model_short
 
-    # Sort by code and date
-    forecast_data = forecast_data.sort_values(by=['code', 'date'])
+    # Compute horizon columns from dates (matching read_linreg_forecasts_pentad)
+    if "date" in forecast_data.columns and not forecast_data.empty:
+        if horizon_type == "pentad":
+            forecast_data["pentad_in_month"] = (forecast_data["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_pentad
+            )
+            forecast_data["pentad_in_year"] = (forecast_data["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_pentad_in_year
+            )
+        elif horizon_type == "decade":
+            forecast_data["decad_in_month"] = (forecast_data["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_decad_in_month
+            )
+            forecast_data["decad_in_year"] = (forecast_data["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_decad_in_year
+            )
 
-    logger.info(f"{model} forecast data ({horizon_type}) read from API: {len(forecast_data)} records")
+    # Sort by code and date
+    forecast_data = forecast_data.sort_values(by=["code", "date"])
+
+    logger.info(
+        f"{model} forecast data ({horizon_type}) read from API: {len(forecast_data)} records"
+    )
     if not forecast_data.empty:
         logger.info(f"Date range: {forecast_data['date'].min()} to {forecast_data['date'].max()}")
         logger.info(f"Stations: {forecast_data['code'].unique().tolist()}")
@@ -1270,7 +1915,6 @@ def read_observed_pentadal_data():
         - code: station code
         - date: observation date
         - discharge_avg: observed discharge value
-        - model_long: "Observed (Obs)"
         - model_short: "Obs"
         - pentad_in_month: pentad within the month (1-6)
         - pentad_in_year: pentad within the year (1-72)
@@ -1315,36 +1959,40 @@ def read_observed_pentadal_data():
                     break
                 skip += page_size
 
+            # Drop all-NA columns from each frame to avoid FutureWarning
+            all_data = [df.dropna(how="all", axis=1) for df in all_data]
+            all_data = [df for df in all_data if not df.empty]
             if all_data:
                 data = pd.concat(all_data, ignore_index=True)
 
                 # Rename discharge to discharge_avg for downstream compatibility
-                if 'discharge' in data.columns:
-                    data = data.rename(columns={'discharge': 'discharge_avg'})
+                if "discharge" in data.columns:
+                    data = data.rename(columns={"discharge": "discharge_avg"})
 
                 # Rename horizon columns to pentad-specific names
-                if 'horizon_value' in data.columns and 'pentad_in_month' not in data.columns:
-                    data = data.rename(columns={'horizon_value': 'pentad_in_month'})
-                if 'horizon_in_year' in data.columns and 'pentad_in_year' not in data.columns:
-                    data = data.rename(columns={'horizon_in_year': 'pentad_in_year'})
+                if "horizon_value" in data.columns and "pentad_in_month" not in data.columns:
+                    data = data.rename(columns={"horizon_value": "pentad_in_month"})
+                if "horizon_in_year" in data.columns and "pentad_in_year" not in data.columns:
+                    data = data.rename(columns={"horizon_in_year": "pentad_in_year"})
 
                 # Apply robust date parsing and ensure code is string
-                if 'date' in data.columns:
-                    data['date'] = fl.parse_dates_robust(data['date'], 'date')
-                if 'code' in data.columns:
-                    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+                if "date" in data.columns:
+                    data["date"] = fl.parse_dates_robust(data["date"], "date")
+                if "code" in data.columns:
+                    data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
                 # Rename 'pentad' to 'pentad_in_month' if present for consistency
-                if 'pentad' in data.columns and 'pentad_in_month' not in data.columns:
-                    data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
+                if "pentad" in data.columns and "pentad_in_month" not in data.columns:
+                    data.rename(columns={"pentad": "pentad_in_month"}, inplace=True)
             else:
-                data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
+                data = pd.DataFrame(columns=["code", "date", "discharge_avg"])
 
-            # Add model columns for observed data
-            data["model_long"] = "Observed (Obs)"
+            # Add model column for observed data
             data["model_short"] = "Obs"
 
-            logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon from API.")
+            logger.info(
+                f"Read {len(data)} rows of observed data for the pentadal forecast horizon from API."
+            )
             return data
 
         except Exception as e:
@@ -1352,29 +2000,33 @@ def read_observed_pentadal_data():
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info("Reading observed pentadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        "Reading observed pentadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentad_discharge_file")
+        os.getenv("ieasyforecast_pentad_discharge_file"),
     )
     data = pd.read_csv(filepath)
 
     # Apply robust date parsing and ensure code is string without .0 suffixes
-    if 'date' in data.columns:
-        data['date'] = fl.parse_dates_robust(data['date'], 'date')
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in data.columns:
+        data["date"] = fl.parse_dates_robust(data["date"], "date")
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Observed (Obs)"
     data["model_short"] = "Obs"
 
     # If there is a column name 'pentad', rename it to 'pentad_in_month'
-    if 'pentad' in data.columns:
-        data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
-    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon from CSV.")
+    if "pentad" in data.columns:
+        data.rename(columns={"pentad": "pentad_in_month"}, inplace=True)
+    logger.info(
+        f"Read {len(data)} rows of observed data for the pentadal forecast horizon from CSV."
+    )
 
     return data
+
 
 def read_observed_decadal_data():
     """
@@ -1388,7 +2040,6 @@ def read_observed_decadal_data():
         - code: station code
         - date: observation date
         - discharge_avg: observed discharge value
-        - model_long: "Observed (Obs)"
         - model_short: "Obs"
         - decad_in_month: decade within the month (1-3)
         - decad_in_year: decade within the year (1-36)
@@ -1432,32 +2083,36 @@ def read_observed_decadal_data():
                     break
                 skip += page_size
 
+            # Drop all-NA columns from each frame to avoid FutureWarning
+            all_data = [df.dropna(how="all", axis=1) for df in all_data]
+            all_data = [df for df in all_data if not df.empty]
             if all_data:
                 data = pd.concat(all_data, ignore_index=True)
 
                 # Rename discharge to discharge_avg for downstream compatibility
-                if 'discharge' in data.columns:
-                    data = data.rename(columns={'discharge': 'discharge_avg'})
+                if "discharge" in data.columns:
+                    data = data.rename(columns={"discharge": "discharge_avg"})
 
                 # Rename horizon columns to decad-specific names
-                if 'horizon_value' in data.columns and 'decad_in_month' not in data.columns:
-                    data = data.rename(columns={'horizon_value': 'decad_in_month'})
-                if 'horizon_in_year' in data.columns and 'decad_in_year' not in data.columns:
-                    data = data.rename(columns={'horizon_in_year': 'decad_in_year'})
+                if "horizon_value" in data.columns and "decad_in_month" not in data.columns:
+                    data = data.rename(columns={"horizon_value": "decad_in_month"})
+                if "horizon_in_year" in data.columns and "decad_in_year" not in data.columns:
+                    data = data.rename(columns={"horizon_in_year": "decad_in_year"})
 
                 # Apply robust date parsing and ensure code is string
-                if 'date' in data.columns:
-                    data['date'] = fl.parse_dates_robust(data['date'], 'date')
-                if 'code' in data.columns:
-                    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+                if "date" in data.columns:
+                    data["date"] = fl.parse_dates_robust(data["date"], "date")
+                if "code" in data.columns:
+                    data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
             else:
-                data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
+                data = pd.DataFrame(columns=["code", "date", "discharge_avg"])
 
-            # Add model columns for observed data
-            data["model_long"] = "Observed (Obs)"
+            # Add model column for observed data
             data["model_short"] = "Obs"
 
-            logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from API.")
+            logger.info(
+                f"Read {len(data)} rows of observed data for the decadal forecast horizon from API."
+            )
             return data
 
         except Exception as e:
@@ -1465,26 +2120,30 @@ def read_observed_decadal_data():
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info("Reading observed decadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        "Reading observed decadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_decad_discharge_file")
+        os.getenv("ieasyforecast_decad_discharge_file"),
     )
     data = pd.read_csv(filepath)
 
     # Apply robust date parsing and ensure code is string without .0 suffixes
-    if 'date' in data.columns:
-        data['date'] = fl.parse_dates_robust(data['date'], 'date')
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in data.columns:
+        data["date"] = fl.parse_dates_robust(data["date"], "date")
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Observed (Obs)"
     data["model_short"] = "Obs"
 
-    logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from CSV.")
+    logger.info(
+        f"Read {len(data)} rows of observed data for the decadal forecast horizon from CSV."
+    )
 
     return data
+
 
 def read_linreg_forecasts_pentad():
     """
@@ -1499,7 +2158,7 @@ def read_linreg_forecasts_pentad():
 
     Returns:
     forecasts (pandas.DataFrame): The linear regression forecasts for the
-        pentadal forecast horizon with added model_long and model_short columns.
+        pentadal forecast horizon with added model_short column.
     stats (pandas.DataFrame): The statistics of the observed data for the
         pentadal forecast horizon.
 
@@ -1540,7 +2199,9 @@ def read_linreg_forecasts_pentad():
             data = _read_lr_forecasts_from_api(horizon_type="pentad")
 
             if data.empty:
-                logger.warning("No LR pentadal forecast data returned from API, falling back to CSV")
+                logger.warning(
+                    "No LR pentadal forecast data returned from API, falling back to CSV"
+                )
             else:
                 # Drop duplicate rows in date and code if they exist, keeping the last row
                 data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
@@ -1558,23 +2219,35 @@ def read_linreg_forecasts_pentad():
                 # Remove stats columns and discharge_avg from forecasts if present
                 cols_to_drop = ["q_mean", "q_std_sigma", "delta", "discharge_avg"]
                 cols_to_drop_present = [c for c in cols_to_drop if c in data.columns]
-                forecasts = data.drop(columns=cols_to_drop_present, errors='ignore')
+                forecasts = data.drop(columns=cols_to_drop_present, errors="ignore")
 
                 # Recalculate pentad in month and pentad in year
-                forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-                forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+                forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_pentad
+                )
+                forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_pentad_in_year
+                )
 
                 # Save the most recent forecasts to CSV for comparison
                 try:
                     save_most_recent_forecasts(forecasts, "LR")
                 except ImportError:
-                    logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+                    logger.warning(
+                        "Could not import save_most_recent_forecasts from src.postprocessing_tools"
+                    )
                 except Exception as e:
                     logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-                logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from API.")
-                logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from API.")
-                logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
+                logger.info(
+                    f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from API."
+                )
+                logger.info(
+                    f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from API."
+                )
+                logger.debug(
+                    f"Columns in the linear regression forecast data:\n{forecasts.columns}"
+                )
                 logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
                 logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
                 logger.debug(f"General runoff statistics data: \n{stats.head()}")
@@ -1582,28 +2255,31 @@ def read_linreg_forecasts_pentad():
                 return forecasts, stats
 
         except Exception as e:
-            logger.warning(f"Failed to read LR pentadal forecasts from API: {e}. Falling back to CSV.")
+            logger.warning(
+                f"Failed to read LR pentadal forecasts from API: {e}. Falling back to CSV."
+            )
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info("Reading LR pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        "Reading LR pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_analysis_pentad_file")
+        os.getenv("ieasyforecast_analysis_pentad_file"),
     )
     data = pd.read_csv(filepath)
 
     # Apply robust date parsing and ensure code is string without .0 suffixes
-    if 'date' in data.columns:
-        data['date'] = fl.parse_dates_robust(data['date'], 'date')
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in data.columns:
+        data["date"] = fl.parse_dates_robust(data["date"], "date")
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Linear regression (LR)"
     data["model_short"] = "LR"
 
     # Split the data into forecasts and statistics
@@ -1613,12 +2289,14 @@ def read_linreg_forecasts_pentad():
     forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
 
     # Add one day to date
-    #forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
-    #stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+    # forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    # stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
 
     # Recalculate pentad in month and pentad in year
     forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-    forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+    forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+        tl.get_pentad_in_year
+    )
 
     # Save the most recent forecasts to CSV for comparison
     try:
@@ -1628,14 +2306,19 @@ def read_linreg_forecasts_pentad():
     except Exception as e:
         logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from CSV.")
-    logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from CSV.")
+    logger.info(
+        f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from CSV."
+    )
+    logger.info(
+        f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from CSV."
+    )
     logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
     logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
     logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
     logger.debug(f"General runoff statistics data: \n{stats.head()}")
 
     return forecasts, stats
+
 
 def read_linreg_forecasts_decade():
     """
@@ -1650,7 +2333,7 @@ def read_linreg_forecasts_decade():
 
     Returns:
     forecasts (pandas.DataFrame): The linear regression forecasts for the
-        decadal forecast horizon with added model_long and model_short columns.
+        decadal forecast horizon with added model_short column.
     stats (pandas.DataFrame): The statistics of the observed data for the
         decadal forecast horizon.
 
@@ -1709,23 +2392,35 @@ def read_linreg_forecasts_decade():
                 # Remove stats columns and discharge_avg from forecasts if present
                 cols_to_drop = ["q_mean", "q_std_sigma", "delta", "discharge_avg"]
                 cols_to_drop_present = [c for c in cols_to_drop if c in data.columns]
-                forecasts = data.drop(columns=cols_to_drop_present, errors='ignore')
+                forecasts = data.drop(columns=cols_to_drop_present, errors="ignore")
 
                 # Recalculate decad in month and decad in year
-                forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
-                forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+                forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_decad_in_month
+                )
+                forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_decad_in_year
+                )
 
                 # Save the most recent forecasts to CSV for comparison
                 try:
                     save_most_recent_forecasts_decade(forecasts, "LR")
                 except ImportError:
-                    logger.warning("Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+                    logger.warning(
+                        "Could not import save_most_recent_forecasts_decade from src.postprocessing_tools"
+                    )
                 except Exception as e:
                     logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-                logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from API.")
-                logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from API.")
-                logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
+                logger.info(
+                    f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from API."
+                )
+                logger.info(
+                    f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from API."
+                )
+                logger.debug(
+                    f"Columns in the linear regression forecast data:\n{forecasts.columns}"
+                )
                 logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
                 logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
                 logger.debug(f"General runoff statistics data: \n{stats.head()}")
@@ -1733,28 +2428,31 @@ def read_linreg_forecasts_decade():
                 return forecasts, stats
 
         except Exception as e:
-            logger.warning(f"Failed to read LR decadal forecasts from API: {e}. Falling back to CSV.")
+            logger.warning(
+                f"Failed to read LR decadal forecasts from API: {e}. Falling back to CSV."
+            )
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info("Reading LR decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        "Reading LR decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_analysis_decad_file")
+        os.getenv("ieasyforecast_analysis_decad_file"),
     )
     data = pd.read_csv(filepath)
 
     # Apply robust date parsing and ensure code is string without .0 suffixes
-    if 'date' in data.columns:
-        data['date'] = fl.parse_dates_robust(data['date'], 'date')
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in data.columns:
+        data["date"] = fl.parse_dates_robust(data["date"], "date")
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Linear regression (LR)"
     data["model_short"] = "LR"
 
     # Split the data into forecasts and statistics
@@ -1764,23 +2462,33 @@ def read_linreg_forecasts_decade():
     forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
 
     # Add one day to date
-    #forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
-    #stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+    # forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    # stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
 
     # Recalculate decad in month and decad in year
-    forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
-    forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+    forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+        tl.get_decad_in_month
+    )
+    forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(
+        tl.get_decad_in_year
+    )
 
     # Save the most recent forecasts to CSV for comparison
     try:
         save_most_recent_forecasts_decade(forecasts, "LR")
     except ImportError:
-        logger.warning("Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+        logger.warning(
+            "Could not import save_most_recent_forecasts_decade from src.postprocessing_tools"
+        )
     except Exception as e:
         logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from CSV.")
-    logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from CSV.")
+    logger.info(
+        f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from CSV."
+    )
+    logger.info(
+        f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from CSV."
+    )
     logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
     logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
     logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
@@ -1788,26 +2496,34 @@ def read_linreg_forecasts_decade():
 
     return forecasts, stats
 
-def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short):
+
+def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
     Added robust error handling.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
         # First read the data without date parsing to avoid format conflicts
         try:
-            daily_data = pd.read_csv(filepath, on_bad_lines='skip', low_memory=False)
+            daily_data = pd.read_csv(filepath, on_bad_lines="skip", low_memory=False)
             logger.info(f"Successfully read raw data from {filepath}")
         except Exception as e:
             logger.warning(f"Error reading CSV file {filepath}: {e}")
             return pd.DataFrame()
-        
+
         # We read the 'code' column as string. Discard .0 suffixes if they exist
-        if 'code' in daily_data.columns:
-            daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        if "code" in daily_data.columns:
+            daily_data["code"] = daily_data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
         else:
             logger.warning(f"code column missing from {filepath}")
             return pd.DataFrame()
@@ -1817,8 +2533,8 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             if col in daily_data.columns:
                 try:
                     # Let pandas infer format for each value
-                    daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
-                    
+                    daily_data[col] = pd.to_datetime(daily_data[col], errors="coerce")
+
                     # Check for conversion issues
                     if daily_data[col].isna().any():
                         logger.warning(f"Some values in {col} couldn't be converted to dates")
@@ -1827,62 +2543,68 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
                 except Exception as e:
                     logger.warning(f"Error converting {col} to datetime: {e}")
                     return pd.DataFrame()
-            
+
         # Make sure date columns are properly converted to datetime
         # Check if forecast_date column exists and is a datetime column
         if "forecast_date" not in daily_data.columns:
             logger.warning(f"forecast_date column missing from {filepath}")
             return pd.DataFrame()
-            
+
         if not pd.api.types.is_datetime64_any_dtype(daily_data["forecast_date"]):
             # Try to convert to datetime
             try:
-                daily_data["forecast_date"] = pd.to_datetime(daily_data["forecast_date"], errors='coerce')
+                daily_data["forecast_date"] = pd.to_datetime(
+                    daily_data["forecast_date"], errors="coerce"
+                )
             except Exception as e:
                 logger.warning(f"Error converting forecast_date to datetime: {e}")
                 return pd.DataFrame()
-                
+
         # Check for NaT values after conversion
         if daily_data["forecast_date"].isna().any():
-            logger.warning(f"NaT values found in forecast_date column after conversion")
+            logger.warning("NaT values found in forecast_date column after conversion")
             # Drop rows with NaT values
             daily_data = daily_data.dropna(subset=["forecast_date"])
-            
+
         # Do the same for date column
         if "date" not in daily_data.columns:
             logger.warning(f"date column missing from {filepath}")
             return pd.DataFrame()
-            
+
         if not pd.api.types.is_datetime64_any_dtype(daily_data["date"]):
             # Try to convert to datetime
             try:
-                daily_data["date"] = pd.to_datetime(daily_data["date"], errors='coerce')
+                daily_data["date"] = pd.to_datetime(daily_data["date"], errors="coerce")
             except Exception as e:
                 logger.warning(f"Error converting date to datetime: {e}")
                 return pd.DataFrame()
-                
+
         # Check for NaT values after conversion
         if daily_data["date"].isna().any():
-            logger.warning(f"NaT values found in date column after conversion")
+            logger.warning("NaT values found in date column after conversion")
             # Drop rows with NaT values
             daily_data = daily_data.dropna(subset=["date"])
-        
+
         # Convert to date what needs to be date
         daily_data["forecast_date"] = daily_data["forecast_date"].dt.date
         daily_data["date"] = daily_data["date"].dt.date
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
-        
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(
+            fl.get_last_day_of_month
+        )
+
         # Convert forecast_date to datetime for access to dt accessor
         # This step ensures the column is a datetime we can extract day from
         daily_data["forecast_date"] = pd.to_datetime(daily_data["forecast_date"])
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])].copy()
+        data = daily_data[
+            (daily_data["day_of_month"].isin([5, 10, 15, 20, 25]))
+            | (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])
+        ].copy()
 
         # Check if we have any data after filtering
         if data.empty:
@@ -1893,11 +2615,12 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
         data.loc[:, "forecast_date"] = data["forecast_date"].dt.date
 
         # Group by code and forecast_date and calculate the mean of all columns
-        forecast = data \
-            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
-            .groupby(["code", "forecast_date"]) \
-            .mean() \
+        forecast = (
+            data.drop(columns=["date", "day_of_month", "last_day_of_month"], errors="ignore")
+            .groupby(["code", "forecast_date"])
+            .mean()
             .reset_index()
+        )
 
         # Rename the column forecast_date to date and Q50 to forecasted_discharge.
         # In the case of the ARIMA model, we don't have quantiles but rename the column Q to forecasted_discharge.
@@ -1912,17 +2635,22 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast["model_long"] = model_long
         forecast["model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year if date column exists
         if "date" in forecast.columns:
             # Convert back to datetime for Timedelta operation
             forecast["date"] = pd.to_datetime(forecast["date"])
-            forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-            forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+            forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_pentad
+            )
+            forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_pentad_in_year
+            )
 
-        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon."
+        )
         logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
         logger.debug(f"Read forecast data sample: {forecast.head()}")
 
@@ -1932,7 +2660,8 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
         logger.warning(f"Error processing {model} forecast data from {filepath}: {e}")
         return pd.DataFrame()
 
-def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short):
+
+def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the decadal forecast.
     Added robust error handling.
@@ -1940,35 +2669,48 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
     Args:
         filepath (str): The path to the file with the forecast results.
         model (str): The model to read the forecast results from.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
         # Read the forecast results with robust date parsing
         daily_data = pd.read_csv(filepath)
-        
+
         # Apply robust date parsing and ensure code is string without .0 suffixes
-        if 'date' in daily_data.columns:
-            daily_data['date'] = fl.parse_dates_robust(daily_data['date'], 'date')
-        if 'forecast_date' in daily_data.columns:
-            daily_data['forecast_date'] = fl.parse_dates_robust(daily_data['forecast_date'], 'forecast_date')
-        if 'code' in daily_data.columns:
-            daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        if "date" in daily_data.columns:
+            daily_data["date"] = fl.parse_dates_robust(daily_data["date"], "date")
+        if "forecast_date" in daily_data.columns:
+            daily_data["forecast_date"] = fl.parse_dates_robust(
+                daily_data["forecast_date"], "forecast_date"
+            )
+        if "code" in daily_data.columns:
+            daily_data["code"] = daily_data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(
+            fl.get_last_day_of_month
+        )
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 10, 20, or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([10, 20])) | \
-                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
+        data = daily_data[
+            (daily_data["day_of_month"].isin([10, 20]))
+            | (daily_data["forecast_date"] == daily_data["last_day_of_month"])
+        ]
 
         # Check if we have any data after filtering
         if data.empty:
@@ -1976,11 +2718,12 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
             return pd.DataFrame()
 
         # Group by code and forecast_date and calculate the mean of all columns
-        forecast = data \
-            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
-            .groupby(["code", "forecast_date"]) \
-            .mean() \
+        forecast = (
+            data.drop(columns=["date", "day_of_month", "last_day_of_month"], errors="ignore")
+            .groupby(["code", "forecast_date"])
+            .mean()
             .reset_index()
+        )
 
         # Rename the column forecast_date to date and Q50 to forecasted_discharge.
         # In the case of the ARIMA model, we don't have quantiles but rename the column Q to forecasted_discharge.
@@ -1995,15 +2738,20 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast["model_long"] = model_long
         forecast["model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year if date column exists
         if "date" in forecast.columns:
-            forecast["decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
-            forecast["decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+            forecast["decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_decad_in_month
+            )
+            forecast["decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                tl.get_decad_in_year
+            )
 
-        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon."
+        )
         logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
         logger.debug(f"Read forecast data sample: {forecast.head()}")
 
@@ -2012,6 +2760,7 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
     except Exception as e:
         logger.warning(f"Error processing {model} forecast data from {filepath}: {e}")
         return pd.DataFrame()
+
 
 def read_csv_with_multiple_date_formats(filepath):
     """
@@ -2025,6 +2774,7 @@ def read_csv_with_multiple_date_formats(filepath):
         pandas.DataFrame: The read data or an empty DataFrame if error occurs
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
@@ -2037,7 +2787,7 @@ def read_csv_with_multiple_date_formats(filepath):
             return pd.DataFrame()
 
         # Check if required columns exist
-        required_columns = ['date', 'forecast_date']
+        required_columns = ["date", "forecast_date"]
         for col in required_columns:
             if col not in daily_data.columns:
                 logger.warning(f"Column {col} missing from {filepath}")
@@ -2045,17 +2795,17 @@ def read_csv_with_multiple_date_formats(filepath):
 
         # Try to parse the 'date' column with the first format
         try:
-            daily_data['date'] = pd.to_datetime(daily_data['date'], format='%d.%m.%Y')
+            daily_data["date"] = pd.to_datetime(daily_data["date"], format="%d.%m.%Y")
         except ValueError:
             # If it fails, try the second format
             try:
-                daily_data['date'] = pd.to_datetime(daily_data['date'], format='%Y-%m-%d')
+                daily_data["date"] = pd.to_datetime(daily_data["date"], format="%Y-%m-%d")
             except ValueError:
                 # If both fail, try a general approach
                 try:
-                    daily_data['date'] = pd.to_datetime(daily_data['date'], errors='coerce')
+                    daily_data["date"] = pd.to_datetime(daily_data["date"], errors="coerce")
                     # Check if we have any valid dates
-                    if daily_data['date'].isna().all():
+                    if daily_data["date"].isna().all():
                         logger.warning(f"Could not parse 'date' column in {filepath}")
                         return pd.DataFrame()
                 except Exception as e:
@@ -2064,17 +2814,23 @@ def read_csv_with_multiple_date_formats(filepath):
 
         # Try to parse the 'forecast_date' column with the first format
         try:
-            daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%d.%m.%Y')
+            daily_data["forecast_date"] = pd.to_datetime(
+                daily_data["forecast_date"], format="%d.%m.%Y"
+            )
         except ValueError:
             # If it fails, try the second format
             try:
-                daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%Y-%m-%d')
+                daily_data["forecast_date"] = pd.to_datetime(
+                    daily_data["forecast_date"], format="%Y-%m-%d"
+                )
             except ValueError:
                 # If both fail, try a general approach
                 try:
-                    daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], errors='coerce')
+                    daily_data["forecast_date"] = pd.to_datetime(
+                        daily_data["forecast_date"], errors="coerce"
+                    )
                     # Check if we have any valid dates
-                    if daily_data['forecast_date'].isna().all():
+                    if daily_data["forecast_date"].isna().all():
                         logger.warning(f"Could not parse 'forecast_date' column in {filepath}")
                         return pd.DataFrame()
                 except Exception as e:
@@ -2087,7 +2843,10 @@ def read_csv_with_multiple_date_formats(filepath):
         logger.warning(f"Error reading CSV file {filepath}: {e}")
         return pd.DataFrame()
 
-def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_long, model_short):
+
+def read_daily_probabilistic_conceptmod_forecasts_pentad(
+    filepath, code, model_long=None, *, model_short
+):
     """
     Reads in forecast results from probabilistic conceptual models for the pentadal forecast.
     Added robust error handling.
@@ -2095,13 +2854,20 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
     Args:
         filepath (str): The path to the file with the forecast results.
         code (str): The code of the hydropost for which to read the forecast results.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
@@ -2114,12 +2880,16 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(
+            fl.get_last_day_of_month
+        )
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+        data = daily_data[
+            (daily_data["day_of_month"].isin([5, 10, 15, 20, 25]))
+            | (daily_data["forecast_date"] == daily_data["last_day_of_month"])
+        ].copy()
 
         # If no data after filtering, return empty DataFrame
         if data.empty:
@@ -2144,11 +2914,12 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
         # Group by code and forecast_date and pentad_in_year
         # We have to aggregate only data for the first pentad for each forecast date
         try:
-            forecast = data \
-                .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
-                .groupby(["code", "forecast_date", "pentad_in_year"]) \
-                .mean() \
+            forecast = (
+                data.drop(columns=["date", "day_of_month", "last_day_of_month"], errors="ignore")
+                .groupby(["code", "forecast_date", "pentad_in_year"])
+                .mean()
                 .reset_index()
+            )
 
             # Keep only the first pentad that appears for each forecast_date
             forecast = forecast.groupby(["code", "forecast_date"]).first().reset_index()
@@ -2168,21 +2939,26 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast.loc[:, "model_long"] = model_long
         forecast.loc[:, "model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year
         if "date" in forecast.columns:
             try:
-                forecast.loc[:, "pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-                forecast.loc[:, "pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+                forecast.loc[:, "pentad_in_month"] = (
+                    forecast["date"] + pd.Timedelta(days=1)
+                ).apply(tl.get_pentad)
+                forecast.loc[:, "pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_pentad_in_year
+                )
             except Exception as e:
                 logger.warning(f"Error calculating pentad values: {e}")
                 # Set default values to avoid further errors
                 forecast.loc[:, "pentad_in_month"] = 1
                 forecast.loc[:, "pentad_in_year"] = 1
 
-        logger.info(f"Read {len(forecast)} rows of {model_short} forecasts for the pentadal forecast horizon.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model_short} forecasts for the pentadal forecast horizon."
+        )
         logger.debug(f"Columns in the {model_short} forecast data: {forecast.columns}")
         logger.debug(f"Read forecast data sample: {forecast.head()}")
 
@@ -2191,8 +2967,11 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
     except Exception as e:
         logger.warning(f"Error processing conceptual model forecast data from {filepath}: {e}")
         return pd.DataFrame()
-    
-def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_long, model_short):
+
+
+def read_daily_probabilistic_conceptmod_forecasts_decade(
+    filepath, code, model_long=None, *, model_short
+):
     """
     Reads in forecast results from probabilistic conceptual models for the pentadal forecast.
     Added robust error handling.
@@ -2200,13 +2979,20 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
     Args:
         filepath (str): The path to the file with the forecast results.
         code (str): The code of the hydropost for which to read the forecast results.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
@@ -2219,12 +3005,16 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(
+            fl.get_last_day_of_month
+        )
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 10, 20 or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([10, 20])) | \
-                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+        data = daily_data[
+            (daily_data["day_of_month"].isin([10, 20]))
+            | (daily_data["forecast_date"] == daily_data["last_day_of_month"])
+        ].copy()
 
         # If no data after filtering, return empty DataFrame
         if data.empty:
@@ -2249,11 +3039,12 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
         # Group by code and forecast_date and pentad_in_year
         # We have to aggregate only data for the first pentad for each forecast date
         try:
-            forecast = data \
-                .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
-                .groupby(["code", "forecast_date", "decad_in_year"]) \
-                .mean() \
+            forecast = (
+                data.drop(columns=["date", "day_of_month", "last_day_of_month"], errors="ignore")
+                .groupby(["code", "forecast_date", "decad_in_year"])
+                .mean()
                 .reset_index()
+            )
 
             # Keep only the first pentad that appears for each forecast_date
             forecast = forecast.groupby(["code", "forecast_date"]).first().reset_index()
@@ -2273,21 +3064,26 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast.loc[:, "model_long"] = model_long
         forecast.loc[:, "model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year
         if "date" in forecast.columns:
             try:
-                forecast.loc[:, "decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
-                forecast.loc[:, "decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+                forecast.loc[:, "decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_decad_in_month
+                )
+                forecast.loc[:, "decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(
+                    tl.get_decad_in_year
+                )
             except Exception as e:
                 logger.warning(f"Error calculating pentad values: {e}")
                 # Set default values to avoid further errors
                 forecast.loc[:, "decad_in_month"] = 1
                 forecast.loc[:, "decad_in_year"] = 1
 
-        logger.info(f"Read {len(forecast)} rows of {model_short} forecasts for the decadal forecast horizon.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model_short} forecasts for the decadal forecast horizon."
+        )
         logger.debug(f"Columns in the {model_short} forecast data: {forecast.columns}")
         logger.debug(f"Read forecast data sample: {forecast.head()}")
 
@@ -2296,6 +3092,7 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
     except Exception as e:
         logger.warning(f"Error processing conceptual model forecast data from {filepath}: {e}")
         return pd.DataFrame()
+
 
 def extract_code_from_conceptmod_results_filename(filename):
     """
@@ -2308,12 +3105,12 @@ def extract_code_from_conceptmod_results_filename(filename):
     Returns:
         str: The extracted code or None if extraction fails.
     """
-    import re
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
-        match = re.search(r'_(\d+)\.csv$', filename)
+        match = re.search(r"_(\d+)\.csv$", filename)
         if match:
             return match.group(1)
         else:
@@ -2337,6 +3134,7 @@ def read_conceptual_model_forecast_pentad(filepath):
                               or an empty DataFrame if file can't be read.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Test if the filepath exists
@@ -2358,10 +3156,7 @@ def read_conceptual_model_forecast_pentad(filepath):
 
     try:
         forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
-            filepath,
-            code=code,
-            model_long="Rainfall runoff assimilation model (RRAM)",
-            model_short="RRAM"
+            filepath, code=code, model_short="RRAM"
         )
 
         logger.debug(f"Type of forecast: {type(forecast)}")
@@ -2373,7 +3168,8 @@ def read_conceptual_model_forecast_pentad(filepath):
     except Exception as e:
         logger.warning(f"Error reading forecast from {filepath}: {e}")
         return pd.DataFrame()
-    
+
+
 def read_conceptual_model_forecast_decade(filepath):
     """
     Reads the forecast results from the conceptual model for the decadal
@@ -2387,6 +3183,7 @@ def read_conceptual_model_forecast_decade(filepath):
                               or an empty DataFrame if file can't be read.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Test if the filepath exists
@@ -2408,10 +3205,7 @@ def read_conceptual_model_forecast_decade(filepath):
 
     try:
         forecast = read_daily_probabilistic_conceptmod_forecasts_decade(
-            filepath,
-            code=code,
-            model_long="Rainfall runoff assimilation model (RRAM)",
-            model_short="RRAM"
+            filepath, code=code, model_short="RRAM"
         )
 
         logger.debug(f"Type of forecast: {type(forecast)}")
@@ -2423,6 +3217,7 @@ def read_conceptual_model_forecast_decade(filepath):
     except Exception as e:
         logger.warning(f"Error reading forecast from {filepath}: {e}")
         return pd.DataFrame()
+
 
 def get_files_in_subdirectories(directory, pattern):
     """
@@ -2436,9 +3231,9 @@ def get_files_in_subdirectories(directory, pattern):
     Returns:
         list: A list of files that match the pattern or empty list if error occurs.
     """
-    import fnmatch
     import logging
     import os
+
     logger = logging.getLogger(__name__)
 
     if not os.path.exists(directory):
@@ -2463,6 +3258,7 @@ def get_files_in_subdirectories(directory, pattern):
         logger.warning(f"Error searching for files in {directory}: {e}")
         return []
 
+
 def read_all_conceptual_model_forecasts_pentad():
     """
     From the folder, ieasyhydroforecast_PATH_TO_RESULT, reads all available
@@ -2474,6 +3270,7 @@ def read_all_conceptual_model_forecasts_pentad():
                                 or an empty DataFrame if none are found.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Get the path to the results directory
@@ -2481,12 +3278,16 @@ def read_all_conceptual_model_forecasts_pentad():
 
     # If path is not set, return empty DataFrame with warning
     if path_to_results_dir is None:
-        logger.warning("Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts.")
+        logger.warning(
+            "Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # If directory doesn't exist, return empty DataFrame with warning
     if not os.path.exists(path_to_results_dir):
-        logger.warning(f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts.")
+        logger.warning(
+            f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # Get a list of operational daily forecast files in subdirectories of path_to_results_dir
@@ -2498,7 +3299,9 @@ def read_all_conceptual_model_forecasts_pentad():
 
     # If no files found, return empty DataFrame with warning
     if not files:
-        logger.warning(f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts.")
+        logger.warning(
+            f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # Read the forecast results from all files
@@ -2552,7 +3355,8 @@ def read_all_conceptual_model_forecasts_pentad():
                 # Append hindcasts to forecasts, if there are duplicates, keep the forecast
                 # and discard the hindcast
                 forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(
-                    subset=["code", "date"], keep="first")
+                    subset=["code", "date"], keep="first"
+                )
 
     # If we still have no data, return empty DataFrame with warning
     # If we still have no data, return empty DataFrame with warning
@@ -2563,11 +3367,14 @@ def read_all_conceptual_model_forecasts_pentad():
         try:
             save_most_recent_forecasts(forecasts, "RRAM")
         except ImportError:
-            logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+            logger.warning(
+                "Could not import save_most_recent_forecasts from src.postprocessing_tools"
+            )
         except Exception as e:
             logger.warning(f"Error saving most recent RRAM forecasts: {e}")
 
     return forecasts
+
 
 def read_all_conceptual_model_forecasts_decade():
     """
@@ -2580,6 +3387,7 @@ def read_all_conceptual_model_forecasts_decade():
                                 or an empty DataFrame if none are found.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Get the path to the results directory
@@ -2587,12 +3395,16 @@ def read_all_conceptual_model_forecasts_decade():
 
     # If path is not set, return empty DataFrame with warning
     if path_to_results_dir is None:
-        logger.warning("Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts.")
+        logger.warning(
+            "Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # If directory doesn't exist, return empty DataFrame with warning
     if not os.path.exists(path_to_results_dir):
-        logger.warning(f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts.")
+        logger.warning(
+            f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # Get a list of operational daily forecast files in subdirectories of path_to_results_dir
@@ -2604,7 +3416,9 @@ def read_all_conceptual_model_forecasts_decade():
 
     # If no files found, return empty DataFrame with warning
     if not files:
-        logger.warning(f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts.")
+        logger.warning(
+            f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts."
+        )
         return pd.DataFrame()
 
     # Read the forecast results from all files
@@ -2658,7 +3472,8 @@ def read_all_conceptual_model_forecasts_decade():
                 # Append hindcasts to forecasts, if there are duplicates, keep the forecast
                 # and discard the hindcast
                 forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(
-                    subset=["code", "date"], keep="first")
+                    subset=["code", "date"], keep="first"
+                )
 
     # If we still have no data, return empty DataFrame with warning
     # If we still have no data, return empty DataFrame with warning
@@ -2669,14 +3484,17 @@ def read_all_conceptual_model_forecasts_decade():
         try:
             save_most_recent_forecasts_decade(forecasts, "RRAM")
         except ImportError:
-            logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+            logger.warning(
+                "Could not import save_most_recent_forecasts from src.postprocessing_tools"
+            )
         except Exception as e:
             logger.warning(f"Error saving most recent RRAM forecasts: {e}")
 
     return forecasts
 
+
 def read_machine_learning_forecasts_pentad(model):
-    '''
+    """
     Reads forecast results from the machine learning model for the pentadal
     forecast horizon with robust error handling.
 
@@ -2689,40 +3507,41 @@ def read_machine_learning_forecasts_pentad(model):
 
     Returns:
     pandas.DataFrame: Forecast results or an empty DataFrame if files not found or error occurs.
-    '''
+    """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Set model-specific parameters
-    if model == 'TFT':
+    if model == "TFT":
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal Fusion Transformer (TFT)"
+
         model_short = "TFT"
-    elif model == 'TIDE':
+    elif model == "TIDE":
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-series Dense Encoder (TiDE)"
+
         model_short = "TiDE"
-    elif model == 'TSMIXER':
+    elif model == "TSMIXER":
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Mixer (TSMixer)"
+
         model_short = "TSMixer"
-    elif model == 'ARIMA':
+    elif model == "ARIMA":
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
+
         model_short = "ARIMA"
     else:
-        logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+        logger.warning(
+            f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'"
+        )
         return pd.DataFrame()
 
     # Check if API is enabled (default: true)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
 
     if api_enabled and SAPPHIRE_API_AVAILABLE:
-        logger.info(f"Reading {model} pentadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        logger.info(
+            f"Reading {model} pentadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)"
+        )
         try:
             # Read from API using the helper function
             forecast = _read_ml_forecasts_from_api(model=model, horizon_type="pentad")
@@ -2732,22 +3551,32 @@ def read_machine_learning_forecasts_pentad(model):
                 try:
                     save_most_recent_forecasts(forecast, model_short)
                 except ImportError:
-                    logger.warning(f"Could not import save_most_recent_forecasts from src.postprocessing_tools")
+                    logger.warning(
+                        "Could not import save_most_recent_forecasts from src.postprocessing_tools"
+                    )
                 except Exception as e:
                     logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
-                logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from API.")
+                logger.info(
+                    f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from API."
+                )
                 return forecast
             else:
-                logger.warning(f"No {model} pentadal forecast data returned from API, falling back to CSV")
+                logger.warning(
+                    f"No {model} pentadal forecast data returned from API, falling back to CSV"
+                )
                 # Fall through to CSV reading
 
         except Exception as e:
-            logger.warning(f"Failed to read {model} pentadal forecasts from API: {e}. Falling back to CSV.")
+            logger.warning(
+                f"Failed to read {model} pentadal forecasts from API: {e}. Falling back to CSV."
+            )
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info(f"Reading {model} pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        f"Reading {model} pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
 
     # Read environment variables to construct the file path
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -2771,23 +3600,30 @@ def read_machine_learning_forecasts_pentad(model):
     logger.debug(f"{filepath}")
 
     try:
-        forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
+        forecast = read_daily_probabilistic_ml_forecasts_pentad(
+            filepath, model, model_short=model_short
+        )
         # Save the most recent forecasts to CSV for comparison
         try:
             save_most_recent_forecasts(forecast, model_short)
         except ImportError:
-            logger.warning(f"Could not import save_most_recent_forecasts from src.postprocessing_tools")
+            logger.warning(
+                "Could not import save_most_recent_forecasts from src.postprocessing_tools"
+            )
         except Exception as e:
             logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
-        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from CSV.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from CSV."
+        )
         return forecast
     except Exception as e:
         logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
         return pd.DataFrame()
 
+
 def read_machine_learning_forecasts_decade(model):
-    '''
+    """
     Reads forecast results from the machine learning model for the decadal
     forecast horizon with robust error handling.
 
@@ -2800,40 +3636,41 @@ def read_machine_learning_forecasts_decade(model):
 
     Returns:
     pandas.DataFrame: Forecast results or an empty DataFrame if files not found or error occurs.
-    '''
+    """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Set model-specific parameters
-    if model == 'TFT':
+    if model == "TFT":
         filename = f"decad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal Fusion Transformer (TFT)"
+
         model_short = "TFT"
-    elif model == 'TIDE':
+    elif model == "TIDE":
         filename = f"decad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-series Dense Encoder (TiDE)"
+
         model_short = "TiDE"
-    elif model == 'TSMIXER':
+    elif model == "TSMIXER":
         filename = f"decad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Mixer (TSMixer)"
+
         model_short = "TSMixer"
-    elif model == 'ARIMA':
+    elif model == "ARIMA":
         filename = f"decad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
+
         model_short = "ARIMA"
     else:
-        logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+        logger.warning(
+            f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'"
+        )
         return pd.DataFrame()
 
     # Check if API is enabled (default: true)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
 
     if api_enabled and SAPPHIRE_API_AVAILABLE:
-        logger.info(f"Reading {model} decadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        logger.info(
+            f"Reading {model} decadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)"
+        )
         try:
             # Read from API using the helper function
             forecast = _read_ml_forecasts_from_api(model=model, horizon_type="decade")
@@ -2843,22 +3680,32 @@ def read_machine_learning_forecasts_decade(model):
                 try:
                     save_most_recent_forecasts_decade(forecast, model_short)
                 except ImportError:
-                    logger.warning(f"Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+                    logger.warning(
+                        "Could not import save_most_recent_forecasts_decade from src.postprocessing_tools"
+                    )
                 except Exception as e:
                     logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
-                logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from API.")
+                logger.info(
+                    f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from API."
+                )
                 return forecast
             else:
-                logger.warning(f"No {model} decadal forecast data returned from API, falling back to CSV")
+                logger.warning(
+                    f"No {model} decadal forecast data returned from API, falling back to CSV"
+                )
                 # Fall through to CSV reading
 
         except Exception as e:
-            logger.warning(f"Failed to read {model} decadal forecasts from API: {e}. Falling back to CSV.")
+            logger.warning(
+                f"Failed to read {model} decadal forecasts from API: {e}. Falling back to CSV."
+            )
             # Fall through to CSV reading
 
     # CSV fallback: Read from file
-    logger.info(f"Reading {model} decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
+    logger.info(
+        f"Reading {model} decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)"
+    )
 
     # Read environment variables to construct the file path
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -2882,20 +3729,27 @@ def read_machine_learning_forecasts_decade(model):
     logger.debug(f"{filepath}")
 
     try:
-        forecast = read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short)
+        forecast = read_daily_probabilistic_ml_forecasts_decade(
+            filepath, model, model_short=model_short
+        )
         # Save the most recent forecasts to CSV for comparison
         try:
             save_most_recent_forecasts_decade(forecast, model_short)
         except ImportError:
-            logger.warning(f"Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+            logger.warning(
+                "Could not import save_most_recent_forecasts_decade from src.postprocessing_tools"
+            )
         except Exception as e:
             logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
-        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from CSV.")
+        logger.info(
+            f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from CSV."
+        )
         return forecast
     except Exception as e:
         logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
         return pd.DataFrame()
+
 
 def deprecated_read_linreg_forecasts_pentad_dummy(model):
     """
@@ -2903,33 +3757,27 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
     """
     if model == "A":
         filename = os.getenv("ieasyforecast_modelA_pentad_file")
-        model_long = "Model A (MA)"
         model_short = "MA"
     elif model == "B":
         filename = os.getenv("ieasyforecast_modelB_pentad_file")
-        model_long = "Model B (MB)"
         model_short = "MB"
     else:
         raise ValueError("Invalid model")
 
     # Read the linear regression forecasts for the pentadal forecast horizon with robust date parsing
-    filepath = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        filename
-    )
+    filepath = os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), filename)
     data = pd.read_csv(filepath)
-    
+
     # Apply robust date parsing and ensure code is string without .0 suffixes
-    if 'date' in data.columns:
-        data['date'] = fl.parse_dates_robust(data['date'], 'date')
-    if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if "date" in data.columns:
+        data["date"] = fl.parse_dates_robust(data["date"], "date")
+    if "code" in data.columns:
+        data["code"] = data["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = model_long
     data["model_short"] = model_short
 
     # Split the data into forecasts and statistics
@@ -2948,126 +3796,181 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
 
     return forecasts, stats
 
+
 def calculate_neural_ensemble_forecast(forecasts):
     # Define the models we're interested in
-    target_models = ['TiDE', 'TFT', 'TSMixer', 'TIDE', 'TSMIXER']
+    target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 
     # Filter forecasts to include only the target models if they exist
-    available_target_models = [model for model in target_models if any(forecasts['model_short'].str.contains(model))]
+    available_target_models = [
+        model for model in target_models if any(forecasts["model_short"].str.contains(model))
+    ]
 
     if not available_target_models:
-        logger.warning("None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts.")
+        logger.warning(
+            "None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts."
+        )
         return forecasts
 
-    filtered_forecasts = forecasts[forecasts['model_short'].str.contains('|'.join(available_target_models))]
+    filtered_forecasts = forecasts[
+        forecasts["model_short"].str.contains("|".join(available_target_models))
+    ]
 
     # Create a dataframe with unique date and codes from filtered forecasts
-    ensemble_mean = filtered_forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
-        .drop_duplicates(keep='last').copy()
+    ensemble_mean = (
+        filtered_forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]
+        .drop_duplicates(keep="last")
+        .copy()
+    )
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    model_names = ', '.join(available_target_models)
-    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
-    ensemble_mean['model_short'] = f"NE"
+    # Add model columns to the ensemble_mean dataframe
+    model_names = ", ".join(sorted(set(available_target_models)))
+    ensemble_mean["model_short"] = "NE"
+    ensemble_mean["composition"] = model_names
 
     # Calculate the ensemble mean over the filtered models
-    ensemble_mean_q = filtered_forecasts \
-        .groupby(["date", "code", "pentad_in_month", "pentad_in_year"]) \
-            .agg({"forecasted_discharge": "mean"}).reset_index()
+    agg_dict = {"forecasted_discharge": "mean"}
+    for qcol in ("q05", "q25", "q75", "q95"):
+        if qcol in filtered_forecasts.columns:
+            agg_dict[qcol] = "mean"
+
+    ensemble_mean_q = (
+        filtered_forecasts.groupby(["date", "code", "pentad_in_month", "pentad_in_year"])
+        .agg(agg_dict)
+        .reset_index()
+    )
 
     # Merge ensemble_mean_q into ensemble_mean
     ensemble_mean = pd.merge(
         ensemble_mean,
         ensemble_mean_q,
         on=["date", "code", "pentad_in_month", "pentad_in_year"],
-        how="left")
+        how="left",
+    )
 
     # Append ensemble_mean to original forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
 
     logger.info(f"Calculated ensemble forecast for models: {model_names}")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].head()}"
+    )
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].tail()}"
+    )
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
 
+
 def calculate_neural_ensemble_forecast_decade(forecasts):
     # Define the models we're interested in
-    target_models = ['TiDE', 'TFT', 'TSMixer', 'TIDE', 'TSMIXER']
+    target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 
     # Filter forecasts to include only the target models if they exist
-    available_target_models = [model for model in target_models if any(forecasts['model_short'].str.contains(model))]
+    available_target_models = [
+        model for model in target_models if any(forecasts["model_short"].str.contains(model))
+    ]
 
     if not available_target_models:
-        logger.warning("None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts.")
+        logger.warning(
+            "None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts."
+        )
         return forecasts
 
-    filtered_forecasts = forecasts[forecasts['model_short'].str.contains('|'.join(available_target_models))]
+    filtered_forecasts = forecasts[
+        forecasts["model_short"].str.contains("|".join(available_target_models))
+    ]
 
     # Create a dataframe with unique date and codes from filtered forecasts
-    ensemble_mean = filtered_forecasts[["date", "code", "decad_in_month", "decad_in_year"]]\
-        .drop_duplicates(keep='last').copy()
+    ensemble_mean = (
+        filtered_forecasts[["date", "code", "decad_in_month", "decad_in_year"]]
+        .drop_duplicates(keep="last")
+        .copy()
+    )
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    model_names = ', '.join(available_target_models)
-    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
-    ensemble_mean['model_short'] = f"NE"
+    # Add model columns to the ensemble_mean dataframe
+    model_names = ", ".join(sorted(set(available_target_models)))
+    ensemble_mean["model_short"] = "NE"
+    ensemble_mean["composition"] = model_names
 
     # Calculate the ensemble mean over the filtered models
-    ensemble_mean_q = filtered_forecasts \
-        .groupby(["date", "code", "decad_in_month", "decad_in_year"]) \
-            .agg({"forecasted_discharge": "mean"}).reset_index()
+    agg_dict = {"forecasted_discharge": "mean"}
+    for qcol in ("q05", "q25", "q75", "q95"):
+        if qcol in filtered_forecasts.columns:
+            agg_dict[qcol] = "mean"
+
+    ensemble_mean_q = (
+        filtered_forecasts.groupby(["date", "code", "decad_in_month", "decad_in_year"])
+        .agg(agg_dict)
+        .reset_index()
+    )
 
     # Merge ensemble_mean_q into ensemble_mean
     ensemble_mean = pd.merge(
         ensemble_mean,
         ensemble_mean_q,
         on=["date", "code", "decad_in_month", "decad_in_year"],
-        how="left")
+        how="left",
+    )
 
     # Append ensemble_mean to original forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
 
     logger.info(f"Calculated decadal ensemble forecast for models: {model_names}")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].head()}"
+    )
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].tail()}"
+    )
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
 
+
 def calculate_ensemble_forecast(forecasts):
     # Create a dataframe with unique date and codes from forecasts
-    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
-        .drop_duplicates(keep='last').copy()
+    ensemble_mean = (
+        forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]
+        .drop_duplicates(keep="last")
+        .copy()
+    )
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    ensemble_mean['model_long'] = "Ensemble mean (EM)"
-    ensemble_mean['model_short'] = "EM"
+    # Add model columns to the ensemble_mean dataframe
+    ensemble_mean["model_short"] = "EM"
 
     # Calculate the ensemble mean over all models
-    ensemble_mean_q = forecasts \
-        .groupby(["date", "code", "pentad_in_month", "pentad_in_year"]) \
-            .agg({"forecasted_discharge": "mean"}).reset_index()
+    ensemble_mean_q = (
+        forecasts.groupby(["date", "code", "pentad_in_month", "pentad_in_year"])
+        .agg({"forecasted_discharge": "mean"})
+        .reset_index()
+    )
 
     # Merge ensemble_mean_q into ensemble_mean
     ensemble_mean = pd.merge(
         ensemble_mean,
         ensemble_mean_q,
         on=["date", "code", "pentad_in_month", "pentad_in_year"],
-        how="left")
+        how="left",
+    )
 
     # Append ensemble_mean to forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
-    logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
+    logger.info("Calculated ensemble forecast for the pentadal forecast horizon.")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].head()}"
+    )
+    logger.debug(
+        f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].tail()}"
+    )
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
+
 
 # region Dealing with virtual stations
 def add_hydroposts(combined_data, check_hydroposts):
@@ -3086,40 +3989,52 @@ def add_hydroposts(combined_data, check_hydroposts):
 
     """
     # Get the earliest date for which we have data in the combined_data
-    earliest_date = combined_data['date'].min()
+    earliest_date = combined_data["date"].min()
 
     # Check if the virtual hydroposts are in the combined_data
+    # Collect missing rows first, then concat once (avoid O(N²) loop concat)
+    missing_rows = []
+    existing_codes = set(combined_data["code"].values)
     for hydropost in check_hydroposts:
-        if hydropost not in combined_data['code'].values:
+        if hydropost not in existing_codes:
             logger.debug(f"Adding virtual hydropost {hydropost} to the list of stations.")
-            # Add the virtual hydropost to the combined_data
-            new_row = pd.DataFrame({
-                'code': [hydropost],
-                'date': [earliest_date],
-                'discharge': [np.nan],
-                #'name': [f'Virtual hydropost {hydropost}']
-            })
-            combined_data = pd.concat([combined_data, new_row], ignore_index=True)
+            missing_rows.append(
+                {
+                    "code": hydropost,
+                    "date": earliest_date,
+                    "discharge": np.nan,
+                }
+            )
+
+    if missing_rows:
+        combined_data = pd.concat([combined_data, pd.DataFrame(missing_rows)], ignore_index=True)
 
     return combined_data
 
-def calculate_virtual_stations_data(data_df: pd.DataFrame,
-                                    code_col='code', discharge_col='forecasted_discharge',
-                                    date_col='date', model_col='model_short'):
-    """
 
-    """
+def calculate_virtual_stations_data(
+    data_df: pd.DataFrame,
+    code_col="code",
+    discharge_col="forecasted_discharge",
+    date_col="date",
+    model_col="model_short",
+):
+    """ """
     # Test if we have a virtual stations file configured
-    if os.getenv('ieasyforecast_virtual_stations') is None:
+    if os.getenv("ieasyforecast_virtual_stations") is None:
         logger.warning("No virtual stations file configured. Skipping virtual stations.")
         return data_df
 
     # Get configuration for virtual stations
-    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
-                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+    with open(
+        os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_virtual_stations"),
+        )
+    ) as f:
         json_data = json.load(f)
-        virtual_stations = json_data['virtualStations'].keys()
-        instructions = json_data['virtualStations']
+        virtual_stations = json_data["virtualStations"].keys()
+        instructions = json_data["virtualStations"]
 
     # Add the virtual stations to the data if they are not already there
     data_df = add_hydroposts(data_df, virtual_stations)
@@ -3128,14 +4043,16 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
     for station in virtual_stations:
         # Get the instructions for the station
         instruction = instructions[station]
-        #print(instruction)
-        weigth_by_station = instruction['weightByStation']
-        #print(weigth_by_station)
+        # print(instruction)
+        weigth_by_station = instruction["weightByStation"]
+        # print(weigth_by_station)
 
         # Currently, we only implement the combination function 'sum'. Throw an error if the function is not 'sum'
-        if instruction['combinationFunction'] != 'sum':
+        if instruction["combinationFunction"] != "sum":
             logger.error(f"Combination function for station {station} is not 'sum'.")
-            logger.error(f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}.")
+            logger.error(
+                f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}."
+            )
             exit()
 
         # Get the data for the stations that contribute to the virtual station and multiply them with the weight
@@ -3145,32 +4062,45 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
                 logger.error(f"Virtual station {station} cannot contribute to itself.")
                 exit()
 
-            #print(contributing_station, weight)
+            # print(contributing_station, weight)
             # Get the data for the contributing station
             data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
 
             # Multiply the discharge data with the weight
-            data_contributing_station[discharge_col] = data_contributing_station[discharge_col] * weight
+            data_contributing_station[discharge_col] = (
+                data_contributing_station[discharge_col] * weight
+            )
 
             # Add the data to the virtual station if data_virtual_station exists
-            if 'data_virtual_station' not in locals():
+            if "data_virtual_station" not in locals():
                 data_virtual_station = data_contributing_station
                 # Change code to the code of the virtual station
                 data_virtual_station[code_col] = station
                 # Change the name to the name of the virtual station
-                #data_virtual_station['name'] = f'Virtual hydropost {station}'
+                # data_virtual_station['name'] = f'Virtual hydropost {station}'
             else:
                 # Merge the data for the contributing station with the data_virtual_station
-                data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
+                data_virtual_station = pd.merge(
+                    data_virtual_station,
+                    data_contributing_station,
+                    on=date_col,
+                    how="outer",
+                    suffixes=("", "_y"),
+                )
                 # Add discharge_y to discharge and discard all _y columns
-                data_virtual_station[discharge_col] = data_virtual_station[discharge_col] + data_virtual_station[discharge_col + '_y']
-                data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
+                data_virtual_station[discharge_col] = (
+                    data_virtual_station[discharge_col] + data_virtual_station[discharge_col + "_y"]
+                )
+                data_virtual_station.drop(
+                    columns=[col for col in data_virtual_station.columns if "_y" in col],
+                    inplace=True,
+                )
 
-            #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
+            # print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
 
         # Discard the name column
-        if 'name' in data_virtual_station.columns:
-            data_virtual_station.drop(columns=['name'], inplace=True)
+        if "name" in data_virtual_station.columns:
+            data_virtual_station.drop(columns=["name"], inplace=True)
 
         # Get the number of models in the data_df
         models = data_df[model_col].unique()
@@ -3178,27 +4108,35 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
         # Check if we already have data for the virtual station in the data_df
         # dataframe and fill gaps with data_virtual_station
         if station in data_df[code_col].values:
-
+            parts_to_add = []
             for model in models:
                 # Get the data for the virtual station
-                data_station = data_df[(data_df[code_col] == station) & (data_df[model_col] == model)].copy()
+                data_station = data_df[
+                    (data_df[code_col] == station) & (data_df[model_col] == model)
+                ].copy()
 
                 # Get the latest date for which we have data in the data_df for the virtual station
                 last_date_station = data_station[date_col].max()
 
                 # Get the data for the date from the other stations
-                data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
+                data_virtual_station = data_virtual_station[
+                    data_virtual_station[date_col] >= last_date_station
+                ].copy()
 
-                # Merge the data for the virtual station with the data_df
-                data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
+                parts_to_add.append(data_virtual_station.copy())
+
+            # Concat once after loop instead of per-model (avoid O(N²) loop concat)
+            if parts_to_add:
+                data_df = pd.concat([data_df] + parts_to_add, ignore_index=True)
 
         # Delete data_virtual_station
         del data_virtual_station
 
-        # Remove rows where the model_long column is nan
-        data_df = data_df[data_df['model_long'].notna()]
+        # Remove rows where the model_short column is nan
+        data_df = data_df[data_df["model_short"].notna()]
 
     return data_df
+
 
 # endregion
 def save_most_recent_forecasts(forecasts, model_name):
@@ -3217,10 +4155,10 @@ def save_most_recent_forecasts(forecasts, model_name):
         return
 
     # Get the most recent date in the dataset
-    most_recent_date = forecasts['date'].max()
+    most_recent_date = forecasts["date"].max()
 
     # Filter for the most recent date
-    recent_forecasts = forecasts[forecasts['date'] == most_recent_date]
+    recent_forecasts = forecasts[forecasts["date"] == most_recent_date]
 
     if recent_forecasts.empty:
         logger.warning(f"No recent forecasts available for model {model_name}")
@@ -3228,20 +4166,25 @@ def save_most_recent_forecasts(forecasts, model_name):
 
     # Create directory if it doesn't exist
     raw_forecast_dir = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        "raw_forecast_logs"
+        os.getenv("ieasyforecast_intermediate_data_path"), "raw_forecast_logs"
     )
     os.makedirs(raw_forecast_dir, exist_ok=True)
 
     # Save the filtered data to CSV
     forecast_file = os.path.join(
         raw_forecast_dir,
-        f"raw_{model_name}_ml_pentad_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
+        f"raw_{model_name}_ml_pentad_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv",
     )
 
     # Save relevant columns only
-    columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
-                     'forecasted_discharge', 'model_short', 'model_long']
+    columns_to_save = [
+        "code",
+        "date",
+        "pentad_in_month",
+        "pentad_in_year",
+        "forecasted_discharge",
+        "model_short",
+    ]
 
     # Only keep columns that exist in the DataFrame
     columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
@@ -3251,6 +4194,7 @@ def save_most_recent_forecasts(forecasts, model_name):
 
     logger.info(f"Raw {model_name} forecasts saved to: {forecast_file}")
     logger.info(f"Number of stations with {model_name} forecasts: {len(recent_forecasts)}")
+
 
 def save_most_recent_forecasts_decade(forecasts, model_name):
     """
@@ -3268,10 +4212,10 @@ def save_most_recent_forecasts_decade(forecasts, model_name):
         return
 
     # Get the most recent date in the dataset
-    most_recent_date = forecasts['date'].max()
+    most_recent_date = forecasts["date"].max()
 
     # Filter for the most recent date
-    recent_forecasts = forecasts[forecasts['date'] == most_recent_date]
+    recent_forecasts = forecasts[forecasts["date"] == most_recent_date]
 
     if recent_forecasts.empty:
         logger.warning(f"No recent forecasts available for model {model_name}")
@@ -3279,20 +4223,25 @@ def save_most_recent_forecasts_decade(forecasts, model_name):
 
     # Create directory if it doesn't exist
     raw_forecast_dir = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        "raw_forecast_logs"
+        os.getenv("ieasyforecast_intermediate_data_path"), "raw_forecast_logs"
     )
     os.makedirs(raw_forecast_dir, exist_ok=True)
 
     # Save the filtered data to CSV
     forecast_file = os.path.join(
         raw_forecast_dir,
-        f"raw_{model_name}_ml_decade_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
+        f"raw_{model_name}_ml_decade_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv",
     )
 
     # Save relevant columns only
-    columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
-                     'forecasted_discharge', 'model_short', 'model_long']
+    columns_to_save = [
+        "code",
+        "date",
+        "pentad_in_month",
+        "pentad_in_year",
+        "forecasted_discharge",
+        "model_short",
+    ]
 
     # Only keep columns that exist in the DataFrame
     columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
@@ -3329,124 +4278,134 @@ def read_observed_and_modelled_data_pentade():
     stats = stats_linreg
 
     # Debugging prints:
-    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_linreg_forecasts_pentad  ||||")
+    print("\n\n\n\n\n||||  DEBUGGING  -  read_linreg_forecasts_pentad  ||||")
     # Print the latest date in the DataFrame
-    latest_date_temp = linreg['date'].max()
+    latest_date_temp = linreg["date"].max()
     print(f"Latest date in simulated_df: {latest_date_temp}")
     # Print all unique forecast models (model_short) in the DataFrame
-    unique_models = linreg['model_short'].unique()
+    unique_models = linreg["model_short"].unique()
     print(f"Unique forecast models in simulated_df: {unique_models}")
     # Print unique forecast models available for latest date
-    latest_models = linreg[linreg['date'] == latest_date_temp]['model_short'].unique()
+    latest_models = linreg[linreg["date"] == latest_date_temp]["model_short"].unique()
     print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
-    print(f"\n\n\n\n\n\n")
+    print("\n\n\n\n\n\n")
 
     # Learn which modules are activated
     read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")
     if read_ml_results is None:
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read."
+        )
     elif read_ml_results == "False":
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read."
+        )
     elif read_ml_results == "True":
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
-        
-        # Read available ML models          
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts."
+        )
+
+        # Read available ML models
         available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
         logger.debug(f"Available ML models: {available_ml_models}")
-        
+
         if available_ml_models is None:
-            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            logger.info(
+                "Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available."
+            )
             pass
         else:
             available_ml_models = available_ml_models.split(",")
             logger.info(f"Available ML models: {available_ml_models}")
-        
+
         # Read TIDE results if TIDE in available models
-        if not 'TIDE' in available_ml_models:        
+        if "TIDE" not in available_ml_models:
             logger.debug("No TIDE results to be read. Skipping TIDE.")
-        else: 
-            tide = read_machine_learning_forecasts_pentad(model='TIDE')
-        
+        else:
+            tide = read_machine_learning_forecasts_pentad(model="TIDE")
+
         # Read TFT results
-        if not 'TFT' in available_ml_models:
+        if "TFT" not in available_ml_models:
             logger.debug("No TFT results to be read. Skipping TFT.")
         else:
-            tft = read_machine_learning_forecasts_pentad(model='TFT')
-        
+            tft = read_machine_learning_forecasts_pentad(model="TFT")
+
         # Read TSMIXER results
-        if not 'TSMIXER' in available_ml_models:
+        if "TSMIXER" not in available_ml_models:
             logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
         else:
-            tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
-    
+            tsmixer = read_machine_learning_forecasts_pentad(model="TSMIXER")
+
         # Read ARIMA results
-        if not 'ARIMA' in available_ml_models:
+        if "ARIMA" not in available_ml_models:
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
-        else: 
-            arima = read_machine_learning_forecasts_pentad(model='ARIMA')
-        
-        # Read RRMAMBA results
-        if not 'RRMAMBA' in available_ml_models:
-            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
-        else: 
-            rrmamba = read_machine_learning_forecasts_pentad(model='RRMAMBA')
-    
+        else:
+            arima = read_machine_learning_forecasts_pentad(model="ARIMA")
+
     else:
-        logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
-        
+        logger.warning(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read."
+        )
+
     run_cm_models = os.getenv("ieasyhydroforecast_run_CM_models")
     if run_cm_models is None:
-        logger.info("Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read."
+        )
     elif run_cm_models == "False":
-        logger.info("Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read."
+        )
     elif run_cm_models == "True":
         cm = read_all_conceptual_model_forecasts_pentad()
-    else: 
-        logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
-    
-    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    else:
+        logger.warning(
+            "Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read."
+        )
+
+    # Only check for NaN values in the model_short column if the DataFrame is not empty
     available_forecasts = []
 
     # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
     if not linreg.empty:
-        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of linreg.")
+        if "model_short" in linreg.columns and linreg["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of linreg.")
         else:
             available_forecasts.append(linreg)
-            
+
     if not tide.empty:
-        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tide.")
+        if "model_short" in tide.columns and tide["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tide.")
         else:
             available_forecasts.append(tide)
-            
+
     if not tft.empty:
-        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tft.")
+        if "model_short" in tft.columns and tft["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tft.")
         else:
             available_forecasts.append(tft)
-            
+
     if not tsmixer.empty:
-        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tsmixer.")
+        if "model_short" in tsmixer.columns and tsmixer["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tsmixer.")
         else:
             available_forecasts.append(tsmixer)
-            
+
     if not arima.empty:
-        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of arima.")
+        if "model_short" in arima.columns and arima["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of arima.")
         else:
             available_forecasts.append(arima)
-            
+
     if not rrmamba.empty:
-        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of rrmamba.")
+        if "model_short" in rrmamba.columns and rrmamba["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of rrmamba.")
         else:
             available_forecasts.append(rrmamba)
-            
+
     if not cm.empty:
-        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of cm.")
+        if "model_short" in cm.columns and cm["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of cm.")
         else:
             available_forecasts.append(cm)
 
@@ -3454,17 +4413,19 @@ def read_observed_and_modelled_data_pentade():
     if available_forecasts:
         forecasts = pd.concat(available_forecasts)
         logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+        logger.debug(
+            f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_short']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_short']].tail()}"
+        )
 
         # Calculate virtual stations forecasts if needed
         forecasts = calculate_virtual_stations_data(forecasts)
-        
-        # Test if we have any nans in the model_long column
-        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of forecasts.")
-            
+
+        # Test if we have any nans in the model_short column
+        if "model_short" in forecasts.columns and forecasts["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of forecasts.")
+
         forecasts = calculate_neural_ensemble_forecast(forecasts)
-    else: 
+    else:
         logger.warning("No forecasts available to concatenate. Skipping concatenation.")
         forecasts = pd.DataFrame()
 
@@ -3473,6 +4434,7 @@ def read_observed_and_modelled_data_pentade():
         observed = pd.merge(observed, stats, on=["date", "code"], how="left")
 
     return observed, forecasts
+
 
 def read_observed_and_modelled_data_decade():
     """
@@ -3501,107 +4463,117 @@ def read_observed_and_modelled_data_decade():
     # Learn which modules are activated
     read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")
     if read_ml_results is None:
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read."
+        )
     elif read_ml_results == "False":
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read."
+        )
     elif read_ml_results == "True":
-        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts."
+        )
 
-        # Read available ML models          
+        # Read available ML models
         available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
         if available_ml_models is None:
-            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            logger.info(
+                "Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available."
+            )
             pass
         else:
             available_ml_models = available_ml_models.split(",")
             logger.info(f"Available ML models: {available_ml_models}")
-        
+
         # Read TIDE results
-        if not 'TIDE' in available_ml_models:
+        if "TIDE" not in available_ml_models:
             logger.debug("No TIDE results to be read. Skipping TIDE.")
-        else: 
-            tide = read_machine_learning_forecasts_decade(model='TIDE')
-        
+        else:
+            tide = read_machine_learning_forecasts_decade(model="TIDE")
+
         # Read TFT results
-        if not 'TFT' in available_ml_models:
+        if "TFT" not in available_ml_models:
             logger.debug("No TFT results to be read. Skipping TFT.")
         else:
-            tft = read_machine_learning_forecasts_decade(model='TFT')
-        
+            tft = read_machine_learning_forecasts_decade(model="TFT")
+
         # Read TSMIXER results
-        if not 'TSMIXER' in available_ml_models:
+        if "TSMIXER" not in available_ml_models:
             logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
         else:
-            tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
-    
+            tsmixer = read_machine_learning_forecasts_decade(model="TSMIXER")
+
         # Read ARIMA results
-        if not 'ARIMA' in available_ml_models:
+        if "ARIMA" not in available_ml_models:
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
-        else: 
-            arima = read_machine_learning_forecasts_decade(model='ARIMA')
-        
-        # Read RRMAMBA results
-        if not 'RRMAMBA' in available_ml_models:
-            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
-        else: 
-            rrmamba = read_machine_learning_forecasts_decade(model='RRMAMBA')
-    
+        else:
+            arima = read_machine_learning_forecasts_decade(model="ARIMA")
+
     else:
-        logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
-        
+        logger.warning(
+            "Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read."
+        )
+
     run_cm_models = os.getenv("ieasyhydroforecast_run_CM_models")
     if run_cm_models is None:
-        logger.info("Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read."
+        )
     elif run_cm_models == "False":
-        logger.info("Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read.")
+        logger.info(
+            "Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read."
+        )
     elif run_cm_models == "True":
         cm = read_all_conceptual_model_forecasts_decade()
-    else: 
-        logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
-    
-    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    else:
+        logger.warning(
+            "Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read."
+        )
+
+    # Only check for NaN values in the model_short column if the DataFrame is not empty
     available_forecasts = []
 
-    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
+    # Test if there are any nans in the model_short column of each model
     if not linreg.empty:
-        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of linreg.")
+        if "model_short" in linreg.columns and linreg["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of linreg.")
         else:
             available_forecasts.append(linreg)
-            
+
     if not tide.empty:
-        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tide.")
+        if "model_short" in tide.columns and tide["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tide.")
         else:
             available_forecasts.append(tide)
-            
+
     if not tft.empty:
-        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tft.")
+        if "model_short" in tft.columns and tft["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tft.")
         else:
             available_forecasts.append(tft)
-            
+
     if not tsmixer.empty:
-        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tsmixer.")
+        if "model_short" in tsmixer.columns and tsmixer["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of tsmixer.")
         else:
             available_forecasts.append(tsmixer)
-            
+
     if not arima.empty:
-        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of arima.")
+        if "model_short" in arima.columns and arima["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of arima.")
         else:
             available_forecasts.append(arima)
-            
+
     if not rrmamba.empty:
-        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of rrmamba.")
+        if "model_short" in rrmamba.columns and rrmamba["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of rrmamba.")
         else:
             available_forecasts.append(rrmamba)
-            
+
     if not cm.empty:
-        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of cm.")
+        if "model_short" in cm.columns and cm["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of cm.")
         else:
             available_forecasts.append(cm)
 
@@ -3609,17 +4581,19 @@ def read_observed_and_modelled_data_decade():
     if available_forecasts:
         forecasts = pd.concat(available_forecasts)
         logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+        logger.debug(
+            f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_short']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_short']].tail()}"
+        )
 
         # Calculate virtual stations forecasts if needed
         forecasts = calculate_virtual_stations_data(forecasts)
-        
-        # Test if we have any nans in the model_long column
-        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of forecasts.")
-            
+
+        # Test if we have any nans in the model_short column
+        if "model_short" in forecasts.columns and forecasts["model_short"].isnull().values.any():
+            logger.error("There are nans in the model_short column of forecasts.")
+
         forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
-    else: 
+    else:
         logger.warning("No forecasts available to concatenate. Skipping concatenation.")
         forecasts = pd.DataFrame()
 
@@ -3629,80 +4603,12 @@ def read_observed_and_modelled_data_decade():
 
     return observed, forecasts
 
-'''def read_observed_and_modelled_data_decade():
-    """
-    Reads results from all forecast methods into a dataframe.
-
-    Returns:
-    forecasts (pandas.DataFrame): The forecasts from all methods.
-    """
-    # Read the observed data
-    observed = read_observed_decadal_data()
-
-    # Read the linear regression forecasts for the pentadal forecast horizon
-    linreg, stats_linreg = read_linreg_forecasts_decade()
-
-    # Read the forecasts from the other methods
-    tide = read_machine_learning_forecasts_decade(model='TIDE')
-    tft = read_machine_learning_forecasts_decade(model='TFT')
-    tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
-    arima = read_machine_learning_forecasts_decade(model='ARIMA')
-    cm = read_all_conceptual_model_forecasts_decade()
-
-    #logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
-    #logger.debug(f"type of code in tide: {tide['code'].dtype}")
-    #logger.debug(f"type of code in cm: {cm['code'].dtype}")
-
-    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
-    if linreg['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of linreg.")
-        exit()
-    if tide['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tide.")
-        exit()
-    if tft['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tft.")
-        exit()
-    if tsmixer['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tsmixer.")
-        exit()
-    if arima['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of arima.")
-        exit()
-    if cm['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of cm.")
-        exit()
-
-    # Merge tide, tft, tsmixer and arima into linreg.
-    # same columns are: date, code, pentad_in_month, pentad_in_year,
-    # forecasted_discharge, model_long and model_short
-    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
-    #logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-    #logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
-    
-    # Calculate virtual stations forecasts if needed
-    forecasts = calculate_virtual_stations_data(forecasts)
-    # Test if we have any nans in the model_long column
-    if forecasts['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of forecasts.")
-        exit()
-
-    stats = stats_linreg
-    #logger.debug(f"columns of stats concatenated:\n{stats.columns}")
-    #logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
-    #logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
-
-    forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
-
-    # Merge the general runoff statistics to the observed DataFrame
-    observed = pd.merge(observed, stats, on=["date", "code"], how="left")
-
-    return observed, forecasts'''
 
 # endregion
 
 # --- Classes ----------------------------------------------------------
 # region classes
+
 
 class ForecastFlags:
     """
@@ -3715,6 +4621,7 @@ class ForecastFlags:
     # Set flags for daily and pentad forecasts
     flags = ForecastFlags(day=True, pentad=True)
     """
+
     def __init__(self, day=False, pentad=False, decad=False, month=False, season=False):
         self.day = day
         self.pentad = pentad
@@ -3727,7 +4634,6 @@ class ForecastFlags:
 
     @classmethod
     def from_forecast_date_get_flags(cls, start_date):
-
         forecast_flags = cls()
 
         # Get the day of the month
@@ -3750,8 +4656,5 @@ class ForecastFlags:
 
         return forecast_flags
 
+
 # endregion
-
-
-
-

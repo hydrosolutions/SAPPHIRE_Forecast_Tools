@@ -1,0 +1,145 @@
+{
+  "stations_available_for_forecast": {
+    "99001": {
+      "id": [
+        1.0
+      ],
+      "basin": [
+        "Test Basin"
+      ],
+      "lat": [
+        42.0
+      ],
+      "long": [
+        74.0
+      ],
+      "country": [
+        "Testland"
+      ],
+      "is_virtual": [
+        false
+      ],
+      "region": [
+        "Test Region"
+      ],
+      "site_type": [
+        "automatic-discharge"
+      ],
+      "name_ru": [
+        "Test Station 99001"
+      ],
+      "organization_id": [
+        1
+      ],
+      "elevation": [
+        1000.0
+      ],
+      "river_ru": [
+        "Test River 99001"
+      ],
+      "punkt_ru": [
+        "Test Point 99001"
+      ],
+      "code": [
+        99001
+      ],
+      "header": [
+        "99001"
+      ]
+    },
+    "99002": {
+      "id": [
+        2.0
+      ],
+      "basin": [
+        "Test Basin"
+      ],
+      "lat": [
+        42.1
+      ],
+      "long": [
+        74.1
+      ],
+      "country": [
+        "Testland"
+      ],
+      "is_virtual": [
+        false
+      ],
+      "region": [
+        "Test Region"
+      ],
+      "site_type": [
+        "automatic-discharge"
+      ],
+      "name_ru": [
+        "Test Station 99002"
+      ],
+      "organization_id": [
+        1
+      ],
+      "elevation": [
+        1100.0
+      ],
+      "river_ru": [
+        "Test River 99002"
+      ],
+      "punkt_ru": [
+        "Test Point 99002"
+      ],
+      "code": [
+        99002
+      ],
+      "header": [
+        "99002"
+      ]
+    },
+    "99003": {
+      "id": [
+        3.0
+      ],
+      "basin": [
+        "Test Basin"
+      ],
+      "lat": [
+        42.2
+      ],
+      "long": [
+        74.2
+      ],
+      "country": [
+        "Testland"
+      ],
+      "is_virtual": [
+        false
+      ],
+      "region": [
+        "Test Region"
+      ],
+      "site_type": [
+        "automatic-discharge"
+      ],
+      "name_ru": [
+        "Test Station 99003"
+      ],
+      "organization_id": [
+        1
+      ],
+      "elevation": [
+        1200.0
+      ],
+      "river_ru": [
+        "Test River 99003"
+      ],
+      "punkt_ru": [
+        "Test Point 99003"
+      ],
+      "code": [
+        99003
+      ],
+      "header": [
+        "99003"
+      ]
+    }
+  }
+}

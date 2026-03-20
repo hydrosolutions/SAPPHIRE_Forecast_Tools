@@ -1,5 +1,6 @@
 ---
 name: skill-creator
+model: sonnet
 description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
 license: Complete terms in LICENSE.txt
 ---
@@ -65,7 +66,7 @@ skill-name/
 
 Every SKILL.md consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Claude reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name`, `description`, and optionally `model` fields. The `name` and `description` are what Claude reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used. The `model` field (`haiku`, `sonnet`, or `opus`) specifies the recommended model tier.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -303,13 +304,15 @@ Any example files and directories not needed for the skill should be deleted. Th
 
 ##### Frontmatter
 
-Write the YAML frontmatter with `name` and `description`:
+Write the YAML frontmatter with `name`, `description`, and optionally `model`:
 
 - `name`: The skill name
 - `description`: This is the primary triggering mechanism for your skill, and helps Claude understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
   - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Claude.
+  - **Format**: Use a quoted string or plain single-line string. Do NOT use YAML block scalars (`|` or `>`), as these are not accepted by some IDEs.
   - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+- `model` (optional): Recommended model tier for this skill. Use `haiku` for reference/dispatch skills, `sonnet` for analysis/review/planning skills, `opus` for code implementation and deep domain expertise. Omit to inherit the session default.
 
 Do not include any other fields in YAML frontmatter.
 

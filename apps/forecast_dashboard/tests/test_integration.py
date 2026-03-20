@@ -10,7 +10,7 @@ import datetime as dt
 
 TEST_PENTAD = False
 TEST_DECAD = False
-TEST_LOCAL = True
+TEST_LOCAL = False
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"

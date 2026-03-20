@@ -9,7 +9,9 @@ USAGE
 -----
 
 1. FORECAST MODE (default) - Daily operational forecasting
-   Runs from last_successful_run_date + 1 day to today.
+   Runs for today only. If today is not a forecast day, exits gracefully.
+   Catch-up for missed days is handled by hindcast mode (--hindcast).
+   Re-running on the same day is safe (upsert semantics).
 
    # Pentad forecasts only (5-day periods, 72 per year)
    SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py
@@ -25,7 +27,6 @@ USAGE
    ieasyhydroforecast_env_file_path=/path/to/.env SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py
 
 2. HINDCAST MODE - Recalculate historical forecasts
-   Does NOT update last_successful_run_date (preserves operational state).
 
    # Explicit date range
    python linear_regression.py --hindcast --start-date 2024-01-01 --end-date 2024-12-31
@@ -97,49 +98,48 @@ Running `python linear_regression.py --hindcast` nightly will:
 """
 
 # I/O
+import argparse
+import datetime as dt
+import logging
 import os
 import sys
-import logging
-import argparse
 from logging.handlers import TimedRotatingFileHandler
 
 import pandas as pd
-import datetime as dt
 
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
+from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
-import setup_library as sl
 import forecast_library as fl
+import setup_library as sl
 import tag_library as tl
 
 # Local methods
-#from src import src
+# from src import src
 
 
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # Create the logs directory if it doesn't exist
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 # Create a file handler to write logs to a file
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
-                                        interval=1, backupCount=30)
+file_handler = TimedRotatingFileHandler("logs/log", when="midnight", interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
 
 # Create a stream handler to print logs to the console
@@ -168,7 +168,7 @@ def parse_arguments():
         argparse.Namespace: Parsed arguments with hindcast, start_date, end_date
     """
     parser = argparse.ArgumentParser(
-        description='''Linear Regression Forecast Module for Hydrological Forecasting
+        description="""Linear Regression Forecast Module for Hydrological Forecasting
 
 To see this help message, run:
   python linear_regression.py --help
@@ -180,13 +180,12 @@ linear regression. Forecasts are only produced on specific days:
   - DECAD:  Days 10, 20, and last day of each month
 
 MODES:
-  Forecast Mode (default): Runs from last_successful_run_date + 1 to today.
-                           Updates last_successful_run_date after each run.
+  Forecast Mode (default): Runs for today only. Re-running is safe (upsert).
+                           Catch-up for missed days: use hindcast mode.
 
   Hindcast Mode (-H):      Recalculates historical forecasts for a date range.
-                           Does NOT update last_successful_run_date.
                            Automatically skips non-forecast days for efficiency.
-''',
+""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES:
@@ -230,28 +229,29 @@ DOCKER:
   docker run <image> sh -c "SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py"
   docker run <image> sh -c "ieasyhydroforecast_env_file_path=/data/.env python linear_regression.py"
   docker run <image> sh -c "python linear_regression.py --hindcast -s 2024-01-01"
-        """
+        """,
     )
     parser.add_argument(
-        '--hindcast', '-H',
-        action='store_true',
-        help='Run in hindcast mode to recalculate historical forecasts. '
-             'Does NOT update last_successful_run_date.'
+        "--hindcast",
+        "-H",
+        action="store_true",
+        help="Run in hindcast mode to recalculate historical forecasts.",
     )
     parser.add_argument(
-        '--start-date', '-s',
+        "--start-date",
+        "-s",
         type=str,
-        metavar='YYYY-MM-DD',
-        help='Start date for hindcast. If not specified, auto-detects from '
-             'output files (uses earliest missing date across all gauges). '
-             'New gauges use ieasyhydroforecast_START_DATE from .env.'
+        metavar="YYYY-MM-DD",
+        help="Start date for hindcast. If not specified, auto-detects from "
+        "output files (uses earliest missing date across all gauges). "
+        "New gauges use ieasyhydroforecast_START_DATE from .env.",
     )
     parser.add_argument(
-        '--end-date', '-e',
+        "--end-date",
+        "-e",
         type=str,
-        metavar='YYYY-MM-DD',
-        help='End date for hindcast (defaults to yesterday). '
-             'Must be before today.'
+        metavar="YYYY-MM-DD",
+        help="End date for hindcast (defaults to yesterday). Must be before today.",
     )
 
     args = parser.parse_args()
@@ -261,31 +261,35 @@ DOCKER:
         # Parse start date if provided
         if args.start_date:
             try:
-                args.start_date = dt.datetime.strptime(args.start_date, '%Y-%m-%d').date()
+                args.start_date = dt.datetime.strptime(args.start_date, "%Y-%m-%d").date()
             except ValueError:
                 parser.error(f"Invalid start date format: {args.start_date}. Use YYYY-MM-DD")
 
-        # Parse end date or default to yesterday
+        # Parse end date or default to today (allows backfilling today's
+        # forecast when the operational run failed, e.g. due to late data).
         if args.end_date:
             try:
-                args.end_date = dt.datetime.strptime(args.end_date, '%Y-%m-%d').date()
+                args.end_date = dt.datetime.strptime(args.end_date, "%Y-%m-%d").date()
             except ValueError:
                 parser.error(f"Invalid end date format: {args.end_date}. Use YYYY-MM-DD")
         else:
-            args.end_date = dt.date.today() - dt.timedelta(days=1)
+            args.end_date = dt.date.today()
 
         # Validate date range if start_date is provided
-        if args.start_date:
-            if args.start_date > args.end_date:
-                parser.error(f"Start date ({args.start_date}) must be before or equal to end date ({args.end_date})")
+        if args.start_date and args.start_date > args.end_date:
+            parser.error(
+                f"Start date ({args.start_date}) must be before or equal to end date ({args.end_date})"
+            )
 
-        if args.end_date >= dt.date.today():
-            parser.error(f"End date ({args.end_date}) must be before today ({dt.date.today()})")
+        if args.end_date > dt.date.today():
+            parser.error(
+                f"End date ({args.end_date}) must not be in the future (today={dt.date.today()})"
+            )
 
     return args
 
 
-def get_last_forecast_dates_per_gauge(prediction_mode='BOTH'):
+def get_last_forecast_dates_per_gauge(prediction_mode="BOTH"):
     """
     Get the last forecast date for each gauge from the output files.
 
@@ -297,52 +301,63 @@ def get_last_forecast_dates_per_gauge(prediction_mode='BOTH'):
               {code: datetime.date or None if no forecasts}
     """
     import os
-    intermediate_path = os.getenv('ieasyforecast_intermediate_data_path', '')
+
+    intermediate_path = os.getenv("ieasyforecast_intermediate_data_path", "")
 
     gauge_dates = {}
 
     # Check pentad forecast file
-    if prediction_mode in ['PENTAD', 'BOTH']:
-        pentad_file = os.path.join(intermediate_path, 'forecast_pentad_linreg.csv')
+    if prediction_mode in ["PENTAD", "BOTH"]:
+        pentad_file = os.path.join(intermediate_path, "forecast_pentad_linreg.csv")
         if os.path.exists(pentad_file):
             try:
                 df = pd.read_csv(pentad_file)
-                if 'date' in df.columns and 'code' in df.columns and len(df) > 0:
-                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                if "date" in df.columns and "code" in df.columns and len(df) > 0:
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
                     # Convert code to string, handling float values like 15013.0 -> "15013"
-                    df['code'] = df['code'].apply(lambda x: str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x))
-                    for code, group in df.groupby('code'):
-                        max_date = group['date'].max()
-                        if pd.notna(max_date):
-                            # Keep the latest date - start hindcast from there + 1 day
-                            if code not in gauge_dates or max_date.date() > gauge_dates[code]:
-                                gauge_dates[code] = max_date.date()
+                    df["code"] = df["code"].apply(
+                        lambda x: str(int(x))
+                        if pd.notna(x) and float(x) == int(float(x))
+                        else str(x)
+                    )
+                    for code, group in df.groupby("code"):
+                        max_date = group["date"].max()
+                        # Keep the latest date - start hindcast from there + 1 day
+                        if pd.notna(max_date) and (
+                            code not in gauge_dates or max_date.date() > gauge_dates[code]
+                        ):
+                            gauge_dates[code] = max_date.date()
             except Exception as e:
                 logger.warning(f"Could not read pentad forecast file: {e}")
 
     # Check decad forecast file
-    if prediction_mode in ['DECAD', 'BOTH']:
-        decad_file = os.path.join(intermediate_path, 'forecast_decad_linreg.csv')
+    if prediction_mode in ["DECAD", "BOTH"]:
+        decad_file = os.path.join(intermediate_path, "forecast_decad_linreg.csv")
         if os.path.exists(decad_file):
             try:
                 df = pd.read_csv(decad_file)
-                if 'date' in df.columns and 'code' in df.columns and len(df) > 0:
-                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                if "date" in df.columns and "code" in df.columns and len(df) > 0:
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
                     # Convert code to string, handling float values like 15013.0 -> "15013"
-                    df['code'] = df['code'].apply(lambda x: str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x))
-                    for code, group in df.groupby('code'):
-                        max_date = group['date'].max()
-                        if pd.notna(max_date):
-                            # Keep the latest date - start hindcast from there + 1 day
-                            if code not in gauge_dates or max_date.date() > gauge_dates[code]:
-                                gauge_dates[code] = max_date.date()
+                    df["code"] = df["code"].apply(
+                        lambda x: str(int(x))
+                        if pd.notna(x) and float(x) == int(float(x))
+                        else str(x)
+                    )
+                    for code, group in df.groupby("code"):
+                        max_date = group["date"].max()
+                        # Keep the latest date - start hindcast from there + 1 day
+                        if pd.notna(max_date) and (
+                            code not in gauge_dates or max_date.date() > gauge_dates[code]
+                        ):
+                            gauge_dates[code] = max_date.date()
             except Exception as e:
                 logger.warning(f"Could not read decad forecast file: {e}")
 
     return gauge_dates
 
 
-def get_forecast_days_for_month(year, month, prediction_mode='BOTH'):
+def get_forecast_days_for_month(year, month, prediction_mode="BOTH"):
     """
     Get the list of forecast days for a given month.
 
@@ -355,9 +370,10 @@ def get_forecast_days_for_month(year, month, prediction_mode='BOTH'):
         list: Sorted list of days in the month that are forecast days
     """
     import calendar
+
     last_day = calendar.monthrange(year, month)[1]
 
-    if prediction_mode == 'DECAD':
+    if prediction_mode == "DECAD":
         # Decad days: 10, 20, last day
         return [10, 20, last_day]
     else:
@@ -365,7 +381,7 @@ def get_forecast_days_for_month(year, month, prediction_mode='BOTH'):
         return [5, 10, 15, 20, 25, last_day]
 
 
-def get_next_forecast_day(current_date, prediction_mode='BOTH'):
+def get_next_forecast_day(current_date, prediction_mode="BOTH"):
     """
     Get the next forecast day on or after current_date.
 
@@ -383,7 +399,7 @@ def get_next_forecast_day(current_date, prediction_mode='BOTH'):
     for _ in range(32):
         last_day = calendar.monthrange(date.year, date.month)[1]
 
-        if prediction_mode == 'DECAD':
+        if prediction_mode == "DECAD":
             forecast_days = [10, 20, last_day]
         else:
             # PENTAD or BOTH - use pentad days (which include decad days)
@@ -398,7 +414,7 @@ def get_next_forecast_day(current_date, prediction_mode='BOTH'):
     return current_date
 
 
-def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
+def get_hindcast_start_date_from_output(prediction_mode="BOTH", site_list=None):
     """
     Auto-detect the hindcast start date by finding the earliest date after
     the last forecast in the output files. Also considers new gauges that
@@ -418,14 +434,18 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
                                        Example: ieasyhydroforecast_START_DATE=2000-01-01
     """
     # Get default start date from environment variable
-    env_default_start = os.getenv('ieasyhydroforecast_START_DATE')
+    env_default_start = os.getenv("ieasyhydroforecast_START_DATE")
     default_start_date = None
     if env_default_start:
         try:
-            default_start_date = dt.datetime.strptime(env_default_start, '%Y-%m-%d').date()
-            logger.info(f"Default start date from ieasyhydroforecast_START_DATE: {default_start_date}")
+            default_start_date = dt.datetime.strptime(env_default_start, "%Y-%m-%d").date()
+            logger.info(
+                f"Default start date from ieasyhydroforecast_START_DATE: {default_start_date}"
+            )
         except ValueError:
-            logger.warning(f"Invalid ieasyhydroforecast_START_DATE format: {env_default_start}. Expected YYYY-MM-DD")
+            logger.warning(
+                f"Invalid ieasyhydroforecast_START_DATE format: {env_default_start}. Expected YYYY-MM-DD"
+            )
 
     # Get last forecast date per gauge from output files
     gauge_dates = get_last_forecast_dates_per_gauge(prediction_mode)
@@ -441,12 +461,10 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
         site_codes = set(str(s) for s in site_list)
         existing_codes = set(gauge_dates.keys())
         new_gauges = list(site_codes - existing_codes)
-        # DEBUG: Log comparison details
-        logger.info(f"DEBUG: site_codes from iEH HF: {sorted(site_codes)}")
-        logger.info(f"DEBUG: existing_codes from output files: {sorted(existing_codes)}")
-        logger.info(f"DEBUG: new_gauges (in iEH but not in output): {sorted(new_gauges)}")
         if new_gauges:
-            logger.info(f"Found {len(new_gauges)} new gauges without forecast history: {new_gauges}")
+            logger.info(
+                f"Found {len(new_gauges)} new gauges without forecast history: {new_gauges}"
+            )
 
     # Determine start date per gauge, then take the earliest
     # - Existing gauges: last forecast date + 1 day
@@ -479,27 +497,37 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
     # Add start date for new gauges (from env var)
     if new_gauges:
         if default_start_date:
-            logger.info(f"New gauges {new_gauges} will use ieasyhydroforecast_START_DATE: {default_start_date}")
+            logger.info(
+                f"New gauges {new_gauges} will use ieasyhydroforecast_START_DATE: {default_start_date}"
+            )
             start_dates.append(default_start_date)
         else:
             logger.error("New gauges detected but ieasyhydroforecast_START_DATE is not set.")
             logger.error("Please set ieasyhydroforecast_START_DATE=YYYY-MM-DD in your .env file")
             return None
 
-    # Return the earliest start date (to cover all gauges)
+    # Return the second earliest start date to avoid outliers with very old dates
+    # This handles cases where one gauge has e.g. 2000-01-01 while all others have recent dates
     if start_dates:
-        earliest_start = min(start_dates)
-        logger.info(f"Auto-detected hindcast start date: {earliest_start} (earliest across all gauges)")
-        # DEBUG: Log all start dates and exit early
-        logger.info(f"DEBUG: All start_dates list: {sorted(start_dates)}")
-        logger.info(f"DEBUG: Minimum (earliest) start date: {earliest_start}")
-        logger.info("DEBUG: Exiting early for debugging. Remove this block when done.")
-        sys.exit(0)
-        return earliest_start
+        sorted_dates = sorted(start_dates)
+        if len(sorted_dates) >= 2:
+            # Use second earliest to skip potential outlier
+            selected_start = sorted_dates[1]
+            logger.info(
+                f"Auto-detected hindcast start date: {selected_start} (second earliest across {len(sorted_dates)} gauges)"
+            )
+            logger.info(f"  Skipped earliest date {sorted_dates[0]} to avoid outlier gauge")
+        else:
+            # Only one gauge, use it
+            selected_start = sorted_dates[0]
+            logger.info(f"Auto-detected hindcast start date: {selected_start} (only gauge)")
+        return selected_start
     else:
         # No existing forecasts and no new gauges - use default if available
         if default_start_date:
-            logger.info(f"No existing forecasts. Using ieasyhydroforecast_START_DATE: {default_start_date}")
+            logger.info(
+                f"No existing forecasts. Using ieasyhydroforecast_START_DATE: {default_start_date}"
+            )
             return default_start_date
         else:
             logger.warning("No existing forecasts found and ieasyhydroforecast_START_DATE not set.")
@@ -507,81 +535,75 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
 
 
 def main():
-
     # Parse command-line arguments
     args = parse_arguments()
 
-    logger.info(f"\n\n====== LINEAR REGRESSION =========================")
+    logger.info("\n\n====== LINEAR REGRESSION =========================")
     logger.debug(f"Script started at {dt.datetime.now()}.")
-    logger.info(f"\n\n------ Setting up --------------------------------")
+    logger.info("\n\n------ Setting up --------------------------------")
 
     # Configuration
     sl.load_environment()
 
-    # Check the prediction mode from environment
-    prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+    # Check the prediction mode from environment (treat empty string as unset)
+    prediction_mode = os.getenv("SAPPHIRE_PREDICTION_MODE", "") or "BOTH"
     logger.info(f"Running in {prediction_mode} prediction mode")
 
     # Log hindcast mode if enabled
     if args.hindcast:
-        logger.info(f"*** HINDCAST MODE ENABLED ***")
+        logger.info("*** HINDCAST MODE ENABLED ***")
         if args.start_date:
             logger.info(f"Hindcast start date: {args.start_date}")
         else:
             logger.info("Hindcast start date: auto-detect from output files")
         logger.info(f"Hindcast end date: {args.end_date}")
 
-    run_pentad = prediction_mode in ['PENTAD', 'BOTH']
-    run_decad = prediction_mode in ['DECAD', 'BOTH']
+    run_pentad = prediction_mode in ["PENTAD", "BOTH"]
+    run_decad = prediction_mode in ["DECAD", "BOTH"]
 
     # Set up the iEasyHydro SDK
     # Test if we need to connect via ssh tunnel
-    if os.getenv('ieasyhydroforecast_ssh_to_iEH') == 'True':
+    if os.getenv("ieasyhydroforecast_ssh_to_iEH") == "True":
         tunnels = sl.check_local_ssh_tunnels()
         if not tunnels:
-            logger.error("No SSH tunnels found but required according to env variable ieasyhydroforecast_ssh_to_iEH. Exiting.")
+            logger.error(
+                "No SSH tunnels found but required according to env variable ieasyhydroforecast_ssh_to_iEH. Exiting."
+            )
             exit()
         else:
             logger.debug(f"SSH tunnels found: {tunnels}")
 
-    # Test if we read from iEasyHydro or iEasyHydro HF
-    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+    # Legacy iEasyHydro SDK — used only for qdanger lookup (optional).
+    # Site discovery uses config JSON files (populated by preprocessing_runoff).
+    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
         ieh_sdk = IEasyHydroSDK()
         has_access_to_db = sl.check_database_access(ieh_sdk)
-        has_access_to_hf_db = False
         if not has_access_to_db:
             ieh_sdk = None
     else:
-        # Connect to iEasyHydro HF
-        ieh_hf_sdk = IEasyHydroHFSDK()
-        has_access_to_hf_db = sl.check_database_access(ieh_hf_sdk)
+        ieh_sdk = None
         has_access_to_db = False
-        if not has_access_to_db:
-            ieh_sdk = None
-        if not has_access_to_hf_db:
-            ieh_hf_sdk = None
 
-    # Identify sites for which to produce forecasts FIRST
-    # (Needed for hindcast auto-detection to check for new gauges)
-    # Gets us a list of site objects with the necessary information to write forecast outputs
-    if has_access_to_hf_db:
-        # Use the iEH HF SDK to get the sites
-        fc_sites_pentad, site_list_pentad, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_pentad else ([], [], None)
-        fc_sites_decad, site_list_decad, _ = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_decad else ([], [], None)
-    else:
-        # Use the iEH SDK to get the sites
-        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db) if run_pentad else ([], [])
-        fc_sites_decad, site_list_decad = ([], [])
-        if run_decad:
-            if run_pentad:
-                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
-            else:
-                # If only running decadal forecasts, we need to get pentadal sites first for reference
-                temp_fc_sites_pentad, temp_site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
-                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(temp_fc_sites_pentad, temp_site_list_pentad)
+    # Identify sites from config JSON files (always config-file path)
+    fc_sites_pentad, site_list_pentad = (
+        sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db) if run_pentad else ([], [])
+    )
+    fc_sites_decad, site_list_decad = ([], [])
+    if run_decad:
+        if run_pentad:
+            fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+                fc_sites_pentad, site_list_pentad
+            )
+        else:
+            temp_fc_sites_pentad, temp_site_list_pentad = sl.get_pentadal_forecast_sites(
+                ieh_sdk, has_access_to_db
+            )
+            fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+                temp_fc_sites_pentad, temp_site_list_pentad
+            )
 
     # Combine site lists for hindcast auto-detection
-    all_site_codes = list(set(site_list_pentad + site_list_decad))
+    all_site_codes = list(set(list(site_list_pentad) + list(site_list_decad)))
     logger.info(f"Total sites from iEH: {len(all_site_codes)}")
 
     # Get start and end dates for current call to the script.
@@ -594,9 +616,13 @@ def main():
             forecast_date = args.start_date
         else:
             # Auto-detect start date from output files, passing site list to check for new gauges
-            forecast_date = get_hindcast_start_date_from_output(prediction_mode, site_list=all_site_codes)
+            forecast_date = get_hindcast_start_date_from_output(
+                prediction_mode, site_list=all_site_codes
+            )
             if not forecast_date:
-                logger.error("Could not auto-detect hindcast start date. Please provide --start-date or set ieasyhydroforecast_START_DATE.")
+                logger.error(
+                    "Could not auto-detect hindcast start date. Please provide --start-date or set ieasyhydroforecast_START_DATE."
+                )
                 sys.exit(1)
         date_end = args.end_date
 
@@ -606,7 +632,9 @@ def main():
 
         # Check if there's anything to do
         if forecast_date > date_end:
-            logger.info(f"Hindcast mode: next forecast day ({forecast_date}) is after end date ({date_end}).")
+            logger.info(
+                f"Hindcast mode: next forecast day ({forecast_date}) is after end date ({date_end})."
+            )
             logger.info("All forecasts are already up to date. Nothing to do.")
             sys.exit(0)
 
@@ -620,13 +648,11 @@ def main():
         logger.info(f"Hindcast mode: running from {forecast_date} to {date_end}")
         logger.info(f"Hindcast mode: {count_days} forecast days to process")
     else:
-        # Normal forecast mode
-        forecast_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
-
-    # Only perform the next steps if we have to produce a forecast.
-    if not forecast_date:
-        logger.info("No valid forecast date. Exiting.")
-        exit()
+        # Operational mode: run for today only.
+        # Catch-up for missed days is handled by hindcast mode (--hindcast).
+        forecast_date = dt.date.today()
+        date_end = forecast_date
+        bulletin_date = forecast_date + dt.timedelta(days=1)
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
     forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(forecast_date)
@@ -639,7 +665,8 @@ def main():
     data_pentad, data_decad = fl.get_pentadal_and_decadal_data(
         forecast_flags=forecast_flags,
         site_list_pentad=site_list_pentad,
-        site_list_decad=site_list_decad)
+        site_list_decad=site_list_decad,
+    )
     # Test if either data_pentad or data_decad is empty
     if run_pentad and data_pentad.empty:
         logger.info("No pentadal data available. Exiting.")
@@ -655,61 +682,53 @@ def main():
 
     # Save pentadal data
     if run_pentad:
-        fl.write_pentad_hydrograph_data(data_pentad, iehhf_sdk=ieh_hf_sdk)
+        fl.write_pentad_hydrograph_data(data_pentad)
         fl.write_pentad_time_series_data(data_pentad)
 
     # Save decadal data
     if run_decad:
-        fl.write_decad_hydrograph_data(data_decad, iehhf_sdk=ieh_hf_sdk)
+        fl.write_decad_hydrograph_data(data_decad)
         fl.write_decad_time_series_data(data_decad)
 
     # Iterate over the dates
     current_day = forecast_date
     while current_day <= date_end:
-
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
-        # Update dates - in hindcast mode, we use our iteration dates
-        # In normal mode, we re-check from define_run_dates
-        if args.hindcast:
-            # In hindcast mode, use current_day directly (don't re-call define_run_dates)
-            current_date = current_day
-            bulletin_date = current_day + dt.timedelta(days=1)
-        else:
-            # Normal mode: Update the last run_date in the database
-            current_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
-            # Make sure we have a valid forecast date
-            if not forecast_date:
-                print("No valid forecast date. Exiting.")
-                exit()
+        bulletin_date = current_day + dt.timedelta(days=1)
 
         # Update the forecast flags
-        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
+        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_day)
         logger.debug(f"Forecast flags: {forecast_flags}")
 
         # Get predictor dates for the current forecast
         predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
 
-        # Test if today is a forecast day for either pentadal and decadal forecasts
-        # We only run through the rest of the code in the loop if current_date is a forecast day
+        # Guard: run_pentad comes from SAPPHIRE_PREDICTION_MODE (user intent);
+        # forecast_flags.pentad comes from ForecastFlags (calendar check).
+        # Both are needed because get_pentadal_and_decadal_data() unconditionally
+        # sets forecast_flags.pentad = True as a known side-effect.
         if run_pentad and forecast_flags.pentad:
-            logger.info(f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
-            #logger.debug(f'data_pentad.head(): \n{data_pentad.head()}')
-            #logger.debug(f'data_pentad.tail(): \n{data_pentad.tail()}')
+            logger.info(
+                f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}."
+            )
+            # logger.debug(f'data_pentad.head(): \n{data_pentad.head()}')
+            # logger.debug(f'data_pentad.tail(): \n{data_pentad.tail()}')
 
             # Filter the discharge data for the sites we need to produce forecasts
             discharge_pentad = fl.filter_discharge_data_for_code_and_date(
                 df=data_pentad,
                 filter_sites=site_list_pentad,
                 filter_date=current_day,
-                code_col='code',
-                date_col='date')
+                code_col="code",
+                date_col="date",
+            )
             # Print the tail of discharge_pentad for code 16936
-            #logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
-            #logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
+            # logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
+            # logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
 
             # Print discharge_data for code == '15194' for april and may 2024
-            #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
+            # logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
 
             # Write the predictor to the Site objects
             logger.debug(f"Predictor dates: {predictor_dates.pentad}")
@@ -717,33 +736,39 @@ def main():
                 data_df=discharge_pentad,
                 start_date=max(predictor_dates.pentad),
                 fc_sites=fc_sites_pentad,
-                date_col='date',
-                code_col='code',
-                predictor_col='discharge_sum')
+                date_col="date",
+                code_col="code",
+                predictor_col="discharge_sum",
+            )
 
             # Calculate norm discharge for the pentad forecast
             forecast_pentad_of_year = tl.get_pentad_in_year(current_day)
             fl.save_discharge_avg(
-                discharge_pentad, fc_sites_pentad, group_id=forecast_pentad_of_year,
-                code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
+                discharge_pentad,
+                fc_sites_pentad,
+                group_id=forecast_pentad_of_year,
+                code_col="code",
+                group_col="pentad_in_year",
+                value_col="discharge_avg",
+            )
 
             # Perform linear regression for the current forecast horizon
             # The linear regression is performed on past data. Here, the slope and
             # intercept of the linear regression model are calculated for each site for
             # the current forecast.
             # We take into account saved points from the pentad forecast dashboard.
-            print("\n\n\n\n\n\n\n")
             logger.debug("Performing linear regression ...")
-            print("Performing linear regression ...")
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
-                station_col='code',
-                horizon_col='pentad_in_year',
-                predictor_col='discharge_sum',
-                discharge_avg_col='discharge_avg',
-                forecast_horizon_int=int(forecast_pentad_of_year))
+                station_col="code",
+                horizon_col="pentad_in_year",
+                predictor_col="discharge_sum",
+                discharge_avg_col="discharge_avg",
+                forecast_horizon_int=int(forecast_pentad_of_year),
+                forecast_date=current_day,
+            )
 
-            #logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
+            # logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
             logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
 
             # Generate the forecast for the current forecast horizon
@@ -751,48 +776,60 @@ def main():
                 fc_sites_pentad,
                 group_id=forecast_pentad_of_year,
                 result_df=linreg_pentad,
-                code_col='code',
-                group_col='pentad_in_year')
+                code_col="code",
+                group_col="pentad_in_year",
+            )
 
             # Rename the column discharge_sum to predictor
             linreg_pentad.rename(
-                columns={'discharge_sum': 'predictor',
-                         'pentad': 'pentad_in_month'}, inplace=True)
-            #logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
+                columns={"discharge_sum": "predictor", "pentad": "pentad_in_month"}, inplace=True
+            )
+            # logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
 
             # Write output files for the current forecast horizon
             try:
                 # Diagnostics: log env and date coverage about to be written
-                env_intermediate = os.getenv('ieasyforecast_intermediate_data_path')
-                env_last_success = os.getenv('ieasyforecast_last_successful_run_file')
-                logger.info(f"[linreg] intermediate_data_path={env_intermediate}, last_run_file={env_last_success}")
+                env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
+                env_last_success = os.getenv("ieasyforecast_last_successful_run_file")
+                logger.info(
+                    f"[linreg] intermediate_data_path={env_intermediate}, last_run_file={env_last_success}"
+                )
 
                 # Ensure date is datetime for diagnostics using robust parsing
-                if 'date' in linreg_pentad.columns:
-                    _dates = fl.parse_dates_robust(linreg_pentad['date'], 'date')
-                    _years = sorted(set([int(y) for y in _dates.dt.year.dropna().unique()])) if not _dates.empty else []
-                    logger.info(f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}")
+                if "date" in linreg_pentad.columns:
+                    _dates = fl.parse_dates_robust(linreg_pentad["date"], "date")
+                    _years = (
+                        sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
+                        if not _dates.empty
+                        else []
+                    )
+                    logger.info(
+                        f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
+                    )
                 else:
                     logger.warning("[linreg] pentad write: 'date' column missing in output frame")
 
             except Exception as _e:
                 logger.warning(f"[linreg] diagnostics before write failed: {_e}")
 
-            fl.write_linreg_pentad_forecast_data(linreg_pentad)
+            fl.write_linreg_pentad_forecast_data(linreg_pentad, forecast_date=current_day)
 
         else:
-            logger.info(f'No pentadal forecast for {current_day}.')
+            logger.info(f"No pentadal forecast for {current_day}.")
 
         if run_decad and forecast_flags.decad:
-            logger.info(f"Starting decadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
+            logger.info(
+                f"Starting decadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}."
+            )
 
             # Filter the discharge data for the sites we need to produce forecasts
             discharge_decad = fl.filter_discharge_data_for_code_and_date(
                 df=data_decad,
                 filter_sites=site_list_decad,
                 filter_date=current_day,
-                code_col='code',
-                date_col='date')
+                code_col="code",
+                date_col="date",
+            )
 
             # Write the predictor to the Site objects
             logger.debug(f"Predictor dates: {predictor_dates.decad}")
@@ -800,62 +837,80 @@ def main():
                 data_df=discharge_decad,
                 start_date=max(predictor_dates.decad),
                 fc_sites=fc_sites_decad,
-                date_col='date',
-                code_col='code',
-                predictor_col='predictor')
+                date_col="date",
+                code_col="code",
+                predictor_col="predictor",
+            )
 
             # Calculate norm discharge for the decad forecast
             forecast_decad_of_year = tl.get_decad_in_year(current_day)
             fl.save_discharge_avg(
-                discharge_decad, fc_sites_decad, group_id=forecast_decad_of_year,
-                code_col='code', group_col='decad_in_year', value_col='discharge_avg')
+                discharge_decad,
+                fc_sites_decad,
+                group_id=forecast_decad_of_year,
+                code_col="code",
+                group_col="decad_in_year",
+                value_col="discharge_avg",
+            )
 
             # Perform linear regression for the current forecast horizon
             # TODO: Once the decad forecast dashboard is finished, filter for
             # selected points.
             linreg_decad = fl.perform_linear_regression(
                 data_df=discharge_decad,
-                station_col='code',
-                horizon_col='decad_in_year',
-                predictor_col='predictor',
-                discharge_avg_col='discharge_avg',
-                forecast_horizon_int=int(forecast_decad_of_year))
+                station_col="code",
+                horizon_col="decad_in_year",
+                predictor_col="predictor",
+                discharge_avg_col="discharge_avg",
+                forecast_horizon_int=int(forecast_decad_of_year),
+                forecast_date=current_day,
+            )
 
-            #logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
+            # logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
 
             # Generate the forecast for the current forecast horizon
             fl.perform_forecast(
                 fc_sites_decad,
                 group_id=forecast_decad_of_year,
                 result_df=linreg_decad,
-                code_col='code',
-                group_col='decad_in_year')
+                code_col="code",
+                group_col="decad_in_year",
+            )
 
             # Write output files for the current forecast horizon
-            fl.write_linreg_decad_forecast_data(linreg_decad)
+            try:
+                env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
+                logger.info(f"[linreg] intermediate_data_path={env_intermediate}")
+
+                if "date" in linreg_decad.columns:
+                    _dates = fl.parse_dates_robust(linreg_decad["date"], "date")
+                    _years = (
+                        sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
+                        if not _dates.empty
+                        else []
+                    )
+                    logger.info(
+                        f"[linreg] decad write rows={len(linreg_decad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
+                    )
+                else:
+                    logger.warning("[linreg] decad write: 'date' column missing in output frame")
+
+            except Exception as _e:
+                logger.warning(f"[linreg] decad diagnostics before write failed: {_e}")
+
+            fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day)
 
         else:
-            logger.info(f'No decadal forecast for {current_day}.')
+            logger.info(f"No decadal forecast for {current_day}.")
 
-        # Store the last run date (only in normal forecast mode, NOT in hindcast mode)
-        if args.hindcast:
-            logger.debug(f"Hindcast mode: NOT updating last_successful_run_date")
-            ret = None
-        else:
-            ret = sl.store_last_successful_run_date(current_day, prediction_mode=prediction_mode)
-
-        # Move to the next day (or next forecast day in hindcast mode)
+        # Advance to next forecast day. In operational mode (single day), the
+        # loop exits after one iteration anyway; in hindcast mode this skips
+        # non-forecast days for efficiency.
         logger.info(f"Iteration for {current_day} completed successfully.")
-        if args.hindcast:
-            # Skip to next forecast day (more efficient than iterating every day)
-            current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
-        else:
-            current_day += dt.timedelta(days=1)
+        current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
 
-    if ret is None:
-        sys.exit(0) # Success
-    else:
-        sys.exit(1)
+    sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

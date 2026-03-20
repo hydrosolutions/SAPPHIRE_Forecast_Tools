@@ -1,5 +1,6 @@
 ---
 name: requesting-code-review
+model: haiku
 description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
 ---
 

@@ -1,32 +1,40 @@
 # syntax=docker/dockerfile:1
 
+# Python 3.12 + uv image for machine_learning module
+# Migration completed 2026-01-29 (Python 3.12 + uv)
+# See: doc/plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md
+#
+# NOTE: This image has a larger footprint due to torch/darts dependencies.
+# Expected DockerHub Scout health grade: C/D (acceptable for ML workloads)
+
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
-# Set an environment variable that can be read by the application to know if it
-# is running in a container.
-ENV SAPPHRIE_OPDEV_ENV=true
-ENV IN_DOCKER=true
+# Set environment variables for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
+ENV IN_DOCKER=True
 
-# Setting the working directory to /app
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
+
+# Set working directory
 WORKDIR /app
 
-# All files in the current directory are copied into the container into
-# directory app.
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
+# Copy machine_learning source code (includes pyproject.toml and uv.lock)
 COPY apps/machine_learning /app/apps/machine_learning
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/machine_learning/requirements.txt,target=/app/apps/machine_learning/requirements.txt \
-    pip install --trusted-host pypi.python.org -r apps/machine_learning/requirements.txt && \
-    pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
+# Note: torch and darts are large packages, this step may take a while
+WORKDIR /app/apps/machine_learning
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-
-# Run the application.
-# This cmd is moved to the pipeline definition
-#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py  && python apps/machine_learning/add_new_station.py"]
-# New CMD to allow for different run modes
-# RUN_MODE can be forecast, maintenance or not given (which defaults to running all maintenance and forecast tasks)
-CMD ["sh", "-c", "echo \"Environment Variables:\" && echo \"RUN_MODE=$RUN_MODE\" && echo \"SAPPHIRE_MODEL_TO_USE=$SAPPHIRE_MODEL_TO_USE\" && echo \"SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE\" && export PYTHONPATH=/app/apps/iEasyHydroForecast && if [ \"$RUN_MODE\" = \"forecast\" ]; then python apps/machine_learning/make_forecast.py; elif [ \"$RUN_MODE\" = \"maintenance\" ]; then python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; else python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; fi"]
+# Run the application using uv run (activates the virtual environment automatically)
+# RUN_MODE can be "forecast", "maintenance", or empty (runs all)
+# SAPPHIRE_MODEL_TO_USE can be "TFT", "TIDE", or "TSMIXER"
+# SAPPHIRE_PREDICTION_MODE can be "PENTAD" or "DECAD"
+CMD ["sh", "-c", "echo \"Environment Variables:\" && echo \"RUN_MODE=$RUN_MODE\" && echo \"SAPPHIRE_MODEL_TO_USE=$SAPPHIRE_MODEL_TO_USE\" && echo \"SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE\" && if [ \"$RUN_MODE\" = \"forecast\" ]; then uv run make_forecast.py; elif [ \"$RUN_MODE\" = \"maintenance\" ]; then uv run recalculate_nan_forecasts.py && uv run fill_ml_gaps.py && uv run add_new_station.py; else uv run recalculate_nan_forecasts.py && uv run make_forecast.py && uv run fill_ml_gaps.py && uv run add_new_station.py; fi"]

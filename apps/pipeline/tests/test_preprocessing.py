@@ -3,7 +3,7 @@ import docker
 import time
 from typing import Optional
 
-class TestPreprocessingGateway(luigi.Task):
+class PreprocessingGatewayTask(luigi.Task):
     max_retries = 3
     retry_delay = 5
     fail_count = luigi.IntParameter(default=2)

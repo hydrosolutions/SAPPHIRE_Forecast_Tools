@@ -12,6 +12,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
   - [Deployment with private data on a server](#deployment-with-private-data-on-a-server)
     - [Configuring your server](#configuring-your-server)
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
+      - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -118,6 +119,27 @@ For a production environment, the Luigi scheduler daemon (`luigid`) must be runn
     ```
     You should see the `sapphire-luigi-daemon` container with a status of `Up`. You can access the Luigi web interface at `http://<your-server-ip>:8082`.
 
+#### Set up SSH tunnel to iEasyHydro HF (if required)
+
+If the SAPPHIRE forecast tools need to access an iEasyHydro High Frequency (HF) database that is not directly reachable from the server (e.g., on a different network or behind a firewall), you must set up a persistent SSH tunnel using `autossh` and `systemd`.
+
+**When is this needed?**
+- The iEasyHydro HF server is on a different network than the SAPPHIRE server
+- The iEasyHydro HF API listens only on `localhost` on its host machine (common security configuration)
+
+**When is this NOT needed?**
+- The iEasyHydro HF API is directly reachable from the SAPPHIRE server (same network, API bound to network interface)
+- You are using the iEasyHydro HF cloud version (configure the cloud endpoint in `.env` instead)
+
+**Setup summary:**
+1. Install `autossh` on the SAPPHIRE server
+2. Generate a dedicated SSH key pair
+3. Install the public key on the iEasyHydro HF server (coordinate with the remote IT team)
+4. Create a `systemd` service that maintains the tunnel automatically (auto-start on boot, auto-reconnect on drop)
+5. Configure your `.env` to point at `localhost:<tunnel-port>`
+
+For the full step-by-step instructions with all commands, see the [Update Deployment Checklist — Section 1.2, Option B or C](prod/update_deployment_checklist.md#12-ieasyhydro-hf-connectivity-if-applicable).
+
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
 
@@ -190,26 +212,46 @@ To edit the cron jobs, type the following command to the console:
 ```bash
 crontab -e
 ```
-Add the following line to the crontab file (assuming your server times corresponds to the required run times; if not, adjust the times accordingly):
+
+**Important: Log rotation**
+
+The crontab below uses timestamped log files (e.g., `sapphire_gateway_20260116.log`) to prevent logs from growing indefinitely. A cleanup job deletes logs older than 7 days. Make sure the log directory exists:
+```bash
+mkdir -p /home/ubuntu/logs
+```
+
+Add the following to the crontab file. Adjust times for your timezone (example below uses UTC, with jobs running in the morning Bishkek time):
 ```bash
 # m h  dom mon dow   command
 # ---------------------------------------------------------------------------
-# SAPPHIRE Forecast Tools Schedule
+# SAPPHIRE Forecast Tools Schedule (Times in UTC)
 # ---------------------------------------------------------------------------
-# NOTE: The Luigi daemon (luigid) must be running as a service for these tasks to be scheduled correctly.
+# NOTE: The Luigi daemon (luigid) must be running as a service for these tasks.
 #
-# (1) Run Gateway Preprocessing at 09:00. This is independent of daily data.
-0 9 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_preprocessing_gateway.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_gateway_preprocessing.log 2>&1
+# Log cleanup: delete logs older than 7 days (runs daily at 02:00 UTC)
+0 2 * * * find /home/ubuntu/logs -name "sapphire_*.log" -mtime +7 -delete
 #
-# (2) Run Pentadal Forecast pipeline at 10:00. Luigi will trigger runoff preprocessing.
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_pentadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_pentadal_forecast.log 2>&1
+# (1) Gateway Preprocessing at 03:00 UTC (09:00 Bishkek). Independent of daily data.
+0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_gateway_$(date +\%Y\%m\%d).log 2>&1
 #
-# (3) Run Decadal Forecast pipeline at 11:00. Luigi will use the already-running/completed runoff task.
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_decadal_forecast.log 2>&1
+# (2) Pentadal Forecast at 04:00 UTC (10:00 Bishkek). Luigi triggers runoff preprocessing.
+0 4 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_pentadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_pentadal_$(date +\%Y\%m\%d).log 2>&1
 #
-# (4) Maintenance jobs (frontend update, ML maintenance)
-2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_operational_logs_frontend.log 2>&1
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_ml_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_ml_maintenance.log 2>&1
+# (3) Decadal Forecast at 05:00 UTC (11:00 Bishkek). Luigi uses completed runoff task.
+0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
+#
+# (4) Daily maintenance via Luigi (replaces individual maintenance cron jobs)
+# Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
+# ML concurrency is limited to 3 via Luigi resources.
+0 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
+#
+# (5) Periodic maintenance tasks (bimonthly/yearly)
+# Bimonthly long-term postprocessing (1st of odd months)
+0 22 1 1,3,5,7,9,11 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh long_term /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_longterm_$(date +\%Y\%m\%d).log 2>&1
+# Yearly skill recalculation (January 1)
+0 1 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
+# Yearly snow norm recalculation (August 25)
+0 2 25 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
 ```
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 

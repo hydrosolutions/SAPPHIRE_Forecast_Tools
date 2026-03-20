@@ -15,48 +15,48 @@
 # ----------------------------------------------------------------
 
 
-import os
-import sys
-import pandas as pd
-import numpy as np
 import datetime
-import subprocess
-
 import logging
+import os
+import subprocess
+import sys
 from logging.handlers import TimedRotatingFileHandler
 
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+import pandas as pd
+
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 # Ensure the logs directory exists
-logs_dir = 'logs'
+logs_dir = "logs"
 if not os.path.exists(logs_dir):
     os.makedirs(logs_dir)
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
-                                        interval=1, backupCount=30)
+file_handler = TimedRotatingFileHandler("logs/log", when="midnight", interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-logger = logging.getLogger('fill_ml_gaps')
+logger = logging.getLogger("fill_ml_gaps")
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 # SAPPHIRE API imports
 from scr.utils_ml_forecast import (
+    SAPPHIRE_API_AVAILABLE,
+    _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
-    _check_ml_forecast_consistency,
-    SAPPHIRE_API_AVAILABLE
+    get_permitted_station_codes,
+    normalize_ml_csv_columns,
 )
-
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
@@ -64,34 +64,35 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
-def call_hindcast_script(min_missing_date: str,
-                         max_missing_date: str,
-                         MODEL_TO_USE: str,
-                         intermediate_data_path: str,
-                         PREDICTION_MODE: str) -> pd.DataFrame:
 
+def call_hindcast_script(
+    min_missing_date: str,
+    max_missing_date: str,
+    MODEL_TO_USE: str,
+    intermediate_data_path: str,
+    PREDICTION_MODE: str,
+) -> pd.DataFrame:
     # --------------------------------------------------------------------
     # CALL THE HINDCAST SCRIPT
     # --------------------------------------------------------------------
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     # Ensure the environment variable is set
     env = os.environ.copy()
-    env['SAPPHIRE_MODEL_TO_USE'] = MODEL_TO_USE
-    env['ieasyhydroforecast_START_DATE'] = min_missing_date
-    env['ieasyhydroforecast_END_DATE'] = max_missing_date
-    env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
-    env['ieasyhydroforecast_NEW_STATIONS'] = 'None'
+    env["SAPPHIRE_MODEL_TO_USE"] = MODEL_TO_USE
+    env["ieasyhydroforecast_START_DATE"] = min_missing_date
+    env["ieasyhydroforecast_END_DATE"] = max_missing_date
+    env["SAPPHIRE_HINDCAST_MODE"] = PREDICTION_MODE
+    env["ieasyhydroforecast_NEW_STATIONS"] = "None"
 
     # Prepare the command
-    if (os.getenv('IN_DOCKER') == 'True'):
-        command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
-        print('Running in Docker, calling command:', command)
-        logger.info('Running in Docker, calling command: %s', command)
+    if os.getenv("IN_DOCKER") == "True":
+        command = ["python", "apps/machine_learning/hindcast_ML_models.py"]
+        print("Running in Docker, calling command:", command)
+        logger.info("Running in Docker, calling command: %s", command)
     else:
-        command = ['python', 'hindcast_ML_models.py']
-        print('Running locally, calling command:', command)
-        logger.info('Running locally, calling command: %s', command)
-
+        command = [sys.executable, "hindcast_ML_models.py"]
+        print("Running locally, calling command:", command)
+        logger.info("Running locally, calling command: %s", command)
 
     # Call the script
     result = subprocess.run(command, capture_output=True, text=True, env=env)
@@ -110,109 +111,167 @@ def call_hindcast_script(min_missing_date: str,
     # GET THE HINDCAST
     # --------------------------------------------------------------------
     # Path to the output directory
-    OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
+    OUTPUT_PATH_DISCHARGE = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
 
-    PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
+    PATH_HINDCAST = os.path.join(PATH_FORECAST, "hindcast", MODEL_TO_USE)
 
-
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv'
+    file_name = (
+        f"{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv"
+    )
 
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 
     return hindcast
 
 
-
-
 def fill_ml_gaps():
-
-    logger.info(f'--------------------------------------------------------------------')
-    logger.info(f"Starting fill_ml_gaps.py")
-    print(f'--------------------------------------------------------------------')
-    print(f"Starting fill_ml_gaps.py")
+    logger.info("--------------------------------------------------------------------")
+    logger.info("Starting fill_ml_gaps.py")
+    print("--------------------------------------------------------------------")
+    print("Starting fill_ml_gaps.py")
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
-    MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
-    logger.info('Model to use: %s', MODEL_TO_USE)
-    print('Model to use:', MODEL_TO_USE)
+    MODEL_TO_USE = os.getenv("SAPPHIRE_MODEL_TO_USE")
+    logger.info("Model to use: %s", MODEL_TO_USE)
+    print("Model to use:", MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
-        raise ValueError('Model not supported')
+    if MODEL_TO_USE not in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+        raise ValueError("Model not supported")
 
     # --------------------------------------------------------------------
     # Define whch prediction mode to use
     # --------------------------------------------------------------------
-    PREDICTION_MODE = os.getenv('SAPPHIRE_PREDICTION_MODE')
-    logger.debug('Prediction mode: %s', PREDICTION_MODE)
-    if PREDICTION_MODE not in ['PENTAD', 'DECAD']:
-        raise ValueError('Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD')
-
-
+    PREDICTION_MODE = os.getenv("SAPPHIRE_PREDICTION_MODE")
+    logger.debug("Prediction mode: %s", PREDICTION_MODE)
+    if PREDICTION_MODE not in ["PENTAD", "DECAD"]:
+        raise ValueError(
+            "Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
+        )
 
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
     # --------------------------------------------------------------------
-    # Get the directory of the current script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
     # Specify the path to the .env file
     sl.load_environment()
 
     # --------------------------------------------------------------------
     # GET THE LATEST FORECAST
     # --------------------------------------------------------------------
-    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
 
     # Path to the output directory
-    OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
-
+    OUTPUT_PATH_DISCHARGE = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_FORECAST = os.path.join(PATH_FORECAST, MODEL_TO_USE)
 
-    PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
-
     # Get the current date
     current_date = datetime.datetime.now().date()
-    current_date = current_date.strftime('%Y-%m-%d')
+    current_date = current_date.strftime("%Y-%m-%d")
 
-    if PREDICTION_MODE == 'PENTAD':
-        prefix = 'pentad'
+    if PREDICTION_MODE == "PENTAD":
+        prefix = "pentad"
     else:
-        prefix = 'decad'
+        prefix = "decad"
 
-
-    forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
+    forecast_path = os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv")
     limit_day_gap = 1
 
+    # --- Read existing forecasts (API-primary, CSV fallback) ---
+    from datetime import timedelta
 
-    try:
-        forecast = pd.read_csv(forecast_path)
-    except FileNotFoundError:
-        logger.error('No forecast file found')
+    api_start = (datetime.date.today() - timedelta(days=730)).isoformat()
+    permitted_codes = get_permitted_station_codes()
+
+    if permitted_codes is not None and len(permitted_codes) > 0:
+        # Per-code reads — each query ≤730 rows, fits in one page,
+        # avoiding non-deterministic pagination (ML-007).
+        frames = []
+        for code in sorted(permitted_codes):
+            df = _read_ml_forecasts_from_api(
+                model_type=MODEL_TO_USE,
+                horizon_type=prefix,
+                start_date=api_start,
+                code=code,
+            )
+            if not df.empty:
+                frames.append(df)
+        forecast = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    else:
+        # Config unavailable — fall back to all-codes query (existing behavior)
+        logger.warning(
+            "fill_ml_gaps: org config unavailable — falling back to all-codes "
+            "read (non-deterministic pagination may produce phantom gaps)"
+        )
+        forecast = _read_ml_forecasts_from_api(
+            model_type=MODEL_TO_USE,
+            horizon_type=prefix,
+            start_date=api_start,
+        )
+
+    # CSV fallback — triggers if API returned empty for all codes
+    if forecast.empty:
+        logger.warning(
+            "fill_ml_gaps: API returned no %s %s forecasts — falling back to CSV",
+            MODEL_TO_USE,
+            prefix,
+        )
+        try:
+            forecast = pd.read_csv(forecast_path)
+            forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
+            forecast["date"] = pd.to_datetime(forecast["date"])
+            forecast = normalize_ml_csv_columns(forecast)
+        except FileNotFoundError:
+            logger.warning(
+                "fill_ml_gaps: No CSV found at %s either — no gap detection possible",
+                forecast_path,
+            )
+            return
+        # CSV contains all orgs' data — re-apply org-filter
+        if permitted_codes is not None and len(permitted_codes) > 0 and not forecast.empty:
+            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
+
+    # Second emptiness guard (preserved from original)
+    if forecast.empty:
+        logger.warning(
+            "fill_ml_gaps: Both API and CSV returned no data for %s %s. "
+            "Gap detection skipped — forecasts may be missing.",
+            MODEL_TO_USE,
+            prefix,
+        )
         return
+
+    # Treat null-discharge rows as missing — they are phantom records
+    # that should not count as valid forecasts for gap detection.
+    if "Q50" in forecast.columns:
+        n_nulls = forecast["Q50"].isna().sum()
+        if n_nulls > 0:
+            logger.info(
+                "fill_ml_gaps: Excluding %d null-discharge rows from gap detection",
+                n_nulls,
+            )
+            forecast = forecast[forecast["Q50"].notna()].copy()
 
     missing_forecasts_dict = {}
     min_missing_date = None
     max_missing_date = None
-    #iterate over the unique codes
+    # iterate over the unique codes
     for code in forecast.code.unique():
-        #select the forecast for the specific code
+        # select the forecast for the specific code
         forecast_code = forecast[forecast.code == code].copy()
-        #get the unique forecast dates
-        forecast_dates = forecast_code['forecast_date'].unique()
-        forecast_dates = pd.to_datetime(forecast_dates)
-        forecast_dates = forecast_dates.sort_values()
+        # get the unique forecast dates
+        forecast_dates = forecast_code["forecast_date"].unique()
+        forecast_dates = pd.DatetimeIndex(forecast_dates).sort_values()
         # check if there are any missing forecasts
         missing_forecasts = []
 
         for i in range(1, len(forecast_dates)):
-            if (forecast_dates[i] - forecast_dates[i-1]).days > limit_day_gap:
-                missing_tuple = (forecast_dates[i-1], forecast_dates[i])
+            if (forecast_dates[i] - forecast_dates[i - 1]).days > limit_day_gap:
+                missing_tuple = (forecast_dates[i - 1], forecast_dates[i])
                 # append the previous date with a forecast
                 # append the next date which has a forecast
                 missing_forecasts.append(missing_tuple)
@@ -224,10 +283,10 @@ def fill_ml_gaps():
             max_missing_date_current = missing_forecasts[-1][1]
 
             # call the hindcast script to fill in the missing forecasts
-            min_date = min_missing_date_current.strftime('%Y-%m-%d')
-            max_date = max_missing_date_current.strftime('%Y-%m-%d')
-            logger.info('Missing forecasts for code %s from %s to %s', code, min_date, max_date)
-            print('Missing forecasts for code', code, 'from', min_date, 'to', max_date)
+            min_date = min_missing_date_current.strftime("%Y-%m-%d")
+            max_date = max_missing_date_current.strftime("%Y-%m-%d")
+            logger.info("Missing forecasts for code %s from %s to %s", code, min_date, max_date)
+            print("Missing forecasts for code", code, "from", min_date, "to", max_date)
 
             if min_missing_date is None:
                 min_missing_date = min_missing_date_current
@@ -235,37 +294,55 @@ def fill_ml_gaps():
             else:
                 min_missing_date = min(min_missing_date, min_missing_date_current)
                 max_missing_date = max(max_missing_date, max_missing_date_current)
-            
+
     # if there are no missing forecasts
     if len(missing_forecasts_dict) == 0:
-        logger.info('No missing forecasts')
-        print('No missing forecasts')
+        logger.info("No missing forecasts")
+        print("No missing forecasts")
 
     # if there are missing forecasts
     else:
-
         # get the minimum and maximum missing dates
-        min_missing_date = min_missing_date.strftime('%Y-%m-%d')
+        min_missing_date = min_missing_date.strftime("%Y-%m-%d")
         max_missing_date = max_missing_date - datetime.timedelta(days=1)
-        max_missing_date = max_missing_date.strftime('%Y-%m-%d')
+        max_missing_date = max_missing_date.strftime("%Y-%m-%d")
 
-        logger.info('Missing forecasts from %s to %s', min_missing_date, max_missing_date)
-        print('Missing forecasts from', min_missing_date, 'to', max_missing_date)
+        logger.info("Missing forecasts from %s to %s", min_missing_date, max_missing_date)
+        print("Missing forecasts from", min_missing_date, "to", max_missing_date)
         print("Missing forecasts for the following code:", list(missing_forecasts_dict.keys()))
 
         # trigger the hindcast script to fill in the missing forecasts
-        hindcast = call_hindcast_script(min_missing_date, max_missing_date,
-            MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
+        try:
+            hindcast = call_hindcast_script(
+                min_missing_date,
+                max_missing_date,
+                MODEL_TO_USE,
+                intermediate_data_path,
+                PREDICTION_MODE,
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            logger.error(
+                "fill_ml_gaps: hindcast call failed for %s (%s–%s): %s",
+                prefix,
+                min_missing_date,
+                max_missing_date,
+                exc,
+            )
+            return
 
-        hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
+        hindcast["forecast_date"] = pd.to_datetime(hindcast["forecast_date"])
+        hindcast["code"] = hindcast["code"].astype(str)
 
-        #now iterate and fill the missing forecasts,
-        #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
+        # now iterate and fill the missing forecasts,
+        # this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
         all_filled_forecasts = []  # Collect all gap-filled forecasts for API
         for code, missing_forecasts in missing_forecasts_dict.items():
             mask_dates = pd.Series(False, index=hindcast.index)
             for missing_forecast in missing_forecasts:
-                mask_dates = mask_dates | ((hindcast.forecast_date >= missing_forecast[0]) & (hindcast.forecast_date <= missing_forecast[1]))
+                mask_dates = mask_dates | (
+                    (hindcast.forecast_date >= missing_forecast[0])
+                    & (hindcast.forecast_date <= missing_forecast[1])
+                )
 
             mask_fill = (hindcast.code == code) & mask_dates
 
@@ -276,31 +353,68 @@ def fill_ml_gaps():
             # Also collect for API write
             all_filled_forecasts.append(hindcast_missing)
 
-
-        forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
+        forecast["forecast_date"] = pd.to_datetime(forecast["forecast_date"])
         # sort the forecast by forecast_date
-        forecast = forecast.sort_values(by='forecast_date')
-        # save the forecast
-        forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+        forecast = forecast.sort_values(by="forecast_date")
 
-        # Write gap-filled forecasts to SAPPHIRE API (maintenance mode)
-        if SAPPHIRE_API_AVAILABLE and len(all_filled_forecasts) > 0:
+        # --- Write gap-filled forecasts: API first (primary), CSV second (fallback) ---
+        api_ok = False
+        filled_df = None
+        if len(all_filled_forecasts) > 0:
+            filled_df = pd.concat(all_filled_forecasts, axis=0)
+            if filled_df.empty:
+                logger.warning(
+                    "fill_ml_gaps: %d gap intervals detected but 0 hindcast rows "
+                    "matched — possible code-type or date-range mismatch",
+                    sum(len(v) for v in missing_forecasts_dict.values()),
+                )
+
+        if SAPPHIRE_API_AVAILABLE and filled_df is not None and len(filled_df) > 0:
             try:
-                filled_df = pd.concat(all_filled_forecasts, axis=0)
                 horizon_type = "pentad" if prefix == "pentad" else "decade"
-                _write_ml_forecast_to_api(filled_df, horizon_type, MODEL_TO_USE)
-                logger.info(f"Wrote {len(filled_df)} gap-filled forecasts to API")
-            except Exception as e:
-                logger.error(f"Failed to write gap-filled forecasts to API: {e}")
-                # Don't fail the whole process - CSV was already saved
+                api_ok = _write_ml_forecast_to_api(filled_df, horizon_type, MODEL_TO_USE)
+                if api_ok:
+                    logger.info(
+                        "Wrote %d gap-filled forecasts to API for %s/%s",
+                        len(filled_df),
+                        prefix,
+                        MODEL_TO_USE,
+                    )
+                else:
+                    logger.warning(
+                        "API write returned failure for %s/%s; falling back to CSV",
+                        prefix,
+                        MODEL_TO_USE,
+                    )
+            except Exception:
+                logger.error(
+                    "API write raised an exception for %s/%s; falling back to CSV",
+                    prefix,
+                    MODEL_TO_USE,
+                    exc_info=True,
+                )
 
-        logger.info('Missing forecasts filled in')
+        # CSV write (deprecated fallback — will be removed once API is sole store)
+        forecast = normalize_ml_csv_columns(forecast)
+        forecast.to_csv(
+            os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv"),
+            index=False,
+        )
 
-    logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
-    logger.info(f'--------------------------------------------------------------------')
-    print('Script fill_ml_gaps.py finished at', datetime.datetime.now())
-    print(f'--------------------------------------------------------------------')
+        if not api_ok and filled_df is not None and len(filled_df) > 0:
+            logger.warning(
+                "Gap-filled data for %s/%s exists only in CSV — API write failed",
+                prefix,
+                MODEL_TO_USE,
+            )
+
+        logger.info("Missing forecasts filled in")
+
+    logger.info("Script fill_ml_gaps.py finished at %s. Exiting.", datetime.datetime.now())
+    logger.info("--------------------------------------------------------------------")
+    print("Script fill_ml_gaps.py finished at", datetime.datetime.now())
+    print("--------------------------------------------------------------------")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     fill_ml_gaps()
