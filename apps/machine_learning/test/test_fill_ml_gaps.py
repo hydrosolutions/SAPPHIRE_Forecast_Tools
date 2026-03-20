@@ -87,6 +87,14 @@ def _make_forecast_df(codes=None, n_days=5, include_q50=True, nan_rows=None):
     return df
 
 
+_BASE_ENV = {
+    "SAPPHIRE_MODEL_TO_USE": "TFT",
+    "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+    "ieasyforecast_intermediate_data_path": "/tmp/test_ml004",
+    "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+}
+
+
 def _make_hindcast_df(codes=None, n_days=3, start_date="2024-01-03"):
     """Build a minimal hindcast DataFrame returned by call_hindcast_script.
 
@@ -125,34 +133,64 @@ def _make_hindcast_df(codes=None, n_days=3, start_date="2024-01-03"):
 
 
 class TestNullDischargeFilter:
-    """Tests for the Q50-based null-discharge filter (Bug C, Phase 1a)."""
+    """ML-008b: null-Q50 rows must NOT be excluded from gap detection.
 
-    def test_rows_with_nan_q50_are_excluded(self):
-        """Rows where Q50 is NaN must be removed before gap detection."""
-        # Arrange
+    The null-discharge filter was removed because flag=3 rows (null Q50)
+    are legitimate forecast records that should count as "represented dates"
+    for gap detection purposes. Removing them caused an infinite hindcast loop.
+    """
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True)
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    @patch("fill_ml_gaps.get_permitted_station_codes", return_value=None)
+    @patch("fill_ml_gaps.sl")
+    def test_null_q50_rows_do_not_trigger_hindcast(
+        self,
+        mock_sl,
+        mock_permitted,
+        mock_read_api,
+        mock_hindcast,
+        mock_write_api,
+    ):
+        """Contiguous dates with some NaN Q50 (flag=3) must not be
+        detected as gaps. The gap detector should see all dates as
+        present regardless of Q50 value.
+        """
+        mock_sl.load_environment.return_value = None
+        # 5 consecutive days, rows 1 and 3 have NaN Q50
         forecast = _make_forecast_df(n_days=5, nan_rows=[1, 3])
-        assert forecast["Q50"].isna().sum() == 2
+        mock_read_api.return_value = forecast
 
-        # Act -- replicate the filter logic from fill_ml_gaps lines 221-228
-        if "Q50" in forecast.columns:
-            forecast = forecast[forecast["Q50"].notna()].copy()
+        fill_ml_gaps.fill_ml_gaps()
 
-        # Assert
-        assert len(forecast) == 3
-        assert forecast["Q50"].isna().sum() == 0
+        mock_hindcast.assert_not_called()
 
-    def test_no_q50_column_does_not_crash(self):
-        """When Q50 column is absent, the filter must be a no-op."""
-        # Arrange
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True)
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    @patch("fill_ml_gaps.get_permitted_station_codes", return_value=None)
+    @patch("fill_ml_gaps.sl")
+    def test_no_q50_column_does_not_crash(
+        self,
+        mock_sl,
+        mock_permitted,
+        mock_read_api,
+        mock_hindcast,
+        mock_write_api,
+    ):
+        """When Q50 column is absent, gap detection still works without crash."""
+        mock_sl.load_environment.return_value = None
         forecast = _make_forecast_df(n_days=3, include_q50=False)
-        original_len = len(forecast)
+        mock_read_api.return_value = forecast
 
-        # Act -- same guard as the production code
-        if "Q50" in forecast.columns:
-            forecast = forecast[forecast["Q50"].notna()].copy()
+        fill_ml_gaps.fill_ml_gaps()
 
-        # Assert
-        assert len(forecast) == original_len
+        mock_hindcast.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

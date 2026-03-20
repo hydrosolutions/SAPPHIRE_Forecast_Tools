@@ -215,8 +215,9 @@ def fill_ml_gaps():
 
     # CSV fallback — triggers if API returned empty for all codes
     if forecast.empty:
-        logger.warning(
-            "fill_ml_gaps: API returned no %s %s forecasts — falling back to CSV",
+        logger.error(
+            "fill_ml_gaps: API returned no %s %s forecasts — falling back to CSV. "
+            "Gap detection may be unreliable without complete API data.",
             MODEL_TO_USE,
             prefix,
         )
@@ -244,17 +245,6 @@ def fill_ml_gaps():
             prefix,
         )
         return
-
-    # Treat null-discharge rows as missing — they are phantom records
-    # that should not count as valid forecasts for gap detection.
-    if "Q50" in forecast.columns:
-        n_nulls = forecast["Q50"].isna().sum()
-        if n_nulls > 0:
-            logger.info(
-                "fill_ml_gaps: Excluding %d null-discharge rows from gap detection",
-                n_nulls,
-            )
-            forecast = forecast[forecast["Q50"].notna()].copy()
 
     missing_forecasts_dict = {}
     min_missing_date = None

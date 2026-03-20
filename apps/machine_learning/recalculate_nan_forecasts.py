@@ -250,7 +250,7 @@ def recalculate_nan_forecasts():
     min_missing_dates = []
     max_missing_dates = []
 
-    forecast["flag"] = forecast["flag"].astype(int, errors="ignore")
+    forecast["flag"] = pd.to_numeric(forecast["flag"], errors="coerce")
     try:
         # First attempt with default parsing
         forecast["date"] = pd.to_datetime(forecast["date"])
@@ -331,10 +331,21 @@ def recalculate_nan_forecasts():
     # --------------------------------------------------------------------
     # UPDATE THE FORECAST
     # Only replace the values with flag == 1
-    hindcast["flag"] = hindcast["flag"].astype(int)
+    hindcast["flag"] = pd.to_numeric(hindcast["flag"], errors="coerce")
+    n_nan_flags = hindcast["flag"].isna().sum()
+    if n_nan_flags > 0:
+        logger.warning(
+            "recalculate_nan_forecasts: %d hindcast rows have missing flag "
+            "— assigning flag=3 (permanent failure)",
+            n_nan_flags,
+        )
+        hindcast.loc[hindcast["flag"].isna(), "flag"] = 3
     hindcast["date"] = pd.to_datetime(hindcast["date"])
     hindcast["forecast_date"] = pd.to_datetime(hindcast["forecast_date"])
     hindcast["code"] = hindcast["code"].astype(str)
+    # Normalize forecast codes to str so per-code filters match hindcast codes
+    forecast["code"] = forecast["code"].astype(str)
+    codes_with_nan = [str(c) for c in codes_with_nan]
 
     def update_forecast(forecast_code, hindcast_code):
         value_cols = [col for col in forecast_code.columns if "Q" in col]
@@ -344,6 +355,9 @@ def recalculate_nan_forecasts():
         forecast_dates_flag1 = forecast_code[forecast_code["flag"].isin([1, 2])][
             "forecast_date"
         ].unique()
+
+        # Track which rows originally had flag in [1, 2]
+        original_flag12_mask = forecast_code["flag"].isin([1, 2])
 
         for forecast_date in forecast_dates_flag1:
             fc_mask = forecast_code["forecast_date"] == forecast_date
@@ -374,15 +388,22 @@ def recalculate_nan_forecasts():
                 "flag",
             ] = merged.loc[valid_flag, flag_col].values
 
-        return forecast_code
+        # Rows that were flag=1/2 and got updated (flag changed)
+        changed_mask = original_flag12_mask & ~forecast_code["flag"].isin([1, 2])
+        applied_rows = forecast_code.loc[changed_mask]
 
-    # Main loop
+        return forecast_code, applied_rows
+
+    # Main loop — collect rows that were actually applied
+    replaced_rows = []
     for code in codes_with_nan:
         forecast_code = forecast[forecast["code"] == code].copy()
         hindcast_code = hindcast[hindcast["code"] == code].copy()
         try:
-            updated = update_forecast(forecast_code, hindcast_code)
+            updated, applied = update_forecast(forecast_code, hindcast_code)
             forecast[forecast["code"] == code] = updated
+            if not applied.empty:
+                replaced_rows.append(applied)
         except Exception as e:
             logger.error(
                 "recalculate_nan_forecasts: update_forecast failed for "
@@ -399,16 +420,21 @@ def recalculate_nan_forecasts():
 
     # --- Write to API first (primary), then CSV (deprecated fallback) ---
     api_write_ok = False
-    if SAPPHIRE_API_AVAILABLE and len(hindcast) > 0:
+    if SAPPHIRE_API_AVAILABLE and replaced_rows:
         try:
+            api_data = pd.concat(replaced_rows, ignore_index=True)
             horizon_type = "pentad" if prefix == "pentad" else "decade"
-            api_write_ok = _write_ml_forecast_to_api(hindcast, horizon_type, MODEL_TO_USE)
+            api_write_ok = _write_ml_forecast_to_api(api_data, horizon_type, MODEL_TO_USE)
             if api_write_ok:
-                logger.info("Wrote %d recalculated forecasts to API", len(hindcast))
+                logger.info(
+                    "Wrote %d recalculated forecasts to API (out of %d hindcast rows)",
+                    len(api_data),
+                    len(hindcast),
+                )
             else:
                 logger.warning(
                     "API write returned failure for %d forecasts (model=%s)",
-                    len(hindcast),
+                    len(api_data),
                     MODEL_TO_USE,
                 )
         except Exception as e:

@@ -493,8 +493,9 @@ def main():
                     HINDCAST_MODE,
                 )
             else:
-                logger.warning(
-                    "API write returned failure for hindcast %s %s",
+                logger.error(
+                    "hindcast_ML_models: API write returned failure for %s %s "
+                    "— hindcast rows may not be visible to fill_ml_gaps on next run",
                     MODEL_TO_USE,
                     HINDCAST_MODE,
                 )
@@ -512,8 +513,10 @@ def main():
     )
 
     if not api_ok:
-        logger.warning(
-            "Hindcast data for %s/%s exists only in CSV — API write failed or unavailable",
+        logger.error(
+            "hindcast_ML_models: Hindcast data for %s/%s exists only in CSV "
+            "— API write failed or unavailable; fill_ml_gaps gap detection "
+            "may be incomplete until data is in the API",
             MODEL_TO_USE,
             HINDCAST_MODE,
         )
