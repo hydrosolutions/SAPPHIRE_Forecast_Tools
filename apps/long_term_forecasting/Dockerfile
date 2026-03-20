@@ -11,6 +11,11 @@ ENV IN_DOCKER=True
 USER root
 WORKDIR /app
 
+# fiona requires GDAL C library + C++ compiler for building from source (no aarch64 wheel)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgdal-dev g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
 COPY apps/long_term_forecasting /app/apps/long_term_forecasting
 
