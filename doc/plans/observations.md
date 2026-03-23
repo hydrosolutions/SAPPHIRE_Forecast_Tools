@@ -807,7 +807,7 @@ Both stations return only norm data (dates starting at 2000-01-01). Expected: cu
 - The SWE endpoint may only store norms, not operational observations
 
 **Assessment**: Needs investigation. Snow data may only contain norms by design, or operational snow ingestion may be broken. Check `snow_data_operational.py` and the Data Gateway response for these stations.
-**Status**: Needs investigation
+**Status**: [TRIAGED: PREPG-003] — root cause: operational 2-day window anchored to wall clock, DG lags 3-7 days. See `high_prio_gi_draft_prepg_snow_api_operational_window.md`
 
 ---
 
