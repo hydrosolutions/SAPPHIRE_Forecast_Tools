@@ -13,8 +13,9 @@ The `forecasts` table contains thousands of records with
 `forecasted_discharge IS NULL`. These originate from two sources:
 
 1. **Historical pentad/decade records (Jan-Dec 2025)**: The ML pipeline
-   wrote records even when the model failed to produce predictions
-   (Q50 = NaN).
+   wrote records when the model failed to produce predictions
+   (Q50 = NaN). Many of these carry a flag value indicating the reason
+   for failure (transient gap, code error, or permanent failure).
 2. **Recent day-level records (Feb 27-28, 2026)**: The ML pipeline ran
    but the model produced no output on those dates (all 605 records
    per model per date are null).
@@ -39,15 +40,50 @@ Null records per model at PENTAD level:
 
 ### Why This Blocks the Pipelines
 
-Both `fill_ml_gaps.py` and `gap_detector.detect_missing_ensembles()`
-check for **missing rows**, not **null-valued rows**:
+The original analysis assumed all null-discharge records were useless
+and should be deleted. That was wrong — see "Design Rationale" below.
+The actual problem is that **consumers** (gap detectors, skill metrics,
+dashboard) were not flag-aware and treated all rows identically
+regardless of discharge value or flag.
 
-- `fill_ml_gaps.py` (line 233): looks for gaps in consecutive
-  `forecast_date` — a null-discharge row still counts as "present"
-- `gap_detector.py` (line 108): checks `model_short == model` row
-  existence — doesn't filter on discharge value
+- **`gap_detector.py`** (line ~108): checked `model_short == model` row
+  existence without filtering on `forecasted_discharge.notna()` —
+  flag=3 tombstone rows would mask the fact that a date had no valid
+  forecast, causing gap detection to skip dates that genuinely needed
+  re-hindcasting.
+- **`fill_ml_gaps.py`**: similarly treated any row as "present",
+  so flag=3 rows would prevent the gap-filler from requesting a
+  hindcast for that date.
+- **Skill metrics**: including null-discharge rows in metric
+  calculations produces meaningless results.
 
-Result: null records mask real gaps, preventing automatic gap-filling.
+---
+
+## Design Rationale: The ML Flag State Machine
+
+Null-discharge records in the ML module are **intentional** and carry
+operational meaning. The flag column encodes the reason:
+
+| Flag | Q50 | Meaning | Retry? |
+|------|-----|---------|--------|
+| 0 | value | Valid operational forecast | No |
+| 1 | NaN | Operational NaN — transient data gap | Yes (`recalculate_nan`) |
+| 2 | NaN | Code error — model crashed | Yes (`recalculate_nan`) |
+| 3 | NaN | Permanent failure — no input data | **No — tombstone** |
+| 4 | value | Valid hindcast replacement | No |
+
+**Flag=3 rows are tombstones.** They were introduced by ML-008b to
+prevent the infinite hindcast loop: without a tombstone, the gap
+detector would repeatedly detect that date as missing and trigger
+another hindcast attempt, which would fail again, looping forever.
+Deleting flag=3 rows would re-introduce the ML-008b infinite loop.
+
+**Flag=1/2 rows are retry signals** for `recalculate_nan_forecasts.py`.
+They indicate transient failures that may be resolvable with a
+hindcast attempt.
+
+**Consequence for this plan**: Phase 2 must NOT be a blanket DELETE of
+all null-discharge records. It must be flag-aware.
 
 ---
 
@@ -55,37 +91,51 @@ Result: null records mask real gaps, preventing automatic gap-filling.
 
 ### Phase 1: Prevent Recurrence (Code fixes)
 
-**Goal**: Fix the write boundary and gap detectors **before** cleanup,
-so the next pipeline run cannot re-introduce null records.
+**Goal**: Fix write boundaries and gap detectors **before** cleanup,
+so the next pipeline run cannot re-introduce the problem.
 
-#### 1a. Filter nulls at write boundary
+#### 1a. Remove dead code `_write_ml_daily_forecast_to_api`
 
-Two locations need a null-discharge filter:
+`_write_ml_daily_forecast_to_api()` in
+`machine_learning/scr/utils_ml_forecast.py` (around line 875) is dead
+code — it is never called anywhere in the module. All ML writes go
+through `_write_ml_forecast_to_api`. The dead function also contains
+a conceptually wrong null-discharge filter (added during an earlier
+revision of this plan) and a docstring that incorrectly claims it is
+"used by the decad pipeline."
 
-1. **ML writer** (`machine_learning/scr/utils_ml_forecast.py`):
-   `_write_ml_daily_forecast_to_api()` line ~779 — skip records where
-   Q50 is NaN instead of writing `forecasted_discharge: None`.
+**Action**: Delete `_write_ml_daily_forecast_to_api` entirely from
+`utils_ml_forecast.py`.
 
-2. **Postprocessing writer** (`postprocessing_forecasts/src/api_writer.py`):
-   `_write_combined_forecast_to_api()` line ~284 — drop rows where
-   `forecasted_discharge` is NaN before building the records list.
+**Keep the postprocessing writer filter** in
+`postprocessing_forecasts/src/api_writer.py` —
+`_write_combined_forecast_to_api()` dropping rows where
+`forecasted_discharge` is NaN before building the records list is
+correct. Combined/ensemble forecasts with null discharge carry no
+useful information (they are downstream aggregates, not raw model
+state), so filtering them at write time is appropriate and does not
+interfere with the flag state machine.
 
-#### 1b. Treat null-discharge rows as gaps in detectors
+#### 1b. Make gap detectors flag-aware
 
-Even with write-side filters, partial failures could slip through.
-Defense-in-depth: make gap detectors treat null discharge as missing.
+The gap detector fixes ensure that flag=3 tombstone rows correctly
+satisfy "this date is covered" while still allowing `recalculate_nan`
+to retry flag=1/2 rows.
 
-1. **`fill_ml_gaps.py`** (line ~233): when checking for consecutive
-   `forecast_date`, also exclude rows where `forecasted_discharge` is
-   null (or filter them out before gap detection).
+1. **`gap_detector.py`** filter on `forecasted_discharge.notna()` —
+   **Done** ✓ (already implemented as part of ML-008b / this branch).
 
-2. **`gap_detector.py`** (line ~108): when checking row existence for
-   `model_short == model`, add a filter on
-   `forecasted_discharge.notna()`.
+2. **`fill_ml_gaps.py`** — **No longer needed.** ML-008b resolved this
+   by removing the null-Q50 exclusion filter from the gap detection
+   path. Flag=3 rows now count as "present" dates in `fill_ml_gaps.py`,
+   which is correct — they should NOT trigger re-hindcasting because
+   the failure was permanent (no input data available for that date).
 
-### Phase 2: Backup and Delete Null-Discharge Records (DB cleanup)
+### Phase 2: Flag-Aware DB Cleanup
 
-**Goal**: Remove useless records so gap detectors see real gaps.
+**Goal**: Resolve or remove only the null-discharge records that are
+genuinely problematic, while preserving tombstones that prevent
+infinite loops.
 
 **Action**: Run SQL directly on the postprocessing database.
 
@@ -93,49 +143,82 @@ Defense-in-depth: make gap detectors treat null discharge as missing.
 docker exec sapphire-postprocessing-db psql -U postgres -d postprocessing_db
 ```
 
-```sql
--- 1. Verify counts before deletion
-SELECT
-    horizon_type,
-    COUNT(*) AS total,
-    COUNT(*) FILTER (WHERE forecasted_discharge IS NULL) AS null_count
-FROM forecasts
-GROUP BY horizon_type
-ORDER BY horizon_type;
+**Step 1 — Understand the flag distribution of null records:**
 
--- 2. Backup null records before deletion
+```sql
+SELECT flag, horizon_type, COUNT(*)
+FROM forecasts
+WHERE forecasted_discharge IS NULL
+GROUP BY flag, horizon_type
+ORDER BY flag, horizon_type;
+```
+
+**Step 2 — Decide per flag value:**
+
+- **Flag=3 (tombstone)**: Keep as-is. These are permanent-failure
+  markers that prevent infinite hindcast loops. Do NOT delete.
+- **Flag=4 (valid hindcast)**: These should have a discharge value.
+  Investigate any flag=4 null rows individually — they indicate a write
+  bug. Count:
+  ```sql
+  SELECT COUNT(*) FROM forecasts
+  WHERE forecasted_discharge IS NULL AND flag = 4;
+  ```
+- **Flag=1/2 (retry signals)**: These should be resolved by running
+  `recalculate_nan_forecasts.py` (Phase 4). Do NOT delete — let the
+  recalculate script attempt hindcasts and either fill them (flag → 4)
+  or mark them permanent (flag → 3). Rows older than 30 days that
+  persist as flag=1/2 indicate `recalculate_nan` never ran or
+  failed silently.
+- **Flag=NULL (if any)**: Records written before the flag column
+  existed. Investigate individually before deciding whether to keep
+  or delete.
+
+**Step 3 — Backup all null records before any action:**
+
+```sql
 COPY (SELECT * FROM forecasts WHERE forecasted_discharge IS NULL)
 TO '/tmp/null_forecasts_backup.csv' CSV HEADER;
+```
 
--- 3. Delete null-discharge records (all horizons)
+**Step 4 — Remove only flag=NULL records that predate the flag
+column** (if confirmed safe after investigation):
+
+```sql
 BEGIN;
 
-DELETE FROM forecasts WHERE forecasted_discharge IS NULL;
+-- Only delete records with no flag and no discharge
+-- (pre-flag-column era, truly useless records)
+DELETE FROM forecasts
+WHERE forecasted_discharge IS NULL AND flag IS NULL;
 
--- 4. Verify counts after deletion
-SELECT
-    horizon_type,
-    COUNT(*) AS total,
-    COUNT(*) FILTER (WHERE forecasted_discharge IS NULL) AS null_count
+-- Verify tombstones are intact
+SELECT flag, horizon_type, COUNT(*)
 FROM forecasts
-GROUP BY horizon_type
-ORDER BY horizon_type;
+WHERE forecasted_discharge IS NULL
+GROUP BY flag, horizon_type
+ORDER BY flag, horizon_type;
+-- Expected: only flag=3 rows remain (tombstones)
 
--- If counts look correct:
+-- If correct:
 COMMIT;
 -- Otherwise: ROLLBACK;
 ```
 
-**Expected result**: ~11,690 records deleted across all horizons.
-
-**Risk**: Low. The deleted records contain no forecast information
-(discharge = NULL). Valid records are untouched. Backup CSV preserved
-in container at `/tmp/null_forecasts_backup.csv`.
+**Expected result**: Flag=3 null rows remain (correct). Flag=1/2 rows
+remain until Phase 4 resolves them. Only genuinely useless rows (no
+flag, no discharge) are removed.
 
 ### Phase 3: Re-run ML Gap-Fill
 
-**Goal**: Fill day-level gaps via hindcast. After Phase 2, the ML gap
-detector will see missing forecast dates.
+**Goal**: Fill genuinely missing dates via hindcast. After Phase 2,
+the ML gap detector will see dates with no record at all (not even a
+tombstone).
+
+**Note**: With the ML-008b fix in place, `fill_ml_gaps.py` will now
+correctly skip flag=3 dates (tombstones count as "present"). Only
+dates with no record at all will be hindcast-attempted. This means
+the gap-filler will not loop on permanent-failure dates.
 
 **Action**: For each model and horizon, run gap-fill:
 
@@ -182,8 +265,10 @@ after Phase 3 completes.
 
 ### Phase 4: Re-run ML NaN Recalculation
 
-**Goal**: Replace any remaining flag=1/2 (NaN marker) records with
-valid hindcast values.
+**Goal**: Replace flag=1/2 (transient-failure) records with valid
+hindcast values. This is the correct resolution path for retry-signal
+rows — do not delete them, let `recalculate_nan_forecasts` either
+fill them (flag → 4) or permanently mark them (flag → 3).
 
 ```bash
 SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD \
@@ -204,6 +289,18 @@ SAPPHIRE_MODEL_TO_USE=TIDE SAPPHIRE_PREDICTION_MODE=DECAD \
 
 SAPPHIRE_MODEL_TO_USE=TSMIXER SAPPHIRE_PREDICTION_MODE=DECAD \
     python recalculate_nan_forecasts.py
+```
+
+After this phase completes, all flag=1/2 rows should be resolved.
+Any that remain as null-discharge should now be flag=3 (permanent
+failure confirmed by the recalculate script). Verify:
+
+```sql
+SELECT flag, horizon_type, COUNT(*)
+FROM forecasts
+WHERE forecasted_discharge IS NULL AND flag IN (1, 2)
+GROUP BY flag, horizon_type;
+-- Expected: 0 rows
 ```
 
 ### Phase 5: Re-run Postprocessing Maintenance
@@ -267,20 +364,34 @@ for every (period, code, model) combination.
 
 ## Verification
 
-After all phases complete:
+After all phases complete, the expected state is:
+
+- Flag=3 null-discharge rows remain (tombstones — this is correct)
+- No flag=1/2 null-discharge rows (all resolved by Phase 4)
+- No flag=NULL null-discharge rows (removed in Phase 2 or confirmed safe)
 
 ```sql
--- No null discharge records should remain
-SELECT horizon_type, COUNT(*)
+-- Flag=3 null-discharge rows are expected (permanent failures / tombstones)
+-- Flag=1/2 null-discharge rows should be 0 after recalculate_nan runs
+SELECT flag, horizon_type, COUNT(*)
 FROM forecasts
-WHERE forecasted_discharge IS NULL
-GROUP BY horizon_type;
--- Expected: 0 rows
+WHERE forecasted_discharge IS NULL AND flag NOT IN (3)
+GROUP BY flag, horizon_type;
+-- Expected: 0 rows (all remaining nulls should be flag=3 tombstones)
+
+-- Verify tombstones are present and accounted for
+SELECT flag, horizon_type, COUNT(*)
+FROM forecasts
+WHERE forecasted_discharge IS NULL AND flag = 3
+GROUP BY flag, horizon_type
+ORDER BY horizon_type;
+-- These rows are correct — do not treat as a problem
 
 -- Check coverage for station 15102
 SELECT
     model_type,
     COUNT(*) as total,
+    COUNT(*) FILTER (WHERE forecasted_discharge IS NOT NULL) AS valid,
     MIN(date) as min_date,
     MAX(date) as max_date
 FROM forecasts
@@ -302,10 +413,10 @@ Dashboard check:
 ## Execution Order
 
 ```
-Phase 1 (Code fixes - prevent recurrence)
+Phase 1 (Code fixes - dead code removal, gap detector fixes)
     |
     v
-Phase 2 (DB cleanup - backup + delete nulls)
+Phase 2 (DB cleanup - flag-aware, backup + selective removal)
     |
     v
 Phase 3 (ML gap-fill) ---> Phase 4 (ML NaN recalc)
@@ -320,3 +431,9 @@ Phase 6 (Skill metrics - all years: 2025, 2026)
 Phase 1 must be done first to prevent re-introducing nulls.
 Phases 3+4 must complete before Phase 5 (postprocessing needs the
 filled ML forecasts).
+
+---
+
+*Revised 2026-03-23: Null-discharge ML records are intentional (flag
+state machine). Removed ML write-boundary filter — would break ML-008b
+infinite loop prevention. Reframed Phase 2 as flag-aware cleanup.*

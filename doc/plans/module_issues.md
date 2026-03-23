@@ -41,16 +41,16 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
 | **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Review | [`high_prio_gi_draft_ml_api_primary_reads.md`](issues/high_prio_gi_draft_ml_api_primary_reads.md) |
-| **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`high_prio_gi_draft_ml_csv_schema_corruption_fix.md`](issues/high_prio_gi_draft_ml_csv_schema_corruption_fix.md) |
-| **ML-010** | Read old_forecast from API with CSV fallback in make_forecast.py | ml | **High** | Review | [`high_prio_gi_draft_ml_api_read_old_forecasts.md`](issues/high_prio_gi_draft_ml_api_read_old_forecasts.md) |
+| **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`review_gi_draft_ml_csv_schema_corruption_fix.md`](issues/review_gi_draft_ml_csv_schema_corruption_fix.md) |
+| **ML-010** | Read old_forecast from API with CSV fallback in make_forecast.py | ml | **High** | Review | [`review_gi_draft_ml_api_read_old_forecasts.md`](issues/review_gi_draft_ml_api_read_old_forecasts.md) |
 | **ML-004** | Hindcast gap-fill never persists to API — silent write failure (3 bugs) | ml | **Critical** | Review | [`review_gi_draft_ml_hindcast_api_write_broken.md`](issues/review_gi_draft_ml_hindcast_api_write_broken.md) |
 | **ML-005** | ML consistency check reads forecasts without station code filter | ml | **Medium** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) (Phase 4) |
-| **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Review | [`high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md) |
+| **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Review | [`review_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/review_gi_draft_ml_nan_recalc_shape_mismatch.md) |
 | **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Review | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Option 1 (ORDER BY): colleague; Option 2 (per-code reads): done |
-| **ML-008b** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Draft | [`high_prio_gi_draft_ml_fill_gaps_null_loop.md`](issues/high_prio_gi_draft_ml_fill_gaps_null_loop.md) | — |
+| **ML-008b** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Review | [`review_gi_draft_ml_fill_gaps_null_loop.md`](issues/review_gi_draft_ml_fill_gaps_null_loop.md) | — |
 | ~~**ML-011**~~ | ~~flag=2 semantic collision in make_forecast.py~~ | ~~ml~~ | | Deleted | — | Deleted 2026-03-20: no behavioral impact |
-| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | Draft | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
-| **ML-013** | recalculate_nan_forecasts API write overwrites valid operational rows | ml | **High** | Draft | [`high_prio_gi_draft_ml_recalc_api_overwrite.md`](issues/high_prio_gi_draft_ml_recalc_api_overwrite.md) | ML-012 |
+| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | In Progress | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
+| **ML-013** | recalculate_nan_forecasts API write overwrites valid operational rows | ml | **High** | Review | [`review_gi_draft_ml_recalc_api_overwrite.md`](issues/review_gi_draft_ml_recalc_api_overwrite.md) | ML-012 |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
@@ -77,7 +77,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-001** | Create Makefile and local dev infrastructure | infra | **High** | Draft | [`high_prio_gi_draft_infra_makefile_local_dev.md`](issues/high_prio_gi_draft_infra_makefile_local_dev.md) | — |
 | **INFRA-002** | Update uv.lock files for all py312 modules (security) | infra | **Medium** | Open | See `security_updates.md` + `docker_health_score_improvement.md` | — |
 | **INFRA-003** | Add pytest-cov with threshold enforcement to CI | infra | **Medium** | Open | — (from `architecture_review_claude.md` gap #10) | — |
-| **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | Draft | [`high_prio_gi_draft_infra_forecast_date_rule.md`](issues/high_prio_gi_draft_infra_forecast_date_rule.md) | — |
+| **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | In Progress | [`high_prio_gi_draft_infra_forecast_date_rule.md`](issues/high_prio_gi_draft_infra_forecast_date_rule.md) | — |
 | **INFRA-005** | Remove `model_long` from app pipeline (incremental) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_model_registry.md`](issues/mid_prio_gi_draft_infra_model_registry.md) | — |
 | **INFRA-007** | Fix ML forecast API reader & align write/read architecture | infra | **High** | Review | [`review_gi_draft_fix_ml_forecast_api_reader.md`](issues/review_gi_draft_fix_ml_forecast_api_reader.md) | Phase 3 cleanup pending production deployment |
 | **INFRA-008** | CPU-only PyTorch + Dockerize long_term_forecasting | infra | **High** | Review | [`dockerization_ltf_and_optimization_dockerization.md`](dockerization_ltf_and_optimization_dockerization.md) | — |
@@ -120,6 +120,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LTF-001** | `--today` flag in `run_forecast.py` runs zero models | **Medium** | Review | [`review_gi_draft_lt_today_flag_runs_no_models.md`](issues/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Review | [`review_gi_draft_ltf_sql_org_scoping.md`](issues/review_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
+| **LTF-003** | run_forecast.py sets flag=0 on null forecasts — marks failures as valid (Assigned: @sandrohuni) | **High** | Draft | [`high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -148,7 +149,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-023** | Period-aware aggregation of ML daily targets (fix contamination from adjacent periods) | **Critical** | Review | [`review_gi_draft_pp_period_aware_aggregation.md`](issues/review_gi_draft_pp_period_aware_aggregation.md) | — |
 | **PP-024** | Write maintenance gap-fill records directly to API (DB retains gaps after maintenance) | **High** | Review | [`review_gi_draft_pp_maintenance_api_write.md`](issues/review_gi_draft_pp_maintenance_api_write.md) | Absorbed into PP-022 |
 | **PP-025** | Org-scoped data readers (add codes filtering to all read functions) | **High** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) | INFRA-009 (complete) |
-| **PP-026** | Clean null-discharge phantom forecasts from DB and prevent new ones | **High** | In Progress | [`high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
+| **PP-026** | Make consumers flag-aware for null-discharge ML forecasts; clean stale flag=1/2 records | **High** | In Progress | [`high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
+| **PP-027** | Add per-station observability when EM ensemble is skipped | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_silent_skip_observability.md`](issues/mid_prio_gi_draft_pp_em_silent_skip_observability.md) | — |
+| **PP-028** | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics | **Medium** | Draft | [`mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -298,4 +301,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-20 (ML-011 deleted — no behavioral impact; ML-012/013 added to index; ML-006 status→Review; ML-008b renumbered from ML-011)*
+*Last updated: 2026-03-23 (ML-008b/013 Draft→Review; ML-012 Draft→In Progress; INFRA-004 Draft→In Progress; ML-006/009/010 file links updated to review_*; LTF-003 assigned to @sandrohuni)*

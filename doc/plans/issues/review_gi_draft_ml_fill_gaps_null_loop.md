@@ -1,6 +1,6 @@
 # ML-008: `fill_ml_gaps.py` triggers infinite hindcast loop on flag=3 rows
 
-**Status**: Draft
+**Status**: Review
 **Module**: `machine_learning`
 **Priority**: High
 **Labels**: `bug`, `infinite-loop`, `operational-pipeline`, `data-integrity`
