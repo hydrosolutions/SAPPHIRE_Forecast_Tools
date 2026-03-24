@@ -1,6 +1,6 @@
 # Clean Null-Discharge Forecast Records and Re-Fill Gaps
 
-**Status**: In Progress
+**Status**: Complete (Phase 1 code fixes done; Phase 2 DB cleanup skipped — all consumers now filter null-discharge rows, tombstones needed for ML-008b; Phases 3-6 are routine operational tasks, not code issues)
 **Modules**: `postprocessing_forecasts`, `machine_learning`
 **Impact**: All ML models (TFT, TiDE, TSMixer), ensembles (EM, NE),
 skill metrics for all stations

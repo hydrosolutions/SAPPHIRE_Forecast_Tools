@@ -2,7 +2,7 @@
 
 **Priority**: Medium
 **Module**: postprocessing\_forecasts (`pp`)
-**Status**: Draft — investigation complete, pending verification steps
+**Status**: Verified — all bugs closed (not-a-bug or upstream data gap). Only remaining action: add n\_pairs=0 WARNING log.
 **Branch**: TBD
 
 ## Problem
@@ -255,9 +255,10 @@ for r in data[:3]:
 
 | Bug | Root Cause | Status |
 |-----|-----------|--------|
-| Bug 1 (model=None) | Almost certainly a misread of API response (`model` vs `model_type`). Writer and `MODEL_TYPE_MAP` (17/17 enum values covered) are correct. | **Needs API query verification (Step 1)** |
+| Bug 1 (model=None) | **NOT A BUG.** API response uses `model_type` (not `model`). Verified 2026-03-24: all skill metric records have correct `model_type` values (EM, LR, NE, TFT, TSMixer, TiDE for pentad/decad; MC\_ALD, GBT, LR\_SM, etc. for monthly). Original report misread a non-existent `model` key. | **Closed** |
 | Bug 2 (rmse=None) | Never implemented. No column in DB, no field in schema, no computation. **Cross-boundary fix — split to separate issue.** | **Confirmed gap — out of scope for this issue** |
-| Bug 3 (n\_pairs=0) | Recalculation logic correct. Likely data availability (no decad/monthly forecasts) or `valid_from` date semantics for monthly. | **Needs API query verification (Steps 2-4)** |
+| Bug 3 decad (n\_pairs=0) | **NOT A BUG.** Verified 2026-03-24: decad skill metrics are fully populated. Station 15189: 6 models × 18 horizons, n\_pairs=14-16. Station 16059: n\_pairs=10-15. The original report was taken before a recalculation run populated these records. | **Closed** |
+| Bug 3 monthly (n\_pairs=0) | **DATA GAP, not a code bug.** Verified 2026-03-24: MC\_ALD is the only model with data (n\_pairs=168-218 per month, both stations). All other models (GBT, LR\_Base, LR\_SM, LR\_SM\_DT, LR\_SM\_ROF, SM\_GBT, SM\_GBT\_LR, SM\_GBT\_Norm) have n\_pairs=0 because they never produced forecasts (known "6/8 model outputs null" upstream issue). `valid_from` semantics are correct (target month start). Monthly preprocessing observations are empty but irrelevant — monthly skill uses long-forecast data directly. | **Closed — upstream data gap** |
 
 ## Proposed Changes
 
