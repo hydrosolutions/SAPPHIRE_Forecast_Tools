@@ -1,6 +1,6 @@
 # INFRA-014: Extend validate_pipeline.py with JSON output, baseline/delta, and new checks
 
-**Status**: Draft
+**Status**: Review
 **Module**: `infra` (cross-module)
 **Priority**: Medium
 **Labels**: `enhancement`, `testing`, `observability`, `developer-experience`
@@ -32,11 +32,11 @@ Extend `CheckResult` dataclass with `max_date` and `counts` fields. Add `results
 
 **Steps:**
 
-- [ ] **1a.** Add `max_date: str | None = None` and `counts: dict = field(default_factory=dict)` to `CheckResult` dataclass
-- [ ] **1b.** Implement `results_to_json(results: list[CheckResult]) -> dict` — serialises all fields to a JSON-compatible dict
-- [ ] **1c.** Add `--output-json <path>` CLI flag; when supplied, write the JSON dict to the given path after all checks complete
-- [ ] **1d.** Ensure all existing checks populate `max_date` and `counts` where the data is already available; leave as `None`/`{}` where it is not
-- [ ] **1e.** Write `TestJsonOutput` (5 tests):
+- [x] **1a.** Add `max_date: str | None = None` and `counts: dict = field(default_factory=dict)` to `CheckResult` dataclass
+- [x] **1b.** Implement `results_to_json(results: list[CheckResult]) -> dict` — serialises all fields to a JSON-compatible dict
+- [x] **1c.** Add `--output-json <path>` CLI flag; when supplied, write the JSON dict to the given path after all checks complete
+- [x] **1d.** Ensure all existing checks populate `max_date` and `counts` where the data is already available; leave as `None`/`{}` where it is not
+- [x] **1e.** Write `TestJsonOutput` (5 tests):
   - JSON is valid and parseable
   - All check names appear as keys
   - `status` field is one of `PASS`, `WARN`, `FAIL`, `SKIP`
@@ -57,12 +57,12 @@ Add `--phase pre|post` and `--baseline <path>` CLI flags. Pre mode saves baselin
 
 **Steps:**
 
-- [ ] **2a.** Add `--phase {pre,post}` flag; default behaviour (no flag) is unchanged
-- [ ] **2b.** Add `--baseline <path>` flag
-- [ ] **2c.** `--phase pre`: run all checks, write JSON to `--baseline` path (or a default path if omitted), exit 0
-- [ ] **2d.** `--phase post`: run all checks, load baseline JSON, compute per-check count deltas
-- [ ] **2e.** Delta report: for each check where a numeric count decreased vs baseline, emit a `WARN` line; increases and unchanged counts are informational only
-- [ ] **2f.** Write `TestPhaseMode` (8 tests):
+- [x] **2a.** Add `--phase {pre,post}` flag; default behaviour (no flag) is unchanged
+- [x] **2b.** Add `--baseline <path>` flag
+- [x] **2c.** `--phase pre`: run all checks, write JSON to `--baseline` path (or a default path if omitted), exit 0
+- [x] **2d.** `--phase post`: run all checks, load baseline JSON, compute per-check count deltas
+- [x] **2e.** Delta report: for each check where a numeric count decreased vs baseline, emit a `WARN` line; increases and unchanged counts are informational only
+- [x] **2f.** Write `TestPhaseMode` (8 tests):
   - Pre mode writes a file at the baseline path
   - Post mode loads the file and computes deltas
   - Count decrease → `WARN` in output
@@ -106,13 +106,13 @@ Extend the existing short-term quantile ordering, discharge non-negative, and sk
 
 **Steps:**
 
-- [ ] **3a.** Implement `check_ml_flag_distribution()` with stuck-flag `WARN`
-- [ ] **3b.** Implement `check_snow_norm_dates()` with year-2000-only `WARN`
-- [ ] **3c.** Implement `check_em_ne_parity()` with horizon-level count comparison
-- [ ] **3d.** Implement `check_data_freshness()` with configurable threshold
-- [ ] **3e.** Implement `run_tier2_long_term()` extending existing tier-2 logic
-- [ ] **3f.** Register all five checks in the main check runner
-- [ ] **3g.** Write `TestNewChecks` (15 tests — 3 per check):
+- [x] **3a.** Implement `check_ml_flag_distribution()` with stuck-flag `WARN`
+- [x] **3b.** Implement `check_snow_norm_dates()` with year-2000-only `WARN`
+- [x] **3c.** Implement `check_em_ne_parity()` with horizon-level count comparison
+- [x] **3d.** Implement `check_data_freshness()` with configurable threshold
+- [x] **3e.** Implement `run_tier2_long_term()` extending existing tier-2 logic
+- [x] **3f.** Register all five checks in the main check runner
+- [x] **3g.** Write `TestNewChecks` (15 tests — 3 per check):
   - Each check returns `SKIP` when no data
   - Each check returns `PASS` on healthy data
   - Each check returns `WARN` on the trigger condition
@@ -131,10 +131,10 @@ Update `doc/dev/review_checklist_local_template.md` to reference `validate_pipel
 
 **Steps:**
 
-- [ ] **4a.** Add a pre-run section: `bash apps/run_locally.sh validate --phase pre --baseline /tmp/baseline.json`
-- [ ] **4b.** Add a post-run section: `bash apps/run_locally.sh validate --phase post --baseline /tmp/baseline.json`
-- [ ] **4c.** Replace manual curl-based count checks with references to the automated JSON output
-- [ ] **4d.** Add snow current-year and ML flag distribution to the automated check reference table
+- [x] **4a.** Add a pre-run section: `bash apps/run_locally.sh validate --phase pre --baseline /tmp/baseline.json`
+- [x] **4b.** Add a post-run section: `bash apps/run_locally.sh validate --phase post --baseline /tmp/baseline.json`
+- [x] **4c.** Replace manual curl-based count checks with references to the automated JSON output
+- [x] **4d.** Add snow current-year and ML flag distribution to the automated check reference table
 
 **Dependencies**: Phases 1, 2, 3
 
@@ -154,18 +154,18 @@ All changes are additive:
 
 ## Acceptance Criteria
 
-- [ ] `--output-json` produces valid, parseable JSON with all check results
-- [ ] `--phase pre` saves baseline; `--phase post` loads and reports deltas
-- [ ] Count decrease in delta mode triggers `WARN` (not silent)
-- [ ] ML flag distribution reported in JSON `counts` field
-- [ ] Snow norm-vs-operational detection warns when only year-2000 dates are present
-- [ ] EM/NE parity mismatch triggers `WARN`
-- [ ] Data freshness `WARN` when `max_date` is more than 3 days stale
-- [ ] Long-term quantile ordering checked (not just short-term)
-- [ ] All existing tests pass unchanged
-- [ ] 28 new tests pass (5 + 8 + 15)
-- [ ] Template updated with automated check references
-- [ ] No changes to `sapphire/services/`
+- [x] `--output-json` produces valid, parseable JSON with all check results
+- [x] `--phase pre` saves baseline; `--phase post` loads and reports deltas
+- [x] Count decrease in delta mode triggers `WARN` (not silent)
+- [x] ML flag distribution reported in JSON `counts` field
+- [x] Snow norm-vs-operational detection warns when only year-2000 dates are present
+- [x] EM/NE parity mismatch triggers `WARN`
+- [x] Data freshness `WARN` when `max_date` is more than 3 days stale
+- [x] Long-term quantile ordering checked (not just short-term)
+- [x] All existing tests pass unchanged
+- [x] 28 new tests pass (5 + 8 + 15)
+- [x] Template updated with automated check references
+- [x] No changes to `sapphire/services/`
 
 ---
 

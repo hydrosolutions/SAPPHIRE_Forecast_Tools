@@ -95,6 +95,32 @@ cd sapphire && docker-compose ps
 All containers (`preprocessing-api`, `postprocessing-api`, `api-gateway`, etc.)
 should show `Up`.
 
+### 0.4 Automated pre-run validation (baseline snapshot)
+
+Run `validate_pipeline.py` in pre-run mode to snapshot current record counts.
+This replaces the manual baseline counting in Sections 1.1–1.4 for automated
+checks (ML flag distribution, snow dates, EM/NE parity, data freshness).
+
+```bash
+ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  bash apps/run_locally.sh validate --phase pre --baseline /tmp/vp_baseline.json
+```
+
+<!-- RESULT: (paste last line: "VALIDATION SUMMARY: N passed, 0 failed, ...") -->
+
+The baseline JSON is written to `/tmp/vp_baseline.json`. The automated checks
+cover the following and produce JSON output in `counts` and `max_date` fields:
+
+| Automated check | Replaces / supplements |
+|----------------|------------------------|
+| ML flag distribution | Section 4.1 manual `flag_dist=` inspection |
+| Snow operational values | Section 1.3 year-2000 date note |
+| EM/NE parity (pentad/decade) | Section 4.3 manual count comparison |
+| Data freshness (`max_date`) | Sections 1.1–1.4 `max_date=` recording |
+
+Manual sections 1.1–1.4 remain useful for per-station spot-checks and
+discharge value inspection; the automated checks provide a quick pass/fail.
+
 ---
 
 ## 1. Before Run: Baseline Snapshot
@@ -219,10 +245,18 @@ can confirm new records appear after the run.
   ```
   <!-- RESULT: count=  dates=  values= -->
 
-**Note**: SWE records use year-2000 dates as a day-of-year index for
-climatological norms. This is expected.
+**Note**: Historical SWE norm records use year-2000 dates as a day-of-year
+index. Operational SWE records written by `preprocessing_gateway` should have
+current-year dates. If **all** snow dates are year-2000, the operational
+update window was likely missed (see PREPG-003). The automated
+`check_snow_operational_values` check in Section 0.4 detects this condition
+and emits WARN when only year-2000 dates are present.
 
 ### 1.4 Postprocessing — Short-term baseline counts
+
+**Automated alternative available**: Section 0.4 (`--phase pre`) records
+baseline counts for all check targets automatically. The manual queries below
+remain useful for per-station and per-model inspection.
 
 Record counts here; compare after run to confirm new records were written.
 
@@ -270,6 +304,12 @@ Record counts here; compare after run to confirm new records were written.
 
 ### 2.1 Verify: Data freshness — new runoff record for today
 
+**Automated alternative available**: The `check_data_freshness` check (Section
+0.4) compares `max_date` for each dataset against `forecast_date` and emits
+WARN for any dataset more than 3 days stale (configurable via
+`FRESHNESS_THRESHOLD_DAYS`). The manual queries below provide per-station
+discharge values and flag details not captured by the automated check.
+
 - [ ] $S1 — today's discharge record:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
@@ -315,6 +355,11 @@ issue, not a code bug.
 - HTTP 4xx/5xx from the API endpoint — service is down or endpoint changed.
 
 ### 2.2 Verify: New meteo data for today
+
+**Automated alternative available**: `check_data_freshness` (Section 0.4)
+covers meteo `max_date` freshness automatically. The manual queries below
+give actual temperature and precipitation values for sanity-range checking
+(-30 to +40 °C, ≥ 0 mm).
 
 - [ ] $S1 temperature today (date + value):
   ```bash
@@ -506,6 +551,11 @@ Note the 30-day start date (TODAY minus 30 days) and set it manually below.
   to `/forecast/` with `horizon=pentad` or `horizon=decade`.
 
 ### 4.1 Verify: ML daily forecasts written
+
+**Automated alternative available**: `check_ml_flag_distribution` (Section
+0.4) detects stuck-flag conditions (all records with the same flag value) and
+populates `counts` in the JSON output. The manual queries below show per-model,
+per-station breakdowns and exact forecast values.
 
 - [ ] All models, $S1 — today's forecasts (issue_date=$TODAY):
   ```bash
@@ -973,6 +1023,41 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   "
   ```
   <!-- RESULT: count=  n_pairs=  nse=  mae= -->
+
+---
+
+## 6a. Automated Post-Run Validation (delta report)
+
+Run `validate_pipeline.py` in post-run mode to compare current record counts
+against the pre-run baseline and report any decreases (WARN) or increases
+(INFO). This catches silent regressions that manual spot-checks might miss.
+
+```bash
+ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  bash apps/run_locally.sh validate --phase post --baseline /tmp/vp_baseline.json
+```
+
+<!-- RESULT: (paste VALIDATION SUMMARY and any DELTA WARN lines) -->
+
+**What to look for**:
+- `DELTA WARN` lines indicate record counts decreased — investigate before
+  signing off.
+- `DELTA INFO` lines indicate counts increased — expected for new pipeline
+  runs that add data.
+- No delta lines means nothing changed (expected if run did not write new data,
+  e.g. non-forecast day).
+
+To also save the full JSON output for archival:
+
+```bash
+ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  bash apps/run_locally.sh validate \
+    --phase post \
+    --baseline /tmp/vp_baseline.json \
+    --output-json /tmp/vp_$(date +%F).json
+```
+
+<!-- RESULT: JSON file written to /tmp/vp_YYYY-MM-DD.json -->
 
 ---
 
