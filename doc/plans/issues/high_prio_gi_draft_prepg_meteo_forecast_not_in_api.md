@@ -1,6 +1,6 @@
 # PREPG-005: Meteo API write discards all forecast rows — only observations reach the database
 
-**Status**: Draft
+**Status**: Review
 **Module**: `preprocessing_gateway`
 **Priority**: High
 **Labels**: `bug`, `data-integrity`, `api-migration`, `meteo-data`
@@ -27,7 +27,7 @@ DG get_control_spinup_and_forecast()
   → API: _write_meteo_to_api() filters [yesterday, today]  ← forecast dropped ✗
 ```
 
-The upper bound `data["date"] <= today` on line 309 of `_write_meteo_to_api()` removes all forecast rows (future dates).
+The upper bound `data["date"] <= today` on line 309 of `_write_meteo_to_api()` removes all forecast rows (future dates). The same bug exists on line 320 (the fallback for unknown sync modes).
 
 ### Intended behavior
 
@@ -43,6 +43,18 @@ All freshly-fetched data (reanalysis + forecast) should be written to the API. T
 | Forecast rows written to API? | No (window misses them) | No (upper bound excludes them) |
 | Fix pattern | Drop upper bound: `date >= yesterday` (one-sided) | Same — drop `<= today` upper bound |
 
+### Execution-order dependency: QM → ERA5 extension
+
+Both `Quantile_Mapping_OP.py` and `extend_era5_reanalysis.py` write to the same `(meteo_type, code, date)` keys using the same HRU codes. The pipeline runs them in order (`run_locally.sh:490`):
+
+```
+Quantile_Mapping_OP.py  →  extend_era5_reanalysis.py  →  snow_data_operational.py
+```
+
+QM writes forecast rows with `norm=None` (it has no climatological data). ERA5 extension then writes dashboard data for the full current year (Jan 1 – Dec 31) with both `value` and `norm`. Because ERA5 extension runs second, it overwrites QM's `norm=None` with actual norm values for all dates it covers — including the forecast dates.
+
+**If ERA5 extension fails or is skipped**, forecast-dated rows remain in the DB with `norm=None`. This affects the dashboard (no climatological reference line for those dates) but does **not** affect downstream forecast consumers (`machine_learning`, `long_term_forecasting`), which only read `value`. This is an acceptable degradation — the forecast data is still available.
+
 ---
 
 ## Problem Statement
@@ -55,6 +67,14 @@ In `Quantile_Mapping_OP.py`, `_write_meteo_to_api()` lines 306-309:
 today = pd.Timestamp.today().normalize()
 yesterday = today - pd.Timedelta(days=1)
 if sync_mode == "operational":
+    data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
+```
+
+The same two-sided filter appears in the fallback for unknown sync modes (line 320):
+
+```python
+else:
+    logger.warning("Unknown sync mode '%s', defaulting to operational", sync_mode)
     data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
 ```
 
@@ -83,15 +103,15 @@ The 50-member ECMWF ensemble forecasts are written to CSV only (`{code}_P_ensemb
 
 ## Proposed Fix
 
-### Fix 1 (Required): Remove the upper bound in operational mode
+### Fix 1 (Required): Remove the upper bound in operational mode and fallback
 
 **File**: `apps/preprocessing_gateway/Quantile_Mapping_OP.py`
-**Function**: `_write_meteo_to_api()`, line 309
+**Function**: `_write_meteo_to_api()`, lines 309 and 320
 
-The fix mirrors the proven PREPG-003 snow pattern in `dg_utils.py:write_snow_to_api()` (line 505). Change the operational filter from a two-sided window to a one-sided filter:
+The fix mirrors the proven PREPG-003 snow pattern in `dg_utils.py:write_snow_to_api()` (line 505). Change both the operational filter and the fallback from a two-sided window to a one-sided filter:
 
 ```python
-# Before (bug):
+# Before (bug — line 309):
 if sync_mode == "operational":
     data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
 
@@ -99,18 +119,34 @@ if sync_mode == "operational":
 if sync_mode == "operational":
     # Include yesterday, today, and any forecast dates beyond today
     data_to_write = data[data["date"] >= yesterday]
+
+# Before (bug — line 320, fallback):
+else:
+    data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
+
+# After (fix — same one-sided filter):
+else:
+    data_to_write = data[data["date"] >= yesterday]
 ```
 
 This drops the `<= today` upper bound so ECMWF IFS forecast rows (future dates) pass through. The DB upsert on `(meteo_type, code, date)` ensures that on subsequent runs, observation values overwrite previously-written forecast values — same proven pattern as snow.
 
 The write payload grows from ~2 rows to ~17 rows per code (yesterday + today + ~15 forecast days), which is negligible.
 
-### Fix 2 (Recommended): Update `_check_meteo_consistency()` for forecast dates
+### Fix 2 (Required): Update `_check_meteo_consistency()` for forecast dates
 
 **File**: `apps/preprocessing_gateway/Quantile_Mapping_OP.py`
-**Lines**: 413-416
+**Function**: `_check_meteo_consistency()`, lines 413-416 and 448-452
 
-The consistency check also uses `[yesterday, today]` window. Once forecasts are written, the check should cover the same date range as the write.
+The consistency check has two date-windowed operations that must match the write:
+
+1. **CSV filter** (line 416): `csv_recent = csv_data[(csv_data["date"] >= yesterday) & (csv_data["date"] <= today)]`
+   → Change to: `csv_recent = csv_data[csv_data["date"] >= yesterday]`
+
+2. **API read** (line 448-452): `client.read_meteo(..., start_date=yesterday, end_date=today)`
+   → Change to: `client.read_meteo(..., start_date=yesterday)` (drop `end_date` or set to max forecast date)
+
+Without this, the consistency check would pass (checking only [yesterday, today]) while forecast rows could silently fail to write.
 
 ---
 
@@ -118,15 +154,44 @@ The consistency check also uses `[yesterday, today]` window. Once forecasts are 
 
 ### Phase 1: Remove upper bound in operational meteo write
 
-**File**: `apps/preprocessing_gateway/Quantile_Mapping_OP.py`, `_write_meteo_to_api()` line 309
-**Change**: Drop `& (data["date"] <= today)` from the operational filter, matching the snow pattern in `dg_utils.py:505`.
+**Goal**: Allow forecast rows through the operational date filter.
+**File**: `apps/preprocessing_gateway/Quantile_Mapping_OP.py`, `_write_meteo_to_api()`
+**Changes**:
+- Line 309: Drop `& (data["date"] <= today)` from the operational filter
+- Line 320: Drop `& (data["date"] <= today)` from the fallback filter
+**Acceptance**: Function writes ~17 rows per code (yesterday + today + ~15 forecast days) instead of ~2.
 
 ### Phase 2: Update consistency check
 
+**Goal**: Verify forecast rows reach the API, not just [yesterday, today].
 **File**: Same file, `_check_meteo_consistency()`
-**Change**: Align the verification window with the write window.
+**Changes**:
+- Line 416: Change CSV filter to one-sided: `csv_data["date"] >= yesterday`
+- Lines 448-452: Drop `end_date=today` from the `client.read_meteo()` call (or set `end_date` to `csv_recent["date"].max()`)
+**Acceptance**: Consistency check verifies forecast-dated rows are present in API.
 
-### Phase 3: Verify
+### Phase 3: Update existing tests
+
+**Goal**: Fix tests that assert the old 2-row operational behavior.
+**Files**: `apps/preprocessing_gateway/test/test_api_coverage_gaps.py`, `apps/preprocessing_gateway/test/test_api_integration.py`
+**Changes**:
+- `test_api_coverage_gaps.py:TestQMWritesRecentDays.test_qm_writes_yesterday_and_today` (line 71): Update test data to include future dates, assert that records include forecast rows (not just yesterday+today)
+- `test_api_coverage_gaps.py:TestQMWritesRecentDays.test_qm_skips_when_recent_days_not_in_data` (line 116): This test uses data with only tomorrow — after the fix, this should assert `result=True` (forecast row is written), not `result=False`
+- `test_api_integration.py:TestQMMeteoAPIWrite` (line 1087): Update assertions that expect exactly 2 records in operational mode
+- `test_api_integration.py:TestQMMeteoAPISyncMode` (line 2178): Update operational-mode assertions
+**Acceptance**: All existing tests pass with updated assertions reflecting the new behavior.
+
+### Phase 4: Add new tests for forecast meteo API write
+
+**Goal**: Cover the new forecast-write behavior and edge cases.
+**File**: `apps/preprocessing_gateway/test/test_api_coverage_gaps.py` (extend existing file, don't create new)
+**Tests**:
+1. Creates mock control member data with spinup (past) and forecast (future) rows — verifies API write includes forecast-dated rows
+2. Verifies that `norm=None` is set for all QM-written records (QM has no climatological data)
+3. Verifies fallback (unknown sync mode) also includes forecast rows
+**Acceptance**: New tests pass, covering the forecast-write path.
+
+### Phase 5: Verify end-to-end
 
 1. Run `Quantile_Mapping_OP.py` locally
 2. Query the preprocessing API: `curl "http://localhost:8000/api/preprocessing/meteo/?meteo_type=T&code=15189&limit=20"` — should now include rows with future dates (forecast)
@@ -134,24 +199,41 @@ The consistency check also uses `[yesterday, today]` window. Once forecasts are 
 4. Run `machine_learning` and confirm it reads forecast meteo from the API
 5. Run `long_term_forecasting` and confirm it reads forecast meteo from the database (same PostgreSQL, accessed via SQLAlchemy)
 
-### Phase 4: Tests
+---
 
-Add a unit test in `apps/preprocessing_gateway/test/` that:
-1. Creates mock control member data with spinup (past) and forecast (future) rows
-2. Verifies that the API write includes forecast-dated rows
-3. Simulates a second run where observations cover previously-forecast dates — asserts upsert overwrites correctly
+## CSV/API Consistency After Fix
+
+| Data slice | CSV | API (operational) before fix | API (operational) after fix |
+|------------|-----|-----------------------------|-----------------------------|
+| Spinup (~365 days past) | Full | Last 2 days only | Last 2 days only — **intentional** |
+| Forecast (~15 days future) | Full | **Missing** | **Present** |
+| Norms | Not in CM CSV | Written by ERA5 ext | Written by ERA5 ext — unchanged |
+
+**Intentional remaining gap**: In operational mode, only yesterday+today of historical spinup reach the API. The CSV has the full ~365-day spinup. This is by design — operational mode is incremental. Use `mode="initial"` or `mode="maintenance"` to backfill historical data.
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `_write_meteo_to_api()` writes both recent observations and forecast rows to the API
-- [ ] The `date <= today` upper bound is removed (or bypassed via `mode="initial"`)
-- [ ] Forecast-dated meteo records (P, T) appear in the preprocessing API
-- [ ] On subsequent runs, observation values overwrite previously-written forecast values (upsert verified)
-- [ ] Existing norms are not clobbered
-- [ ] Consistency check covers the same date range as the write
-- [ ] No changes to `sapphire/services/` (ownership boundary respected)
+- [x] `_write_meteo_to_api()` writes both recent observations and forecast rows to the API
+- [x] The `date <= today` upper bound is removed from both the operational filter (line 309) and the fallback filter (line 320)
+- [x] Forecast-dated meteo records (P, T) appear in the preprocessing API *(verified: forecast values through 2026-04-07 for code 15013)*
+- [x] On subsequent runs, observation values overwrite previously-written forecast values (upsert verified) *(confirmed: ERA5 extension overwrote QM's norm=None with real norms on same keys)*
+- [x] Existing norms are not clobbered (ERA5 extension runs after QM and restores norms)
+- [x] Consistency check covers the same date range as the write (one-sided filter + wider API read)
+- [x] Existing tests updated to reflect new behavior (no assertion failures)
+- [x] No changes to `sapphire/services/` (ownership boundary respected)
+
+---
+
+## Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| ERA5 extension fails → forecast rows have `norm=None` | Low | Cosmetic (dashboard only) | Downstream consumers read `value` only; `norm=None` does not affect forecasts |
+| Execution order changes (ERA5 runs before QM) | Very low | `norm` values overwritten with `None` | Pipeline order is defined in `run_locally.sh:490`; document dependency |
+| Upsert overwrites all fields including `norm` | By design | N/A | This is the intended behavior — last writer wins, same as snow pattern |
+| Write payload increase (~2 → ~17 rows) | N/A | Negligible | ~15 extra rows per code per type per run |
 
 ---
 
@@ -159,6 +241,7 @@ Add a unit test in `apps/preprocessing_gateway/test/` that:
 
 - **Ensemble forecast API integration**: The 50-member ensemble data has an `ensemble_member` dimension not supported by the current meteo API schema. This requires a schema change and is tracked separately.
 - **Lead time / source field**: The meteo API schema has no field to distinguish observation from forecast. This is acceptable — the upsert overwrite cycle means the latest data always wins, same as the snow pattern.
+- **Historical spinup backfill in operational mode**: Operational mode intentionally writes only recent data (yesterday onward). The full 365-day spinup is available via `mode="initial"` or `mode="maintenance"`.
 
 ---
 
@@ -181,10 +264,11 @@ Identified 2026-03-24 while investigating PREPG-003 (snow API write). Comparison
 {
   "phases": {
     "phase_1": {
-      "title": "Remove upper bound in operational meteo write",
+      "title": "Remove upper bound in operational meteo write (lines 309 + 320)",
       "file": "apps/preprocessing_gateway/Quantile_Mapping_OP.py",
       "changes": [
-        "Drop date <= today upper bound from operational filter in _write_meteo_to_api()",
+        "Drop date <= today upper bound from operational filter (line 309)",
+        "Drop date <= today upper bound from fallback filter (line 320)",
         "Mirror snow pattern: data[data['date'] >= yesterday]"
       ],
       "depends_on": [],
@@ -193,25 +277,47 @@ Identified 2026-03-24 while investigating PREPG-003 (snow API write). Comparison
     "phase_2": {
       "title": "Update consistency check window",
       "file": "apps/preprocessing_gateway/Quantile_Mapping_OP.py",
-      "changes": ["Align _check_meteo_consistency date range with write range"],
+      "changes": [
+        "Change CSV filter to one-sided: csv_data['date'] >= yesterday (line 416)",
+        "Drop end_date from client.read_meteo() call (lines 448-452)"
+      ],
       "depends_on": [],
       "parallel_with": ["phase_1"]
     },
     "phase_3": {
-      "title": "Verify fix end-to-end",
+      "title": "Update existing tests for new behavior",
+      "files": [
+        "apps/preprocessing_gateway/test/test_api_coverage_gaps.py",
+        "apps/preprocessing_gateway/test/test_api_integration.py"
+      ],
+      "changes": [
+        "Update assertions expecting 2 records to expect ~17 (yesterday + today + forecast)",
+        "Update test_qm_skips_when_recent_days_not_in_data to expect result=True",
+        "Update TestQMMeteoAPIWrite and TestQMMeteoAPISyncMode operational assertions"
+      ],
       "depends_on": ["phase_1", "phase_2"],
       "parallel_with": ["phase_4"]
     },
     "phase_4": {
-      "title": "Add unit tests for forecast meteo API write",
-      "file": "apps/preprocessing_gateway/test/test_meteo_api_forecast.py",
+      "title": "Add new tests for forecast meteo API write",
+      "file": "apps/preprocessing_gateway/test/test_api_coverage_gaps.py",
+      "changes": [
+        "Test forecast rows included in operational write",
+        "Test norm=None for all QM-written records",
+        "Test fallback filter also includes forecast rows"
+      ],
       "depends_on": ["phase_1"],
       "parallel_with": ["phase_3"]
+    },
+    "phase_5": {
+      "title": "Verify fix end-to-end",
+      "depends_on": ["phase_3", "phase_4"],
+      "parallel_with": []
     }
   },
   "execution_groups": [
     {"group": 1, "parallel": true, "phases": ["phase_1", "phase_2"]},
-    {"group": 2, "parallel": true, "phases": ["phase_3", "phase_4"]}
+    {"group": 2, "parallel": true, "phases": ["phase_3", "phase_4"]},
+    {"group": 3, "parallel": false, "phases": ["phase_5"]}
   ]
 }
-```

@@ -100,7 +100,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PREPG-001** | Yearly snow norm recalculation | **Medium** | Review | [`mid_prio_gi_draft_prepg_yearly_norm_recalculation.md`](issues/mid_prio_gi_draft_prepg_yearly_norm_recalculation.md) | Historical snow CSVs must exist |
 | **PREPG-002** | Add coverage endpoints to preprocessing service | **Low** | Draft | [`low_prio_gi_draft_preprocessing_coverage_endpoints.md`](issues/low_prio_gi_draft_preprocessing_coverage_endpoints.md) | — |
 | ~~**PREPG-003**~~ | ~~Snow operational API write discards all data — wall-clock-anchored window vs DG lag~~ | | Closed (Not a Bug) | [`high_prio_gi_draft_prepg_snow_api_operational_window.md`](issues/high_prio_gi_draft_prepg_snow_api_operational_window.md) | — |
-| **PREPG-005** | Meteo API write discards all forecast rows — `date <= today` upper bound | **High** | Draft | [`high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md`](issues/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md) | — |
+| **PREPG-005** | Meteo API write discards all forecast rows — `date <= today` upper bound | **High** | Review | [`high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md`](issues/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md) | — |
 
 ### Preprocessing Runoff (`prepq`)
 
