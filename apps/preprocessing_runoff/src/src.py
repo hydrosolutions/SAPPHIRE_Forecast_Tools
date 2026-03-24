@@ -209,8 +209,10 @@ def filter_roughly_for_outliers(
 
     This function groups the input DataFrame by the group_by column and the month derived from the date_col column,
     and applies a rolling window outlier detection method to the filter_col column of each group.
-    Outliers are defined as values that are more than 1.5 times the IQR away from the Q1 and Q3.
+    Outliers are defined using asymmetric IQR thresholds per (station, season):
+    lower = Q1 - 2.0 * IQR, upper = Q3 + 6.5 * IQR.
     These outliers are replaced with NaN.
+    A second pass applies a 300% day-over-day change filter.
 
     The function further drops all rows with NaN in the group_by column.
 

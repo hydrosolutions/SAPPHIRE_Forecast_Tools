@@ -22,6 +22,7 @@ Key functions:
 | `src/src.py` | Core functions for data processing and statistics |
 | `src/config.py` | Configuration loading (log level, validation, spot-check, site cache settings) |
 | `src/profiling.py` | Performance profiling utilities (enabled via `PREPROCESSING_PROFILING=true`) |
+| `src/google_sheets_reader.py` | Google Sheets discharge ingestion for manual sites (requires `gspread`) |
 
 ## Quick Start
 
@@ -194,13 +195,21 @@ Site reliability tracking (updated in maintenance mode):
 
 ## Outlier Filtering
 
-The module uses IQR-based thresholds to identify and remove outliers:
-- **Lower threshold:** Q25 - 2.5 × IQR
-- **Upper threshold:** Q75 + IQR
+The module uses a two-pass algorithm to identify and remove outliers:
 
-Where IQR = Q75 - Q25 (interquartile range)
+**Pass 1 — Seasonal IQR filtering** (per station × season group):
+- Groups data by station and season (winter/spring/summer/autumn)
+- Only applies to groups with >10 observations
+- **Lower threshold:** Q25 - 2.0 × IQR (moderately tight — flags near-zero anomalies)
+- **Upper threshold:** Q75 + 6.5 × IQR (very permissive — accommodates flood peaks)
+- Where IQR = Q75 - Q25 (interquartile range)
+- Values outside these thresholds are set to NaN
 
-Values outside these thresholds are set to NaN and interpolated if the gap is ≤ 2 days.
+**Pass 2 — Reindex, interpolate, and day-over-day change filter** (per station):
+- Reindexes to a complete daily date range
+- Linear interpolation for gaps ≤ 2 days
+- **300% change filter:** if `|value_t − value_{t−1}| / |value_{t−1}| > 3`, the value is set to NaN
+- Second linear interpolation pass (limit 2 days) to fill values removed by the change filter
 
 ## Date Handling
 
