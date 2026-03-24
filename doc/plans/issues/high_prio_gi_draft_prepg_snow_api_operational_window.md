@@ -1,9 +1,21 @@
 # PREPG-003: Snow operational API write discards all data due to wall-clock-anchored 2-day window
 
-**Status**: Draft
+**Status**: Closed (Not a Bug)
 **Module**: `preprocessing_gateway`
-**Priority**: High
+**Priority**: ~~High~~
 **Labels**: `bug`, `data-integrity`, `api-migration`, `snow-data`
+
+### Resolution (2026-03-24)
+
+Investigation with actual DG data confirmed this is **not a bug**. The SnowMapper Data Gateway operational endpoint returns both reanalysis rows (lagged 3-7 days) AND forecast rows extending ~9 days beyond the last reanalysis date. The forecast rows cover dates at and beyond today, so the wall-clock-anchored `date >= yesterday` filter in `write_snow_to_api()` correctly captures ~10 forecast dates per run. The API write succeeds and the preprocessing database contains non-NULL snow values for both reanalysis and forecast dates.
+
+Evidence from 2026-03-24 pipeline run:
+- DG CSV: 327 reanalysis rows (2025-03-24 to 2026-03-17) + 15 forecast rows (2026-03-18 to 2026-04-01)
+- `Source` column values: `SnowMapper-Reanalysis` and `SnowMapper=Forecast-2026-03-23-00`
+- API query confirmed: SWE values populated through 2026-04-01 for station 15189
+- The `transform_snow_data()` output preserves all 342 data rows (630 after expanding 63 station codes)
+
+The original diagnosis assumed the DG returned only reanalysis data. The forecast rows were not accounted for.
 
 ---
 
