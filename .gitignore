@@ -251,3 +251,9 @@ temp_luigi.cfg
 # Sensitive deployment docs (contain server IPs and connection details)
 doc/prod/ssh_tunnel_tajhm_ieh_hf.md
 doc/prod/ssh_tunnel_tajhm_handover.md
+
+# Local pipeline review checklists (contain operational data: station codes,
+# discharge values, dates). The template (no date suffix) is tracked; filled
+# copies are not.
+doc/dev/review_checklist_local_20*.md
+doc/dev/review_checklist_server_20*.md
