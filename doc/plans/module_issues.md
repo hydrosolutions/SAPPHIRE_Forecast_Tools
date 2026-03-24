@@ -115,7 +115,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`low_prio_gi_draft_LR_cleanup_dead_run_date_code.md`](issues/low_prio_gi_draft_LR_cleanup_dead_run_date_code.md) | — |
 | **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
-| **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Draft | [`high_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/high_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
+| **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Archived | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
 
 ### Long-Term Forecasting (`ltf`)
 
@@ -154,7 +154,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-025** | Org-scoped data readers (add codes filtering to all read functions) | **High** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) | INFRA-009 (complete) |
 | **PP-026** | Make consumers flag-aware for null-discharge ML forecasts; clean stale flag=1/2 records | **High** | In Progress | [`high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
 | **PP-027** | Add per-station observability when EM ensemble is skipped | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_silent_skip_observability.md`](issues/mid_prio_gi_draft_pp_em_silent_skip_observability.md) | — |
-| **PP-028** | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics | **Medium** | Draft | [`mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
+| ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -221,6 +221,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|------|
 | LR-001 | Leap year date handling and hindcast mode | 2026-02-03 | [`archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md) |
 | LR-002 | Replace `last_successful_run` file with "just run for today" | 2026-03-03 | [`archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md`](issues/archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md) |
+| LR-005 | LR hindcast NaN API write skip — Issues A+C resolved; Issue B (log message) archived as low-prio | 2026-03-24 | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) |
 
 ### Postprocessing (`pp`)
 
@@ -234,6 +235,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
 | PP-017 | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 | PP-018 | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
+| PP-028 | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics — all bugs closed (not-a-bug or upstream data gap) | 2026-03-24 | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) |
 
 ### Machine Learning (`ml`)
 
@@ -304,4 +306,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-24 (PREPG-003 closed — not a bug, DG forecast rows cover the operational window; PREPG-005 added — meteo forecast rows dropped by date<=today upper bound)*
+*Last updated: 2026-03-24 (LR-005 archived — Issues A+C resolved, Issue B low-prio log improvement remains; PP-028 closed)*
