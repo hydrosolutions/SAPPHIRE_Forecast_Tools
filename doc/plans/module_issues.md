@@ -86,6 +86,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-011** | Upstream module org-scoped API reads (audit + deferred fixes) | infra | **Low** | In Progress | [`low_prio_gi_draft_infra_upstream_org_scoped_reads.md`](issues/low_prio_gi_draft_infra_upstream_org_scoped_reads.md) | PP-025, INFRA-009 |
 | **INFRA-012** | Multi-org safety guards (write guard, collision check, isolation test) | infra | **High** | Review | [`review_gi_draft_infra_multi_org_safety_guards.md`](issues/review_gi_draft_infra_multi_org_safety_guards.md) | — |
 | ~~**INFRA-013**~~ | ~~Postprocessing API container crashes on bulk forecast writes (118 restarts)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | — |
+| **INFRA-014** | Extend validate_pipeline.py: JSON output, baseline/delta, new checks | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_validate_pipeline_extensions.md`](issues/mid_prio_gi_draft_infra_validate_pipeline_extensions.md) | — |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
