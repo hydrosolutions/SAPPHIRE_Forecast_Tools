@@ -49,7 +49,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Review | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Option 1 (ORDER BY): colleague; Option 2 (per-code reads): done |
 | **ML-008b** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Review | [`review_gi_draft_ml_fill_gaps_null_loop.md`](issues/review_gi_draft_ml_fill_gaps_null_loop.md) | — |
 | ~~**ML-011**~~ | ~~flag=2 semantic collision in make_forecast.py~~ | ~~ml~~ | | Deleted | — | Deleted 2026-03-20: no behavioral impact |
-| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | In Progress | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
+| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | Review | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
 | **ML-013** | recalculate_nan_forecasts API write overwrites valid operational rows | ml | **High** | Review | [`review_gi_draft_ml_recalc_api_overwrite.md`](issues/review_gi_draft_ml_recalc_api_overwrite.md) | ML-012 |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |

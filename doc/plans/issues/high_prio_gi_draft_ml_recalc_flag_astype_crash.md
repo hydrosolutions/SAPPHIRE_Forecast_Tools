@@ -1,6 +1,6 @@
 # ML-012: `recalculate_nan_forecasts.py` crashes on NaN flag values
 
-**Status**: In Progress (code complete, tests missing)
+**Status**: Review
 **Module**: `machine_learning`
 **Priority**: High
 **Labels**: `bug`, `crash`, `operational-pipeline`, `data-integrity`

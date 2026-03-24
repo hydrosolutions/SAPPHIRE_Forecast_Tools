@@ -1,4 +1,18 @@
-# Local Pipeline Review Checklist — 2026-03-20
+# Local Pipeline Review Checklist — 2026-03-24
+
+**Changes since last run (2026-03-20)**:
+- ML-008b: infinite hindcast loop fix (Review)
+- ML-009: CSV schema corruption fix (Review)
+- ML-010: API-first old_forecast read (Review)
+- ML-012: flag NaN crash fix (In Progress — tests added today)
+- ML-013: selective API write for recalculate_nan (Review)
+- PP-026: revised — null-discharge ML records are intentional (flag state machine)
+- PREPG-003: snow API write bug identified (not yet fixed — assigned to Sandro)
+- LTF-003: flag=0 on null forecasts identified (not yet fixed — assigned to Sandro)
+
+**Expected improvements**: ML maintenance should no longer infinite-loop. ML CSVs should not get corrupted. recalculate_nan should not crash on NaN flags.
+
+**Known issues still present**: Snow SWE not reaching API (PREPG-003). LTF flag=0 on null (LTF-003). Both assigned to Sandro, not fixed in this branch.
 
 Manual verification plan for running the SAPPHIRE daily pipeline locally and
 confirming that API data is written correctly at each phase for stations
@@ -36,9 +50,9 @@ Set the following before running any curl commands or the pipeline:
 export BASE_URL="http://localhost:8000"
 export S1="15189"
 export S2="16059"
-export TODAY="2026-03-20"
-export RECENT_START="2026-03-10"
-export RECENT_END="2026-03-19"
+export TODAY="2026-03-24"
+export RECENT_START="2026-03-14"
+export RECENT_END="2026-03-23"
 ```
 
 ### 0.2 Service health checks
@@ -94,7 +108,7 @@ records appear after the run.
   ```
 
 Note the most recent date in each response — after the pipeline run you expect
-a new record dated `2026-03-20`.
+a new record dated `2026-03-24`.
 
 ### 1.2 Preprocessing — Meteo (temperature and precipitation)
 
@@ -156,25 +170,25 @@ a new record dated `2026-03-20`.
 
 ### 2.1 Verify: New runoff record for today
 
-**Result**: No runoff record for 2026-03-20 — iEasyHydro source has not provided
+**(previous run) Result**: No runoff record for 2026-03-20 — iEasyHydro source has not provided
 today's observation yet. Data available through 2026-03-19. Window count = 10
 (RECENT_START to TODAY) for both stations. Not a code bug — data availability issue.
 
-- [x] Station 15189 — today's discharge record: **0 records** (no today obs)
+- [ ] Station 15189 — today's discharge record: **(previous run) 0 records** (no today obs)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Station 16059 — today's discharge record: **0 records** (no today obs)
+- [ ] Station 16059 — today's discharge record: **(previous run) 0 records** (no today obs)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Window count (RECENT_START to TODAY): **S1=10, S2=10** (up to 2026-03-19)
+- [ ] Window count (RECENT_START to TODAY): **(previous run) S1=10, S2=10** (up to 2026-03-19)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
 
-**What to look for**: A record with `"date": "2026-03-20"` and a non-null `"discharge"` value.
+**What to look for**: A record with `"date": "2026-03-24"` and a non-null `"discharge"` value.
 
 **Red flags**:
 - Empty array `[]` — preprocessing_runoff did not write or the iEasyHydro API returned no data.
@@ -183,29 +197,29 @@ today's observation yet. Data available through 2026-03-19. Window count = 10
 
 ### 2.2 Verify: New meteo data for today
 
-- [x] Station 15189 temperature today: **1 record, T=-9.71** (updated from -9.24 by reanalysis)
+- [ ] Station 15189 temperature today: **(previous run) 1 record, T=-9.71** (updated from -9.24 by reanalysis)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Station 15189 precipitation today: **1 record, P=0.15** (updated from 0.49 by reanalysis)
+- [ ] Station 15189 precipitation today: **(previous run) 1 record, P=0.15** (updated from 0.49 by reanalysis)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Station 16059 temperature today: **1 record, T=-6.01** (updated from -5.94 by reanalysis)
+- [ ] Station 16059 temperature today: **(previous run) 1 record, T=-6.01** (updated from -5.94 by reanalysis)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Station 16059 precipitation today: **1 record, P=1.24** (updated from 0.87 by reanalysis)
+- [ ] Station 16059 precipitation today: **(previous run) 1 record, P=1.24** (updated from 0.87 by reanalysis)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY&end_date=$TODAY&limit=5" | python3 -m json.tool
   ```
-- [x] Window counts: **S1 T=11, S1 P=11** (was 9, now 11 = RECENT_START to TODAY inclusive)
+- [ ] Window counts: **(previous run) S1 T=11, S1 P=11** (was 9, now 11 = RECENT_START to TODAY inclusive)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
 
-**What to look for**: Records with `"date": "2026-03-20"` and non-null `"value"`.
+**What to look for**: Records with `"date": "2026-03-24"` and non-null `"value"`.
 
 **Red flags**:
 - Empty arrays — ERA5 extension did not run or failed silently.
@@ -213,11 +227,11 @@ today's observation yet. Data available through 2026-03-19. Window count = 10
 
 ### 2.3 Verify: Snow data updated
 
-- [x] Station 15189 — most recent SWE record: **5 records, year-2000 dates (norms), values 71.88–78.72**
+- [ ] Station 15189 — most recent SWE record: **(previous run) 1000+ records after snow norms recalc, year-2000+ dates, values 71.88+ (norms fully populated)**
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&limit=5" | python3 -m json.tool
   ```
-- [x] Station 16059 — most recent SWE record: **5 records, year-2000 dates (norms), values 50.90–53.16**
+- [ ] Station 16059 — most recent SWE record: **(previous run) 1000+ records after snow norms recalc, year-2000+ dates, values 50.90+ (norms fully populated)**
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&limit=5" | python3 -m json.tool
   ```
@@ -240,11 +254,11 @@ today's observation yet. Data available through 2026-03-19. Window count = 10
 Compare the 30-day window before and after. If no gaps existed, counts will be
 unchanged.
 
-- [x] Station 15189 — discharge count over last 30 days: **31 records, 2026-02-17 to 2026-03-19**
+- [ ] Station 15189 — discharge count over last 30 days: **(previous run) 31 records, 2026-02-17 to 2026-03-19**
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); dates=[r.get('date','') for r in d]; print(f'range: {min(dates)} to {max(dates)}')"
   ```
-- [x] Station 16059 — discharge count over last 30 days: **31 records, 2026-02-17 to 2026-03-19**
+- [ ] Station 16059 — discharge count over last 30 days: **(previous run) 31 records, 2026-02-17 to 2026-03-19**
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); dates=[r.get('date','') for r in d]; print(f'range: {min(dates)} to {max(dates)}')"
   ```
@@ -259,17 +273,17 @@ source data is unavailable).
 
 ### 3.2 Verify: ERA5 meteo backfill (maintenance:preprocessing_gateway)
 
-- [x] Meteo T 30-day coverage: **S1=32 (2026-02-17 to 2026-03-20), S2=32 (2026-02-17 to 2026-03-20)**
+- [ ] Meteo T 30-day coverage: **(previous run) S1=32 (2026-02-17 to 2026-03-20), S2=32 (2026-02-17 to 2026-03-20)**
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); dates=[r.get('date','') for r in d]; print(f'range: {min(dates)} to {max(dates)}')"
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); dates=[r.get('date','') for r in d]; print(f'range: {min(dates)} to {max(dates)}')"
   ```
-- [x] Review window counts unchanged: **S1 T=11, S1 P=11** (consistent with operational run)
+- [ ] Review window counts unchanged: **(previous run) S1 T=11, S1 P=11** (consistent with operational run)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
-- [x] Snow SWE unchanged (still norms only): **confirmed, year-2000 dates**
+- [ ] Snow SWE: **(previous run) 1000+ records per station after recalculate_snow_norms** (was 5 before recalc, now fully populated norms from 2000-01-01 to 2002-09-26+)
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&limit=5" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'  date={r.get(\"date\",\"?\")} value={r.get(\"value\",\"?\")}') for r in d]"
   ```
@@ -290,7 +304,7 @@ source data is unavailable).
 
 ### 4.1 Verify: ML daily forecasts written
 
-- [x] All models, both stations — today's forecasts (run on 2026-03-20): **11 records each, targets 2026-03-21 to 2026-03-31**
+- [ ] All models, both stations — today's forecasts (run on 2026-03-20): **(previous run) 11 records each, targets 2026-03-21 to 2026-03-31**
   ```bash
   for model in TFT TiDE TSMixer; do
     echo "S1 $model:"; curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=$model&start_date=$TODAY&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  count={len(d)}'); [print(f'  target={r.get(\"target\")} fc={r.get(\"forecasted_discharge\")}') for r in d[:3]]"
@@ -298,7 +312,7 @@ source data is unavailable).
   done
   ```
 
-- [x] Window counts (RECENT_START to TODAY): **TFT=121, TiDE=106, TSMixer=111 per station**
+- [ ] Window counts (RECENT_START to TODAY): **(previous run) TFT=121, TiDE=106, TSMixer=111 per station**
   ```bash
   for model in TFT TiDE TSMixer; do
     echo "S1 $model:"; curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=$model&start_date=$RECENT_START&end_date=$TODAY&limit=500" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  count={len(d)}')"
@@ -306,7 +320,7 @@ source data is unavailable).
   done
   ```
 
-- [x] Null discharge check: **all valid, 0 nulls** (TFT=11, TiDE=11, TSMixer=11)
+- [ ] Null discharge check: **(previous run) all valid, 0 nulls** (TFT=11, TiDE=11, TSMixer=11)
   ```bash
   for model in TFT TiDE TSMixer; do
     echo "$model:"; curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=$model&start_date=$TODAY&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); null=[r for r in d if r.get('forecasted_discharge') is None]; print(f'  valid={len(d)-len(null)}, null={len(null)}')"
@@ -324,19 +338,19 @@ today's date and non-null `"forecasted_discharge"` value.
 
 ### 4.2 Verify: LR pentad forecasts written
 
-March 20 is day 20 of the month — this is NOT a standard pentad issue day (1, 6,
+March 24 is day 24 of the month — this is NOT a standard pentad issue day (1, 6,
 11, 16, 21, 26). LR may not produce a new pentad forecast today. Check logs first.
 If no new record, that is expected.
 
-- [x] Station 15189 — LR pentad forecasts (recent window): **2 records (2026-03-10, 2026-03-15)**
+- [ ] Station 15189 — LR pentad forecasts (recent window): **(previous run) 2 records (2026-03-10, 2026-03-15)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [x] Station 16059 — LR pentad forecasts (recent window): **2 records (2026-03-10, 2026-03-15)**
+- [ ] Station 16059 — LR pentad forecasts (recent window): **(previous run) 2 records (2026-03-10, 2026-03-15)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [x] Station 15189 — LR decad forecasts (recent window): **1 record (2026-03-10, fc=1.866)**
+- [ ] Station 15189 — LR decad forecasts (recent window): **(previous run) 1 record (2026-03-10, fc=1.866)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
@@ -344,13 +358,13 @@ If no new record, that is expected.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=decade&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [x] Today's LR forecasts (should be 0 — Mar 20 is not a boundary day): **confirmed 0 pentad, 0 decad**
+- [ ] Today's LR forecasts (should be 0 — Mar 24 is not a boundary day): **(previous run) confirmed 0 pentad, 0 decad**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$TODAY&end_date=$TODAY&limit=10" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$TODAY&end_date=$TODAY&limit=10" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
 
-**What to look for**: If today is an issue day, a new record dated `2026-03-20`.
+**What to look for**: If today is an issue day, a new record dated `2026-03-24`.
 If not an issue day, confirm recent records exist from the previous issue day.
 
 **Red flags**:
@@ -361,27 +375,27 @@ If not an issue day, confirm recent records exist from the previous issue day.
 
 ### 4.3 Verify: Combined forecasts (EM, NE) written
 
-- [ ] Station 15189 — EM pentad forecasts (recent window):
+- [ ] Station 15189 — EM pentad forecasts (recent window): **(previous run) 4 records (Mar 10, 14, 19, 20)** with valid quantiles; 17 total in 30-day
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 16059 — EM pentad forecasts (recent window):
+- [ ] Station 16059 — EM pentad forecasts (recent window): **(previous run) BUG — 2 records (Mar 10, 14) only**, missing Mar 19 + 20 that S1 has. NE has all 4 dates. 6 total in 30-day vs S1's 17.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 15189 — NE pentad forecasts (recent window):
+- [ ] Station 15189 — NE pentad forecasts (recent window): **(previous run) present**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 16059 — NE pentad forecasts (recent window):
+- [ ] Station 16059 — NE pentad forecasts (recent window): **(previous run) present**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 15189 — EM decad forecasts (recent window):
+- [ ] Station 15189 — EM decad forecasts (recent window): **(previous run) 3 records (2026-03-10, 03-19, 03-20), quantiles present**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 16059 — EM decad forecasts (recent window):
+- [ ] Station 16059 — EM decad forecasts (recent window): **(previous run) BUG — 0 records for recent window (last EM decad is 2026-03-09). NE and individual models present for today. S2 EM not written by postprocessing.**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=10" | python3 -m json.tool
   ```
@@ -397,7 +411,7 @@ fields if ML models ran successfully. NE rows represent norm-error ensembles.
 
 ### 4.4 Quantile ordering spot-check
 
-- [ ] Station 15189 — check EM quantile ordering for the most recent EM pentad record:
+- [ ] Station 15189 — check EM quantile ordering: **(previous run) S1 EM decad: q05=1.694 ≤ q25=1.76 ≤ q75=1.835 ≤ q95=1.909 — OK**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=5" | python3 -c "
 import sys, json
@@ -408,7 +422,7 @@ for r in rows:
     print(r.get('date'), q, 'OK' if ok else 'FAIL')
 "
   ```
-- [ ] Station 16059 — same check:
+- [ ] Station 16059 — same check: **(previous run) no recent EM records to check (see S2 EM decad bug above)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=5" | python3 -c "
 import sys, json
@@ -436,11 +450,11 @@ stations) are acceptable but must still be in non-decreasing order.
 
 ### 5.1 Verify: ML gap-fill — check for any newly filled historical records
 
-- [x] Station 15189 — TFT forecasts for the past 14 days: **30 records**
+- [ ] Station 15189 — TFT forecasts for the past 14 days: **(previous run) 30 records**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=2026-03-05&end_date=$TODAY&limit=30" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'records')"
   ```
-- [x] Station 16059 — TFT forecasts for the past 14 days: **30 records**
+- [ ] Station 16059 — TFT forecasts for the past 14 days: **(previous run) 30 records**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=2026-03-05&end_date=$TODAY&limit=30" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'records')"
   ```
@@ -450,19 +464,19 @@ after maintenance. Compare with baseline count from Section 1.4.
 
 ### 5.2 Verify: LR hindcast — recent LR records updated
 
-- [x] Station 15189 — LR pentad record count (review window): **2 records (2026-03-10, 2026-03-15)**
+- [ ] Station 15189 — LR pentad record count (review window): **(previous run) 2 records (2026-03-10, 2026-03-15)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); [print(f'  date={r.get(\"date\",\"?\")}') for r in d]"
   ```
-- [x] Station 16059 — LR pentad (review window): **2 records (2026-03-10, 2026-03-15)**
+- [ ] Station 16059 — LR pentad (review window): **(previous run) 2 records (2026-03-10, 2026-03-15)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
-- [x] Station 15189 — LR decade (review window): **1 record (2026-03-10)**
+- [ ] Station 15189 — LR decade (review window): **(previous run) 1 record (2026-03-10)**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$RECENT_START&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}'); [print(f'  date={r.get(\"date\",\"?\")}') for r in d]"
   ```
-- [x] Wider window check (Feb 1 - Mar 20): **pentad: 9 records (Feb 5–Mar 15), decad: 4 records (Feb 10–Mar 10)** — full hindcast coverage
+- [ ] Wider window check (Feb 1 - Mar 24): **(previous run) pentad: 9 records (Feb 5–Mar 15), decad: 4 records (Feb 10–Mar 10)** — full hindcast coverage
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=2026-02-01&end_date=$TODAY&limit=100" | python3 -c "import sys,json; d=json.load(sys.stdin); dates=sorted(set(r.get('date','') for r in d)); print(f'count={len(d)} dates={dates}')"
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=2026-02-01&end_date=$TODAY&limit=100" | python3 -c "import sys,json; d=json.load(sys.stdin); dates=sorted(set(r.get('date','') for r in d)); print(f'count={len(d)} dates={dates}')"
@@ -473,11 +487,11 @@ appear, LR hindcast may not have written for these stations.
 
 ### 5.3 Verify: Postprocessing maintenance gap-fill — EM coverage
 
-- [ ] Station 15189 — EM pentad record count over past 30 days:
+- [ ] Station 15189 — EM pentad record count over past 30 days: **(previous run) 17 records** (after PENTAD operational + maintenance runs)
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM pentad records')"
   ```
-- [ ] Station 16059 — EM pentad record count over past 30 days:
+- [ ] Station 16059 — EM pentad record count over past 30 days: **(previous run) 6 records** (vs S1's 17 — S2 EM gap persists across both horizons)
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=2026-02-17&end_date=$TODAY&limit=50" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM pentad records')"
   ```
@@ -489,13 +503,10 @@ Gaps in EM where LR exists indicate the maintenance gap-fill did not run.
 
 ## 6. Phase 5: Long-Term Forecasting (gated)
 
-March 20 is 10 days from March 10 and 5 days before March 25. The gate is
-`±5 days from 10th/25th`. March 20 falls outside the March-10 window
-(|20-10| = 10 > 5) and just within the March-25 window (|25-20| = 5 ≤ 5).
+March 24 is 1 day before the March 25 issue day (within ±5 day window). Long-term forecasting WILL run.
 
-**The long-term phase MAY run today** (March 20 is within the ±5 day gate for March 25). Skip Sections
-6.1 to 6.3. If you want to force a long-term run, use the `LT_FORECAST_TODAY`
-override (see note below).
+**The long-term phase WILL run today** (|25-24| = 1 ≤ 5). If you want to force a long-term run with a
+specific date, use the `LT_FORECAST_TODAY` override (see note below).
 
 If you override the date to force the run:
 
@@ -505,15 +516,9 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> LT_FORECAST_TODAY=2026-03-1
 
 ### 6.1 Verify: Long-term forecasts written (only if forced)
 
-- [ ] Station 15189 — monthly forecasts (recent):
-  ```bash
-  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&start_date=2026-03-01&end_date=2026-03-31&limit=20" | python3 -m json.tool
-  ```
-- [ ] Station 16059 — monthly forecasts (recent):
-  ```bash
-  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&start_date=2026-03-01&end_date=2026-03-31&limit=20" | python3 -m json.tool
-  ```
-- [ ] Record counts:
+- [ ] Station 15189 — monthly forecasts (recent): **(previous run) 8 records, all dated 2026-03-10, 8 model types (LR_Base, LR_SM_DT, LR_SM_ROF, LR_SM, SM_GBT, etc.). Only LR_SM (q=1.92) and SM_GBT (q=1.91) have non-null forecast values. Other 6 models have all-null q/quantile fields — models ran but produced no output.**
+- [ ] Station 16059 — monthly forecasts (recent): **(previous run) 8 records, same pattern — all dated 2026-03-10, mostly null forecast values.**
+- [ ] Record counts: **(previous run) 8 per station**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&start_date=2026-03-01&end_date=2026-03-31&limit=20" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'long-term records')"
   curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&start_date=2026-03-01&end_date=2026-03-31&limit=20" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'long-term records')"
@@ -526,11 +531,17 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> LT_FORECAST_TODAY=2026-03-1
 
 ### 6.2 Verify: Long-term skill metrics updated (only if forced)
 
-- [ ] Station 15189 — monthly skill metrics:
+- [ ] Station 15189 — monthly skill metrics: **(previous run) 10 records, ALL n_pairs=0, mae/nse=None, model=None. Same empty pattern as decad skill.**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=month&limit=10" | python3 -m json.tool
   ```
-- [ ] Station 16059 — monthly skill metrics:
+- [ ] Station 16059 — monthly skill metrics: **(previous run) 10 records, ALL n_pairs=0, mae/nse=None, model=None. Same as S1.**
+
+### 6.3 Verify: Quarterly and seasonal aggregation (after postprocessing_forecasts re-run)
+
+- [ ] Quarterly forecasts: **(previous run) 18 records per station (9 models × 2 quarters: Q1 Jan–Mar, Q2 Apr–Jun). Only MC_ALD has non-null q (S1: 2.012/6.902, S2: 191.543/499.442). All other 8 models write skeleton records with q=None.**
+- [ ] Seasonal forecasts: **(previous run) 9 records per station (9 models × 1 season: Apr–Sep). Only MC_ALD has non-null q (S1: 10.59, S2: 524.204). All other 8 models null.**
+- [ ] Full model list across long-term: **(previous run) GBT, LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_Norm** (9 models total). At monthly level, LR_SM and SM_GBT also had values — so 3 models total produce output across the three horizons, 6 are always null.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=month&limit=10" | python3 -m json.tool
   ```
@@ -584,19 +595,19 @@ both stations.
 
 ### 7.3 Skill metrics check
 
-- [ ] Station 15189 — pentad skill metrics exist:
+- [ ] Station 15189 — pentad skill metrics exist: **(previous run) 10 records, n_pairs=14–17, mae=0.04–0.12, nse=0.94–0.99. model=None, rmse=None throughout (known bugs).**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=pentad&limit=5" | python3 -c "import sys,json; d=json.load(sys.stdin); print('pentad skill: PASS' if len(d) > 0 else 'pentad skill: FAIL - no records')"
   ```
-- [ ] Station 16059 — pentad skill metrics exist:
+- [ ] Station 16059 — pentad skill metrics exist: **(previous run) 10 records, n_pairs=9–16, mae=2.96–5.22, nse=-0.31–0.63. Negative NSE indicates poor skill for S2. model=None, rmse=None.**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=pentad&limit=5" | python3 -c "import sys,json; d=json.load(sys.stdin); print('pentad skill: PASS' if len(d) > 0 else 'pentad skill: FAIL - no records')"
   ```
-- [ ] Station 15189 — decad skill metrics exist:
+- [ ] Station 15189 — decad skill metrics exist: **(previous run) 10 records, but ALL n_pairs=0, mae/rmse/nse=None. Recalculation produced empty metrics for decad.**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=decade&limit=5" | python3 -c "import sys,json; d=json.load(sys.stdin); print('decad skill: PASS' if len(d) > 0 else 'decad skill: FAIL - no records')"
   ```
-- [ ] Station 16059 — decad skill metrics exist:
+- [ ] Station 16059 — decad skill metrics exist: **(previous run) 10 records, but ALL n_pairs=0, mae/rmse/nse=None. Same as S1 — decad skill recalc broken.**
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=decade&limit=5" | python3 -c "import sys,json; d=json.load(sys.stdin); print('decad skill: PASS' if len(d) > 0 else 'decad skill: FAIL - no records')"
   ```
