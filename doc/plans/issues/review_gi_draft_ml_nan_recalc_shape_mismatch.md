@@ -1,6 +1,6 @@
 # ML-006: NumPy shape mismatch in `recalculate_nan_forecasts.py` during `.loc` assignment
 
-**Status**: Draft
+**Status**: Review
 **Module**: `machine_learning`
 **Priority**: High
 **Labels**: `bug`, `maintenance-mode`, `data-integrity`

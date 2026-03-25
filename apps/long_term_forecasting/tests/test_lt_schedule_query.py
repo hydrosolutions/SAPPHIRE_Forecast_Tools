@@ -1,5 +1,7 @@
 """Tests for lt_schedule_query module."""
 
+import io
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -9,7 +11,7 @@ import pandas as pd
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lt_schedule_query import HORIZON_TYPE_TO_SKILL, day_distance, query_schedule
+from lt_schedule_query import HORIZON_TYPE_TO_SKILL, day_distance, main, query_schedule
 
 
 class TestDayDistance:
@@ -277,3 +279,127 @@ class TestQuerySchedule:
         assert "month_0" in result["active_modes"]
         assert "broken" in result["skipped_modes"]
         assert "config load error" in result["skipped_modes"]["broken"]
+
+
+class TestMainStdoutContract:
+    """Verify that main() prints valid JSON as its last stdout line.
+
+    The shell parser in run_locally.sh splits stdout on newlines and reads
+    the last element as JSON.  These tests confirm that contract holds even
+    when other content (e.g. log lines leaked from run_in_venv) precedes the
+    JSON line.
+    """
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_last_stdout_line_is_valid_json(self, mock_sl, mock_fc_cls):
+        """main() with --today 2026-03-24 prints valid JSON as its last line.
+
+        month_1 has issue_day=25, today is day 24 — distance is 1 which is
+        within ISSUE_DAY_TOLERANCE (5), so month_1 is active.
+        """
+        # Arrange
+        mock_fc_cls.return_value = make_multi_mode_config(
+            {
+                "month_1": {
+                    "issue_day": 25,
+                    "models": ["LR_Base"],
+                    "horizon_type": "month",
+                },
+            }
+        )
+
+        captured = io.StringIO()
+
+        # Act
+        with (
+            patch("sys.argv", ["lt_schedule_query.py", "--today", "2026-03-24"]),
+            patch("sys.stdout", captured),
+        ):
+            main()
+
+        # Assert — last non-empty line must be valid JSON
+        stdout_text = captured.getvalue()
+        lines = [line for line in stdout_text.splitlines() if line.strip()]
+        assert lines, "main() produced no stdout output"
+        last_line = lines[-1]
+        parsed = json.loads(last_line)
+        assert "active_modes" in parsed
+        assert "skipped_modes" in parsed
+        assert "skill_metric_types" in parsed
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_json_keys_present_with_active_mode(self, mock_sl, mock_fc_cls):
+        """Parsed JSON contains the three expected top-level keys."""
+        # Arrange
+        mock_fc_cls.return_value = make_multi_mode_config(
+            {
+                "month_1": {
+                    "issue_day": 25,
+                    "models": ["LR_Base"],
+                    "horizon_type": "month",
+                },
+            }
+        )
+
+        captured = io.StringIO()
+
+        # Act
+        with (
+            patch("sys.argv", ["lt_schedule_query.py", "--today", "2026-03-24"]),
+            patch("sys.stdout", captured),
+        ):
+            main()
+
+        # Assert
+        stdout_text = captured.getvalue()
+        last_line = [ln for ln in stdout_text.splitlines() if ln.strip()][-1]
+        parsed = json.loads(last_line)
+
+        assert isinstance(parsed["active_modes"], list)
+        assert isinstance(parsed["skipped_modes"], dict)
+        assert isinstance(parsed["skill_metric_types"], list)
+        assert "month_1" in parsed["active_modes"]
+        assert "MONTHLY" in parsed["skill_metric_types"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_last_line_still_valid_json_when_prefixed_by_log_lines(self, mock_sl, mock_fc_cls):
+        """Simulates run_in_venv log contamination: extra lines before JSON.
+
+        Even when fake log lines appear above the JSON line (as can happen
+        when run_locally.sh captures both stdout streams), reading only the
+        last newline-delimited element still yields valid JSON.
+        """
+        # Arrange
+        mock_fc_cls.return_value = make_multi_mode_config(
+            {
+                "month_1": {
+                    "issue_day": 25,
+                    "models": ["LR_Base"],
+                    "horizon_type": "month",
+                },
+            }
+        )
+
+        captured = io.StringIO()
+
+        # Act — inject fake "log" prefix lines before main() writes its JSON
+        with (
+            patch("sys.argv", ["lt_schedule_query.py", "--today", "2026-03-24"]),
+            patch("sys.stdout", captured),
+        ):
+            # Simulate lines that run_in_venv or a wrapper might emit to stdout
+            print("INFO: activating virtual environment")
+            print("INFO: running lt_schedule_query.py")
+            main()
+
+        # Assert — the last non-empty line is still valid JSON
+        stdout_text = captured.getvalue()
+        lines = [line for line in stdout_text.splitlines() if line.strip()]
+        last_line = lines[-1]
+        parsed = json.loads(last_line)
+        assert "active_modes" in parsed
+        assert "skipped_modes" in parsed
+        assert "skill_metric_types" in parsed

@@ -46,6 +46,8 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    get_permitted_station_codes,
+    normalize_ml_csv_columns,
 )
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -187,13 +189,35 @@ def recalculate_nan_forecasts():
     from datetime import timedelta
 
     api_start = (datetime.date.today() - timedelta(days=730)).isoformat()
+    permitted_codes = get_permitted_station_codes()
 
-    forecast = _read_ml_forecasts_from_api(
-        model_type=MODEL_TO_USE,
-        horizon_type=prefix,
-        start_date=api_start,
-    )
+    if permitted_codes is not None and len(permitted_codes) > 0:
+        # Per-code reads — each query ≤730 rows, fits in one page,
+        # avoiding non-deterministic pagination (ML-007).
+        frames = []
+        for code in sorted(permitted_codes):
+            df = _read_ml_forecasts_from_api(
+                model_type=MODEL_TO_USE,
+                horizon_type=prefix,
+                start_date=api_start,
+                code=code,
+            )
+            if not df.empty:
+                frames.append(df)
+        forecast = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    else:
+        # Config unavailable — fall back to all-codes query (existing behavior)
+        logger.warning(
+            "recalculate_nan_forecasts: org config unavailable — falling back "
+            "to all-codes read (non-deterministic pagination may affect results)"
+        )
+        forecast = _read_ml_forecasts_from_api(
+            model_type=MODEL_TO_USE,
+            horizon_type=prefix,
+            start_date=api_start,
+        )
 
+    # CSV fallback — triggers if API returned empty for all codes
     if forecast.empty:
         logger.warning(
             "recalculate_nan_forecasts: API returned no %s %s forecasts — falling back to CSV",
@@ -202,10 +226,15 @@ def recalculate_nan_forecasts():
         )
         try:
             forecast = pd.read_csv(forecast_path)
+            forecast = normalize_ml_csv_columns(forecast)
         except FileNotFoundError:
             logger.error("No forecast file found (API and CSV both empty)")
             return
+        # CSV contains all orgs' data — re-apply org-filter
+        if permitted_codes is not None and len(permitted_codes) > 0 and not forecast.empty:
+            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
 
+    # Second emptiness guard (preserved from original lines 211-218)
     if forecast.empty:
         logger.warning(
             "recalculate_nan_forecasts: Both API and CSV empty for %s %s. "
@@ -215,38 +244,13 @@ def recalculate_nan_forecasts():
         )
         return
 
-    # Filter to current org's stations (org-scoped reads)
-    try:
-        import json
-
-        config_path = os.path.join(
-            os.getenv("ieasyforecast_configuration_path", ""),
-            os.getenv("ieasyforecast_config_file_station_selection", ""),
-        )
-        with open(config_path) as f:
-            permitted_codes = {str(c) for c in json.load(f).get("stationsID", [])}
-        decad_file = os.getenv("ieasyforecast_config_file_station_selection_decad", "")
-        if decad_file:
-            decad_path = os.path.join(os.getenv("ieasyforecast_configuration_path", ""), decad_file)
-            if os.path.exists(decad_path):
-                with open(decad_path) as f:
-                    permitted_codes |= {str(c) for c in json.load(f).get("stationsID", [])}
-        if permitted_codes and not forecast.empty:
-            before_count = len(forecast)
-            forecast = forecast[forecast["code"].astype(str).isin(permitted_codes)]
-            filtered = before_count - len(forecast)
-            if filtered:
-                logger.info("Org-scoped filter: removed %d rows from other orgs", filtered)
-    except Exception:
-        logger.debug("Could not apply org-scoped filter — config unavailable")
-
     unique_codes = forecast["code"].unique()
 
     codes_with_nan = []
     min_missing_dates = []
     max_missing_dates = []
 
-    forecast["flag"] = forecast["flag"].astype(int, errors="ignore")
+    forecast["flag"] = pd.to_numeric(forecast["flag"], errors="coerce")
     try:
         # First attempt with default parsing
         forecast["date"] = pd.to_datetime(forecast["date"])
@@ -327,10 +331,21 @@ def recalculate_nan_forecasts():
     # --------------------------------------------------------------------
     # UPDATE THE FORECAST
     # Only replace the values with flag == 1
-    hindcast["flag"] = hindcast["flag"].astype(int)
+    hindcast["flag"] = pd.to_numeric(hindcast["flag"], errors="coerce")
+    n_nan_flags = hindcast["flag"].isna().sum()
+    if n_nan_flags > 0:
+        logger.warning(
+            "recalculate_nan_forecasts: %d hindcast rows have missing flag "
+            "— assigning flag=3 (permanent failure)",
+            n_nan_flags,
+        )
+        hindcast.loc[hindcast["flag"].isna(), "flag"] = 3
     hindcast["date"] = pd.to_datetime(hindcast["date"])
     hindcast["forecast_date"] = pd.to_datetime(hindcast["forecast_date"])
     hindcast["code"] = hindcast["code"].astype(str)
+    # Normalize forecast codes to str so per-code filters match hindcast codes
+    forecast["code"] = forecast["code"].astype(str)
+    codes_with_nan = [str(c) for c in codes_with_nan]
 
     def update_forecast(forecast_code, hindcast_code):
         value_cols = [col for col in forecast_code.columns if "Q" in col]
@@ -340,6 +355,9 @@ def recalculate_nan_forecasts():
         forecast_dates_flag1 = forecast_code[forecast_code["flag"].isin([1, 2])][
             "forecast_date"
         ].unique()
+
+        # Track which rows originally had flag in [1, 2]
+        original_flag12_mask = forecast_code["flag"].isin([1, 2])
 
         for forecast_date in forecast_dates_flag1:
             fc_mask = forecast_code["forecast_date"] == forecast_date
@@ -370,15 +388,22 @@ def recalculate_nan_forecasts():
                 "flag",
             ] = merged.loc[valid_flag, flag_col].values
 
-        return forecast_code
+        # Rows that were flag=1/2 and got updated (flag changed)
+        changed_mask = original_flag12_mask & ~forecast_code["flag"].isin([1, 2])
+        applied_rows = forecast_code.loc[changed_mask]
 
-    # Main loop
+        return forecast_code, applied_rows
+
+    # Main loop — collect rows that were actually applied
+    replaced_rows = []
     for code in codes_with_nan:
         forecast_code = forecast[forecast["code"] == code].copy()
         hindcast_code = hindcast[hindcast["code"] == code].copy()
         try:
-            updated = update_forecast(forecast_code, hindcast_code)
+            updated, applied = update_forecast(forecast_code, hindcast_code)
             forecast[forecast["code"] == code] = updated
+            if not applied.empty:
+                replaced_rows.append(applied)
         except Exception as e:
             logger.error(
                 "recalculate_nan_forecasts: update_forecast failed for "
@@ -395,16 +420,21 @@ def recalculate_nan_forecasts():
 
     # --- Write to API first (primary), then CSV (deprecated fallback) ---
     api_write_ok = False
-    if SAPPHIRE_API_AVAILABLE and len(hindcast) > 0:
+    if SAPPHIRE_API_AVAILABLE and replaced_rows:
         try:
+            api_data = pd.concat(replaced_rows, ignore_index=True)
             horizon_type = "pentad" if prefix == "pentad" else "decade"
-            api_write_ok = _write_ml_forecast_to_api(hindcast, horizon_type, MODEL_TO_USE)
+            api_write_ok = _write_ml_forecast_to_api(api_data, horizon_type, MODEL_TO_USE)
             if api_write_ok:
-                logger.info("Wrote %d recalculated forecasts to API", len(hindcast))
+                logger.info(
+                    "Wrote %d recalculated forecasts to API (out of %d hindcast rows)",
+                    len(api_data),
+                    len(hindcast),
+                )
             else:
                 logger.warning(
                     "API write returned failure for %d forecasts (model=%s)",
-                    len(hindcast),
+                    len(api_data),
                     MODEL_TO_USE,
                 )
         except Exception as e:
@@ -412,6 +442,7 @@ def recalculate_nan_forecasts():
 
     # CSV write (deprecated fallback)
     csv_path = os.path.join(PATH_FORECAST, prefix + "_" + MODEL_TO_USE + "_forecast.csv")
+    forecast = normalize_ml_csv_columns(forecast)
     forecast.to_csv(csv_path, index=False)
 
     if not api_write_ok:

@@ -28,11 +28,37 @@ sapphire/
 
 ## Running Services
 
-### Start all services with Docker Compose
+### Environment setup
+
+Services require environment variables (database credentials, ports, secrets) defined in a `.env` file. A template listing all required variables is provided at `sapphire/.env.example`.
+
+Two options:
+
+1. Copy the example file and fill in your values:
+   ```bash
+   cp sapphire/.env.example sapphire/.env
+   # edit sapphire/.env with your values
+   ```
+
+2. Point to an external config file with `--env-file`:
+   ```bash
+   docker compose --env-file ~/path/to/config/.env_kghm_bea up -d
+   ```
+
+The `sapphire/.env` file is gitignored — each developer maintains their own copy.
+
+### Start all services
 
 ```bash
-cd sapphire
-docker-compose up -d
+docker compose --env-file /path/to/.env up -d
+```
+
+**Apple Silicon (arm64):** The dashboard image has no arm64 manifest. Start the API services only by listing them explicitly:
+
+```bash
+docker compose --env-file /path/to/.env up -d \
+  preprocessing-db postprocessing-db user-db auth-db \
+  api-gateway preprocessing-api postprocessing-api user-api auth-api
 ```
 
 ### Check service health
@@ -48,13 +74,13 @@ curl http://localhost:8000/health/ready
 ### View logs
 
 ```bash
-docker-compose logs -f preprocessing-api
+docker compose logs -f preprocessing-api
 ```
 
 ### Stop services
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ## Developer Database Access

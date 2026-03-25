@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from typing import Dict
 
 
@@ -7,32 +7,37 @@ class Settings(BaseSettings):
     Gateway configuration settings
     Load from environment variables
     """
-    model_config = SettingsConfigDict(env_file=".env")
 
     # Gateway settings
     gateway_title: str = "SAPPHIRE API Gateway"
     gateway_version: str = "1.0.0"
 
     # Timeout settings (in seconds)
-    request_timeout: int = 30
-    health_check_timeout: int = 5
+    request_timeout: int
+    health_check_timeout: int
 
     # Authentication
-    api_key_enabled: bool = False
-    api_key: str = "your-secret-api-key"
+    api_key_enabled: bool
+    api_key: str
 
     # Rate limiting (requests per minute per IP)
-    rate_limit_enabled: bool = False
-    rate_limit: int = 100
+    rate_limit_enabled: bool
+    rate_limit: int
+
+    # Service URLs
+    preprocessing_api_url: str
+    postprocessing_api_url: str
+    user_api_url: str
+    auth_api_url: str
 
     @property
     def services(self) -> Dict[str, str]:
         """Get all service URLs as a dictionary."""
         return {
-            "preprocessing": "http://preprocessing-api:8002",
-            "postprocessing": "http://postprocessing-api:8003",
-            "user": "http://user-api:8004",
-            "auth": "http://auth-api:8005",
+            "preprocessing": self.preprocessing_api_url,
+            "postprocessing": self.postprocessing_api_url,
+            "user": self.user_api_url,
+            "auth": self.auth_api_url,
         }
 
     def get_service_url(self, service_name: str) -> str:

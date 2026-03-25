@@ -12,6 +12,7 @@ def update_forecast(forecast_code, hindcast_code):
     """Extracted from recalculate_nan_forecasts.recalculate_nan_forecasts().
 
     Mirror of the nested function — kept in sync manually.
+    Updated for ML-013: returns (forecast_code, applied_rows) tuple.
     """
     value_cols = [col for col in forecast_code.columns if "Q" in col]
     forecast_code = forecast_code.copy()
@@ -20,6 +21,9 @@ def update_forecast(forecast_code, hindcast_code):
     forecast_dates_flag1 = forecast_code[forecast_code["flag"].isin([1, 2])][
         "forecast_date"
     ].unique()
+
+    # Track which rows originally had flag in [1, 2]
+    original_flag12_mask = forecast_code["flag"].isin([1, 2])
 
     for forecast_date in forecast_dates_flag1:
         fc_mask = forecast_code["forecast_date"] == forecast_date
@@ -50,7 +54,11 @@ def update_forecast(forecast_code, hindcast_code):
             "flag",
         ] = merged.loc[valid_flag, flag_col].values
 
-    return forecast_code
+    # Rows that were flag=1/2 and got updated (flag changed)
+    changed_mask = original_flag12_mask & ~forecast_code["flag"].isin([1, 2])
+    applied_rows = forecast_code.loc[changed_mask]
+
+    return forecast_code, applied_rows
 
 
 def _make_df(dates, forecast_date, code="15013", q50=None, flag=1):
@@ -80,7 +88,7 @@ class TestUpdateForecastShapeMismatch:
             flag=3,
         )
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert result["Q50"].tolist() == [10.0, 20.0]
         assert result["flag"].tolist() == [3, 3]
 
@@ -89,7 +97,7 @@ class TestUpdateForecastShapeMismatch:
         fc = _make_df(["2026-03-01", "2026-03-02", "2026-03-03"], "2026-03-01", flag=1)
         hc = _make_df(["2026-03-01", "2026-03-02"], "2026-03-01", q50=[10.0, 20.0], flag=3)
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert result["Q50"].iloc[0] == 10.0
         assert result["Q50"].iloc[1] == 20.0
         assert pd.isna(result["Q50"].iloc[2])  # extra row unchanged
@@ -105,7 +113,7 @@ class TestUpdateForecastShapeMismatch:
             flag=3,
         )
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert result["Q50"].tolist() == [10.0, 20.0]
         assert len(result) == 2  # no extra rows added
 
@@ -114,7 +122,7 @@ class TestUpdateForecastShapeMismatch:
         fc = _make_df(["2026-03-01"], "2026-03-01", flag=1)
         hc = _make_df(["2026-03-01"], "2026-03-05", q50=[99.0], flag=3)  # different forecast_date
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert pd.isna(result["Q50"].iloc[0])  # unchanged
         assert result["flag"].iloc[0] == 1  # unchanged
 
@@ -123,7 +131,7 @@ class TestUpdateForecastShapeMismatch:
         fc = _make_df(["2026-03-01"], "2026-03-01", flag=0)
         hc = _make_df(["2026-03-01"], "2026-03-01", q50=[10.0], flag=3)
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert pd.isna(result["Q50"].iloc[0])  # flag=0 not updated
 
     def test_multiple_value_cols_all_updated(self):
@@ -151,7 +159,7 @@ class TestUpdateForecastShapeMismatch:
             }
         )
 
-        result = update_forecast(fc, hc)
+        result, _ = update_forecast(fc, hc)
         assert result["Q05"].tolist() == [1.0, 2.0]
         assert result["Q50"].tolist() == [10.0, 20.0]
         assert result["Q95"].tolist() == [100.0, 200.0]

@@ -150,6 +150,10 @@ ML_MAINTENANCE_SCRIPTS=(
     add_new_station.py
 )
 
+# Machine learning only runs for DECAD mode (PENTAD forecasts use LR only).
+# Override with ML_MODE=BOTH to restore old behavior.
+ML_MODE="${ML_MODE:-DECAD}"
+
 # Modules with maintenance modes
 MAINTENANCE_MODULES=(
     preprocessing_runoff
@@ -294,14 +298,15 @@ query_lt_schedule() {
         return 0
     }
 
-    # Parse JSON output (uses Python-style JSON, parse with simple extraction)
-    LT_ACTIVE_MODES=$(echo "$json_output" | python3 -c "
+    # Parse JSON output — run_in_venv contaminates stdout with log lines;
+    # the JSON is always the last line, so extract it with tail.
+    LT_ACTIVE_MODES=$(echo "$json_output" | tail -n 1 | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 print(' '.join(d.get('active_modes', [])))
 " 2>/dev/null) || LT_ACTIVE_MODES=""
 
-    LT_SKILL_METRIC_TYPES=$(echo "$json_output" | python3 -c "
+    LT_SKILL_METRIC_TYPES=$(echo "$json_output" | tail -n 1 | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 print(' '.join(d.get('skill_metric_types', [])))
@@ -355,6 +360,13 @@ should_skip_module() {
         done
     fi
     return 1
+}
+
+should_skip_ml_for_mode() {
+    local current_mode="$1"
+    # ML_MODE=BOTH means run ML for every mode (legacy behavior)
+    [ "$ML_MODE" = "BOTH" ] && return 1
+    [ "$current_mode" != "$ML_MODE" ]
 }
 
 resolve_org() {
@@ -1003,7 +1015,11 @@ run_short_term_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running forecasting for mode: ${mode}"
 
-        if ! should_skip_module machine_learning; then
+        if should_skip_module machine_learning; then
+            :
+        elif should_skip_ml_for_mode "$mode"; then
+            log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+        else
             run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -1128,7 +1144,11 @@ run_maintenance_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running maintenance for mode: ${mode}"
 
-        if ! should_skip_module machine_learning; then
+        if should_skip_module machine_learning; then
+            :
+        elif should_skip_ml_for_mode "$mode"; then
+            log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+        else
             run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -1168,7 +1188,11 @@ run_daily_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
 
-        if ! should_skip_module machine_learning; then
+        if should_skip_module machine_learning; then
+            :
+        elif should_skip_ml_for_mode "$mode"; then
+            log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+        else
             run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -1180,7 +1204,11 @@ run_daily_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
 
-        if ! should_skip_module machine_learning; then
+        if should_skip_module machine_learning; then
+            :
+        elif should_skip_ml_for_mode "$mode"; then
+            log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+        else
             run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
@@ -1493,6 +1521,8 @@ Environment variables:
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
   ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm).
                                           Demo skips: preprocessing_gateway, machine_learning, long_term_forecasting.
+  ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
+                                            Set ML_MODE=BOTH to run ML for all modes.
 
 Examples:
   # Full daily run (PENTAD + DECAD + maintenance)
@@ -1623,6 +1653,7 @@ main() {
     log INFO "Organization: ${ORG:-<not set, running all modules>}"
     log INFO "Continue on error: ${CONTINUE_ON_ERROR}"
     log INFO "Dry run: ${DRY_RUN}"
+    log INFO "ML mode: ${ML_MODE}"
     log INFO "Log file: ${LOG_FILE}"
 
     if [ "$ORG" = "demo" ]; then
@@ -1700,6 +1731,10 @@ main() {
                 log WARN "SAPPHIRE_PREDICTION_MODE not set, defaulting to PENTAD"
             fi
             for mode in "${modes_to_run[@]}"; do
+                if should_skip_ml_for_mode "$mode"; then
+                    log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+                    continue
+                fi
                 export SAPPHIRE_PREDICTION_MODE="$mode"
                 log INFO "Running ML maintenance for mode: ${mode}"
                 run_maintenance_machine_learning || { exit_code=$?; break; }

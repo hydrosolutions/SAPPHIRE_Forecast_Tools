@@ -27,6 +27,7 @@ dependencies = [
     # Internal dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
     "pillow>=12.1.1",
+    "httpx==0.28.0",
 ]
 
 [project.optional-dependencies]

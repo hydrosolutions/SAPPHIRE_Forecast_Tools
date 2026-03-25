@@ -198,7 +198,7 @@ async def preprocessing_proxy(
 
 
 # Postprocessing service routes
-@app.api_route("/api/postprocessing/{path:path}", methods=["GET", "POST"], tags=["Postprocessing"])
+@app.api_route("/api/postprocessing/{path:path}", methods=["GET", "POST", "DELETE"], tags=["Postprocessing"])
 async def postprocessing_proxy(
     path: str,
     request: Request,

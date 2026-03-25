@@ -258,6 +258,72 @@ class TestApiWriteReturnsFailure:
         )
 
 
+class TestCsvColumnsAreCanonical:
+    """Phase 2 (ML-003): CSV written by recalculate_nan_forecasts must
+    contain only canonical ML columns — no API-only columns allowed.
+    """
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("recalculate_nan_forecasts.SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_nan_forecasts._write_ml_forecast_to_api")
+    @patch("recalculate_nan_forecasts.call_hindcast_script")
+    @patch("recalculate_nan_forecasts._read_ml_forecasts_from_api")
+    @patch("recalculate_nan_forecasts.sl")
+    def test_csv_write_has_only_canonical_columns(
+        self,
+        mock_sl,
+        mock_read_api,
+        mock_call_hindcast,
+        mock_write_api,
+        tmp_path,
+    ):
+        """API-only columns (horizon_type, model_type, id) must not appear
+        in the CSV file written by recalculate_nan_forecasts.
+        """
+        from scr.utils_ml_forecast import ML_CANONICAL_CSV_COLUMNS
+
+        # Arrange — forecast from the API that carries extra API-only columns
+        forecast = _make_forecast_df_with_nans()
+        forecast["horizon_type"] = "day"
+        forecast["model_type"] = "TFT"
+        forecast["id"] = range(len(forecast))
+        mock_sl.load_environment.return_value = None
+        mock_read_api.return_value = forecast
+
+        # Hindcast replaces the NaN rows (clean, no extra columns)
+        mock_call_hindcast.return_value = _make_hindcast_df()
+        mock_write_api.return_value = True
+
+        forecast_dir = tmp_path / "output" / "TFT"
+        forecast_dir.mkdir(parents=True)
+        env_override = {
+            **_BASE_ENV,
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+        }
+
+        # Act
+        with patch.dict(os.environ, env_override, clear=False):
+            recalculate_nan_forecasts.recalculate_nan_forecasts()
+
+        # Assert — read the CSV and verify no API-only columns are present
+        csv_path = forecast_dir / "pentad_TFT_forecast.csv"
+        assert csv_path.exists(), "Expected CSV file was not written"
+        written = pd.read_csv(csv_path)
+        api_only = {
+            "horizon_type",
+            "model_type",
+            "id",
+            "model_type_description",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+        leaked = api_only & set(written.columns)
+        assert not leaked, f"API-only columns leaked into CSV: {leaked}"
+        non_canonical = set(written.columns) - set(ML_CANONICAL_CSV_COLUMNS)
+        assert not non_canonical, f"Non-canonical columns in CSV: {non_canonical}"
+
+
 class TestApiUnavailableFallback:
     """Phase 2b: SAPPHIRE_API_AVAILABLE is False — CSV-only warning."""
 
@@ -428,3 +494,143 @@ class TestCallHindcastScriptRaisesOnFailure:
 
         assert result.equals(expected_df)
         mock_read_csv.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test class: Selective API write — only replaced rows sent (ML-013)
+# ---------------------------------------------------------------------------
+
+
+def _make_wide_hindcast_df():
+    """Hindcast covering wider range than flag=1 dates — includes flag=0 dates."""
+    dates = pd.to_datetime(["2024-06-01", "2024-06-06", "2024-06-11"])
+    forecast_dates = pd.to_datetime(["2024-05-31", "2024-06-05", "2024-06-10"])
+    return pd.DataFrame(
+        {
+            "code": [12345, 12345, 12345],
+            "date": dates,
+            "forecast_date": forecast_dates,
+            "flag": [4, 4, 4],
+            "Q5": [11.0, 12.0, 13.0],
+            "Q25": [21.0, 22.0, 23.0],
+            "Q50": [31.0, 32.0, 33.0],
+            "Q75": [41.0, 42.0, 43.0],
+            "Q95": [51.0, 52.0, 53.0],
+        }
+    )
+
+
+class TestSelectiveApiWrite:
+    """ML-013: API write sends only the rows whose flag changed from 1/2."""
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("recalculate_nan_forecasts.SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_nan_forecasts._write_ml_forecast_to_api")
+    @patch("recalculate_nan_forecasts.call_hindcast_script")
+    @patch("recalculate_nan_forecasts._read_ml_forecasts_from_api")
+    @patch("recalculate_nan_forecasts.sl")
+    def test_api_write_sends_only_replaced_rows(
+        self,
+        mock_sl,
+        mock_read_api,
+        mock_call_hindcast,
+        mock_write_api,
+        tmp_path,
+    ):
+        """Only the 2 flag=1 rows that were replaced should reach the API —
+        not all 3 rows from the hindcast (which covers the flag=0 row too).
+        """
+        # Arrange
+        mock_sl.load_environment.return_value = None
+        mock_read_api.return_value = _make_forecast_df_with_nans()
+        # Hindcast covers all 3 dates including the flag=0 row
+        mock_call_hindcast.return_value = _make_wide_hindcast_df()
+        mock_write_api.return_value = True
+
+        forecast_dir = tmp_path / "output" / "TFT"
+        forecast_dir.mkdir(parents=True)
+        env_override = {**_BASE_ENV, "ieasyforecast_intermediate_data_path": str(tmp_path)}
+
+        # Act
+        with patch.dict(os.environ, env_override, clear=False):
+            recalculate_nan_forecasts.recalculate_nan_forecasts()
+
+        # Assert — only the 2 originally-flag=1 rows should be sent
+        assert mock_write_api.called, "API write was not called"
+        args, kwargs = mock_write_api.call_args
+        api_data = args[0]
+        assert len(api_data) == 2, f"Expected 2 replaced rows sent to API, got {len(api_data)}"
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("recalculate_nan_forecasts.SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_nan_forecasts._write_ml_forecast_to_api")
+    @patch("recalculate_nan_forecasts.call_hindcast_script")
+    @patch("recalculate_nan_forecasts._read_ml_forecasts_from_api")
+    @patch("recalculate_nan_forecasts.sl")
+    def test_no_matching_hindcast_means_no_api_write(
+        self,
+        mock_sl,
+        mock_read_api,
+        mock_call_hindcast,
+        mock_write_api,
+        tmp_path,
+    ):
+        """When hindcast is empty the early return at line 324-326 fires
+        and the API write is never reached.
+        """
+        # Arrange
+        mock_sl.load_environment.return_value = None
+        mock_read_api.return_value = _make_forecast_df_with_nans()
+        # Empty hindcast triggers the early return
+        mock_call_hindcast.return_value = pd.DataFrame()
+
+        forecast_dir = tmp_path / "output" / "TFT"
+        forecast_dir.mkdir(parents=True)
+        env_override = {**_BASE_ENV, "ieasyforecast_intermediate_data_path": str(tmp_path)}
+
+        # Act
+        with patch.dict(os.environ, env_override, clear=False):
+            recalculate_nan_forecasts.recalculate_nan_forecasts()
+
+        # Assert — early return must have prevented any API call
+        mock_write_api.assert_not_called()
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("recalculate_nan_forecasts.SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_nan_forecasts._write_ml_forecast_to_api")
+    @patch("recalculate_nan_forecasts.call_hindcast_script")
+    @patch("recalculate_nan_forecasts._read_ml_forecasts_from_api")
+    @patch("recalculate_nan_forecasts.sl")
+    def test_api_write_sends_updated_flag_values(
+        self,
+        mock_sl,
+        mock_read_api,
+        mock_call_hindcast,
+        mock_write_api,
+        tmp_path,
+    ):
+        """The DataFrame reaching the API must carry the hindcast flag=4,
+        not the original flag=1 values.
+        """
+        # Arrange
+        mock_sl.load_environment.return_value = None
+        mock_read_api.return_value = _make_forecast_df_with_nans()
+        # Hindcast provides flag=4 replacements for both flag=1 rows
+        mock_call_hindcast.return_value = _make_hindcast_df()
+        mock_write_api.return_value = True
+
+        forecast_dir = tmp_path / "output" / "TFT"
+        forecast_dir.mkdir(parents=True)
+        env_override = {**_BASE_ENV, "ieasyforecast_intermediate_data_path": str(tmp_path)}
+
+        # Act
+        with patch.dict(os.environ, env_override, clear=False):
+            recalculate_nan_forecasts.recalculate_nan_forecasts()
+
+        # Assert — flag values in the API payload must be 4 (from hindcast)
+        assert mock_write_api.called, "API write was not called"
+        args, kwargs = mock_write_api.call_args
+        api_data = args[0]
+        assert set(api_data["flag"].unique()) == {4}, (
+            f"Expected flag=4 in API payload, got: {api_data['flag'].unique()}"
+        )

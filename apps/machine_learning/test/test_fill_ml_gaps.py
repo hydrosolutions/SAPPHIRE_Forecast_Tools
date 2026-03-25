@@ -87,6 +87,14 @@ def _make_forecast_df(codes=None, n_days=5, include_q50=True, nan_rows=None):
     return df
 
 
+_BASE_ENV = {
+    "SAPPHIRE_MODEL_TO_USE": "TFT",
+    "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+    "ieasyforecast_intermediate_data_path": "/tmp/test_ml004",
+    "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+}
+
+
 def _make_hindcast_df(codes=None, n_days=3, start_date="2024-01-03"):
     """Build a minimal hindcast DataFrame returned by call_hindcast_script.
 
@@ -125,34 +133,64 @@ def _make_hindcast_df(codes=None, n_days=3, start_date="2024-01-03"):
 
 
 class TestNullDischargeFilter:
-    """Tests for the Q50-based null-discharge filter (Bug C, Phase 1a)."""
+    """ML-008b: null-Q50 rows must NOT be excluded from gap detection.
 
-    def test_rows_with_nan_q50_are_excluded(self):
-        """Rows where Q50 is NaN must be removed before gap detection."""
-        # Arrange
+    The null-discharge filter was removed because flag=3 rows (null Q50)
+    are legitimate forecast records that should count as "represented dates"
+    for gap detection purposes. Removing them caused an infinite hindcast loop.
+    """
+
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True)
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    @patch("fill_ml_gaps.get_permitted_station_codes", return_value=None)
+    @patch("fill_ml_gaps.sl")
+    def test_null_q50_rows_do_not_trigger_hindcast(
+        self,
+        mock_sl,
+        mock_permitted,
+        mock_read_api,
+        mock_hindcast,
+        mock_write_api,
+    ):
+        """Contiguous dates with some NaN Q50 (flag=3) must not be
+        detected as gaps. The gap detector should see all dates as
+        present regardless of Q50 value.
+        """
+        mock_sl.load_environment.return_value = None
+        # 5 consecutive days, rows 1 and 3 have NaN Q50
         forecast = _make_forecast_df(n_days=5, nan_rows=[1, 3])
-        assert forecast["Q50"].isna().sum() == 2
+        mock_read_api.return_value = forecast
 
-        # Act -- replicate the filter logic from fill_ml_gaps lines 221-228
-        if "Q50" in forecast.columns:
-            forecast = forecast[forecast["Q50"].notna()].copy()
+        fill_ml_gaps.fill_ml_gaps()
 
-        # Assert
-        assert len(forecast) == 3
-        assert forecast["Q50"].isna().sum() == 0
+        mock_hindcast.assert_not_called()
 
-    def test_no_q50_column_does_not_crash(self):
-        """When Q50 column is absent, the filter must be a no-op."""
-        # Arrange
+    @patch.dict(os.environ, _BASE_ENV, clear=False)
+    @patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True)
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    @patch("fill_ml_gaps.get_permitted_station_codes", return_value=None)
+    @patch("fill_ml_gaps.sl")
+    def test_no_q50_column_does_not_crash(
+        self,
+        mock_sl,
+        mock_permitted,
+        mock_read_api,
+        mock_hindcast,
+        mock_write_api,
+    ):
+        """When Q50 column is absent, gap detection still works without crash."""
+        mock_sl.load_environment.return_value = None
         forecast = _make_forecast_df(n_days=3, include_q50=False)
-        original_len = len(forecast)
+        mock_read_api.return_value = forecast
 
-        # Act -- same guard as the production code
-        if "Q50" in forecast.columns:
-            forecast = forecast[forecast["Q50"].notna()].copy()
+        fill_ml_gaps.fill_ml_gaps()
 
-        # Assert
-        assert len(forecast) == original_len
+        mock_hindcast.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +462,72 @@ class TestApiFirstWrite:
         assert any("API write raised an exception" in rec.message for rec in caplog.records), (
             f"Expected exception log, got: {[r.message for r in caplog.records]}"
         )
+
+    @patch.dict(
+        os.environ,
+        {
+            "SAPPHIRE_MODEL_TO_USE": "TFT",
+            "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+            "ieasyforecast_intermediate_data_path": "/tmp/test_ml004",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+    )
+    @patch("fill_ml_gaps._write_ml_forecast_to_api")
+    @patch("fill_ml_gaps.call_hindcast_script")
+    @patch("fill_ml_gaps._read_ml_forecasts_from_api")
+    def test_csv_write_has_only_canonical_columns(
+        self, mock_read_api, mock_hindcast, mock_write_api, tmp_path
+    ):
+        """CSV written after gap-fill must contain only canonical columns.
+
+        When the gap-filled data carries API-only columns (e.g., from a
+        hindcast that added ``horizon_type``, ``model_type``, or ``id``),
+        those columns must be stripped before the CSV is written to disk.
+        """
+        from scr.utils_ml_forecast import ML_CANONICAL_CSV_COLUMNS
+
+        # Arrange — forecast with a 3-day gap to trigger hindcast path
+        forecast_with_gap = _make_forecast_df(n_days=2)
+        forecast_with_gap.loc[1, "forecast_date"] = pd.Timestamp("2024-01-05")
+        mock_read_api.return_value = forecast_with_gap
+
+        # Hindcast returns a DataFrame that includes API-only extra columns
+        hindcast = _make_hindcast_df(start_date="2024-01-02", n_days=3)
+        hindcast["horizon_type"] = "day"
+        hindcast["model_type"] = "TFT"
+        hindcast["id"] = range(len(hindcast))
+        mock_hindcast.return_value = hindcast
+
+        mock_write_api.return_value = True
+
+        csv_dir = tmp_path / "output" / "TFT"
+        csv_dir.mkdir(parents=True)
+
+        with patch.dict(
+            os.environ,
+            {"ieasyforecast_intermediate_data_path": str(tmp_path)},
+        ):
+            with patch("fill_ml_gaps.SAPPHIRE_API_AVAILABLE", True):
+                fill_ml_gaps.fill_ml_gaps()
+
+        # Assert — read back the CSV and check column names
+        csv_path = csv_dir / "pentad_TFT_forecast.csv"
+        assert csv_path.exists(), "Expected CSV file was not written"
+        written = __import__("pandas").read_csv(csv_path)
+        api_only = {
+            "horizon_type",
+            "model_type",
+            "id",
+            "model_type_description",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+        leaked = api_only & set(written.columns)
+        assert not leaked, f"API-only columns leaked into CSV: {leaked}"
+        # All written columns must be from the canonical set
+        non_canonical = set(written.columns) - set(ML_CANONICAL_CSV_COLUMNS)
+        assert not non_canonical, f"Non-canonical columns in CSV: {non_canonical}"
 
     @patch.dict(
         os.environ,

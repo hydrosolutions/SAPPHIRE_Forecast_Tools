@@ -109,7 +109,9 @@ from scr import TFTPredictor, TiDEPredictor, TSMixerPredictor, predictor_ARIMA, 
 from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _check_ml_forecast_consistency,
+    _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    normalize_ml_csv_columns,
 )
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -191,6 +193,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
         forecast_combined = forecast_combined.drop_duplicates(
             subset=["forecast_date", "date", "code"], keep="last"
         )
+        forecast_combined = normalize_ml_csv_columns(forecast_combined)
         forecast_combined.to_csv(forecast_file_path, index=False)
     except Exception as e:
         logger.error(f"Failed to write pentad forecast to CSV: {e}")
@@ -241,6 +244,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         forecast_combined = forecast_combined.drop_duplicates(
             subset=["forecast_date", "date", "code"], keep="last"
         )
+        forecast_combined = normalize_ml_csv_columns(forecast_combined)
         forecast_combined.to_csv(forecast_file_path, index=False)
     except Exception as e:
         logger.error(f"Failed to write decad forecast to CSV: {e}")
@@ -657,21 +661,40 @@ def make_ml_forecast():
     THRESHOLD_MISSING_DAYS = int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
 
-    # load the old forecast
-    if PREDICTION_MODE == "PENTAD":
+    # Load old forecast for missing-value imputation (API-first, CSV fallback)
+    prefix = "pentad" if PREDICTION_MODE == "PENTAD" else "decad"
+    forecast_csv_path = os.path.join(OUTPUT_PATH_DISCHARGE, f"{prefix}_{MODEL_TO_USE}_forecast.csv")
+    lookback_start = (
+        pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=60)
+    ).strftime("%Y-%m-%d")
+
+    old_forecast = _read_ml_forecasts_from_api(
+        model_type=MODEL_TO_USE,
+        horizon_type=prefix,
+        start_date=lookback_start,
+    )
+    if old_forecast.empty:
+        logger.info(
+            "API returned no %s %s forecasts for imputation — falling back to CSV",
+            MODEL_TO_USE,
+            prefix,
+        )
         try:
-            old_forecast = pd.read_csv(
-                os.path.join(OUTPUT_PATH_DISCHARGE, f"pentad_{MODEL_TO_USE}_forecast.csv")
+            old_forecast = pd.read_csv(forecast_csv_path)
+            old_forecast["forecast_date"] = pd.to_datetime(
+                old_forecast["forecast_date"], format="mixed"
             )
+            old_forecast["date"] = pd.to_datetime(old_forecast["date"], format="mixed")
+            old_forecast = normalize_ml_csv_columns(old_forecast)
         except FileNotFoundError:
             old_forecast = pd.DataFrame()
     else:
-        try:
-            old_forecast = pd.read_csv(
-                os.path.join(OUTPUT_PATH_DISCHARGE, f"decad_{MODEL_TO_USE}_forecast.csv")
-            )
-        except FileNotFoundError:
-            old_forecast = pd.DataFrame()
+        logger.info(
+            "Read %d %s %s forecast rows from API for imputation",
+            len(old_forecast),
+            MODEL_TO_USE,
+            prefix,
+        )
 
     logger.debug("Predicting for %s rivers", len(rivers_to_predict))
     logger.debug("Rivers to predict: %s", rivers_to_predict)

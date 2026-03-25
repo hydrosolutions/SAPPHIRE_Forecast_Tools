@@ -1,12 +1,11 @@
 import logging
 import sys
-import os
+from app.config import settings
 
 
 def setup_logging():
     """Configure application logging"""
-    log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
+    log_level = getattr(logging, settings.log_level, logging.INFO)
 
     logging.basicConfig(
         level=log_level,

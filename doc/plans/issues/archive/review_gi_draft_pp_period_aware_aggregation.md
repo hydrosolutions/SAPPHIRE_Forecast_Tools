@@ -1,6 +1,6 @@
 # PP-023: Period-aware aggregation of ML daily targets
 
-**Status**: Implemented (all steps verified 2026-03-13)
+**Status**: Complete (verified 2026-03-24)
 **Module**: postprocessing_forecasts
 **Priority**: Critical
 **Labels**: `bug`, `data-quality`, `postprocessing`
