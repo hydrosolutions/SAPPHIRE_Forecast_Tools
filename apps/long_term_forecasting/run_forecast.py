@@ -36,6 +36,7 @@ from lt_utils import (
     check_valid_forecast_issue_date,
     create_model_instance,
     save_forecast,
+    infer_q_columns
 )
 from post_process_lt_forecast import post_process_lt_forecast
 
@@ -272,8 +273,31 @@ def run_single_model(
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
         forecast = forecast.round(2)
-        forecast["flag"] = 0
-        success = True
+        
+        # add all station codes as columns if not already present (some models return forecasts for a subset of stations)
+        codes_with_forecast = forecast["code"].unique()
+        station_codes = [int(c) for c in station_codes]  # ensure station codes are int for comparison
+        missing_codes = set(station_codes) - set(codes_with_forecast)
+        logger.info(f"Model {model_name} produced forecasts for {len(codes_with_forecast)} stations. Missing codes: {missing_codes}")
+        first_row = forecast.head(1)
+        q_cols = infer_q_columns(forecast)
+        for code in missing_codes:
+            missing_row = first_row.copy()
+            missing_row["code"] = code
+            missing_row[q_cols] = np.nan  # did not produce a forecast for this station, set to NaN
+            forecast = pd.concat([forecast, missing_row], ignore_index=True)
+
+        # where Q_model_name is Nan, set flag to 2, else 0 (0 = forecast produced, 2 = no forecast produced, missing data)
+        main_q_col = f"Q_{model_name}"
+        if main_q_col not in forecast.columns:
+            logger.error(f"Expected main Q column {main_q_col} not found in forecast for model {model_name}. Available columns: {forecast.columns}")
+            forecast["flag"] = 2
+            success = False
+        else:
+            nan_mask = forecast[main_q_col].isna()
+            forecast.loc[nan_mask, "flag"] = 2  # no forecast produced,
+            forecast.loc[~nan_mask, "flag"] = 0  # forecast produced
+            success = True
 
     else:
         logger.error(f"Cannot run model {model_name} due to missing or outdated data.")
