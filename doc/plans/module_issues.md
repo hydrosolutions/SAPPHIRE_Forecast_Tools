@@ -87,6 +87,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-012** | Multi-org safety guards (write guard, collision check, isolation test) | infra | **High** | Review | [`review_gi_draft_infra_multi_org_safety_guards.md`](issues/review_gi_draft_infra_multi_org_safety_guards.md) | — |
 | ~~**INFRA-013**~~ | ~~Postprocessing API container crashes on bulk forecast writes (118 restarts)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | — |
 | **INFRA-014** | Extend validate_pipeline.py: JSON output, baseline/delta, new checks | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_validate_pipeline_extensions.md`](issues/mid_prio_gi_draft_infra_validate_pipeline_extensions.md) | — |
+| **INFRA-015** | Audit pentad/decade boundary date convention across modules | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_pentad_decade_boundary_audit.md`](issues/mid_prio_gi_draft_infra_pentad_decade_boundary_audit.md) | LR-008 (only finding) |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
@@ -116,6 +117,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`low_prio_gi_draft_LR_cleanup_dead_run_date_code.md`](issues/low_prio_gi_draft_LR_cleanup_dead_run_date_code.md) | — |
 | **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
 | **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Archived | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
+| **LR-006** | Fix maintenance script sync mode and hindcast auto-detect filenames | **High** | Review | [`review_gi_draft_lr_maintenance_and_autodetect_fixes.md`](issues/review_gi_draft_lr_maintenance_and_autodetect_fixes.md) | — |
+| **LR-007** | API write failures are silent when API is enabled | **High** | Draft | [`high_prio_gi_draft_lr_api_write_loud_failure.md`](issues/high_prio_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
+| **LR-008** | LR forecasts use wrong pentad/decad on boundary days (wrong norm + training data) | **High** | Draft | [`high_prio_gi_draft_lr_pentad_horizon_offset.md`](issues/high_prio_gi_draft_lr_pentad_horizon_offset.md) | LR-007 (Phase 3 needs loud failure) |
 
 ### Long-Term Forecasting (`ltf`)
 
@@ -309,4 +313,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-24 (PP-022, PP-023, PP-026 completed; LR-005 archived; PP-028 closed)*
+*Last updated: 2026-03-25 (LR-006, LR-007, LR-008 drafted; INFRA-015 downgraded to Medium)*

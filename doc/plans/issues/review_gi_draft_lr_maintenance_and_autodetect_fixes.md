@@ -1,6 +1,6 @@
 # LR-006: Fix maintenance sync mode and hindcast auto-detect (API-first)
 
-**Status**: Draft
+**Status**: Review
 **Module**: `linear_regression`
 **Priority**: High
 **Labels**: `bug`, `maintenance`, `hindcast`, `data-integrity`
