@@ -1,6 +1,6 @@
 # LR-007: API write failures are silent when API is enabled
 
-**Status**: Draft
+**Status**: Review
 **Module**: `linear_regression`, `iEasyHydroForecast`
 **Priority**: High
 **Labels**: `reliability`, `api-integration`, `data-integrity`
@@ -318,20 +318,20 @@ error message when the container exits non-zero due to API write failures.
 
 ## Acceptance Criteria (overall)
 
-- [ ] All six `write_*` functions in `forecast_library.py` return `bool`
-- [ ] `True` when API is disabled or write succeeds; `False` when API was
+- [x] All six `write_*` functions in `forecast_library.py` return `bool`
+- [x] `True` when API is disabled or write succeeds; `False` when API was
       enabled but write failed
-- [ ] CSV write behaviour is unchanged in `warn`/`ignore` modes; in `fail`
+- [x] CSV write behaviour is unchanged in `warn`/`ignore` modes; in `fail`
       mode, CSV is skipped for the failing function (intentional hard stop)
-- [ ] `linear_regression.py` logs a `logger.error` for each failed API
+- [x] `linear_regression.py` logs a `logger.error` for each failed API
       write and exits non-zero after completing all processing
-- [ ] All new tests pass with zero skips
-- [ ] `test_integration_main.py` mocks updated from `return_value = None`
+- [x] All new tests pass with zero skips
+- [x] `test_integration_main.py` mocks updated from `return_value = None`
       to `return_value = True`
-- [ ] Full linear_regression test suite passes with zero skips
-- [ ] `bin/daily_linreg_maintenance.sh` produces an actionable warning
+- [x] Full linear_regression test suite passes with zero skips
+- [x] `bin/daily_linreg_maintenance.sh` produces an actionable warning
       mentioning API write failures when the container exits non-zero
-- [ ] No changes to `sapphire/services/` (ownership boundary respected)
+- [x] No changes to `sapphire/services/` (ownership boundary respected)
 
 ---
 
