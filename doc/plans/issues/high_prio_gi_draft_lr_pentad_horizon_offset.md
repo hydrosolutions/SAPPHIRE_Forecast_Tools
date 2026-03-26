@@ -69,16 +69,21 @@ In `linear_regression.py`, `linreg_pentad["pentad_in_year"]` retains the issue-d
 1. Pentad path — insert after `perform_forecast` / rename block and before `write_linreg_pentad_forecast_data` call:
 
 ```python
-# Override pentad_in_year for API/CSV: the DB field horizon_in_year must
-# reflect the TARGET period (the period being forecast), not the issue
-# date's period. The LR DataFrame convention stores rows under the issue
-# date, so pentad_in_year = issue_pentad. We convert to target_pentad
-# here, only for the write. forecast_pentad_of_year (used for training,
-# norms, visibility) is unchanged.
+# Override pentad_in_year and pentad_in_month for API/CSV: the DB fields
+# horizon_in_year and horizon_value must reflect the TARGET period (the
+# period being forecast), not the issue date's period. The LR DataFrame
+# convention stores rows under the issue date, so pentad_in_year =
+# issue_pentad. We convert to target_pentad here, only for the write.
+# forecast_pentad_of_year (used for training, norms, visibility) is
+# unchanged.
 # Dec 31 edge case: issue pentad 72 wraps to target pentad 1.
+# Note: the 4 hydrograph/timeseries write functions already recompute
+# pentad_in_year from date + 1 day internally, so only the forecast
+# write needs this override.
 _issue_pentad = int(forecast_pentad_of_year)
 _target_pentad = 1 if _issue_pentad == 72 else _issue_pentad + 1
 linreg_pentad["pentad_in_year"] = str(_target_pentad)
+linreg_pentad["pentad_in_month"] = str(((_target_pentad - 1) % 6) + 1)
 ```
 
 2. Decad path — insert before `write_linreg_decad_forecast_data` call:
@@ -88,15 +93,16 @@ linreg_pentad["pentad_in_year"] = str(_target_pentad)
 _issue_decad = int(forecast_decad_of_year)
 _target_decad = 1 if _issue_decad == 36 else _issue_decad + 1
 linreg_decad["decad_in_year"] = str(_target_decad)
+linreg_decad["decad_in_month"] = str(((_target_decad - 1) % 3) + 1)
 ```
 
 **CRITICAL CONSTRAINT**: Do NOT change `forecast_pentad_of_year`, `forecast_decad_of_year`, or any call to `save_discharge_avg`, `perform_linear_regression`, `perform_forecast`. The override is purely a pre-write column mutation.
 
 **Acceptance criteria**:
-- On March 25 (issue pentad 17): `horizon_in_year` written to API = 18
-- On March 10 (issue decad 7): `horizon_in_year` written to API = 8
-- On Dec 31 (issue pentad 72): `horizon_in_year` written to API = 1
-- On Dec 31 (issue decad 36): `horizon_in_year` written to API = 1
+- On March 25 (issue pentad 17): `horizon_in_year` = 18, `horizon_value` = 6
+- On March 10 (issue decad 7): `horizon_in_year` = 8, `horizon_value` = 2
+- On Dec 31 (issue pentad 72): `horizon_in_year` = 1, `horizon_value` = 1
+- On Dec 31 (issue decad 36): `horizon_in_year` = 1, `horizon_value` = 1
 - `save_discharge_avg`, `perform_linear_regression`, `perform_forecast` still receive issue-date key
 - All existing tests pass
 
@@ -117,18 +123,19 @@ linreg_decad["decad_in_year"] = str(_target_decad)
 | 2 | Convention | Training filter uses issue pentad | `perform_linear_regression(forecast_horizon_int=17)` filters to `pentad_in_year == 17` rows |
 | 3 | Upstream isolation | `save_discharge_avg` receives issue pentad as `group_id` | Mock: `group_id == "17"` on March 25 |
 | 4 | Upstream isolation | `perform_linear_regression` receives `forecast_horizon_int == 17` on March 25 | Mock: `forecast_horizon_int == 17` |
-| 5 | Metadata fix (pentad) | March 25: write receives `pentad_in_year == "18"` | Inspect DataFrame before write |
-| 6 | Metadata fix (pentad) | March 5: write receives `pentad_in_year == "14"` | |
-| 7 | Metadata fix (pentad non-boundary) | March 12: write receives `pentad_in_year == "16"` | |
-| 8 | Metadata fix (decad) | March 10: write receives `decad_in_year == "8"` | |
-| 9 | Metadata fix (decad) | March 20: write receives `decad_in_year == "9"` | |
-| 10 | Dec 31 wrap (pentad) | Issue pentad 72 → written `pentad_in_year == "1"` | |
-| 11 | Dec 31 wrap (decad) | Issue decad 36 → written `decad_in_year == "1"` | |
-| 12 | Month boundary (pentad) | Jan 31 (issue pentad 6) → written `pentad_in_year == "7"` | Crosses month |
-| 13 | Month boundary (pentad) | May 31 (issue pentad 30) → written `pentad_in_year == "31"` | Crosses month |
-| 14 | Leap year | Feb 29 (issue pentad 12) → written `pentad_in_year == "13"` | |
+| 5 | Metadata fix (pentad) | March 25: write receives target metadata | `pentad_in_year == "18"`, `pentad_in_month == "6"` |
+| 6 | Metadata fix (pentad) | March 5: write receives target metadata | `pentad_in_year == "14"`, `pentad_in_month == "2"` |
+| 7 | Metadata fix (pentad non-boundary) | March 12: write receives target metadata | `pentad_in_year == "16"`, `pentad_in_month == "4"` |
+| 8 | Metadata fix (decad) | March 10: write receives target metadata | `decad_in_year == "8"`, `decad_in_month == "2"` |
+| 9 | Metadata fix (decad) | March 20: write receives target metadata | `decad_in_year == "9"`, `decad_in_month == "3"` |
+| 10 | Dec 31 wrap (pentad) | Issue pentad 72 → target pentad 1 | `pentad_in_year == "1"`, `pentad_in_month == "1"` |
+| 11 | Dec 31 wrap (decad) | Issue decad 36 → target decad 1 | `decad_in_year == "1"`, `decad_in_month == "1"` |
+| 12 | Month boundary (pentad) | Jan 31 (issue pentad 6) → target pentad 7 | `pentad_in_year == "7"`, `pentad_in_month == "1"` (Feb) |
+| 13 | Month boundary (pentad) | May 31 (issue pentad 30) → target pentad 31 | `pentad_in_year == "31"`, `pentad_in_month == "1"` (Jun) |
+| 14 | Leap year | Feb 29 (issue pentad 12) → target pentad 13 | `pentad_in_year == "13"`, `pentad_in_month == "1"` (Mar) |
+| 15 | Internal consistency | `horizon_in_year` and `horizon_value` are consistent | For all test cases: `(pentad_in_year - 1) // 6 + 1` = month, `(pentad_in_year - 1) % 6 + 1` = `pentad_in_month` |
 
-**Integration smoke test**: Mock `fl.save_discharge_avg` and `fl.perform_linear_regression`. Call the pipeline pentad path with `forecast_date=date(2026, 3, 25)`. Assert: (a) `save_discharge_avg` received `group_id="17"`, (b) `perform_linear_regression` received `forecast_horizon_int=17`, (c) the DataFrame passed to `write_linreg_pentad_forecast_data` has `pentad_in_year == "18"`.
+**Integration smoke test**: Mock `fl.save_discharge_avg` and `fl.perform_linear_regression`. Call the pipeline pentad path with `forecast_date=date(2026, 3, 25)`. Assert: (a) `save_discharge_avg` received `group_id="17"`, (b) `perform_linear_regression` received `forecast_horizon_int=17`, (c) the DataFrame passed to `write_linreg_pentad_forecast_data` has `pentad_in_year == "18"` and `pentad_in_month == "6"`.
 
 **CRITICAL CONSTRAINT**: Tests use `SAPPHIRE_TEST_ENV=True`, mock API clients, no live filesystem writes outside `tmp_path`.
 
@@ -192,6 +199,7 @@ the API write, without changing any upstream computation.
 | Norm discharge lookup | 17 | n/a | Issue-date |
 | Visibility query | Correct (uses +1 day from issue pentad's last day) | n/a | Issue-date |
 | API `horizon_in_year` | 18 (after override) | 18 | Target-date |
+| API `horizon_value` | 6 (after override) | 6 | Target-date |
 ```
 
 **Acceptance criteria**:
@@ -203,6 +211,8 @@ the API write, without changing any upstream computation.
 ## Acceptance Criteria (overall)
 
 - [ ] `horizon_in_year` written to API = target pentad (18 on March 25, not 17)
+- [ ] `horizon_value` written to API = target pentad-in-month (6 on March 25, not 5)
+- [ ] `horizon_in_year` and `horizon_value` are internally consistent for all cases
 - [ ] `forecast_pentad_of_year` passed to upstream functions is unchanged (17 on March 25)
 - [ ] Dec 31 edge case handled: pentad 72 → 1, decad 36 → 1
 - [ ] 14 protective tests pass, including upstream isolation guards
