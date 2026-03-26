@@ -177,6 +177,19 @@ class CombinedForecastDataMigrator(DataMigrator):
         """Prepare pentad (5-day) runoff data for API"""
         records = []
         skip = 0
+
+        # Detect quantile column naming convention
+        if "q05" in df.columns:
+            q05_col, q25_col, q75_col, q95_col = "q05", "q25", "q75", "q95"
+        elif "Q5" in df.columns:
+            q05_col, q25_col, q75_col, q95_col = "Q5", "Q25", "Q75", "Q95"
+        else:
+            raise ValueError(
+                "Could not find quantile columns. "
+                "Expected either 'q05/q25/q75/q95' or 'Q5/Q25/Q75/Q95'."
+            )
+        logger.debug(f"Using quantile columns: {q05_col}, {q25_col}, {q75_col}, {q95_col}")
+
         for _, row in df.iterrows():
             if not pd.notna(row["pentad_in_year"]):
                 skip += 1
@@ -193,11 +206,11 @@ class CombinedForecastDataMigrator(DataMigrator):
                     "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
                     "horizon_value": int(row["pentad_in_month"]),
                     "horizon_in_year": int(row["pentad_in_year"]),
-                    "q05": float(row["q05"]) if pd.notna(row["q05"]) else None,
-                    "q25": float(row["q25"]) if pd.notna(row["q25"]) else None,
+                    "q05": float(row[q05_col]) if pd.notna(row[q05_col]) else None,
+                    "q25": float(row[q25_col]) if pd.notna(row[q25_col]) else None,
                     # "q50": None,
-                    "q75": float(row["q75"]) if pd.notna(row["q75"]) else None,
-                    "q95": float(row["q95"]) if pd.notna(row["q95"]) else None,
+                    "q75": float(row[q75_col]) if pd.notna(row[q75_col]) else None,
+                    "q95": float(row[q95_col]) if pd.notna(row[q95_col]) else None,
                     "forecasted_discharge": float(row["forecasted_discharge"])
                     if pd.notna(row["forecasted_discharge"])
                     else None,
@@ -211,6 +224,24 @@ class CombinedForecastDataMigrator(DataMigrator):
         """Prepare decade (10-day) runoff data for API"""
         records = []
         skip = 0
+
+        # Detect quantile column naming convention
+        if "q05" in df.columns:
+            q05_col, q25_col, q75_col, q95_col = "q05", "q25", "q75", "q95"
+        elif "Q5" in df.columns:
+            q05_col, q25_col, q75_col, q95_col = "Q5", "Q25", "Q75", "Q95"
+        else:
+            raise ValueError(
+                "Could not find quantile columns. "
+                "Expected either 'q05/q25/q75/q95' or 'Q5/Q25/Q75/Q95'."
+            )
+        if "decad" in df.columns:
+            decad_in_month = "decad"
+        else:
+            decad_in_month = "decad_in_month"
+
+        logger.debug(f"Using quantile columns: {q05_col}, {q25_col}, {q75_col}, {q95_col}")
+
         for _, row in df.iterrows():
             if not pd.notna(row["decad_in_year"]):
                 skip += 1
@@ -225,13 +256,13 @@ class CombinedForecastDataMigrator(DataMigrator):
                         "%Y-%m-%d"
                     ),
                     "flag": int(row["flag"]) if pd.notna(row["flag"]) else None,
-                    "horizon_value": int(row["decad"]),
+                    "horizon_value": int(row[decad_in_month]),
                     "horizon_in_year": int(row["decad_in_year"]),
-                    "q05": float(row["q05"]) if pd.notna(row["q05"]) else None,
-                    "q25": float(row["q25"]) if pd.notna(row["q25"]) else None,
+                    "q05": float(row[q05_col]) if pd.notna(row[q05_col]) else None,
+                    "q25": float(row[q25_col]) if pd.notna(row[q25_col]) else None,
                     # "q50": None,
-                    "q75": float(row["q75"]) if pd.notna(row["q75"]) else None,
-                    "q95": float(row["q95"]) if pd.notna(row["q95"]) else None,
+                    "q75": float(row[q75_col]) if pd.notna(row[q75_col]) else None,
+                    "q95": float(row[q95_col]) if pd.notna(row[q95_col]) else None,
                     "forecasted_discharge": float(row["forecasted_discharge"])
                     if pd.notna(row["forecasted_discharge"])
                     else None,

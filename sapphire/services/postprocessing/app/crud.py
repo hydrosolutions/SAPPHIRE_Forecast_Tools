@@ -1,3 +1,4 @@
+from sqlalchemy import tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -7,39 +8,50 @@ from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBu
 from app.logger import logger
 
 
+def _has_changes(existing, incoming_data: dict) -> bool:
+    """Return True if any field in incoming_data differs from the existing ORM record."""
+    return any(getattr(existing, k) != v for k, v in incoming_data.items())
+
+
 def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> List[Forecast]:
-    """Create or update multiple forecasts in bulk (upsert based on horizon_type, code, model_type, date)"""
+    """Create or update multiple forecasts in bulk (upsert based on horizon_type, code, model_type, date, target)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["model_type"], i["date"], i["target"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.model_type, r.date, r.target): r
+            for r in db.query(Forecast).filter(
+                tuple_(Forecast.horizon_type, Forecast.code, Forecast.model_type, Forecast.date, Forecast.target).in_(keys)
+            ).all()
+        }
+
         db_forecasts = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["model_type"], data["date"], data["target"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, code, model_type, date) exists
-            existing_forecast = db.query(Forecast).filter(
-                Forecast.horizon_type == item.horizon_type,
-                Forecast.code == item.code,
-                Forecast.model_type == item.model_type,
-                Forecast.date == item.date,
-                Forecast.target == item.target
-            ).first()
-
-            if existing_forecast:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_forecast, key, value)
-                db_forecasts.append(existing_forecast)
-                logger.info(f"Updated forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated forecast: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged forecast: {key}")
+                db_forecasts.append(existing)
             else:
-                # Create new record
-                new_forecast = Forecast(**item.model_dump())
-                db.add(new_forecast)
-                db_forecasts.append(new_forecast)
-                logger.info(f"Created forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
+                new = Forecast(**data)
+                db.add(new)
+                changed.append(new)
+                db_forecasts.append(new)
+                logger.info(f"Created forecast: {key}")
 
-        db.commit()
-
-        # Refresh all forecasts to get updated state
-        for forecast in db_forecasts:
-            db.refresh(forecast)
+        if changed:
+            db.commit()
+            for f in changed:
+                db.refresh(f)
 
         logger.info(f"Processed {len(db_forecasts)} forecasts in bulk")
         return db_forecasts
@@ -93,38 +105,48 @@ def get_forecast(
 def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> List[LongForecast]:
     """Create or update multiple long forecasts in bulk (upsert based on horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {
+            (i["horizon_type"], i["horizon_value"], i["code"], i["date"], i["model_type"], i["valid_from"], i["valid_to"])
+            for i in incoming
+        }
+
+        existing_map = {
+            (r.horizon_type, r.horizon_value, r.code, r.date, r.model_type, r.valid_from, r.valid_to): r
+            for r in db.query(LongForecast).filter(
+                tuple_(
+                    LongForecast.horizon_type, LongForecast.horizon_value, LongForecast.code,
+                    LongForecast.date, LongForecast.model_type, LongForecast.valid_from, LongForecast.valid_to
+                ).in_(keys)
+            ).all()
+        }
+
         db_long_forecasts = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["horizon_value"], data["code"], data["date"], data["model_type"], data["valid_from"], data["valid_to"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, horizon_value, code, date, model_type, valid_from, valid_to) exists
-            existing_long_forecast = db.query(LongForecast).filter(
-                LongForecast.horizon_type == item.horizon_type,
-                LongForecast.horizon_value == item.horizon_value,
-                LongForecast.code == item.code,
-                LongForecast.date == item.date,
-                LongForecast.model_type == item.model_type,
-                LongForecast.valid_from == item.valid_from,
-                LongForecast.valid_to == item.valid_to
-            ).first()
-
-            if existing_long_forecast:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_long_forecast, key, value)
-                db_long_forecasts.append(existing_long_forecast)
-                logger.info(f"Updated long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated long forecast: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged long forecast: {key}")
+                db_long_forecasts.append(existing)
             else:
-                # Create new record
-                new_long_forecast = LongForecast(**item.model_dump())
-                db.add(new_long_forecast)
-                db_long_forecasts.append(new_long_forecast)
-                logger.info(f"Created long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+                new = LongForecast(**data)
+                db.add(new)
+                changed.append(new)
+                db_long_forecasts.append(new)
+                logger.info(f"Created long forecast: {key}")
 
-        db.commit()
-
-        # Refresh all long forecasts to get updated state
-        for long_forecast in db_long_forecasts:
-            db.refresh(long_forecast)
+        if changed:
+            db.commit()
+            for lf in changed:
+                db.refresh(lf)
 
         logger.info(f"Processed {len(db_long_forecasts)} long forecasts in bulk")
         return db_long_forecasts
@@ -178,34 +200,42 @@ def get_long_forecast(
 def create_lr_forecast(db: Session, bulk_data: LRForecastBulkCreate) -> List[LRForecast]:
     """Create or update multiple LR forecasts in bulk (upsert based on horizon_type, code, date)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["date"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.date): r
+            for r in db.query(LRForecast).filter(
+                tuple_(LRForecast.horizon_type, LRForecast.code, LRForecast.date).in_(keys)
+            ).all()
+        }
+
         db_lr_forecasts = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["date"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, code, date) exists
-            existing_lr_forecast = db.query(LRForecast).filter(
-                LRForecast.horizon_type == item.horizon_type,
-                LRForecast.code == item.code,
-                LRForecast.date == item.date
-            ).first()
-
-            if existing_lr_forecast:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_lr_forecast, key, value)
-                db_lr_forecasts.append(existing_lr_forecast)
-                logger.info(f"Updated LR forecast: {item.horizon_type}, {item.code}, {item.date}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated LR forecast: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged LR forecast: {key}")
+                db_lr_forecasts.append(existing)
             else:
-                # Create new record
-                new_lr_forecast = LRForecast(**item.model_dump())
-                db.add(new_lr_forecast)
-                db_lr_forecasts.append(new_lr_forecast)
-                logger.info(f"Created LR forecast: {item.horizon_type}, {item.code}, {item.date}")
+                new = LRForecast(**data)
+                db.add(new)
+                changed.append(new)
+                db_lr_forecasts.append(new)
+                logger.info(f"Created LR forecast: {key}")
 
-        db.commit()
-
-        # Refresh all LR forecasts to get updated state
-        for lr_forecast in db_lr_forecasts:
-            db.refresh(lr_forecast)
+        if changed:
+            db.commit()
+            for lrf in changed:
+                db.refresh(lrf)
 
         logger.info(f"Processed {len(db_lr_forecasts)} LR forecasts in bulk")
         return db_lr_forecasts
@@ -247,38 +277,45 @@ def get_lr_forecast(
 def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[SkillMetric]:
     """Create or update multiple skill metrics in bulk (upsert based on horizon_type, code, model_type, date, horizon_in_year)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["model_type"], i["date"], i["horizon_in_year"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.model_type, r.date, r.horizon_in_year): r
+            for r in db.query(SkillMetric).filter(
+                tuple_(
+                    SkillMetric.horizon_type, SkillMetric.code, SkillMetric.model_type,
+                    SkillMetric.date, SkillMetric.horizon_in_year
+                ).in_(keys)
+            ).all()
+        }
+
         db_skill_metrics = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["model_type"], data["date"], data["horizon_in_year"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same unique constraint fields exists
-            # Note: We flush after each add so queries find pending records in the same batch
-            existing_skill_metric = db.query(SkillMetric).filter(
-                SkillMetric.horizon_type == item.horizon_type,
-                SkillMetric.code == item.code,
-                SkillMetric.model_type == item.model_type,
-                SkillMetric.date == item.date,
-                SkillMetric.horizon_in_year == item.horizon_in_year
-            ).first()
-
-            if existing_skill_metric:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_skill_metric, key, value)
-                db_skill_metrics.append(existing_skill_metric)
-                logger.info(f"Updated skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated skill metric: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged skill metric: {key}")
+                db_skill_metrics.append(existing)
             else:
-                # Create new record
-                new_skill_metric = SkillMetric(**item.model_dump())
-                db.add(new_skill_metric)
-                db.flush()  # Flush so subsequent queries find this pending record
-                db_skill_metrics.append(new_skill_metric)
-                logger.info(f"Created skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
+                new = SkillMetric(**data)
+                db.add(new)
+                changed.append(new)
+                db_skill_metrics.append(new)
+                logger.info(f"Created skill metric: {key}")
 
-        db.commit()
-
-        # Refresh all skill metrics to get updated state
-        for skill_metric in db_skill_metrics:
-            db.refresh(skill_metric)
+        if changed:
+            db.commit()
+            for sm in changed:
+                db.refresh(sm)
 
         logger.info(f"Processed {len(db_skill_metrics)} skill metrics in bulk")
         return db_skill_metrics
@@ -323,37 +360,45 @@ def get_skill_metric(
 def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin]:
     """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code, model_type)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["year"], i["horizon_value"], i["code"], i["model_type"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.year, r.horizon_value, r.code, r.model_type): r
+            for r in db.query(Bulletin).filter(
+                tuple_(
+                    Bulletin.horizon_type, Bulletin.year, Bulletin.horizon_value,
+                    Bulletin.code, Bulletin.model_type
+                ).in_(keys)
+            ).all()
+        }
+
         db_bulletins = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["year"], data["horizon_value"], data["code"], data["model_type"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same unique constraint fields exists
-            existing_bulletin = db.query(Bulletin).filter(
-                Bulletin.horizon_type == item.horizon_type,
-                Bulletin.year == item.year,
-                Bulletin.horizon_value == item.horizon_value,
-                Bulletin.code == item.code,
-                Bulletin.model_type == item.model_type
-            ).first()
-
-            if existing_bulletin:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_bulletin, key, value)
-                db_bulletins.append(existing_bulletin)
-                logger.info(f"Updated bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated bulletin: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged bulletin: {key}")
+                db_bulletins.append(existing)
             else:
-                # Create new record
-                new_bulletin = Bulletin(**item.model_dump())
-                db.add(new_bulletin)
-                db.flush()  # Flush so subsequent queries find this pending record
-                db_bulletins.append(new_bulletin)
-                logger.info(f"Created bulletin: {item.horizon_type}, {item.year}, {item.horizon_value}, {item.code}, {item.model_type}")
+                new = Bulletin(**data)
+                db.add(new)
+                changed.append(new)
+                db_bulletins.append(new)
+                logger.info(f"Created bulletin: {key}")
 
-        db.commit()
-
-        # Refresh all bulletins to get updated state
-        for bulletin in db_bulletins:
-            db.refresh(bulletin)
+        if changed:
+            db.commit()
+            for b in changed:
+                db.refresh(b)
 
         logger.info(f"Processed {len(db_bulletins)} bulletins in bulk")
         return db_bulletins
@@ -423,37 +468,45 @@ def delete_bulletin(
 def create_lr_visibility(db: Session, bulk_data: LRVisibilityBulkCreate) -> List[LRVisibility]:
     """Create or update multiple LR visibility records in bulk (upsert based on horizon_type, code, month, horizon_value)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["month"], i["horizon_value"], i["year"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.month, r.horizon_value, r.year): r
+            for r in db.query(LRVisibility).filter(
+                tuple_(
+                    LRVisibility.horizon_type, LRVisibility.code, LRVisibility.month,
+                    LRVisibility.horizon_value, LRVisibility.year
+                ).in_(keys)
+            ).all()
+        }
+
         db_lr_visibility = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["month"], data["horizon_value"], data["year"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same unique constraint fields exists
-            existing_record = db.query(LRVisibility).filter(
-                LRVisibility.horizon_type == item.horizon_type,
-                LRVisibility.code == item.code,
-                LRVisibility.month == item.month,
-                LRVisibility.horizon_value == item.horizon_value,
-                LRVisibility.year == item.year
-            ).first()
-
-            if existing_record:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_record, key, value)
-                db_lr_visibility.append(existing_record)
-                logger.info(f"Updated LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated LR visibility: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged LR visibility: {key}")
+                db_lr_visibility.append(existing)
             else:
-                # Create new record
-                new_record = LRVisibility(**item.model_dump())
-                db.add(new_record)
-                db.flush()  # Flush so subsequent queries find this pending record
-                db_lr_visibility.append(new_record)
-                logger.info(f"Created LR visibility: {item.horizon_type}, {item.code}, month={item.month}, horizon_value={item.horizon_value}")
+                new = LRVisibility(**data)
+                db.add(new)
+                changed.append(new)
+                db_lr_visibility.append(new)
+                logger.info(f"Created LR visibility: {key}")
 
-        db.commit()
-
-        # Refresh all records to get updated state
-        for record in db_lr_visibility:
-            db.refresh(record)
+        if changed:
+            db.commit()
+            for lrv in changed:
+                db.refresh(lrv)
 
         logger.info(f"Processed {len(db_lr_visibility)} LR visibility records in bulk")
         return db_lr_visibility
