@@ -650,10 +650,10 @@ Is a decad issue day?  [ ] YES  [ ] NO
   import sys, json
   d = json.load(sys.stdin)
   print(f'count={len(d)}')
-  [print(f'  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
+  [print(f'  date={r.get(\"date\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
   "
   ```
-  <!-- RESULT: count=  dates=  fc_values= -->
+  <!-- RESULT: count=  dates=  horizon_in_year=  horizon_value=  fc_values= -->
 
 - [ ] $S2 — LR pentad forecasts (recent window):
   ```bash
@@ -663,10 +663,12 @@ Is a decad issue day?  [ ] YES  [ ] NO
   import sys, json
   d = json.load(sys.stdin)
   print(f'count={len(d)}')
-  [print(f'  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
+  [print(f'  date={r.get(\"date\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
   "
   ```
-  <!-- RESULT: count=  dates=  fc_values= -->
+  <!-- RESULT: count=  dates=  horizon_in_year=  horizon_value=  fc_values= -->
+
+> **LR-008 check**: On pentad issue days (5,10,15,20,25,EOM), `horizon_in_year` must equal the **target** pentad (issue pentad + 1, wrapping to 1 after pentad 72). E.g., on day 25 of month 3 (issue pentad 17): `horizon_in_year=18`, `horizon_value=6`. If you see the issue pentad (e.g., `horizon_in_year=17`, `horizon_value=5`), the LR-008 metadata override is not active.
 
 - [ ] $S1 — LR decad forecasts (recent window):
   ```bash
@@ -676,10 +678,10 @@ Is a decad issue day?  [ ] YES  [ ] NO
   import sys, json
   d = json.load(sys.stdin)
   print(f'count={len(d)}')
-  [print(f'  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
+  [print(f'  date={r.get(\"date\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
   "
   ```
-  <!-- RESULT: count=  dates=  fc_values= -->
+  <!-- RESULT: count=  dates=  horizon_in_year=  horizon_value=  fc_values= -->
 
 - [ ] $S2 — LR decad forecasts (recent window):
   ```bash
@@ -689,10 +691,12 @@ Is a decad issue day?  [ ] YES  [ ] NO
   import sys, json
   d = json.load(sys.stdin)
   print(f'count={len(d)}')
-  [print(f'  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
+  [print(f'  date={r.get(\"date\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}  fc={r.get(\"forecasted_discharge\")}') for r in d]
   "
   ```
-  <!-- RESULT: count=  dates=  fc_values= -->
+  <!-- RESULT: count=  dates=  horizon_in_year=  horizon_value=  fc_values= -->
+
+> **LR-008 check**: On decad issue days (10, 20, EOM), `horizon_in_year` must equal the **target** decad (issue decad + 1, wrapping to 1 after decad 36). E.g., on day 20 of month 3 (issue decad 8): `horizon_in_year=9`, `horizon_value=3`. If you see the issue decad (e.g., `horizon_in_year=8`, `horizon_value=2`), the LR-008 metadata override is not active.
 
 - [ ] Confirm today's LR count (0 expected if not a boundary day):
   ```bash
@@ -1206,8 +1210,8 @@ not just PASS/FAIL where a threshold applies.
 | ML TSMixer count today | | | ≥ 1 | |
 | ML null forecasts | | | 0 | |
 | ML forecast issue_date = TODAY | | | TRUE | |
-| LR pentad (recent issue day) | | | non-null fc | |
-| LR decad (recent issue day) | | | non-null fc | |
+| LR pentad (recent issue day) | | | non-null fc; `horizon_in_year` = issue pentad + 1 (LR-008) | |
+| LR decad (recent issue day) | | | non-null fc; `horizon_in_year` = issue decad + 1 (LR-008) | |
 | EM pentad (recent issue day) | | | non-null q | |
 | EM quantile ordering | | | all OK | |
 | NE pentad (recent issue day) | | | ≥ 1 record | |
