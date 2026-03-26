@@ -120,7 +120,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LR-006** | Fix maintenance script sync mode and hindcast auto-detect filenames | **High** | Review | [`review_gi_draft_lr_maintenance_and_autodetect_fixes.md`](issues/review_gi_draft_lr_maintenance_and_autodetect_fixes.md) | — |
 | **LR-007** | API write failures are silent when API is enabled | **High** | Review | [`review_gi_draft_lr_api_write_loud_failure.md`](issues/review_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
 | **LR-008** | Align LR `horizon_in_year` metadata with target-period convention | **High** | Review | [`review_gi_draft_lr_pentad_horizon_offset.md`](issues/review_gi_draft_lr_pentad_horizon_offset.md) | — |
-| ~~**LR-009**~~ | ~~Dec 31 cross-year boundary: wrong year context in `perform_linear_regression`~~ | ~~**High**~~ | Closed (Invalid) | [`high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) | LR-008 |
+| ~~**LR-009**~~ | ~~Dec 31 cross-year boundary: wrong year context in `perform_linear_regression`~~ | ~~**High**~~ | Closed (Invalid) | [`archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) | LR-008 |
 
 ### Long-Term Forecasting (`ltf`)
 
@@ -228,7 +228,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | LR-001 | Leap year date handling and hindcast mode | 2026-02-03 | [`archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md) |
 | LR-002 | Replace `last_successful_run` file with "just run for today" | 2026-03-03 | [`archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md`](issues/archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md) |
 | LR-005 | LR hindcast NaN API write skip — Issues A+C resolved; Issue B (log message) archived as low-prio | 2026-03-24 | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) |
-| LR-009 | Dec 31 cross-year boundary: wrong year context in `perform_linear_regression` — Closed (Invalid) — predicated on wrong LR-008 diagnosis | 2026-03-26 | [`high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) |
+| LR-009 | Dec 31 cross-year boundary: wrong year context in `perform_linear_regression` — Closed (Invalid) — predicated on wrong LR-008 diagnosis | 2026-03-26 | [`archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) |
 
 ### Postprocessing (`pp`)
 
