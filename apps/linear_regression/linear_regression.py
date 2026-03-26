@@ -887,6 +887,16 @@ def main():
             )
             # logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
 
+            # Override pentad metadata for API/CSV: horizon_in_year and
+            # horizon_value must reflect the TARGET period, not the issue
+            # date. The LR DataFrame indexes by issue date, so we convert
+            # here. forecast_pentad_of_year (training, norms, visibility)
+            # is unchanged. See doc/data_flow_short_term.md.
+            _issue_pentad = int(forecast_pentad_of_year)
+            _target_pentad = 1 if _issue_pentad == 72 else _issue_pentad + 1
+            linreg_pentad["pentad_in_year"] = str(_target_pentad)
+            linreg_pentad["pentad_in_month"] = str(((_target_pentad - 1) % 6) + 1)
+
             # Write output files for the current forecast horizon
             try:
                 # Diagnostics: log env and date coverage about to be written
@@ -984,6 +994,12 @@ def main():
                 code_col="code",
                 group_col="decad_in_year",
             )
+
+            # Override decad metadata for API/CSV — same pattern as pentad.
+            _issue_decad = int(forecast_decad_of_year)
+            _target_decad = 1 if _issue_decad == 36 else _issue_decad + 1
+            linreg_decad["decad_in_year"] = str(_target_decad)
+            linreg_decad["decad_in_month"] = str(((_target_decad - 1) % 3) + 1)
 
             # Write output files for the current forecast horizon
             try:

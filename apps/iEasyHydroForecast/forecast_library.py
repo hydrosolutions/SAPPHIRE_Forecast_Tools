@@ -1526,6 +1526,20 @@ def perform_linear_regression(
         3        B       2            250             25    0.0       250.0                  25.0
         5        C       2            180             18    0.0       180.0                  18.0
 
+    Note on issue-date indexing convention:
+        The input DataFrame (data_df) carries ``pentad_in_year`` values computed
+        from each row's own date — the **issue date** of that historical forecast,
+        not the target period. A row dated 2026-03-25 has ``pentad_in_year = 17``
+        and ``discharge_avg`` equal to the mean of March 26–31 (the target, pentad
+        18). Therefore ``forecast_horizon_int = 17`` is correct when forecasting on
+        March 25: it selects all historical March 21–25 issue dates, each carrying
+        the correct target's discharge average.
+
+        The ``horizon_in_year`` and ``horizon_value`` metadata written to the API
+        are overridden to the target pentad (18) in ``linear_regression.py`` after
+        this function returns. This function must NOT receive the target pentad as
+        ``forecast_horizon_int``.
+
     """
     # Test that all input types are as expected.
     if not isinstance(data_df, pd.DataFrame):

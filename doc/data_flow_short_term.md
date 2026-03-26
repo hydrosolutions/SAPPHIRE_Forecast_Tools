@@ -136,6 +136,30 @@ flowchart TD
 
 > **Note:** The ML module code also contains references to ARIMA and RRAM (RR-Mamba) models. These are deprecated and no longer supported in the operational pipeline.
 
+#### LR Issue-Date Indexing Convention
+
+The LR module indexes training data by the **issue date** (the date the forecast
+is produced), not the target period. `get_pentadal_and_decadal_data()` assigns
+`pentad_in_year` from each row's own date. A row dated March 25 has
+`pentad_in_year = 17`, while its `discharge_avg` column holds the mean discharge
+of March 26–31 (the target period, pentad 18).
+
+This means `forecast_horizon_int = 17` (the issue pentad) is the correct filter
+key for training data and norm discharge on March 25. **Do not change it to 18.**
+
+The ML pipeline uses a different convention: `horizon_in_year = 18` (the target
+pentad). The discrepancy is resolved by a metadata override in
+`linear_regression.py` that converts to the target-period convention immediately
+before the API write, without changing any upstream computation.
+
+| Layer | LR value | ML value | Convention |
+|-------|----------|----------|------------|
+| Training data filter | 17 | n/a | Issue-date |
+| Norm discharge lookup | 17 | n/a | Issue-date |
+| Visibility query | Correct (uses +1 day from issue pentad's last day) | n/a | Issue-date |
+| API `horizon_in_year` | 18 (after override) | 18 | Target-date |
+| API `horizon_value` | 6 (after override) | 6 | Target-date |
+
 ### Phase 3: Postprocessing
 
 1. **Read and aggregate**: The postprocessing module's data reading phase
