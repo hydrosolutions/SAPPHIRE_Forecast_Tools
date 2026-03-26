@@ -54,11 +54,21 @@ export S2="<station_code_2>"          # e.g. secondary monitoring station
 export TODAY="YYYY-MM-DD"             # date of this pipeline run
 export RECENT_START="YYYY-MM-DD"      # ~10 days before TODAY
 export RECENT_END="YYYY-MM-DD"        # day before TODAY (TODAY minus 1)
+export TODAY_MINUS_30="YYYY-MM-DD"    # TODAY minus 30 days (for maintenance coverage checks)
+export PREV_PENTAD="YYYY-MM-DD"       # most recent pentad issue day ≤ RECENT_END (5/10/15/20/25/EOM)
+export PREV_DECAD="YYYY-MM-DD"        # most recent decad issue day ≤ RECENT_END (10/20/EOM)
+export MONTH_START="YYYY-MM-01"       # first day of current month (for long-term queries)
+export MONTH_END="YYYY-MM-31"         # last day of current month (use 28/29/30/31 as appropriate)
 ```
 
 > Note: `RECENT_END` is typically `TODAY - 1 day`. It is a separate variable
 > so that all baseline queries use a consistent window and do not accidentally
 > include the post-run state.
+
+> `PREV_PENTAD` is the most recent pentad issue day on or before `RECENT_END`.
+> Pentad days: 5, 10, 15, 20, 25, last day of month. `PREV_DECAD` is similar
+> for decad days (10, 20, last day of month). These target the specific dates
+> that hindcast/maintenance should have filled.
 
 ### 0.2 Service health checks
 
@@ -292,6 +302,14 @@ Record counts here; compare after run to confirm new records were written.
   ```
   <!-- RESULT: count= (baseline) -->
 
+- [ ] $S2 LR pentad forecasts (RECENT_START to RECENT_END):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$RECENT_START&end_date=$RECENT_END&limit=20" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
+  ```
+  <!-- RESULT: count= (baseline) -->
+
 ---
 
 ## 2. Phase 1: Preprocessing (runs once)
@@ -463,12 +481,12 @@ give actual temperature and precipitation values for sanity-range checking
 
 ### 3.1 Verify: Gap-fill — 30-day runoff coverage
 
-Note the 30-day start date (TODAY minus 30 days) and set it manually below.
+Uses `$TODAY_MINUS_30` set in Section 0.1 for the 30-day lookback window.
 
 - [ ] $S1 — discharge count and date range over last 30 days:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=60" \
+    "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -481,7 +499,7 @@ Note the 30-day start date (TODAY minus 30 days) and set it manually below.
 - [ ] $S2 — discharge count and date range over last 30 days:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=60" \
+    "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -504,7 +522,7 @@ Note the 30-day start date (TODAY minus 30 days) and set it manually below.
 - [ ] $S1 T — 30-day count and range:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=60" \
+    "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -517,7 +535,7 @@ Note the 30-day start date (TODAY minus 30 days) and set it manually below.
 - [ ] $S2 T — 30-day count and range:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=60" \
+    "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -571,7 +589,7 @@ per-station breakdowns and exact forecast values.
   nulls = sum(1 for v in vals if v is None)
   flag_dist = {f: flags.count(f) for f in set(flags)}
   print(f'  count={len(d)}  null_fc={nulls}  flag_dist={flag_dist}')
-  if d: print(f'  fc_range=[{min(v for v in vals if v):.3f}, {max(v for v in vals if v):.3f}]')
+  if d: print(f'  fc_range=[{min(v for v in vals if v is not None):.3f}, {max(v for v in vals if v is not None):.3f}]')
   "
   done
   ```
@@ -591,7 +609,7 @@ per-station breakdowns and exact forecast values.
   nulls = sum(1 for v in vals if v is None)
   flag_dist = {f: flags.count(f) for f in set(flags)}
   print(f'  count={len(d)}  null_fc={nulls}  flag_dist={flag_dist}')
-  if d: print(f'  fc_range=[{min(v for v in vals if v):.3f}, {max(v for v in vals if v):.3f}]')
+  if d: print(f'  fc_range=[{min(v for v in vals if v is not None):.3f}, {max(v for v in vals if v is not None):.3f}]')
   "
   done
   ```
@@ -862,7 +880,7 @@ after maintenance.
 - [ ] $S1 — LR pentad 30-day record count and dates:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=50" \
+    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -874,14 +892,14 @@ after maintenance.
 
 - [ ] $S2 — LR pentad 30-day count:
   ```bash
-  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=50" \
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'count={len(d)}')"
   ```
   <!-- RESULT: count= -->
 
 - [ ] $S1 — LR decad 30-day count:
   ```bash
-  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=50" \
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -894,12 +912,70 @@ after maintenance.
 **What to look for**: 5 or 6 pentad issue days within 30 days. If fewer
 records appear, LR hindcast may not have written for these stations.
 
+### 5.2a Verify: LR hindcast — previous pentad/decad spot-check
+
+Targeted check for the most recent pentad issue day. Uses `$PREV_PENTAD` and
+`$PREV_DECAD` set in Section 0.1.
+
+- [ ] $S1 — LR pentad at PREV_PENTAD (single-date check):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  if d:
+      r = d[0]
+      print(f'PASS  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}')
+  else:
+      print('WARN  no LR pentad record for PREV_PENTAD — hindcast may not have filled this gap')
+  "
+  ```
+  <!-- RESULT: PASS or WARN -->
+
+- [ ] $S2 — LR pentad at PREV_PENTAD (regression check for LR fix):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  if d:
+      r = d[0]
+      print(f'PASS  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}  horizon_in_year={r.get(\"horizon_in_year\")}  horizon_value={r.get(\"horizon_value\")}')
+  else:
+      print('FAIL  S2 has no LR pentad record at PREV_PENTAD — this was the station affected by the LR endpoint bug')
+  "
+  ```
+  <!-- RESULT: PASS or FAIL (S2 must have ≥1 record after LR fix) -->
+
+- [ ] $S1 — LR decad at PREV_DECAD:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$PREV_DECAD&end_date=$PREV_DECAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  if d:
+      r = d[0]
+      print(f'PASS  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}  horizon_in_year={r.get(\"horizon_in_year\")}')
+  else:
+      print('WARN  no LR decad record for PREV_DECAD')
+  "
+  ```
+  <!-- RESULT: PASS or WARN -->
+
+> **S2 regression check**: S2 previously returned 0 records from the
+> postprocessing API because the code queried `/forecast/?model=LR` instead
+> of `/lr-forecast/`. After the fix, S2 must have records here. A FAIL on
+> S2 indicates the fix has regressed.
+
 ### 5.3 Verify: Postprocessing maintenance — EM gap-fill coverage
 
 - [ ] $S1 — EM pentad 30-day count (should match LR pentad count):
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=50" \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM pentad records')"
   ```
   <!-- RESULT: count= (should ≈ LR pentad count from 5.2) -->
@@ -907,13 +983,139 @@ records appear, LR hindcast may not have written for these stations.
 - [ ] $S2 — EM pentad 30-day count:
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=<TODAY_MINUS_30>&end_date=$TODAY&limit=50" \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM pentad records')"
   ```
   <!-- RESULT: count= -->
 
-**What to look for**: EM count should roughly match LR count. Gaps in EM
-where LR exists indicate the maintenance gap-fill did not run.
+- [ ] $S1 — NE pentad 30-day count (should match EM pentad count):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'NE pentad records')"
+  ```
+  <!-- RESULT: count= (should ≈ EM pentad count) -->
+
+- [ ] $S2 — NE pentad 30-day count:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'NE pentad records')"
+  ```
+  <!-- RESULT: count= -->
+
+- [ ] $S1 — EM decad 30-day count (should match LR decad count from 5.2):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM decad records')"
+  ```
+  <!-- RESULT: count= (should ≈ LR decad count from 5.2) -->
+
+- [ ] $S2 — EM decad 30-day count:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'EM decad records')"
+  ```
+  <!-- RESULT: count= -->
+
+- [ ] $S1 — NE decad 30-day count:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'NE decad records')"
+  ```
+  <!-- RESULT: count= -->
+
+- [ ] $S2 — NE decad 30-day count:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d), 'NE decad records')"
+  ```
+  <!-- RESULT: count= -->
+
+**What to look for**: EM and NE pentad counts should roughly match LR pentad
+count (from 5.2). EM and NE decad counts should roughly match LR decad count.
+Gaps in EM/NE where LR exists indicate the maintenance gap-fill did not run
+or ran before LR hindcast wrote its data. See 5.3a for targeted date-level checks.
+
+### 5.3a Verify: Postprocessing maintenance — EM/NE at previous pentad
+
+Only relevant if 5.2a showed LR records exist at PREV_PENTAD.
+
+- [ ] $S1 — EM pentad at PREV_PENTAD (value-level check):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  if d:
+      r = d[0]
+      q = [r.get('q05'), r.get('q25'), r.get('q75'), r.get('q95')]
+      has_q = all(x is not None for x in q)
+      print(f'PASS  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}  quantiles_present={has_q}')
+      if has_q:
+          ok = q[0] <= q[1] <= q[2] <= q[3]
+          print(f'  q=[{q[0]:.3f}, {q[1]:.3f}, {q[2]:.3f}, {q[3]:.3f}]  order={\"OK\" if ok else \"FAIL\"}')
+  else:
+      print('WARN  no EM pentad record for PREV_PENTAD — maintenance may not have run yet')
+  "
+  ```
+  <!-- RESULT: PASS/WARN, quantiles_present=, order= -->
+
+- [ ] $S2 — EM pentad at PREV_PENTAD:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  if d:
+      r = d[0]
+      print(f'PASS  date={r.get(\"date\")}  fc={r.get(\"forecasted_discharge\")}  q05={r.get(\"q05\")}  q95={r.get(\"q95\")}')
+  else:
+      print('WARN  no EM pentad for S2 at PREV_PENTAD')
+  "
+  ```
+  <!-- RESULT: PASS or WARN -->
+
+- [ ] $S1 — NE pentad at PREV_PENTAD:
+  ```bash
+  curl -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'PASS count={len(d)}' if d else 'WARN  no NE pentad record for PREV_PENTAD')
+  "
+  ```
+  <!-- RESULT: PASS or WARN -->
+
+- [ ] $S2 — NE pentad at PREV_PENTAD:
+  ```bash
+  curl -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'PASS count={len(d)}' if d else 'WARN  no NE pentad for S2 at PREV_PENTAD')
+  "
+  ```
+  <!-- RESULT: PASS or WARN -->
+
+> **Dependency note**: Postprocessing maintenance only fills EM/NE gaps when
+> individual-model rows (LR, TFT, etc.) already exist for that date. If LR
+> records exist (5.2a passed) but EM/NE are absent, maintenance may have run
+> before LR hindcast wrote its data. Re-run maintenance standalone:
+> ```bash
+> ieasyhydroforecast_env_file_path=<path> \
+>   SAPPHIRE_PREDICTION_MODE=BOTH \
+>   POSTPROCESSING_GAPFILL_MAX_MONTHS=1 \
+>   python apps/postprocessing_forecasts/postprocessing_maintenance.py
+> ```
 
 ---
 
@@ -972,7 +1174,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - [ ] $S1 — monthly forecasts (current month window):
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&start_date=<YYYY-MM-01>&end_date=<YYYY-MM-31>&limit=20" \
+    "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&start_date=$MONTH_START&end_date=$MONTH_END&limit=20" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -985,7 +1187,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 - [ ] $S2 — monthly forecasts (current month window):
   ```bash
   curl -w "\nTime: %{time_total}s\n" -s \
-    "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&start_date=<YYYY-MM-01>&end_date=<YYYY-MM-31>&limit=20" \
+    "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&start_date=$MONTH_START&end_date=$MONTH_END&limit=20" \
     | python3 -c "
   import sys, json
   d = json.load(sys.stdin)
@@ -1212,6 +1414,7 @@ not just PASS/FAIL where a threshold applies.
 | ML forecast issue_date = TODAY | | | TRUE | |
 | LR pentad (recent issue day) | | | non-null fc; `horizon_in_year` = issue pentad + 1 (LR-008) | |
 | LR decad (recent issue day) | | | non-null fc; `horizon_in_year` = issue decad + 1 (LR-008) | |
+| LR S2 at PREV_PENTAD (regression) | | | ≥ 1 record (was 0 before fix) | |
 | EM pentad (recent issue day) | | | non-null q | |
 | EM quantile ordering | | | all OK | |
 | NE pentad (recent issue day) | | | ≥ 1 record | |
@@ -1230,6 +1433,7 @@ not just PASS/FAIL where a threshold applies.
 | Runoff null but meteo present | iEasyHydro source returned no obs for today | Check source API; not a code bug if data availability is the constraint |
 | ML forecasts missing, LR present | ML module crashed (date format bug, shape mismatch) | Check pipeline logs for tracebacks in `machine_learning` phase |
 | EM missing, individual ML present | Postprocessing ensemble step crashed | Check logs for `postprocessing_forecasts` phase errors |
+| EM forecast value diverges from LR | Stale EM record computed before LR fix; or LR wrote after EM was computed | Re-run `postprocessing_maintenance.py` to recompute EM from updated LR values; compare LR fc from 5.2a with EM fc from 5.3a |
 | EM `q05` all null | Quantile fields not being written | Check postprocessing_forecasts version; run `run_tests.sh postprocessing_forecasts` |
 | `q05 > q25` quantile inversion | Quantile regression ordering not enforced | Check postprocessing quantile sort step |
 | LR returns `-1.0` values | Sentinel value not converted to NaN | Check `linear_regression` module for sentinel guard |
