@@ -631,8 +631,8 @@ date and non-null `"forecasted_discharge"` value.
 
 ### 4.2 Verify: LR forecasts written
 
-Pentad issue days: 1, 6, 11, 16, 21, 26 of the month.
-Decad issue days: 1, 11, 21 of the month.
+Pentad issue days: 5, 10, 15, 20, 25, and last day of the month.
+Decad issue days: 10, 20, and last day of the month.
 
 Determine whether TODAY is a boundary day before checking:
 

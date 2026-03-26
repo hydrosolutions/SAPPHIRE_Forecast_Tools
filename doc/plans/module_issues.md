@@ -192,6 +192,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **DOC-001** | Add Quick Start section to README | infra | **Medium** | Open | See `documentation_improvement_plan.md` Priority 1 |
 | **DOC-002** | Fix incomplete TODOs in doc/configuration.md | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 2 |
 | **DOC-003** | Create doc/modules/ documentation structure | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 3 |
+| **DOC-004** | Update `data_flow_long_term.md` — seasonal pipeline, model output specs, config conventions (Assigned: @sandrohurni, @mabesa) | doc, LTF, PP | **Medium** | Draft | [`mid_prio_gi_draft_doc_data_flow_long_term_gaps.md`](issues/mid_prio_gi_draft_doc_data_flow_long_term_gaps.md) |
 
 ---
 
