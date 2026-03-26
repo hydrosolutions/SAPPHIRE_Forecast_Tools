@@ -3492,7 +3492,7 @@ def _write_runoff_to_api(
 
     Supports different sync modes:
     - operational (default): Only write today's data
-    - maintenance: Write the last 30 days of data
+    - maintenance: Write the last 90 days of data
     - initial: Write all data (for first-time setup)
 
     Args:
@@ -3568,8 +3568,8 @@ def _write_runoff_to_api(
         data_to_write = data[data["date"] == today]
         logger.info(f"Operational mode: writing {len(data_to_write)} records for date {today}")
     elif sync_mode == "maintenance":
-        # Write the last 30 days of data
-        cutoff = today - pd.Timedelta(days=30)
+        # Write the last 90 days of data
+        cutoff = today - pd.Timedelta(days=90)
         data_to_write = data[data["date"] >= cutoff]
         logger.info(
             f"Maintenance mode: writing {len(data_to_write)} records from {cutoff} to {today}"

@@ -118,6 +118,8 @@ for MODE in "${PREDICTION_MODES[@]}"; do
 
     # Run the linear regression container in maintenance (hindcast) mode
     # RUN_MODE=maintenance triggers --hindcast flag via the container's CMD
+    # SAPPHIRE_SYNC_MODE=maintenance triggers 90-day lookback for pentad/decad
+    #   runoff writes to the preprocessing API (same as daily_preprunoff_maintenance.sh)
     # DOCKER_HOST_OVERRIDE is set on macOS to replace localhost with host.docker.internal
     docker run \
         --name $CONTAINER_NAME \
@@ -128,6 +130,7 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         -e IN_DOCKER=True \
         -e SAPPHIRE_PREDICTION_MODE=${MODE} \
         -e RUN_MODE=maintenance \
+        -e SAPPHIRE_SYNC_MODE=maintenance \
         ${DOCKER_HOST_OVERRIDE} \
         -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
         -v ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff \

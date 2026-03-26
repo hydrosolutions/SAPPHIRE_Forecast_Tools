@@ -289,9 +289,122 @@ DOCKER:
     return args
 
 
+def _get_last_dates_from_api(prediction_mode):
+    """Query postprocessing API for the last LR forecast date per gauge.
+
+    Uses the module-level ``fl`` binding (``import forecast_library as fl``).
+    Do NOT add a local import — ``iEasyHydroForecast.forecast_library`` is
+    not importable as a package path.
+    """
+    client = fl._get_postprocessing_client()
+    if client is None:
+        return {}
+
+    gauge_dates = {}
+    horizons = []
+    if prediction_mode in ("PENTAD", "BOTH"):
+        horizons.append("pentad")
+    if prediction_mode in ("DECAD", "BOTH"):
+        horizons.append("decade")
+
+    page_size = 10000
+
+    for horizon in horizons:
+        two_years_ago = (dt.date.today() - dt.timedelta(days=730)).isoformat()
+
+        skip = 0
+        while True:
+            df = client.read_lr_forecasts(
+                horizon=horizon,
+                start_date=two_years_ago,
+                skip=skip,
+                limit=page_size,
+            )
+            if df.empty or "date" not in df.columns or "code" not in df.columns:
+                break
+
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df["code"] = df["code"].astype(str)
+            for code, group in df.groupby("code"):
+                max_date = group["date"].max()
+                if pd.notna(max_date) and (
+                    code not in gauge_dates or max_date.date() > gauge_dates[code]
+                ):
+                    gauge_dates[code] = max_date.date()
+
+            if len(df) < page_size:
+                break
+            skip += page_size
+
+    return gauge_dates
+
+
+def _get_last_dates_from_csv(prediction_mode):
+    """Read last LR forecast dates per gauge from CSV files (fallback)."""
+    import os
+
+    intermediate_path = os.getenv("ieasyforecast_intermediate_data_path", "")
+    gauge_dates = {}
+
+    if prediction_mode in ("PENTAD", "BOTH"):
+        pentad_filename = os.getenv(
+            "ieasyforecast_analysis_pentad_file",
+            "forecast_pentad_linreg.csv",
+        )
+        pentad_file = os.path.join(intermediate_path, pentad_filename)
+        if os.path.exists(pentad_file):
+            try:
+                df = pd.read_csv(pentad_file)
+                if "date" in df.columns and "code" in df.columns and len(df) > 0:
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                    df["code"] = df["code"].apply(
+                        lambda x: str(int(x))
+                        if pd.notna(x) and float(x) == int(float(x))
+                        else str(x)
+                    )
+                    for code, group in df.groupby("code"):
+                        max_date = group["date"].max()
+                        if pd.notna(max_date) and (
+                            code not in gauge_dates or max_date.date() > gauge_dates[code]
+                        ):
+                            gauge_dates[code] = max_date.date()
+            except Exception as e:
+                logger.warning(f"Could not read pentad forecast file: {e}")
+
+    if prediction_mode in ("DECAD", "BOTH"):
+        decad_filename = os.getenv(
+            "ieasyforecast_analysis_decad_file",
+            "forecast_decad_linreg.csv",
+        )
+        decad_file = os.path.join(intermediate_path, decad_filename)
+        if os.path.exists(decad_file):
+            try:
+                df = pd.read_csv(decad_file)
+                if "date" in df.columns and "code" in df.columns and len(df) > 0:
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                    df["code"] = df["code"].apply(
+                        lambda x: str(int(x))
+                        if pd.notna(x) and float(x) == int(float(x))
+                        else str(x)
+                    )
+                    for code, group in df.groupby("code"):
+                        max_date = group["date"].max()
+                        if pd.notna(max_date) and (
+                            code not in gauge_dates or max_date.date() > gauge_dates[code]
+                        ):
+                            gauge_dates[code] = max_date.date()
+            except Exception as e:
+                logger.warning(f"Could not read decad forecast file: {e}")
+
+    return gauge_dates
+
+
 def get_last_forecast_dates_per_gauge(prediction_mode="BOTH"):
     """
-    Get the last forecast date for each gauge from the output files.
+    Get the last forecast date for each gauge.
+
+    Queries the postprocessing API first (authoritative source). Falls back
+    to CSV files when the API is unavailable or returns no data.
 
     Args:
         prediction_mode: 'PENTAD', 'DECAD', or 'BOTH'
@@ -300,60 +413,22 @@ def get_last_forecast_dates_per_gauge(prediction_mode="BOTH"):
         dict: Dictionary mapping gauge code to last forecast date
               {code: datetime.date or None if no forecasts}
     """
-    import os
-
-    intermediate_path = os.getenv("ieasyforecast_intermediate_data_path", "")
-
     gauge_dates = {}
 
-    # Check pentad forecast file
-    if prediction_mode in ["PENTAD", "BOTH"]:
-        pentad_file = os.path.join(intermediate_path, "forecast_pentad_linreg.csv")
-        if os.path.exists(pentad_file):
-            try:
-                df = pd.read_csv(pentad_file)
-                if "date" in df.columns and "code" in df.columns and len(df) > 0:
-                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                    # Convert code to string, handling float values like 15013.0 -> "15013"
-                    df["code"] = df["code"].apply(
-                        lambda x: str(int(x))
-                        if pd.notna(x) and float(x) == int(float(x))
-                        else str(x)
-                    )
-                    for code, group in df.groupby("code"):
-                        max_date = group["date"].max()
-                        # Keep the latest date - start hindcast from there + 1 day
-                        if pd.notna(max_date) and (
-                            code not in gauge_dates or max_date.date() > gauge_dates[code]
-                        ):
-                            gauge_dates[code] = max_date.date()
-            except Exception as e:
-                logger.warning(f"Could not read pentad forecast file: {e}")
+    # --- Primary path: query postprocessing API ---
+    try:
+        gauge_dates = _get_last_dates_from_api(prediction_mode)
+        if gauge_dates:
+            logger.info(
+                f"Auto-detect: found last forecast dates for {len(gauge_dates)} gauges from API"
+            )
+            return gauge_dates
+        logger.info("Auto-detect: API returned no LR forecasts, trying CSV fallback")
+    except Exception as e:
+        logger.warning(f"Auto-detect: API query failed ({e}), trying CSV fallback")
 
-    # Check decad forecast file
-    if prediction_mode in ["DECAD", "BOTH"]:
-        decad_file = os.path.join(intermediate_path, "forecast_decad_linreg.csv")
-        if os.path.exists(decad_file):
-            try:
-                df = pd.read_csv(decad_file)
-                if "date" in df.columns and "code" in df.columns and len(df) > 0:
-                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                    # Convert code to string, handling float values like 15013.0 -> "15013"
-                    df["code"] = df["code"].apply(
-                        lambda x: str(int(x))
-                        if pd.notna(x) and float(x) == int(float(x))
-                        else str(x)
-                    )
-                    for code, group in df.groupby("code"):
-                        max_date = group["date"].max()
-                        # Keep the latest date - start hindcast from there + 1 day
-                        if pd.notna(max_date) and (
-                            code not in gauge_dates or max_date.date() > gauge_dates[code]
-                        ):
-                            gauge_dates[code] = max_date.date()
-            except Exception as e:
-                logger.warning(f"Could not read decad forecast file: {e}")
-
+    # --- Fallback: read CSV files ---
+    gauge_dates = _get_last_dates_from_csv(prediction_mode)
     return gauge_dates
 
 
