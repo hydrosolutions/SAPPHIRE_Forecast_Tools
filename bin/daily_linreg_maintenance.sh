@@ -150,6 +150,7 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         log_message "$MODE hindcast completed successfully"
     else
         log_message "WARNING: $MODE hindcast completed with exit code: $CONTAINER_EXIT_CODE"
+        log_message "Possible cause: API write failures — check DB consistency against CSV files"
         log_message "Check log file for details: $SERVICE_LOG"
     fi
 

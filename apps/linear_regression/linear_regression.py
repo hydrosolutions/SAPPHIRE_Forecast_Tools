@@ -755,15 +755,41 @@ def main():
     if run_decad:
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
+    api_write_failures = False
+
     # Save pentadal data
     if run_pentad:
-        fl.write_pentad_hydrograph_data(data_pentad)
-        fl.write_pentad_time_series_data(data_pentad)
+        if not fl.write_pentad_hydrograph_data(data_pentad):
+            logger.error(
+                "CRITICAL: API write failed for %s. Data written to CSV only. "
+                "API database is now behind CSV.",
+                "write_pentad_hydrograph_data",
+            )
+            api_write_failures = True
+        if not fl.write_pentad_time_series_data(data_pentad):
+            logger.error(
+                "CRITICAL: API write failed for %s. Data written to CSV only. "
+                "API database is now behind CSV.",
+                "write_pentad_time_series_data",
+            )
+            api_write_failures = True
 
     # Save decadal data
     if run_decad:
-        fl.write_decad_hydrograph_data(data_decad)
-        fl.write_decad_time_series_data(data_decad)
+        if not fl.write_decad_hydrograph_data(data_decad):
+            logger.error(
+                "CRITICAL: API write failed for %s. Data written to CSV only. "
+                "API database is now behind CSV.",
+                "write_decad_hydrograph_data",
+            )
+            api_write_failures = True
+        if not fl.write_decad_time_series_data(data_decad):
+            logger.error(
+                "CRITICAL: API write failed for %s. Data written to CSV only. "
+                "API database is now behind CSV.",
+                "write_decad_time_series_data",
+            )
+            api_write_failures = True
 
     # Iterate over the dates
     current_day = forecast_date
@@ -887,7 +913,14 @@ def main():
             except Exception as _e:
                 logger.warning(f"[linreg] diagnostics before write failed: {_e}")
 
-            fl.write_linreg_pentad_forecast_data(linreg_pentad, forecast_date=current_day)
+            if not fl.write_linreg_pentad_forecast_data(linreg_pentad, forecast_date=current_day):
+                logger.error(
+                    "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
+                    "API database is now behind CSV.",
+                    "write_linreg_pentad_forecast_data",
+                    current_day,
+                )
+                api_write_failures = True
 
         else:
             logger.info(f"No pentadal forecast for {current_day}.")
@@ -973,7 +1006,14 @@ def main():
             except Exception as _e:
                 logger.warning(f"[linreg] decad diagnostics before write failed: {_e}")
 
-            fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day)
+            if not fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day):
+                logger.error(
+                    "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
+                    "API database is now behind CSV.",
+                    "write_linreg_decad_forecast_data",
+                    current_day,
+                )
+                api_write_failures = True
 
         else:
             logger.info(f"No decadal forecast for {current_day}.")
@@ -984,6 +1024,12 @@ def main():
         logger.info(f"Iteration for {current_day} completed successfully.")
         current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
 
+    if api_write_failures:
+        logger.error(
+            "Pipeline completed but one or more API writes failed. "
+            "Check logs above for CRITICAL messages. Exiting with error."
+        )
+        sys.exit(1)
     sys.exit(0)
 
 
