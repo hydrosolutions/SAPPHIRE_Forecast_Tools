@@ -1291,3 +1291,137 @@ class TestQuantileAggregation:
         em_rows = joint[joint["model_short"] == "EM"]
         if len(em_rows) > 0 and "valid_from" in em_rows.columns:
             assert em_rows["valid_from"].notna().all()
+
+
+class TestPointForecastFallback:
+    """Models that store forecast in q (not q50) should still produce skill metrics.
+
+    This covers GBT, LR_Base, LR_SM, etc. which populate q but not q50 in the
+    long_forecasts API. MC_ALD populates both q and q50.
+    """
+
+    def test_q_fallback_produces_nonzero_npairs(self):
+        """When q50 is NaN but q is populated, skill metrics should compute."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        # Point-only model: q has values, q50 is NaN, no quantiles
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["GBT"] * 4,
+                "q": [9.5, 11.0, 10.5, 12.5],
+                "q50": [np.nan] * 4,
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        gbt_stats = stats[stats["model_short"] == "GBT"]
+        assert not gbt_stats.empty, "GBT should have skill metrics"
+        assert gbt_stats.iloc[0]["n_pairs"] > 0, "n_pairs should be > 0"
+        assert pd.notna(gbt_stats.iloc[0]["nse"]), "nse should be computed"
+        assert pd.notna(gbt_stats.iloc[0]["mae"]), "mae should be computed"
+
+    def test_q50_preferred_over_q_when_both_present(self):
+        """When both q50 and q are populated, q50 should be used (MC_ALD case)."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1", "S1"],
+                "year": [2024, 2024],
+                "month": [1, 2],
+                "model_short": ["MC_ALD", "MC_ALD"],
+                "q": [9.0, 11.0],  # different from q50
+                "q50": [9.5, 11.5],  # q50 should be preferred
+                "q05": [7.0, 9.0],
+                "q10": [7.5, 9.5],
+                "q25": [8.0, 10.0],
+                "q75": [11.0, 13.0],
+                "q90": [12.0, 14.0],
+                "q95": [13.0, 15.0],
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        mc_stats = stats[stats["model_short"] == "MC_ALD"]
+        assert mc_stats.iloc[0]["n_pairs"] > 0
+        # MAE should be computed against q50 values (9.5, 11.5), not q values (9.0, 11.0)
+        # obs = (10, 12), q50 = (9.5, 11.5) → errors = (0.5, 0.5) → MAE = 0.5
+        assert abs(mc_stats.iloc[0]["mae"] - 0.5) < 0.01, (
+            f"MAE should be ~0.5 (using q50), got {mc_stats.iloc[0]['mae']}"
+        )
+
+    def test_mixed_models_q50_and_q_only(self):
+        """MC_ALD (has q50) and GBT (q only) should both produce metrics."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        rows_mc = [
+            ("S1", 2024, 1, "MC_ALD", 7.0, 7.5, 8.0, 9.5, 11.0, 12.0, 13.0),
+            ("S1", 2024, 2, "MC_ALD", 9.0, 9.5, 10.0, 11.5, 13.0, 14.0, 15.0),
+            ("S1", 2025, 1, "MC_ALD", 7.5, 8.0, 8.5, 10.0, 11.5, 12.5, 13.5),
+            ("S1", 2025, 2, "MC_ALD", 9.5, 10.0, 10.5, 12.0, 13.5, 14.5, 15.5),
+        ]
+        fcst_mc = _make_fcst(rows_mc)
+        fcst_mc["q"] = fcst_mc["q50"]  # MC_ALD has both
+
+        fcst_gbt = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["GBT"] * 4,
+                "q": [9.5, 11.0, 10.5, 12.5],
+                "q50": [np.nan] * 4,
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        fcst = pd.concat([fcst_mc, fcst_gbt], ignore_index=True)
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+
+        models_with_metrics = stats[stats["n_pairs"] > 0]["model_short"].unique()
+        assert "MC_ALD" in models_with_metrics, "MC_ALD should have metrics"
+        assert "GBT" in models_with_metrics, "GBT should have metrics via q fallback"
+
+    def test_q_column_absent_still_works(self):
+        """When q column is not present at all, behavior unchanged (uses q50)."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+            ]
+        )
+        rows = [
+            ("S1", 2024, 1, "MC_ALD", 7.0, 7.5, 8.0, 9.5, 11.0, 12.0, 13.0),
+            ("S1", 2024, 2, "MC_ALD", 9.0, 9.5, 10.0, 11.5, 13.0, 14.0, 15.0),
+        ]
+        fcst = _make_fcst(rows)  # no "q" column
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        mc_stats = stats[stats["model_short"] == "MC_ALD"]
+        assert mc_stats.iloc[0]["n_pairs"] > 0

@@ -118,7 +118,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
 | **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Archived | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
 | **LR-006** | Fix maintenance script sync mode and hindcast auto-detect filenames | **High** | Review | [`review_gi_draft_lr_maintenance_and_autodetect_fixes.md`](issues/review_gi_draft_lr_maintenance_and_autodetect_fixes.md) | — |
-| **LR-007** | API write failures are silent when API is enabled | **High** | Draft | [`high_prio_gi_draft_lr_api_write_loud_failure.md`](issues/high_prio_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
+| **LR-007** | API write failures are silent when API is enabled | **High** | Review | [`review_gi_draft_lr_api_write_loud_failure.md`](issues/review_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
 | **LR-008** | LR forecasts use wrong pentad/decad on boundary days (wrong norm + training data) | **High** | Draft | [`high_prio_gi_draft_lr_pentad_horizon_offset.md`](issues/high_prio_gi_draft_lr_pentad_horizon_offset.md) | LR-007 (Phase 3 needs loud failure) |
 
 ### Long-Term Forecasting (`ltf`)
@@ -158,7 +158,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-025** | Org-scoped data readers (add codes filtering to all read functions) | **High** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) | INFRA-009 (complete) |
 | ~~**PP-026**~~ | ~~Make consumers flag-aware for null-discharge ML forecasts; clean stale flag=1/2 records~~ | | Complete | [`archive/high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/archive/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
 | **PP-027** | Add per-station observability when EM ensemble is skipped | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_silent_skip_observability.md`](issues/mid_prio_gi_draft_pp_em_silent_skip_observability.md) | — |
-| ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
+| ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ (Bug 3 monthly reopened+fixed 2026-03-26: q50 fallback to q) | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -243,7 +243,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-022 | Fix stale-record refresh and minor inconsistencies in maintenance pipeline | 2026-03-24 | [`archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md`](issues/archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md) |
 | PP-023 | Period-aware aggregation of ML daily targets (fix contamination from adjacent periods) | 2026-03-24 | [`archive/review_gi_draft_pp_period_aware_aggregation.md`](issues/archive/review_gi_draft_pp_period_aware_aggregation.md) |
 | PP-026 | Make consumers flag-aware for null-discharge ML forecasts — Phase 1 code fixes done; Phase 2 DB cleanup skipped (harmless, tombstones needed) | 2026-03-24 | [`archive/high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/archive/high_prio_gi_draft_pp_clean_null_forecasts.md) |
-| PP-028 | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics — all bugs closed (not-a-bug or upstream data gap) | 2026-03-24 | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) |
+| PP-028 | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics — Bug 3 monthly reopened+fixed 2026-03-26 (q50 fallback to q in skill_metrics.py:1091) | 2026-03-26 | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) |
 
 ### Machine Learning (`ml`)
 

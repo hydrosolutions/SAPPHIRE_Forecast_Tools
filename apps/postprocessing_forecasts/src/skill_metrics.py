@@ -1052,14 +1052,14 @@ def calculate_monthly_skill_metrics(
 ) -> tuple:
     """Calculate monthly skill metrics for long-term forecasts.
 
-    Point metrics (Q50 vs observed): NSE, MAE, accuracy, sdivsigma.
+    Point metrics (q50 or q vs observed): NSE, MAE, accuracy, sdivsigma.
     Probabilistic metric: CRPS (using Q05-Q95 quantile distribution).
 
     Args:
         observations: [code, year, month, month_in_year,
                        discharge_avg, delta]
         forecasts: [code, year, month, model_short,
-                    q50, q05, q10, q25, q75, q90, q95]
+                    q50 (or q as fallback), q05, q10, q25, q75, q90, q95]
         timing_stats: Optional timing collector (passed through).
 
     Returns:
@@ -1088,7 +1088,10 @@ def calculate_monthly_skill_metrics(
         on=["code", "year", "month"],
         how="inner",
     )
-    merged["forecasted_discharge"] = merged["q50"].astype(float)
+    if "q" in merged.columns:
+        merged["forecasted_discharge"] = merged["q50"].fillna(merged["q"]).astype(float)
+    else:
+        merged["forecasted_discharge"] = merged["q50"].astype(float)
 
     if merged.empty:
         # No overlap — Naive Mean needs merged data (forecast+obs pairs)
