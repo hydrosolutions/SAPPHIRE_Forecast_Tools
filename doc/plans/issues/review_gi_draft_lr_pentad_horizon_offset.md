@@ -1,6 +1,6 @@
 # LR-008: Align LR `horizon_in_year` metadata with target-period convention
 
-**Status**: Draft
+**Status**: Review
 **Module**: `linear_regression`
 **Priority**: High
 **Labels**: `data-integrity`, `api-integration`
@@ -210,16 +210,16 @@ the API write, without changing any upstream computation.
 
 ## Acceptance Criteria (overall)
 
-- [ ] `horizon_in_year` written to API = target pentad (18 on March 25, not 17)
-- [ ] `horizon_value` written to API = target pentad-in-month (6 on March 25, not 5)
-- [ ] `horizon_in_year` and `horizon_value` are internally consistent for all cases
-- [ ] `forecast_pentad_of_year` passed to upstream functions is unchanged (17 on March 25)
-- [ ] Dec 31 edge case handled: pentad 72 → 1, decad 36 → 1
-- [ ] 14 protective tests pass, including upstream isolation guards
-- [ ] Full linear_regression test suite passes with zero skips
-- [ ] Convention documented in `perform_linear_regression` docstring and `data_flow_short_term.md`
-- [ ] No changes to `forecast_library.py` logic (docstring only)
-- [ ] No changes to `sapphire/services/` without coordination
+- [x] `horizon_in_year` written to API = target pentad (18 on March 25, not 17)
+- [x] `horizon_value` written to API = target pentad-in-month (6 on March 25, not 5)
+- [x] `horizon_in_year` and `horizon_value` are internally consistent for all cases
+- [x] `forecast_pentad_of_year` passed to upstream functions is unchanged (17 on March 25)
+- [x] Dec 31 edge case handled: pentad 72 → 1, decad 36 → 1
+- [x] 14 protective tests pass, including upstream isolation guards
+- [x] Full linear_regression test suite passes with zero skips
+- [x] Convention documented in `perform_linear_regression` docstring and `data_flow_short_term.md`
+- [x] No changes to `forecast_library.py` logic (docstring only)
+- [x] No changes to `sapphire/services/` without coordination
 
 ---
 

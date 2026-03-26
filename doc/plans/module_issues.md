@@ -119,7 +119,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Archived | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
 | **LR-006** | Fix maintenance script sync mode and hindcast auto-detect filenames | **High** | Review | [`review_gi_draft_lr_maintenance_and_autodetect_fixes.md`](issues/review_gi_draft_lr_maintenance_and_autodetect_fixes.md) | — |
 | **LR-007** | API write failures are silent when API is enabled | **High** | Review | [`review_gi_draft_lr_api_write_loud_failure.md`](issues/review_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
-| **LR-008** | Align LR `horizon_in_year` metadata with target-period convention | **High** | Draft | [`high_prio_gi_draft_lr_pentad_horizon_offset.md`](issues/high_prio_gi_draft_lr_pentad_horizon_offset.md) | — |
+| **LR-008** | Align LR `horizon_in_year` metadata with target-period convention | **High** | Review | [`review_gi_draft_lr_pentad_horizon_offset.md`](issues/review_gi_draft_lr_pentad_horizon_offset.md) | — |
 | ~~**LR-009**~~ | ~~Dec 31 cross-year boundary: wrong year context in `perform_linear_regression`~~ | ~~**High**~~ | Closed (Invalid) | [`high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) | LR-008 |
 
 ### Long-Term Forecasting (`ltf`)
@@ -316,4 +316,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-26 (LR-007 → Review; LR-008 title updated to target-period convention; LR-009 → Closed (Invalid) — predicated on wrong LR-008 diagnosis)*
+*Last updated: 2026-03-26 (LR-007 → Review; LR-008 title updated to target-period convention; LR-009 → Closed (Invalid) — predicated on wrong LR-008 diagnosis; LR-008 → Review)*
