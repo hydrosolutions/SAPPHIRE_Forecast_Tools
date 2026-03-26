@@ -1425,3 +1425,99 @@ class TestPointForecastFallback:
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         mc_stats = stats[stats["model_short"] == "MC_ALD"]
         assert mc_stats.iloc[0]["n_pairs"] > 0
+
+    def test_both_q_and_q50_nan_returns_zero_npairs(self):
+        """When both q and q50 are NaN, n_pairs should be 0 (no crash)."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["EMPTY"] * 4,
+                "q": [np.nan] * 4,
+                "q50": [np.nan] * 4,
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        empty_stats = stats[stats["model_short"] == "EMPTY"]
+        # Should not crash; should return 0 pairs
+        assert empty_stats.empty or empty_stats.iloc[0]["n_pairs"] == 0
+
+    def test_zero_forecast_value_not_treated_as_missing(self):
+        """q=0.0 is a valid forecast (e.g. dry season), not NaN."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 0.5),
+                ("S1", 2024, 2, 0.3),
+                ("S1", 2025, 1, 0.4),
+                ("S1", 2025, 2, 0.2),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["DRY"] * 4,
+                "q": [0.0, 0.0, 0.0, 0.0],
+                "q50": [np.nan] * 4,
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        dry_stats = stats[stats["model_short"] == "DRY"]
+        assert not dry_stats.empty, "DRY model should have stats"
+        assert dry_stats.iloc[0]["n_pairs"] > 0, "Zero forecasts should count as valid pairs"
+        assert pd.notna(dry_stats.iloc[0]["mae"]), "MAE should be computed"
+
+    def test_partial_q50_fill_within_single_model(self):
+        """Some rows have q50, others only q — both should contribute pairs."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["MIXED"] * 4,
+                "q": [9.5, 11.0, 10.5, 12.5],
+                "q50": [9.5, np.nan, 10.5, np.nan],  # partial: 2 have q50, 2 don't
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        mixed_stats = stats[stats["model_short"] == "MIXED"]
+        assert not mixed_stats.empty
+        # All 4 rows should produce pairs (q50 used where available, q elsewhere)
+        # With 2 years x 2 months, grouped by month_in_year, each group has 2 pairs
+        assert mixed_stats.iloc[0]["n_pairs"] >= 2
