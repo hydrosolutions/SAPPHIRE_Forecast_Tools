@@ -757,3 +757,9 @@ doc/prod/
 4. `deployment.md` reference doc also needs updates to stay in sync — the
    Prerequisites section has been rewritten; the step-by-step section below
    it still needs work
+5. Add cross-references from `deployment.md` to the `doc/prod/` checklists.
+   `deployment.md` is the reference doc (what + why); the checklists are the
+   action docs (do this now). After graduation, `deployment.md` should link
+   to both checklists — e.g., a "Next steps" or "Operational checklists"
+   section at the end pointing to `doc/prod/deployment_new.md` for first-time
+   setup and `doc/prod/deployment_update.md` for updates

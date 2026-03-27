@@ -7,6 +7,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
   - [Server requirements](#server-requirements)
     - [Option A: Provisioning on AWS](#option-a-provisioning-on-aws)
     - [Option B: Organization-owned server](#option-b-organization-owned-server)
+    - [Connect to the server](#connect-to-the-server)
     - [Install software on the server](#install-software-on-the-server)
     - [Verify server readiness](#verify-server-readiness)
 - [Step-by-step instructions](#step-by-step-instructions)
@@ -189,9 +190,43 @@ Expected output: rules for ports 22, 80, 443, 5006, 5007, 8082. No rules for
 > (databases). These are accessed only from localhost by the pipeline and
 > dashboards. Exposing database ports is a security risk.
 
+### Connect to the server
+
+All remaining steps are performed on the server via SSH.
+
+**If you provisioned on AWS** — use the key pair you created during launch:
+```bash
+ssh -i ~/.ssh/<your-key>.pem ubuntu@<server-ip>
+```
+
+**If your IT team provided access** — use the credentials they gave you:
+```bash
+ssh <username>@<server-ip>
+# or, if a specific key was provided:
+ssh -i ~/.ssh/<your-key> <username>@<server-ip>
+```
+
+**Verify sudo privileges:**
+```bash
+sudo whoami
+# Expected: root
+```
+
+If this prints `root`, you're ready to proceed. If not, ask your IT team
+to grant sudo access to your user.
+
+**Troubleshooting:**
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `Connection timed out` | Server not reachable or port 22 blocked | Check server IP, verify firewall/security group allows SSH from your IP |
+| `Permission denied (publickey)` | Wrong key or key not installed | Verify the key file path; for AWS, ensure you're using the `.pem` from launch |
+| `Permission denied (password)` | Password auth disabled (common on AWS) | Use key-based auth instead; AWS instances don't accept passwords by default |
+| `sudo: <user> is not in the sudoers file` | User lacks sudo privileges | Ask IT to run `usermod -aG sudo <username>` on the server |
+
 ### Install software on the server
 
-SSH into your server and install the required software.
+Install the required software.
 
 **Docker Engine** — follow the full instructions for Ubuntu:
 [Docker Engine installation on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
