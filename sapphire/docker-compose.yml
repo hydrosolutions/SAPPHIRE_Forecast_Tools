@@ -175,7 +175,7 @@ services:
     # For development: mount code as volume
     volumes:
       - ./services/preprocessing:/code
-      - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
+      - /Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
 
   postprocessing-api:
     build:
@@ -200,7 +200,8 @@ services:
     # For development: mount code as volume
     volumes:
       - ./services/postprocessing:/code
-      - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
+      - /Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - /Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/config:/config
 
   user-api:
     build:

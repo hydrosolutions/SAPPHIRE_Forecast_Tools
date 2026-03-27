@@ -17,13 +17,14 @@ import os
 import sys
 import time
 
+import numpy as np
 import pandas as pd
 from __init__ import SAPPHIRE_API_AVAILABLE
 from config_forecast import ForecastConfig
 from data_interface import DataInterface, DataInterfaceDB
 
 # Import forecast models
-from lt_utils import create_model_instance, save_forecast
+from lt_utils import create_model_instance, infer_q_columns, save_forecast
 from post_process_lt_forecast import post_process_lt_forecast
 
 # set lt_forecasting logger level
@@ -161,6 +162,7 @@ def calibrate_model(
     static_data: pd.DataFrame,
     offset_base: datetime,
     offset_discharge: datetime,
+    station_codes: list[str] | None = None,
 ) -> bool:
     """
     Run a single calibration model.
@@ -224,8 +226,22 @@ def calibrate_model(
         hindcast = model_instance.calibrate_model_and_hindcast()
         # round numerical cols to .1 decimal
         hindcast = hindcast.round(2)
-        hindcast["flag"] = 1
-        success = True
+
+        # Flag based on NaN: 1 = hindcast produced, 3 = no hindcast (NaN)
+        main_q_col = f"Q_{model_name}"
+        if main_q_col not in hindcast.columns:
+            logger.error(
+                f"Expected main Q column {main_q_col} not found in "
+                f"hindcast for model {model_name}. "
+                f"Available columns: {hindcast.columns.tolist()}"
+            )
+            hindcast["flag"] = 3
+            success = False
+        else:
+            nan_mask = hindcast[main_q_col].isna()
+            hindcast.loc[nan_mask, "flag"] = 3
+            hindcast.loc[~nan_mask, "flag"] = 1
+            success = True
     except Exception as e:
         # raise the full error
         logger.error(f"Error during calibration and hindcast for model {model_name}: {e}")
@@ -393,6 +409,7 @@ def calibrate_and_hindcast(
             static_data=static_data,
             offset_base=offset_base,
             offset_discharge=offset_discharge,
+            station_codes=station_codes,
         )
 
         execution_is_success[model_name] = success
