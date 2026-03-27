@@ -39,7 +39,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|--------|----------|--------|------|
 | **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | Review | [`review_gi_draft_infra_date_mismatch_and_sentinel.md`](issues/review_gi_draft_infra_date_mismatch_and_sentinel.md) |
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md) |
-| **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
+| **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Draft | [`high_prio_gi_draft_ml_hindcast_subprocess_root_cause.md`](issues/high_prio_gi_draft_ml_hindcast_subprocess_root_cause.md) |
 | **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Review | [`high_prio_gi_draft_ml_api_primary_reads.md`](issues/high_prio_gi_draft_ml_api_primary_reads.md) |
 | **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`review_gi_draft_ml_csv_schema_corruption_fix.md`](issues/review_gi_draft_ml_csv_schema_corruption_fix.md) |
 | **ML-010** | Read old_forecast from API with CSV fallback in make_forecast.py | ml | **High** | Review | [`review_gi_draft_ml_api_read_old_forecasts.md`](issues/review_gi_draft_ml_api_read_old_forecasts.md) |

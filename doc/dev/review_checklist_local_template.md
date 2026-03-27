@@ -875,6 +875,186 @@ order.
 **What to look for**: If gaps existed before the run, counts should be higher
 after maintenance.
 
+### 5.1a Diagnose: ML hindcast failure triage (if 5.1 shows no improvement)
+
+Skip this section if Section 5.1 shows expected count increases. Use these
+queries when ML maintenance appears to have failed silently — counts unchanged,
+or logs show hindcast subprocess errors. These checks map to ML-002 failure
+vectors (see `doc/plans/issues/high_prio_gi_draft_ml_hindcast_subprocess_root_cause.md`).
+
+#### Input data availability (ML-002 Vectors 2, 6)
+
+The hindcast needs historical discharge and ERA5 meteo data. If the API
+returns empty results for these, the hindcast script crashes before producing
+output (no try/except around `read_meteo_data_combined()` or
+`fl.read_daily_discharge_data()`).
+
+- [ ] Discharge data depth — does historical data exist for the hindcast
+  training window? The hindcast typically needs data back to
+  `ieasyhydroforecast_START_DATE` (often 2000-01-01). Check if at least some
+  records exist in a recent year:
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=2023-01-01&end_date=2023-12-31&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'S1 2023 discharge count={len(d)}  (expect ~365 if complete)')
+  "
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=2023-01-01&end_date=2023-12-31&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'S2 2023 discharge count={len(d)}  (expect ~365 if complete)')
+  "
+  ```
+  <!-- RESULT: S1 2023 count=  S2 2023 count= -->
+
+- [ ] ERA5 meteo data depth — does T and P data exist for the hindcast
+  training window? The script crashes at line 267 if `era5_data_transformed`
+  is empty (`.min()` on empty series raises TypeError):
+  ```bash
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=2023-01-01&end_date=2023-12-31&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'S1 T 2023 count={len(d)}')
+  "
+  curl -w "\nTime: %{time_total}s\n" -s \
+    "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=2023-01-01&end_date=2023-12-31&limit=5" \
+    | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  print(f'S1 P 2023 count={len(d)}')
+  "
+  ```
+  <!-- RESULT: S1 T count=  S1 P count=  (expect ~365 each if complete) -->
+
+**Red flags**:
+- `count=0` for discharge or meteo — the hindcast will crash on empty data.
+  Check whether the data was migrated to the DB (see Section 8 remediation).
+- Low counts (e.g., < 100 for a full year) — may indicate incomplete migration
+  or pagination limits masking the true count.
+
+> **Pagination note**: The API default limit is 100. The queries above use
+> `limit=5` intentionally — we only need to confirm records *exist*, not
+> fetch them all. If `count=5`, data exists (at least 5 records). If
+> `count=0`, data is genuinely absent.
+
+#### Per-model hindcast output (ML-002 Vector 8 — silent data loss)
+
+When the hindcast subprocess runs but a model's `predictor.hindcast()` throws
+an exception, it is silently caught (`print(e)`, no logger) and returns an
+empty DataFrame. The result is a CSV with headers but no data rows. Check
+each model separately to identify which model failed:
+
+- [ ] Per-model forecast coverage for $S1 (30-day window, all 3 models):
+  ```bash
+  for model in TFT TiDE TSMixer; do
+    curl -s \
+      "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=$model&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" \
+      | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  dates = sorted(set(r.get('date','') for r in d))
+  nulls = sum(1 for r in d if r.get('forecasted_discharge') is None)
+  print(f'$model: count={len(d)}  unique_dates={len(dates)}  null_fc={nulls}')
+  "
+  done
+  ```
+  <!-- RESULT: TFT count=  TiDE count=  TSMixer count=  null_fc= -->
+
+- [ ] Per-model forecast coverage for $S2 (30-day window):
+  ```bash
+  for model in TFT TiDE TSMixer; do
+    curl -s \
+      "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=$model&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" \
+      | python3 -c "
+  import sys, json
+  d = json.load(sys.stdin)
+  dates = sorted(set(r.get('date','') for r in d))
+  nulls = sum(1 for r in d if r.get('forecasted_discharge') is None)
+  print(f'$model: count={len(d)}  unique_dates={len(dates)}  null_fc={nulls}')
+  "
+  done
+  ```
+  <!-- RESULT: TFT count=  TiDE count=  TSMixer count=  null_fc= -->
+
+**What to look for**: All three models should have similar `unique_dates`
+counts (~30). Large discrepancies between models indicate model-specific
+failures (e.g., missing `.pt` file, scaler incompatibility).
+
+**Red flags**:
+- One model has 0 records while others have ~30 — that model's hindcast
+  crashed (check model file exists on disk, scaler CSVs present).
+- All models have records but high `null_fc` count — hindcast ran but
+  produced NaN values (flag-related, see ML-006).
+- All models have 0 records — hindcast subprocess crashed before any model
+  ran (env var issue, API unreachable, or working directory problem).
+
+#### Flag distribution analysis (ML-002 Vector 8)
+
+The API does not expose a `flag` filter, so fetch recent forecasts and
+count flags client-side. Flag semantics: 0 = good forecast, 1 = NaN
+(gap to fill), 2 = NaN (unfillable), 4 = hindcast-produced.
+
+- [ ] $S1 TFT flag distribution (30-day window):
+  ```bash
+  curl -s \
+    "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" \
+    | python3 -c "
+  import sys, json
+  from collections import Counter
+  d = json.load(sys.stdin)
+  flags = Counter(r.get('flag') for r in d)
+  print(f'total={len(d)}  flag_dist={dict(sorted(flags.items()))}')
+  "
+  ```
+  <!-- RESULT: total=  flag_dist= -->
+
+**What to look for**: After successful maintenance, most records should have
+`flag=0` (operational) or `flag=4` (hindcast-produced). A high count of
+`flag=1` or `flag=2` indicates the hindcast did not fill these gaps.
+
+**Red flags**:
+- All records have `flag=1` — maintenance ran but hindcast produced no data.
+  Cross-reference with per-model coverage above to identify which model failed.
+- `flag=None` — flag was not written at all (API write bug, see ML-004).
+
+#### Filesystem checks (requires server access)
+
+These checks cannot be done via the API. Run them on the server or in the
+Docker container when the above API checks indicate a failure.
+
+```bash
+# Check model files exist (Vector 3 — IndexError on missing .pt)
+ls -la $MODELS_AND_SCALERS_PATH/TFT/*.pt
+ls -la $MODELS_AND_SCALERS_PATH/TiDE/*.pt
+ls -la $MODELS_AND_SCALERS_PATH/TSMixer/*.pt
+
+# Check scaler CSVs exist (Vector 7 — unguarded pd.read_csv)
+for model_dir in TFT TiDE TSMixer; do
+  echo "--- $model_dir ---"
+  ls $MODELS_AND_SCALERS_PATH/$model_dir/scaler_stats_*.csv 2>/dev/null || echo "MISSING scaler CSVs"
+done
+
+# Check static features file exists (Vector 5 — index type mismatch)
+ls -la $MODELS_AND_SCALERS_PATH/static_features/ML_basin_attributes_v2.csv
+
+# Check hindcast logs for swallowed exceptions (Vector 8)
+# The predictor catches all exceptions with print() — grep for error output
+grep -i "error in hindcasting" apps/logs/*.log 2>/dev/null | tail -10
+```
+
+<!-- RESULT: (paste output or "all files present") -->
+
+> **Cross-reference**: If API checks show one specific model missing while
+> others are fine, check that model's `.pt` and scaler files first. If ALL
+> models are missing, check API reachability and env var setup (see ML-002
+> issue file for the full failure vector list).
+
 ### 5.2 Verify: LR hindcast — 30-day coverage
 
 - [ ] $S1 — LR pentad 30-day record count and dates:
