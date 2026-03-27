@@ -125,16 +125,9 @@ All edits below are on the `maxat_sapphire_2` branch.
   - Check that `build_test.yml` triggers on PRs targeting `maxat_sapphire_2`
   - Check that `:latest` Docker images are built from `maxat_sapphire_2`
 
-- [ ] **5.4** Notify collaborators (especially Maxat) that:
-  - Default branch is now `maxat_sapphire_2`
-  - New PRs should target `maxat_sapphire_2`
-  - `main` is frozen as v1 archive
+- [x] **5.4** Collaborators notified (2026-03-27)
 
-- [ ] **5.5** Update local clones:
-  ```bash
-  git fetch origin
-  git remote set-head origin --auto
-  ```
+- [x] **5.5** Local clones updated (`git remote set-head origin --auto`)
 
 ---
 
