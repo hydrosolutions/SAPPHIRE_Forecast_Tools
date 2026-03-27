@@ -253,8 +253,8 @@ def run_single_model(
 
     # None means this model is not scheduled for today — skip gracefully
     if today is None:
-        logger.info(f"Model {model_name} not scheduled for today, skipping")
-        return True  # skip is not a failure
+        logger.warning(f"Model {model_name} not scheduled for today, skipping")
+        return False  # skip is a failure
 
     logger.info(f"Can model {model_name} be run? {'Yes' if can_be_run else 'No'}")
 

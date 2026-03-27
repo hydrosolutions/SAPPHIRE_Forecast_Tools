@@ -32,6 +32,104 @@ For more detailed implementation specifics refer to the
 [Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting)
 documentation and code base.
 
+## Model Types
+
+The model setup and configuration is generally configuration driven, allowing for different setups, but within the SAPPHIRE Forecast Tools only a certain setup support is implemented. Generally there are 3 different long term modes considered.
+**month**: Forecast operate in monthly resolution and predict the average streamflow for the given month.
+**quarter** Forecasts predict the quarter average of streamflow (so 3 month averages).
+**season** Forecasts predict the seasonal average (so 6 month averages).
+
+### Month Forecast
+The monthly resolution forecasts show this configuration pattern. 
+```json
+    "prediction_horizon": 30,
+    "offset": 35,
+    "forecast_days": [
+        5,
+        10,
+        15,
+        20,
+        25,
+        "end"
+    ],
+    "horizon_type" : "season",
+    ...
+```
+We predict the average over a 30 day window and offset it by 35 days. Meaning if we produce the forecast on 25.05 - we predict for June (a clearrer explanation of how the offset is calculated can be found below). In the SAPPHIRE project there is support for in month forecast (e.g offset = 20, when we predict on the 10th for the current month), 1 Month ahead , 2 month ahead and 3 month ahead. Currently we do not consider it reasonable to produce forecasts for longer lead times in monthly resolution. Those 3 month aheads can be aggreagted to a quarter forecast.
+
+#### Models
+**LR Base** Bayesian Linear Regression using past discharge, precipitation and temperature (probabilistic output ~ $N(\mu, \sigma)$)
+
+**GBT** Gradient boosted tree ensemble consisting of XGB, LGBM and Catboost - the final prediction is the mean of the 3 submodels (features are discharge, precipitation, temperature and static features)
+
+**LR SM** Bayesian Linear Regression using past discharge, precipitation, temperature and SWE from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
+
+**LR SM DT** Bayesian Linear Regression using past discharge, precipitation, temperature and the change of SWE from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
+
+**LR SM ROF** Bayesian Linear Regression using past discharge, precipitation, temperature, SWE and runoff formation (snow melt + precipitaiton) from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
+
+**SM GBT**Gradient boosted tree ensemble consisting of XGB, LGBM and Catboost - the final prediction is the mean of the 3 submodels (features are discharge, precipitation, temperature, SWE and ROF from Snowmapper and static features)
+
+**SM GBT LR**Gradient boosted tree ensemble consisting of XGB, LGBM and Catboost - the final prediction is the mean of the 3 submodels (features are discharge, precipitation, temperature, SWE and ROF from Snowmapper, and the predictions from the linear regressions and static features) - the model predicts the relative deviation from the long term norm instead of absolute values.
+
+**SM GBT Norm**Gradient boosted tree ensemble consisting of XGB, LGBM and Catboost - the final prediction is the mean of the 3 submodels (features are discharge, precipitation, temperature, SWE and ROF from Snowmapper and static features) - the model predicts the relative deviation from the long term norm instead of absolute values.
+
+**MC ALD** A small neural network which takes in ensemble statistics of all previous models (mean, spread, min, max, std...), historical error statistics (mean, bias, std, max...) and the time of the year. The model predicts the asymmetry $\tau = f(X, \theta)$ and scale $\beta = f(X, \theta)$ parameters of the Asymmetric Laplace Distribution (ALD), with the ensemble mean as the location parameter $\mu$. The final distributional prediction is:
+
+$$\hat{y} \sim \text{ALD}(\mu,\, \beta,\, \tau), \quad \tau \in (0,1)$$
+
+with the predictive mean shifted from the ensemble mean by:
+
+$$\mathbb{E}[\hat{y}] = \mu + \frac{\beta(1 - 2\tau)}{\tau(1 - \tau)}$$
+
+This allows the model to act as a soft bias correction — when $\tau \neq 0.5$ the predicted mean deviates from $\mu$, and $\beta$ controls the spread of the uncertainty envelope.
+
+### Quarter Forecast
+Example .json config:
+```json
+    "prediction_horizon": 90,
+    "offset": 95,
+    "forecast_days": [
+        25
+    ],
+    "operational_issue_day": 25,
+    "operational_month_lead_time": 1,
+    "calendar_month_adjustment": false,
+    "forecast_horizon_months": 3,
+    "horizon_type": "quarter",
+```
+We predict the average over the next 90 days with an offset of 5 days (95 in config). 
+
+#### Models
+**LR Base** Bayesian Linear Regression using past discharge, precipitation and temperature (probabilistic output  ~ $N(\mu, \sigma)$)
+
+**LR SM** Bayesian Linear Regression using past discharge, precipitation, temperature and SWE from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
+
+
+### Seasonal Forecast
+Example .json config for the seasonal forecast of March.
+```json
+    "prediction_horizon": 183,
+    "offset": 189,
+    "forecast_days": [
+        25
+    ],
+    "operational_issue_day": 25,
+    "target_start_month": 4,
+    "target_end_month": 9,
+    "horizon_type" : "season",
+    "calendar_month_adjustment": false,
+    "operational_month_lead_time": 1,
+````
+We note that the target is here fixed by the start and end month - we are only interested in the period April - September. Offset for January: 248, Offset for February: 217, Offset for April: 158. 
+
+#### Models
+**LR Base** Bayesian Linear Regression using past discharge, precipitation and temperature (probabilistic output ~ $N(\mu, \sigma)$)
+
+**LR SM** Bayesian Linear Regression using past discharge, precipitation, temperature and SWE from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
+
+
+
 ## Operational Schedule
 
 ### When Forecasts Run
@@ -59,20 +157,22 @@ separate JSON config file. Modes represent different lead times:
 | `month_0` | Current month | March |
 | `month_1` | +1 month | April |
 | `month_2` | +2 months | May |
-| … | … | … |
-| `month_9` | +9 months | December |
+| `month_3` | +3 months | June |
+| `quarter` | +1 months  | April - June |
+| `seasonal_march`| +1 month | April - September |
 
-Each mode can also be configured for seasonal or multi-month targets (see
-[Multi-Month Forecast Modes](#multi-month-forecast-modes) below).
+In January run seasonal_january, same for February and April.
 
 ### Full Operational Run
 
 In production, **all modes run sequentially** in a single pipeline invocation:
 
 ```bash
-for month in 0 1 2 3 4 5 6 7 8 9; do
+for month in 0 1 2 3; do
     lt_forecast_mode=month_${month} python run_forecast.py --all
 done
+# Optional quarter , seasonal_xy
+lt_forecast_mode=quarter python run_forecast.py --all
 ```
 
 See `apps/run_locally.sh` (`run_long_term_forecasting_operational()`) for the
@@ -103,7 +203,7 @@ ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_m
 ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_1 python run_forecast.py --models LR_Base GBT LR_SM SM_GBT
 
 # Run forecasts for each month, continue even if one fails
-for month in  0 1 2 3 4 5 6 7 8 9; do
+for month in  0 1 2 3; do
     echo "Running forecast for month_$month" >> ../../summary.log
     if ! ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_$month python run_forecast.py --all; then
         echo "WARNING: month_$month forecast failed, continuing with next month" >> ../../summary.log
@@ -165,7 +265,7 @@ typically set in the deployment `.env` file alongside the standard
 | Variable | Set At | Description |
 |----------|--------|-------------|
 | `lt_forecast_mode` | CLI invocation | Which mode to run (e.g., `month_1`) |
-| `LT_OPERATIONAL_MODES` | Shell (optional) | Override which modes `run_locally.sh` runs (default: `0 1 2 3 4 5 6 7 8 9`) |
+| `LT_OPERATIONAL_MODES` | Shell (optional) | Override which modes `run_locally.sh` runs (default: `0 1 2 3`) |
 | `LT_FORECAST_TODAY` | Shell (optional) | Override today's date for `run_forecast.py` (`YYYY-MM-DD`) |
 
 ### Configuration Path Variables
@@ -173,7 +273,7 @@ typically set in the deployment `.env` file alongside the standard
 | Variable | Description |
 |----------|-------------|
 | `ieasyhydroforecast_ml_long_term_configuration` | Relative path (from config root) to directory containing mode JSON configs |
-| `ieasyhydroforecast_ml_long_term_supported_modes` | Comma-separated list of supported modes (e.g., `month_0,month_1,...,month_9`) |
+| `ieasyhydroforecast_ml_long_term_supported_modes` | Comma-separated list of supported modes (e.g., `month_0,month_1,...,seasonal_april`) |
 | `ieasyhydroforecast_ml_long_term_output_path` | Output directory for forecast results (relative to intermediate data path) |
 | `ieasyhydroforecast_ml_long_term_path_to_static` | Path to static features CSV (relative to models/scalers path) |
 
