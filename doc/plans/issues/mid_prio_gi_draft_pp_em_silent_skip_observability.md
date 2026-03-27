@@ -2,7 +2,7 @@
 
 **Priority**: Medium
 **Module**: postprocessing_forecasts (`pp`)
-**Status**: Draft
+**Status**: Implemented (Phase 1 only — diagnostic logging)
 **Branch**: TBD
 
 ## Problem
