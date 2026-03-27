@@ -1,0 +1,101 @@
+version: 2
+updates:
+  # --- Active app modules (uv + pyproject.toml) ---
+  - package-ecosystem: "pip"
+    directory: "/apps/iEasyHydroForecast"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/preprocessing_runoff"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/preprocessing_gateway"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/linear_regression"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/machine_learning"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/long_term_forecasting"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/postprocessing_forecasts"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/pipeline"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/forecast_dashboard"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/apps/validate_pipeline"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        update-types: ["minor", "patch"]
+
+  # --- GitHub Actions ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        update-types: ["minor", "patch"]
