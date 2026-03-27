@@ -105,20 +105,15 @@ All edits below are on the `maxat_sapphire_2` branch.
 
 ### Phase 4: Change GitHub default branch
 
-- [ ] **4.1** Go to GitHub repo Settings -> Branches -> Default branch
-  - Change from `main` to `maxat_sapphire_2`
+- [x] **4.1** Default branch changed to `maxat_sapphire_2` on GitHub (2026-03-27)
 
-- [ ] **4.2** Add branch protection rules to `maxat_sapphire_2` (matching whatever `main` had)
+- [x] **4.2** Branch protection rules added to `maxat_sapphire_2`
 
-- [ ] **4.3** Optionally protect `main` as read-only (prevent accidental pushes to v1)
+- [x] **4.3** `main` branch locked (read-only)
 
 ### Phase 5: Post-switch verification
 
-- [ ] **5.1** Verify `remotes/origin/HEAD` updated:
-  ```bash
-  git remote set-head origin --auto
-  git remote show origin | head -5
-  ```
+- [x] **5.1** Verified `remotes/origin/HEAD` points to `maxat_sapphire_2`
 
 - [ ] **5.2** Push the CI/CD and doc changes from Phase 2-3:
   ```bash
