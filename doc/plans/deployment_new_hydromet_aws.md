@@ -1,0 +1,724 @@
+# Deployment Plan: SAPPHIRE on a New AWS Server
+
+**Target date:** Week of 2026-03-31
+**Server:** AWS (Ubuntu 24.04 LTS)
+
+This plan traces the full deployment end-to-end for a new hydromet service,
+referencing existing docs where they cover a step, and flagging gaps inline as
+`[DOC-GAP]` issues. Each gap has a concrete fix action so the docs can be
+improved before or after deployment.
+
+Placeholders used throughout:
+- `<org>` — short organization identifier (e.g., `demo`)
+- `<country>` — country code (e.g., `che`)
+- `<data_folder>` — `<country>_data_forecast_tools`
+- `<env_file>` — `.env_<org>`
+- `<tz_offset>` — UTC offset for the target timezone
+
+---
+
+## Table of Contents
+
+- [Deployment Plan: SAPPHIRE on a New AWS Server](#deployment-plan-sapphire-on-a-new-aws-server)
+  - [Table of Contents](#table-of-contents)
+  - [Phase 1: AWS Server Provisioning](#phase-1-aws-server-provisioning)
+  - [Phase 2: Base Software Installation](#phase-2-base-software-installation)
+  - [Phase 3: Clone Repo \& Create Data Folder](#phase-3-clone-repo--create-data-folder)
+  - [Phase 4: SAPPHIRE Services (API Stack)](#phase-4-sapphire-services-api-stack)
+    - [4.1 Create services .env](#41-create-services-env)
+    - [4.2 Start the services](#42-start-the-services)
+    - [4.3 Run data migrations (if migrating from CSV)](#43-run-data-migrations-if-migrating-from-csv)
+  - [Phase 5: Pipeline .env Configuration](#phase-5-pipeline-env-configuration)
+  - [Phase 6: Station Configuration \& Data](#phase-6-station-configuration--data)
+  - [Phase 7: iEasyHydro HF Connectivity](#phase-7-ieasyhydro-hf-connectivity)
+  - [Phase 8: Luigi Daemon \& Pipeline Images](#phase-8-luigi-daemon--pipeline-images)
+    - [8.1 Pull Docker images](#81-pull-docker-images)
+    - [8.2 Start Luigi daemon](#82-start-luigi-daemon)
+    - [8.3 Test a pipeline run](#83-test-a-pipeline-run)
+  - [Phase 9: Dashboards \& Reverse Proxy](#phase-9-dashboards--reverse-proxy)
+    - [9.1 Start dashboards](#91-start-dashboards)
+    - [9.2 Reverse proxy \& HTTPS](#92-reverse-proxy--https)
+  - [Phase 10: Cron Jobs](#phase-10-cron-jobs)
+  - [Phase 11: Monitoring](#phase-11-monitoring)
+  - [Phase 12: Testing \& Validation](#phase-12-testing--validation)
+    - [Validation checklist](#validation-checklist)
+  - [Doc-Gap Summary](#doc-gap-summary)
+    - [Priority for pre-deployment fixes](#priority-for-pre-deployment-fixes)
+  - [Deployment Log](#deployment-log)
+
+---
+
+## Phase 1: AWS Server Provisioning
+
+**Ref:** `doc/deployment.md` > Prerequisites > Server requirements > Provisioning on AWS
+
+- [ ] Provision Ubuntu 24.04 LTS instance following `doc/deployment.md`
+  - Use the AWS settings table for instance type, storage, and AMI
+  - For ML models: use `t3.xlarge` (16 GB RAM) and 30 GB storage
+- [ ] Configure AWS security group — open inbound ports per the port table
+  in `doc/deployment.md` > "Configuring your server"
+  - DB ports (5433–5436): **do not expose** — localhost only
+  - API ports (8000–8005): localhost only unless using reverse proxy
+  - Dashboard ports (5006, 5007): expose directly or via reverse proxy
+- [ ] Set up SSH access (key-based)
+- [ ] Confirm sudo privileges
+
+---
+
+## Phase 2: Base Software Installation
+
+**Ref:** `doc/deployment.md` > Software requirements
+
+- [ ] Install Docker Engine (follow Docker docs for Ubuntu)
+  ```bash
+  # https://docs.docker.com/engine/install/ubuntu/
+  ```
+- [ ] Verify Docker Compose v2 is available
+  ```bash
+  docker compose version
+  ```
+- [ ] Install Git
+  ```bash
+  sudo apt-get update && sudo apt-get install -y git
+  ```
+- [ ] Install autossh (needed later if SSH tunnel required)
+  ```bash
+  sudo apt-get install -y autossh
+  ```
+- [ ] Create directory structure
+  ```bash
+  sudo mkdir -p /data
+  sudo chown ubuntu:ubuntu /data
+  mkdir -p /home/ubuntu/logs
+  ```
+
+---
+
+## Phase 3: Clone Repo & Create Data Folder
+
+**Ref:** `doc/deployment.md` > Download this repository, `doc/configuration.md` > New deployment setup
+
+- [ ] Clone the repository
+  ```bash
+  cd /data
+  git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
+  cd SAPPHIRE_Forecast_Tools
+  git checkout maxat_sapphire_2   # or whichever branch is production-ready
+  ```
+
+- [ ] Create the data folder with the documented structure
+  ```bash
+  mkdir -p /data/<data_folder>/{config,daily_runoff,intermediate_data,GIS,templates,reports}
+  ```
+
+  Expected structure (from `doc/configuration.md`):
+  ```
+  <data_folder>/
+  ├── config/
+  │   ├── <env_file>
+  │   ├── config_all_stations_library.json
+  │   ├── config_station_selection.json
+  │   ├── config_output.json
+  │   ├── config_development_restrict_station_selection.json
+  │   └── locale/          # copy from apps/config/locale/
+  ├── daily_runoff/
+  ├── intermediate_data/
+  ├── GIS/
+  ├── templates/
+  └── reports/
+  ```
+
+- [ ] Copy locale files
+  ```bash
+  cp -r /data/SAPPHIRE_Forecast_Tools/apps/config/locale \
+        /data/<data_folder>/config/
+  ```
+
+  > `[DOC-GAP-2]` **No instructions for adding a new locale.**
+  > `doc/configuration.md` has an explicit TODO: "Document the contents of the
+  > locale directory and what is needed for adding a new language." For now,
+  > deploy with `ru_KG` (Russian) or `en_CH` (English) and add a new language
+  > later.
+  >
+  > **Fix:** Document the `.po`/`.mo` workflow: how to create a new locale
+  > folder, what strings need translation, how to compile `.mo` files.
+
+---
+
+## Phase 4: SAPPHIRE Services (API Stack)
+
+> `[DOC-GAP-3]` **SAPPHIRE services not mentioned in `doc/deployment.md` at
+> all.** The main deployment guide covers only the pipeline + dashboards. The
+> entire API stack (PostgreSQL databases, API gateway, preprocessing/
+> postprocessing/user/auth services) is documented only in `sapphire/README.md`
+> and is not referenced from the deployment flow. Since the pipeline modules now
+> depend on these APIs, this is a critical gap.
+>
+> **Fix:** Add a new section "SAPPHIRE Services (API Stack)" to
+> `doc/deployment.md` between "Configuring your server" and "Copy your data",
+> referencing `sapphire/README.md` and including the steps below. Also document
+> the deployment order: services must be running before the pipeline.
+
+**Ref:** `sapphire/README.md`
+
+### 4.1 Create services .env
+
+- [ ] Copy the template
+  ```bash
+  cp /data/SAPPHIRE_Forecast_Tools/sapphire/.env.example \
+     /data/SAPPHIRE_Forecast_Tools/sapphire/.env
+  ```
+
+- [ ] Edit `sapphire/.env` — fill in:
+  ```
+  POSTGRES_USER=postgres
+  POSTGRES_PASSWORD=<generate-strong-password>
+  PREPROCESSING_DB=preprocessing_db
+  POSTPROCESSING_DB=postprocessing_db
+  USER_DB=user_db
+  AUTH_DB=auth_db
+  JWT_SECRET_KEY=<generate-strong-random-secret>
+  # Service URLs (internal Docker network names)
+  PREPROCESSING_API_URL=http://preprocessing-api:8002
+  POSTPROCESSING_API_URL=http://postprocessing-api:8003
+  USER_API_URL=http://user-api:8004
+  AUTH_API_URL=http://auth-api:8005
+  ```
+
+  > `[DOC-GAP-4]` **No guidance on what values to set in `sapphire/.env`.**
+  > The `.env.example` lists the variable names but leaves all values blank.
+  > There are no instructions on what `PREPROCESSING_API_URL` etc. should be
+  > set to (Docker service names vs localhost), or how to generate
+  > `JWT_SECRET_KEY`.
+  >
+  > **Fix:** Add commented example values to `.env.example` and add a
+  > "Configuration" section to `sapphire/README.md` explaining each group.
+
+### 4.2 Start the services
+
+- [ ] Start all services
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools/sapphire
+  docker compose --env-file .env up -d
+  ```
+
+- [ ] Wait for databases to be healthy
+  ```bash
+  # Check all containers
+  docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}"
+  ```
+
+- [ ] Health check
+  ```bash
+  curl http://localhost:8000/health
+  curl http://localhost:8000/health/ready
+  ```
+
+### 4.3 Run data migrations (if migrating from CSV)
+
+For a fresh deployment with no historical data, migrations may not be needed.
+If migrating existing CSV data:
+
+```bash
+# Preprocessing
+docker exec -it sapphire-preprocessing-api /bin/bash
+python app/data_migrator.py --type runoff
+python app/data_migrator.py --type hydrograph
+python app/data_migrator.py --type meteo
+python app/data_migrator.py --type snow
+
+# Postprocessing
+docker exec -it sapphire-postprocessing-api /bin/bash
+python app/data_migrator.py --type skillmetric --batch-size 1
+python app/data_migrator.py --type lrforecast
+python app/data_migrator.py --type combinedforecast
+python app/data_migrator.py --type forecast
+python app/data_migrator.py --type longforecast
+```
+
+> `[DOC-GAP-5]` **No "fresh deployment" path for SAPPHIRE services.**
+> The migration docs assume you have existing CSV data. For a brand-new
+> deployment with no historical data, it's unclear whether:
+> (a) the databases auto-create tables on first start (via Alembic/SQLAlchemy),
+> (b) you need to run migrations even with empty data, or
+> (c) the pipeline will fail if the DBs are empty.
+>
+> **Fix:** Add a "Fresh deployment (no historical data)" subsection to
+> `sapphire/README.md` clarifying what happens on first start and whether
+> any bootstrapping is needed.
+
+---
+
+## Phase 5: Pipeline .env Configuration
+
+**Ref:** `doc/configuration.md`, `apps/config/.env` (as template)
+
+- [ ] Create `<env_file>` by copying an existing example and adapting
+  ```bash
+  cp /data/SAPPHIRE_Forecast_Tools/apps/config/.env \
+     /data/<data_folder>/config/<env_file>
+  ```
+
+- [ ] Edit the file — key variables to change:
+
+  | Variable | What to set | Documented? |
+  |----------|------------|-------------|
+  | `ieasyhydroforecast_organization` | `<org>` | Yes |
+  | All data paths (`../../../...`) | Point to `../../../<data_folder>/` | Implicit |
+  | `IEASYHYDRO_HOST` | Endpoint or `False` | Yes |
+  | `IEASYHYDROHF_HOST` | Endpoint or `False` | **No** |
+  | `IEASYHYDROHF_USERNAME` | Credentials | **No** |
+  | `IEASYHYDROHF_PASSWORD` | Credentials | **No** |
+  | `ieasyhydroforecast_connect_to_iEH` | `True` or `False` | Yes |
+  | `ieasyhydroforecast_ssh_to_iEH` | Depends on network setup | Yes |
+  | `ieasyhydroforecast_API_KEY_GATEAWAY` | API key or empty | Yes |
+  | `ieasyhydroforecast_run_ML_models` | `true` or `false` | Yes |
+  | `ieasyhydroforecast_run_CM_models` | `true` or `false` | Yes |
+  | `ieasyhydroforecast_locale` | `ru_KG` or `en_CH` | Yes |
+  | `ieasyforecast_country_borders_file_name` | GADM shapefile for your country | Yes |
+  | `ieasyhydroforecast_backend_docker_image_tag` | `local` or `latest` | Yes |
+  | `ieasyhydroforecast_frontend_docker_image_tag` | `local` or `latest` | Yes |
+  | `SAPPHIRE_PIPELINE_SMTP_*` | SMTP config for alerts | In monitoring doc |
+  | `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Alert recipients | In monitoring doc |
+
+  > `[DOC-GAP-6]` **No minimal .env variable reference.**
+  > `doc/configuration.md` has an explicit TODO: "Document the minimal set of
+  > required .env variables for a deployment that only uses linear regression
+  > with manual sites." The current example .env files have 100+ variables and
+  > it's unclear which are required vs optional vs module-specific.
+  >
+  > **Fix:** Create a table in `doc/configuration.md` categorizing every .env
+  > variable as: required (all deployments), required-if (conditional on
+  > module), or optional. Mark which module uses each variable.
+
+  > `[DOC-GAP-7]` **iEasyHydro HF SDK variables undocumented.**
+  > `doc/configuration.md` has a TODO: "Document `IEASYHYDROHF_HOST`,
+  > `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD`." These are the new SDK
+  > variables used by `preprocessing_runoff`, distinct from the legacy
+  > `IEASYHYDRO_HOST` etc.
+  >
+  > **Fix:** Add a section to `doc/configuration.md` documenting these
+  > variables, when they're needed, and how they differ from the legacy ones.
+
+- [ ] Update all relative paths to point to your `<data_folder>`
+  ```bash
+  sed -i 's/<old_data_folder>/<data_folder>/g' \
+    /data/<data_folder>/config/<env_file>
+  ```
+
+- [ ] Verify path convention: from `apps/<module>/`, the data folder is at
+  `../../../<data_folder>/` (three levels up). Confirm this
+  matches the actual directory layout on the server.
+
+  > `[DOC-GAP-8]` **Path convention explanation is buried.**
+  > The `../../../` convention is explained in one sentence in
+  > `doc/configuration.md` but is easy to miss. For a new deployment this is
+  > a common source of confusion.
+  >
+  > **Fix:** Add a clear diagram or example showing the directory tree and
+  > how relative paths resolve from `apps/<module>/` to the data folder.
+
+---
+
+## Phase 6: Station Configuration & Data
+
+**Ref:** `doc/configuration.md` > The config all stations library file
+
+- [ ] Create `config_all_stations_library.json` with your stations
+  - Required fields per station: `code`, `name_ru`, `river_ru`, `punkt_ru`,
+    `lat`, `long`, `region`, `basin`
+  - All values as single-element lists (e.g., `"lat": [41.3]`)
+  - Station codes must be numeric strings starting with `1`
+  - For manual sites (no iEH HF): add `"data_source": ["manual"]`
+
+- [ ] Create `config_station_selection.json` — subset of stations to forecast
+  - Format: same as documented, copy structure from example
+
+- [ ] Create `config_output.json`
+  - Copy from `apps/config/config_output.json` and adapt
+
+- [ ] Create `config_development_restrict_station_selection.json`
+  - Start with a small subset (2-3 stations) for initial testing
+  - Set to `null` in `.env` once everything works
+
+- [ ] Download admin boundaries for your country
+  - From https://gadm.org/data.html — download the appropriate shapefile
+  - Place in `/data/<data_folder>/GIS/`
+  - Update `ieasyforecast_country_borders_file_name` in `.env`
+
+- [ ] Place historical discharge Excel files in `daily_runoff/`
+  - One file per station: `<station_code>_*.xlsx`
+  - Must have sheet named `2000` with columns `date` (YYYY-MM-DD) and
+    `discharge` (m3/s)
+
+- [ ] Create forecast bulletin templates in `templates/`
+  - Copy from existing deployment and adapt headers/labels
+  - See `doc/bulletin_template_tags.md` for available template tags
+
+---
+
+## Phase 7: iEasyHydro HF Connectivity
+
+**Ref:** `doc/prod/update_deployment_checklist.md` > Section 1.2
+
+**Decision point:** Does the target hydromet have iEasyHydro HF installed?
+
+- **If YES with direct network access** → Option A (set `IEASYHYDROHF_HOST`
+  directly)
+- **If YES but API on localhost only** → Option B (SSH tunnel, same network)
+- **If YES but different network (AWS to on-premise)** → Option C (SSH tunnel
+  with port forwarding) — this is most likely for AWS
+- **If NO** → Set `ieasyhydroforecast_connect_to_iEH=False` and use manual
+  data entry / Google Sheets
+
+For Option C (most likely scenario for AWS):
+
+- [ ] Get remote server details from the hydromet IT team:
+  - SSH username, IP, port
+  - iEasyHydro HF API port (typically 5555)
+  - Request firewall rule: allow inbound SSH from AWS server IP
+- [ ] Generate SSH key pair on AWS server
+  ```bash
+  ssh-keygen -t ed25519 -f ~/.ssh/<org>_ieh_key -N ""
+  ```
+- [ ] Send public key to the hydromet IT team for installation
+- [ ] Test SSH connection, then set up autossh + systemd service
+  (follow `doc/prod/update_deployment_checklist.md` Option C steps 4-8)
+- [ ] Update `.env`:
+  ```
+  IEASYHYDROHF_HOST=http://localhost:<local-tunnel-port>
+  ieasyhydroforecast_ssh_to_iEH=false  # tunnel is managed by systemd, not by pipeline scripts
+  ```
+
+The SSH tunnel documentation in `update_deployment_checklist.md` is thorough
+and generic — this section works well.
+
+---
+
+## Phase 8: Luigi Daemon & Pipeline Images
+
+**Ref:** `doc/deployment.md` > Set up Luigi Daemon, `bin/README.md`
+
+### 8.1 Pull Docker images
+
+- [ ] Pull all required images
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools
+  bash bin/setup_docker.sh /data/<data_folder>/config/<env_file>
+  ```
+  Or pull manually:
+  ```bash
+  export TAG=latest  # or "local" depending on CI/CD branch
+  docker pull mabesa/sapphire-pythonbaseimage:$TAG
+  docker pull mabesa/sapphire-pipeline:$TAG
+  docker pull mabesa/sapphire-preprunoff:$TAG
+  docker pull mabesa/sapphire-linreg:$TAG
+  docker pull mabesa/sapphire-postprocessing:$TAG
+  docker pull mabesa/sapphire-dashboard:$TAG
+  # If ML models enabled:
+  docker pull mabesa/sapphire-prepgateway:$TAG
+  docker pull mabesa/sapphire-ml:$TAG
+  ```
+
+### 8.2 Start Luigi daemon
+
+- [ ] Start the daemon
+  ```bash
+  docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+  ```
+
+- [ ] Verify
+  ```bash
+  docker ps | grep luigi-daemon
+  curl -s http://localhost:8082/ > /dev/null && echo "OK" || echo "FAIL"
+  ```
+
+### 8.3 Test a pipeline run
+
+- [ ] Run preprocessing as a smoke test
+  ```bash
+  bash bin/run_preprocessing_runoff.sh /data/<data_folder>/config/<env_file>
+  ```
+
+- [ ] Check Luigi UI at `http://<server-ip>:8082`
+
+> `[DOC-GAP-9]` **Deployment order not documented.**
+> The relationship between Phase 4 (SAPPHIRE services) and Phase 8 (pipeline)
+> is not documented anywhere. The pipeline modules use `sapphire_api_client`
+> to write to the APIs, so the services MUST be running before the pipeline.
+> If services are down, the pipeline will either fail or silently fall back
+> to CSV-only mode (depending on the module).
+>
+> **Fix:** Add a "Deployment Order" section to `doc/deployment.md`:
+> 1. SAPPHIRE services (databases + APIs)
+> 2. Luigi daemon
+> 3. Pipeline scripts
+> 4. Dashboards
+
+---
+
+## Phase 9: Dashboards & Reverse Proxy
+
+**Ref:** `bin/README.md` > docker-compose-dashboards.yml
+
+### 9.1 Start dashboards
+
+- [ ] Start both dashboards
+  ```bash
+  docker compose -f bin/docker-compose-dashboards.yml \
+    --env-file /data/<data_folder>/config/<env_file> up -d
+  ```
+
+- [ ] Verify health
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5007/forecast_dashboard
+  ```
+
+### 9.2 Reverse proxy & HTTPS
+
+> `[DOC-GAP-10]` **No reverse proxy / HTTPS setup instructions.**
+> `doc/deployment.md` mentions nginx on port 81 and says dashboards should be
+> at `fc.pentad.<base_url>` and `fc.decad.<base_url>`, but provides no
+> instructions for setting up nginx, Let's Encrypt, or any reverse proxy.
+>
+> **Fix:** Add a "Reverse Proxy & HTTPS" section to `doc/deployment.md` with:
+> - nginx or Nginx Proxy Manager setup
+> - Let's Encrypt / certbot for SSL
+> - Example nginx config forwarding to ports 5006/5007
+> - WebSocket proxy configuration (needed for Bokeh/Panel dashboards)
+> - Optionally proxy 8000 (API gateway) and 8082 (Luigi) behind auth
+
+Practical steps (not yet documented):
+
+- [ ] Install nginx or Nginx Proxy Manager
+- [ ] Configure DNS: `fc.pentad.<domain>` → server IP,
+  `fc.decad.<domain>` → server IP
+- [ ] Set up SSL certificates (Let's Encrypt)
+- [ ] Configure reverse proxy rules:
+  - `fc.pentad.<domain>` → `localhost:5006`
+  - `fc.decad.<domain>` → `localhost:5007`
+  - Include WebSocket upgrade headers for Panel/Bokeh
+
+---
+
+## Phase 10: Cron Jobs
+
+**Ref:** `doc/deployment.md` > Set up cron job
+
+- [ ] Create log directory
+  ```bash
+  mkdir -p /home/ubuntu/logs
+  ```
+
+- [ ] Edit crontab
+  ```bash
+  crontab -e
+  ```
+
+- [ ] Add schedule (adapt times for your timezone — replace `<tz_offset>`
+  comments with local times):
+  ```bash
+  # m h  dom mon dow   command
+  # ---------------------------------------------------------------------------
+  # SAPPHIRE Forecast Tools Schedule (Times in UTC)
+  # Adapt paths and timezone comments for your deployment.
+  # ---------------------------------------------------------------------------
+
+  # Log cleanup: delete logs older than 7 days
+  0 2 * * * find /home/ubuntu/logs -name "sapphire_*.log" -mtime +7 -delete
+
+  # (1) Gateway Preprocessing at 03:00 UTC
+  0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_gateway_$(date +\%Y\%m\%d).log 2>&1
+
+  # (2) Pentadal Forecast at 04:00 UTC
+  0 4 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_pentadal_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_pentadal_$(date +\%Y\%m\%d).log 2>&1
+
+  # (3) Decadal Forecast at 05:00 UTC
+  0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
+
+  # (4) Long-term Forecast at 06:00 UTC
+  0 6 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
+
+  # (5) Daily maintenance (evening UTC)
+  0 14 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
+
+  # (6) Periodic maintenance
+  # Bimonthly long-term postprocessing (1st of odd months)
+  0 17 1 1,3,5,7,9,11 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh long_term /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_longterm_$(date +\%Y\%m\%d).log 2>&1
+  # Yearly skill recalculation (January 1)
+  0 1 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
+  # Yearly snow norm recalculation (August 25)
+  0 2 25 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
+  ```
+
+  > `[DOC-GAP-11]` **Crontab template in `doc/deployment.md` is
+  > deployment-specific.** The crontab in `doc/deployment.md` hardcodes paths
+  > and timezone comments for a single deployment. There's no generic template.
+  >
+  > **Fix:** Replace hardcoded paths with `<data_folder>` and `<env_file>`
+  > placeholders. Add a timezone reference table for common deployments.
+
+- [ ] Verify
+  ```bash
+  crontab -l
+  ```
+
+---
+
+## Phase 11: Monitoring
+
+**Ref:** `doc/monitoring/forecast_tools_monitoring.md`
+
+- [ ] Configure SMTP variables in `<env_file>`:
+  ```
+  SAPPHIRE_PIPELINE_SMTP_SERVER=<smtp_server>
+  SAPPHIRE_PIPELINE_SMTP_PORT=<port>
+  SAPPHIRE_PIPELINE_SMTP_USERNAME=<username>
+  SAPPHIRE_PIPELINE_SMTP_PASSWORD=<password>
+  SAPPHIRE_PIPELINE_SENDER_EMAIL=<sender>
+  SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<recipients>
+  ```
+
+- [ ] Set up Docker container monitoring (systemd service)
+  - Follow `doc/monitoring/forecast_tools_monitoring.md`
+
+- [ ] Set up dashboard log monitoring (systemd service)
+  - Follow `doc/monitoring/forecast_tools_monitoring.md`
+
+- [ ] Test email alerts
+
+---
+
+## Phase 12: Testing & Validation
+
+**Ref:** `doc/deployment.md` > Testing the deployment
+
+> `[DOC-GAP-12]` **Testing section is outdated.**
+> The testing section in `doc/deployment.md` references:
+> - "Docker Desktop application" (we're on a headless server)
+> - "double-clicking the dashboard icon" (no GUI)
+> - `config_output.yaml` (now `.json`)
+> - `apps/internal_data/last_successful_run.txt` (path may have changed)
+> - No mention of verifying SAPPHIRE services or API health
+>
+> **Fix:** Rewrite the testing section for headless server deployment,
+> add API health checks, and update file references.
+
+### Validation checklist
+
+**Services health:**
+
+- [ ] SAPPHIRE API gateway responds
+  ```bash
+  curl http://localhost:8000/health
+  curl http://localhost:8000/health/ready
+  ```
+
+- [ ] Luigi daemon is running
+  ```bash
+  curl -s http://localhost:8082/ > /dev/null && echo "OK"
+  ```
+
+- [ ] Dashboards respond
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5007/forecast_dashboard
+  ```
+
+**Pipeline smoke test:**
+
+- [ ] Run gateway preprocessing
+  ```bash
+  bash bin/run_preprocessing_gateway.sh /data/<data_folder>/config/<env_file>
+  ```
+
+- [ ] Run pentadal forecast
+  ```bash
+  bash bin/run_pentadal_forecasts.sh /data/<data_folder>/config/<env_file>
+  ```
+
+- [ ] Check Luigi UI for green tasks
+
+- [ ] Check for errors in logs
+  ```bash
+  grep -iE "error|critical|exception" /home/ubuntu/logs/sapphire_*.log | tail -20
+  ```
+
+**Data verification:**
+
+- [ ] Verify data reached the API
+  ```bash
+  curl "http://localhost:8000/api/preprocessing/runoff/?limit=5"
+  curl "http://localhost:8000/api/postprocessing/forecasts/?limit=5"
+  ```
+
+- [ ] Check dashboards display data correctly (via browser or curl)
+
+**Hindcast run (optional but recommended):**
+
+- [ ] Start with restricted station selection (2-3 stations)
+- [ ] Run hindcasts from a recent date to verify pipeline end-to-end
+- [ ] Once verified, expand to full station selection
+
+---
+
+## Doc-Gap Summary
+
+| ID | Gap | Severity | Where to fix |
+|----|-----|----------|--------------|
+| ~~DOC-GAP-1~~ | ~~SAPPHIRE services ports not in deployment.md~~ | ~~Low~~ | ✅ Fixed |
+| DOC-GAP-2 | No locale/translation setup instructions | Medium | `doc/configuration.md` |
+| DOC-GAP-3 | **SAPPHIRE services missing from deployment.md entirely** | **Critical** | `doc/deployment.md` new section |
+| DOC-GAP-4 | No guidance on sapphire/.env values | Medium | `sapphire/.env.example` + `sapphire/README.md` |
+| DOC-GAP-5 | No "fresh deployment" path for services | Medium | `sapphire/README.md` |
+| DOC-GAP-6 | **No minimal .env variable reference** | **High** | `doc/configuration.md` |
+| DOC-GAP-7 | iEasyHydro HF SDK vars undocumented | Medium | `doc/configuration.md` |
+| DOC-GAP-8 | Path convention explanation buried | Low | `doc/configuration.md` |
+| DOC-GAP-9 | **Deployment order not documented** | **High** | `doc/deployment.md` |
+| DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
+| DOC-GAP-11 | Crontab template is deployment-specific | Low | `doc/deployment.md` |
+| DOC-GAP-12 | Testing section outdated | Low | `doc/deployment.md` |
+
+### Priority for pre-deployment fixes
+
+1. **DOC-GAP-3 + DOC-GAP-9** (critical): Add SAPPHIRE services section and
+   deployment order to `doc/deployment.md` — without this, anyone following
+   the guide will miss the entire API stack
+2. **DOC-GAP-6** (high): Create the minimal .env variable reference
+3. Everything else can be fixed during or after deployment
+
+---
+
+## Deployment Log
+
+*Use this section to record issues, deviations, and learnings during the
+actual deployment. These notes feed back into doc improvements.*
+
+| Date | Phase | Issue / Observation | Resolution | Doc update needed? |
+|------|-------|---------------------|------------|--------------------|
+| | | | | |
+| | | | | |
+| | | | | |
+| | | | | |
+
+---
+
+> `[DOC-GAP-13]` **`deploy_sapphire_forecast_tools.sh` is deprecated with no
+> replacement.** The script is marked deprecated in `bin/README.md` but there's
+> no single "first-time deployment" script or guide that replaces it. The
+> current approach is to follow the manual steps, but this isn't stated.
+>
+> **Fix:** Either remove the deprecated script and add a note saying "follow
+> doc/deployment.md for first-time setup", or create a new first-time
+> deployment script that includes SAPPHIRE services startup.
+
+---
+
+## Resolved Doc-Gaps
+
+Changes already applied to the docs as part of deployment preparation.
+
+| ID | What was done | Commit / branch |
+|----|---------------|-----------------|
+| DOC-GAP-1 | Added structured port table with SAPPHIRE services ports and security guidance to `doc/deployment.md` > "Configuring your server" | `develop_long_term_fix_api_postprocessing_forecasts` |

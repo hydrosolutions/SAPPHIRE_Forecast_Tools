@@ -1,10 +1,14 @@
 <h1>Installation</h1>
-This document describes the steps for the installation of the SAPPHIRE Forecast Tools. The forecast tools have been developed for installation on an Ubuntu server, OS version 24.4 LTS.
+This document describes the steps for the installation of the SAPPHIRE Forecast Tools. The forecast tools have been developed for installation on an Ubuntu server, OS version 24.04 LTS.
 
 - [Prerequisites](#prerequisites)
-  - [Server requirements](#server-requirements)
   - [Skills required](#skills-required)
   - [Software requirements](#software-requirements)
+    - [Required for all deployments](#required-for-all-deployments)
+    - [Required depending on your setup](#required-depending-on-your-setup)
+  - [Server requirements](#server-requirements)
+    - [Provisioning on AWS](#provisioning-on-aws)
+    - [Security group configuration](#security-group-configuration)
 - [Step-by-step instructions](#step-by-step-instructions)
   - [Download this repository](#download-this-repository)
   - [General information for deployment](#general-information-for-deployment)
@@ -25,29 +29,134 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
 
 # Prerequisites
 
-## Server requirements
-The forecast tools have been developed and tested on **Ubuntu 20.04 LTS**. We therefore recommend you use the same operating system. The forecast tools can be deployed on other operating systems, but the installation instructions may differ from the instructions in this document. The forecast tools have been developed to run on a server. We recommend that the server has at least **8 GB of RAM** and 4 CPU cores. The server should further have at least **12 GB of free storage**. If you plan to integrate large forecasting models your storage requirements may be higher.
-
 ## Skills required
-Although we try to provide very detailed step-by-step instructions some basic skills are recommended: The user should have basic knowledge of the **command line interface (CLI)** and should be able to run commands in the CLI. The user should have basic knowledge of **Git** and should be able to clone a repository from GitHub. We further recommend that the user has basic knowledge of **Docker** and is able to run Docker containers.
+
+The deployment is done entirely from the command line over SSH. The person
+performing the deployment should be comfortable with:
+
+- **SSH**: connecting to a remote server, managing key pairs
+- **Linux command line**: navigating directories, editing files (e.g., with
+  `nano` or `vim`), reading logs, running scripts
+- **Git**: cloning a repository, checking out a branch
+- **Docker & Docker Compose**: starting/stopping containers, reading container
+  logs (`docker logs`), understanding multi-service `docker-compose.yml` files
+- **Basic networking**: understanding ports, checking if a service is listening
+  (`curl`), configuring firewall rules or security groups
+
+Optional, depending on your setup:
+
+- **DNS management**: creating A records for dashboard subdomains (if using
+  reverse proxy)
+- **nginx**: configuring reverse proxy rules and SSL certificates (if exposing
+  dashboards via HTTPS)
+- **systemd**: creating and managing services (if setting up SSH tunnels or
+  monitoring)
 
 ## Software requirements
-The following software is required to deploy the forecast tools:
-- Docker Engine
-- Git (optional)
 
+### Required for all deployments
 
-Whereby Docker Engine are required for the installation of the forecast tools. Git is used to clone the GitHub repository with the folder structure and example files.
+| Software | Purpose | Install instructions |
+|----------|---------|---------------------|
+| Docker Engine (includes Compose v2) | Runs all services, pipeline, and dashboards | [Docker docs for Ubuntu](https://docs.docker.com/engine/install/ubuntu/) |
+| Git | Clone the repository | `sudo apt-get install git` |
 
-Please follow the **detailed installation instructions for Docker Engine on Ubuntu** in the [Docker documentation](https://docs.docker.com/engine/install/ubuntu/).
-
-**Git** can be installed from the command line as follows:
+After installing Docker Engine, verify that Compose v2 is available:
 ```bash
-sudo apt-get update
-sudo apt-get install git
+docker compose version   # should print v2.x.x
 ```
 
-Perform the following steps the computer where the forecast tools are deployed.
+### Required depending on your setup
+
+| Software | When needed | Install |
+|----------|------------|---------|
+| autossh | SSH tunnel to iEasyHydro HF on a different network | `sudo apt-get install autossh` |
+| nginx | Reverse proxy for dashboards and API behind HTTPS | `sudo apt-get install nginx` |
+| certbot | Free SSL certificates from Let's Encrypt | [certbot instructions](https://certbot.eff.org/) |
+
+### Quick install block
+
+Once the server is provisioned, you can install all command-line tools in one
+step (Docker must be installed separately — see link above):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git autossh nginx curl
+```
+
+## Server requirements
+
+The forecast tools have been developed and tested on **Ubuntu 24.04 LTS**.
+We recommend the same operating system. Other Linux distributions may work
+but the instructions below assume Ubuntu.
+
+**Minimum hardware:**
+
+| Resource | Small deployment | Large deployment |
+|----------|-----------------|------------------|
+| RAM | 8 GB | 16 GB |
+| CPU cores | 4 | 4 |
+| Storage | 20 GB | 64 GB |
+
+Storage requirements depend on the number of stations, models enabled, and
+how much historical data is migrated. A deployment with ~20 stations and
+linear regression only needs ~20 GB. Deployments with 100+ stations, ML
+models, and full hindcast history can reach 50–64 GB. When in doubt, start
+with 30 GB — EBS volumes on AWS can be resized without downtime.
+
+### Provisioning on AWS
+
+Follow the official AWS guide to launch an EC2 instance:
+[Launch an instance using the new launch instance wizard](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html)
+
+Use these SAPPHIRE-specific settings during the launch wizard:
+
+| Parameter | Recommended value | Notes |
+|-----------|-------------------|-------|
+| AMI | Ubuntu Server 24.04 LTS (HVM, SSD) | Search "ubuntu 24.04" in the AMI catalog |
+| Instance type | `t3.xlarge` (4 vCPU, 16 GB) | `t3.large` (2 vCPU, 8 GB) sufficient without ML models |
+| Key pair | Create or select an ED25519 key pair | Store the `.pem` file securely; this is your only SSH access |
+| Storage | 30 GB gp3 (adjust per table above) | EBS volumes can be resized later without downtime |
+| Security group | See port table below | Create a dedicated group named e.g. `sapphire-sg` |
+
+> **Tip:** If you are deploying on a different cloud or on-premise, the
+> hardware requirements and port rules above still apply — only the
+> provisioning steps differ.
+
+### Security group configuration
+
+AWS security groups act as a firewall: inbound traffic is blocked by default,
+and only ports with an explicit rule are reachable. This means you do **not**
+need deny rules for the database or API ports — simply don't add them.
+
+For the mechanics of creating and editing security groups, see the AWS
+documentation:
+[Control traffic to your AWS resources using security groups](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html)
+
+**Inbound rules to add** (create a group named e.g. `sapphire-sg`):
+
+| Type | Port | Source | Purpose |
+|------|------|--------|---------|
+| SSH | 22 | Your IP or office CIDR | Admin access. **Never** use `0.0.0.0/0` |
+| HTTP | 80 | `0.0.0.0/0` | Redirect to HTTPS / Let's Encrypt validation |
+| HTTPS | 443 | `0.0.0.0/0` | Dashboards and (optionally) API via reverse proxy |
+| Custom TCP | 5006 | `0.0.0.0/0` | Pentad dashboard (skip if behind reverse proxy) |
+| Custom TCP | 5007 | `0.0.0.0/0` | Decad dashboard (skip if behind reverse proxy) |
+| Custom TCP | 8082 | Your IP or office CIDR | Luigi web UI (restrict to admins) |
+
+**Ports intentionally NOT exposed:**
+
+| Port | Service | Why not exposed |
+|------|---------|-----------------|
+| 8000–8005 | API gateway and microservices | Accessed only from localhost by the pipeline and dashboards |
+| 5433–5436 | PostgreSQL databases | Internal only; exposing databases is a security risk |
+
+> If you later set up a reverse proxy (nginx) for the dashboards, you can
+> remove the 5006 and 5007 rules and access everything through port 443.
+
+**Outbound rules:** Leave the default (allow all outbound). The pipeline needs
+to reach Docker Hub, external APIs (iEasyHydro HF, SAPPHIRE Data Gateway),
+and SMTP servers for monitoring alerts.
 
 # Step-by-step instructions
 ## Download this repository
@@ -92,15 +201,32 @@ The full power of the forecast tools can of course only be unleashed by deployin
 - Adapt the configuration files
 
 ### Configuring your server
-You may have to open specific ports on your server to allow you to view the dashboards in a browser. The following ports are typically used for the SAPPHIRE Forecast Tools:
-- 22 for ssh
-- 80 for http
-- 81 for nginx proxy manager (optional)
-- 443 for https
-- 3647 for the configuration dashboard (optional)
-- 5006 for the forecast dashboard for displaying pentadal forecasts
-- 5007 for the forecast dashboard for displaying decadal forecasts
-- 8082 for the luigi task monitor 
+You may have to open specific ports on your server. The table below lists all ports used by the SAPPHIRE Forecast Tools, grouped by function. Pay attention to the "Expose to internet?" column — database ports must never be exposed, and API ports should stay on localhost unless you explicitly need external access.
+
+| Port | Service | Group | Expose to internet? |
+|------|---------|-------|---------------------|
+| 22 | SSH | Infrastructure | Yes (key-based only) |
+| 80 | HTTP | Infrastructure | Yes |
+| 443 | HTTPS | Infrastructure | Yes |
+| 81 | Nginx Proxy Manager (optional) | Infrastructure | Optional |
+| 8082 | Luigi task monitor | Pipeline | Optional (behind auth) |
+| 5006 | Pentad forecast dashboard | Dashboards | Yes (via reverse proxy) |
+| 5007 | Decad forecast dashboard | Dashboards | Yes (via reverse proxy) |
+| 3647 | Configuration dashboard (optional) | Dashboards | Optional |
+| 8000 | API Gateway | SAPPHIRE Services | Localhost only* |
+| 8002 | Preprocessing API | SAPPHIRE Services | Localhost only |
+| 8003 | Postprocessing API | SAPPHIRE Services | Localhost only |
+| 8004 | User API | SAPPHIRE Services | Localhost only |
+| 8005 | Auth API | SAPPHIRE Services | Localhost only |
+| 5433 | Preprocessing DB (PostgreSQL) | SAPPHIRE Services | **Never** |
+| 5434 | Postprocessing DB (PostgreSQL) | SAPPHIRE Services | **Never** |
+| 5435 | User DB (PostgreSQL) | SAPPHIRE Services | **Never** |
+| 5436 | Auth DB (PostgreSQL) | SAPPHIRE Services | **Never** |
+
+\* API Gateway may be exposed via reverse proxy if external API access is needed.
+
+> **Note:** The SAPPHIRE services (API stack + databases) must be running before
+> the pipeline. See `sapphire/README.md` for setup instructions.
 
 #### Set up the Luigi Daemon (Production)
 For a production environment, the Luigi scheduler daemon (`luigid`) must be running persistently to manage the pipeline tasks. Since the entire application stack runs in Docker, the recommended approach is to run the daemon as a persistent Docker container.
