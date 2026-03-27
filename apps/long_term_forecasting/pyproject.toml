@@ -10,7 +10,7 @@ authors = [
 dependencies = [
     # ML frameworks
     "catboost==1.2.3",
-    "lightgbm==4.5.0",
+    "lightgbm>=4.6.0",
     "xgboost==2.0.3",
     "scikit-learn>=1.4.0",
     # Deep learning
@@ -27,7 +27,7 @@ dependencies = [
     "scipy>=1.15.0",
     # Geospatial
     "geopandas>=0.14.3",
-    "fiona>=1.9.5",
+    "fiona>=1.10.1",
     "pyproj>=3.7.2",
     "shapely>=2.1.2",
     # Visualization

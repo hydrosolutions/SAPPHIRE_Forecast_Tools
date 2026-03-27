@@ -1,30 +1,32 @@
 # Long Term Forecasting
 
 ## LT Package
-Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1"
+Core implementation in the upstream
+[long-term-forecasting](https://github.com/hydrosolutions/long-term-forecasting)
+library, managed as a uv dependency in `pyproject.toml`.
 
-Use:
+All dependencies (including lt-forecasting) are installed automatically:
 ```bash
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
+cd apps/long_term_forecasting
+uv sync --all-extras
 ```
 
-or a specific version:
-```bash
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+To pin to a specific version, edit `pyproject.toml` under `[tool.uv.sources]`:
+```toml
+lt-forecasting = { git = "https://github.com/hydrosolutions/long-term-forecasting.git", rev = "v1.1.1" }
 ```
+Then run `uv lock && uv sync`.
 
 ### Fast Development
-For fast development, install from a local clone of the `long-term-forecasting`
-repository:
-```bash
-pip uninstall -y lt-forecasting
-pip install -e "/path/to/local/long-term-forecasting"
+For fast development with a local clone of the `long-term-forecasting`
+repository, temporarily switch the source in `pyproject.toml`:
+```toml
+lt-forecasting = { path = "/path/to/local/long-term-forecasting", editable = true }
 ```
+Then run `uv lock && uv sync`.
 
-When ready to switch back to the released version:
-```bash
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
-```
+When ready to switch back to the released version, restore the git source and
+run `uv lock && uv sync` again.
 
 Functions here act more like an interface.
 
@@ -233,26 +235,22 @@ ieasyhydroforecast_env_file_path="your.env" lt_forecast_mode=month_1 python dev_
 
 ## How to setup the Environment
 
-1. Create local python environment
- ```bash  
-python3.11 -m venv myenv
-# activate your environment (here macos)
-source myenv/bin/activate
-```
-2. Download Custom Github packages and Libraries
-```bash  
-# iEasy Hydro SDK library
-pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-# long term forecasting library (use latest version)
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
+This module uses [uv](https://docs.astral.sh/uv/) for dependency management.
+All dependencies (including git-hosted packages like ieasyhydro-sdk and
+lt-forecasting) are declared in `pyproject.toml` and pinned in `uv.lock`.
 
-# During Development - make changes directly in the codebase (if code base is locally available)
-pip install -e "path/to/lt_forecasting/dir"
+```bash
+# Install uv if not already available (https://docs.astral.sh/uv/getting-started/installation/)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# SQL access
-pip install psycopg2-binary sqlalchemy
+# Install all dependencies (creates .venv automatically)
+cd apps/long_term_forecasting
+uv sync --all-extras
 ```
-If you work on macOS you might need to install lightgbm via homebrew. Or use conda to install the lightgbm package this should also handle the installation. On Windows and Linux system this should not be required.
+
+If you work on macOS you might need to install lightgbm via homebrew. Or use
+conda to install the lightgbm package — this should also handle the
+installation. On Windows and Linux this should not be required.
 
 ## Long-Term Environment Variables
 
