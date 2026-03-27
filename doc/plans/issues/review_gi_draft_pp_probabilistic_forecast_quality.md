@@ -1,6 +1,6 @@
 # PP-020: Probabilistic Forecast Quality Metrics & Documentation
 
-**Status**: Draft — plan reviewed and updated 2026-03-27
+**Status**: Review — implementation complete (commit `8fd2a4e`), awaiting user review
 **Module**: postprocessing_forecasts
 **Priority**: Medium
 **Labels**: `forecast-quality`, `uncertainty`, `documentation`, `postprocessing`
