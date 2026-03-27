@@ -265,19 +265,20 @@ services:
       - ieasyhydroforecast_url_pentad=${ieasyhydroforecast_url_pentad}
       - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url_pentad}
       - sapphire_forecast_horizon=pentad
+      - API_GATEWAY_URL=${API_GATEWAY_URL}
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
-      --port=5055
+      --port=5006
       $${ORIGINS_ARGS}
       forecast_dashboard.py
       --num-threads=4
       "
     restart: always
     ports:
-      - "5055:5055"
+      - "5006:5006"
     volumes:
       - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
       - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
@@ -288,10 +289,12 @@ services:
     labels:
       - com.centurylinklabs.watchtower.enable=true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5055/forecast_dashboard"]
+      test: ["CMD", "curl", "-f", "http://localhost:5006/forecast_dashboard"]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - sapphire-network
 
 volumes:
   task-data:

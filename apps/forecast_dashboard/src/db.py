@@ -12,7 +12,8 @@ from dashboard.logger import setup_logger
 
 logger = setup_logger()
 
-API_BASE = "http://localhost:8000/api"
+api_gateway_url = os.getenv("API_GATEWAY_URL", "http://localhost:8000")
+API_BASE = f"{api_gateway_url}/api"
 API_TIMEOUT = 30
 CURRENT_YEAR = 2026
 PREVIOUS_YEAR = CURRENT_YEAR - 1

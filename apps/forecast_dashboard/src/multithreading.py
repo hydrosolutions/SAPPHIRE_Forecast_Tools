@@ -72,20 +72,20 @@ def write_to_excel(sites_list, env_file_path,
     #report.generate_report(sites_list=sites_list)
 
 
-def write_forecast_bulletin_in_background(site_list, env_file_path, status):
-    status.object = 'Status: Writing...'
-    print('DEBUG: Multithreading write_forecast_b...: Writing forecast bulletin in background ...')
-    with ThreadPoolExecutor() as executor:
-        future = executor.submit(write_to_excel, site_list, env_file_path)
-        future.add_done_callback(lambda f: status_update(status, f))
+# def write_forecast_bulletin_in_background(site_list, env_file_path, status):
+#     status.object = 'Status: Writing...'
+#     print('DEBUG: Multithreading write_forecast_b...: Writing forecast bulletin in background ...')
+#     with ThreadPoolExecutor() as executor:
+#         future = executor.submit(write_to_excel, site_list, env_file_path)
+#         future.add_done_callback(lambda f: status_update(status, f))
 
-# Function to update status after background task is done
-def status_update(status, future):
-    try:
-        result = future.result()
-        status.object = 'Status: Done'
-    except Exception as e:
-        # Print the error and the traceback
-        logger.error(f'Error: {e}')
-        logger.error(traceback.format_exc())
-        status.object = f'Status: Failed with error {e}'
+# # Function to update status after background task is done
+# def status_update(status, future):
+#     try:
+#         result = future.result()
+#         status.object = 'Status: Done'
+#     except Exception as e:
+#         # Print the error and the traceback
+#         logger.error(f'Error: {e}')
+#         logger.error(traceback.format_exc())
+#         status.object = f'Status: Failed with error {e}'

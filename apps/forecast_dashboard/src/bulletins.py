@@ -78,39 +78,39 @@ def round_percentage_to_integer_string(value: float) -> int:
         print(f'Error in round_percentage: {e}')
         return None
 
-def round_percentage_to_comma_separated_string(value: float) -> str:
-    '''
-    Round percentage to 0 decimals for values ge  100, to 1 decimal for values
-    ge  10 and to 2 decimals for values ge  0.
+# def round_percentage_to_comma_separated_string(value: float) -> str:
+#     '''
+#     Round percentage to 0 decimals for values ge  100, to 1 decimal for values
+#     ge  10 and to 2 decimals for values ge  0.
 
-    Args:
-        value (str): The percentage value to round.
+#     Args:
+#         value (str): The percentage value to round.
 
-    Returns:
-        str: The rounded percentage value. An empty string is returned in case of
-            a negative input value.
-    '''
-    try:
-        if not isinstance(value, float):
-            raise TypeError('Input value must be a float')
+#     Returns:
+#         str: The rounded percentage value. An empty string is returned in case of
+#             a negative input value.
+#     '''
+#     try:
+#         if not isinstance(value, float):
+#             raise TypeError('Input value must be a float')
 
-        if math.isclose(value, 100.0):
-            string = "100"
-        elif abs(value) > 0.0 and abs(value) < 10.0:
-            string = "{:.2f}".format(round(value, 2))
-        elif abs(value) >= 10.0 and abs(value) < 100.0:
-            string = "{:.1f}".format(round(value, 1))
-        else:
-            string = "{:.0f}".format(round(value, 0))
-        # Replace . in string with ,
-        string = string.replace('.', ',')
-        return string
-    except TypeError as e:
-        print(f'Error in round_percentage: {e}')
-        return None
-    except Exception as e:
-        print(f'Error in round_percentage: {e}')
-        return None
+#         if math.isclose(value, 100.0):
+#             string = "100"
+#         elif abs(value) > 0.0 and abs(value) < 10.0:
+#             string = "{:.2f}".format(round(value, 2))
+#         elif abs(value) >= 10.0 and abs(value) < 100.0:
+#             string = "{:.1f}".format(round(value, 1))
+#         else:
+#             string = "{:.0f}".format(round(value, 0))
+#         # Replace . in string with ,
+#         string = string.replace('.', ',')
+#         return string
+#     except TypeError as e:
+#         print(f'Error in round_percentage: {e}')
+#         return None
+#     except Exception as e:
+#         print(f'Error in round_percentage: {e}')
+#         return None
 
 def round_discharge_to_comma_separated_string(value: float) -> str:
     '''

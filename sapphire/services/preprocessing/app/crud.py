@@ -1,3 +1,4 @@
+from sqlalchemy import tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -7,37 +8,50 @@ from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, Hydrograph
 from app.logger import logger
 
 
+def _has_changes(existing, incoming_data: dict) -> bool:
+    """Return True if any field in incoming_data differs from the existing ORM record."""
+    return any(getattr(existing, k) != v for k, v in incoming_data.items())
+
+
 def create_runoff(db: Session, bulk_data) -> list[Runoff]:
     """Create or update multiple runoffs in bulk (upsert based on horizon_type, code, date)"""
     try:
+        incoming = [item.dict() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["date"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.date): r
+            for r in db.query(Runoff).filter(
+                tuple_(Runoff.horizon_type, Runoff.code, Runoff.date).in_(keys)
+            ).all()
+        }
+
         db_runoffs = []
+        changed = []  # only records that need refresh
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["date"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, code, date) exists
-            existing_runoff = db.query(Runoff).filter(
-                Runoff.horizon_type == item.horizon_type,
-                Runoff.code == item.code,
-                Runoff.date == item.date
-            ).first()
-
-            if existing_runoff:
-                # Update existing record
-                for key, value in item.dict().items():
-                    setattr(existing_runoff, key, value)
-                db_runoffs.append(existing_runoff)
-                logger.info(f"Updated runoff: {item.horizon_type}, {item.code}, {item.date}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated runoff: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged runoff: {key}")
+                db_runoffs.append(existing)
             else:
-                # Create new record
-                new_runoff = Runoff(**item.dict())
-                db.add(new_runoff)
-                db_runoffs.append(new_runoff)
-                logger.info(f"Created runoff: {item.horizon_type}, {item.code}, {item.date}")
+                new = Runoff(**data)
+                db.add(new)
+                changed.append(new)
+                db_runoffs.append(new)
+                logger.info(f"Created runoff: {key}")
 
-        db.commit()
-
-        # Refresh all runoffs to get updated state
-        for runoff in db_runoffs:
-            db.refresh(runoff)
+        if changed:
+            db.commit()
+            for r in changed:
+                db.refresh(r)
 
         logger.info(f"Processed {len(db_runoffs)} runoffs in bulk")
         return db_runoffs
@@ -74,34 +88,42 @@ def get_runoff(db: Session, horizon: Optional[str] = None, code: Optional[str] =
 def create_hydrograph(db: Session, bulk_data: HydrographBulkCreate) -> List[Hydrograph]:
     """Create or update multiple hydrographs in bulk (upsert based on horizon_type, code, date)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["horizon_type"], i["code"], i["date"]) for i in incoming}
+
+        existing_map = {
+            (r.horizon_type, r.code, r.date): r
+            for r in db.query(Hydrograph).filter(
+                tuple_(Hydrograph.horizon_type, Hydrograph.code, Hydrograph.date).in_(keys)
+            ).all()
+        }
+
         db_hydrographs = []
+        changed = []
+        for data in incoming:
+            key = (data["horizon_type"], data["code"], data["date"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, code, date) exists
-            existing_hydrograph = db.query(Hydrograph).filter(
-                Hydrograph.horizon_type == item.horizon_type,
-                Hydrograph.code == item.code,
-                Hydrograph.date == item.date
-            ).first()
-
-            if existing_hydrograph:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_hydrograph, key, value)
-                db_hydrographs.append(existing_hydrograph)
-                logger.info(f"Updated hydrograph: {item.horizon_type}, {item.code}, {item.date}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated hydrograph: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged hydrograph: {key}")
+                db_hydrographs.append(existing)
             else:
-                # Create new record
-                new_hydrograph = Hydrograph(**item.model_dump())
-                db.add(new_hydrograph)
-                db_hydrographs.append(new_hydrograph)
-                logger.info(f"Created hydrograph: {item.horizon_type}, {item.code}, {item.date}")
+                new = Hydrograph(**data)
+                db.add(new)
+                changed.append(new)
+                db_hydrographs.append(new)
+                logger.info(f"Created hydrograph: {key}")
 
-        db.commit()
-
-        # Refresh all hydrographs to get updated state
-        for hydrograph in db_hydrographs:
-            db.refresh(hydrograph)
+        if changed:
+            db.commit()
+            for h in changed:
+                db.refresh(h)
 
         logger.info(f"Processed {len(db_hydrographs)} hydrographs in bulk")
         return db_hydrographs
@@ -139,34 +161,42 @@ def get_hydrograph(db: Session, horizon: Optional[str] = None, code: Optional[st
 def create_meteo(db: Session, bulk_data: MeteoBulkCreate) -> List[Meteo]:
     """Create or update multiple meteo records in bulk (upsert based on meteo_type, code, date)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["meteo_type"], i["code"], i["date"]) for i in incoming}
+
+        existing_map = {
+            (r.meteo_type, r.code, r.date): r
+            for r in db.query(Meteo).filter(
+                tuple_(Meteo.meteo_type, Meteo.code, Meteo.date).in_(keys)
+            ).all()
+        }
+
         db_meteos = []
+        changed = []
+        for data in incoming:
+            key = (data["meteo_type"], data["code"], data["date"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (meteo_type, code, date) exists
-            existing_meteo = db.query(Meteo).filter(
-                Meteo.meteo_type == item.meteo_type,
-                Meteo.code == item.code,
-                Meteo.date == item.date
-            ).first()
-
-            if existing_meteo:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_meteo, key, value)
-                db_meteos.append(existing_meteo)
-                logger.info(f"Updated meteo: {item.meteo_type}, {item.code}, {item.date}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated meteo: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged meteo: {key}")
+                db_meteos.append(existing)
             else:
-                # Create new record
-                new_meteo = Meteo(**item.model_dump())
-                db.add(new_meteo)
-                db_meteos.append(new_meteo)
-                logger.info(f"Created meteo: {item.meteo_type}, {item.code}, {item.date}")
+                new = Meteo(**data)
+                db.add(new)
+                changed.append(new)
+                db_meteos.append(new)
+                logger.info(f"Created meteo: {key}")
 
-        db.commit()
-
-        # Refresh all meteo records to get updated state
-        for meteo in db_meteos:
-            db.refresh(meteo)
+        if changed:
+            db.commit()
+            for m in changed:
+                db.refresh(m)
 
         logger.info(f"Processed {len(db_meteos)} meteo records in bulk")
         return db_meteos
@@ -205,34 +235,42 @@ def get_meteo(db: Session, meteo_type: Optional[str] = None, code: Optional[str]
 def create_snow(db: Session, bulk_data: SnowBulkCreate) -> List[Snow]:
     """Create or update multiple snow records in bulk (upsert based on snow_type, code, date)"""
     try:
+        incoming = [item.model_dump() for item in bulk_data.data]
+        keys = {(i["snow_type"], i["code"], i["date"]) for i in incoming}
+
+        existing_map = {
+            (r.snow_type, r.code, r.date): r
+            for r in db.query(Snow).filter(
+                tuple_(Snow.snow_type, Snow.code, Snow.date).in_(keys)
+            ).all()
+        }
+
         db_snows = []
+        changed = []
+        for data in incoming:
+            key = (data["snow_type"], data["code"], data["date"])
+            existing = existing_map.get(key)
 
-        for item in bulk_data.data:
-            # Check if a record with the same (snow_type, code, date) exists
-            existing_snow = db.query(Snow).filter(
-                Snow.snow_type == item.snow_type,
-                Snow.code == item.code,
-                Snow.date == item.date
-            ).first()
-
-            if existing_snow:
-                # Update existing record
-                for key, value in item.model_dump().items():
-                    setattr(existing_snow, key, value)
-                db_snows.append(existing_snow)
-                logger.info(f"Updated snow: {item.snow_type}, {item.code}, {item.date}")
+            if existing:
+                if _has_changes(existing, data):
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    changed.append(existing)
+                    logger.info(f"Updated snow: {key}")
+                else:
+                    logger.debug(f"Skipped unchanged snow: {key}")
+                db_snows.append(existing)
             else:
-                # Create new record
-                new_snow = Snow(**item.model_dump())
-                db.add(new_snow)
-                db_snows.append(new_snow)
-                logger.info(f"Created snow: {item.snow_type}, {item.code}, {item.date}")
+                new = Snow(**data)
+                db.add(new)
+                changed.append(new)
+                db_snows.append(new)
+                logger.info(f"Created snow: {key}")
 
-        db.commit()
-
-        # Refresh all snow records to get updated state
-        for snow in db_snows:
-            db.refresh(snow)
+        if changed:
+            db.commit()
+            for s in changed:
+                db.refresh(s)
 
         logger.info(f"Processed {len(db_snows)} snow records in bulk")
         return db_snows

@@ -209,7 +209,7 @@ class BulletinBase(BaseModel):
 
     basin_name: str | None = None
     station_label: str | None = None
-    forecated_discharge: float | None = None
+    forecasted_discharge: float | None = None
     fc_lower: float | None = None
     fc_upper: float | None = None
     delta: float | None = None
