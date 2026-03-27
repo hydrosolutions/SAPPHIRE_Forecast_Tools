@@ -36,7 +36,6 @@ from lt_utils import (
     check_valid_forecast_issue_date,
     create_model_instance,
     save_forecast,
-    infer_q_columns
 )
 from post_process_lt_forecast import post_process_lt_forecast
 
@@ -273,11 +272,13 @@ def run_single_model(
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
         forecast = forecast.round(2)
-        
+
         # where Q_model_name is Nan, set flag to 2, else 0 (0 = forecast produced, 2 = no forecast produced, missing data)
         main_q_col = f"Q_{model_name}"
         if main_q_col not in forecast.columns:
-            logger.error(f"Expected main Q column {main_q_col} not found in forecast for model {model_name}. Available columns: {forecast.columns}")
+            logger.error(
+                f"Expected main Q column {main_q_col} not found in forecast for model {model_name}. Available columns: {forecast.columns}"
+            )
             forecast["flag"] = 2
             success = False
         else:

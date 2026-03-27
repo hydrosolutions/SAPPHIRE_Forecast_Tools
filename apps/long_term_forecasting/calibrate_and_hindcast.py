@@ -17,14 +17,13 @@ import os
 import sys
 import time
 
-import numpy as np
 import pandas as pd
 from __init__ import SAPPHIRE_API_AVAILABLE
 from config_forecast import ForecastConfig
 from data_interface import DataInterface, DataInterfaceDB
 
 # Import forecast models
-from lt_utils import create_model_instance, infer_q_columns, save_forecast
+from lt_utils import create_model_instance, save_forecast
 from post_process_lt_forecast import post_process_lt_forecast
 
 # set lt_forecasting logger level
