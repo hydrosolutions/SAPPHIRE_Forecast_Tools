@@ -88,7 +88,6 @@ Active Python modules that perform hydrological forecasting operations:
 
 **Legacy/deprecated modules:**
 - `backend/` — legacy, being phased out
-- `machine_learning_monthly/` — deprecated, replaced by `long_term_forecasting`
 
 ### 2. SAPPHIRE Services (`sapphire/services/`)
 
@@ -166,7 +165,7 @@ ruff check apps/<module>/          # review remaining manual fixes
 
 **Key rules enabled**: `E` (pycodestyle), `F` (pyflakes), `I` (isort), `UP` (pyupgrade), `B` (bugbear), `SIM` (simplify). The full rule selection and per-path ignores are documented in `ruff.toml`.
 
-**Excluded from linting**: `backend/`, `machine_learning_monthly/`, `conceptual_model/`, `daily_runoff/` (legacy/deprecated).
+**Excluded from linting**: `backend/`, `conceptual_model/`, `daily_runoff/` (legacy/deprecated).
 
 **Do not** add `# noqa` comments to silence warnings without understanding the underlying issue. Fix the code instead, or add the rule to `ruff.toml` ignores if it is genuinely too noisy project-wide.
 
