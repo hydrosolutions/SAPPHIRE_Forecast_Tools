@@ -7,8 +7,9 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
     - [Required for all deployments](#required-for-all-deployments)
     - [Required depending on your setup](#required-depending-on-your-setup)
   - [Server requirements](#server-requirements)
-    - [Provisioning on AWS](#provisioning-on-aws)
-    - [Security group configuration](#security-group-configuration)
+    - [Option A: Provisioning on AWS](#option-a-provisioning-on-aws)
+    - [Option B: Organization-owned server](#option-b-organization-owned-server)
+    - [Verify server readiness](#verify-server-readiness)
 - [Step-by-step instructions](#step-by-step-instructions)
   - [Download this repository](#download-this-repository)
   - [General information for deployment](#general-information-for-deployment)
@@ -102,9 +103,12 @@ Storage requirements depend on the number of stations, models enabled, and
 how much historical data is migrated. A deployment with ~20 stations and
 linear regression only needs ~20 GB. Deployments with 100+ stations, ML
 models, and full hindcast history can reach 50–64 GB. When in doubt, start
-with 30 GB — EBS volumes on AWS can be resized without downtime.
+with 30 GB and expand later.
 
-### Provisioning on AWS
+Choose the option that matches your infrastructure, then continue to
+[Verify server readiness](#verify-server-readiness) before proceeding.
+
+### Option A: Provisioning on AWS
 
 Follow the official AWS guide to launch an EC2 instance:
 [Launch an instance using the new launch instance wizard](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html)
@@ -117,13 +121,9 @@ Use these SAPPHIRE-specific settings during the launch wizard:
 | Instance type | `t3.xlarge` (4 vCPU, 16 GB) | `t3.large` (2 vCPU, 8 GB) sufficient without ML models |
 | Key pair | Create or select an ED25519 key pair | Store the `.pem` file securely; this is your only SSH access |
 | Storage | 30 GB gp3 (adjust per table above) | EBS volumes can be resized later without downtime |
-| Security group | See port table below | Create a dedicated group named e.g. `sapphire-sg` |
+| Security group | Create new, configure below | Name it e.g. `sapphire-sg` |
 
-> **Tip:** If you are deploying on a different cloud or on-premise, the
-> hardware requirements and port rules above still apply — only the
-> provisioning steps differ.
-
-### Security group configuration
+#### AWS security group
 
 AWS security groups act as a firewall: inbound traffic is blocked by default,
 and only ports with an explicit rule are reachable. This means you do **not**
@@ -133,7 +133,7 @@ For the mechanics of creating and editing security groups, see the AWS
 documentation:
 [Control traffic to your AWS resources using security groups](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html)
 
-**Inbound rules to add** (create a group named e.g. `sapphire-sg`):
+**Inbound rules to add:**
 
 | Type | Port | Source | Purpose |
 |------|------|--------|---------|
@@ -144,19 +144,113 @@ documentation:
 | Custom TCP | 5007 | `0.0.0.0/0` | Decad dashboard (skip if behind reverse proxy) |
 | Custom TCP | 8082 | Your IP or office CIDR | Luigi web UI (restrict to admins) |
 
-**Ports intentionally NOT exposed:**
-
-| Port | Service | Why not exposed |
-|------|---------|-----------------|
-| 8000–8005 | API gateway and microservices | Accessed only from localhost by the pipeline and dashboards |
-| 5433–5436 | PostgreSQL databases | Internal only; exposing databases is a security risk |
-
-> If you later set up a reverse proxy (nginx) for the dashboards, you can
-> remove the 5006 and 5007 rules and access everything through port 443.
-
 **Outbound rules:** Leave the default (allow all outbound). The pipeline needs
 to reach Docker Hub, external APIs (iEasyHydro HF, SAPPHIRE Data Gateway),
 and SMTP servers for monitoring alerts.
+
+### Option B: Organization-owned server
+
+Most hydromet services deploy on their own infrastructure (physical server or
+VM managed by the organization's IT department). The hardware and port
+requirements are the same as for AWS — only the provisioning steps differ.
+
+#### Request from your IT team
+
+Before you begin, ask your IT department to prepare a server with:
+
+| Requirement | Details |
+|-------------|---------|
+| Operating system | Ubuntu 24.04 LTS (fresh install preferred) |
+| Hardware | See [minimum hardware table](#server-requirements) above |
+| SSH access | Key-based SSH access with `sudo` privileges |
+| Outbound internet | The server must be able to reach Docker Hub, GitHub, and external APIs |
+| Static IP or hostname | Needed if dashboards will be accessed from outside the local network |
+
+#### Firewall configuration with `ufw`
+
+Ubuntu's built-in firewall (`ufw`) is the equivalent of AWS security groups.
+If your organization uses a different firewall (e.g., `iptables`, a hardware
+firewall), apply the same port rules through that tool.
+
+```bash
+# Enable ufw (if not already active)
+sudo ufw enable
+
+# Allow SSH (always do this first to avoid locking yourself out)
+sudo ufw allow from <your-ip-or-cidr> to any port 22
+
+# Allow HTTP and HTTPS
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Allow dashboards (skip if using reverse proxy on port 443)
+sudo ufw allow 5006/tcp
+sudo ufw allow 5007/tcp
+
+# Allow Luigi web UI (restrict to admin IPs)
+sudo ufw allow from <your-ip-or-cidr> to any port 8082
+```
+
+**Verify:**
+```bash
+sudo ufw status verbose
+```
+Expected output: rules for ports 22, 80, 443, 5006, 5007, 8082. No rules for
+8000–8005 or 5433–5436 — these stay localhost-only by default.
+
+> **Important:** Do not open ports 8000–8005 (API services) or 5433–5436
+> (databases). These are accessed only from localhost by the pipeline and
+> dashboards. Exposing database ports is a security risk.
+
+### Verify server readiness
+
+After completing either Option A or Option B, SSH into the server and run
+the checks below. All must pass before proceeding to the
+[step-by-step instructions](#step-by-step-instructions).
+
+```bash
+# 1. Operating system
+lsb_release -ds
+# Expected: Ubuntu 24.04.x LTS
+```
+
+```bash
+# 2. Hardware resources
+echo "RAM: $(free -h | awk '/Mem:/ {print $2}')"
+echo "CPUs: $(nproc)"
+echo "Disk: $(df -h / | awk 'NR==2 {print $4}') free"
+# Expected: RAM ≥8 GB, CPUs ≥4, Disk ≥20 GB free
+```
+
+```bash
+# 3. Docker and Compose
+docker --version
+docker compose version
+# Expected: Docker 24.x or newer, Compose v2.x.x
+```
+
+```bash
+# 4. Outbound connectivity
+curl -s --max-time 5 https://registry-1.docker.io/v2/ && echo "Docker Hub: OK"
+curl -s --max-time 5 https://github.com > /dev/null && echo "GitHub: OK"
+# Expected: both print OK
+```
+
+```bash
+# 5. Ports are free (no existing services on our ports)
+ss -tlnp | grep -E ':(5006|5007|8000|8002|8003|8004|8005|8082)\b' || echo "All ports free: OK"
+# Expected: "All ports free: OK"
+```
+
+If any check fails, fix the issue before continuing. Common problems:
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `docker: command not found` | Docker not installed | Follow [Docker install instructions](https://docs.docker.com/engine/install/ubuntu/) |
+| `docker compose version` prints v1.x | Old Docker Compose standalone | Remove it (`sudo apt remove docker-compose`) and install Docker Engine which includes Compose v2 |
+| `permission denied` on docker commands | User not in `docker` group | `sudo usermod -aG docker $USER` then log out and back in |
+| Docker Hub connectivity fails | Outbound traffic blocked | Ask IT to allow HTTPS to `registry-1.docker.io` and `production.cloudflare.docker.com` |
+| A port is already in use | Another service is listening | Identify it with `ss -tlnp | grep :<port>` and stop or reconfigure it |
 
 # Step-by-step instructions
 ## Download this repository
