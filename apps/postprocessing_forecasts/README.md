@@ -255,3 +255,70 @@ Or directly:
 cd apps
 SAPPHIRE_TEST_ENV=True pytest postprocessing_forecasts/tests/ -v
 ```
+
+## Quantile Averaging & Known Limitations
+
+This module averages quantile bands in two distinct ways. They have
+different mathematical properties and different correctness guarantees.
+
+### Vincentization (cross-model averaging)
+
+Vincentization averages corresponding quantiles from **different
+models** for the same station and target period. For example, if TFT
+forecasts q10 = 12.5 m³/s and GBT forecasts q10 = 14.3 m³/s, the
+ensemble q10 is approximately 13.4 m³/s.
+
+- Used when creating ensemble forecasts: EM, Skilled Mean, Naive Mean.
+- Valid for mixture distributions (Vincent 1912, Ratcliff 1979).
+- A quantile monotonicity guard (`enforce_quantile_monotonicity` in
+  `postprocessing_tools.py`) is applied after every multi-model
+  vincentization step to ensure q05 ≤ q10 ≤ ... ≤ q95.
+
+**Where vincentization occurs (14 sites, crossing guard applied):**
+
+- 7 sites in `src/ensemble_calculator.py`
+- 7 sites in `src/skill_metrics.py`
+
+### Temporal aggregation (within-model averaging)
+
+Temporal aggregation averages **one model's quantiles across time
+steps** to produce a coarser-horizon forecast. For example, averaging
+monthly q05 values to produce a quarterly q05.
+
+- Used in `src/aggregation.py` (monthly to quarterly/seasonal) and
+  `src/data_reader.py` (daily to pentad/decad).
+- This is **not valid vincentization**. The identity
+  `mean(q05_jan, q05_feb, q05_mar) = q05(mean_discharge_Q1)` does
+  not hold. The true q05 of the aggregate depends on the correlation
+  structure between time steps, which simple averaging cannot capture.
+- Crossings at temporal aggregation sites are **detected and logged**
+  at WARNING level but **not corrected** — they indicate model quality
+  issues that cannot be fixed at the postprocessing stage.
+- The correct approach would require joint distribution modelling or
+  copula methods (Schefzik et al. 2013).
+
+**Where temporal aggregation occurs (3 sites, log-only detector):**
+
+- 2 sites in `src/aggregation.py`
+- 1 site in `src/data_reader.py`
+
+### Summary
+
+| Type | Files | Sites | Crossing guard |
+|------|-------|-------|---------------|
+| Vincentization (cross-model) | `ensemble_calculator.py`, `skill_metrics.py` | 14 | Applied (corrects) |
+| Temporal aggregation (within-model) | `aggregation.py`, `data_reader.py` | 3 | Logged only |
+
+### References
+
+- Vincent, S.B. (1912). The function of the vibrissae in the
+  behavior of the white rat. Behavioral Monographs 1(5).
+- Ratcliff, R. (1979). Group reaction time distributions and an
+  analysis of distribution statistics. Psychological Bulletin
+  86(3), 446–461.
+- Schefzik, R., Thorarinsdottir, T.L. & Gneiting, T. (2013).
+  Uncertainty quantification in complex simulation models using
+  ensemble copula coupling. Statistical Science 28(4), 616–640.
+- Gneiting, T. & Raftery, A.E. (2007). Strictly proper scoring
+  rules, prediction, and estimation. JASA 102(477), 359–378.
+

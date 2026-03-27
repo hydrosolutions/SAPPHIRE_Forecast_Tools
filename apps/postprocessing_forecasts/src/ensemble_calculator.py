@@ -9,7 +9,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from src.postprocessing_tools import forecast_target_date
+from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,9 @@ def create_ensemble_forecasts(
             agg_dict[qcol] = "mean"
 
     ensemble_avg = qualifying.groupby([period_col, "date", "code"]).agg(agg_dict).reset_index()
+    ensemble_avg = enforce_quantile_monotonicity(
+        ensemble_avg, [c for c in _QUANTILE_COLS if c in ensemble_avg.columns]
+    )
     # model_short now holds the composition string (e.g. "LR, TFT")
     ensemble_avg = ensemble_avg.rename(columns={"model_short": "composition"})
     ensemble_avg["model_short"] = "EM"
@@ -275,6 +278,9 @@ def create_monthly_ensemble_forecasts(
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(["year", "month", "code"]).agg(em_agg).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -379,6 +385,9 @@ def _add_skilled_mean_monthly(
         )
         .reset_index()
     )
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in quantile_cols if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
 
     # Discard single-model groups
@@ -417,6 +426,9 @@ def _add_naive_mean_monthly(
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(["year", "month", "code"]).agg(naive_agg).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in quantile_cols if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
 
@@ -558,6 +570,9 @@ def _create_aggregated_ensemble_forecasts(
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -653,6 +668,9 @@ def _add_skilled_mean_aggregated_ens(
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = pool.groupby(time_group_cols).agg(**sm_agg).reset_index()
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in quantile_cols if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
 
     sm_avg = sm_avg[sm_avg["composition"].apply(is_multi_model_composition)].copy()
@@ -693,6 +711,9 @@ def _add_naive_mean_aggregated_ens(
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(naive_agg).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in quantile_cols if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
 

@@ -16,6 +16,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,7 @@ def aggregate_monthly_fc_to_quarterly(
     grouped = (
         df.groupby(["code", "year", "quarter_in_year", "model_short"]).agg(**agg_dict).reset_index()
     )
+    count_quantile_crossings(grouped, _FC_QUANTILE_COLS, label="monthly→quarterly")
 
     # Require >= QUARTER_MIN_MONTHS
     grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
@@ -317,6 +319,7 @@ def aggregate_monthly_fc_to_seasonal(
         agg_dict["forecasted_discharge"] = ("forecasted_discharge", "mean")
 
     grouped = df.groupby(["code", "season_year", "model_short"]).agg(**agg_dict).reset_index()
+    count_quantile_crossings(grouped, _FC_QUANTILE_COLS, label="monthly→seasonal")
 
     grouped = grouped[grouped["n_months"] >= min_months].copy()
     grouped = grouped.drop(columns=["n_months"])

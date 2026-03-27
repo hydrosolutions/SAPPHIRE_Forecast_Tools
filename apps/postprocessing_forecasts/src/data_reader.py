@@ -12,6 +12,7 @@ import logging
 import os
 
 import pandas as pd
+from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
 
@@ -1858,6 +1859,7 @@ def _normalize_ml_forecasts(
 
     if agg_dict and "code" in df.columns and "date" in df.columns:
         df = df.groupby(["code", "date"], as_index=False).agg(agg_dict)
+        count_quantile_crossings(df, ["q05", "q25", "q75", "q95"], label="daily→pentad/decad")
 
     # Model name mapping: API stores uppercase, need display names
     model_name_map = {

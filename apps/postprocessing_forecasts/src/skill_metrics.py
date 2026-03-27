@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
-from src.postprocessing_tools import forecast_target_date
+from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -1000,6 +1000,69 @@ def calculate_crps(
     return float(np.mean(crps_per_obs))
 
 
+def calculate_pit_reliability(
+    observed: np.ndarray,
+    quantile_forecasts: np.ndarray,
+    quantile_levels: np.ndarray,
+) -> dict:
+    """PIT-based reliability metrics for quantile forecasts.
+
+    Args:
+        observed: shape (N,) — observed values.
+        quantile_forecasts: shape (N, K) — forecasted quantiles.
+        quantile_levels: shape (K,) — e.g. [0.05, ..., 0.95].
+
+    Returns:
+        Dict with keys:
+          'reliability_score': mean |observed - nominal| (lower is
+              better). NaN when n_obs < 2.
+          'n_obs': number of valid observations used.
+    """
+    valid = ~np.isnan(observed)
+    if quantile_forecasts.ndim == 2:
+        valid &= ~np.isnan(quantile_forecasts).any(axis=1)
+    n = int(np.sum(valid))
+    if n < 2:
+        return {"reliability_score": np.nan, "n_obs": n}
+
+    obs = observed[valid]
+    qf = quantile_forecasts[valid]
+
+    observed_coverage = np.array([np.mean(obs <= qf[:, k]) for k in range(len(quantile_levels))])
+    reliability_score = float(np.mean(np.abs(observed_coverage - quantile_levels)))
+    return {"reliability_score": reliability_score, "n_obs": n}
+
+
+def calculate_sharpness(
+    quantile_forecasts: np.ndarray,
+    quantile_levels: np.ndarray,
+) -> dict:
+    """Sharpness metrics: mean prediction interval width.
+
+    Args:
+        quantile_forecasts: shape (N, K) — forecasted quantiles.
+        quantile_levels: shape (K,) — must include 0.05/0.25/0.75/0.95.
+
+    Returns:
+        Dict with 'sharpness_90' (mean q95-q05 width) and
+        'sharpness_50' (mean q75-q25 width). NaN if levels missing.
+    """
+    level_idx = {round(float(lev), 4): i for i, lev in enumerate(quantile_levels)}
+    result = {}
+    for name, lo, hi in [("sharpness_90", 0.05, 0.95), ("sharpness_50", 0.25, 0.75)]:
+        lo_key = round(lo, 4)
+        hi_key = round(hi, 4)
+        if lo_key in level_idx and hi_key in level_idx:
+            widths = (
+                quantile_forecasts[:, level_idx[hi_key]] - quantile_forecasts[:, level_idx[lo_key]]
+            )
+            valid = ~np.isnan(widths)
+            result[name] = float(np.mean(widths[valid])) if np.any(valid) else np.nan
+        else:
+            result[name] = np.nan
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Monthly skill metric pipeline
 # ---------------------------------------------------------------------------
@@ -1073,7 +1136,9 @@ def calculate_monthly_skill_metrics(
     )
 
     empty_stats = pd.DataFrame(
-        columns=["month_in_year", "code", "model_short"] + METRIC_ORDER + ["crps"]
+        columns=["month_in_year", "code", "model_short"]
+        + METRIC_ORDER
+        + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
     )
     empty_joint = pd.DataFrame()
 
@@ -1126,14 +1191,21 @@ def calculate_monthly_skill_metrics(
         if len(qf_cols) == len(_QUANTILE_COLS):
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
         else:
             crps_val = np.nan
+            pit = {"reliability_score": np.nan}
+            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
         crps_records.append(
             {
                 "month_in_year": miy,
                 "code": code,
                 "model_short": model,
                 "crps": crps_val,
+                "reliability_score": pit["reliability_score"],
+                "sharpness_90": sharp["sharpness_90"],
+                "sharpness_50": sharp["sharpness_50"],
             }
         )
 
@@ -1179,6 +1251,9 @@ def calculate_monthly_skill_metrics(
                 em_agg_dict[dcol] = "first"
 
         em_avg = skilled_merged.groupby(["year", "month", "code"]).agg(em_agg_dict).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -1221,12 +1296,17 @@ def calculate_monthly_skill_metrics(
                     obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
                     qf = grp[qf_cols].to_numpy(dtype=np.float64)
                     crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+                    pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+                    sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
                     em_crps.append(
                         {
                             "month_in_year": miy,
                             "code": code,
                             "model_short": model,
                             "crps": crps_val,
+                            "reliability_score": pit["reliability_score"],
+                            "sharpness_90": sharp["sharpness_90"],
+                            "sharpness_50": sharp["sharpness_50"],
                         }
                     )
                 em_crps_df = pd.DataFrame(em_crps)
@@ -1300,6 +1380,9 @@ def _add_naive_mean(
             agg_dict[dcol] = "first"
 
     naive_avg = pool.groupby(["year", "month", "code"]).agg(agg_dict).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in _QUANTILE_COLS if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
 
@@ -1347,12 +1430,17 @@ def _add_naive_mean(
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
             crps_records.append(
                 {
                     "month_in_year": miy,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
+                    "reliability_score": pit["reliability_score"],
+                    "sharpness_90": sharp["sharpness_90"],
+                    "sharpness_50": sharp["sharpness_50"],
                 }
             )
         crps_df = pd.DataFrame(crps_records)
@@ -1480,6 +1568,9 @@ def _add_skilled_mean(
         )
         .reset_index()
     )
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in _QUANTILE_COLS if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
 
     # 6. Discard single-model groups
@@ -1522,12 +1613,17 @@ def _add_skilled_mean(
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
             sm_crps.append(
                 {
                     "month_in_year": miy,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
+                    "reliability_score": pit["reliability_score"],
+                    "sharpness_90": sharp["sharpness_90"],
+                    "sharpness_50": sharp["sharpness_50"],
                 }
             )
         sm_crps_df = pd.DataFrame(sm_crps)
@@ -1732,14 +1828,50 @@ def calculate_skill_metrics(
         }
         # Propagate quantiles into EM rows (vincentization)
         _SHORT_TERM_Q_COLS = ["q05", "q25", "q75", "q95"]
+        _SHORT_TERM_Q_LEVELS = np.array([0.05, 0.25, 0.75, 0.95])
         for qcol in _SHORT_TERM_Q_COLS:
             if qcol in skill_metrics_df_ensemble.columns:
                 em_agg_dict[qcol] = "mean"
+
+        # --- CRPS for individual models (short-term) ---
+        crps_records = []
+        for group_key, grp in skill_metrics_df.groupby([period_col, "code", "model_short"]):
+            p, code, model = group_key
+            obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
+            qf_cols = [c for c in _SHORT_TERM_Q_COLS if c in grp.columns]
+            if len(qf_cols) == len(_SHORT_TERM_Q_COLS):
+                qf = grp[qf_cols].to_numpy(dtype=np.float64)
+                crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
+            else:
+                crps_val = np.nan
+                pit = {"reliability_score": np.nan}
+                sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+            crps_records.append(
+                {
+                    period_col: p,
+                    "code": code,
+                    "model_short": model,
+                    "crps": crps_val,
+                    "reliability_score": pit["reliability_score"],
+                    "sharpness_90": sharp["sharpness_90"],
+                    "sharpness_50": sharp["sharpness_50"],
+                }
+            )
+        if crps_records:
+            crps_df = pd.DataFrame(crps_records)
+            skill_stats = skill_stats.merge(
+                crps_df, on=[period_col, "code", "model_short"], how="left"
+            )
 
         skill_metrics_df_ensemble_avg = (
             skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
             .agg(em_agg_dict)
             .reset_index()
+        )
+        skill_metrics_df_ensemble_avg = enforce_quantile_monotonicity(
+            skill_metrics_df_ensemble_avg, _SHORT_TERM_Q_COLS
         )
         # model_short now holds the composition string
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
@@ -1775,6 +1907,43 @@ def calculate_skill_metrics(
                 )
                 .reset_index()
             )
+
+            # --- CRPS for EM (short-term) ---
+            em_crps_records = []
+            for group_key, grp in ensemble_skill_metrics_df.groupby(
+                [period_col, "code", "model_short", "composition"]
+            ):
+                p, code, model, comp = group_key
+                obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
+                qf_cols = [c for c in _SHORT_TERM_Q_COLS if c in grp.columns]
+                if len(qf_cols) == len(_SHORT_TERM_Q_COLS):
+                    qf = grp[qf_cols].to_numpy(dtype=np.float64)
+                    crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                    pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                    sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
+                else:
+                    crps_val = np.nan
+                    pit = {"reliability_score": np.nan}
+                    sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+                em_crps_records.append(
+                    {
+                        period_col: p,
+                        "code": code,
+                        "model_short": model,
+                        "composition": comp,
+                        "crps": crps_val,
+                        "reliability_score": pit["reliability_score"],
+                        "sharpness_90": sharp["sharpness_90"],
+                        "sharpness_50": sharp["sharpness_50"],
+                    }
+                )
+            if em_crps_records:
+                em_crps_df = pd.DataFrame(em_crps_records)
+                ensemble_skill_stats = ensemble_skill_stats.merge(
+                    em_crps_df,
+                    on=[period_col, "code", "model_short", "composition"],
+                    how="left",
+                )
 
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
@@ -1907,7 +2076,9 @@ def _calculate_aggregated_skill_metrics(
     metric_group_cols = [period_col, "code", "model_short"]
 
     empty_stats = pd.DataFrame(
-        columns=[period_col, "code", "model_short"] + METRIC_ORDER + ["crps"]
+        columns=[period_col, "code", "model_short"]
+        + METRIC_ORDER
+        + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
     )
     empty_joint = pd.DataFrame()
 
@@ -1962,14 +2133,21 @@ def _calculate_aggregated_skill_metrics(
         if len(qf_cols) == len(_QUANTILE_COLS):
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
         else:
             crps_val = np.nan
+            pit = {"reliability_score": np.nan}
+            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
         crps_records.append(
             {
                 period_col: piy,
                 "code": code,
                 "model_short": model,
                 "crps": crps_val,
+                "reliability_score": pit["reliability_score"],
+                "sharpness_90": sharp["sharpness_90"],
+                "sharpness_50": sharp["sharpness_50"],
             }
         )
 
@@ -2006,6 +2184,9 @@ def _calculate_aggregated_skill_metrics(
                 em_agg_dict[dcol] = "first"
 
         em_avg = skilled_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -2043,12 +2224,17 @@ def _calculate_aggregated_skill_metrics(
                     obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
                     qf = grp[qf_cols].to_numpy(dtype=np.float64)
                     crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+                    pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+                    sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
                     em_crps.append(
                         {
                             period_col: piy,
                             "code": code,
                             "model_short": model,
                             "crps": crps_val,
+                            "reliability_score": pit["reliability_score"],
+                            "sharpness_90": sharp["sharpness_90"],
+                            "sharpness_50": sharp["sharpness_50"],
                         }
                     )
                 em_crps_df = pd.DataFrame(em_crps)
@@ -2130,6 +2316,9 @@ def _add_naive_mean_aggregated(
             agg_dict[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(agg_dict).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in _QUANTILE_COLS if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
     naive_avg = naive_avg[naive_avg["composition"].apply(is_multi_model_composition)].copy()
@@ -2172,12 +2361,17 @@ def _add_naive_mean_aggregated(
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
             crps_records.append(
                 {
                     period_col: piy,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
+                    "reliability_score": pit["reliability_score"],
+                    "sharpness_90": sharp["sharpness_90"],
+                    "sharpness_50": sharp["sharpness_50"],
                 }
             )
         crps_df = pd.DataFrame(crps_records)
@@ -2269,6 +2463,9 @@ def _add_skilled_mean_aggregated(
             sm_agg_dict[dcol] = (dcol, "first")
 
     sm_avg = sm_merged.groupby(time_group_cols).agg(**sm_agg_dict).reset_index()
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in _QUANTILE_COLS if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
     sm_avg = sm_avg[sm_avg["composition"].apply(is_multi_model_composition)].copy()
 
@@ -2307,12 +2504,17 @@ def _add_skilled_mean_aggregated(
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
             sm_crps.append(
                 {
                     period_col: piy,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
+                    "reliability_score": pit["reliability_score"],
+                    "sharpness_90": sharp["sharpness_90"],
+                    "sharpness_50": sharp["sharpness_50"],
                 }
             )
         sm_crps_df = pd.DataFrame(sm_crps)
