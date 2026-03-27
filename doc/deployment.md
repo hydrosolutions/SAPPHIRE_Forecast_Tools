@@ -4,11 +4,10 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
 - [Prerequisites](#prerequisites)
   - [Skills required](#skills-required)
   - [Software requirements](#software-requirements)
-    - [Required for all deployments](#required-for-all-deployments)
-    - [Required depending on your setup](#required-depending-on-your-setup)
   - [Server requirements](#server-requirements)
     - [Option A: Provisioning on AWS](#option-a-provisioning-on-aws)
     - [Option B: Organization-owned server](#option-b-organization-owned-server)
+    - [Install software on the server](#install-software-on-the-server)
     - [Verify server readiness](#verify-server-readiness)
 - [Step-by-step instructions](#step-by-step-instructions)
   - [Download this repository](#download-this-repository)
@@ -57,33 +56,21 @@ Optional, depending on your setup:
 
 ### Required for all deployments
 
-| Software | Purpose | Install instructions |
-|----------|---------|---------------------|
-| Docker Engine (includes Compose v2) | Runs all services, pipeline, and dashboards | [Docker docs for Ubuntu](https://docs.docker.com/engine/install/ubuntu/) |
-| Git | Clone the repository | `sudo apt-get install git` |
-
-After installing Docker Engine, verify that Compose v2 is available:
-```bash
-docker compose version   # should print v2.x.x
-```
+| Software | Purpose |
+|----------|---------|
+| [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) (includes Compose v2) | Runs all services, pipeline, and dashboards |
+| Git | Clone the repository |
 
 ### Required depending on your setup
 
-| Software | When needed | Install |
-|----------|------------|---------|
-| autossh | SSH tunnel to iEasyHydro HF on a different network | `sudo apt-get install autossh` |
-| nginx | Reverse proxy for dashboards and API behind HTTPS | `sudo apt-get install nginx` |
-| certbot | Free SSL certificates from Let's Encrypt | [certbot instructions](https://certbot.eff.org/) |
+| Software | When needed |
+|----------|------------|
+| autossh | SSH tunnel to iEasyHydro HF on a different network |
+| nginx | Reverse proxy for dashboards and API behind HTTPS |
+| [certbot](https://certbot.eff.org/) | Free SSL certificates from Let's Encrypt |
 
-### Quick install block
-
-Once the server is provisioned, you can install all command-line tools in one
-step (Docker must be installed separately — see link above):
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git autossh nginx curl
-```
+Installation commands are in the
+[Install software on the server](#install-software-on-the-server) section.
 
 ## Server requirements
 
@@ -202,11 +189,30 @@ Expected output: rules for ports 22, 80, 443, 5006, 5007, 8082. No rules for
 > (databases). These are accessed only from localhost by the pipeline and
 > dashboards. Exposing database ports is a security risk.
 
+### Install software on the server
+
+SSH into your server and install the required software.
+
+**Docker Engine** — follow the full instructions for Ubuntu:
+[Docker Engine installation on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+
+**All other tools** in one step:
+```bash
+sudo apt-get update
+sudo apt-get install -y git autossh curl
+```
+
+Install `nginx` and `certbot` only if you plan to set up a reverse proxy
+for the dashboards:
+```bash
+sudo apt-get install -y nginx
+sudo snap install --classic certbot
+```
+
 ### Verify server readiness
 
-After completing either Option A or Option B, SSH into the server and run
-the checks below. All must pass before proceeding to the
-[step-by-step instructions](#step-by-step-instructions).
+After completing the steps above, run the checks below. All must pass before
+proceeding to the [step-by-step instructions](#step-by-step-instructions).
 
 ```bash
 # 1. Operating system
