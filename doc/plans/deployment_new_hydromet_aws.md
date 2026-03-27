@@ -722,3 +722,38 @@ Changes already applied to the docs as part of deployment preparation.
 | ID | What was done | Commit / branch |
 |----|---------------|-----------------|
 | DOC-GAP-1 | Added structured port table with SAPPHIRE services ports and security guidance to `doc/deployment.md` > "Configuring your server" | `develop_long_term_fix_api_postprocessing_forecasts` |
+
+---
+
+## Post-Deployment: Documentation Graduation
+
+After the Uzbek deployment validates this checklist, graduate it from
+`doc/plans/` to `doc/prod/` and consolidate with the existing update
+checklist. Target structure:
+
+```
+doc/prod/
+├── deployment_new.md              ← this file (first-time deployment)
+├── deployment_update.md           ← current update_deployment_checklist.md
+└── reference/
+    └── ieasyhydro_hf_connectivity.md   ← extracted shared reference
+```
+
+**Design principles:**
+- Each checklist is self-contained and sequential — no jumping between docs
+- Shared complex procedures (like iEasyHydro HF connectivity) live in
+  `reference/` and are linked from both checklists with a brief inline
+  summary (the decision tree) sufficient for repeat users
+- Non-shared steps stay in each checklist even if they involve the same
+  system (e.g., crontab creation vs crontab diffing are different procedures)
+
+**Known issues in `update_deployment_checklist.md` to fix during graduation:**
+1. Hardcoded `kghm` paths — replace with `<data_folder>` / `<env_file>`
+   placeholders (same issue as DOC-GAP-11)
+2. Crontab in §2.5 uses old individual maintenance scripts
+   (`daily_update_sapphire_frontend.sh`, `daily_ml_maintenance.sh`, etc.)
+   — should use the consolidated `run_daily_maintenance.sh`
+3. Section numbering: 2.2 → 2.4 → 2.3 (reordering artifact)
+4. `deployment.md` reference doc also needs updates to stay in sync — the
+   Prerequisites section has been rewritten; the step-by-step section below
+   it still needs work
