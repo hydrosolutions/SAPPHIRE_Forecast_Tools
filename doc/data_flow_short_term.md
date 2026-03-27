@@ -309,3 +309,33 @@ EM requires **≥ 2 qualifying models** per (date, code). Single-model
 | Decade 1 | 1–10 |
 | Decade 2 | 11–20 |
 | Decade 3 | 21–end of month (variable: 8–11 days) |
+
+### Boundary Dates and the +1 Day Shift
+
+The table below shows which calendar day triggers each forecast and which
+period that forecast covers.
+
+| Trigger date (issue date) | Pentad being forecast    | Decade being forecast    |
+|---------------------------|--------------------------|--------------------------|
+| Last day of month         | 1st (next month)         | 1st (next month)         |
+| 5th                       | 2nd                      | —                        |
+| 10th                      | 3rd                      | 2nd                      |
+| 15th                      | 4th                      | —                        |
+| 20th                      | 5th                      | 3rd                      |
+| 25th                      | 6th                      | —                        |
+
+The trigger date (also called the issue date) is the last day of the
+*outgoing* period; the forecast itself covers the *upcoming* period.
+The base helper functions in `tag_library.py` (`get_pentad`,
+`get_pentad_in_year`, etc.) use the formula `(day - 1) // 5 + 1`, which
+maps a given day to the period that *contains* it (i.e. the closing
+period). To obtain the label of the *next* (target) period, downstream
+code adds `+ pd.Timedelta(days=1)` before calling these helpers,
+advancing the issue date to the first day of the upcoming period and
+yielding the correct target-period label. This +1 day shift appears in
+`data_reader.py`, `setup_library.py`, and `forecast_library.py`.
+
+> **Note:** Day-of-month gating (whether today is a boundary day) happens
+> inside Python (`ForecastFlags.from_forecast_date_get_flags()` in
+> `setup_library.py`). The cron job and `run_locally.sh` fire every day;
+> non-boundary days are no-ops.

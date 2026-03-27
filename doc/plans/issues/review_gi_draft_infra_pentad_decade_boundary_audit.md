@@ -1,6 +1,6 @@
 # INFRA-015: Audit pentad/decade boundary date convention across modules
 
-**Status**: Investigation complete — LR-008 found a production bug; documentation actions remain
+**Status**: Complete — all actions resolved
 **Module**: infra (cross-module)
 **Priority**: Mid
 **Labels**: `audit`, `date-handling`, `cross-module`
@@ -122,13 +122,13 @@ convention should be written down.
 
 ## Recommended Actions
 
-1. **Document the convention** — Add a "Pentad/Decade Boundary Dates" section to
-   `doc/data_flow_short_term.md` explaining the two-layer mapping.
-2. ~~**Verify `forecast_horizon_int` in LR API writes**~~ — **RESOLVED: confirmed broken,
-   tracked as LR-008.** The value stored uses `get_pentad_in_year(current_day)` without
-   the +1 shift. LR-008 Phase 1 fixes this.
-3. **Remove dead code** — `save_pentad_forecast()` and `save_decadal_forecast()`
-   in `utils_ml_forecast.py` are never called and should be removed.
+1. ~~**Document the convention**~~ — **DONE.** Added "Boundary Dates and the
+   +1 Day Shift" subsection to `doc/data_flow_short_term.md`.
+2. ~~**Verify `forecast_horizon_int` in LR API writes**~~ — **RESOLVED:
+   confirmed broken, tracked as LR-008.** The value stored uses
+   `get_pentad_in_year(current_day)` without the +1 shift. LR-008 fixes this.
+3. ~~**Remove dead code**~~ — **DONE.** Removed `save_pentad_forecast()` and
+   `save_decadal_forecast()` from `utils_ml_forecast.py` (zero callers).
 
 ---
 
@@ -143,3 +143,4 @@ convention should be written down.
 
 *Created: 2026-03-25 — Initial investigation complete.*
 *Updated: 2026-03-25 — LR-008 found; downgraded to mid priority; conclusion corrected.*
+*Updated: 2026-03-27 — Actions 1 and 3 implemented. Issue complete.*
