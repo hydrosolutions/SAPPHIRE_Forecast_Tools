@@ -72,13 +72,13 @@ grep -A 2 'name = "<package_name>"' apps/<module_name>/uv.lock | grep version
 breaking changes in bokeh 3.5+ (`FuncTickFormatter` was removed).
 
 **Resolution**: The fix for `FuncTickFormatter` has been implemented in the `maxat_sapphire_2`
-branch. This security update will be resolved when `maxat_sapphire_2` is merged into main.
+branch, which is now the default branch (2026-03-27). Verify the fix is active (SEC-005).
 
 #### Status
 
 | Module | Directory | Required | Status |
 |--------|-----------|----------|--------|
-| forecast_dashboard | `apps/forecast_dashboard` | >= 3.8.2 | [~] Blocked - awaiting maxat_sapphire_2 merge |
+| forecast_dashboard | `apps/forecast_dashboard` | >= 3.8.2 | [~] Unblocked — verify on `maxat_sapphire_2` (SEC-005) |
 
 ---
 

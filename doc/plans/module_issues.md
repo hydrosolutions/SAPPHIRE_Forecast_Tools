@@ -88,6 +88,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**INFRA-013**~~ | ~~Postprocessing API container crashes on bulk forecast writes (118 restarts)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | — |
 | **INFRA-014** | Extend validate_pipeline.py: JSON output, baseline/delta, new checks | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_validate_pipeline_extensions.md`](issues/mid_prio_gi_draft_infra_validate_pipeline_extensions.md) | — |
 | **INFRA-015** | Audit pentad/decade boundary date convention across modules | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_pentad_decade_boundary_audit.md`](issues/mid_prio_gi_draft_infra_pentad_decade_boundary_audit.md) | LR-008 (only finding) |
+| **INFRA-016** | Switch default branch from `main` to `maxat_sapphire_2` (v2 cut) | infra | **High** | Draft | [`high_prio_gi_draft_infra_default_branch_switch.md`](issues/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---

@@ -2,7 +2,7 @@ name: Quarterly Security Rebuild
 
 # Rebuilds all Docker images from fresh upstream to pick up security fixes
 # Runs quarterly or on-demand via manual trigger
-# Uses Python 3.12 + uv workflow (aligned with deploy_main.yml)
+# Uses Python 3.12 + uv workflow (aligned with deploy_production.yml)
 
 on:
   schedule:

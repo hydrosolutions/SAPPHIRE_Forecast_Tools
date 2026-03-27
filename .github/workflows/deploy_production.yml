@@ -1,4 +1,4 @@
-name: Test & push main branch do Dockerhub
+name: Test & push production branch to DockerHub
 
 env:
   IMAGE_TAG: latest
@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "maxat_sapphire_2" ]
   #pull_request:
   #  branches: [ "main" ]
 

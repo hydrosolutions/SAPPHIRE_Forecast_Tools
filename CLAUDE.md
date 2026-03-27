@@ -256,7 +256,7 @@ Write concise commit messages that focus on the "why" rather than the "what". Us
 ### Pull Requests
 
 - Keep PRs focused on a single issue or feature
-- Target `main` for production-ready changes
+- Target `maxat_sapphire_2` for production-ready changes
 - Include a summary of changes and test results in the PR description
 
 ---

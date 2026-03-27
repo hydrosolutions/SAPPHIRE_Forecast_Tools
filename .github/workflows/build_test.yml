@@ -4,7 +4,7 @@ env:
   # Use a test tag to avoid conflicts with production images
   IMAGE_TAG: build-test
 
-  # Define image names (same as in deploy_main.yml)
+  # Define image names (same as in deploy_production.yml)
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
   DASHBOARD_IMAGE_NAME: mabesa/sapphire-dashboard
@@ -19,14 +19,14 @@ env:
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
 
 on:
-  # Run on all branch pushes except main (which uses deploy_main.yml)
+  # Run on all branch pushes except maxat_sapphire_2 (which uses deploy_production.yml)
   push:
     branches-ignore:
-      - main
-  # Also run on PRs targeting main
+      - maxat_sapphire_2
+  # Also run on PRs targeting maxat_sapphire_2
   pull_request:
     branches:
-      - main
+      - maxat_sapphire_2
 
 jobs:
   # Test iEasyHydroForecast with Python 3.12 + uv + pytest
