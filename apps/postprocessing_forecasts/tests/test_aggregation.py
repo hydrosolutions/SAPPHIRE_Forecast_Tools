@@ -16,7 +16,6 @@ from src.aggregation import (
     QUARTER_MIN_MONTHS,
     QUARTER_MONTHS,
     aggregate_monthly_fc_to_quarterly,
-    aggregate_monthly_fc_to_seasonal,
     aggregate_monthly_obs_to_quarterly,
     aggregate_monthly_obs_to_seasonal,
     get_season_months,
@@ -408,78 +407,3 @@ class TestAggregateMonthlyFcToQuarterly:
         result = aggregate_monthly_fc_to_quarterly(fc)
         assert "forecasted_discharge" in result.columns
         assert abs(result.iloc[0]["forecasted_discharge"] - 45.0) < 1e-6
-
-
-# ===================================================================
-# Seasonal forecast aggregation
-# ===================================================================
-
-
-class TestAggregateMonthlyFcToSeasonal:
-    def test_basic_aggregation(self, monkeypatch):
-        monkeypatch.delenv("SAPPHIRE_SEASON_START_MONTH", raising=False)
-        monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 4, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 5, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 6, "M1", 30, 40, 50, 60, 70, 80, 90),
-            ]
-        )
-        result = aggregate_monthly_fc_to_seasonal(fc)
-        assert len(result) == 1
-        assert result.iloc[0]["season_year"] == 2024
-        assert result.iloc[0]["season_in_year"] == 1
-
-    def test_cross_year_season(self, monkeypatch):
-        monkeypatch.setenv("SAPPHIRE_SEASON_START_MONTH", "10")
-        monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "3")
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 10, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 11, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 12, "M1", 30, 40, 50, 60, 70, 80, 90),
-                ("S1", 2025, 1, "M1", 40, 50, 60, 70, 80, 90, 100),
-                ("S1", 2025, 2, "M1", 50, 60, 70, 80, 90, 100, 110),
-                ("S1", 2025, 3, "M1", 60, 70, 80, 90, 100, 110, 120),
-            ]
-        )
-        result = aggregate_monthly_fc_to_seasonal(fc)
-        assert len(result) == 1
-        assert result.iloc[0]["season_year"] == 2024
-
-    def test_valid_from_valid_to_cross_year(self, monkeypatch):
-        monkeypatch.setenv("SAPPHIRE_SEASON_START_MONTH", "10")
-        monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "3")
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 10, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 11, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 12, "M1", 30, 40, 50, 60, 70, 80, 90),
-            ]
-        )
-        result = aggregate_monthly_fc_to_seasonal(fc)
-        assert result.iloc[0]["valid_from"] == "2024-10-01"
-        assert result.iloc[0]["valid_to"] == "2025-03-31"
-
-    def test_empty_input(self, monkeypatch):
-        monkeypatch.delenv("SAPPHIRE_SEASON_START_MONTH", raising=False)
-        monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
-        result = aggregate_monthly_fc_to_seasonal(pd.DataFrame())
-        assert result.empty
-
-    def test_non_season_months_excluded(self, monkeypatch):
-        monkeypatch.delenv("SAPPHIRE_SEASON_START_MONTH", raising=False)
-        monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70),  # not in season
-                ("S1", 2024, 4, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 5, "M1", 30, 40, 50, 60, 70, 80, 90),
-                ("S1", 2024, 6, "M1", 40, 50, 60, 70, 80, 90, 100),
-            ]
-        )
-        result = aggregate_monthly_fc_to_seasonal(fc)
-        assert len(result) == 1
-        # Only season months averaged: q50 = mean(50, 60, 70) = 60
-        assert abs(result.iloc[0]["q50"] - 60.0) < 1e-6

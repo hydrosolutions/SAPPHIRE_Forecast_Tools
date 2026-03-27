@@ -22,9 +22,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.aggregation import (
-    aggregate_monthly_fc_to_seasonal,
     aggregate_monthly_obs_to_seasonal,
     get_season_months,
+    get_season_year,
 )
 from src.ensemble_calculator import create_seasonal_ensemble_forecasts
 from src.skill_metrics import calculate_seasonal_skill_metrics
@@ -516,7 +516,27 @@ class TestSeasonalCrossYearPipeline:
         monthly_fc = _monthly_fc(n_years=4, models=("LR", "TFT"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
-        sfc = aggregate_monthly_fc_to_seasonal(monthly_fc)
+        # Build seasonal forecasts directly (replaces removed aggregation)
+        season_months = get_season_months()
+        sfc = monthly_fc[monthly_fc["month"].isin(season_months)].copy()
+        sfc["season_year"] = sfc.apply(
+            lambda r: get_season_year(int(r["year"]), int(r["month"])), axis=1
+        )
+        sfc = (
+            sfc.groupby(["code", "season_year", "model_short"])
+            .agg(
+                q05=("q05", "mean"),
+                q10=("q10", "mean"),
+                q25=("q25", "mean"),
+                q50=("q50", "mean"),
+                q75=("q75", "mean"),
+                q90=("q90", "mean"),
+                q95=("q95", "mean"),
+                forecasted_discharge=("forecasted_discharge", "mean"),
+            )
+            .reset_index()
+        )
+        sfc["season_in_year"] = 1
 
         assert not sobs.empty
         assert not sfc.empty
@@ -566,7 +586,27 @@ class TestSeasonalCrossYearPipeline:
         monthly_fc = _monthly_fc(n_years=3, models=("LR", "TFT"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
-        sfc = aggregate_monthly_fc_to_seasonal(monthly_fc)
+        # Build seasonal forecasts directly (replaces removed aggregation)
+        season_months = get_season_months()
+        sfc = monthly_fc[monthly_fc["month"].isin(season_months)].copy()
+        sfc["season_year"] = sfc.apply(
+            lambda r: get_season_year(int(r["year"]), int(r["month"])), axis=1
+        )
+        sfc = (
+            sfc.groupby(["code", "season_year", "model_short"])
+            .agg(
+                q05=("q05", "mean"),
+                q10=("q10", "mean"),
+                q25=("q25", "mean"),
+                q50=("q50", "mean"),
+                q75=("q75", "mean"),
+                q90=("q90", "mean"),
+                q95=("q95", "mean"),
+                forecasted_discharge=("forecasted_discharge", "mean"),
+            )
+            .reset_index()
+        )
+        sfc["season_in_year"] = 1
 
         assert not sobs.empty
         assert not sfc.empty

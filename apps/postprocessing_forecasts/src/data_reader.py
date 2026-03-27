@@ -29,6 +29,45 @@ except ImportError:
     SAPPHIRE_API_AVAILABLE = False
 
 
+# Ensemble model names to filter from raw API reads (these are derived,
+# not raw model output).
+_ENSEMBLE_MODELS = frozenset({"EM", "Skilled Mean", "Naive Mean"})
+
+_SEASONAL_FC_COLS = [
+    "code",
+    "season_year",
+    "season_in_year",
+    "model_short",
+    "q05",
+    "q10",
+    "q25",
+    "q50",
+    "q75",
+    "q90",
+    "q95",
+    "forecasted_discharge",
+    "valid_from",
+    "valid_to",
+]
+
+_QUARTERLY_FC_COLS = [
+    "code",
+    "year",
+    "quarter_in_year",
+    "model_short",
+    "q05",
+    "q10",
+    "q25",
+    "q50",
+    "q75",
+    "q90",
+    "q95",
+    "forecasted_discharge",
+    "valid_from",
+    "valid_to",
+]
+
+
 def read_skill_metrics(
     horizon_type: str,
     codes: list[str] | None = None,
@@ -981,8 +1020,18 @@ def _read_long_forecasts_api(
     codes: list[str],
     start_year: int,
     end_year: int,
+    horizon_type: str = "month",
 ) -> pd.DataFrame:
-    """Read long-term forecasts from postprocessing API with pagination."""
+    """Read long-term forecasts from postprocessing API with pagination.
+
+    Args:
+        codes: List of station codes to query.
+        start_year: First year of the date range (inclusive).
+        end_year: Last year of the date range (inclusive).
+        horizon_type: Horizon type filter passed to the API (e.g. ``"month"``
+            or ``"season"``). Defaults to ``"month"`` to preserve existing
+            behaviour for all current callers.
+    """
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping")
         return pd.DataFrame()
@@ -1009,7 +1058,7 @@ def _read_long_forecasts_api(
             batch_size = 1000
             while True:
                 df_batch = client.read_long_term_forecasts(
-                    horizon_type="month",
+                    horizon_type=horizon_type,
                     code=code,
                     start_date=start_date,
                     end_date=end_date,
@@ -2441,7 +2490,18 @@ def read_quarterly_forecasts(
     start_year: int,
     end_year: int,
 ) -> pd.DataFrame:
-    """Read quarterly forecasts by aggregating monthly forecasts.
+    """Read quarterly forecasts from aggregated monthly and direct API sources.
+
+    Combines two sources:
+    1. Monthly forecasts aggregated to quarterly via
+       ``aggregate_monthly_fc_to_quarterly``.
+    2. Direct quarterly forecasts read from the API
+       (``horizon_type="quarter"``).
+
+    When a model appears in both sources for the same quarter, the
+    direct quarterly forecast takes precedence.  Ensemble models
+    (EM, Skilled Mean, Naive Mean) are filtered out of the direct
+    path — only raw model output is returned.
 
     Args:
         codes: Station codes to read.
@@ -2455,17 +2515,58 @@ def read_quarterly_forecasts(
     """
     from src.aggregation import aggregate_monthly_fc_to_quarterly
 
+    empty_cols = [
+        "code",
+        "year",
+        "quarter_in_year",
+        "model_short",
+    ]
+
+    # Source 1: aggregate monthly forecasts to quarterly
     monthly = read_monthly_forecasts(codes, start_year, end_year)
-    if monthly.empty:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "year",
-                "quarter_in_year",
-                "model_short",
-            ]
-        )
-    return aggregate_monthly_fc_to_quarterly(monthly)
+    if not monthly.empty:
+        aggregated = aggregate_monthly_fc_to_quarterly(monthly)
+    else:
+        aggregated = pd.DataFrame()
+
+    # Source 2: direct quarterly forecasts from API
+    raw_q = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="quarter")
+    if raw_q is not None and not raw_q.empty:
+        direct = _normalize_combined_forecasts(raw_q, "quarter")
+        # Filter out ensemble models — only raw model output
+        if "model_short" in direct.columns:
+            direct = direct[~direct["model_short"].isin(_ENSEMBLE_MODELS)].copy()
+    else:
+        direct = pd.DataFrame()
+
+    # Combine sources
+    if aggregated.empty and direct.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    if aggregated.empty:
+        combined = direct
+    elif direct.empty:
+        combined = aggregated
+    else:
+        # Concat: aggregated first, direct second.
+        # drop_duplicates(keep="last") prefers direct.
+        combined = pd.concat([aggregated, direct], ignore_index=True)
+        dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        available = [c for c in dedup_cols if c in combined.columns]
+        combined = combined.drop_duplicates(subset=available, keep="last")
+
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    # Select canonical output columns
+    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+
+    # Normalize valid_from/valid_to to strings for consistency
+    for col in ("valid_from", "valid_to"):
+        if col in combined.columns:
+            combined[col] = combined[col].astype(str)
+
+    return combined
 
 
 def read_seasonal_forecasts(
@@ -2473,7 +2574,11 @@ def read_seasonal_forecasts(
     start_year: int,
     end_year: int,
 ) -> pd.DataFrame:
-    """Read seasonal forecasts by aggregating monthly forecasts.
+    """Read seasonal forecasts directly from the API.
+
+    Reads forecasts stored with horizon_type="season" in the
+    postprocessing API.  Ensemble models (EM, Skilled Mean,
+    Naive Mean) are filtered out — only raw model output is returned.
 
     Args:
         codes: Station codes to read.
@@ -2485,19 +2590,40 @@ def read_seasonal_forecasts(
         model_short, q05-q95, forecasted_discharge, valid_from,
         valid_to].
     """
-    from src.aggregation import aggregate_monthly_fc_to_seasonal
+    empty = pd.DataFrame(
+        columns=[
+            "code",
+            "season_year",
+            "season_in_year",
+            "model_short",
+        ]
+    )
 
-    monthly = read_monthly_forecasts(codes, start_year, end_year)
-    if monthly.empty:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "season_year",
-                "season_in_year",
-                "model_short",
-            ]
-        )
-    return aggregate_monthly_fc_to_seasonal(monthly)
+    raw = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="season")
+    if raw is None or raw.empty:
+        logger.info("No seasonal forecast data from API for %d-%d", start_year, end_year)
+        return empty
+
+    df = _normalize_combined_forecasts(raw, "season")
+    if df.empty:
+        return empty
+
+    # Filter out ensemble models — only raw model output
+    if "model_short" in df.columns:
+        df = df[~df["model_short"].isin(_ENSEMBLE_MODELS)].copy()
+
+    if df.empty:
+        return empty
+
+    # Select canonical output columns
+    df = df[[c for c in _SEASONAL_FC_COLS if c in df.columns]]
+
+    # Normalize valid_from/valid_to to strings for consistency
+    for col in ("valid_from", "valid_to"):
+        if col in df.columns:
+            df[col] = df[col].astype(str)
+
+    return df
 
 
 # -------------------------------------------------------------------
@@ -2509,10 +2635,13 @@ def read_latest_quarterly_forecasts(
     codes: list[str],
     forecast_date: dt.date | None = None,
 ) -> pd.DataFrame:
-    """Read latest monthly forecasts, aggregate to quarterly.
+    """Read latest quarterly forecasts from aggregated monthly and direct API.
 
-    Uses a wider lookback window (~120 days) to capture a full
-    quarter's worth of monthly forecasts.
+    Combines two sources:
+    1. Monthly forecasts (120-day lookback) aggregated to quarterly.
+    2. Direct quarterly forecasts from the API.
+
+    When a model appears in both sources, the direct forecast wins.
 
     Args:
         codes: Station codes to read.
@@ -2531,44 +2660,72 @@ def read_latest_quarterly_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year)
-    if raw is None or raw.empty:
-        logger.warning("No recent monthly forecast data for quarterly aggregation")
-        return pd.DataFrame()
+    # Source 1: aggregate monthly forecasts to quarterly
+    raw_m = _read_long_forecasts_api(codes, start_year, end_year)
+    if raw_m is not None and not raw_m.empty:
+        df_m = _normalize_monthly_forecasts(raw_m)
+        if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
+            df_m["forecasted_discharge"] = df_m["q50"].astype(float)
+        aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+    else:
+        aggregated = pd.DataFrame()
 
-    df = _normalize_monthly_forecasts(raw)
-    if df.empty:
-        return df
+    # Source 2: direct quarterly forecasts from API
+    raw_q = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="quarter")
+    if raw_q is not None and not raw_q.empty:
+        direct = _normalize_combined_forecasts(raw_q, "quarter")
+        if "model_short" in direct.columns:
+            direct = direct[~direct["model_short"].isin(_ENSEMBLE_MODELS)].copy()
+    else:
+        direct = pd.DataFrame()
 
-    # Add forecasted_discharge from q50 if missing
-    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
-        df["forecasted_discharge"] = df["q50"].astype(float)
+    # Combine sources
+    if aggregated.empty and direct.empty:
+        logger.warning("No quarterly forecast data available")
+        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
-    quarterly = aggregate_monthly_fc_to_quarterly(df)
-    if quarterly.empty:
-        return quarterly
+    if aggregated.empty:
+        combined = direct
+    elif direct.empty:
+        combined = aggregated
+    else:
+        combined = pd.concat([aggregated, direct], ignore_index=True)
+        dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        available = [c for c in dedup_cols if c in combined.columns]
+        combined = combined.drop_duplicates(subset=available, keep="last")
+
+    if combined.empty:
+        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+
+    # Select canonical output columns
+    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+
+    # Normalize valid_from/valid_to to strings
+    for col in ("valid_from", "valid_to"):
+        if col in combined.columns:
+            combined[col] = combined[col].astype(str)
 
     # Filter to the most recent quarter
-    max_year = int(quarterly["year"].max())
-    max_q = int(quarterly[quarterly["year"] == max_year]["quarter_in_year"].max())
-    quarterly = quarterly[
-        (quarterly["year"] == max_year) & (quarterly["quarter_in_year"] == max_q)
+    max_year = int(combined["year"].max())
+    max_q = int(combined[combined["year"] == max_year]["quarter_in_year"].max())
+    combined = combined[
+        (combined["year"] == max_year) & (combined["quarter_in_year"] == max_q)
     ].copy()
 
     logger.info(
         "Read %d latest quarterly forecasts for Q%d-%d",
-        len(quarterly),
+        len(combined),
         max_q,
         max_year,
     )
-    return quarterly
+    return combined
 
 
 def read_latest_seasonal_forecasts(
     codes: list[str],
     forecast_date: dt.date | None = None,
 ) -> pd.DataFrame:
-    """Read latest monthly forecasts, aggregate to seasonal.
+    """Read the most recent seasonal forecasts directly from the API.
 
     Uses a wide lookback (~200 days) to capture cross-year seasons.
 
@@ -2580,39 +2737,45 @@ def read_latest_seasonal_forecasts(
         DataFrame with seasonal forecasts for the most recent season.
         Empty DataFrame if no data.
     """
-    from src.aggregation import aggregate_monthly_fc_to_seasonal
-
     today = forecast_date if forecast_date is not None else dt.date.today()
     start_date = today - dt.timedelta(days=200)
     start_year = start_date.year
     end_year = today.year
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    raw = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="season")
     if raw is None or raw.empty:
-        logger.warning("No recent monthly forecast data for seasonal aggregation")
-        return pd.DataFrame()
+        logger.warning("No recent seasonal forecast data from API")
+        return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 
-    df = _normalize_monthly_forecasts(raw)
+    df = _normalize_combined_forecasts(raw, "season")
     if df.empty:
-        return df
+        return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 
-    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
-        df["forecasted_discharge"] = df["q50"].astype(float)
+    # Filter out ensemble models — only raw model output
+    if "model_short" in df.columns:
+        df = df[~df["model_short"].isin(_ENSEMBLE_MODELS)].copy()
 
-    seasonal = aggregate_monthly_fc_to_seasonal(df)
-    if seasonal.empty:
-        return seasonal
+    if df.empty:
+        return pd.DataFrame(columns=_SEASONAL_FC_COLS)
+
+    # Select canonical output columns
+    df = df[[c for c in _SEASONAL_FC_COLS if c in df.columns]]
+
+    # Normalize valid_from/valid_to to strings
+    for col in ("valid_from", "valid_to"):
+        if col in df.columns:
+            df[col] = df[col].astype(str)
 
     # Filter to the most recent season_year
-    max_sy = int(seasonal["season_year"].max())
-    seasonal = seasonal[seasonal["season_year"] == max_sy].copy()
+    max_sy = int(df["season_year"].max())
+    df = df[df["season_year"] == max_sy].copy()
 
     logger.info(
         "Read %d latest seasonal forecasts for season_year %d",
-        len(seasonal),
+        len(df),
         max_sy,
     )
-    return seasonal
+    return df
 
 
 # -------------------------------------------------------------------
