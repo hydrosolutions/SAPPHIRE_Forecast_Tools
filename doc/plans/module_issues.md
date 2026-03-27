@@ -129,7 +129,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LTF-001** | `--today` flag in `run_forecast.py` runs zero models | **Medium** | Review | [`review_gi_draft_lt_today_flag_runs_no_models.md`](issues/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Review | [`review_gi_draft_ltf_sql_org_scoping.md`](issues/review_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
-| **LTF-003** | run_forecast.py sets flag=0 on null forecasts — marks failures as valid (Assigned: @sandrohuni) | **High** | Draft | [`high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
+| ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -253,6 +253,12 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | ML-BF3 | ML datetime format crash blocks API write (BF-3) | 2026-03-14 | See `review_checklist_local_2026-03-13.md` BF-3 |
+
+### Long-Term Forecasting (`ltf`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| LTF-003 | run_forecast.py sets flag=0 on null forecasts — Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation; Fix 2 (skeleton record guard) not implemented but non-critical | 2026-03-27 | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) |
 
 ### API (`api`)
 
