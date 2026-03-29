@@ -130,6 +130,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LTF-001** | `--today` flag in `run_forecast.py` runs zero models | **Medium** | Review | [`review_gi_draft_lt_today_flag_runs_no_models.md`](issues/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Review | [`review_gi_draft_ltf_sql_org_scoping.md`](issues/review_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
 | ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
+| **LTF-004** | Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation | **High** | Draft | [`high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -161,6 +162,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-026**~~ | ~~Make consumers flag-aware for null-discharge ML forecasts; clean stale flag=1/2 records~~ | | Complete | [`archive/high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/archive/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
 | **PP-027** | Add per-station observability when EM ensemble is skipped | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_silent_skip_observability.md`](issues/mid_prio_gi_draft_pp_em_silent_skip_observability.md) | — |
 | ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ (Bug 3 monthly reopened+fixed 2026-03-26: q50 fallback to q) | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
+| **PP-029** | NaN guard in seasonal/quarterly API write (`_write_aggregated_forecasts_to_api`) | **Medium** | Draft | [`mid_prio_gi_draft_pp_seasonal_nan_guard.md`](issues/mid_prio_gi_draft_pp_seasonal_nan_guard.md) | — |
+| **PP-030** | Fix EM skill metric degradation in recalculate_skill_metrics.py (boundary-pentad n_pairs=1-2) | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_recalc_boundary_fix.md`](issues/mid_prio_gi_draft_pp_em_recalc_boundary_fix.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
