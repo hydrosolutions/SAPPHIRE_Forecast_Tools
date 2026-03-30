@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 from functools import wraps
 
 import numpy as np
@@ -15,7 +16,7 @@ logger = setup_logger()
 api_gateway_url = os.getenv("API_GATEWAY_URL", "http://localhost:8000")
 API_BASE = f"{api_gateway_url}/api"
 API_TIMEOUT = 30
-CURRENT_YEAR = 2026
+CURRENT_YEAR = datetime.now().year
 PREVIOUS_YEAR = CURRENT_YEAR - 1
 
 SNOW_VALUE_COLS = [f"value{i}" for i in range(1, 15)]
@@ -150,6 +151,12 @@ def get_hydrograph_day_all(station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
+
+    if df.empty or "code" not in df.columns:
+        logger.warning("get_hydrograph_day_all: no data or missing 'code' for station %s", code)
+        return pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
+                                     str(PREVIOUS_YEAR), str(CURRENT_YEAR)])
+
     df.rename(columns={
         "q05": "5%", "q25": "25%", "q50": "50%", "q75": "75%", "q95": "95%",
         "previous": str(PREVIOUS_YEAR), "current": str(CURRENT_YEAR),
@@ -169,6 +176,13 @@ def get_hydrograph_pentad_all(horizon, station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-25",
         "limit": 1000,
     })
+
+    if df.empty or "code" not in df.columns:
+        logger.warning("get_hydrograph_pentad_all: no data or missing 'code' for station %s", code)
+        return pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
+                                     _horizon_in_year_col(horizon),
+                                     str(PREVIOUS_YEAR), str(CURRENT_YEAR)])
+
     renames = {
         "previous": str(PREVIOUS_YEAR),
         "current": str(CURRENT_YEAR),
@@ -189,6 +203,14 @@ def _get_meteo(station, meteo_type: str) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
+
+    if df.empty or "value" not in df.columns:
+        logger.warning(
+            "_get_meteo: no '%s' data for station %s — returning empty DataFrame",
+            meteo_type, code,
+        )
+        return pd.DataFrame(columns=["code", "date", meteo_type, f"{meteo_type}_norm"])
+
     df.rename(columns={"value": meteo_type, "norm": f"{meteo_type}_norm"}, inplace=True)
     df[meteo_type] = df[meteo_type].astype(float)
     df[f"{meteo_type}_norm"] = df[f"{meteo_type}_norm"].astype(float)
@@ -239,6 +261,16 @@ def get_ml_forecast(horizon, station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
+
+    if df.empty or "date" not in df.columns:
+        logger.warning(
+            "get_ml_forecast: no forecast data for station %s — returning empty DataFrame", code
+        )
+        return pd.DataFrame(columns=[
+            "code", "date", "forecast_date", "model_short", "model_long",
+            "Q5", "Q25", "Q75", "Q95", "E[Q]", "flag", "composition",
+        ])
+
     df.rename(columns={
         "date": "forecast_date", "target": "date",
         "model_type": "model_short", "model_type_description": "model_long",
@@ -276,6 +308,13 @@ def get_linreg_predictor(horizon, station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
+
+    if df.empty or "date" not in df.columns:
+        logger.warning("get_linreg_predictor: no LR forecast data for station %s", code)
+        return pd.DataFrame(columns=[
+            "code", "date", "Date", _horizon_in_year_col(horizon),
+        ])
+
     df.rename(columns={"horizon_in_year": _horizon_in_year_col(horizon)}, inplace=True)
     df.drop(columns=["horizon_type", "horizon_value", "id"], inplace=True, errors="ignore")
     df["Date"] = df["date"] + pd.Timedelta(days=1)
@@ -302,29 +341,42 @@ def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
         ml_params["code"] = code
 
     df_ml = _read_data("postprocessing", "forecast", ml_params)
-    df_ml.rename(columns={
-        "horizon_value": hv_col, "horizon_in_year": hin,
-        "model_type": "model_short", "model_type_description": "model_long",
-        "q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95",
-    }, inplace=True)
-    df_ml.drop(columns=["horizon_type", "target", "id"], inplace=True, errors="ignore")
-    df_ml["Date"] = df_ml["date"] + pd.Timedelta(days=1)
-    df_ml["year"] = df_ml["Date"].dt.year
+    if df_ml.empty or "date" not in df_ml.columns:
+        logger.warning("get_forecasts_all: no ML forecast data for station %s", code)
+        df_ml = pd.DataFrame()
+    else:
+        df_ml.rename(columns={
+            "horizon_value": hv_col, "horizon_in_year": hin,
+            "model_type": "model_short", "model_type_description": "model_long",
+            "q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95",
+        }, inplace=True)
+        df_ml.drop(columns=["horizon_type", "target", "id"], inplace=True, errors="ignore")
+        df_ml["Date"] = df_ml["date"] + pd.Timedelta(days=1)
+        df_ml["year"] = df_ml["Date"].dt.year
 
     # --- Linear regression forecasts ---
     lr_params = {k: v for k, v in ml_params.items() if k != "target"}
     df_lr = _read_data("postprocessing", "lr-forecast", lr_params)
     lr_hv = "decade" if horizon == "decade" else "pentad"
-    df_lr.rename(columns={
-        "horizon_value": lr_hv, "horizon_in_year": hin,
-    }, inplace=True)
-    df_lr.drop(columns=["horizon_type", "discharge_avg", "q_mean", "q_std_sigma", "delta", "id"],
-               inplace=True, errors="ignore")
-    df_lr["model_short"] = "LR"
-    df_lr["model_long"] = "Linear regression (LR)"
-    df_lr["flag"] = None
-    df_lr["Date"] = df_lr["date"] + pd.Timedelta(days=1)
-    df_lr["year"] = df_lr["Date"].dt.year
+
+    if df_lr.empty or "date" not in df_lr.columns:
+        logger.warning("get_forecasts_all: no LR forecast data for station %s", code)
+        df_lr = pd.DataFrame()
+    else:
+        df_lr.rename(columns={
+            "horizon_value": lr_hv, "horizon_in_year": hin,
+        }, inplace=True)
+        df_lr.drop(columns=["horizon_type", "discharge_avg", "q_mean", "q_std_sigma", "delta", "id"],
+                inplace=True, errors="ignore")
+        df_lr["model_short"] = "LR"
+        df_lr["model_long"] = "Linear regression (LR)"
+        df_lr["flag"] = None
+        df_lr["Date"] = df_lr["date"] + pd.Timedelta(days=1)
+        df_lr["year"] = df_lr["Date"].dt.year
+    
+    if df_ml.empty and df_lr.empty:
+        logger.warning("get_forecasts_all: no forecast data at all for station %s", code)
+        return pd.DataFrame()
 
     # Union of columns, missing columns will become NaN
     combined = pd.concat([df_ml, df_lr], ignore_index=True, sort=False)
@@ -370,10 +422,22 @@ def get_data(horizon, station, all_stations) -> dict:
         "forecast_stats":       i18n_models(get_forecast_stats(horizon, station)),
     }
 
-    data["forecasts_all"] = data["forecasts_all"].merge(
-        data["forecast_stats"],
-        on=["code", hin, "model_short", "model_long"],
-        how="left",
-        suffixes=("", "_stats"),
+    # Only merge if both sides have data and the required join keys
+    forecasts_all = data["forecasts_all"]
+    forecast_stats = data["forecast_stats"]
+    merge_keys = ["code", hin, "model_short", "model_long"]
+    can_merge = (
+        not forecasts_all.empty
+        and not forecast_stats.empty
+        and all(k in forecasts_all.columns for k in merge_keys)
+        and all(k in forecast_stats.columns for k in merge_keys)
     )
+    if can_merge:
+        data["forecasts_all"] = forecasts_all.merge(
+            forecast_stats,
+            on=merge_keys,
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
     return data
