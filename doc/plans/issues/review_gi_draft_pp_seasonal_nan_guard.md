@@ -1,6 +1,6 @@
 # PP-029: Guard against NaN in seasonal/quarterly API write
 
-**Status**: Draft
+**Status**: Review
 **Module**: postprocessing_forecasts
 **Priority**: Medium
 **Labels**: `bug`, `postprocessing`, `api`
