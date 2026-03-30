@@ -8,7 +8,7 @@ dependencies = [
     # NOTE: Pinning bokeh<3.5 due to breaking changes in 3.5+ (FuncTickFormatter removed)
     # Panel and HoloViews are also pinned for compatibility
     "panel>=1.4.2,<1.5",
-    "holoviews>=1.18.3,<1.20",
+    "holoviews>=1.18.3,<1.23",
     "bokeh>=3.4.1,<3.5",
     # Data processing
     "pandas>=2.2.2",
