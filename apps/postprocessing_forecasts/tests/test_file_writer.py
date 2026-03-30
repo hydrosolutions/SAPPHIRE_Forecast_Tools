@@ -463,6 +463,70 @@ class TestSaveMonthlyForecastData:
         assert result is None
 
 
+class TestSaveMonthlyForecastDataApiWithoutCsv:
+    """Tests that save_monthly_forecast_data writes to API even when CSV
+    env vars are not configured.
+
+    Regression tests for PP-032: the early return at line 451 when CSV
+    path is missing caused the API write at line 501 to be skipped.
+    """
+
+    @pytest.fixture(autouse=True)
+    def no_csv_env(self, tmp_path):
+        """Deliberately leave CSV env vars unset so CSV path is empty."""
+        overrides = {
+            "ieasyforecast_intermediate_data_path": "",
+            "ieasyforecast_monthly_combined_forecast_file": "",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    @pytest.fixture
+    def monthly_ensemble_data(self):
+        """Monthly joint forecasts with ensemble rows."""
+        return pd.DataFrame(
+            {
+                "code": ["15013", "15013", "15013"],
+                "year": [2024, 2024, 2024],
+                "month": [6, 6, 6],
+                "month_in_year": [6, 6, 6],
+                "date": pd.to_datetime(["2024-06-01"] * 3),
+                "forecasted_discharge": [102.5, 101.0, 103.0],
+                "model_short": ["EM", "Naive Mean", "Skilled Mean"],
+                "composition": ["GBT, LR_Base"] * 3,
+            }
+        )
+
+    def test_api_write_called_when_csv_not_configured(self, monthly_ensemble_data):
+        """PP-032 regression: API write must happen even without CSV path.
+
+        Before the fix, save_monthly_forecast_data() returned early when
+        ieasyforecast_intermediate_data_path or
+        ieasyforecast_monthly_combined_forecast_file was empty, skipping
+        the api_writer._write_monthly_ensemble_to_api() call entirely.
+        """
+        with patch(
+            "src.api_writer._write_monthly_ensemble_to_api",
+            return_value=True,
+        ) as mock_api:
+            file_writer.save_monthly_forecast_data(monthly_ensemble_data)
+            mock_api.assert_called_once()
+
+    def test_api_receives_ensemble_data_without_csv(self, monthly_ensemble_data):
+        """The DataFrame passed to the API writer contains ensemble rows."""
+        with patch(
+            "src.api_writer._write_monthly_ensemble_to_api",
+            return_value=True,
+        ) as mock_api:
+            file_writer.save_monthly_forecast_data(monthly_ensemble_data)
+            call_data = mock_api.call_args[0][0]
+            models = set(call_data["model_short"].unique())
+            assert "EM" in models
+
+
 class TestSaveForecastDataAtomicWrites:
     """Tests that save_forecast_data(PENTAD/DECAD, ...) write correct output files."""
 
