@@ -173,7 +173,7 @@ git fetch origin
 git status
 
 # Check what will be deployed
-git log origin/main..HEAD --oneline  # For main deployments
+git log origin/maxat_sapphire_2..HEAD --oneline  # For production deployments
 git log origin/implementation_planning..HEAD --oneline  # For feature branch
 ```
 

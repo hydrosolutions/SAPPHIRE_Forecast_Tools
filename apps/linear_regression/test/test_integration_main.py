@@ -120,12 +120,12 @@ def _setup_common_mocks(mock_sl, mock_fl, mock_tl):
     mock_fl.perform_linear_regression.return_value = _make_linreg_df()
     mock_fl.perform_forecast.return_value = None
     mock_fl.parse_dates_robust.return_value = pd.to_datetime(pd.Series(["2024-01-05"]))
-    mock_fl.write_linreg_pentad_forecast_data.return_value = None
-    mock_fl.write_linreg_decad_forecast_data.return_value = None
-    mock_fl.write_pentad_hydrograph_data.return_value = None
-    mock_fl.write_pentad_time_series_data.return_value = None
-    mock_fl.write_decad_hydrograph_data.return_value = None
-    mock_fl.write_decad_time_series_data.return_value = None
+    mock_fl.write_linreg_pentad_forecast_data.return_value = True
+    mock_fl.write_linreg_decad_forecast_data.return_value = True
+    mock_fl.write_pentad_hydrograph_data.return_value = True
+    mock_fl.write_pentad_time_series_data.return_value = True
+    mock_fl.write_decad_hydrograph_data.return_value = True
+    mock_fl.write_decad_time_series_data.return_value = True
 
     # tag_library
     mock_tl.get_pentad_in_year.return_value = 1

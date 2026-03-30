@@ -9,7 +9,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from src.postprocessing_tools import forecast_target_date
+from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +130,29 @@ def create_ensemble_forecasts(
     # Drop NaN forecasts
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
+    # --- PP-027: Gate A diagnostic — codes lost at skill-merge + NaN drop ---
+    _input_codes = set(forecasts["code"].unique())
+    _post_merge_codes = set(qualifying["code"].unique()) if not qualifying.empty else set()
+    _gate_a_skipped = _input_codes - _post_merge_codes
+    if _gate_a_skipped:
+        logger.info(
+            "EM: %d station(s) have no skilled forecasts after skill-merge + NaN drop: %s",
+            len(_gate_a_skipped),
+            ", ".join(sorted(_gate_a_skipped)),
+        )
+
     # Step 3: exclude NE (neural ensemble) from ensemble candidates
     qualifying = qualifying[qualifying["model_short"] != "NE"].copy()
+
+    # --- PP-027: Gate B diagnostic — codes lost to NE-only models ---
+    _post_ne_codes = set(qualifying["code"].unique()) if not qualifying.empty else set()
+    _ne_only_codes = _post_merge_codes - _post_ne_codes
+    if _ne_only_codes:
+        logger.info(
+            "EM: %d station(s) dropped — only NE model qualified: %s",
+            len(_ne_only_codes),
+            ", ".join(sorted(_ne_only_codes)),
+        )
 
     if qualifying.empty:
         logger.info("No qualifying forecasts for ensemble creation")
@@ -151,6 +172,9 @@ def create_ensemble_forecasts(
             agg_dict[qcol] = "mean"
 
     ensemble_avg = qualifying.groupby([period_col, "date", "code"]).agg(agg_dict).reset_index()
+    ensemble_avg = enforce_quantile_monotonicity(
+        ensemble_avg, [c for c in _QUANTILE_COLS if c in ensemble_avg.columns]
+    )
     # model_short now holds the composition string (e.g. "LR, TFT")
     ensemble_avg = ensemble_avg.rename(columns={"model_short": "composition"})
     ensemble_avg["model_short"] = "EM"
@@ -159,6 +183,16 @@ def create_ensemble_forecasts(
     ensemble_avg = ensemble_avg[
         ensemble_avg["composition"].apply(is_multi_model_composition)
     ].copy()
+
+    # --- PP-027: Gate C diagnostic — codes with only 1 qualifying model ---
+    _post_comp_codes = set(ensemble_avg["code"].unique()) if not ensemble_avg.empty else set()
+    _single_model_codes = _post_ne_codes - _post_comp_codes
+    if _single_model_codes:
+        logger.info(
+            "EM: %d station(s) dropped — only 1 qualifying model (need 2+): %s",
+            len(_single_model_codes),
+            ", ".join(sorted(_single_model_codes)),
+        )
 
     if ensemble_avg.empty:
         logger.info("No multi-model ensembles after filtering")
@@ -275,6 +309,9 @@ def create_monthly_ensemble_forecasts(
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(["year", "month", "code"]).agg(em_agg).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -379,6 +416,9 @@ def _add_skilled_mean_monthly(
         )
         .reset_index()
     )
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in quantile_cols if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
 
     # Discard single-model groups
@@ -417,6 +457,9 @@ def _add_naive_mean_monthly(
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(["year", "month", "code"]).agg(naive_agg).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in quantile_cols if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
 
@@ -558,6 +601,9 @@ def _create_aggregated_ensemble_forecasts(
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
+        em_avg = enforce_quantile_monotonicity(
+            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+        )
         em_avg = em_avg.rename(columns={"model_short": "composition"})
         em_avg["model_short"] = "EM"
 
@@ -653,6 +699,9 @@ def _add_skilled_mean_aggregated_ens(
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = pool.groupby(time_group_cols).agg(**sm_agg).reset_index()
+    sm_avg = enforce_quantile_monotonicity(
+        sm_avg, [c for c in quantile_cols if c in sm_avg.columns]
+    )
     sm_avg["model_short"] = "Skilled Mean"
 
     sm_avg = sm_avg[sm_avg["composition"].apply(is_multi_model_composition)].copy()
@@ -693,6 +742,9 @@ def _add_naive_mean_aggregated_ens(
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(naive_agg).reset_index()
+    naive_avg = enforce_quantile_monotonicity(
+        naive_avg, [c for c in quantile_cols if c in naive_avg.columns]
+    )
     naive_avg = naive_avg.rename(columns={"model_short": "composition"})
     naive_avg["model_short"] = "Naive Mean"
 

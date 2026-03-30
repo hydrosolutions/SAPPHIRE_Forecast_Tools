@@ -298,14 +298,15 @@ query_lt_schedule() {
         return 0
     }
 
-    # Parse JSON output (uses Python-style JSON, parse with simple extraction)
-    LT_ACTIVE_MODES=$(echo "$json_output" | python3 -c "
+    # Parse JSON output — run_in_venv contaminates stdout with log lines;
+    # the JSON is always the last line, so extract it with tail.
+    LT_ACTIVE_MODES=$(echo "$json_output" | tail -n 1 | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 print(' '.join(d.get('active_modes', [])))
 " 2>/dev/null) || LT_ACTIVE_MODES=""
 
-    LT_SKILL_METRIC_TYPES=$(echo "$json_output" | python3 -c "
+    LT_SKILL_METRIC_TYPES=$(echo "$json_output" | tail -n 1 | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 print(' '.join(d.get('skill_metric_types', [])))

@@ -22,7 +22,7 @@ DEFAULTS = {
         "log_level": None,  # None means use env or default INFO
     },
     "maintenance": {
-        "lookback_days": 30,
+        "lookback_days": 50,
     },
     "operational": {
         "fetch_yesterday": True,

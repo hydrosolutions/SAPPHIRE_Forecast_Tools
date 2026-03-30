@@ -1756,6 +1756,7 @@ class LinRegMaintenance(DockerTaskBase):
         environment = _common_maintenance_env() + [
             f"SAPPHIRE_PREDICTION_MODE={self.prediction_mode}",
             "RUN_MODE=maintenance",
+            "SAPPHIRE_SYNC_MODE=maintenance",
         ]
 
         status, details = self.execute_with_retries(

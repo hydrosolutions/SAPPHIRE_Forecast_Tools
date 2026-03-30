@@ -10,7 +10,6 @@ target-version = "py311"
 exclude = [
     "backend/",
     "apps/backend/",
-    "apps/machine_learning_monthly/",
     "apps/conceptual_model/",
     "apps/daily_runoff/",
     "sapphire/services/",

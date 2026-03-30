@@ -1526,6 +1526,20 @@ def perform_linear_regression(
         3        B       2            250             25    0.0       250.0                  25.0
         5        C       2            180             18    0.0       180.0                  18.0
 
+    Note on issue-date indexing convention:
+        The input DataFrame (data_df) carries ``pentad_in_year`` values computed
+        from each row's own date — the **issue date** of that historical forecast,
+        not the target period. A row dated 2026-03-25 has ``pentad_in_year = 17``
+        and ``discharge_avg`` equal to the mean of March 26–31 (the target, pentad
+        18). Therefore ``forecast_horizon_int = 17`` is correct when forecasting on
+        March 25: it selects all historical March 21–25 issue dates, each carrying
+        the correct target's discharge average.
+
+        The ``horizon_in_year`` and ``horizon_value`` metadata written to the API
+        are overridden to the target pentad (18) in ``linear_regression.py`` after
+        this function returns. This function must NOT receive the target pentad as
+        ``forecast_horizon_int``.
+
     """
     # Test that all input types are as expected.
     if not isinstance(data_df, pd.DataFrame):
@@ -3492,7 +3506,7 @@ def _write_runoff_to_api(
 
     Supports different sync modes:
     - operational (default): Only write today's data
-    - maintenance: Write the last 30 days of data
+    - maintenance: Write the last 90 days of data
     - initial: Write all data (for first-time setup)
 
     Args:
@@ -3568,8 +3582,8 @@ def _write_runoff_to_api(
         data_to_write = data[data["date"] == today]
         logger.info(f"Operational mode: writing {len(data_to_write)} records for date {today}")
     elif sync_mode == "maintenance":
-        # Write the last 30 days of data
-        cutoff = today - pd.Timedelta(days=30)
+        # Write the last 90 days of data
+        cutoff = today - pd.Timedelta(days=90)
         data_to_write = data[data["date"] >= cutoff]
         logger.info(
             f"Maintenance mode: writing {len(data_to_write)} records from {cutoff} to {today}"
@@ -3659,7 +3673,9 @@ def write_linreg_pentad_forecast_data(
             If None, uses legacy year-derivation logic (backward compatibility).
 
     Returns:
-        None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
     # Get the path to the output file
     try:
@@ -3761,12 +3777,13 @@ def write_linreg_pentad_forecast_data(
         # Use provided api_data
         data_for_api = api_data
 
+    api_ok = True
     if data_for_api is not None and not data_for_api.empty:
         try:
             _write_lr_forecast_to_api(data_for_api, "pentad")
         except Exception as e:
-            logger.error(f"API write failed: {e}")
-            # Continue to CSV write as backup
+            _handle_api_write_error(e, "write_linreg_pentad_forecast_data")
+            api_ok = False
 
     # Handle existing file
     existing_data = None
@@ -3879,7 +3896,7 @@ def write_linreg_pentad_forecast_data(
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             raise ValueError(f"Write consistency check failed for pentad: {message}")
 
-    return ret
+    return api_ok
 
 
 def write_linreg_pentad_forecast_data_deprecating(data: pd.DataFrame):
@@ -4010,7 +4027,9 @@ def write_linreg_decad_forecast_data(
             If None, uses legacy year-derivation logic (backward compatibility).
 
     Returns:
-        None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
     # Get the path to the output file
     try:
@@ -4102,12 +4121,13 @@ def write_linreg_decad_forecast_data(
         # Use provided api_data
         data_for_api = api_data
 
+    api_ok = True
     if data_for_api is not None and not data_for_api.empty:
         try:
             _write_lr_forecast_to_api(data_for_api, "decade")
         except Exception as e:
-            logger.error(f"API write failed: {e}")
-            # Continue to CSV write as backup
+            _handle_api_write_error(e, "write_linreg_decad_forecast_data")
+            api_ok = False
 
     # Handle existing file
     if os.path.exists(output_file_path):
@@ -4204,7 +4224,7 @@ def write_linreg_decad_forecast_data(
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             raise ValueError(f"Write consistency check failed for decad: {message}")
 
-    return ret
+    return api_ok
 
 
 def write_linreg_decad_forecast_data_deprecating(data: pd.DataFrame):
@@ -4459,7 +4479,9 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
         norms are to be read from iEH HF.
 
     Returns:
-    None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
 
     # Only keep rows where issue_date is True
@@ -4684,11 +4706,12 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
     runoff_stats["day_of_year"] = runoff_stats["day_of_year"].astype(int)
 
     # --- API Write (before CSV) ---
+    api_ok = True
     try:
         _write_hydrograph_to_api(runoff_stats, "pentad")
     except Exception as e:
-        logger.error(f"Hydrograph API write failed: {e}")
-        # Continue to CSV write as backup
+        _handle_api_write_error(e, "write_pentad_hydrograph_data")
+        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -4734,7 +4757,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - hydrograph overwrites entire file
 
-    return None
+    return api_ok
 
 
 def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
@@ -4747,7 +4770,9 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
         norms are to be read from iEH HF.
 
     Returns:
-    None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
 
     # Validate input data
@@ -5177,11 +5202,12 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
         runoff_stats = runoff_stats.replace([np.inf, -np.inf], np.nan)
 
     # --- API Write (before CSV) ---
+    api_ok = True
     try:
         _write_hydrograph_to_api(runoff_stats, "decade")
     except Exception as e:
-        logger.error(f"Hydrograph API write failed: {e}")
-        # Continue to CSV write as backup
+        _handle_api_write_error(e, "write_decad_hydrograph_data")
+        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_decad_file.
@@ -5285,7 +5311,7 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - hydrograph overwrites entire file
 
-    return None
+    return api_ok
 
 
 def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk=None):
@@ -5442,7 +5468,9 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     data (pd.DataFrame): The data to be written to a csv file.
 
     Returns:
-    None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
     # Drop the rows where the issue dates are False
     data = data[data["issue_date"] == True]
@@ -5473,12 +5501,13 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     )
 
     # --- API Write (before CSV) ---
+    api_ok = True
     api_written_data = None
     try:
         api_written_data = _write_runoff_to_api(data, "pentad")
     except Exception as e:
-        logger.error(f"Runoff API write failed: {e}")
-        # Continue to CSV write as backup
+        _handle_api_write_error(e, "write_pentad_time_series_data")
+        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -5528,7 +5557,7 @@ def write_pentad_time_series_data(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - continue with CSV as backup
 
-    return None
+    return api_ok
 
 
 def write_decad_time_series_data(data: pd.DataFrame):
@@ -5539,7 +5568,9 @@ def write_decad_time_series_data(data: pd.DataFrame):
     data (pd.DataFrame): The data to be written to a csv file.
 
     Returns:
-    None
+        bool: True if no API write exception occurred (including when API is
+            disabled or no data to write). False only if an API write exception
+            was caught in warn/ignore mode.
     """
     # Drop the rows where the issue dates are False
     data = data[data["issue_date"] == True]
@@ -5571,12 +5602,13 @@ def write_decad_time_series_data(data: pd.DataFrame):
     data.loc[:, "decad_in_year"] = (data["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
 
     # --- API Write (before CSV) ---
+    api_ok = True
     api_written_data = None
     try:
         api_written_data = _write_runoff_to_api(data, "decade")
     except Exception as e:
-        logger.error(f"Runoff API write failed: {e}")
-        # Continue to CSV write as backup
+        _handle_api_write_error(e, "write_decad_time_series_data")
+        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -5626,7 +5658,7 @@ def write_decad_time_series_data(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - continue with CSV as backup
 
-    return None
+    return api_ok
 
 
 # endregion

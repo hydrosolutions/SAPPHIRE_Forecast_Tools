@@ -25,7 +25,7 @@ class TestLoadConfig:
 
         cfg = config.load_config()
 
-        assert cfg["maintenance"]["lookback_days"] == 30
+        assert cfg["maintenance"]["lookback_days"] == 50
         assert cfg["operational"]["fetch_yesterday"] is True
         assert cfg["operational"]["fetch_morning"] is True
 

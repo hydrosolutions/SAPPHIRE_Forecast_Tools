@@ -20,3 +20,14 @@ def _reset_api_singletons():
     fl._reset_api_clients()
     yield
     fl._reset_api_clients()
+
+
+@pytest.fixture()
+def disable_api_client(monkeypatch):
+    """Force _get_postprocessing_client() to return None.
+
+    Use this in CSV-path tests so that the API-first path in
+    get_last_forecast_dates_per_gauge() is skipped and the CSV fallback
+    is exercised.
+    """
+    monkeypatch.setattr(fl, "_get_postprocessing_client", lambda: None)

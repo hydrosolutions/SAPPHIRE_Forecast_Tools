@@ -39,18 +39,18 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|--------|----------|--------|------|
 | **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | Review | [`review_gi_draft_infra_date_mismatch_and_sentinel.md`](issues/review_gi_draft_infra_date_mismatch_and_sentinel.md) |
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/high_prio_gi_draft_ml_maintenance_hindcast_file_not_found.md) |
-| **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
+| **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Draft | [`high_prio_gi_draft_ml_hindcast_subprocess_root_cause.md`](issues/high_prio_gi_draft_ml_hindcast_subprocess_root_cause.md) |
 | **ML-003** | Migrate maintenance scripts to API-primary reads (`fill_ml_gaps`, `recalculate_nan_forecasts`, `add_new_station`) | ml | **High** | Review | [`high_prio_gi_draft_ml_api_primary_reads.md`](issues/high_prio_gi_draft_ml_api_primary_reads.md) |
-| **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`high_prio_gi_draft_ml_csv_schema_corruption_fix.md`](issues/high_prio_gi_draft_ml_csv_schema_corruption_fix.md) |
-| **ML-010** | Read old_forecast from API with CSV fallback in make_forecast.py | ml | **High** | Review | [`high_prio_gi_draft_ml_api_read_old_forecasts.md`](issues/high_prio_gi_draft_ml_api_read_old_forecasts.md) |
+| **ML-009** | Fix ML forecast CSV schema corruption (API column leak + corruption loop) | ml | **Critical** | Review | [`review_gi_draft_ml_csv_schema_corruption_fix.md`](issues/review_gi_draft_ml_csv_schema_corruption_fix.md) |
+| **ML-010** | Read old_forecast from API with CSV fallback in make_forecast.py | ml | **High** | Review | [`review_gi_draft_ml_api_read_old_forecasts.md`](issues/review_gi_draft_ml_api_read_old_forecasts.md) |
 | **ML-004** | Hindcast gap-fill never persists to API — silent write failure (3 bugs) | ml | **Critical** | Review | [`review_gi_draft_ml_hindcast_api_write_broken.md`](issues/review_gi_draft_ml_hindcast_api_write_broken.md) |
 | **ML-005** | ML consistency check reads forecasts without station code filter | ml | **Medium** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) (Phase 4) |
-| **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Review | [`high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/high_prio_gi_draft_ml_nan_recalc_shape_mismatch.md) |
+| **ML-006** | NumPy shape mismatch in recalculate_nan_forecasts `.loc` assignment | ml | **High** | Review | [`review_gi_draft_ml_nan_recalc_shape_mismatch.md`](issues/review_gi_draft_ml_nan_recalc_shape_mismatch.md) |
 | **ML-007** | Non-deterministic API pagination causes inconsistent gap detection | ml | **Medium** | Review | [`mid_prio_gi_draft_ml_api_pagination_nondeterministic.md`](issues/mid_prio_gi_draft_ml_api_pagination_nondeterministic.md) | Option 1 (ORDER BY): colleague; Option 2 (per-code reads): done |
-| **ML-008b** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Draft | [`high_prio_gi_draft_ml_fill_gaps_null_loop.md`](issues/high_prio_gi_draft_ml_fill_gaps_null_loop.md) | — |
+| **ML-008b** | fill_ml_gaps infinite hindcast loop on null-discharge (flag=3) rows | ml | **High** | Review | [`review_gi_draft_ml_fill_gaps_null_loop.md`](issues/review_gi_draft_ml_fill_gaps_null_loop.md) | — |
 | ~~**ML-011**~~ | ~~flag=2 semantic collision in make_forecast.py~~ | ~~ml~~ | | Deleted | — | Deleted 2026-03-20: no behavioral impact |
-| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | Draft | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
-| **ML-013** | recalculate_nan_forecasts API write overwrites valid operational rows | ml | **High** | Draft | [`high_prio_gi_draft_ml_recalc_api_overwrite.md`](issues/high_prio_gi_draft_ml_recalc_api_overwrite.md) | ML-012 |
+| **ML-012** | recalculate_nan_forecasts crashes on NaN flag values (astype crash) | ml | **High** | Review | [`high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
+| **ML-013** | recalculate_nan_forecasts API write overwrites valid operational rows | ml | **High** | Review | [`review_gi_draft_ml_recalc_api_overwrite.md`](issues/review_gi_draft_ml_recalc_api_overwrite.md) | ML-012 |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
@@ -77,7 +77,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-001** | Create Makefile and local dev infrastructure | infra | **High** | Draft | [`high_prio_gi_draft_infra_makefile_local_dev.md`](issues/high_prio_gi_draft_infra_makefile_local_dev.md) | — |
 | **INFRA-002** | Update uv.lock files for all py312 modules (security) | infra | **Medium** | Open | See `security_updates.md` + `docker_health_score_improvement.md` | — |
 | **INFRA-003** | Add pytest-cov with threshold enforcement to CI | infra | **Medium** | Open | — (from `architecture_review_claude.md` gap #10) | — |
-| **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | Draft | [`high_prio_gi_draft_infra_forecast_date_rule.md`](issues/high_prio_gi_draft_infra_forecast_date_rule.md) | — |
+| **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | In Progress | [`high_prio_gi_draft_infra_forecast_date_rule.md`](issues/high_prio_gi_draft_infra_forecast_date_rule.md) | — |
 | **INFRA-005** | Remove `model_long` from app pipeline (incremental) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_model_registry.md`](issues/mid_prio_gi_draft_infra_model_registry.md) | — |
 | **INFRA-007** | Fix ML forecast API reader & align write/read architecture | infra | **High** | Review | [`review_gi_draft_fix_ml_forecast_api_reader.md`](issues/review_gi_draft_fix_ml_forecast_api_reader.md) | Phase 3 cleanup pending production deployment |
 | **INFRA-008** | CPU-only PyTorch + Dockerize long_term_forecasting | infra | **High** | Review | [`dockerization_ltf_and_optimization_dockerization.md`](dockerization_ltf_and_optimization_dockerization.md) | — |
@@ -86,6 +86,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-011** | Upstream module org-scoped API reads (audit + deferred fixes) | infra | **Low** | In Progress | [`low_prio_gi_draft_infra_upstream_org_scoped_reads.md`](issues/low_prio_gi_draft_infra_upstream_org_scoped_reads.md) | PP-025, INFRA-009 |
 | **INFRA-012** | Multi-org safety guards (write guard, collision check, isolation test) | infra | **High** | Review | [`review_gi_draft_infra_multi_org_safety_guards.md`](issues/review_gi_draft_infra_multi_org_safety_guards.md) | — |
 | ~~**INFRA-013**~~ | ~~Postprocessing API container crashes on bulk forecast writes (118 restarts)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | — |
+| **INFRA-014** | Extend validate_pipeline.py: JSON output, baseline/delta, new checks | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_validate_pipeline_extensions.md`](issues/mid_prio_gi_draft_infra_validate_pipeline_extensions.md) | — |
+| ~~**INFRA-015**~~ | ~~Audit pentad/decade boundary date convention across modules~~ | ~~infra~~ | | Review | [`review_gi_draft_infra_pentad_decade_boundary_audit.md`](issues/review_gi_draft_infra_pentad_decade_boundary_audit.md) | LR-008 (only finding) |
+| **INFRA-016** | Switch default branch from `main` to `maxat_sapphire_2` (v2 cut) | infra | **High** | In Progress | [`high_prio_gi_draft_infra_default_branch_switch.md`](issues/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-001** | Synthetic integration tests with fake data | fd | **Medium** | Draft | [`gi_draft_fd_synthetic_integration_tests.md`](issues/gi_draft_fd_synthetic_integration_tests.md) | — |
 
 ---
@@ -98,6 +101,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **PREPG-001** | Yearly snow norm recalculation | **Medium** | Review | [`mid_prio_gi_draft_prepg_yearly_norm_recalculation.md`](issues/mid_prio_gi_draft_prepg_yearly_norm_recalculation.md) | Historical snow CSVs must exist |
 | **PREPG-002** | Add coverage endpoints to preprocessing service | **Low** | Draft | [`low_prio_gi_draft_preprocessing_coverage_endpoints.md`](issues/low_prio_gi_draft_preprocessing_coverage_endpoints.md) | — |
+| ~~**PREPG-003**~~ | ~~Snow operational API write discards all data — wall-clock-anchored window vs DG lag~~ | | Closed (Not a Bug) | [`archive/high_prio_gi_draft_prepg_snow_api_operational_window.md`](issues/archive/high_prio_gi_draft_prepg_snow_api_operational_window.md) | — |
+| ~~**PREPG-005**~~ | ~~Meteo API write discards all forecast rows — `date <= today` upper bound~~ | **High** | Complete | [`archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md`](issues/archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md) | — |
 
 ### Preprocessing Runoff (`prepq`)
 
@@ -112,7 +117,11 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LR-003** | Clean up dead `last_successful_run` code and state | **Low** | Draft | [`low_prio_gi_draft_LR_cleanup_dead_run_date_code.md`](issues/low_prio_gi_draft_LR_cleanup_dead_run_date_code.md) | — |
 | **LR-004** | Remove iEH HF SDK dependency (use config-file path) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) Phase 2 | — |
-| **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Draft | [`high_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/high_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
+| **LR-005** | LR hindcast NaN API write skip has misleading log message | **Low** | Archived | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) | — |
+| **LR-006** | Fix maintenance script sync mode and hindcast auto-detect filenames | **High** | Review | [`review_gi_draft_lr_maintenance_and_autodetect_fixes.md`](issues/review_gi_draft_lr_maintenance_and_autodetect_fixes.md) | — |
+| **LR-007** | API write failures are silent when API is enabled | **High** | Review | [`review_gi_draft_lr_api_write_loud_failure.md`](issues/review_gi_draft_lr_api_write_loud_failure.md) | LR-006 (shared shell script edit) |
+| **LR-008** | Align LR `horizon_in_year` metadata with target-period convention | **High** | Review | [`review_gi_draft_lr_pentad_horizon_offset.md`](issues/review_gi_draft_lr_pentad_horizon_offset.md) | — |
+| ~~**LR-009**~~ | ~~Dec 31 cross-year boundary: wrong year context in `perform_linear_regression`~~ | ~~**High**~~ | Closed (Invalid) | [`archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) | LR-008 |
 
 ### Long-Term Forecasting (`ltf`)
 
@@ -120,6 +129,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **LTF-001** | `--today` flag in `run_forecast.py` runs zero models | **Medium** | Review | [`review_gi_draft_lt_today_flag_runs_no_models.md`](issues/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | **LTF-002** | SQL org-scoping for long-term forecasting queries | **High** | Review | [`review_gi_draft_ltf_sql_org_scoping.md`](issues/review_gi_draft_ltf_sql_org_scoping.md) | INFRA-009 (complete), INFRA-012 (complete) |
+| ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
+| **LTF-004** | Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation | **High** | Draft | [`high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -142,13 +153,18 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-017**~~ | ~~Quarterly forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
 | ~~**PP-018**~~ | ~~Seasonal forecast postprocessing (aggregation + ensembles + skill metrics)~~ | | Complete | See `postprocessing_unified_plan.md` Phase 4b | — |
 | **PP-019** | Propagate quantiles through short-term ensemble creation | **High** | Review | [`review_gi_draft_pp_short_term_ensemble_quantiles.md`](issues/review_gi_draft_pp_short_term_ensemble_quantiles.md) | — |
-| **PP-020** | Probabilistic forecast quality metrics & documentation | **Medium** | Draft | [`mid_prio_gi_draft_pp_probabilistic_forecast_quality.md`](issues/mid_prio_gi_draft_pp_probabilistic_forecast_quality.md) | PP-019 (partial) |
+| **PP-020** | Probabilistic forecast quality metrics & documentation | **Medium** | Review | [`review_gi_draft_pp_probabilistic_forecast_quality.md`](issues/review_gi_draft_pp_probabilistic_forecast_quality.md) | PP-019 (complete) |
 | **PP-021** | Improve short-term maintenance pipeline efficiency and stale quantile detection | **High** | Review | [`review_gi_draft_pp_maintenance_pipeline_efficiency.md`](issues/review_gi_draft_pp_maintenance_pipeline_efficiency.md) | PP-019 (complete) |
-| **PP-022** | Fix stale-record refresh and minor inconsistencies in maintenance pipeline | **Critical** | Review | [`review_gi_draft_pp_maintenance_stale_refresh_fix.md`](issues/review_gi_draft_pp_maintenance_stale_refresh_fix.md) | PP-021 (complete) |
-| **PP-023** | Period-aware aggregation of ML daily targets (fix contamination from adjacent periods) | **Critical** | Review | [`review_gi_draft_pp_period_aware_aggregation.md`](issues/review_gi_draft_pp_period_aware_aggregation.md) | — |
+| ~~**PP-022**~~ | ~~Fix stale-record refresh and minor inconsistencies in maintenance pipeline~~ | | Complete | [`archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md`](issues/archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md) | PP-021 (complete) |
+| ~~**PP-023**~~ | ~~Period-aware aggregation of ML daily targets (fix contamination from adjacent periods)~~ | | Complete | [`archive/review_gi_draft_pp_period_aware_aggregation.md`](issues/archive/review_gi_draft_pp_period_aware_aggregation.md) | — |
 | **PP-024** | Write maintenance gap-fill records directly to API (DB retains gaps after maintenance) | **High** | Review | [`review_gi_draft_pp_maintenance_api_write.md`](issues/review_gi_draft_pp_maintenance_api_write.md) | Absorbed into PP-022 |
 | **PP-025** | Org-scoped data readers (add codes filtering to all read functions) | **High** | Complete | [`review_gi_draft_pp_org_scoped_data_readers.md`](issues/review_gi_draft_pp_org_scoped_data_readers.md) | INFRA-009 (complete) |
-| **PP-026** | Clean null-discharge phantom forecasts from DB and prevent new ones | **High** | In Progress | [`high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
+| ~~**PP-026**~~ | ~~Make consumers flag-aware for null-discharge ML forecasts; clean stale flag=1/2 records~~ | | Complete | [`archive/high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/archive/high_prio_gi_draft_pp_clean_null_forecasts.md) | — |
+| **PP-027** | Add per-station observability when EM ensemble is skipped | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_silent_skip_observability.md`](issues/mid_prio_gi_draft_pp_em_silent_skip_observability.md) | — |
+| ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ (Bug 3 monthly reopened+fixed 2026-03-26: q50 fallback to q) | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
+| **PP-029** | NaN guard in seasonal/quarterly API write (`_write_aggregated_forecasts_to_api`) | **Medium** | Draft | [`mid_prio_gi_draft_pp_seasonal_nan_guard.md`](issues/mid_prio_gi_draft_pp_seasonal_nan_guard.md) | — |
+| **PP-030** | Fix EM skill metric degradation in recalculate_skill_metrics.py (boundary-pentad n_pairs=1-2) | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_recalc_boundary_fix.md`](issues/mid_prio_gi_draft_pp_em_recalc_boundary_fix.md) | — |
+| **PP-031** | Pentad/decad aggregation does not select boundary issue days (shared code path in `_normalize_ml_forecasts`) | **High** | Draft | [`high_prio_gi_draft_pp_pentad_date_misalignment.md`](issues/high_prio_gi_draft_pp_pentad_date_misalignment.md) | PP-023 (complete) |
 
 ### Forecast Dashboard (`fd`)
 
@@ -182,6 +198,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **DOC-001** | Add Quick Start section to README | infra | **Medium** | Open | See `documentation_improvement_plan.md` Priority 1 |
 | **DOC-002** | Fix incomplete TODOs in doc/configuration.md | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 2 |
 | **DOC-003** | Create doc/modules/ documentation structure | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 3 |
+| **DOC-004** | Update `data_flow_long_term.md` — seasonal pipeline, model output specs, config conventions (Assigned: @sandrohurni, @mabesa) | doc, LTF, PP | **Medium** | Draft | [`mid_prio_gi_draft_doc_data_flow_long_term_gaps.md`](issues/mid_prio_gi_draft_doc_data_flow_long_term_gaps.md) |
 
 ---
 
@@ -215,6 +232,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|------|
 | LR-001 | Leap year date handling and hindcast mode | 2026-02-03 | [`archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md) |
 | LR-002 | Replace `last_successful_run` file with "just run for today" | 2026-03-03 | [`archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md`](issues/archive/gi_LR-002_replace_last_run_file_COMPLETED_2026-03-03.md) |
+| LR-005 | LR hindcast NaN API write skip — Issues A+C resolved; Issue B (log message) archived as low-prio | 2026-03-24 | [`archive/low_prio_gi_draft_lr_hindcast_station_restriction.md`](issues/archive/low_prio_gi_draft_lr_hindcast_station_restriction.md) |
+| LR-009 | Dec 31 cross-year boundary: wrong year context in `perform_linear_regression` — Closed (Invalid) — predicated on wrong LR-008 diagnosis | 2026-03-26 | [`archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md`](issues/archive/high_prio_gi_draft_lr_dec31_cross_year_boundary.md) |
 
 ### Postprocessing (`pp`)
 
@@ -228,12 +247,22 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
 | PP-017 | Quarterly forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
 | PP-018 | Seasonal forecast postprocessing (aggregation + ensembles + skill metrics) | 2026-03-05 | See `postprocessing_unified_plan.md` Phase 4b |
+| PP-022 | Fix stale-record refresh and minor inconsistencies in maintenance pipeline | 2026-03-24 | [`archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md`](issues/archive/review_gi_draft_pp_maintenance_stale_refresh_fix.md) |
+| PP-023 | Period-aware aggregation of ML daily targets (fix contamination from adjacent periods) | 2026-03-24 | [`archive/review_gi_draft_pp_period_aware_aggregation.md`](issues/archive/review_gi_draft_pp_period_aware_aggregation.md) |
+| PP-026 | Make consumers flag-aware for null-discharge ML forecasts — Phase 1 code fixes done; Phase 2 DB cleanup skipped (harmless, tombstones needed) | 2026-03-24 | [`archive/high_prio_gi_draft_pp_clean_null_forecasts.md`](issues/archive/high_prio_gi_draft_pp_clean_null_forecasts.md) |
+| PP-028 | Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics — Bug 3 monthly reopened+fixed 2026-03-26 (q50 fallback to q in skill_metrics.py:1091) | 2026-03-26 | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) |
 
 ### Machine Learning (`ml`)
 
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | ML-BF3 | ML datetime format crash blocks API write (BF-3) | 2026-03-14 | See `review_checklist_local_2026-03-13.md` BF-3 |
+
+### Long-Term Forecasting (`ltf`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| LTF-003 | run_forecast.py sets flag=0 on null forecasts — Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation; Fix 2 (skeleton record guard) not implemented but non-critical | 2026-03-27 | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) |
 
 ### API (`api`)
 
@@ -298,4 +327,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-03-20 (ML-011 deleted — no behavioral impact; ML-012/013 added to index; ML-006 status→Review; ML-008b renumbered from ML-011)*
+*Last updated: 2026-03-26 (LR-007 → Review; LR-008 title updated to target-period convention; LR-009 → Closed (Invalid) — predicated on wrong LR-008 diagnosis; LR-008 → Review)*

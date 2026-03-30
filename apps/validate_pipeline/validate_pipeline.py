@@ -22,11 +22,13 @@ Exit codes:
 import argparse
 import calendar
 import contextlib
+import json
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 
@@ -67,6 +69,15 @@ SHORT_TERM_MODELS = ["LR", "TFT", "TiDE", "TSMixer", "EM", "NE"]
 # Quantile columns in ML forecasts.
 # q50 is stored as forecasted_discharge in short-term Forecast records.
 QUANTILE_COLS = ["q05", "q25", "q75", "q95"]
+
+# Quantile columns in long-term (monthly) forecasts.
+LT_QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
+
+# Discharge column name in long-term forecasts.
+LT_DISCHARGE_COL = "q"
+
+# Default threshold (days) for data freshness checks.
+_FRESHNESS_THRESHOLD_DEFAULT = 3
 
 # High limit for API reads so we get enough records for validation.
 READ_LIMIT = 5000
@@ -140,6 +151,8 @@ class CheckResult:
     record_count: int = 0
     module: str = ""  # Source pipeline module, e.g. "preprocessing_runoff"
     data: pd.DataFrame | None = field(default=None, repr=False)
+    max_date: str | None = None
+    counts: dict = field(default_factory=dict)
 
 
 def _status_tag(status: str) -> str:
@@ -151,6 +164,130 @@ def _status_tag(status: str) -> str:
         "SKIP": "\033[0;34m[SKIP]\033[0m",
     }
     return tags.get(status, f"[{status}]")
+
+
+# ---------------------------------------------------------------------------
+# JSON serialisation
+# ---------------------------------------------------------------------------
+
+
+def results_to_json(
+    results: list[CheckResult],
+    metadata: dict | None = None,
+) -> dict:
+    """Serialise check results to a JSON-compatible dict.
+
+    Args:
+        results: List of check results.
+        metadata: Optional metadata (forecast_date, target) stored
+            under the ``_meta`` key.
+
+    Returns:
+        Dict keyed by check name with status, detail, record_count,
+        module, max_date, and counts fields.
+    """
+    payload: dict = {}
+    if metadata:
+        payload["_meta"] = metadata
+    for r in results:
+        payload[r.name] = {
+            "status": r.status,
+            "detail": r.detail,
+            "record_count": r.record_count,
+            "module": r.module,
+            "max_date": r.max_date,
+            "counts": r.counts,
+        }
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Baseline / delta mode
+# ---------------------------------------------------------------------------
+
+
+def write_baseline(
+    results: list[CheckResult],
+    forecast_date: date,
+    target: str,
+    path: str,
+) -> None:
+    """Write a baseline JSON snapshot for later delta comparison.
+
+    Args:
+        results: Check results to serialise.
+        forecast_date: The forecast date for the current run.
+        target: Pipeline target (e.g. "short-term").
+        path: File path to write the baseline JSON to.
+    """
+    metadata = {
+        "forecast_date": forecast_date.isoformat(),
+        "target": target,
+    }
+    payload = results_to_json(results, metadata=metadata)
+    Path(path).write_text(json.dumps(payload, indent=2))
+
+
+def load_and_validate_baseline(
+    path: str,
+    forecast_date: date,
+    target: str,
+) -> dict:
+    """Load baseline JSON and validate metadata matches current run.
+
+    Args:
+        path: File path to the baseline JSON.
+        forecast_date: The forecast date for the current run.
+        target: Pipeline target (e.g. "short-term").
+
+    Returns:
+        The loaded baseline dict.
+
+    Raises:
+        FileNotFoundError: If baseline file does not exist.
+        ValueError: If forecast_date or target do not match.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Baseline file not found: {path}")
+    baseline = json.loads(p.read_text())
+    meta = baseline.get("_meta", {})
+    if meta.get("forecast_date") != forecast_date.isoformat():
+        raise ValueError(
+            f"Baseline forecast_date {meta.get('forecast_date')} "
+            f"!= current {forecast_date.isoformat()}"
+        )
+    if meta.get("target") != target:
+        raise ValueError(f"Baseline target {meta.get('target')!r} != current {target!r}")
+    return baseline
+
+
+def compute_deltas(current_json: dict, baseline_json: dict) -> list[str]:
+    """Compare record counts between current and baseline runs.
+
+    Args:
+        current_json: Current run results as JSON-compatible dict.
+        baseline_json: Baseline run results as JSON-compatible dict.
+
+    Returns:
+        List of delta report lines. WARN for decreases, INFO for
+        increases, nothing for unchanged.
+    """
+    lines: list[str] = []
+    for key in current_json:
+        if key == "_meta":
+            continue
+        cur_count = current_json[key].get("record_count", 0)
+        if key not in baseline_json:
+            lines.append(f"DELTA INFO: {key} not in baseline (new check)")
+            continue
+        base_count = baseline_json[key].get("record_count", 0)
+        delta = cur_count - base_count
+        if delta < 0:
+            lines.append(f"DELTA WARN: {key} count decreased from {base_count} to {cur_count}")
+        elif delta > 0:
+            lines.append(f"DELTA INFO: {key} count increased from {base_count} to {cur_count}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +339,7 @@ def check_presence(
             data=df,
         )
 
-    return CheckResult(
+    result = CheckResult(
         name=check_name,
         status="PASS",
         detail=f"{len(df)} records",
@@ -210,6 +347,10 @@ def check_presence(
         module=module,
         data=df,
     )
+    if "date" in df.columns and not df.empty:
+        raw = pd.to_datetime(df["date"], errors="coerce").max()
+        result.max_date = raw.date().isoformat() if pd.notna(raw) else None
+    return result
 
 
 def run_tier1_short_term(
@@ -386,8 +527,19 @@ def run_tier1_long_term(
 # ---------------------------------------------------------------------------
 
 
-def check_discharge_non_negative(results: list[CheckResult]) -> CheckResult:
-    """Verify that discharge / forecasted_discharge values are >= 0."""
+def check_discharge_non_negative(
+    results: list[CheckResult],
+    discharge_cols: tuple[str, ...] = ("discharge", "forecasted_discharge"),
+) -> CheckResult:
+    """Verify that discharge / forecasted_discharge values are >= 0.
+
+    Args:
+        results: Tier 1 check results containing DataFrames.
+        discharge_cols: Column names to check for negative values.
+
+    Returns:
+        CheckResult with PASS, FAIL, or SKIP status.
+    """
     bad_count = 0
     total = 0
     sources: list[str] = []
@@ -395,7 +547,7 @@ def check_discharge_non_negative(results: list[CheckResult]) -> CheckResult:
     for r in results:
         if r.data is None or r.data.empty:
             continue
-        for col in ("discharge", "forecasted_discharge"):
+        for col in discharge_cols:
             if col in r.data.columns:
                 series = pd.to_numeric(r.data[col], errors="coerce")
                 negatives = series.dropna() < 0
@@ -461,15 +613,28 @@ def check_no_nan_in_forecasts(results: list[CheckResult]) -> CheckResult:
     )
 
 
-def check_quantile_ordering(results: list[CheckResult]) -> CheckResult:
-    """Verify q05 <= q25 <= q75 <= q95 row-wise."""
+def check_quantile_ordering(
+    results: list[CheckResult],
+    quantile_cols: list[str] | None = None,
+) -> CheckResult:
+    """Verify quantile columns are non-decreasing row-wise.
+
+    Args:
+        results: Tier 1 check results containing DataFrames.
+        quantile_cols: Ordered list of quantile column names to check.
+            Defaults to QUANTILE_COLS (short-term: q05, q25, q75, q95).
+
+    Returns:
+        CheckResult with PASS, FAIL, or SKIP status.
+    """
+    cols = quantile_cols if quantile_cols is not None else QUANTILE_COLS
     bad_count = 0
     total = 0
 
     for r in results:
         if r.data is None or r.data.empty:
             continue
-        cols_present = [c for c in QUANTILE_COLS if c in r.data.columns]
+        cols_present = [c for c in cols if c in r.data.columns]
         if len(cols_present) < 2:
             continue
 
@@ -615,10 +780,254 @@ def check_skill_metric_ranges(results: list[CheckResult]) -> CheckResult:
     )
 
 
+def check_ml_flag_distribution(
+    tier1_results: list[CheckResult],
+) -> CheckResult:
+    """Check ML forecast flag distribution for stuck-flag detection.
+
+    Counts records per flag value across all ML forecast results.
+    Emits WARN if all records carry the same flag value, which may
+    indicate a stuck flag assignment bug.
+
+    Args:
+        tier1_results: Tier 1 check results to inspect.
+
+    Returns:
+        CheckResult with PASS, WARN, or SKIP status.
+    """
+    ml_models = {"TFT", "TiDE", "TSMixer"}
+    flag_counts: dict[str, int] = {}
+    total = 0
+
+    for r in tier1_results:
+        # Only check ML model forecast results
+        if not any(m in r.name for m in ml_models):
+            continue
+        if r.data is None or r.data.empty:
+            continue
+        if "flag" not in r.data.columns:
+            continue
+        for flag_val in r.data["flag"].dropna():
+            key = str(flag_val)
+            flag_counts[key] = flag_counts.get(key, 0) + 1
+            total += 1
+
+    if total == 0:
+        return CheckResult(
+            name="ML flag distribution",
+            status="SKIP",
+            detail="no ML forecast data with flag column",
+        )
+
+    result = CheckResult(
+        name="ML flag distribution",
+        status="PASS",
+        detail=f"{total} records, {len(flag_counts)} distinct flag value(s)",
+        record_count=total,
+        counts=flag_counts,
+    )
+    if len(flag_counts) == 1:
+        only_flag = next(iter(flag_counts))
+        result.status = "WARN"
+        result.detail = f"all {total} records have flag={only_flag!r} — possible stuck flag"
+    return result
+
+
+def check_snow_operational_values(
+    tier1_results: list[CheckResult],
+) -> CheckResult:
+    """Detect whether snow records contain only year-2000 norm dates.
+
+    Snow records may be climatological norms (year-2000 dates) or
+    operational records (current-year dates). If all dates fall in
+    year 2000, this likely indicates the PREPG-003 symptom where the
+    operational write window was missed.
+
+    Args:
+        tier1_results: Tier 1 check results to inspect.
+
+    Returns:
+        CheckResult with PASS, WARN, or SKIP status.
+    """
+    snow_results = [r for r in tier1_results if "Snow" in r.name]
+    all_dates: list[date] = []
+
+    for r in snow_results:
+        if r.data is None or r.data.empty:
+            continue
+        if "date" not in r.data.columns:
+            continue
+        parsed = pd.to_datetime(r.data["date"], errors="coerce").dropna()
+        all_dates.extend(d.date() for d in parsed)
+
+    if not all_dates:
+        return CheckResult(
+            name="Snow operational values",
+            status="SKIP",
+            detail="no snow data to check",
+        )
+
+    years = {d.year for d in all_dates}
+    if years == {2000}:
+        return CheckResult(
+            name="Snow operational values",
+            status="WARN",
+            detail=(
+                "all snow dates are year-2000 norms — "
+                "operational update may have been missed (PREPG-003)"
+            ),
+            record_count=len(all_dates),
+        )
+    return CheckResult(
+        name="Snow operational values",
+        status="PASS",
+        detail=f"{len(all_dates)} records, years: {sorted(years)}",
+        record_count=len(all_dates),
+    )
+
+
+def check_em_ne_parity(
+    tier1_results: list[CheckResult],
+    horizon: str,
+) -> CheckResult:
+    """Check EM and NE record counts match per horizon.
+
+    A mismatch between EM and NE record counts for the same horizon
+    indicates an incomplete ensemble and triggers WARN.
+
+    Args:
+        tier1_results: Tier 1 check results to inspect.
+        horizon: API horizon string (e.g. "pentad").
+
+    Returns:
+        CheckResult with PASS, WARN, or SKIP status.
+    """
+    em_count = 0
+    ne_count = 0
+
+    for r in tier1_results:
+        if r.data is None or r.data.empty:
+            continue
+        if f"Forecasts (EM, {horizon})" == r.name:
+            em_count = r.record_count
+        elif f"Forecasts (NE, {horizon})" == r.name:
+            ne_count = r.record_count
+
+    if em_count == 0 and ne_count == 0:
+        return CheckResult(
+            name=f"EM/NE parity ({horizon})",
+            status="SKIP",
+            detail="no EM or NE records to compare",
+        )
+
+    if em_count != ne_count:
+        return CheckResult(
+            name=f"EM/NE parity ({horizon})",
+            status="WARN",
+            detail=(f"EM={em_count} records, NE={ne_count} records — ensemble may be incomplete"),
+            counts={"EM": em_count, "NE": ne_count},
+        )
+    return CheckResult(
+        name=f"EM/NE parity ({horizon})",
+        status="PASS",
+        detail=f"EM and NE both have {em_count} records",
+        record_count=em_count,
+        counts={"EM": em_count, "NE": ne_count},
+    )
+
+
+def check_data_freshness(
+    tier1_results: list[CheckResult],
+    forecast_date: date,
+) -> CheckResult:
+    """Check data freshness against forecast_date.
+
+    For each dataset in tier1_results that has a max_date, compute the
+    lag (forecast_date - max_date). Emit WARN if any dataset's max_date
+    is more than FRESHNESS_THRESHOLD_DAYS older than forecast_date.
+
+    The threshold defaults to _FRESHNESS_THRESHOLD_DEFAULT and can be
+    overridden with the FRESHNESS_THRESHOLD_DAYS environment variable.
+
+    Args:
+        tier1_results: Tier 1 check results with max_date populated.
+        forecast_date: The forecast date for the current run.
+
+    Returns:
+        CheckResult with PASS, WARN, or SKIP status.
+    """
+    threshold = int(os.environ.get("FRESHNESS_THRESHOLD_DAYS", str(_FRESHNESS_THRESHOLD_DEFAULT)))
+    stale: list[str] = []
+    checked = 0
+
+    for r in tier1_results:
+        if r.max_date is None:
+            continue
+        try:
+            max_dt = date.fromisoformat(r.max_date)
+        except ValueError:
+            continue
+        lag = (forecast_date - max_dt).days
+        checked += 1
+        if lag > threshold:
+            stale.append(f"{r.name}: max_date={r.max_date} (lag={lag}d)")
+
+    if checked == 0:
+        return CheckResult(
+            name="Data freshness",
+            status="SKIP",
+            detail="no max_date information available",
+        )
+    if stale:
+        return CheckResult(
+            name="Data freshness",
+            status="WARN",
+            detail=(f"{len(stale)} dataset(s) stale (>{threshold}d): " + "; ".join(stale)),
+        )
+    return CheckResult(
+        name="Data freshness",
+        status="PASS",
+        detail=f"all {checked} datasets fresh (threshold={threshold}d)",
+        record_count=checked,
+    )
+
+
+def run_tier2_long_term(
+    tier1_results: list[CheckResult],
+) -> list[CheckResult]:
+    """Run Tier 2 correctness checks for long-term (monthly) forecasts.
+
+    Applies quantile ordering and discharge non-negative checks using
+    long-term column names, plus skill metric range checks.
+
+    Args:
+        tier1_results: Tier 1 long-term check results.
+
+    Returns:
+        List of CheckResult from long-term correctness checks.
+    """
+    results: list[CheckResult] = []
+
+    # Long-term uses a wider quantile set
+    results.append(check_quantile_ordering(tier1_results, quantile_cols=LT_QUANTILE_COLS))
+    # Long-term discharge column is "q"
+    results.append(
+        check_discharge_non_negative(
+            tier1_results,
+            discharge_cols=(LT_DISCHARGE_COL, "forecasted_discharge"),
+        )
+    )
+    skill_results = [r for r in tier1_results if "skill" in r.name.lower()]
+    results.append(check_skill_metric_ranges(skill_results))
+
+    return results
+
+
 def run_tier2(
     tier1_results: list[CheckResult],
     horizon: str,
     module_filter: str | None = None,
+    forecast_date: date | None = None,
 ) -> list[CheckResult]:
     """Run Tier 2 correctness checks reusing Tier 1 DataFrames.
 
@@ -627,6 +1036,7 @@ def run_tier2(
         horizon: API horizon string (e.g. "pentad").
         module_filter: If set, skip cross-module checks like "all models
             present" — same rationale as Tier 3.
+        forecast_date: Forecast date for freshness checks.
     """
     results: list[CheckResult] = []
 
@@ -644,6 +1054,15 @@ def run_tier2(
     # Skill metric checks
     skill_results = [r for r in tier1_results if "skill" in r.name.lower()]
     results.append(check_skill_metric_ranges(skill_results))
+
+    # New checks: ML flag distribution, snow operational dates, EM/NE parity
+    results.append(check_ml_flag_distribution(tier1_results))
+    results.append(check_snow_operational_values(tier1_results))
+    results.append(check_em_ne_parity(tier1_results, horizon))
+
+    # Data freshness check (requires forecast_date)
+    if forecast_date is not None:
+        results.append(check_data_freshness(tier1_results, forecast_date))
 
     return results
 
@@ -847,6 +1266,9 @@ def validate(
     forecast_date: date,
     horizons: list[str],
     module_filter: str | None = None,
+    output_json_path: str | None = None,
+    phase: str | None = None,
+    baseline_path: str | None = None,
 ) -> int:
     """Run all validation tiers and return exit code.
 
@@ -856,6 +1278,10 @@ def validate(
         horizons: List of API horizon strings (e.g. ["pentad"]).
         module_filter: If set, only show results from this module and
             skip Tier 3 cross-module checks.
+        output_json_path: If set, write JSON results to this file path.
+        phase: If "pre", write baseline JSON and exit 0. If "post",
+            load baseline and compute deltas. None means normal mode.
+        baseline_path: File path for the baseline JSON (used with phase).
     """
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
 
@@ -942,17 +1368,27 @@ def validate(
 
     # --- Tier 2: Data Correctness ---
     if tier1_results:
+        # Split LT results from short-term results for separate routing
+        lt_results = [r for r in tier1_results if "month" in r.name.lower()]
+        if lt_results:
+            t2_lt = run_tier2_long_term(lt_results)
+            print_results("Tier 2: Data Correctness (long-term)", t2_lt)
+            all_results.extend(t2_lt)
+
         for horizon in horizons:
             horizon_results = [
                 r
                 for r in tier1_results
-                if horizon in r.name
-                or "day" in r.name.lower()
-                or "Meteo" in r.name
-                or "Snow" in r.name
-                or "skill" in r.name.lower()
+                if (
+                    horizon in r.name
+                    or "day" in r.name.lower()
+                    or "Meteo" in r.name
+                    or "Snow" in r.name
+                    or "skill" in r.name.lower()
+                )
+                and "month" not in r.name.lower()
             ]
-            t2 = run_tier2(horizon_results, horizon, module_filter)
+            t2 = run_tier2(horizon_results, horizon, module_filter, forecast_date)
             print_results("Tier 2: Data Correctness", t2)
             all_results.extend(t2)
 
@@ -963,7 +1399,36 @@ def validate(
         print_results("Tier 3: Cross-module Consistency", t3)
         all_results.extend(t3)
 
-    return print_summary(all_results)
+    exit_code = print_summary(all_results)
+
+    # --- JSON output ---
+    if output_json_path:
+        metadata = {
+            "forecast_date": forecast_date.isoformat(),
+            "target": target,
+        }
+        payload = results_to_json(all_results, metadata=metadata)
+        Path(output_json_path).write_text(json.dumps(payload, indent=2))
+
+    # --- Phase mode ---
+    if phase == "pre" and baseline_path:
+        write_baseline(all_results, forecast_date, target, baseline_path)
+        return 0
+
+    if phase == "post" and baseline_path:
+        try:
+            baseline = load_and_validate_baseline(baseline_path, forecast_date, target)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[FAIL] Baseline error: {exc}")
+            return 1
+        current_json = results_to_json(all_results)
+        delta_lines = compute_deltas(current_json, baseline)
+        if delta_lines:
+            print("\n--- Delta Report ---")
+            for line in delta_lines:
+                print(line)
+
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1002,8 +1467,34 @@ def main(argv: list[str] | None = None) -> int:
             "Auto-infers --target if not provided."
         ),
     )
+    parser.add_argument(
+        "--output-json",
+        metavar="PATH",
+        default=None,
+        help="Write all check results as JSON to this file path.",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=["pre", "post"],
+        default=None,
+        help=(
+            "Phase mode: 'pre' saves a baseline JSON before the run; "
+            "'post' loads baseline and reports count deltas after the run. "
+            "Requires --baseline."
+        ),
+    )
+    parser.add_argument(
+        "--baseline",
+        metavar="PATH",
+        default=None,
+        help="File path for the baseline JSON (required when --phase is set).",
+    )
 
     args = parser.parse_args(argv)
+
+    # --baseline is required when --phase is set
+    if args.phase and not args.baseline:
+        parser.error("--baseline PATH is required when --phase is set")
 
     # If --module given without --target, auto-infer from the mapping
     target = args.target
@@ -1036,7 +1527,15 @@ def main(argv: list[str] | None = None) -> int:
             f"{forecast_date} (horizons: {', '.join(horizons)})"
         )
 
-    return validate(target, forecast_date, horizons, module_filter=args.module)
+    return validate(
+        target,
+        forecast_date,
+        horizons,
+        module_filter=args.module,
+        output_json_path=args.output_json,
+        phase=args.phase,
+        baseline_path=args.baseline,
+    )
 
 
 if __name__ == "__main__":

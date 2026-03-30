@@ -11,6 +11,7 @@ import sys
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from linear_regression import (
@@ -59,6 +60,7 @@ class TestDateBoundaries:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestEmptyDataHandling:
     """Functions gracefully handle missing/empty inputs."""
 
@@ -114,6 +116,7 @@ class TestEmptyDataHandling:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestCodeConversion:
     """Float code values in CSV are converted to clean string keys."""
 
@@ -176,6 +179,7 @@ class TestCodeConversion:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestDuplicateHandling:
     """Duplicate dates per gauge → returns max date."""
 
@@ -200,6 +204,7 @@ class TestDuplicateHandling:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestNaNHandling:
     """NaN values in CSV are handled gracefully."""
 

@@ -425,47 +425,6 @@ def write_output_txt(
 
 
 # --------------------------------------------------------------------
-# SAVE PENTAD FORECAST
-# --------------------------------------------------------------------
-def save_pentad_forecast() -> bool:
-    """
-    This function returns a boolean value, showing if the 5 day forecast should be saved or not
-    """
-    days_to_save = [5, 10, 15, 20, 25]
-
-    today = datetime.datetime.now()
-    today = today.date()
-
-    # check if today is the last day of the month
-    tomorrow = today + datetime.timedelta(days=1)
-    is_last_day_of_month = tomorrow.month != today.month
-
-    # check if today is in the list of days to save
-    is_day_to_save = today.day in days_to_save
-
-    return is_last_day_of_month or is_day_to_save
-
-
-def save_decadal_forecast() -> bool:
-    """
-    This function returns a boolean value, showing if the 10 day forecast should be saved or not
-    """
-    days_to_save = [10, 20]
-
-    today = datetime.datetime.now()
-    today = today.date()
-
-    # check if today is the last day of the month
-    tomorrow = today + datetime.timedelta(days=1)
-    is_last_day_of_month = tomorrow.month != today.month
-
-    # check if today is in the list of days to save
-    is_day_to_save = today.day in days_to_save
-
-    return is_last_day_of_month or is_day_to_save
-
-
-# --------------------------------------------------------------------
 # SAPPHIRE API INTEGRATION
 # --------------------------------------------------------------------
 

@@ -3,7 +3,7 @@ Tests documenting what data the operational pipeline writes to the API
 and where coverage gaps exist.
 
 Pipeline execution order (Dockerfile CMD):
-  1. Quantile_Mapping_OP.py   → meteo yesterday+today, norm=None
+  1. Quantile_Mapping_OP.py   → meteo yesterday onward (incl. forecast), norm=None
   2. extend_era5_reanalysis.py → 365 dashboard records (norm + value)
   3. snow_data_operational.py  → snow yesterday+today
 
@@ -58,18 +58,18 @@ def make_daily_df(start: date, end: date, code: str, col: str = "P", base: float
 
 
 # =====================================================================
-# 1. Quantile_Mapping_OP writes yesterday+today with norm=None
+# 1. Quantile_Mapping_OP writes yesterday onward (incl. forecast) with norm=None
 # =====================================================================
 
 
 class TestQMWritesRecentDays:
-    """Quantile_Mapping_OP._write_meteo_to_api filters to yesterday+today
-    (2-day window to guard against DG data lag) and sets norm=None.
-    This means it provides the raw operational value but no climatological
-    context."""
+    """Quantile_Mapping_OP._write_meteo_to_api filters to yesterday onward
+    (one-sided window — includes forecast dates beyond today) and sets
+    norm=None. This means it provides the raw operational value but no
+    climatological context."""
 
-    def test_qm_writes_yesterday_and_today(self):
-        """QM's _write_meteo_to_api filters to yesterday+today and sets
+    def test_qm_writes_yesterday_today_and_forecast(self):
+        """QM's _write_meteo_to_api filters to yesterday onward and sets
         norm=None.  We mock the API client to capture what is sent."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
@@ -77,10 +77,233 @@ class TestQMWritesRecentDays:
         today = pd.Timestamp.today().normalize()
         yesterday = today - pd.Timedelta(days=1)
         two_days_ago = today - pd.Timedelta(days=2)
-        # Only 3 days of data — avoids the 381-row CM range issue
+        tomorrow = today + pd.Timedelta(days=1)
         cm_data = pd.DataFrame(
             {
-                "date": [two_days_ago, yesterday, today],
+                "date": [two_days_ago, yesterday, today, tomorrow],
+                "code": "00003",
+                "P": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_meteo.return_value = 3
+
+        with (
+            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                },
+            ),
+        ):
+            result = qm._write_meteo_to_api(cm_data, "P", "00003")
+
+        assert result is True
+        records = mock_client.write_meteo.call_args[0][0]
+        assert len(records) == 3, (
+            f"QM should write 3 records (yesterday+today+forecast), got {len(records)}"
+        )
+        dates = {r["date"] for r in records}
+        assert dates == {
+            yesterday.strftime("%Y-%m-%d"),
+            today.strftime("%Y-%m-%d"),
+            tomorrow.strftime("%Y-%m-%d"),
+        }
+        for r in records:
+            assert r["norm"] is None, "QM writes norm=None — it has no climatological data"
+
+    def test_qm_writes_forecast_only_data(self):
+        """If the CM data has only future forecast days (beyond today),
+        QM writes them — the one-sided filter includes all dates >= yesterday."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        # Data only has tomorrow — inside the yesterday-onward window
+        day_after = pd.Timestamp.today().normalize() + timedelta(days=1)
+        data = pd.DataFrame(
+            {
+                "date": [day_after],
+                "code": ["00003"],
+                "P": [5.0],
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_meteo.return_value = 1
+
+        with (
+            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                },
+            ),
+        ):
+            result = qm._write_meteo_to_api(data, "P", "00003")
+
+        assert result is True
+        records = mock_client.write_meteo.call_args[0][0]
+        assert len(records) == 1
+        assert records[0]["date"] == day_after.strftime("%Y-%m-%d")
+
+
+# =====================================================================
+# 1b. Forecast-specific QM write behavior (PREPG-005)
+# =====================================================================
+
+
+class TestQMForecastWrite:
+    """Tests for PREPG-005: QM operational mode now includes forecast rows.
+
+    After the fix, the one-sided filter (date >= yesterday) passes through
+    ~15 ECMWF IFS forecast days beyond today. All records get norm=None
+    because QM has no climatological data."""
+
+    def test_realistic_cm_data_includes_forecast(self):
+        """Control member data with spinup + forecast: operational mode
+        writes yesterday + today + all forecast dates, drops older spinup."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=1)
+        # Realistic CM: 10 days of spinup + 15 days of forecast
+        spinup_dates = pd.date_range(end=today, periods=10, freq="D")
+        forecast_dates = pd.date_range(start=today + pd.Timedelta(days=1), periods=15, freq="D")
+        all_dates = spinup_dates.append(forecast_dates)
+        cm_data = pd.DataFrame(
+            {
+                "date": all_dates,
+                "code": "00003",
+                "T": [10.0 + i * 0.5 for i in range(len(all_dates))],
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_meteo.return_value = 17
+
+        with (
+            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                },
+            ),
+        ):
+            result = qm._write_meteo_to_api(cm_data, "T", "00003")
+
+        assert result is True
+        records = mock_client.write_meteo.call_args[0][0]
+        # yesterday + today + 15 forecast = 17
+        assert len(records) == 17, (
+            f"Expected 17 records (yesterday+today+15 forecast), got {len(records)}"
+        )
+        record_dates = sorted(r["date"] for r in records)
+        assert record_dates[0] == yesterday.strftime("%Y-%m-%d")
+        assert record_dates[-1] == forecast_dates[-1].strftime("%Y-%m-%d")
+
+    def test_all_qm_records_have_norm_none(self):
+        """QM writes norm=None for ALL records including forecast dates."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=1)
+        forecast = today + pd.Timedelta(days=5)
+        data = pd.DataFrame(
+            {
+                "date": [yesterday, today, forecast],
+                "code": "00003",
+                "P": [1.0, 2.0, 3.0],
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_meteo.return_value = 3
+
+        with (
+            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                },
+            ),
+        ):
+            qm._write_meteo_to_api(data, "P", "00003")
+
+        records = mock_client.write_meteo.call_args[0][0]
+        for r in records:
+            assert r["norm"] is None, (
+                f"QM must write norm=None for all records, got norm={r['norm']} "
+                f"for date={r['date']}"
+            )
+
+    def test_fallback_sync_mode_includes_forecast(self):
+        """Unknown sync mode falls back to operational — must also include
+        forecast dates (same one-sided filter)."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=1)
+        tomorrow = today + pd.Timedelta(days=1)
+        data = pd.DataFrame(
+            {
+                "date": [yesterday, today, tomorrow],
+                "code": "00003",
+                "T": [10.0, 15.0, 20.0],
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_meteo.return_value = 3
+
+        with (
+            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                    "SAPPHIRE_SYNC_MODE": "unknown_mode",
+                },
+            ),
+        ):
+            result = qm._write_meteo_to_api(data, "T", "00003")
+
+        assert result is True
+        records = mock_client.write_meteo.call_args[0][0]
+        assert len(records) == 3
+        dates = {r["date"] for r in records}
+        assert tomorrow.strftime("%Y-%m-%d") in dates, (
+            "Fallback sync mode must include forecast dates"
+        )
+
+    def test_old_spinup_excluded(self):
+        """Data older than yesterday must NOT be written in operational mode."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=1)
+        old_date = today - pd.Timedelta(days=30)
+        data = pd.DataFrame(
+            {
+                "date": [old_date, yesterday, today],
                 "code": "00003",
                 "P": [1.0, 2.0, 3.0],
             }
@@ -100,52 +323,14 @@ class TestQMWritesRecentDays:
                 },
             ),
         ):
-            result = qm._write_meteo_to_api(cm_data, "P", "00003")
+            qm._write_meteo_to_api(data, "P", "00003")
 
-        assert result is True
         records = mock_client.write_meteo.call_args[0][0]
-        assert len(records) == 2, f"QM should write 2 records (yesterday+today), got {len(records)}"
+        assert len(records) == 2
         dates = {r["date"] for r in records}
-        assert dates == {
-            yesterday.strftime("%Y-%m-%d"),
-            today.strftime("%Y-%m-%d"),
-        }
-        for r in records:
-            assert r["norm"] is None, "QM writes norm=None — it has no climatological data"
-
-    def test_qm_skips_when_recent_days_not_in_data(self):
-        """If the CM data doesn't include yesterday or today (e.g.,
-        gateway returned only future forecast days), QM writes nothing."""
-        if not qm.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
-
-        # Data only has tomorrow — outside the yesterday+today window
-        day_after = pd.Timestamp.today().normalize() + timedelta(days=1)
-        data = pd.DataFrame(
-            {
-                "date": [day_after],
-                "code": ["00003"],
-                "P": [5.0],
-            }
+        assert old_date.strftime("%Y-%m-%d") not in dates, (
+            "Old spinup dates must be excluded in operational mode"
         )
-
-        mock_client = MagicMock()
-        mock_client.readiness_check.return_value = True
-
-        with (
-            patch.object(qm, "SapphirePreprocessingClient", return_value=mock_client),
-            patch.dict(
-                os.environ,
-                {
-                    "SAPPHIRE_API_ENABLED": "true",
-                    "SAPPHIRE_API_URL": "http://test:8000",
-                },
-            ),
-        ):
-            result = qm._write_meteo_to_api(data, "P", "00003")
-
-        assert result is False
-        mock_client.write_meteo.assert_not_called()
 
 
 # =====================================================================

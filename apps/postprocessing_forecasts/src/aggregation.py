@@ -16,6 +16,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,7 @@ def aggregate_monthly_fc_to_quarterly(
     grouped = (
         df.groupby(["code", "year", "quarter_in_year", "model_short"]).agg(**agg_dict).reset_index()
     )
+    count_quantile_crossings(grouped, _FC_QUANTILE_COLS, label="monthly→quarterly")
 
     # Require >= QUARTER_MIN_MONTHS
     grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
@@ -269,75 +271,6 @@ def aggregate_monthly_fc_to_quarterly(
     )
 
     # Ensure forecasted_discharge exists (from q50)
-    if "forecasted_discharge" not in grouped.columns and "q50" in grouped.columns:
-        grouped["forecasted_discharge"] = grouped["q50"].astype(float)
-
-    return grouped
-
-
-def aggregate_monthly_fc_to_seasonal(
-    monthly_fc: pd.DataFrame,
-) -> pd.DataFrame:
-    """Aggregate monthly forecasts to seasonal.
-
-    Args:
-        monthly_fc: DataFrame with columns [code, year, month,
-            model_short, q05-q95].
-
-    Returns:
-        DataFrame with columns [code, season_year, season_in_year,
-        model_short, q05-q95, forecasted_discharge, valid_from,
-        valid_to].
-    """
-    if monthly_fc.empty:
-        return pd.DataFrame(
-            columns=["code", "season_year", "season_in_year", "model_short"] + _FC_QUANTILE_COLS
-        )
-
-    season_months = get_season_months()
-    n_season_months = len(season_months)
-    min_months = max(1, int(np.ceil(n_season_months * SEASON_MIN_COVERAGE)))
-
-    df = monthly_fc.copy()
-    df = df[df["month"].isin(season_months)].copy()
-    if df.empty:
-        return pd.DataFrame(
-            columns=["code", "season_year", "season_in_year", "model_short"] + _FC_QUANTILE_COLS
-        )
-
-    df["season_year"] = df.apply(lambda r: get_season_year(int(r["year"]), int(r["month"])), axis=1)
-
-    agg_dict: dict = {
-        "n_months": ("month", "count"),
-    }
-    for qcol in _FC_QUANTILE_COLS:
-        if qcol in df.columns:
-            agg_dict[qcol] = (qcol, "mean")
-    if "forecasted_discharge" in df.columns:
-        agg_dict["forecasted_discharge"] = ("forecasted_discharge", "mean")
-
-    grouped = df.groupby(["code", "season_year", "model_short"]).agg(**agg_dict).reset_index()
-
-    grouped = grouped[grouped["n_months"] >= min_months].copy()
-    grouped = grouped.drop(columns=["n_months"])
-
-    if grouped.empty:
-        return pd.DataFrame(
-            columns=["code", "season_year", "season_in_year", "model_short"] + _FC_QUANTILE_COLS
-        )
-
-    grouped["season_in_year"] = 1
-
-    # Synthesize valid_from/valid_to spanning season
-    grouped["valid_from"] = grouped.apply(
-        lambda r: _season_start_date(int(r["season_year"])),
-        axis=1,
-    )
-    grouped["valid_to"] = grouped.apply(
-        lambda r: _season_end_date(int(r["season_year"])),
-        axis=1,
-    )
-
     if "forecasted_discharge" not in grouped.columns and "q50" in grouped.columns:
         grouped["forecasted_discharge"] = grouped["q50"].astype(float)
 
