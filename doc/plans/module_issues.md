@@ -164,6 +164,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ (Bug 3 monthly reopened+fixed 2026-03-26: q50 fallback to q) | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
 | **PP-029** | NaN guard in seasonal/quarterly API write (`_write_aggregated_forecasts_to_api`) | **Medium** | Draft | [`mid_prio_gi_draft_pp_seasonal_nan_guard.md`](issues/mid_prio_gi_draft_pp_seasonal_nan_guard.md) | — |
 | **PP-030** | Fix EM skill metric degradation in recalculate_skill_metrics.py (boundary-pentad n_pairs=1-2) | **Medium** | Draft | [`mid_prio_gi_draft_pp_em_recalc_boundary_fix.md`](issues/mid_prio_gi_draft_pp_em_recalc_boundary_fix.md) | — |
+| **PP-031** | Pentad/decad aggregation assigns wrong issue date (off-by-one from pentad boundary) | **High** | Draft | [`high_prio_gi_draft_pp_pentad_date_misalignment.md`](issues/high_prio_gi_draft_pp_pentad_date_misalignment.md) | PP-023 (complete) |
 
 ### Forecast Dashboard (`fd`)
 
