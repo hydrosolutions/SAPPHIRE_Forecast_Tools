@@ -857,4 +857,33 @@ During ML module data flow audit, found that `_write_ml_daily_forecast_to_api()`
 
 ---
 
-*Last updated: 2026-03-23 (triaged 5 observations: PP-028 skill metrics, LTF-003 flag-zero-on-null, INFRA-006 NE boundary + LR validator)*
+## 2026-03-28
+
+### preprocessing_gateway: Snow SWE Forecast Data Gaps
+
+**Observed during**: Local pipeline review checklist (`review_checklist_local_2026-03-27_2.md`), section 1.3.
+
+**What**: SWE forecast-period records (Apr 5–11) have `value=None` for both stations (S1=15189, S2=16059) while norm values are present. The operational SWE values stop at Apr 4. This means the snow forecast horizon is shorter than the meteo forecast horizon (which extends to Apr 11 with values).
+
+**Possible causes**:
+- ERA5-Land snow data delivery lag — forecast extension may not cover as many days as temperature/precipitation
+- Quantile mapping or data gateway may not produce SWE forecasts beyond a certain lead time
+- Source data genuinely unavailable at longer lead times
+
+**Rerun result (2026-03-28)**: After rerunning `preprocessing_gateway`, Apr 5 gained values for both stations (S1: 81.16, S2: 55.27 with full ensemble members). Apr 6-12 remain norm-only. This confirms the snow forecast source delivers incrementally — roughly one new day per daily run, with a shorter lead time (~7 days) than the meteo ERA5 forecast (~15 days). This is expected behavior of the data source, not a code bug. Downstream models should handle the shorter snow forecast horizon gracefully.
+
+**Also found**: The `table` helper function in the review checklist had a display bug — `str(r.get(k, '') or '')` treats `0.0` as falsy, showing blanks instead of `0.0` for zero precipitation. Fixed to `'' if r.get(k) is None else str(r[k])`.
+
+### run_locally.sh: ML operational target includes maintenance scripts
+
+**Observed during**: Local pipeline review checklist (`review_checklist_local_2026-03-28.md`), section 5.
+
+**What**: `run_locally.sh machine_learning` runs all 3 scripts per model (`recalculate_nan_forecasts.py`, `make_forecast.py`, `fill_ml_gaps.py`). Only `make_forecast.py` is the actual operational forecast. The other two (`recalculate_nan_forecasts.py`, `fill_ml_gaps.py`) are maintenance tasks that should arguably only run in the maintenance target.
+
+**Impact**: Running maintenance scripts during operational mode adds unnecessary runtime. Not harmful (idempotent), but muddies the separation between operational and maintenance runs.
+
+**Action needed**: Review whether `ML_SCRIPTS` for operational mode should be reduced to just `make_forecast.py`, with the other two only in `ML_MAINTENANCE_SCRIPTS`. Check if there's a reason they were bundled together (e.g., NaN recalc must run before forecast).
+
+---
+
+*Last updated: 2026-03-28 (ML operational/maintenance script separation observation)*

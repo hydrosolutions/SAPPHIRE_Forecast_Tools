@@ -21,7 +21,22 @@ Copy this file, fill in Section 0.1, and work through each phase in order.
       full pipeline, then use Section 10 for verification.
 4. Work through each section, running the curl commands and recording results in
    the `<!-- RESULT: -->` placeholders.
-5. Keep the filled checklist **local only** — it contains operational data.
+5. **Result format**: Paste the **complete, unabridged** output of each curl
+   command (piped through `table`) into the RESULT comment. **NEVER** summarize,
+   shorten, or use `...` to elide rows. The full raw table with every row is the
+   record — it must be reviewable without re-running the query. Even for large
+   result sets (100+ rows), paste the entire output. Use multi-line comments:
+   ```
+   <!-- RESULT:
+   horizon_type  code   date        discharge  predictor  horizon_value  ...
+   ------------  -----  ----------  ---------  ---------  -------------  ...
+   day           12345  2026-01-01  5.2                   1              ...
+   day           12345  2026-01-02  5.3                   2              ...
+
+   (N records)
+   -->
+   ```
+7. Keep the filled checklist **local only** — it contains operational data.
    The `.gitignore` pattern `doc/dev/review_checklist_local_20*.md` must exclude
    it from commits. This template (no date suffix) is safe to commit.
 
@@ -29,16 +44,22 @@ Copy this file, fill in Section 0.1, and work through each phase in order.
 
 ## API Key Notes
 
-**ML forecasts are stored with `horizon=day`** in the postprocessing API
-regardless of the horizon_type context they were run in (pentad or decad).
-To query ML model forecasts (TFT, TiDE, TSMixer), always use `horizon=day`
-with a `model` filter.
+**Raw short-term ML forecasts are stored with `horizon=day`** in the
+postprocessing API regardless of the horizon_type context they were run in
+(pentad or decad). To query ML model forecasts (TFT, TiDE, TSMixer), always
+use `horizon=day` with a `model` filter.
+
+**Raw long-term ML forecasts are stored with `horizon=month`,
+`horizon=quarter`, or `horizon=season`** in the postprocessing API. To query
+long-term ML model forecasts (TFT, TiDE, TSMixer), use `horizon=month`,
+`horizon=quarter`, or `horizon=season`, depending on the horizon_type.
 
 **LR forecasts have a separate endpoint**: `/api/postprocessing/lr-forecast/`
 (not `/api/postprocessing/forecast/`).
 
-**Combined forecasts** (EM, NE) are at `/api/postprocessing/forecast/` with
-`horizon=pentad` or `horizon=decade`.
+**Combined forecasts** (EM, NE, and most other models) are at
+`/api/postprocessing/forecast/` with `horizon=pentad`, `horizon=decade`,
+`horizon=month`, `horizon=quarter`, or `horizon=season`.
 
 ---
 
@@ -87,7 +108,7 @@ import sys, json
 d = json.load(sys.stdin)
 if not d: print('(no records)'); sys.exit()
 keys = list(d[0].keys())
-rows = [[str(r.get(k, '') or '') for k in keys] for r in d]
+rows = [['' if r.get(k) is None else str(r[k]) for k in keys] for r in d]
 widths = [max(len(k), max((len(row[i]) for row in rows), default=0)) for i, k in enumerate(keys)]
 fmt = '  '.join(f'{:<{w}}' for w in widths)
 print(fmt.format(*keys))
@@ -128,7 +149,7 @@ and silently drop data.
 cd sapphire && docker-compose ps
 ```
 
-<!-- RESULT: (list containers and their status) -->
+<!-- RESULT: -->
 
 All containers (`preprocessing-api`, `postprocessing-api`, `api-gateway`, etc.)
 should show `Up`.
@@ -144,7 +165,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   bash apps/run_locally.sh validate --phase pre --baseline /tmp/vp_baseline.json
 ```
 
-<!-- RESULT: (paste last line: "VALIDATION SUMMARY: N passed, 0 failed, ...") -->
+<!-- RESULT: -->
 
 The baseline JSON is written to `/tmp/vp_baseline.json`. The automated checks
 cover the following and produce JSON output in `counts` and `max_date` fields:
@@ -173,92 +194,59 @@ can confirm new records appear after the run.
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — recent daily runoff (today + past 5 days):
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ### 1.2 Preprocessing — Meteo
 
-- [ ] $S1 temperature (today + past 5 days):
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+Each query covers recent history through the forecast period in a single call.
+If forecast-period rows (dates > TODAY) are present, ERA5 forecast extension
+is working. If only rows up to TODAY appear, only reanalysis data is available.
 
-- [ ] $S1 temperature — forecast period (ERA5 extension check):
+- [ ] $S1 temperature (past 5 days + forecast period):
   ```bash
-  # If forecast-period rows exist, ERA5 forecast extension is working.
-  # Empty result means only reanalysis data is available.
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 precipitation (today + past 5 days):
+- [ ] $S1 precipitation (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 precipitation — forecast period:
+- [ ] $S2 temperature (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S2 temperature (today + past 5 days):
+- [ ] $S2 precipitation (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 temperature — forecast period:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 precipitation (today + past 5 days):
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 precipitation — forecast period:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ### 1.3 Preprocessing — Snow
 
-- [ ] $S1 SWE (most recent records):
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+Each query covers recent history through the forecast period in a single call.
 
-- [ ] $S1 SWE — forecast period:
+- [ ] $S1 SWE (past 5 days + forecast period):
   ```bash
-  # Check for forecast-period snow values
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S2 SWE (most recent records):
+- [ ] $S2 SWE (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 SWE — forecast period:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **Note**: Historical SWE norm records use year-2000 dates as a day-of-year
 index. Operational SWE records written by `preprocessing_gateway` should have
@@ -279,31 +267,43 @@ Record counts here; compare after run to confirm new records were written.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$RECENT_START&end_date=$RECENT_END&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 ML TFT forecasts (RECENT_START to RECENT_END):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$RECENT_START&end_date=$RECENT_END&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 EM pentad forecasts (RECENT_START to RECENT_END):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$RECENT_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 LR pentad forecasts (RECENT_START to RECENT_END):
+- [ ] $S1 LR pentad forecasts (PREV_PENTAD to TODAY):
   ```bash
-  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$RECENT_START&end_date=$RECENT_END&limit=50" | table
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$PREV_PENTAD&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S2 LR pentad forecasts (RECENT_START to RECENT_END):
+- [ ] $S2 LR pentad forecasts (PREV_PENTAD to TODAY):
   ```bash
-  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$RECENT_START&end_date=$RECENT_END&limit=50" | table
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$PREV_PENTAD&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
+
+- [ ] $S1 LR decad forecasts (PREV_DECAD to TODAY):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$PREV_DECAD&end_date=$TODAY&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 LR decad forecasts (PREV_DECAD to TODAY):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=decade&start_date=$PREV_DECAD&end_date=$TODAY&limit=50" | table
+  ```
+  <!-- RESULT: -->
 
 ---
 
@@ -331,13 +331,13 @@ discharge values and flag details not captured by the automated check.
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — today + past 5 days discharge:
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: A record with `"date": "$TODAY"` and a non-null
 `"discharge"` value. If the iEasyHydro source has not provided today's
@@ -363,92 +363,47 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 
 ### 3.1 Verify: New meteo data for today
 
-**Automated alternative available**: `check_data_freshness` (Section 0.4)
-covers meteo `max_date` freshness automatically. The manual queries below
-give actual temperature and precipitation values for sanity-range checking
-(-30 to +40 °C, ≥ 0 mm).
+Each query covers recent history through the forecast period in a single call.
+If forecast-period rows (dates > TODAY) are present, ERA5 forecast extension
+is working.
 
-- [ ] $S1 temperature (today + past 5 days):
+- [ ] $S1 temperature (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) (sanity: values typically -30 to +40 °C) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 temperature — forecast period (ERA5 extension check):
+- [ ] $S1 precipitation (past 5 days + forecast period):
   ```bash
-  # If forecast-period rows exist, ERA5 forecast extension is working.
-  # Empty result means only reanalysis data is available.
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 precipitation (today + past 5 days):
+- [ ] $S2 temperature (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) (sanity: ≥ 0, typically < 100 mm/day) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 precipitation — forecast period:
+- [ ] $S2 precipitation (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 temperature (today + past 5 days):
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 temperature — forecast period:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 precipitation (today + past 5 days):
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 precipitation — forecast period:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-**Red flags**:
-- Empty arrays — ERA5 extension did not run or failed silently.
-- Values identical to previous day for multiple stations — possible ERA5
-  stale data.
+  <!-- RESULT: -->
 
 ### 3.2 Verify: Snow data
 
-- [ ] $S1 — most recent SWE records:
+- [ ] $S1 SWE (past 5 days + forecast period):
   ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 — forecast-period snow values:
+- [ ] $S2 SWE (past 5 days + forecast period):
   ```bash
-  # Check for forecast-period snow values
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
+  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&start_date=$TODAY_MINUS_5&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 — most recent SWE records:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 — forecast-period snow values:
-  ```bash
-  curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ---
 
@@ -484,13 +439,13 @@ Is a decad issue day?  [ ] YES  [ ] NO
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — LR pentad forecasts (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 > **LR-008 check**: On pentad issue days (5,10,15,20,25,EOM), `horizon_in_year` must equal the **target** pentad (issue pentad + 1, wrapping to 1 after pentad 72). E.g., on day 25 of month 3 (issue pentad 17): `horizon_in_year=18`, `horizon_value=6`. If you see the issue pentad (e.g., `horizon_in_year=17`, `horizon_value=5`), the LR-008 metadata override is not active.
 
@@ -498,13 +453,13 @@ Is a decad issue day?  [ ] YES  [ ] NO
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — LR decad forecasts (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=decade&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 > **LR-008 check**: On decad issue days (10, 20, EOM), `horizon_in_year` must equal the **target** decad (issue decad + 1, wrapping to 1 after decad 36). E.g., on day 20 of month 3 (issue decad 8): `horizon_in_year=9`, `horizon_value=3`. If you see the issue decad (e.g., `horizon_in_year=8`, `horizon_value=2`), the LR-008 metadata override is not active.
 
@@ -536,54 +491,41 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 populates `counts` in the JSON output. The manual queries below show per-model,
 per-station breakdowns and exact forecast values.
 
-- [ ] $S1 TFT — today's forecasts (all target dates):
+- [ ] $S1 TFT — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S1 TFT ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY&end_date=$TODAY&limit=100" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 TiDE — today's forecasts:
+- [ ] $S1 TiDE — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S1 TiDE ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TiDE&start_date=$TODAY&end_date=$TODAY&limit=100" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TiDE&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 TSMixer — today's forecasts:
+- [ ] $S1 TSMixer — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S1 TSMixer ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$TODAY&limit=100" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S1 TFT — recent history (TODAY_MINUS_5 to TODAY):
+- [ ] $S2 TFT — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S1 TFT (recent history) ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=200" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S2 TFT — today's forecasts:
+- [ ] $S2 TiDE — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S2 TFT ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$TODAY&end_date=$TODAY&limit=100" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TiDE&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
-- [ ] $S2 TiDE — today's forecasts:
+- [ ] $S2 TSMixer — forecasts (TODAY to FORECAST_END):
   ```bash
-  echo "=== S2 TiDE ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TiDE&start_date=$TODAY&end_date=$TODAY&limit=100" | table
+  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$FORECAST_END&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
-
-- [ ] $S2 TSMixer — today's forecasts:
-  ```bash
-  echo "=== S2 TSMixer ==="
-  curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$TODAY&limit=100" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] Cross-module date consistency — ML forecast issue_date must equal TODAY:
   ```bash
@@ -650,17 +592,74 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 
 ### 6.1 Verify: Long-term forecasts written (only if gate OPEN or forced)
 
-- [ ] $S1 — monthly forecasts (current month window):
-  ```bash
-  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
-  ```
-  <!-- RESULT: (paste table output) -->
+Query each horizon separately. `horizon_value` maps to month_N (0=current month,
+1=next month, etc.). Only query horizons that the active modes should have written.
 
-- [ ] $S2 — monthly forecasts (current month window):
+- [ ] $S1 — month_0 (horizon_value=0):
   ```bash
-  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&horizon_value=0&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
+
+- [ ] $S1 — month_1 (horizon_value=1):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&horizon_value=1&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S1 — month_2 (horizon_value=2):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&horizon_value=2&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S1 — month_3 (horizon_value=3):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&horizon_value=3&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — month_1 (horizon_value=1):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&horizon_value=1&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — month_2 (horizon_value=2):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&horizon_value=2&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — month_3 (horizon_value=3):
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=month&horizon_value=3&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S1 — quarterly forecasts:
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=QUARTER&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — quarterly forecasts:
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=QUARTER&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S1 — seasonal forecasts:
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=SEASON&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — seasonal forecasts:
+  ```bash
+  curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=SEASON&start_date=$MONTH_START&end_date=$MONTH_END&limit=50" | table
+  ```
+  <!-- RESULT: -->
 
 **Red flags**:
 - Empty arrays after a forced run — `long_term_forecasting` module crashed or
@@ -673,13 +672,13 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — monthly skill metrics:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ---
 
@@ -706,37 +705,37 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM pentad (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — NE pentad (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — NE pentad (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — EM decad (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM decad (recent window):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: EM rows should have non-null `q05`, `q25`, `q75`, `q95`
 fields if ML models ran successfully. NE rows represent norm-error ensembles.
@@ -753,7 +752,7 @@ fields if ML models ran successfully. NE rows represent norm-error ensembles.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — EM pentad quantile ordering validation:
   ```bash
@@ -776,7 +775,7 @@ fields if ML models ran successfully. NE rows represent norm-error ensembles.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM pentad quantile ordering validation:
   ```bash
@@ -810,7 +809,7 @@ Quick scan after all operational modules. Full log analysis in Section 8a.
 grep -E "ERROR|CRITICAL|Traceback" apps/logs/run_locally_*.log 2>/dev/null | tail -20
 ```
 
-<!-- RESULT: (paste any ERROR/CRITICAL/Traceback lines, or "clean") -->
+<!-- RESULT: -->
 
 ---
 
@@ -839,13 +838,13 @@ Uses `$TODAY_MINUS_30` set in Section 0.1 for the 30-day lookback window.
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" | table
   ```
-  <!-- RESULT: (paste table output) (expected ~30 rows if no gaps) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — discharge over last 30 days:
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: Count should equal the number of days in the window
 (up to 30) if data is complete. Fewer records indicate remaining gaps
@@ -861,13 +860,13 @@ Uses `$TODAY_MINUS_30` set in Section 0.1 for the 30-day lookback window.
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 T — 30-day meteo:
   ```bash
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=60" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] Review window ($S1 T and P, RECENT_START to TODAY):
   ```bash
@@ -876,7 +875,7 @@ Uses `$TODAY_MINUS_30` set in Section 0.1 for the 30-day lookback window.
   echo "=== S1 P ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) (should match Section 3 result) -->
+  <!-- RESULT: -->
 
 ### 8.2 Verify: ML gap-fill
 
@@ -884,13 +883,13 @@ Uses `$TODAY_MINUS_30` set in Section 0.1 for the 30-day lookback window.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$RECENT_START&end_date=$TODAY&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TFT — past 14 days:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$RECENT_START&end_date=$TODAY&limit=200" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: If gaps existed before the run, counts should be higher
 after maintenance.
@@ -919,7 +918,7 @@ output (no try/except around `read_meteo_data_combined()` or
   echo "=== S2 2023 discharge ==="
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=2023-01-01&end_date=2023-12-31&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (expect ~5 rows shown; if (no records) then data absent) -->
+  <!-- RESULT: -->
 
 - [ ] ERA5 meteo data depth — does T and P data exist for the hindcast
   training window? The script crashes at line 267 if `era5_data_transformed`
@@ -930,7 +929,7 @@ output (no try/except around `read_meteo_data_combined()` or
   echo "=== S1 P 2023 ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=2023-01-01&end_date=2023-12-31&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (expect ~5 rows shown; if (no records) then data absent) -->
+  <!-- RESULT: -->
 
 **Red flags**:
 - `count=0` for discharge or meteo — the hindcast will crash on empty data.
@@ -955,42 +954,42 @@ each model separately to identify which model failed:
   echo "=== S1 TFT ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 TiDE — 30-day forecast coverage:
   ```bash
   echo "=== S1 TiDE ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TiDE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 TSMixer — 30-day forecast coverage:
   ```bash
   echo "=== S1 TSMixer ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TSMixer&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TFT — 30-day forecast coverage:
   ```bash
   echo "=== S2 TFT ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TiDE — 30-day forecast coverage:
   ```bash
   echo "=== S2 TiDE ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TiDE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TSMixer — 30-day forecast coverage:
   ```bash
   echo "=== S2 TSMixer ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TSMixer&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: All three models should have similar `unique_dates`
 counts (~30). Large discrepancies between models indicate model-specific
@@ -1014,7 +1013,7 @@ count flags client-side. Flag semantics: 0 = good forecast, 1 = NaN
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: After successful maintenance, most records should have
 `flag=0` (operational) or `flag=4` (hindcast-produced). A high count of
@@ -1050,7 +1049,7 @@ ls -la $MODELS_AND_SCALERS_PATH/static_features/ML_basin_attributes_v2.csv
 grep -i "error in hindcasting" apps/logs/*.log 2>/dev/null | tail -10
 ```
 
-<!-- RESULT: (paste output or "all files present") -->
+<!-- RESULT: -->
 
 > **Cross-reference**: If API checks show one specific model missing while
 > others are fine, check that model's `.pt` and scaler files first. If ALL
@@ -1071,13 +1070,13 @@ grep -i "error in hindcasting" apps/logs/*.log 2>/dev/null | tail -10
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — LR decad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) (expect ~3 decad issue days in 30 days) -->
+  <!-- RESULT: -->
 
 **What to look for**: 5 or 6 pentad issue days within 30 days. If fewer
 records appear, LR hindcast may not have written for these stations.
@@ -1091,19 +1090,19 @@ Targeted check for the most recent pentad issue day. Uses `$PREV_PENTAD` and
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=pentad&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (expect ≥1 row; WARN if empty — hindcast may not have filled this gap) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — LR pentad at PREV_PENTAD (regression check for LR fix):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S2&horizon=pentad&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (S2 must have ≥1 record after LR fix) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — LR decad at PREV_DECAD:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/lr-forecast/?code=$S1&horizon=decade&start_date=$PREV_DECAD&end_date=$PREV_DECAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (expect ≥1 row; WARN if empty) -->
+  <!-- RESULT: -->
 
 > **S2 regression check**: S2 previously returned 0 records from the
 > postprocessing API because the code queried `/forecast/?model=LR` instead
@@ -1118,49 +1117,49 @@ Targeted check for the most recent pentad issue day. Uses `$PREV_PENTAD` and
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM pentad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — NE pentad 30-day records (row count should ≈ EM pentad count):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — NE pentad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — EM decad 30-day records (row count should ≈ LR decad count from 8.3):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM decad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=EM&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — NE decad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=decade&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — NE decad 30-day records:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=decade&model=NE&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **What to look for**: EM and NE pentad counts should roughly match LR pentad
 count (from 8.3). EM and NE decad counts should roughly match LR decad count.
@@ -1175,25 +1174,25 @@ Only relevant if 8.3a showed LR records exist at PREV_PENTAD.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) (WARN if empty — maintenance may not have run yet) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM pentad at PREV_PENTAD:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — NE pentad at PREV_PENTAD:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=NE&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — NE pentad at PREV_PENTAD:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=NE&start_date=$PREV_PENTAD&end_date=$PREV_PENTAD&limit=5" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 > **Dependency note**: Postprocessing maintenance only fills EM/NE gaps when
 > individual-model rows (LR, TFT, etc.) already exist for that date. If LR
@@ -1220,7 +1219,7 @@ grep -E "ERROR|CRITICAL|Traceback" apps/logs/run_locally_*.log 2>/dev/null | tai
 ls -t apps/logs/ | head -5
 ```
 
-<!-- RESULT: (paste any ERROR/CRITICAL/Traceback lines, or "clean") -->
+<!-- RESULT: -->
 
 ```bash
 # Count warnings by module for a quick health summary
@@ -1242,37 +1241,37 @@ Capture current state before recalculation so you can confirm values changed.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — pentad skill metrics (BEFORE):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — decad skill metrics (BEFORE):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — decad skill metrics (BEFORE):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — monthly skill metrics (BEFORE):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — monthly skill metrics (BEFORE):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ### 9.2 Run: recalculate_skill_metrics
 
@@ -1287,7 +1286,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 > quarterly + seasonal + daily skill metrics. Use
 > `SAPPHIRE_PREDICTION_MODE=BOTH` for pentad + decad only.
 
-<!-- RESULT: (paste completion message or duration) -->
+<!-- RESULT: -->
 
 ### 9.3 Verify: Skill Metrics Updated
 
@@ -1300,37 +1299,37 @@ recalculation — investigate.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — pentad skill metrics (AFTER):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — decad skill metrics (AFTER):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — decad skill metrics (AFTER):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — monthly skill metrics (AFTER):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — monthly skill metrics (AFTER):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=month&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **Red flags**:
 - `n_pairs` = 0 or 1 after recalculation — insufficient historical data
@@ -1347,7 +1346,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   bash apps/run_locally.sh recalculate_snow_norms
 ```
 
-<!-- RESULT: (paste completion message or duration) -->
+<!-- RESULT: -->
 
 ### 9.5 Verify: Snow Norms Updated
 
@@ -1366,31 +1365,31 @@ be ~365. If `norm_dates=0`, the recalculation did not write norm records.
   # Check for forecast-period snow values
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — SWE norms (all rows):
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — SWE forecast-period values:
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=SWE&start_date=$TODAY&end_date=$FORECAST_END&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — HS norms (all rows):
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S1&snow_type=HS&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — HS norms (all rows):
   ```bash
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=HS&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ---
 
@@ -1405,7 +1404,7 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
   bash apps/run_locally.sh validate --phase post --baseline /tmp/vp_baseline.json
 ```
 
-<!-- RESULT: (paste VALIDATION SUMMARY and any DELTA WARN lines) -->
+<!-- RESULT: -->
 
 **What to look for**:
 - `DELTA WARN` lines indicate record counts decreased — investigate before
@@ -1440,41 +1439,41 @@ both stations.
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S1&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — runoff today + past 5 days:
   ```bash
   curl -s "$BASE_URL/api/preprocessing/runoff/?code=$S2&horizon=day&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — meteo T (today + past 5 days):
   ```bash
   echo "=== S1 T ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — meteo P (today + past 5 days):
   ```bash
   echo "=== S1 P ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S1&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — meteo T (today + past 5 days):
   ```bash
   echo "=== S2 T ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=T&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — meteo P (today + past 5 days):
   ```bash
   echo "=== S2 P ==="
   curl -s "$BASE_URL/api/preprocessing/meteo/?code=$S2&meteo_type=P&start_date=$TODAY_MINUS_5&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ### 10.2 Short-term forecast completeness
 
@@ -1483,54 +1482,54 @@ both stations.
   echo "=== S1 TFT ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TFT&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 TiDE — today's forecasts:
   ```bash
   echo "=== S1 TiDE ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TiDE&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 TSMixer — today's forecasts:
   ```bash
   echo "=== S1 TSMixer ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TFT — today's forecasts:
   ```bash
   echo "=== S2 TFT ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TFT&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TiDE — today's forecasts:
   ```bash
   echo "=== S2 TiDE ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TiDE&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 TSMixer — today's forecasts:
   ```bash
   echo "=== S2 TSMixer ==="
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=day&model=TSMixer&start_date=$TODAY&end_date=$TODAY&limit=100" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — EM pentad records (recent issue day):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S1&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — EM pentad records (recent issue day):
   ```bash
   curl -s "$BASE_URL/api/postprocessing/forecast/?code=$S2&horizon=pentad&model=EM&start_date=$RECENT_START&end_date=$TODAY&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 ### 10.3 Skill metrics check
 
@@ -1538,25 +1537,25 @@ both stations.
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — pentad skill metrics:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=pentad&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S1 — decad skill metrics:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 - [ ] $S2 — decad skill metrics:
   ```bash
   curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=decade&limit=50" | table
   ```
-  <!-- RESULT: (paste table output) -->
+  <!-- RESULT: -->
 
 **Red flags**:
 - `n_pairs` is 0 or 1 — recalculation ran but insufficient historical pairs
