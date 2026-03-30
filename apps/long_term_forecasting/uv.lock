@@ -165,7 +165,7 @@ wheels = [
 
 [[package]]
 name = "catboost"
-version = "1.2.3"
+version = "1.2.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphviz" },
@@ -177,16 +177,24 @@ dependencies = [
     { name = "scipy" },
     { name = "six" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/3a/7655d408025f53a031a241b4a7d21511583254fb7c3b8e3eac4feeb0f549/catboost-1.2.3.tar.gz", hash = "sha256:72e141e3594975a7c08c787989b9b35d45b2beec13e37a62706a01b1037a1e44", size = 69211285, upload-time = "2024-02-23T10:20:53.658Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/0e/09e8fa0858570fda88090bc3f441b69c18ea3d6f4a02fd41aa5426c157bf/catboost-1.2.10.tar.gz", hash = "sha256:26ae6d423acaf0e9d8160f2477a990431057ed04522d993c2f42dac62743b4f7", size = 39925863, upload-time = "2026-02-18T16:13:29.092Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/c0/83de2c76f5b49d0fd71912facf3ed4fe2db06bf225d526883887688b6156/catboost-1.2.3-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:649d19924db984930cd500faf862fd5b76698d9faa6e2350338d44d17261d783", size = 26164624, upload-time = "2024-02-23T10:18:00.589Z" },
-    { url = "https://files.pythonhosted.org/packages/62/a4/5bea227b83334efda7dc75a8ea0c6da9c4d7a5171e968764f6e10930d7aa/catboost-1.2.3-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:545e981506b02e6c716324089fc5201b57e5e30fb61929b0ac0b61af8290a9b1", size = 98060965, upload-time = "2024-02-23T10:18:08.081Z" },
-    { url = "https://files.pythonhosted.org/packages/f6/6b/8724adcfa5a8cb816f09c41fb30772d14699b948e4462a7afd24613117fb/catboost-1.2.3-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:f8ad8cacf688f75a78324655a69a942309345960af2075b4618a4b723c95ba81", size = 98530701, upload-time = "2024-02-23T10:18:17.827Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/37/3afd3c02798734efcd7840bfa872d3efc06f5d5c92f9613fea3ff5b4311f/catboost-1.2.3-cp311-cp311-win_amd64.whl", hash = "sha256:d9cea396190d4b6072c0e9dced69a0a4b46accda5572b26962b3b29b6d1e9233", size = 101050931, upload-time = "2024-02-23T10:18:27.718Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/dd/ab69f324024662d016fabfb02783820e20b7b169019c027b3a0492fb7722/catboost-1.2.3-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:7ea701141d12bb2e9ec348b4bb02be6b3188b6cd8832ae7b56a9bf98677a9128", size = 26061548, upload-time = "2024-02-23T10:18:34.154Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/13/05f34c83a4cb63e37f753a0be2efd3f7c6691cbab0f81618331a0a475e81/catboost-1.2.3-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:ec28140b7ad8663a68c05968c729263a7e8e604858a61fb6d9a190a9db025b26", size = 98033456, upload-time = "2024-02-23T10:18:41.404Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/32/c18bd93541990aaa70f50859c145eaff04f017fe3a73927ced5d31c6b5fc/catboost-1.2.3-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:c73a85711260c48c881eff41f6183426eeee7f2e07118688ecafc8c32ab57eb3", size = 98490621, upload-time = "2024-02-23T10:18:51.785Z" },
-    { url = "https://files.pythonhosted.org/packages/bc/55/cc1522e00190f68ebe41ff941ed735e00a626f43c123691dc60e899111d8/catboost-1.2.3-cp312-cp312-win_amd64.whl", hash = "sha256:031c4a4e7160b6a965414dd60c9459fb8472c69a8156e80e16734dd0b068986e", size = 101016678, upload-time = "2024-02-23T10:19:01.423Z" },
+    { url = "https://files.pythonhosted.org/packages/90/52/b961328a61a31a474c61fdcc1a19a086f7e672fd1becc0f70697a0ccccdb/catboost-1.2.10-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:ab2e84237308d62bae236b1ecba2e3867697f96bdbaf0ca68dafc2c886946406", size = 28850304, upload-time = "2026-02-18T16:11:49.153Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/5e/4cb6a2f896b34aaa4afe70491c595f77bef7f9b948d719eda99678847d3d/catboost-1.2.10-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:5ffe85f53092219cf65c73c2946426a289ef6f62c119c2bfda52815250d9bcef", size = 96708112, upload-time = "2026-02-18T16:11:53.607Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/62/5839abf95f9ee4bc2beb1be4a45f1a912859362477a4eb0f4c9d81298f53/catboost-1.2.10-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:5819a880af6b314f4980e6c26ad0f7552eafcf247d521bc884fe726347fdd87d", size = 97159502, upload-time = "2026-02-18T16:11:59.55Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/af/36048fdd08eca7876716176c30acf0e7ff1dfb1f53d0b93a021537e26601/catboost-1.2.10-cp311-cp311-win_amd64.whl", hash = "sha256:41bbe16cab0695978c325a20fa300f92831ed78e9cc8c5fe8047538b4055e98e", size = 100244500, upload-time = "2026-02-18T16:12:04.065Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/52/f5cd568800c87576012d715481730da93bcc34e609c5c204550a9ad0c067/catboost-1.2.10-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:b27115d5b443048f710001c8ac666892dfe03498492310b00466203c91cc30a5", size = 28884278, upload-time = "2026-02-18T16:12:07.659Z" },
+    { url = "https://files.pythonhosted.org/packages/33/ae/d33a8feba68fa810b30d70c660e4a2c62299472c2e1aa34406ccce306d13/catboost-1.2.10-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:39234b3692b6c9002b4a2ac529025fc210dd72feb9b621b27d17c65b7d3e9f92", size = 96704178, upload-time = "2026-02-18T16:12:11.229Z" },
+    { url = "https://files.pythonhosted.org/packages/15/6c/08eabe522ac5cefc605ef81f273d77602130739ec7bcdc0ef192aa0a1f07/catboost-1.2.10-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:b28f763776e62f50da90dddf73b36399583295032667a7e46fc5c1f2593eb80f", size = 97136498, upload-time = "2026-02-18T16:12:15.339Z" },
+    { url = "https://files.pythonhosted.org/packages/93/e2/f467a133b37eef2b3d8697d46a6e7f0da24bd3643f5475817c473ffc41dc/catboost-1.2.10-cp312-cp312-win_amd64.whl", hash = "sha256:6b8a7ef11d7a89fc547760cfafeee895011a4b92cc1f60d00235ef80a71158ed", size = 100214655, upload-time = "2026-02-18T16:12:20.046Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/02/3c5f08a7c7969eaa2509d804461db26752fe1c7ecb8ad8510cab51a95fd2/catboost-1.2.10-cp313-cp313-macosx_11_0_universal2.whl", hash = "sha256:bd3d3b344894f61b5f70124658f302148bb9a51c41d0d5b6c453a72e9dfefc49", size = 28829400, upload-time = "2026-02-18T16:12:23.682Z" },
+    { url = "https://files.pythonhosted.org/packages/98/fd/63be2ff7aa9f6a7d63e342f42948259a028bfa50203d5ff687c84804ffb7/catboost-1.2.10-cp313-cp313-manylinux2014_aarch64.whl", hash = "sha256:59aa166f075f0a5ea57b0ba46e5060bd6a22e849e91e4142f16c2df11295b184", size = 96680675, upload-time = "2026-02-18T16:12:28.407Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/2c/fa0479bd79226f037b495a30696b70741beb198f65227c975005e213aa8e/catboost-1.2.10-cp313-cp313-manylinux2014_x86_64.whl", hash = "sha256:42c1b6c7ae5c18cdbe00c8b9493987cc13338fe328baaf1a0b98ddaf58db96a2", size = 97111368, upload-time = "2026-02-18T16:12:32.456Z" },
+    { url = "https://files.pythonhosted.org/packages/69/71/a9e9a06418832fbea9d7cefda585d53395358d498537b6bdd3cf7364cd29/catboost-1.2.10-cp313-cp313-win_amd64.whl", hash = "sha256:5ede858e634d6d0f521bf6dd6fad9374f23d37049ee48e0779ccd2a372632cb1", size = 100201430, upload-time = "2026-02-18T16:12:36.731Z" },
+    { url = "https://files.pythonhosted.org/packages/56/58/f370f6c64db5e7da92e3b88ab62e2df72f113cf5a1eee35b48f69d54accd/catboost-1.2.10-cp314-cp314-macosx_11_0_universal2.whl", hash = "sha256:3efc5e4d414b7c13bff6dd0d6c938cf09bb1445097283c7790e54b8ee461820b", size = 28840256, upload-time = "2026-02-18T16:12:40.153Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/74/18597f0b2923e3660cd44f942fe9e7cddaa99afc252bc745c48f79566330/catboost-1.2.10-cp314-cp314-manylinux2014_aarch64.whl", hash = "sha256:bad9a70890cdc591080a908d54a3cd70002ab1e48b2017adff84726da0b3e16d", size = 96688527, upload-time = "2026-02-18T16:12:43.534Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/ac/7effae0e47fd9586e46a796f5af61b730c572570cedee333ee9ba8db85a8/catboost-1.2.10-cp314-cp314-manylinux2014_x86_64.whl", hash = "sha256:7b8cc4ea3a6ac4a8d05f3a79c8ee5454360a0a710fa12444963865ad3f0ddfec", size = 97119495, upload-time = "2026-02-18T16:12:47.557Z" },
+    { url = "https://files.pythonhosted.org/packages/da/b7/8f9e284a9cdd034f01f017dc5dab0da03dc3eac171a2be205745da3becb6/catboost-1.2.10-cp314-cp314-win_amd64.whl", hash = "sha256:951c5bdf27b8edb6ca624f41134888c666ae68275488803d3c91ce83e154f0c5", size = 101749687, upload-time = "2026-02-18T16:12:51.736Z" },
 ]
 
 [[package]]
@@ -880,7 +888,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.0" },
     { name = "alembic", specifier = ">=1.17.0" },
-    { name = "catboost", specifier = "==1.2.3" },
+    { name = "catboost", specifier = "==1.2.10" },
     { name = "ieasyhydro-sdk", git = "https://github.com/hydrosolutions/ieasyhydro-python-sdk" },
     { name = "ieasyhydroforecast", editable = "../iEasyHydroForecast" },
     { name = "lightgbm", specifier = ">=4.6.0" },
@@ -911,7 +919,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = "==9.0.0" }]
+dev = [{ name = "pytest", specifier = "==9.0.2" }]
 
 [[package]]
 name = "lt-forecasting"
@@ -1721,7 +1729,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "9.0.0"
+version = "9.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -1730,9 +1738,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/da/1d/eb34f286b164c5e431a810a38697409cca1112cee04b287bb56ac486730b/pytest-9.0.0.tar.gz", hash = "sha256:8f44522eafe4137b0f35c9ce3072931a788a21ee40a2ed279e817d3cc16ed21e", size = 1562764, upload-time = "2025-11-08T17:25:33.34Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/db/7ef3487e0fb0049ddb5ce41d3a49c235bf9ad299b6a25d5780a89f19230f/pytest-9.0.2.tar.gz", hash = "sha256:75186651a92bd89611d1d9fc20f0b4345fd827c41ccd5c299a868a05d70edf11", size = 1568901, upload-time = "2025-12-06T21:30:51.014Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/99/cafef234114a3b6d9f3aaed0723b437c40c57bdb7b3e4c3a575bc4890052/pytest-9.0.0-py3-none-any.whl", hash = "sha256:e5ccdf10b0bac554970ee88fc1a4ad0ee5d221f8ef22321f9b7e4584e19d7f96", size = 373364, upload-time = "2025-11-08T17:25:31.811Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl", hash = "sha256:711ffd45bf766d5264d487b917733b453d917afd2b0ad65223959f59089f875b", size = 374801, upload-time = "2025-12-06T21:30:49.154Z" },
 ]
 
 [[package]]

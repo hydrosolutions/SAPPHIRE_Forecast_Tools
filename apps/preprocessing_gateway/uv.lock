@@ -327,7 +327,7 @@ dev = [
 requires-dist = [
     { name = "ieasyhydroforecast", editable = "../iEasyHydroForecast" },
     { name = "luigi", specifier = ">=3.5.0" },
-    { name = "numpy", specifier = ">=1.26.4,<2.0.0" },
+    { name = "numpy", specifier = ">=1.26.4,<3.0.0" },
     { name = "pandas", specifier = ">=2.2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
     { name = "python-dateutil", specifier = ">=2.9.0" },
