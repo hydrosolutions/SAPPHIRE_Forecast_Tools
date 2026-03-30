@@ -1685,7 +1685,11 @@ def filter_for_highly_skilled_forecasts(
 
 
 def calculate_skill_metrics(
-    config, observed: pd.DataFrame, simulated: pd.DataFrame, timing_stats=None
+    config,
+    observed: pd.DataFrame,
+    simulated: pd.DataFrame,
+    timing_stats=None,
+    exclude_models: list[str] | None = None,
 ):
     """Calculate skill metrics for a short-term horizon (pentad or decad).
 
@@ -1697,11 +1701,14 @@ def calculate_skill_metrics(
         observed: DataFrame with observed data.
         simulated: DataFrame with simulated data.
         timing_stats: Optional TimingStats collector.
+        exclude_models: Optional list of model_short values to skip during
+            ensemble derivation (e.g. ["EM"] to skip EM recalculation).
 
     Returns:
         (skill_stats, joint_forecasts, timing_stats)
     """
     horizon = config.name.capitalize()
+    exclude_models = exclude_models or []
     period_col = config.period_col
     period_in_month_col = config.period_in_month_col
     get_period_func = config.get_period_func
@@ -1865,117 +1872,127 @@ def calculate_skill_metrics(
                 crps_df, on=[period_col, "code", "model_short"], how="left"
             )
 
-        skill_metrics_df_ensemble_avg = (
-            skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
-            .agg(em_agg_dict)
-            .reset_index()
-        )
-        skill_metrics_df_ensemble_avg = enforce_quantile_monotonicity(
-            skill_metrics_df_ensemble_avg, _SHORT_TERM_Q_COLS
-        )
-        # model_short now holds the composition string
-        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
-            columns={"model_short": "composition"}
-        )
-        skill_metrics_df_ensemble_avg["model_short"] = "EM"
-
-        # Discard single-model or empty ensembles
-        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
-            skill_metrics_df_ensemble_avg["composition"].apply(is_multi_model_composition)
-        ].copy()
-
-        number_of_models = simulated["model_short"].nunique()
-        logger.debug("%s number_of_models: %d", horizon, number_of_models)
-        if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
-            # Now recalculate the skill metrics for the ensemble
-            ensemble_skill_metrics_df = pd.merge(
-                skill_metrics_df_ensemble_avg,
-                observed[["code", "date", "discharge_avg", "delta"]],
-                on=["code", "date"],
-            )
-
-            # Single-pass ensemble skill metrics
-            ensemble_skill_stats = (
-                ensemble_skill_metrics_df.groupby(
-                    [period_col, "code", "model_short", "composition"]
-                )[["discharge_avg", "forecasted_discharge", "delta"]]
-                .apply(
-                    calculate_all_skill_metrics,
-                    observed_col="discharge_avg",
-                    simulated_col="forecasted_discharge",
-                    delta_col="delta",
-                )
+        if "EM" not in exclude_models:
+            skill_metrics_df_ensemble_avg = (
+                skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
+                .agg(em_agg_dict)
                 .reset_index()
             )
-
-            # --- CRPS for EM (short-term) ---
-            em_crps_records = []
-            for group_key, grp in ensemble_skill_metrics_df.groupby(
-                [period_col, "code", "model_short", "composition"]
-            ):
-                p, code, model, comp = group_key
-                obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-                qf_cols = [c for c in _SHORT_TERM_Q_COLS if c in grp.columns]
-                if len(qf_cols) == len(_SHORT_TERM_Q_COLS):
-                    qf = grp[qf_cols].to_numpy(dtype=np.float64)
-                    crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
-                    pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
-                    sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
-                else:
-                    crps_val = np.nan
-                    pit = {"reliability_score": np.nan}
-                    sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
-                em_crps_records.append(
-                    {
-                        period_col: p,
-                        "code": code,
-                        "model_short": model,
-                        "composition": comp,
-                        "crps": crps_val,
-                        "reliability_score": pit["reliability_score"],
-                        "sharpness_90": sharp["sharpness_90"],
-                        "sharpness_50": sharp["sharpness_50"],
-                    }
-                )
-            if em_crps_records:
-                em_crps_df = pd.DataFrame(em_crps_records)
-                ensemble_skill_stats = ensemble_skill_stats.merge(
-                    em_crps_df,
-                    on=[period_col, "code", "model_short", "composition"],
-                    how="left",
-                )
-
-            # Append the ensemble skill metrics to the skill metrics
-            skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
-
-            # Calculate period in month (production date -> target period)
-            ensemble_skill_metrics_df[period_in_month_col] = forecast_target_date(
-                ensemble_skill_metrics_df["date"]
-            ).apply(get_period_func)
-
-            # Ensure simulated has composition column for the outer merge
-            if "composition" not in simulated.columns:
-                simulated = simulated.copy()
-                simulated["composition"] = ""
-
-            # Join the two dataframes
-            join_cols = [
-                "code",
-                "date",
-                period_in_month_col,
-                period_col,
-                "forecasted_discharge",
-                "model_short",
-                "composition",
-            ]
-            # Carry quantile columns through into EM rows
-            for qcol in _SHORT_TERM_Q_COLS:
-                if qcol in ensemble_skill_metrics_df.columns:
-                    join_cols.append(qcol)
-            joint_forecasts = pd.merge(
-                simulated, ensemble_skill_metrics_df[join_cols], on=join_cols, how="outer"
+            skill_metrics_df_ensemble_avg = enforce_quantile_monotonicity(
+                skill_metrics_df_ensemble_avg, _SHORT_TERM_Q_COLS
             )
+            # model_short now holds the composition string
+            skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
+                columns={"model_short": "composition"}
+            )
+            skill_metrics_df_ensemble_avg["model_short"] = "EM"
+
+            # Discard single-model or empty ensembles
+            skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
+                skill_metrics_df_ensemble_avg["composition"].apply(is_multi_model_composition)
+            ].copy()
+
+            number_of_models = simulated["model_short"].nunique()
+            logger.debug("%s number_of_models: %d", horizon, number_of_models)
+            if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
+                # Now recalculate the skill metrics for the ensemble
+                ensemble_skill_metrics_df = pd.merge(
+                    skill_metrics_df_ensemble_avg,
+                    observed[["code", "date", "discharge_avg", "delta"]],
+                    on=["code", "date"],
+                )
+
+                # Single-pass ensemble skill metrics
+                ensemble_skill_stats = (
+                    ensemble_skill_metrics_df.groupby(
+                        [period_col, "code", "model_short", "composition"]
+                    )[["discharge_avg", "forecasted_discharge", "delta"]]
+                    .apply(
+                        calculate_all_skill_metrics,
+                        observed_col="discharge_avg",
+                        simulated_col="forecasted_discharge",
+                        delta_col="delta",
+                    )
+                    .reset_index()
+                )
+
+                # --- CRPS for EM (short-term) ---
+                em_crps_records = []
+                for group_key, grp in ensemble_skill_metrics_df.groupby(
+                    [period_col, "code", "model_short", "composition"]
+                ):
+                    p, code, model, comp = group_key
+                    obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
+                    qf_cols = [c for c in _SHORT_TERM_Q_COLS if c in grp.columns]
+                    if len(qf_cols) == len(_SHORT_TERM_Q_COLS):
+                        qf = grp[qf_cols].to_numpy(dtype=np.float64)
+                        crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                        pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
+                        sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
+                    else:
+                        crps_val = np.nan
+                        pit = {"reliability_score": np.nan}
+                        sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+                    em_crps_records.append(
+                        {
+                            period_col: p,
+                            "code": code,
+                            "model_short": model,
+                            "composition": comp,
+                            "crps": crps_val,
+                            "reliability_score": pit["reliability_score"],
+                            "sharpness_90": sharp["sharpness_90"],
+                            "sharpness_50": sharp["sharpness_50"],
+                        }
+                    )
+                if em_crps_records:
+                    em_crps_df = pd.DataFrame(em_crps_records)
+                    ensemble_skill_stats = ensemble_skill_stats.merge(
+                        em_crps_df,
+                        on=[period_col, "code", "model_short", "composition"],
+                        how="left",
+                    )
+
+                # Append the ensemble skill metrics to the skill metrics
+                skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+
+                # Calculate period in month (production date -> target period)
+                ensemble_skill_metrics_df[period_in_month_col] = forecast_target_date(
+                    ensemble_skill_metrics_df["date"]
+                ).apply(get_period_func)
+
+                # Ensure simulated has composition column for the outer merge
+                if "composition" not in simulated.columns:
+                    simulated = simulated.copy()
+                    simulated["composition"] = ""
+
+                # Join the two dataframes
+                join_cols = [
+                    "code",
+                    "date",
+                    period_in_month_col,
+                    period_col,
+                    "forecasted_discharge",
+                    "model_short",
+                    "composition",
+                ]
+                # Carry quantile columns through into EM rows
+                for qcol in _SHORT_TERM_Q_COLS:
+                    if qcol in ensemble_skill_metrics_df.columns:
+                        join_cols.append(qcol)
+                joint_forecasts = pd.merge(
+                    simulated,
+                    ensemble_skill_metrics_df[join_cols],
+                    on=join_cols,
+                    how="outer",
+                )
+            else:
+                joint_forecasts = simulated.copy()
         else:
+            logger.info(
+                "Skipping EM ensemble derivation (excluded). "
+                "Operational EM skill metrics are retained in DB."
+            )
             joint_forecasts = simulated.copy()
 
     return skill_stats, joint_forecasts, timing_stats

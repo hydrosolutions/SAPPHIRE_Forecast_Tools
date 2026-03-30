@@ -844,12 +844,12 @@ class TestRecalcIntegration:
         assert os.path.exists(os.path.join(data_dir, "combined_forecasts_decad.csv"))
         assert os.path.exists(os.path.join(data_dir, "skill_metrics_decad.csv"))
 
-    def test_em_rows_in_output_with_correct_discharge(self, integration_env):
-        """EM discharge = mean of qualified models per station.
+    def test_em_excluded_in_recalc_output(self, integration_env):
+        """PP-030: recalculation skips EM derivation (exclude_models=["EM"]).
 
-        99001: mean(LR, TFT, TiDE)
-        99002: mean(LR, TFT) — TiDE fails
-        99003: no EM (single model)
+        No EM rows should appear in the recalculation output because the
+        recalculation path now passes exclude_models=["EM"] to avoid
+        boundary-pentad date misalignment producing bad EM records.
         """
         tmp_path, data_dir = integration_env
 
@@ -869,11 +869,7 @@ class TestRecalcIntegration:
 
         output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
         em = output[output["model_short"] == "EM"]
-        em_stations = set(em["code"].astype(str))
-
-        assert "99001" in em_stations, "99001 should have EM rows"
-        assert "99002" in em_stations, "99002 should have EM rows"
-        assert "99003" not in em_stations, "99003 should NOT have EM (single model)"
+        assert em.empty, "Recalculation should not produce EM rows (PP-030)"
 
     def test_cross_workflow_recalc_then_operational(self, integration_env):
         """Run recalc -> writes skill CSV -> run operational -> creates EM.

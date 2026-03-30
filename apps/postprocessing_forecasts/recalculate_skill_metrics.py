@@ -130,7 +130,13 @@ def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, co
     with timer(timing_stats_, f"calculating skill metrics {config.name}"):
         logger.info(f"\n\n------ Calculating skill metrics {config.name} --------")
         skill_metrics_result, modelled, returned_timing_stats = (
-            skill_metrics.calculate_skill_metrics(config, observed, modelled, timing_stats_)
+            skill_metrics.calculate_skill_metrics(
+                config,
+                observed,
+                modelled,
+                timing_stats_,
+                exclude_models=["EM"],  # PP-030: skip EM re-derivation at boundaries
+            )
         )
 
     with timer(
