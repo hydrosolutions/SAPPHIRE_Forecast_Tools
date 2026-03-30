@@ -537,8 +537,9 @@ Practical steps (not yet documented):
   # (3) Decadal Forecast at 05:00 UTC
   0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
 
-  # (4) Long-term Forecast at 06:00 UTC
-  0 6 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
+  # (4) Long-term Forecast at 06:00 UTC on the 10th and 25th of each month.
+  # The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
+  0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 
   # (5) Daily maintenance (evening UTC)
   0 14 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
@@ -546,10 +547,10 @@ Practical steps (not yet documented):
   # (6) Periodic maintenance
   # Bimonthly long-term postprocessing (1st of odd months)
   0 17 1 1,3,5,7,9,11 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh long_term /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_longterm_$(date +\%Y\%m\%d).log 2>&1
-  # Yearly skill recalculation (January 1)
-  0 1 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
-  # Yearly snow norm recalculation (August 25)
-  0 2 25 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
+  # Yearly skill recalculation (December 31)
+  0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
+  # Yearly snow norm recalculation (August 31)
+  0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
   ```
 
   > `[DOC-GAP-11]` **Crontab template in `doc/deployment.md` is
