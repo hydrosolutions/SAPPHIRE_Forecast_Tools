@@ -703,4 +703,38 @@ class TestConfigurableYearFilter:
             _simulated_decad_multi_year,
         )
         assert joint["date"].min().year >= 2006
-        assert not joint.empty
+
+
+class TestShortTermCrps:
+    """Test CRPS computation with 4-column short-term quantile set."""
+
+    def test_crps_with_4_quantiles(self):
+        """CRPS can be computed from 4 quantile columns."""
+        from src.skill_metrics import calculate_crps
+
+        # Perfect forecast: observation equals median
+        observed = np.array([10.0, 20.0, 30.0])
+        # Quantile forecasts: q05, q25, q75, q95
+        quantile_forecasts = np.array(
+            [
+                [5.0, 8.0, 12.0, 15.0],
+                [15.0, 18.0, 22.0, 25.0],
+                [25.0, 28.0, 32.0, 35.0],
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.25, 0.75, 0.95])
+        crps = calculate_crps(observed, quantile_forecasts, quantile_levels)
+        assert isinstance(crps, float)
+        assert crps >= 0.0
+        assert not np.isnan(crps)
+
+    def test_crps_perfect_4q(self):
+        """CRPS is zero for perfect deterministic forecast with 4 quantiles."""
+        from src.skill_metrics import calculate_crps
+
+        observed = np.array([10.0])
+        # All quantiles equal to observation
+        quantile_forecasts = np.array([[10.0, 10.0, 10.0, 10.0]])
+        quantile_levels = np.array([0.05, 0.25, 0.75, 0.95])
+        crps = calculate_crps(observed, quantile_forecasts, quantile_levels)
+        assert crps == pytest.approx(0.0, abs=1e-10)

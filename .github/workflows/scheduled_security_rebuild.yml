@@ -1,13 +1,13 @@
-name: Quarterly Security Rebuild
+name: Monthly Security Rebuild
 
 # Rebuilds all Docker images from fresh upstream to pick up security fixes
-# Runs quarterly or on-demand via manual trigger
-# Uses Python 3.12 + uv workflow (aligned with deploy_main.yml)
+# Runs monthly or on-demand via manual trigger
+# Uses Python 3.12 + uv workflow (aligned with deploy_production.yml)
 
 on:
   schedule:
-    # Run at 00:00 UTC on first day of Jan, Apr, Jul, Oct
-    - cron: '0 0 1 1,4,7,10 *'
+    # Run at 00:00 UTC on first day of every month
+    - cron: '0 0 1 * *'
   workflow_dispatch:
     inputs:
       skip_module_rebuild:
@@ -30,19 +30,18 @@ env:
   # CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod  # R-based, builds broken
 
 jobs:
-  # Calculate quarterly tag (e.g., 2025-Q1)
+  # Calculate monthly tag (e.g., 2025-03)
   setup:
     runs-on: ubuntu-latest
     outputs:
-      quarterly_tag: ${{ steps.calc.outputs.quarterly_tag }}
+      monthly_tag: ${{ steps.calc.outputs.monthly_tag }}
     steps:
-      - name: Calculate quarterly tag
+      - name: Calculate monthly tag
         id: calc
         run: |
-          QUARTER=$(( ($(date +%-m) - 1) / 3 + 1 ))
-          QUARTERLY_TAG="$(date +%Y)-Q${QUARTER}"
-          echo "quarterly_tag=${QUARTERLY_TAG}" >> $GITHUB_OUTPUT
-          echo "Quarterly tag: ${QUARTERLY_TAG}"
+          MONTHLY_TAG="$(date +%Y-%m)"
+          echo "monthly_tag=${MONTHLY_TAG}" >> $GITHUB_OUTPUT
+          echo "Monthly tag: ${MONTHLY_TAG}"
 
   # Test iEasyHydroForecast with Python 3.12 + uv before building base image
   test-base-image:
@@ -101,7 +100,7 @@ jobs:
           push: true
           tags: |
             ${{ env.BASE_IMAGE_NAME }}:latest
-            ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           # Pull fresh base image to get security patches
           pull: true
           # Disable cache to ensure fresh build with latest packages
@@ -118,7 +117,7 @@ jobs:
           echo "Verifying uv is available..."
           docker run --rm "${{ env.BASE_IMAGE_NAME }}:latest" uv --version
           echo "Pushed ${{ env.BASE_IMAGE_NAME }}:latest"
-          echo "Pushed ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
+          echo "Pushed ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}"
 
   # Rebuild all module images (only if not skipped)
   # Using matrix strategy with docker/build-push-action@v6
@@ -150,7 +149,7 @@ jobs:
           push: true
           tags: |
             ${{ env.PIPELINE_IMAGE_NAME }}:latest
-            ${{ env.PIPELINE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.PIPELINE_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -183,7 +182,7 @@ jobs:
           push: true
           tags: |
             ${{ env.DASHBOARD_IMAGE_NAME }}:latest
-            ${{ env.DASHBOARD_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.DASHBOARD_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -216,7 +215,7 @@ jobs:
           push: true
           tags: |
             ${{ env.PREPQ_IMAGE_NAME }}:latest
-            ${{ env.PREPQ_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.PREPQ_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -249,7 +248,7 @@ jobs:
           push: true
           tags: |
             ${{ env.PREPG_IMAGE_NAME }}:latest
-            ${{ env.PREPG_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.PREPG_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -282,7 +281,7 @@ jobs:
           push: true
           tags: |
             ${{ env.LINREG_IMAGE_NAME }}:latest
-            ${{ env.LINREG_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.LINREG_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -328,7 +327,7 @@ jobs:
           push: true
           tags: |
             ${{ env.ML_IMAGE_NAME }}:latest
-            ${{ env.ML_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.ML_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -361,7 +360,7 @@ jobs:
           push: true
           tags: |
             ${{ env.POSTPQ_IMAGE_NAME }}:latest
-            ${{ env.POSTPQ_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+            ${{ env.POSTPQ_IMAGE_NAME }}:${{ needs.setup.outputs.monthly_tag }}
           pull: true
           no-cache: true
           provenance: true
@@ -389,9 +388,9 @@ jobs:
     steps:
       - name: Generate summary
         run: |
-          echo "# Quarterly Security Rebuild Summary" >> $GITHUB_STEP_SUMMARY
+          echo "# Monthly Security Rebuild Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Quarterly Tag:** ${{ needs.setup.outputs.quarterly_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Monthly Tag:** ${{ needs.setup.outputs.monthly_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Build Configuration" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -409,7 +408,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Images Rebuilt" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | :latest | :${{ needs.setup.outputs.quarterly_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | :latest | :${{ needs.setup.outputs.monthly_tag }} |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|---------|------|" >> $GITHUB_STEP_SUMMARY
           echo "| ${{ env.BASE_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ github.event.inputs.skip_module_rebuild }}" != "true" ]]; then
@@ -424,7 +423,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Reproducibility" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "To pin to this quarter's images, use:" >> $GITHUB_STEP_SUMMARY
+          echo "To pin to this month's images, use:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`dockerfile" >> $GITHUB_STEP_SUMMARY
-          echo "FROM mabesa/sapphire-pythonbaseimage:${{ needs.setup.outputs.quarterly_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "FROM mabesa/sapphire-pythonbaseimage:${{ needs.setup.outputs.monthly_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

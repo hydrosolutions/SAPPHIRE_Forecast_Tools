@@ -252,8 +252,8 @@ def run_single_model(
 
     # None means this model is not scheduled for today — skip gracefully
     if today is None:
-        logger.info(f"Model {model_name} not scheduled for today, skipping")
-        return True  # skip is not a failure
+        logger.warning(f"Model {model_name} not scheduled for today, skipping")
+        return False  # skip is a failure
 
     logger.info(f"Can model {model_name} be run? {'Yes' if can_be_run else 'No'}")
 
@@ -272,8 +272,20 @@ def run_single_model(
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
         forecast = forecast.round(2)
-        forecast["flag"] = 0
-        success = True
+
+        # where Q_model_name is Nan, set flag to 2, else 0 (0 = forecast produced, 2 = no forecast produced, missing data)
+        main_q_col = f"Q_{model_name}"
+        if main_q_col not in forecast.columns:
+            logger.error(
+                f"Expected main Q column {main_q_col} not found in forecast for model {model_name}. Available columns: {forecast.columns}"
+            )
+            forecast["flag"] = 2
+            success = False
+        else:
+            nan_mask = forecast[main_q_col].isna()
+            forecast.loc[nan_mask, "flag"] = 2  # no forecast produced,
+            forecast.loc[~nan_mask, "flag"] = 0  # forecast produced
+            success = True
 
     else:
         logger.error(f"Cannot run model {model_name} due to missing or outdated data.")

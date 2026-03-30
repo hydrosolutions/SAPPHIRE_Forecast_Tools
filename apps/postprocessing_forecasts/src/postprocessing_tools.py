@@ -285,3 +285,68 @@ def log_most_recent_forecasts_monthly(modelled_data):
     logger.info("Number of stations with forecasts: %d", len(pivoted))
 
     return pivoted
+
+
+def enforce_quantile_monotonicity(
+    df: pd.DataFrame,
+    quantile_cols: list[str],
+) -> pd.DataFrame:
+    """Enforce q05 <= q10 <= ... <= q95 after vincentization.
+
+    Fixes quantile crossings by propagating the running maximum
+    from left to right across quantile columns. Rows where any
+    quantile column is NaN are left untouched.
+
+    Args:
+        df: DataFrame with quantile columns.
+        quantile_cols: Ordered list of column names (ascending).
+
+    Returns:
+        Copy of df with monotonicity enforced on non-NaN rows.
+    """
+    cols_present = [c for c in quantile_cols if c in df.columns]
+    if len(cols_present) < 2:
+        return df
+    df = df.copy()
+    mask = df[cols_present].notna().all(axis=1)
+    n_corrected = 0
+    for i in range(1, len(cols_present)):
+        prev, curr = cols_present[i - 1], cols_present[i]
+        crossing = mask & (df[prev] > df[curr])
+        n_corrected += crossing.sum()
+        df.loc[crossing, curr] = df.loc[crossing, prev]
+    if n_corrected > 0:
+        logger.debug("Quantile crossing guard: corrected %d values", n_corrected)
+    return df
+
+
+def count_quantile_crossings(
+    df: pd.DataFrame,
+    quantile_cols: list[str],
+    label: str = "",
+) -> int:
+    """Count quantile crossings without correcting them.
+
+    For use at temporal aggregation sites where crossings indicate
+    model quality issues and should be logged, not fixed.
+
+    Returns:
+        Total number of crossing cells detected.
+    """
+    cols_present = [c for c in quantile_cols if c in df.columns]
+    if len(cols_present) < 2:
+        return 0
+    mask = df[cols_present].notna().all(axis=1)
+    n_crossings = 0
+    for i in range(1, len(cols_present)):
+        prev, curr = cols_present[i - 1], cols_present[i]
+        n_crossings += (mask & (df[prev] > df[curr])).sum()
+    if n_crossings > 0:
+        logger.warning(
+            "Quantile crossings detected%s: %d values (not corrected "
+            "— temporal aggregation site, may indicate model quality "
+            "issue)",
+            f" [{label}]" if label else "",
+            n_crossings,
+        )
+    return n_crossings

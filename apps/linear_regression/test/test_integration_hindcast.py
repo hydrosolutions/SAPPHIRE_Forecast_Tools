@@ -11,6 +11,7 @@ import sys
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from linear_regression import (
@@ -31,6 +32,7 @@ def _write_csv(path, dates, codes, filename="forecast_pentad_linreg.csv"):
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestLastForecastDatesIntegration:
     """Integration tests: real CSVs → get_last_forecast_dates_per_gauge."""
 
@@ -111,6 +113,7 @@ class TestLastForecastDatesIntegration:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("disable_api_client")
 class TestHindcastStartDateIntegration:
     """Full pipeline: real CSV → start date detection."""
 

@@ -890,8 +890,8 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
         self.test_data["date"] = pd.to_datetime(self.test_data["date"]).dt.date
 
     def test_columns_present(self):
-        # Test if columns in val_data are present in test_data, except for the
-        # column Q50, which is renamed to forecasted_discharge in the test_data
+        # Test if columns in val_data are present in test_data.
+        # Q50 → forecasted_discharge; other Q* columns → lowercase q* (e.g. Q5 → q05).
         for col in self.val_data.columns:
             if col == "forecast_date":
                 continue
@@ -900,6 +900,13 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
                     "forecasted_discharge",
                     self.test_data.columns,
                     f"Column {col} is missing in processed data",
+                )
+            elif col.startswith("Q") and col[1:].isdigit():
+                expected = f"q{int(col[1:]):02d}"
+                self.assertIn(
+                    expected,
+                    self.test_data.columns,
+                    f"Column {col} (normalized to {expected}) is missing in processed data",
                 )
             else:
                 self.assertIn(
@@ -938,20 +945,24 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
                 # Special case for code 16161 and date 2010-07-10: We don't have data and all quantiles are not defined
                 if code == "16161" and date == pd.to_datetime("2010-07-10").date():
                     self.assertTrue(test_data_code["forecasted_discharge"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q10"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q25"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q75"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q90"].isnull().values[0])
+                    self.assertTrue(test_data_code["q10"].isnull().values[0])
+                    self.assertTrue(test_data_code["q25"].isnull().values[0])
+                    self.assertTrue(test_data_code["q75"].isnull().values[0])
+                    self.assertTrue(test_data_code["q90"].isnull().values[0])
                     continue
 
                 # Assert that all values in columns starting with Q are equal in both dataframes
+                # Raw CSV uses uppercase (Q5, Q10, ...), processed uses lowercase (q05, q10, ...)
                 for col in mean.index:
                     if col == "Q50":
                         self.assertAlmostEqual(
                             mean[col], test_data_code["forecasted_discharge"].values[0], places=2
                         )
                     else:
-                        self.assertAlmostEqual(mean[col], test_data_code[col].values[0], places=2)
+                        normalized = f"q{int(col[1:]):02d}"
+                        self.assertAlmostEqual(
+                            mean[col], test_data_code[normalized].values[0], places=2
+                        )
 
 
 class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
@@ -976,8 +987,8 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
         self.test_data["date"] = pd.to_datetime(self.test_data["date"]).dt.date
 
     def test_columns_present(self):
-        # Test if columns in val_data are present in test_data, except for the
-        # column Q50, which is renamed to forecasted_discharge in the test_data
+        # Test if columns in val_data are present in test_data.
+        # Q50 → forecasted_discharge; other Q* columns → lowercase q* (e.g. Q5 → q05).
         for col in self.val_data.columns:
             if col == "forecast_date":
                 continue
@@ -986,6 +997,13 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
                     "forecasted_discharge",
                     self.test_data.columns,
                     f"Column {col} is missing in processed data",
+                )
+            elif col.startswith("Q") and col[1:].isdigit():
+                expected = f"q{int(col[1:]):02d}"
+                self.assertIn(
+                    expected,
+                    self.test_data.columns,
+                    f"Column {col} (normalized to {expected}) is missing in processed data",
                 )
             else:
                 self.assertIn(
@@ -1030,20 +1048,24 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
                 # Special case for code 16161 and date 2010-07-10: We don't have data and all quantiles are not defined
                 if code == "16161" and date == pd.to_datetime("2010-07-10").date():
                     self.assertTrue(test_data_code["forecasted_discharge"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q10"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q25"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q75"].isnull().values[0])
-                    self.assertTrue(test_data_code["Q90"].isnull().values[0])
+                    self.assertTrue(test_data_code["q10"].isnull().values[0])
+                    self.assertTrue(test_data_code["q25"].isnull().values[0])
+                    self.assertTrue(test_data_code["q75"].isnull().values[0])
+                    self.assertTrue(test_data_code["q90"].isnull().values[0])
                     continue
 
                 # Assert that all values in columns starting with Q are equal in both dataframes
+                # Raw CSV uses uppercase (Q5, Q10, ...), processed uses lowercase (q05, q10, ...)
                 for col in mean.index:
                     if col == "Q50":
                         self.assertAlmostEqual(
                             mean[col], test_data_code["forecasted_discharge"].values[0], places=2
                         )
                     else:
-                        self.assertAlmostEqual(mean[col], test_data_code[col].values[0], places=2)
+                        normalized = f"q{int(col[1:]):02d}"
+                        self.assertAlmostEqual(
+                            mean[col], test_data_code[normalized].values[0], places=2
+                        )
 
 
 class TestModelLongDeprecation(unittest.TestCase):

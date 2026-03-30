@@ -306,7 +306,7 @@ def _write_meteo_to_api(
     today = pd.Timestamp.today().normalize()
     yesterday = today - pd.Timedelta(days=1)
     if sync_mode == "operational":
-        data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
+        data_to_write = data[data["date"] >= yesterday]
     elif sync_mode == "maintenance":
         cutoff = today - pd.Timedelta(days=30)
         data_to_write = data[data["date"] >= cutoff]
@@ -317,7 +317,7 @@ def _write_meteo_to_api(
             "Unknown sync mode '%s', defaulting to operational",
             sync_mode,
         )
-        data_to_write = data[(data["date"] >= yesterday) & (data["date"] <= today)]
+        data_to_write = data[data["date"] >= yesterday]
 
     logger.info(
         "%s mode: %d meteo records to write (%s, HRU %s)",
@@ -410,17 +410,16 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
     csv_data = csv_data.copy()
     csv_data["date"] = pd.to_datetime(csv_data["date"])
 
-    # The write function filters to yesterday+today; use the same window
+    # The write function filters to yesterday onward (includes forecast); match that window
     today = pd.Timestamp.today().normalize()
     yesterday = today - pd.Timedelta(days=1)
-    csv_recent = csv_data[(csv_data["date"] >= yesterday) & (csv_data["date"] <= today)].copy()
+    csv_recent = csv_data[csv_data["date"] >= yesterday].copy()
 
     if csv_recent.empty:
         logger.warning(
-            "%s: No CSV rows for %s to %s, nothing to verify. CSV date range: %s to %s",
+            "%s: No CSV rows from %s onward, nothing to verify. CSV date range: %s to %s",
             tag,
             yesterday.date(),
-            today.date(),
             csv_data["date"].min().date(),
             csv_data["date"].max().date(),
         )
@@ -432,7 +431,7 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
         "%s: Verifying API data for dates %s to %s, codes=%s, api_url=%s",
         tag,
         yesterday.date(),
-        today.date(),
+        csv_recent["date"].max().date(),
         list(codes),
         api_url,
     )
@@ -449,7 +448,7 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
                 meteo_type=meteo_type.upper(),
                 code=str(code),
                 start_date=yesterday.strftime("%Y-%m-%d"),
-                end_date=today.strftime("%Y-%m-%d"),
+                end_date=csv_recent["date"].max().strftime("%Y-%m-%d"),
                 limit=1000,
             )
             if api_df.empty:
@@ -505,7 +504,7 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
                     "recent records.",
                     tag,
                     yesterday.date(),
-                    today.date(),
+                    csv_recent["date"].max().date(),
                     meteo_type.upper(),
                     dates_in_api[:5],
                     codes_in_api[:5],

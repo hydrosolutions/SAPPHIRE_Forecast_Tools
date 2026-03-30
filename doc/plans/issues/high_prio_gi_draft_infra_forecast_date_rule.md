@@ -17,8 +17,9 @@ to all downstream functions. Fix four latent year-boundary bugs in `tag_library.
 
 SAPPHIRE runs operational runoff forecasts daily. The pipeline is date-sensitive —
 pentad/decad boundaries, year transitions, and leap years all affect which forecast
-period is computed. The codebase currently has ~80 scattered `date.today()` calls in
-business logic across multiple modules.
+period is computed. The codebase currently has ~105 scattered `date.today()` calls in
+business logic across multiple modules (initial audit: ~18; additional calls
+discovered 2026-03-23: ~25 more; remainder are logging/timestamps).
 
 The `long_term_forecasting` module already implements the correct pattern:
 `initialize_today()` captures the date once and `get_today()` returns it everywhere.
@@ -124,6 +125,115 @@ correctly reflect wall-clock time and should not be changed:
 - `logger.debug(f"Script started at {dt.datetime.now()}.")`
 - `docker_logs_file_path = f"...log_{datetime.now().strftime(...)}.txt"`
 - `timer_start = datetime.datetime.now()`
+
+### Category 2b: Additional business-logic calls discovered 2026-03-23
+
+A follow-up scan found ~25 more calls not in the original audit. They are
+organised by module below.
+
+#### `preprocessing_runoff/src/src.py` — 7 additional calls (beyond 5 already tracked)
+
+These are in data-range construction logic, not hydrograph generation. They
+carry the same clock-tick and hindcast risks as the originally documented calls.
+
+| Line | Context |
+|------|---------|
+| 1892 | `dt.date.today()` — data-range logic |
+| 1995 | `dt.date.today()` — data-range logic |
+| 1996 | `dt.date.today()` — data-range logic |
+| 2374 | `dt.date.today()` — data-range logic |
+| 2406 | `dt.date.today()` — data-range logic |
+| 3162 | `dt.date.today()` — data-range logic |
+| 3178 | `dt.date.today()` — data-range logic |
+
+Total calls in this file after audit: **12** (5 original + 7 new).
+
+#### `preprocessing_station_forcing/src/src.py` — 1 additional call (import-time bug)
+
+| Line | Context |
+|------|---------|
+| 309 | `end_date=dt.date.today()` as a **function default argument** — same import-time evaluation bug as the original `tag_library.py` findings; must be fixed in Phase 1 or a dedicated hotfix |
+
+This adds a fifth instance of the import-time default argument bug (Category 1).
+
+#### `postprocessing_forecasts/` — 10 calls (entire module missing from original audit)
+
+| File | Line(s) | Context | Classification |
+|------|---------|---------|----------------|
+| `postprocessing_operational.py` | 189 | `today = dt.date.today()` | Entry-point capture — acceptable, but should accept override for hindcast |
+| `postprocessing_operational_long_term.py` | 82 | `forecast_date = dt.date.today()` | Entry-point capture — same note |
+| `recalculate_skill_metrics.py` | 182, 210, 257, 304, 351 | `dt.date.today().year` for `current_year` | Business logic — should receive year as param |
+| `src/data_reader.py` | 1085, 2527, 2583 | `today = forecast_date if forecast_date is not None else dt.date.today()` | Guarded fallback — lower risk, but should be eliminated in Phase 3 |
+| `src/skill_metrics.py` | 1671 | `_default_start = dt.date.today().year - 20` | Business logic default — should be a named constant or caller-supplied param |
+| `src/file_writer.py` | 25 | `_resolve_year()` calls `dt.date.today().year` when `year=None` | Business logic fallback — should require explicit year |
+
+#### `linear_regression/linear_regression.py` — 3–4 calls (module missing from original audit)
+
+| Line(s) | Context |
+|---------|---------|
+| 276, 284, 286 | `dt.date.today()` in argument parsing / CLI default construction |
+| 653 | `dt.date.today()` as fallback `forecast_date` |
+
+These are in the CLI entry point layer. Lines 276/284/286 are acceptable if they
+feed into `define_run_dates(today_override=…)` (Phase 2). Line 653 must be
+threaded through from the entry point.
+
+#### `preprocessing_gateway/` — 3 calls (module missing from original audit)
+
+| File | Line | Context |
+|------|------|---------|
+| `extend_era5_reanalysis.py` | 622 | `current_year = datetime.now().year` — business logic |
+| `backfill_new_stations.py` | 309 | `today = date.today()` — business logic |
+| `backfill_new_stations.py` | 336 | `today = date.today()` — business logic |
+
+#### `forecast_dashboard/` — 2 additional calls (beyond 2 already documented)
+
+| File | Line | Context |
+|------|------|---------|
+| `dashboard/utils.py` | 13 | `current_year = dt.datetime.now().year` — module-level constant, import-time evaluation |
+| `dashboard/widgets.py` | 318 | `today_date = dt.datetime.now().date()` — business logic |
+
+`utils.py` line 13 is a module-level assignment (not a default argument), but
+it is evaluated once at import time and cached for the lifetime of the process —
+same year-boundary risk as Category 1.
+
+#### `long_term_forecasting/run_forecast.py` — 1 inconsistent call
+
+| Line | Context |
+|------|---------|
+| 457 | `today = datetime.now().date()` — should use `get_today()` from `__init__.py` (the reference implementation already exists in this module) |
+
+This is the only known deviation from the reference implementation inside
+`long_term_forecasting`. Fix is trivial: replace with `get_today()`.
+
+#### `reset_forecast_run_date/rerun_forecast.py` — 1 call (module missing from original audit)
+
+| Line | Context |
+|------|---------|
+| 115 | `datetime.date.today()` as fallback — this utility is the primary hindcast/backtest tool; using `today()` as a fallback silently defeats its own purpose |
+
+This is high-priority: the fallback should either be removed (make the date
+argument required) or raise an explicit error when not supplied.
+
+---
+
+### Category 3a: Updated call-site summary
+
+| Module | Original count | Newly found | Total | Priority |
+|--------|---------------|-------------|-------|----------|
+| `iEasyHydroForecast/tag_library.py` | 4 (import-time bug) | 0 | 4 | **Phase 1** |
+| `preprocessing_station_forcing/src/src.py` | 3 | 1 (import-time bug) | 4 | **Phase 1** (new bug) + Phase 3 |
+| `iEasyHydroForecast/setup_library.py` | 1 | 0 | 1 | **Phase 2** |
+| `preprocessing_runoff/src/src.py` | 5 | 7 | 12 | Phase 3 |
+| `postprocessing_forecasts/` | 0 | 10 | 10 | Phase 3 |
+| `linear_regression/linear_regression.py` | 0 | 3–4 | 3–4 | Phase 2/3 |
+| `preprocessing_gateway/` | 0 | 3 | 3 | Phase 3 |
+| `forecast_dashboard/` | 3 | 2 | 5 | Phase 3 |
+| `long_term_forecasting/run_forecast.py` | 0 | 1 | 1 | Phase 3 (trivial) |
+| `reset_forecast_run_date/rerun_forecast.py` | 0 | 1 | 1 | Phase 3 (high-impact) |
+| **Total (business logic)** | **~18** | **~25** | **~43** | |
+
+---
 
 ### Category 4: Test files using `date.today()`
 
@@ -255,10 +365,20 @@ as a separate PR:
 
 **Priority order:**
 
-1. `preprocessing_runoff/src/src.py` (5 calls) — highest risk, hydrograph generation
-   is date-sensitive
-2. `preprocessing_station_forcing/src/src.py` (3 calls)
-3. `forecast_dashboard` (3 calls) — lower risk, display only
+1. `preprocessing_station_forcing/src/src.py` line 309 — new import-time default
+   argument bug; fix in Phase 1 alongside `tag_library.py`
+2. `reset_forecast_run_date/rerun_forecast.py` (1 call) — high-impact: this is
+   the hindcast utility; a `today()` fallback defeats its own purpose
+3. `long_term_forecasting/run_forecast.py` (1 call) — trivial: replace with
+   `get_today()`
+4. `preprocessing_runoff/src/src.py` (12 calls total) — highest volume, data-range
+   and hydrograph generation are both date-sensitive
+5. `postprocessing_forecasts/` (10 calls) — entry-point captures + business logic
+   scattered across 5 files
+6. `linear_regression/linear_regression.py` (3–4 calls) — CLI entry point + fallback
+7. `preprocessing_gateway/` (3 calls)
+8. `preprocessing_station_forcing/src/src.py` remaining 3 calls (non-default-arg)
+9. `forecast_dashboard/` (5 calls total) — lower risk, display only
 
 For each module:
 - [ ] Add `forecast_date` or `year` parameter to affected functions
@@ -344,12 +464,12 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
 
 | Phase | Scope | Effort | Risk |
 |-------|-------|--------|------|
-| Phase 1 | 4 function signatures + 4 dashboard call sites + tests | ~3 hours | Low (isolated bug fix) |
-| Phase 2 | 1 function signature + 1 caller + tests | ~2 hours | Low |
-| Phase 3 | 11 call sites across 3 modules + tests per module | ~6 hours (2h/module) | Medium (threading params through call chains) |
+| Phase 1 | 4 `tag_library.py` signatures + 1 `station_forcing` default-arg bug + 4 dashboard call sites + tests | ~4 hours | Low (isolated bug fixes) |
+| Phase 2 | `setup_library` override + `linear_regression` CLI passthrough + tests | ~3 hours | Low |
+| Phase 3 | ~40 call sites across 9 modules + tests per module | ~14 hours (~1.5h/module) | Medium (threading params through call chains) |
 | Phase 4 | Test refactoring (no production code) | ~4 hours | Low |
 
-**Total**: ~15 hours across 4 PRs
+**Total**: ~25 hours across 4+ PRs (revised upward from ~15h after 2026-03-23 audit)
 
 ---
 
@@ -357,8 +477,9 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
 
 - **Logging/timestamp calls**: `datetime.now()` used in log messages, file naming,
   and performance timers is correct and should not be changed
-- **`long_term_forecasting` module**: Already follows the correct pattern — no
-  changes needed
+- **`long_term_forecasting` module**: Follows the correct pattern in most files;
+  one deviation exists at `run_forecast.py:457` (see Category 2b above) — trivial
+  fix, in scope for Phase 3
 - **`machine_learning`**: Colleague's responsibility — coordinate separately
 - **`machine_learning_monthly`**: Deprecated module, not worth refactoring
 - **`backend/`**: Legacy module being phased out
@@ -399,6 +520,12 @@ grep -n "datetime.now().year" apps/iEasyHydroForecast/tag_library.py
 
 ---
 
-*Last updated: 2026-02-27 — Verified line numbers against current codebase.
-Noted forecast_library.py callers already fixed. Updated dashboard call sites
+*Last updated: 2026-03-23 — Added Category 2b with ~25 newly discovered calls
+across `preprocessing_runoff` (7), `preprocessing_station_forcing` (1 import-time
+bug), `postprocessing_forecasts` (10), `linear_regression` (3–4),
+`preprocessing_gateway` (3), `forecast_dashboard` (2 additional),
+`long_term_forecasting/run_forecast.py` (1), and `reset_forecast_run_date` (1).
+Updated total estimate from ~18 to ~43 business-logic calls; effort revised from
+~15h to ~25h. Previous update 2026-02-27: verified line numbers, noted
+forecast_library.py callers already fixed, updated dashboard call sites
 (3808, 3828, 5071, 5076).*

@@ -326,6 +326,7 @@ def save_skill_metrics(config, data: pd.DataFrame, year: int = None):
                 "pbias",
                 "kgelf",
                 "nse_log",
+                "crps",
             ],
         )
 

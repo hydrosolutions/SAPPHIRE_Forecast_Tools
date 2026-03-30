@@ -2631,6 +2631,11 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long=Non
             columns_to_rename["Q50"] = "forecasted_discharge"
         if "Q" in forecast.columns:
             columns_to_rename["Q"] = "forecasted_discharge"
+        # Normalize ML CSV quantile columns (Q5 → q05, Q25 → q25, etc.)
+        # Skip columns already mapped above (Q50 → forecasted_discharge).
+        for col in list(forecast.columns):
+            if col.startswith("Q") and col[1:].isdigit() and col not in columns_to_rename:
+                columns_to_rename[col] = f"q{int(col[1:]):02d}"
 
         forecast.rename(columns=columns_to_rename, inplace=True)
 
@@ -2734,6 +2739,11 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long=Non
             columns_to_rename["Q50"] = "forecasted_discharge"
         if "Q" in forecast.columns:
             columns_to_rename["Q"] = "forecasted_discharge"
+        # Normalize ML CSV quantile columns (Q5 → q05, Q25 → q25, etc.)
+        # Skip columns already mapped above (Q50 → forecasted_discharge).
+        for col in list(forecast.columns):
+            if col.startswith("Q") and col[1:].isdigit() and col not in columns_to_rename:
+                columns_to_rename[col] = f"q{int(col[1:]):02d}"
 
         forecast.rename(columns=columns_to_rename, inplace=True)
 
@@ -2935,6 +2945,11 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(
             columns_to_rename["Q50"] = "forecasted_discharge"
         if "Q" in forecast.columns:
             columns_to_rename["Q"] = "forecasted_discharge"
+        # Normalize ML CSV quantile columns (Q5 → q05, Q25 → q25, etc.)
+        # Skip columns already mapped above (Q50 → forecasted_discharge).
+        for col in list(forecast.columns):
+            if col.startswith("Q") and col[1:].isdigit() and col not in columns_to_rename:
+                columns_to_rename[col] = f"q{int(col[1:]):02d}"
 
         forecast.rename(columns=columns_to_rename, inplace=True)
 
@@ -3060,6 +3075,11 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(
             columns_to_rename["Q50"] = "forecasted_discharge"
         if "Q" in forecast.columns:
             columns_to_rename["Q"] = "forecasted_discharge"
+        # Normalize ML CSV quantile columns (Q5 → q05, Q25 → q25, etc.)
+        # Skip columns already mapped above (Q50 → forecasted_discharge).
+        for col in list(forecast.columns):
+            if col.startswith("Q") and col[1:].isdigit() and col not in columns_to_rename:
+                columns_to_rename[col] = f"q{int(col[1:]):02d}"
 
         forecast.rename(columns=columns_to_rename, inplace=True)
 

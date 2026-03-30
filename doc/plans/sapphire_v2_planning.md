@@ -60,13 +60,20 @@ The working demo will be implemented in SAPPHIRE v2.
 
 ---
 
-## Post-Merge Checklist (maxat_sapphire_2)
+## Branch Switch (2026-03-27)
 
-After merging `maxat_sapphire_2` into `main`, complete these tasks:
+`maxat_sapphire_2` is now the default branch (SAPPHIRE v2). The `main` branch is
+frozen as v0.3.0 and will not receive further updates. No merge of `main` into
+`maxat_sapphire_2` was performed — this is a clean cut.
 
-- [ ] **SEC-005: Verify bokeh update** — The `maxat_sapphire_2` branch includes the fix for
-  `FuncTickFormatter` (removed in bokeh 3.5+). After merge:
-  1. Verify `apps/forecast_dashboard/pyproject.toml` has `bokeh>=3.8.2` (or similar)
+See `doc/plans/issues/high_prio_gi_draft_infra_default_branch_switch.md` (INFRA-016)
+for the full procedure and cherry-pick candidates from `main`.
+
+## Remaining Tasks
+
+- [ ] **SEC-005: Verify bokeh update** — `maxat_sapphire_2` includes the fix for
+  `FuncTickFormatter` (removed in bokeh 3.5+). Verify:
+  1. `apps/forecast_dashboard/pyproject.toml` has `bokeh>=3.8.2` (or similar)
   2. Run `uv lock` in forecast_dashboard to update lock file
   3. Run dashboard tests: `SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard`
   4. Test dashboard manually in browser

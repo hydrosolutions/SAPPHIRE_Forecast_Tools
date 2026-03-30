@@ -1086,8 +1086,9 @@ class TestMeteoConsistencyCheck:
 class TestQuantileMappingWriteMeteoToApi:
     """Tests for the _write_meteo_to_api function in Quantile_Mapping_OP.py
 
-    This function writes yesterday+today (operational mode, 2-day window).
-    Unlike extend_era5_reanalysis.py which writes all data.
+    This function writes yesterday onward (operational mode, one-sided window
+    including forecast dates). Unlike extend_era5_reanalysis.py which writes
+    all data.
     """
 
     def test_api_disabled_via_env_var(self):
@@ -1132,8 +1133,8 @@ class TestQuantileMappingWriteMeteoToApi:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("Quantile_Mapping_OP.SapphirePreprocessingClient")
-    def test_writes_recent_days_only(self, mock_client_class):
-        """Only yesterday+today should be written (operational behavior)."""
+    def test_writes_yesterday_onward(self, mock_client_class):
+        """Yesterday onward should be written (operational behavior)."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -2178,8 +2179,8 @@ class TestQMMeteoSyncMode:
     """Tests for sync mode support in QM _write_meteo_to_api."""
 
     @patch("Quantile_Mapping_OP.SapphirePreprocessingClient")
-    def test_operational_mode_writes_yesterday_and_today(self, mock_client_class):
-        """Operational mode should write yesterday+today (2-day window)."""
+    def test_operational_mode_writes_yesterday_onward(self, mock_client_class):
+        """Operational mode should write yesterday onward (includes forecast)."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -2187,17 +2188,18 @@ class TestQMMeteoSyncMode:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_meteo.return_value = 2
+            mock_client.write_meteo.return_value = 3
             mock_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             yesterday = today - pd.Timedelta(days=1)
             two_days_ago = today - pd.Timedelta(days=2)
+            tomorrow = today + pd.Timedelta(days=1)
             data = pd.DataFrame(
                 {
-                    "date": [two_days_ago, yesterday, today],
-                    "code": [12345, 12345, 12345],
-                    "T": [5.0, 10.0, 15.0],
+                    "date": [two_days_ago, yesterday, today, tomorrow],
+                    "code": [12345, 12345, 12345, 12345],
+                    "T": [5.0, 10.0, 15.0, 20.0],
                 }
             )
 
@@ -2205,11 +2207,12 @@ class TestQMMeteoSyncMode:
             assert result is True
 
             records = mock_client.write_meteo.call_args[0][0]
-            assert len(records) == 2
+            assert len(records) == 3
             dates = {r["date"] for r in records}
             assert dates == {
                 yesterday.strftime("%Y-%m-%d"),
                 today.strftime("%Y-%m-%d"),
+                tomorrow.strftime("%Y-%m-%d"),
             }
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)

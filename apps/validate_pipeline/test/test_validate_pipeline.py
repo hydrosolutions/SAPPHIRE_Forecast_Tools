@@ -4,6 +4,7 @@ Covers early-exit checks, Tier 1 (presence), Tier 2 (correctness),
 Tier 3 (consistency), module attribution, and the CLI entry point.
 """
 
+import json
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -1228,3 +1229,375 @@ class TestCheckExpectedModelsSkipExclusion:
         # TFT was NOT skipped, so it's still expected and missing -> FAIL
         assert check.status == "FAIL"
         assert "TFT" in check.detail
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: JSON Output
+# ---------------------------------------------------------------------------
+
+
+class TestJsonOutput:
+    """Tests for results_to_json() and JSON serialisation."""
+
+    def test_json_is_valid_and_parseable(self):
+        """results_to_json returns a dict that round-trips through JSON."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", detail="10 records", record_count=10),
+        ]
+        payload = vp.results_to_json(results)
+        serialised = json.dumps(payload)
+        parsed = json.loads(serialised)
+        assert isinstance(parsed, dict)
+        assert "Runoff (day)" in parsed
+
+    def test_all_check_names_appear_as_keys(self):
+        """Every check name is a top-level key in the JSON output."""
+        results = [
+            vp.CheckResult("Check A", "PASS"),
+            vp.CheckResult("Check B", "FAIL"),
+            vp.CheckResult("Check C", "WARN"),
+        ]
+        payload = vp.results_to_json(results)
+        assert "Check A" in payload
+        assert "Check B" in payload
+        assert "Check C" in payload
+
+    def test_status_field_is_valid(self):
+        """status field in JSON is one of PASS, WARN, FAIL, SKIP."""
+        valid_statuses = {"PASS", "WARN", "FAIL", "SKIP"}
+        results = [
+            vp.CheckResult("A", "PASS"),
+            vp.CheckResult("B", "WARN"),
+            vp.CheckResult("C", "FAIL"),
+            vp.CheckResult("D", "SKIP"),
+        ]
+        payload = vp.results_to_json(results)
+        for key in ("A", "B", "C", "D"):
+            assert payload[key]["status"] in valid_statuses
+
+    def test_max_date_and_counts_fields_present(self):
+        """max_date and counts fields are present in each check entry."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", max_date="2026-02-23", counts={"a": 1}),
+            vp.CheckResult("Snow (SWE)", "SKIP"),
+        ]
+        payload = vp.results_to_json(results)
+        assert payload["Runoff (day)"]["max_date"] == "2026-02-23"
+        assert payload["Runoff (day)"]["counts"] == {"a": 1}
+        assert payload["Snow (SWE)"]["max_date"] is None
+        assert payload["Snow (SWE)"]["counts"] == {}
+
+    def test_writing_to_path_produces_correct_file(self, tmp_path):
+        """Writing JSON to a path produces a parseable file with correct content."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", detail="5 records", record_count=5),
+        ]
+        output_path = tmp_path / "output.json"
+        payload = vp.results_to_json(results)
+        output_path.write_text(json.dumps(payload, indent=2))
+        loaded = json.loads(output_path.read_text())
+        assert loaded["Runoff (day)"]["status"] == "PASS"
+        assert loaded["Runoff (day)"]["record_count"] == 5
+
+    def test_metadata_stored_under_meta_key(self):
+        """Optional metadata is stored under '_meta' key."""
+        results = [vp.CheckResult("A", "PASS")]
+        meta = {"forecast_date": "2026-02-23", "target": "short-term"}
+        payload = vp.results_to_json(results, metadata=meta)
+        assert "_meta" in payload
+        assert payload["_meta"]["forecast_date"] == "2026-02-23"
+        assert payload["_meta"]["target"] == "short-term"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Baseline / Delta Mode
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseMode:
+    """Tests for write_baseline, load_and_validate_baseline, compute_deltas."""
+
+    def test_pre_mode_writes_baseline_file(self, tmp_path):
+        """write_baseline creates a file at the given path."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(results, date(2026, 2, 23), "short-term", path)
+        assert (tmp_path / "baseline.json").exists()
+        loaded = json.loads((tmp_path / "baseline.json").read_text())
+        assert "Runoff (day)" in loaded
+        assert loaded["_meta"]["forecast_date"] == "2026-02-23"
+
+    def test_post_mode_loads_and_computes_deltas(self, tmp_path):
+        """load_and_validate_baseline + compute_deltas produces delta lines."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(results, date(2026, 2, 23), "short-term", path)
+
+        current_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=12)]
+        baseline = vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+        current_json = vp.results_to_json(current_results)
+        lines = vp.compute_deltas(current_json, baseline)
+        assert any("increased" in line for line in lines)
+
+    def test_count_decrease_produces_warn_line(self, tmp_path):
+        """A count decrease in delta mode produces a DELTA WARN line."""
+        baseline_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(baseline_results, date(2026, 2, 23), "short-term", path)
+
+        current_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=5)]
+        baseline = vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+        current_json = vp.results_to_json(current_results)
+        lines = vp.compute_deltas(current_json, baseline)
+        assert any("DELTA WARN" in line for line in lines)
+        assert any("10 to 5" in line for line in lines)
+
+    def test_count_increase_produces_info_not_warn(self, tmp_path):
+        """A count increase produces INFO (not WARN) in delta output."""
+        baseline_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=5)]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(baseline_results, date(2026, 2, 23), "short-term", path)
+
+        current_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        baseline = vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+        current_json = vp.results_to_json(current_results)
+        lines = vp.compute_deltas(current_json, baseline)
+        assert any("DELTA INFO" in line for line in lines)
+        assert not any("DELTA WARN" in line for line in lines)
+
+    def test_count_unchanged_no_delta_line(self, tmp_path):
+        """Unchanged counts produce no delta lines."""
+        baseline_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(baseline_results, date(2026, 2, 23), "short-term", path)
+
+        current_results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        baseline = vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+        current_json = vp.results_to_json(current_results)
+        lines = vp.compute_deltas(current_json, baseline)
+        assert lines == []
+
+    def test_missing_baseline_raises_file_not_found(self, tmp_path):
+        """Missing baseline file raises FileNotFoundError."""
+        path = str(tmp_path / "nonexistent.json")
+        with pytest.raises(FileNotFoundError, match="Baseline file not found"):
+            vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+
+    def test_no_phase_flag_existing_behaviour(self):
+        """compute_deltas with identical dicts returns no delta lines."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", record_count=10)]
+        payload = vp.results_to_json(results)
+        lines = vp.compute_deltas(payload, payload)
+        assert lines == []
+
+    def test_pre_post_consistent_when_unchanged(self, tmp_path):
+        """Pre then post with same data produces no delta lines."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", record_count=10),
+            vp.CheckResult("Meteo (T)", "PASS", record_count=5),
+        ]
+        path = str(tmp_path / "baseline.json")
+        vp.write_baseline(results, date(2026, 2, 23), "short-term", path)
+
+        baseline = vp.load_and_validate_baseline(path, date(2026, 2, 23), "short-term")
+        current_json = vp.results_to_json(results)
+        lines = vp.compute_deltas(current_json, baseline)
+        assert lines == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: New Checks
+# ---------------------------------------------------------------------------
+
+
+class TestNewChecks:
+    """Tests for check_ml_flag_distribution, check_snow_operational_values,
+    check_em_ne_parity, check_data_freshness, and run_tier2_long_term.
+    """
+
+    # --- check_ml_flag_distribution ---
+
+    def test_ml_flag_distribution_skip_no_data(self):
+        """No ML forecast data -> SKIP."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", data=pd.DataFrame())]
+        check = vp.check_ml_flag_distribution(results)
+        assert check.status == "SKIP"
+
+    def test_ml_flag_distribution_pass_mixed_flags(self):
+        """Multiple distinct flag values -> PASS."""
+        df = pd.DataFrame(
+            {
+                "flag": [0, 1, 0, 2, 1],
+                "forecasted_discharge": [10.0, 11.0, 9.0, 8.5, 12.0],
+            }
+        )
+        results = [vp.CheckResult("Forecasts (TFT, pentad)", "PASS", data=df)]
+        check = vp.check_ml_flag_distribution(results)
+        assert check.status == "PASS"
+        assert len(check.counts) > 1
+
+    def test_ml_flag_distribution_warn_stuck_flag(self):
+        """All records with same flag -> WARN."""
+        df = pd.DataFrame(
+            {
+                "flag": [1, 1, 1, 1],
+                "forecasted_discharge": [10.0, 11.0, 9.0, 8.5],
+            }
+        )
+        results = [vp.CheckResult("Forecasts (TFT, pentad)", "PASS", data=df)]
+        check = vp.check_ml_flag_distribution(results)
+        assert check.status == "WARN"
+        assert "stuck" in check.detail
+
+    # --- check_snow_operational_values ---
+
+    def test_snow_operational_skip_no_data(self):
+        """No snow data -> SKIP."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", data=pd.DataFrame())]
+        check = vp.check_snow_operational_values(results)
+        assert check.status == "SKIP"
+
+    def test_snow_operational_pass_current_year(self):
+        """Snow records with current-year dates -> PASS."""
+        df = pd.DataFrame(
+            {
+                "date": ["2026-01-15", "2026-02-01"],
+                "value": [50.0, 55.0],
+            }
+        )
+        results = [vp.CheckResult("Snow (SWE)", "PASS", data=df)]
+        check = vp.check_snow_operational_values(results)
+        assert check.status == "PASS"
+        assert "2026" in check.detail
+
+    def test_snow_operational_warn_year_2000_only(self):
+        """All snow records with year-2000 dates -> WARN."""
+        df = pd.DataFrame(
+            {
+                "date": ["2000-01-15", "2000-02-01", "2000-03-10"],
+                "value": [50.0, 55.0, 48.0],
+            }
+        )
+        results = [vp.CheckResult("Snow (SWE)", "PASS", data=df)]
+        check = vp.check_snow_operational_values(results)
+        assert check.status == "WARN"
+        assert "PREPG-003" in check.detail
+
+    # --- check_em_ne_parity ---
+
+    def test_em_ne_parity_skip_no_data(self):
+        """No EM or NE data -> SKIP."""
+        results = [vp.CheckResult("Runoff (day)", "PASS", data=pd.DataFrame())]
+        check = vp.check_em_ne_parity(results, "pentad")
+        assert check.status == "SKIP"
+
+    def test_em_ne_parity_pass_equal_counts(self):
+        """EM and NE have equal record counts -> PASS."""
+        df = pd.DataFrame({"code": ["15001", "15002"], "date": ["2026-02-25"] * 2})
+        results = [
+            vp.CheckResult("Forecasts (EM, pentad)", "PASS", record_count=2, data=df),
+            vp.CheckResult("Forecasts (NE, pentad)", "PASS", record_count=2, data=df),
+        ]
+        check = vp.check_em_ne_parity(results, "pentad")
+        assert check.status == "PASS"
+        assert check.counts["EM"] == check.counts["NE"]
+
+    def test_em_ne_parity_warn_mismatch(self):
+        """EM and NE have different record counts -> WARN."""
+        em_df = pd.DataFrame({"code": ["15001", "15002"], "date": ["2026-02-25"] * 2})
+        ne_df = pd.DataFrame({"code": ["15001"], "date": ["2026-02-25"]})
+        results = [
+            vp.CheckResult("Forecasts (EM, pentad)", "PASS", record_count=2, data=em_df),
+            vp.CheckResult("Forecasts (NE, pentad)", "PASS", record_count=1, data=ne_df),
+        ]
+        check = vp.check_em_ne_parity(results, "pentad")
+        assert check.status == "WARN"
+        assert "EM=2" in check.detail
+        assert "NE=1" in check.detail
+
+    # --- check_data_freshness ---
+
+    def test_data_freshness_skip_no_max_dates(self):
+        """No max_date in any result -> SKIP."""
+        results = [vp.CheckResult("Runoff (day)", "PASS")]
+        check = vp.check_data_freshness(results, date(2026, 2, 23))
+        assert check.status == "SKIP"
+
+    def test_data_freshness_pass_recent_data(self):
+        """max_date within threshold -> PASS."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", max_date="2026-02-23"),
+            vp.CheckResult("Meteo (T)", "PASS", max_date="2026-02-22"),
+        ]
+        check = vp.check_data_freshness(results, date(2026, 2, 23))
+        assert check.status == "PASS"
+
+    def test_data_freshness_warn_stale_data(self):
+        """max_date older than threshold -> WARN."""
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", max_date="2026-02-10"),
+        ]
+        # 13 days lag, default threshold is 3
+        check = vp.check_data_freshness(results, date(2026, 2, 23))
+        assert check.status == "WARN"
+        assert "lag=13d" in check.detail
+
+    def test_data_freshness_threshold_env_override(self, monkeypatch):
+        """FRESHNESS_THRESHOLD_DAYS env var overrides default threshold."""
+        monkeypatch.setenv("FRESHNESS_THRESHOLD_DAYS", "30")
+        results = [
+            vp.CheckResult("Runoff (day)", "PASS", max_date="2026-02-10"),
+        ]
+        # 13-day lag is within a 30-day threshold -> PASS
+        check = vp.check_data_freshness(results, date(2026, 2, 23))
+        assert check.status == "PASS"
+
+    # --- run_tier2_long_term ---
+
+    def test_lt_tier2_skip_no_data(self):
+        """run_tier2_long_term with empty results -> all SKIP."""
+        results = [vp.CheckResult("Long-term forecasts (month)", "FAIL", data=pd.DataFrame())]
+        t2 = vp.run_tier2_long_term(results)
+        assert all(r.status == "SKIP" for r in t2)
+
+    def test_lt_tier2_pass_healthy_data(self):
+        """run_tier2_long_term with valid LT data -> PASS checks."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q10": [12.0],
+                "q25": [15.0],
+                "q50": [20.0],
+                "q75": [25.0],
+                "q90": [28.0],
+                "q95": [30.0],
+                "nse": [0.75],
+                "accuracy": [80.0],
+                "n_pairs": [10],
+            }
+        )
+        results = [vp.CheckResult("Long-term forecasts (month)", "PASS", data=df)]
+        t2 = vp.run_tier2_long_term(results)
+        # Quantile ordering and skill metrics should pass
+        quantile_result = next((r for r in t2 if "Quantile" in r.name), None)
+        assert quantile_result is not None
+        assert quantile_result.status == "PASS"
+
+    def test_lt_tier2_warn_disordered_quantiles(self):
+        """run_tier2_long_term with disordered LT quantiles -> FAIL."""
+        df = pd.DataFrame(
+            {
+                "q05": [30.0],
+                "q10": [12.0],
+                "q25": [15.0],  # q05 > q10
+                "q50": [20.0],
+                "q75": [25.0],
+                "q90": [28.0],
+                "q95": [29.0],
+            }
+        )
+        results = [vp.CheckResult("Long-term forecasts (month)", "PASS", data=df)]
+        t2 = vp.run_tier2_long_term(results)
+        quantile_result = next((r for r in t2 if "Quantile" in r.name), None)
+        assert quantile_result is not None
+        assert quantile_result.status == "FAIL"

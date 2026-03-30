@@ -1,5 +1,6 @@
 """Tests for src/ensemble_calculator.py — ensemble creation from skill metrics."""
 
+import logging
 import os
 import sys
 from unittest.mock import patch
@@ -623,3 +624,113 @@ class TestEnsembleQuantilePropagation:
         lr = joint[joint["model_short"] == "LR"].iloc[0]
         for qcol in ("q05", "q25", "q75", "q95"):
             assert pd.isna(lr[qcol]), f"LR {qcol} should be NaN"
+
+
+# ---------------------------------------------------------------------------
+# PP-027: EM skip diagnostic logging tests
+# ---------------------------------------------------------------------------
+
+
+class TestEMSkipDiagnosticLogging:
+    """PP-027: Verify log messages when EM ensemble is skipped."""
+
+    def _make_ensemble(self, forecasts, skill_stats, period="pentad"):
+        if period == "pentad":
+            return create_ensemble_forecasts(
+                forecasts=forecasts,
+                skill_stats=skill_stats,
+                period_col="pentad_in_year",
+                period_in_month_col="pentad_in_month",
+                get_period_in_month_func=tl.get_pentad,
+            )
+        return create_ensemble_forecasts(
+            forecasts=forecasts,
+            skill_stats=skill_stats,
+            period_col="decad_in_year",
+            period_in_month_col="decad_in_month",
+            get_period_in_month_func=tl.get_decad_in_month,
+        )
+
+    def test_gate_a_logs_codes_with_no_skilled_forecasts(self, caplog):
+        """Codes with no matching skill metrics are logged at Gate A."""
+        # Station A has skill metrics; station B does not
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.9],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.9],
+                "mae": [5.0, 5.0],
+                "n_pairs": [20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1, 1],
+                "pentad_in_month": [1, 1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A", "B"],  # B has no skill metrics
+                "model_short": ["LR", "TFT", "TFT"],
+                "forecasted_discharge": [100.0, 110.0, 90.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            with caplog.at_level(logging.INFO, logger="src.ensemble_calculator"):
+                self._make_ensemble(forecasts, skill_stats)
+        assert any("no skilled forecasts" in msg and "B" in msg for msg in caplog.messages)
+
+    def test_gate_c_logs_single_model_codes(self, caplog):
+        """Codes with only 1 qualifying model are logged at Gate C."""
+        # Station A: 2 models pass → EM created
+        # Station B: only 1 model passes → EM dropped, logged
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1, 1],
+                "code": ["A", "A", "B"],
+                "model_short": ["LR", "TFT", "LR"],
+                "sdivsigma": [0.3, 0.4, 0.3],
+                "nse": [0.9, 0.9, 0.9],
+                "delta": [5.0, 5.0, 5.0],
+                "accuracy": [0.9, 0.9, 0.9],
+                "mae": [5.0, 5.0, 5.0],
+                "n_pairs": [20, 20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1, 1],
+                "pentad_in_month": [1, 1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A", "B"],
+                "model_short": ["LR", "TFT", "LR"],
+                "forecasted_discharge": [100.0, 110.0, 90.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            with caplog.at_level(logging.INFO, logger="src.ensemble_calculator"):
+                joint, _ = self._make_ensemble(forecasts, skill_stats)
+        # A should have EM, B should not
+        em_codes = set(joint[joint["model_short"] == "EM"]["code"])
+        assert "A" in em_codes
+        assert "B" not in em_codes
+        # Gate C log should mention B
+        assert any("1 qualifying model" in msg and "B" in msg for msg in caplog.messages)
+
+    def test_no_diagnostic_logs_when_all_stations_produce_em(
+        self, forecasts_pentad, skill_stats_pentad, caplog
+    ):
+        """No skip diagnostics when all stations produce EM successfully."""
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            with caplog.at_level(logging.INFO, logger="src.ensemble_calculator"):
+                self._make_ensemble(forecasts_pentad, skill_stats_pentad)
+        skip_messages = [
+            msg
+            for msg in caplog.messages
+            if "no skilled forecasts" in msg
+            or "only NE model" in msg
+            or "1 qualifying model" in msg
+        ]
+        assert skip_messages == [], f"Unexpected skip logs: {skip_messages}"

@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -12,6 +13,8 @@ from conftest import DECAD, PENTAD
 
 # Import the functions to test
 from src.postprocessing_tools import (
+    count_quantile_crossings,
+    enforce_quantile_monotonicity,
     forecast_target_date,
     log_most_recent_forecasts,
     log_most_recent_forecasts_monthly,
@@ -245,6 +248,198 @@ def test_log_most_recent_forecasts_pentad_missing_code_no_matching_date(tmp_path
     row_15999 = result[result["code"] == "15999"].iloc[0]
     assert pd.isna(row_15999["LR"])
     assert pd.isna(row_15999["TFT"])
+
+
+# ---------------------------------------------------------------------------
+# Quantile crossing guard tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceQuantileMonotonicity:
+    """Tests for enforce_quantile_monotonicity()."""
+
+    def test_no_crossings_unchanged(self):
+        """Already monotonic data passes through unchanged."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0, 20.0],
+                "q25": [15.0, 25.0],
+                "q75": [20.0, 30.0],
+                "q95": [25.0, 35.0],
+            }
+        )
+        result = enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        pd.testing.assert_frame_equal(result, df)
+
+    def test_crossing_fixed(self):
+        """q10 > q25 crossing is corrected."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q10": [30.0],  # crossed!
+                "q25": [20.0],
+                "q50": [25.0],
+                "q75": [30.0],
+                "q90": [35.0],
+                "q95": [40.0],
+            }
+        )
+        cols = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
+        result = enforce_quantile_monotonicity(df, cols)
+        # q10=30 > q25=20, so q25 should be bumped to 30
+        # q50=25 < 30 (new q25), so q50 should be bumped to 30
+        assert result["q10"].iloc[0] == 30.0
+        assert result["q25"].iloc[0] == 30.0
+        assert result["q50"].iloc[0] == 30.0
+        assert result["q75"].iloc[0] == 30.0
+        assert result["q90"].iloc[0] == 35.0
+        assert result["q95"].iloc[0] == 40.0
+
+    def test_partial_columns(self):
+        """Works with only q25/q75 present."""
+        df = pd.DataFrame(
+            {
+                "q25": [20.0],
+                "q75": [15.0],  # crossed!
+            }
+        )
+        result = enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        assert result["q75"].iloc[0] == 20.0
+
+    def test_all_nan_rows_untouched(self):
+        """All-NaN rows are not modified."""
+        df = pd.DataFrame(
+            {
+                "q05": [np.nan],
+                "q25": [np.nan],
+                "q75": [np.nan],
+                "q95": [np.nan],
+            }
+        )
+        result = enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        assert result["q05"].isna().all()
+        assert result["q95"].isna().all()
+
+    def test_mixed_nan_rows_untouched(self):
+        """Rows with partial NaN are not modified (prevents fake values)."""
+        df = pd.DataFrame(
+            {
+                "q05": [np.nan],
+                "q25": [20.0],
+                "q75": [15.0],  # crossed, but row has NaN q05
+                "q95": [25.0],
+            }
+        )
+        result = enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        # Should NOT correct q75 because q05 is NaN
+        assert result["q75"].iloc[0] == 15.0
+
+    def test_mixed_rows_only_non_nan_corrected(self):
+        """DataFrame with both all-NaN (LR) and non-NaN (ML) rows."""
+        df = pd.DataFrame(
+            {
+                "q05": [np.nan, 10.0],
+                "q25": [np.nan, 30.0],  # row 1: crossed
+                "q75": [np.nan, 20.0],  # row 1: crossed
+                "q95": [np.nan, 40.0],
+            }
+        )
+        cols = ["q05", "q25", "q75", "q95"]
+        result = enforce_quantile_monotonicity(df, cols)
+        # Row 0 (all-NaN): unchanged
+        assert result["q05"].isna().iloc[0]
+        assert result["q95"].isna().iloc[0]
+        # Row 1: corrected
+        assert result["q25"].iloc[1] == 30.0
+        assert result["q75"].iloc[1] == 30.0  # bumped from 20 to 30
+
+    def test_short_term_4cols(self):
+        """Works correctly with 4-column short-term quantile set."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q25": [8.0],  # crossed!
+                "q75": [20.0],
+                "q95": [25.0],
+            }
+        )
+        result = enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        assert result["q25"].iloc[0] == 10.0
+
+    def test_returns_copy(self):
+        """Original DataFrame is not modified."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q25": [8.0],
+                "q75": [20.0],
+                "q95": [25.0],
+            }
+        )
+        original_q25 = df["q25"].iloc[0]
+        enforce_quantile_monotonicity(df, ["q05", "q25", "q75", "q95"])
+        assert df["q25"].iloc[0] == original_q25
+
+    def test_single_column_returns_unchanged(self):
+        """With fewer than 2 columns, returns input unchanged."""
+        df = pd.DataFrame({"q50": [10.0]})
+        result = enforce_quantile_monotonicity(df, ["q50"])
+        pd.testing.assert_frame_equal(result, df)
+
+
+class TestCountQuantileCrossings:
+    """Tests for count_quantile_crossings()."""
+
+    def test_no_crossings_returns_zero(self):
+        """Monotonic data returns 0."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q25": [15.0],
+                "q75": [20.0],
+                "q95": [25.0],
+            }
+        )
+        assert count_quantile_crossings(df, ["q05", "q25", "q75", "q95"]) == 0
+
+    def test_detects_crossings(self):
+        """Counts crossing cells correctly."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q25": [30.0],  # q25 > q75 and q25 > q05 is OK but q25 > q75
+                "q75": [20.0],  # crossed!
+                "q95": [25.0],  # q95 > q75 is OK
+            }
+        )
+        count = count_quantile_crossings(df, ["q05", "q25", "q75", "q95"])
+        assert count == 1  # q25(30) > q75(20)
+
+    def test_does_not_modify_values(self):
+        """Values are NOT corrected — log only."""
+        df = pd.DataFrame(
+            {
+                "q05": [10.0],
+                "q25": [30.0],
+                "q75": [20.0],
+                "q95": [25.0],
+            }
+        )
+        original = df.copy()
+        count_quantile_crossings(df, ["q05", "q25", "q75", "q95"])
+        pd.testing.assert_frame_equal(df, original)
+
+    def test_nan_rows_skipped(self):
+        """Rows with NaN quantiles are skipped."""
+        df = pd.DataFrame(
+            {
+                "q05": [np.nan],
+                "q25": [30.0],
+                "q75": [20.0],
+                "q95": [25.0],
+            }
+        )
+        assert count_quantile_crossings(df, ["q05", "q25", "q75", "q95"]) == 0
 
 
 # ============================================================================
@@ -511,3 +706,126 @@ class TestLogMostRecentForecastsMonthly:
 
         assert len(result) == 1
         assert result.iloc[0]["GBT"] == pytest.approx(100.0)
+
+
+class TestCalculatePitReliability:
+    """Tests for calculate_pit_reliability()."""
+
+    def test_perfectly_calibrated(self):
+        """Synthetic perfectly calibrated data → reliability ≈ 0."""
+        from src.skill_metrics import calculate_pit_reliability
+
+        np.random.seed(42)
+        n = 1000
+        quantile_levels = np.array([0.05, 0.25, 0.50, 0.75, 0.95])
+        # Generate observations from N(0,1)
+        observed = np.random.randn(n)
+        # Build quantile forecasts from the true N(0,1) distribution
+        from scipy.stats import norm
+
+        quantile_forecasts = np.column_stack([np.full(n, norm.ppf(q)) for q in quantile_levels])
+        result = calculate_pit_reliability(observed, quantile_forecasts, quantile_levels)
+        assert result["reliability_score"] < 0.05
+        assert result["n_obs"] == n
+
+    def test_biased_high(self):
+        """All observations above q95 → high reliability score."""
+        from src.skill_metrics import calculate_pit_reliability
+
+        observed = np.array([100.0, 200.0, 300.0])
+        quantile_forecasts = np.array(
+            [
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.25, 0.50, 0.75, 0.95])
+        result = calculate_pit_reliability(observed, quantile_forecasts, quantile_levels)
+        assert result["reliability_score"] > 0.3
+
+    def test_single_observation_returns_nan(self):
+        """n_obs=1 returns NaN reliability score."""
+        from src.skill_metrics import calculate_pit_reliability
+
+        observed = np.array([10.0])
+        quantile_forecasts = np.array([[5.0, 8.0, 10.0, 12.0, 15.0]])
+        quantile_levels = np.array([0.05, 0.25, 0.50, 0.75, 0.95])
+        result = calculate_pit_reliability(observed, quantile_forecasts, quantile_levels)
+        assert np.isnan(result["reliability_score"])
+        assert result["n_obs"] == 1
+
+    def test_empty_input(self):
+        """Empty arrays → NaN."""
+        from src.skill_metrics import calculate_pit_reliability
+
+        result = calculate_pit_reliability(
+            np.array([]), np.empty((0, 5)), np.array([0.05, 0.25, 0.50, 0.75, 0.95])
+        )
+        assert np.isnan(result["reliability_score"])
+        assert result["n_obs"] == 0
+
+    def test_nan_handling(self):
+        """NaN observations are filtered correctly."""
+        from src.skill_metrics import calculate_pit_reliability
+
+        observed = np.array([10.0, np.nan, 30.0])
+        quantile_forecasts = np.array(
+            [
+                [5.0, 8.0, 12.0],
+                [5.0, 8.0, 12.0],
+                [25.0, 28.0, 32.0],
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.50, 0.95])
+        result = calculate_pit_reliability(observed, quantile_forecasts, quantile_levels)
+        assert result["n_obs"] == 2
+
+
+class TestCalculateSharpness:
+    """Tests for calculate_sharpness()."""
+
+    def test_constant_spread(self):
+        """Known constant interval width → correct sharpness."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array(
+            [
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_90"] == pytest.approx(60.0)  # 70 - 10
+        assert result["sharpness_50"] == pytest.approx(20.0)  # 50 - 30
+
+    def test_zero_width(self):
+        """Degenerate forecast (all quantiles equal) → sharpness = 0."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[10.0, 10.0, 10.0, 10.0]])
+        quantile_levels = np.array([0.05, 0.25, 0.75, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_90"] == pytest.approx(0.0)
+        assert result["sharpness_50"] == pytest.approx(0.0)
+
+    def test_missing_levels(self):
+        """Missing q05/q95 → NaN for sharpness_90."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[20.0, 40.0]])
+        quantile_levels = np.array([0.25, 0.75])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert np.isnan(result["sharpness_90"])
+        assert result["sharpness_50"] == pytest.approx(20.0)
+
+    def test_4_quantile_short_term(self):
+        """Works with 4-column short-term quantile set."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[5.0, 15.0, 25.0, 35.0]])
+        quantile_levels = np.array([0.05, 0.25, 0.75, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_90"] == pytest.approx(30.0)  # 35 - 5
+        assert result["sharpness_50"] == pytest.approx(10.0)  # 25 - 15

@@ -1,7 +1,7 @@
 name: Deploy Documentation
 
 # Build and deploy documentation to GitHub Pages
-# Triggered manually or on push to main when docs change
+# Triggered manually or on push to maxat_sapphire_2 when docs change
 
 on:
   # Manual trigger
@@ -10,7 +10,7 @@ on:
   # Auto-deploy on push to main when docs change
   # Uncomment when ready to enable auto-deployment:
   # push:
-  #   branches: [main]
+  #   branches: [maxat_sapphire_2]
   #   paths:
   #     - 'doc/**'
   #     - 'docs/**'

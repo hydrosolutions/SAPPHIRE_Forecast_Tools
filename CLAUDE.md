@@ -14,6 +14,53 @@ No passwords, no sensitive data like station codes or runoff data can ever be co
 
 The `apps/` modules and everything else in the repository are fair game.
 
+### Orchestration Protocol
+
+**CRITICAL: The orchestrator (you) must NEVER write implementation code directly. All code changes are delegated to Sonnet 4.6 general-purpose agents.**
+
+**Responsibilities:**
+
+1. **Explore** — Before each phase, read relevant files and gather context. Build agent prompts that include specific file paths, function signatures, and the exact scope of allowed changes.
+
+2. **Constrain** — Every agent prompt MUST include:
+   - The list of files the agent is allowed to modify
+   - An explicit instruction: *"Do NOT change any existing function signatures, data flow logic, or control flow. Your changes must be purely additive or modify only the specific behavior described."*
+   - The expected behavior before and after the change
+
+3. **Delegate** — Launch Sonnet 4.6 general-purpose agents for all implementation. Use `isolation: "worktree"` for changes that carry risk of unintended side effects. Run independent phases in parallel; run dependent phases sequentially.
+
+4. **Deliberate** — After each agent returns, before accepting its work:
+   - Review the diff: does it touch only the files and functions that were scoped?
+   - Check for unintended changes: renamed variables, reordered imports, reformatted code, altered logic paths
+   - Verify the change preserves existing data flow by tracing inputs → outputs through the modified code
+   - If anything is out of scope or unclear, reject and re-delegate with tighter constraints
+
+5. **Verify** — Run `SAPPHIRE_TEST_ENV=True bash run_tests.sh` after each phase. Zero failures, zero unexpected skips.
+
+6. **Iterate** — If tests fail or review finds issues, delegate targeted fixes to a new agent. Never patch over problems in the orchestrator.
+
+7. **Commit** — Only when all tests pass and deliberation is complete.
+
+**Plan structure:** Plans must be organized into phases with explicit dependencies. Each phase specifies:
+- **Goal**: What this phase accomplishes
+- **Files**: Which files may be modified
+- **Depends on**: Which prior phases must complete first
+- **Agents**: How many parallel agents, what each one does
+- **Acceptance criteria**: How to verify the phase succeeded
+
+End the plan with a dependency graph:
+
+```json
+{
+  "phases": {
+    "P1": { "depends_on": [], "parallel_agents": 2 },
+    "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
+    "P3": { "depends_on": ["P1"], "parallel_agents": 1 },
+    "P4": { "depends_on": ["P2", "P3"], "parallel_agents": 1 }
+  }
+}
+```
+
 ---
 
 ## Project Architecture
@@ -41,7 +88,6 @@ Active Python modules that perform hydrological forecasting operations:
 
 **Legacy/deprecated modules:**
 - `backend/` — legacy, being phased out
-- `machine_learning_monthly/` — deprecated, replaced by `long_term_forecasting`
 
 ### 2. SAPPHIRE Services (`sapphire/services/`)
 
@@ -119,7 +165,7 @@ ruff check apps/<module>/          # review remaining manual fixes
 
 **Key rules enabled**: `E` (pycodestyle), `F` (pyflakes), `I` (isort), `UP` (pyupgrade), `B` (bugbear), `SIM` (simplify). The full rule selection and per-path ignores are documented in `ruff.toml`.
 
-**Excluded from linting**: `backend/`, `machine_learning_monthly/`, `conceptual_model/`, `daily_runoff/` (legacy/deprecated).
+**Excluded from linting**: `backend/`, `conceptual_model/`, `daily_runoff/` (legacy/deprecated).
 
 **Do not** add `# noqa` comments to silence warnings without understanding the underlying issue. Fix the code instead, or add the rule to `ruff.toml` ignores if it is genuinely too noisy project-wide.
 
@@ -209,7 +255,7 @@ Write concise commit messages that focus on the "why" rather than the "what". Us
 ### Pull Requests
 
 - Keep PRs focused on a single issue or feature
-- Target `main` for production-ready changes
+- Target `maxat_sapphire_2` for production-ready changes
 - Include a summary of changes and test results in the PR description
 
 ---

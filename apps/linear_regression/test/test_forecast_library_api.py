@@ -1489,8 +1489,8 @@ class TestWriteRunoffToApi:
             os.environ.pop("SAPPHIRE_SYNC_MODE", None)
 
     @patch("forecast_library.SapphirePreprocessingClient")
-    def test_maintenance_mode_writes_last_30_days(self, mock_client_class):
-        """Maintenance mode should write the last 30 days from today."""
+    def test_maintenance_mode_writes_last_90_days(self, mock_client_class):
+        """Maintenance mode should write the last 90 days from today."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1504,7 +1504,7 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 14
             mock_client_class.return_value = mock_client
 
-            # Create data spanning more than 30 days from today
+            # Create data spanning more than 90 days from today
             dates = pd.date_range(end=today, periods=10, freq="5D")
             data = pd.DataFrame(
                 {
@@ -1521,8 +1521,8 @@ class TestWriteRunoffToApi:
 
             # Should return DataFrame
             assert isinstance(result, pd.DataFrame)
-            # Cutoff is today - 30 days
-            cutoff = today - pd.Timedelta(days=30)
+            # Cutoff is today - 90 days
+            cutoff = today - pd.Timedelta(days=90)
             expected_records = data[pd.to_datetime(data["date"]) >= cutoff]
             assert len(result) == len(expected_records)
         finally:
