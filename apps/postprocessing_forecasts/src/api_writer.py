@@ -965,6 +965,37 @@ def _write_aggregated_forecasts_to_api(
             )
             return False
 
+        # --- NaN guard: drop rows with missing year/period before int() conversion ---
+        # Determine which columns to check for NaN before int() conversion
+        if horizon_type == "quarter":
+            nan_check_cols = [c for c in ["year", "quarter_in_year"] if c in data.columns]
+        else:  # season
+            nan_check_cols = ["season_year"] if "season_year" in data.columns else ["year"]
+
+        if nan_check_cols:
+            data_before_nan_drop = data  # keep reference for diagnostics
+            data = data.dropna(subset=nan_check_cols)
+            skipped_nan = len(data_before_nan_drop) - len(data)
+            if skipped_nan > 0:
+                nan_mask = data_before_nan_drop[nan_check_cols].isna().any(axis=1)
+                dropped_detail = (
+                    data_before_nan_drop[nan_mask][["code"]]
+                    .drop_duplicates()
+                    .head(10)
+                    .to_dict("records")
+                )
+                logger.warning(
+                    "Dropped %d %s forecast records with missing year/period values. "
+                    "Sample codes: %s",
+                    skipped_nan,
+                    label,
+                    dropped_detail,
+                )
+
+        if data.empty:
+            logger.info("No %s forecast records to write to API after NaN removal", label)
+            return False
+
         records = []
         for _, row in data.iterrows():
             code = str(row["code"]).replace(".0", "")

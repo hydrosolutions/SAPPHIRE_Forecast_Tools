@@ -44,7 +44,7 @@ if skipped_count > 0:
 
 ## Desired Outcome
 
-- Rows with NaN `season_year` / `year` / `quarter_in_year` are skipped with a WARNING log (not silently dropping the whole batch).
+- Rows with NaN `season_year` / `year` / `quarter_in_year` are skipped individually with a WARNING log, instead of the current behavior where a single NaN row causes the entire batch to be silently dropped.
 - The remaining valid rows are written successfully.
 - A test confirms that a DataFrame with mixed valid and NaN rows writes the valid rows and logs a warning.
 
@@ -83,13 +83,15 @@ The exception propagates to the outer `except Exception` at line 1050, which log
 
 Missing pre-iteration NaN guard for the year/period columns used in `int()` conversion.
 
+**Note on `season_year` fallback (line 987):** `row.get("season_year", row.get("year"))` is a **key-based** fallback — if the `season_year` column *exists* but contains NaN, `.get()` returns NaN (the key is present), it does NOT fall back to `year`. So the NaN guard on `season_year` alone is correct: those rows *would* crash at `int(NaN)`. Repairing NaN `season_year` by falling back to `year` is out of scope (upstream data issue).
+
 ---
 
 ## Implementation Plan
 
 ### Approach
 
-Add a `dropna()` call on the key columns before the `for _, row in data.iterrows()` loop (lines 968–969), following the exact same pattern as the short-term writer. Log skipped rows at WARNING level.
+Add a `dropna()` call on the key columns before the `for _, row in data.iterrows()` loop (lines 968–969), following a similar pattern to the short-term writer's NaN guard (lines 282–297). Log skipped rows at WARNING level. The aggregated version intentionally omits the `"date"` column from diagnostics (not present in these DataFrames) and has no repair step (no source data to derive missing year/period values from).
 
 ### Files to Modify
 
@@ -99,38 +101,16 @@ Add a `dropna()` call on the key columns before the `for _, row in data.iterrows
 
 ### Implementation Steps
 
-- [ ] After line 941 (`if data is None or data.empty`) but before line 968 (`records = []`), determine the key columns to check:
+- [ ] Insert the NaN guard (see Code Example below) inside the `try` block, after the readiness check (~line 966) and before `records = []` (line 968). **Not** after the `data.empty` guard at line 941 — that is outside the `try` block.
   - For `horizon_type == "quarter"`: check `["year", "quarter_in_year"]`
   - For `horizon_type == "season"`: check `["season_year"]` (fall back to `["year"]` if `season_year` not in columns)
-- [ ] Add `dropna()` on those columns with a WARNING log matching the short-term pattern:
-  ```python
-  # Determine NaN-check columns based on horizon type
-  if horizon_type == "quarter":
-      nan_check_cols = [c for c in ["year", "quarter_in_year"] if c in data.columns]
-  else:  # season
-      nan_check_cols = ["season_year"] if "season_year" in data.columns else ["year"]
-
-  n_before = len(data)
-  data = data.dropna(subset=nan_check_cols)
-  skipped_nan = n_before - len(data)
-  if skipped_nan > 0:
-      dropped_detail = (
-          data_orig[data_orig[nan_check_cols[0]].isna()][["code"]]
-          .drop_duplicates().head(10).to_dict("records")
-      )
-      logger.warning(
-          "Dropped %d %s forecast records with missing year/period values. "
-          "Sample codes: %s",
-          skipped_nan, label, dropped_detail,
-      )
-  ```
-  Note: keep a reference to the original `data` for dropped-row inspection before the `dropna`.
 - [ ] Run tests: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts`
 
 ### Code Example
 
 ```python
-# Insert after `if data is None or data.empty:` guard, before `records = []`
+# Insert inside the `try` block, after the readiness check (~line 966),
+# before `records = []` (line 968)
 
 # Determine which columns to check for NaN before int() conversion
 if horizon_type == "quarter":
@@ -138,14 +118,14 @@ if horizon_type == "quarter":
 else:  # season
     nan_check_cols = ["season_year"] if "season_year" in data.columns else ["year"]
 
-nan_check_cols = [c for c in nan_check_cols if c in data.columns]
 if nan_check_cols:
     data_before_nan_drop = data  # keep reference for diagnostics
     data = data.dropna(subset=nan_check_cols)
     skipped_nan = len(data_before_nan_drop) - len(data)
     if skipped_nan > 0:
-        dropped_codes = (
-            data_before_nan_drop[data_before_nan_drop[nan_check_cols[0]].isna()][["code"]]
+        nan_mask = data_before_nan_drop[nan_check_cols].isna().any(axis=1)
+        dropped_detail = (
+            data_before_nan_drop[nan_mask][["code"]]
             .drop_duplicates()
             .head(10)
             .to_dict("records")
@@ -155,7 +135,7 @@ if nan_check_cols:
             "Sample codes: %s",
             skipped_nan,
             label,
-            dropped_codes,
+            dropped_detail,
         )
 
 if data.empty:
@@ -169,11 +149,14 @@ if data.empty:
 
 ### Test Cases
 
-- [ ] NaN in `season_year`: DataFrame with 3 rows, one has `season_year=NaN` → 2 records written, 1 WARNING logged
-- [ ] NaN in `year` (quarter): DataFrame with 3 rows, one has `year=NaN` → 2 records written, 1 WARNING logged
-- [ ] NaN in `quarter_in_year`: DataFrame with 3 rows, one has `quarter_in_year=NaN` → 2 records written, 1 WARNING logged
-- [ ] All rows valid → all written, no WARNING
-- [ ] All rows NaN → returns `False`, logs INFO "No records to write"
+- [ ] NaN in `season_year`: DataFrame with 3 rows, one has `season_year=NaN` → assert `len(records) == 2` on `mock_client.write_long_forecasts.call_args[0][0]`, WARNING logged via `caplog`
+- [ ] NaN in `year` only (quarter, valid `quarter_in_year`): row dropped, assert record count excludes NaN row, WARNING in `caplog`
+- [ ] NaN in `quarter_in_year` only (quarter, valid `year`): row dropped, assert record count excludes NaN row, WARNING in `caplog`
+- [ ] All rows valid (quarter) → all written, no WARNING in `caplog`
+- [ ] All rows valid (season) → all written, no WARNING in `caplog`
+- [ ] All rows NaN (either horizon type) → returns `False`, logs INFO "No records to write"
+- [ ] NaN in `forecasted_discharge` only (valid year/period): row is **not** dropped — assert record is written with `q=None` (regression guard: the NaN guard must not interfere with the existing `pd.notna` handling at line 1019)
+- [ ] Missing `season_year` column (seasonal): DataFrame has only `year` column, no `season_year` → guard falls back to checking `year`, valid rows written successfully
 
 ### Testing Commands
 
@@ -198,6 +181,7 @@ After fix, re-run the seasonal write and confirm no `cannot convert float NaN to
 
 - Investigating *why* `season_year` is NaN in some rows (upstream data issue, separate from this guard)
 - Changes to the seasonal forecast data preparation logic
+- Removing the unused `period_col` parameter from `_write_aggregated_forecasts_to_api()` (dead code — never referenced in the function body; cleanup for a separate PR)
 
 ## Dependencies
 
@@ -206,8 +190,9 @@ None.
 ## Acceptance Criteria
 
 - [ ] `_write_aggregated_forecasts_to_api()` does not crash when rows have NaN in year/period columns
-- [ ] A WARNING is logged for each batch that has rows skipped
-- [ ] Valid rows in the same batch are written successfully
+- [ ] A WARNING is logged for each batch that has rows skipped (verified via `caplog`)
+- [ ] Valid rows in the same batch are written successfully (verified by asserting on actual records passed to `client.write_long_forecasts()`)
+- [ ] Rows with NaN in `forecasted_discharge` (but valid year/period) are NOT dropped — they write with `q=None`
 - [ ] All existing tests pass (`run_tests.sh postprocessing_forecasts` — zero failures, zero unexpected skips)
 - [ ] New test covers the NaN-guard behaviour for both quarter and season horizon types
 
