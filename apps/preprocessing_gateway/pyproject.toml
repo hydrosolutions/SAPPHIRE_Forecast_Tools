@@ -11,7 +11,7 @@ authors = [
 dependencies = [
     # Core data processing
     "pandas>=2.2.2",
-    "numpy>=1.26.4,<2.0.0",
+    "numpy>=1.26.4,<3.0.0",
     # Scientific computing (for quantile mapping)
     "scipy>=1.14.0",
     "scikit-learn>=1.5.0",
