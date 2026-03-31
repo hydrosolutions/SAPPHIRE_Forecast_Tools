@@ -1449,3 +1449,139 @@ class TestEdgeCases:
         em = result[result["model_short"] == "EM"]
         assert len(em) == 1
         assert em.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
+
+
+class TestMonthlyEnsembleHorizonValueGroupby:
+    """PP-032: Ensembles must be computed per horizon_value."""
+
+    def test_mixed_horizon_values_produce_separate_ensembles(self):
+        """month_0 and month_1 for same target get separate EM rows."""
+        forecasts = pd.DataFrame(
+            {
+                "code": ["15013"] * 4,
+                "year": [2024] * 4,
+                "month": [4] * 4,
+                "month_in_year": [4] * 4,
+                "model_short": ["GBT", "LR_Base", "GBT", "LR_Base"],
+                "horizon_value": [0, 0, 1, 1],
+                "date": [
+                    "2024-04-10",
+                    "2024-04-10",
+                    "2024-03-25",
+                    "2024-03-25",
+                ],
+                "forecasted_discharge": [100.0, 110.0, 90.0, 95.0],
+                "valid_from": ["2024-04-01"] * 4,
+                "valid_to": ["2024-04-30"] * 4,
+                "flag": [0] * 4,
+            }
+        )
+        # Skill stats that qualify both models
+        # Thresholds: sdivsigma < 0.6, nse > 0.8, accuracy > 0.8
+        skill_stats = pd.DataFrame(
+            {
+                "month_in_year": [4, 4],
+                "code": ["15013", "15013"],
+                "model_short": ["GBT", "LR_Base"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.85, 0.9],
+                "delta": [0.1, 0.2],
+                "accuracy": [0.85, 0.9],
+                "mae": [5.0, 6.0],
+                "n_pairs": [10, 10],
+            }
+        )
+        result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
+
+        # --- EM ---
+        em_rows = result[result["model_short"] == "EM"]
+        assert len(em_rows) == 2, f"Expected 2 EM rows (one per horizon_value), got {len(em_rows)}"
+        assert set(em_rows["horizon_value"]) == {0, 1}
+        # horizon_value=0 ensemble: mean(100, 110) = 105
+        em_hv0 = em_rows[em_rows["horizon_value"] == 0]
+        assert em_hv0["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
+        # horizon_value=1 ensemble: mean(90, 95) = 92.5
+        em_hv1 = em_rows[em_rows["horizon_value"] == 1]
+        assert em_hv1["forecasted_discharge"].iloc[0] == pytest.approx(92.5)
+
+        # --- Skilled Mean ---
+        sm_rows = result[result["model_short"] == "Skilled Mean"]
+        assert len(sm_rows) == 2, "Skilled Mean must also separate by horizon_value"
+        assert set(sm_rows["horizon_value"]) == {0, 1}
+
+        # --- Naive Mean ---
+        nm_rows = result[result["model_short"] == "Naive Mean"]
+        assert len(nm_rows) == 2, "Naive Mean must also separate by horizon_value"
+        assert set(nm_rows["horizon_value"]) == {0, 1}
+
+    def test_single_horizon_value_works_unchanged(self):
+        """When all records have the same horizon_value, behavior unchanged."""
+        forecasts = pd.DataFrame(
+            {
+                "code": ["15013"] * 2,
+                "year": [2024] * 2,
+                "month": [4] * 2,
+                "month_in_year": [4] * 2,
+                "model_short": ["GBT", "LR_Base"],
+                "horizon_value": [1, 1],
+                "date": ["2024-03-25"] * 2,
+                "forecasted_discharge": [100.0, 110.0],
+                "valid_from": ["2024-04-01"] * 2,
+                "valid_to": ["2024-04-30"] * 2,
+                "flag": [0] * 2,
+            }
+        )
+        # Thresholds: sdivsigma < 0.6, nse > 0.8, accuracy > 0.8
+        skill_stats = pd.DataFrame(
+            {
+                "month_in_year": [4, 4],
+                "code": ["15013", "15013"],
+                "model_short": ["GBT", "LR_Base"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.85, 0.9],
+                "delta": [0.1, 0.2],
+                "accuracy": [0.85, 0.9],
+                "mae": [5.0, 6.0],
+                "n_pairs": [10, 10],
+            }
+        )
+        result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
+        em_rows = result[result["model_short"] == "EM"]
+        assert len(em_rows) == 1
+        assert em_rows["horizon_value"].iloc[0] == 1
+
+    def test_no_horizon_value_column_backward_compat(self):
+        """When horizon_value column absent, groupby uses (year, month, code)."""
+        forecasts = pd.DataFrame(
+            {
+                "code": ["15013"] * 2,
+                "year": [2024] * 2,
+                "month": [4] * 2,
+                "month_in_year": [4] * 2,
+                "model_short": ["GBT", "LR_Base"],
+                "date": ["2024-03-25"] * 2,
+                "forecasted_discharge": [100.0, 110.0],
+                "valid_from": ["2024-04-01"] * 2,
+                "valid_to": ["2024-04-30"] * 2,
+                "flag": [0] * 2,
+            }
+        )
+        # Thresholds: sdivsigma < 0.6, nse > 0.8, accuracy > 0.8
+        skill_stats = pd.DataFrame(
+            {
+                "month_in_year": [4, 4],
+                "code": ["15013", "15013"],
+                "model_short": ["GBT", "LR_Base"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.85, 0.9],
+                "delta": [0.1, 0.2],
+                "accuracy": [0.85, 0.9],
+                "mae": [5.0, 6.0],
+                "n_pairs": [10, 10],
+            }
+        )
+        result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
+        em_rows = result[result["model_short"] == "EM"]
+        assert len(em_rows) == 1
+        # horizon_value should NOT be in the output since it wasn't in input
+        assert "horizon_value" not in em_rows.columns or em_rows["horizon_value"].isna().all()

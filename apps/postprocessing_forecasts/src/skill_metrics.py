@@ -1083,7 +1083,7 @@ _ENSEMBLE_JOINT_COLS = (
         "composition",
     ]
     + _QUANTILE_COLS
-    + ["valid_from", "valid_to", "date", "flag"]
+    + ["valid_from", "valid_to", "date", "flag", "horizon_value"]
 )
 
 

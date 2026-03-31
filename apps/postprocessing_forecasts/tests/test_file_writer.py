@@ -527,6 +527,43 @@ class TestSaveMonthlyForecastDataApiWithoutCsv:
             assert "EM" in models
 
 
+class TestSaveMonthlyForecastDataApiWithCsv:
+    """PP-032: API write must also happen when CSV path IS configured."""
+
+    @pytest.fixture
+    def monthly_ensemble_data(self):
+        """Monthly joint forecasts with ensemble rows."""
+        return pd.DataFrame(
+            {
+                "code": ["15013", "15013", "15013"],
+                "year": [2024, 2024, 2024],
+                "month": [6, 6, 6],
+                "month_in_year": [6, 6, 6],
+                "date": pd.to_datetime(["2024-06-01"] * 3),
+                "forecasted_discharge": [102.5, 101.0, 103.0],
+                "model_short": ["EM", "Naive Mean", "Skilled Mean"],
+                "composition": ["GBT, LR_Base"] * 3,
+            }
+        )
+
+    def test_api_write_called_when_csv_is_configured(self, monthly_ensemble_data, tmp_path):
+        """API write must happen even when CSV path IS configured."""
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_monthly_combined_forecast_file": "test_monthly.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            with patch(
+                "src.api_writer._write_monthly_ensemble_to_api",
+                return_value=True,
+            ) as mock_api:
+                file_writer.save_monthly_forecast_data(monthly_ensemble_data)
+                mock_api.assert_called_once()
+
+
 class TestSaveForecastDataAtomicWrites:
     """Tests that save_forecast_data(PENTAD/DECAD, ...) write correct output files."""
 

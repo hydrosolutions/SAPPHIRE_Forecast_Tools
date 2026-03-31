@@ -1625,17 +1625,10 @@ class TestMonthlyEnsembleHorizonValueConsistency:
         )
 
     @patch("src.api_writer.SapphirePostprocessingClient")
-    def test_horizon_value_uses_absolute_month_currently(self, mock_client_class):
-        """Document current behavior: horizon_value = absolute month (1-12).
-
-        This test captures the CURRENT (incorrect) behavior where
-        horizon_value is set to the calendar month number. When PP-032
-        is fixed to use month offsets, this test should be updated to
-        assert the correct offset-based value.
-
-        Current: horizon_value=4 for April forecast
-        Expected after fix: horizon_value=1 for a month_1 (next month) forecast
-        """
+    def test_horizon_value_uses_offset_from_data(
+        self, mock_client_class, ensemble_with_horizon_value
+    ):
+        """PP-032 fix: horizon_value from input data is used, not absolute month."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1644,17 +1637,40 @@ class TestMonthlyEnsembleHorizonValueConsistency:
         mock_client.write_long_forecasts.return_value = 2
         mock_client_class.return_value = mock_client
 
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(ensemble_with_horizon_value)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        for record in records:
+            assert record["horizon_value"] == 1, (
+                f"horizon_value should be 1 (offset from input data), "
+                f"not {record['horizon_value']} (absolute month)"
+            )
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_horizon_value_falls_back_to_month_when_absent(self, mock_client_class):
+        """When input lacks horizon_value column, falls back to month."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
         data = pd.DataFrame(
             {
                 "code": ["15013"],
                 "year": [2024],
-                "month": [4],
-                "month_in_year": [4],
+                "month": [6],
+                "month_in_year": [6],
                 "forecasted_discharge": [102.5],
                 "model_short": ["EM"],
                 "composition": ["GBT, LR_Base"],
-                "valid_from": ["2024-04-01"],
-                "valid_to": ["2024-04-30"],
+                "valid_from": ["2024-06-01"],
+                "valid_to": ["2024-06-30"],
+                # No horizon_value column
             }
         )
 
@@ -1664,14 +1680,8 @@ class TestMonthlyEnsembleHorizonValueConsistency:
 
         records = mock_client.write_long_forecasts.call_args[0][0]
         record = records[0]
-        # Current behavior: uses absolute month
-        # TODO(PP-032): After fix, this should assert horizon_value
-        # matches the offset used by individual models (e.g. 1 for
-        # month_1), NOT the absolute calendar month.
-        assert record["horizon_value"] == 4, (
-            "Current behavior: horizon_value is absolute month. "
-            "When PP-032 is fixed, update this test to assert the "
-            "correct month offset value."
+        assert record["horizon_value"] == 6, (
+            "Fallback: when horizon_value absent, should use month (6)"
         )
 
 
@@ -1689,16 +1699,8 @@ class TestMonthlyEnsembleDateFieldConsistency:
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
 
     @patch("src.api_writer.SapphirePostprocessingClient")
-    def test_date_equals_valid_from_currently(self, mock_client_class):
-        """Document current behavior: date = valid_from.
-
-        Individual models have date=issue_date (e.g. 2024-03-25).
-        The monthly writer sets date=valid_from (e.g. 2024-04-01).
-        This test captures the current (incorrect) behavior.
-
-        After PP-032 fix, date should equal the issue date from the
-        input forecasts (the ``date`` column), NOT valid_from.
-        """
+    def test_date_uses_issue_date_from_data(self, mock_client_class):
+        """PP-032 fix: date field uses the issue date, not valid_from."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1728,16 +1730,45 @@ class TestMonthlyEnsembleDateFieldConsistency:
 
         records = mock_client.write_long_forecasts.call_args[0][0]
         record = records[0]
-        # Current behavior: date = valid_from, not issue_date
-        # TODO(PP-032): After fix, assert record["date"] == "2024-03-25"
-        assert record["date"] == "2024-04-01", (
-            "Current behavior: date=valid_from. "
-            "When PP-032 is fixed, update this test to assert "
-            "date equals the forecast issue date (2024-03-25)."
+        assert record["date"] == "2024-03-25", (
+            "date should be the issue date (2024-03-25), not valid_from"
         )
-        # valid_from/valid_to should remain correct regardless
         assert record["valid_from"] == "2024-04-01"
         assert record["valid_to"] == "2024-04-30"
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_date_falls_back_to_valid_from_when_absent(self, mock_client_class):
+        """When input lacks date column, falls back to valid_from."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [6],
+                "month_in_year": [6],
+                "forecasted_discharge": [102.5],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+                "valid_from": ["2024-06-01"],
+                "valid_to": ["2024-06-30"],
+                # No date column
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        record = records[0]
+        assert record["date"] == "2024-06-01", "Fallback: when date absent, should use valid_from"
 
 
 class TestMonthlyEnsembleNaNGuard:
