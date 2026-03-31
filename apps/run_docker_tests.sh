@@ -86,7 +86,7 @@ TARGETS=(
     "preprunoff|mabesa/sapphire-preprunoff|apps/preprocessing_runoff/Dockerfile|import preprocessing_runoff|"
     "prepgateway|mabesa/sapphire-prepgateway|apps/preprocessing_gateway/Dockerfile|import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client|"
     "linreg|mabesa/sapphire-linreg|apps/linear_regression/Dockerfile|import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK|"
-    "ml|mabesa/sapphire-ml|apps/machine_learning/Dockerfile|import torch; import darts; import pandas; import numpy|"
+    "ml|mabesa/sapphire-ml|apps/machine_learning/Dockerfile|import torch; import darts; import pytorch_lightning; import pandas; import numpy|"
     "ltforecast|mabesa/sapphire-ltforecast|apps/long_term_forecasting/Dockerfile|import torch; import catboost; import lightgbm; import xgboost; import sapphire_api_client; from ieasyhydro_sdk.sdk import IEasyHydroSDK; import pandas; import numpy||"
     "dashboard|mabesa/sapphire-dashboard|apps/forecast_dashboard/Dockerfile|import panel; import holoviews; import bokeh; import pandas; import numpy|"
     "postprocessing|mabesa/sapphire-postprocessing|apps/postprocessing_forecasts/Dockerfile|import pandas; import numpy; import openpyxl|"
