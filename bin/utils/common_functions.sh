@@ -169,7 +169,7 @@ clean_out_backend() {
     stop_and_remove_container preprunoff
     stop_and_remove_container prepgateway
     stop_and_remove_container linreg
-    stop_and_remove_container postprocessing
+    stop_and_remove_container postprocessing_attempt
     stop_and_remove_container ml_TIDE_PENTAD
     stop_and_remove_container ml_TIDE_DECAD
     stop_and_remove_container ml_TFT_PENTAD
@@ -320,7 +320,7 @@ cleanup_decadal_forecasting_containers() {
   stop_and_remove_container ml_ARIMA_DECAD
   stop_and_remove_container linreg
   stop_and_remove_container conceptmod
-  stop_and_remove_container postprocessing
+  stop_and_remove_container postprocessing_attempt
 }
 
 cleanup_pentadal_forecasting_containers() {
@@ -334,7 +334,7 @@ cleanup_pentadal_forecasting_containers() {
     stop_and_remove_container ml_ARIMA_PENTAD
     stop_and_remove_container linreg
     stop_and_remove_container conceptmod
-    stop_and_remove_container postprocessing
+    stop_and_remove_container postprocessing_attempt
 }
 
 cleanup_long_term_forecasting_containers() {
