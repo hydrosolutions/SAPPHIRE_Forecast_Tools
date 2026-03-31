@@ -1580,3 +1580,309 @@ class TestWriteMonthlyEnsembleToApi:
 
         result = _write_monthly_ensemble_to_api(None)
         assert result is False
+
+
+class TestMonthlyEnsembleHorizonValueConsistency:
+    """PP-032: horizon_value must use the same semantics as individual models.
+
+    Individual model forecasts written by long_term_forecasting use
+    horizon_value as a *month offset* (0=current month, 1=next month, etc.).
+    The monthly ensemble writer must match this convention so that API
+    queries like ``horizon_value=1`` return both individual and ensemble
+    forecasts for the same target month.
+
+    The current implementation uses the absolute calendar month (1-12),
+    which creates a mismatch. These tests document the correct behavior.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+    @pytest.fixture
+    def ensemble_with_horizon_value(self):
+        """Ensemble data that includes horizon_value from the original
+        individual model forecasts (month offset, not absolute month).
+
+        Scenario: issue date 2024-03-25, month_1 forecast targeting April.
+        Individual models were written with horizon_value=1.
+        """
+        return pd.DataFrame(
+            {
+                "code": ["15013", "15013"],
+                "year": [2024, 2024],
+                "month": [4, 4],
+                "month_in_year": [4, 4],
+                "forecasted_discharge": [102.5, 101.0],
+                "model_short": ["EM", "Naive Mean"],
+                "composition": ["GBT, LR_Base", "GBT, LR_Base"],
+                "valid_from": ["2024-04-01", "2024-04-01"],
+                "valid_to": ["2024-04-30", "2024-04-30"],
+                "date": ["2024-03-25", "2024-03-25"],
+                # This column preserves the offset from the original forecasts
+                "horizon_value": [1, 1],
+            }
+        )
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_horizon_value_uses_offset_from_data(
+        self, mock_client_class, ensemble_with_horizon_value
+    ):
+        """PP-032 fix: horizon_value from input data is used, not absolute month."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 2
+        mock_client_class.return_value = mock_client
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(ensemble_with_horizon_value)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        for record in records:
+            assert record["horizon_value"] == 1, (
+                f"horizon_value should be 1 (offset from input data), "
+                f"not {record['horizon_value']} (absolute month)"
+            )
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_horizon_value_falls_back_to_month_when_absent(self, mock_client_class):
+        """When input lacks horizon_value column, falls back to month."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [6],
+                "month_in_year": [6],
+                "forecasted_discharge": [102.5],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+                "valid_from": ["2024-06-01"],
+                "valid_to": ["2024-06-30"],
+                # No horizon_value column
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        record = records[0]
+        assert record["horizon_value"] == 6, (
+            "Fallback: when horizon_value absent, should use month (6)"
+        )
+
+
+class TestMonthlyEnsembleDateFieldConsistency:
+    """PP-032: date field must use issue date, not valid_from.
+
+    Individual model forecasts use ``date`` = forecast issue date
+    (e.g. 2024-03-25). The monthly ensemble writer currently sets
+    ``date = valid_from`` (e.g. 2024-04-01), which makes ensemble
+    records unqueryable alongside individual models by issue date.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_date_uses_issue_date_from_data(self, mock_client_class):
+        """PP-032 fix: date field uses the issue date, not valid_from."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [4],
+                "month_in_year": [4],
+                "forecasted_discharge": [102.5],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+                "valid_from": ["2024-04-01"],
+                "valid_to": ["2024-04-30"],
+                "date": ["2024-03-25"],
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        record = records[0]
+        assert record["date"] == "2024-03-25", (
+            "date should be the issue date (2024-03-25), not valid_from"
+        )
+        assert record["valid_from"] == "2024-04-01"
+        assert record["valid_to"] == "2024-04-30"
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_date_falls_back_to_valid_from_when_absent(self, mock_client_class):
+        """When input lacks date column, falls back to valid_from."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [6],
+                "month_in_year": [6],
+                "forecasted_discharge": [102.5],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+                "valid_from": ["2024-06-01"],
+                "valid_to": ["2024-06-30"],
+                # No date column
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        record = records[0]
+        assert record["date"] == "2024-06-01", "Fallback: when date absent, should use valid_from"
+
+
+class TestMonthlyEnsembleNaNGuard:
+    """PP-032/PP-029: NaN values must not crash the API write.
+
+    The seasonal writer crashed with "cannot convert float NaN to integer".
+    The monthly writer must guard against NaN in forecasted_discharge
+    and quantile fields.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_nan_forecasted_discharge_produces_null_q(self, mock_client_class):
+        """NaN forecasted_discharge -> record has q=None, not NaN."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [6],
+                "month_in_year": [6],
+                "forecasted_discharge": [float("nan")],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        assert records[0]["q"] is None
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_nan_quantiles_excluded_from_record(self, mock_client_class):
+        """NaN quantile values should be omitted from the record, not
+        sent as NaN (which would fail JSON serialization or DB insert).
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013"],
+                "year": [2024],
+                "month": [6],
+                "month_in_year": [6],
+                "forecasted_discharge": [100.0],
+                "model_short": ["EM"],
+                "composition": ["GBT, LR_Base"],
+                "q05": [float("nan")],
+                "q25": [85.0],
+                "q75": [float("nan")],
+                "q95": [130.0],
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        _write_monthly_ensemble_to_api(data)
+
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        record = records[0]
+        # Non-NaN quantiles are present
+        assert record["q25"] == 85.0
+        assert record["q95"] == 130.0
+        # NaN quantiles are excluded (not present as keys with NaN value)
+        assert "q05" not in record or record.get("q05") is None
+        assert "q75" not in record or record.get("q75") is None
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_mixed_nan_and_valid_rows(self, mock_client_class):
+        """Rows with all-NaN forecast values should still produce records
+        (with q=None), not crash the writer.
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_long_forecasts.return_value = 2
+        mock_client_class.return_value = mock_client
+
+        data = pd.DataFrame(
+            {
+                "code": ["15013", "15013"],
+                "year": [2024, 2024],
+                "month": [6, 6],
+                "month_in_year": [6, 6],
+                "forecasted_discharge": [100.0, float("nan")],
+                "model_short": ["EM", "Skilled Mean"],
+                "composition": ["GBT, LR_Base", "GBT, LR_Base"],
+            }
+        )
+
+        from src.api_writer import _write_monthly_ensemble_to_api
+
+        result = _write_monthly_ensemble_to_api(data)
+        assert result is True
+        records = mock_client.write_long_forecasts.call_args[0][0]
+        assert len(records) == 2

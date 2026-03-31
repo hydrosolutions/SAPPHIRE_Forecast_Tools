@@ -419,11 +419,10 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
 
 
 def save_monthly_forecast_data(simulated: pd.DataFrame):
-    """Save monthly combined forecasts (joint_forecasts) to CSV.
+    """Save monthly combined forecasts (joint_forecasts) to CSV and API.
 
-    Follows save_forecast_data() pattern but simpler:
-    no API write (monthly forecasts already in long_forecasts table),
-    uses month_in_year as horizon column.
+    Writes ensemble rows (EM, Naive Mean, Skilled Mean) to the SAPPHIRE
+    API unconditionally, then optionally writes CSV if env vars are configured.
 
     Args:
         simulated: DataFrame with monthly joint forecasts. Expected
@@ -437,6 +436,25 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
         logger.info("No monthly forecast data to save")
         return None
 
+    # Round all float values to 3 decimal places
+    simulated = simulated.round(3)
+
+    # Ensure code is string without .0
+    if "code" in simulated.columns:
+        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    # Write ensemble rows (EM, Naive Mean, Skilled Mean) to API
+    # This runs unconditionally — internal guards check API availability
+    ret = api_writer._write_monthly_ensemble_to_api(simulated)
+    if ret:
+        logger.info("Monthly ensemble forecasts written to API successfully.")
+    else:
+        logger.warning(
+            "Monthly ensemble forecasts API write returned False "
+            "(disabled, unavailable, or failed)."
+        )
+
+    # CSV write — conditional on env vars
     csv_dir = os.getenv("ieasyforecast_intermediate_data_path")
     csv_file = os.getenv("ieasyforecast_monthly_combined_forecast_file")
     if not csv_dir or not csv_file:
@@ -451,13 +469,6 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
         return None
 
     filename = os.path.join(csv_dir, csv_file)
-
-    # Round all float values to 3 decimal places
-    simulated = simulated.round(3)
-
-    # Ensure code is string without .0
-    if "code" in simulated.columns:
-        simulated["code"] = simulated["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     # Extract latest forecasts using month_in_year as horizon.
     # EM/Skilled Mean rows from calculate_monthly_skill_metrics have
@@ -496,16 +507,6 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
     except Exception as e:
         logger.error(f"Could not write latest monthly forecast data to {filename_latest}.")
         raise e
-
-    # Write ensemble rows (EM, Naive Mean, Skilled Mean) to API
-    ret = api_writer._write_monthly_ensemble_to_api(simulated)
-    if ret:
-        logger.info("Monthly ensemble forecasts written to API successfully.")
-    else:
-        logger.warning(
-            "Monthly ensemble forecasts API write returned False "
-            "(disabled, unavailable, or failed)."
-        )
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"

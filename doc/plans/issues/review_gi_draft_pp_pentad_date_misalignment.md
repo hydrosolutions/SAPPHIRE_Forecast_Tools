@@ -1,6 +1,6 @@
 # PP-031: Pentad/decad aggregation does not select boundary issue days (shared code path)
 
-**Status**: Draft
+**Status**: Review
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `bug`, `data-quality`, `postprocessing`
@@ -109,14 +109,15 @@ postprocessing_operational.py
                  │    ├─ _read_ml_forecasts_pp_api(model, "pentad")
                  │    │    └─ queries API: horizon=day,
                  │    │       start_date={year}-01-01, end_date={year}-12-31
-                 │    │       ← PROBLEM: fetches ALL daily forecasts for the year
-                 │    │          should only fetch for today (the boundary day)
+                 │    │       ← NOTE: fetches ALL daily forecasts for the year
+                 │    │          (not the bug — API scope stays unchanged)
                  │    │
                  │    └─ _normalize_ml_forecasts(ml_raw, model, "pentad")
+                 │         ├─ ← BUG: no boundary-day filter on `date` column
                  │         ├─ Filter: keep targets where pentad_in_year(target)
                  │         │    == pentad_in_year(date + 1 day)       (PP-023)
                  │         ├─ Aggregate: groupby(["code", "date"]).mean()
-                 │         │    ← PROBLEM: groups by EVERY ML run date,
+                 │         │    ← produces rows for EVERY ML run date,
                  │         │       not just boundary days
                  │         └─ Compute pentad_in_year from date + 1 day
                  │
@@ -151,41 +152,36 @@ postprocessing_maintenance.py
 1. Gap detector may flag non-boundary dates where ML pentad records exist but EM/NE don't
 2. Fetches entire year(s) of daily data when only specific boundary dates are needed
 
-### Intended Dataflow (OPERATIONAL)
+### Intended Dataflow (AFTER FIX)
+
+The fix is purely inside `_normalize_ml_forecasts()` — a new boundary-day filter
+drops rows where `date` is not a pentad/decad issue day. No changes to API queries,
+entry points, or write paths.
 
 ```
-postprocessing_operational.py
+_normalize_ml_forecasts(df, model, horizon_type)
   │
-  ├─ today = dt.date.today()
-  ├─ if is_pentad_boundary(today): run pentad
-  ├─ if is_decad_boundary(today): run decad
-  │    (dates like 10th, 20th, EOM are BOTH — fetch daily forecasts once,
-  │     aggregate to pentad AND decad using different target windows)
-  │
-  └─ For the boundary day (today):
-       ├─ Fetch ML daily forecasts ONLY for date=today
-       ├─ For pentad: filter targets to next pentad dates, average → write
-       └─ For decad: filter targets to next decad dates, average → write
+  ├─ Parse dates (existing line 1853)
+  ├─ NEW: Drop rows where date is not a boundary day        ← THE FIX
+  │    pentad: date.day not in (5, 10, 15, 20, 25, last_day_of_month)
+  │    decad:  date.day not in (10, 20, last_day_of_month)
+  ├─ Filter targets to period (existing PP-023, line 1858)  ← unchanged
+  ├─ Aggregate groupby(["code", "date"]).mean()             ← unchanged
+  └─ Compute period columns from date + 1 day              ← unchanged
 ```
 
-### Intended Dataflow (MAINTENANCE)
+**Effect on operational path**: `postprocessing_operational.py` already guards on
+`is_pentad_boundary(today)` / `is_decad_boundary(today)`, so on boundary days the
+filter is a no-op for today's records. Non-boundary records from earlier ML runs
+(fetched as part of the year-range query) are now correctly dropped.
 
-```
-postprocessing_maintenance.py
-  │
-  ├─ Detect missing EM/NE on BOUNDARY DAYS ONLY within lookback window
-  │    e.g., Feb pentad boundaries: 5, 10, 15, 20, 25, 28
-  │         Mar pentad boundaries: 5, 10, 15, 20, 25, 31
-  │    Missing: Feb 20, Mar 15, Mar 25 (where ML daily exists but EM/NE absent)
-  │
-  └─ For each missing boundary date:
-       ├─ Fetch ML daily forecasts ONLY for that date
-       ├─ Filter targets to next pentad/decad dates
-       ├─ Average → compute EM, NE → write
-       └─ (same aggregation as operational)
-```
+**Effect on maintenance path**: The gap detector may still flag non-boundary dates
+(from spurious records already in DB). But when maintenance reads through
+`_normalize_ml_forecasts`, the boundary filter drops those rows → empty result →
+no new spurious records written. The gap detector itself is not changed in this PR
+(deferred to follow-up).
 
-### Target Filtering Detail (needs investigation)
+### Target Filtering Detail (verified — PP-023)
 
 The current code computes target period using `tl.get_pentad_in_year(target)`. Since daily ML forecasts store individual `target` dates (e.g., `"target": "2026-03-26"`), not period numbers, the filtering works by:
 
@@ -193,7 +189,7 @@ The current code computes target period using `tl.get_pentad_in_year(target)`. S
 2. Computing `actual_period = get_pentad_in_year(target_date)`
 3. Keeping rows where they match
 
-**Needs verification**: Does `get_pentad_in_year` correctly identify pentad boundaries for all edge cases (EOM with varying month lengths, leap years)? The `target` column IS present on daily ML records — confirmed from API response.
+**Verified correct** (PP-023, complete). `get_pentad_in_year` handles all edge cases: EOM with varying month lengths, leap years, month boundaries. Covered by `test_data_reader_ml_aggregation.py`. **This logic must NOT be changed.**
 
 ---
 
@@ -201,21 +197,22 @@ The current code computes target period using `tl.get_pentad_in_year(target)`. S
 
 ### Steps
 
-- [ ] Step 1: Confirm the fix location — verify `_normalize_ml_forecasts` is the right place to add boundary filtering, or if it should be in the caller
-- [ ] Step 2: Add boundary-day filter: before target filtering, drop rows where `date` is not a pentad/decad issue day
-- [ ] Step 3: Move `is_pentad_boundary()` / `is_decad_boundary()` to shared utility (currently in `postprocessing_operational.py:54-63`)
-- [ ] Step 5: Update maintenance gap detector to only look for missing EM/NE on boundary dates
-- [ ] Step 6: Run operational + maintenance and confirm correct records appear
-- [ ] Step 7 (follow-up): Clean up spurious non-boundary pentad/decad records already in the DB
-- [ ] Step 8 (follow-up): Verify dashboard no longer shows phantom forecasts on non-boundary dates
+- [ ] Step 1: Add `import calendar` to `data_reader.py` imports (stdlib, not currently imported). Add `_is_pentad_boundary()` and `_is_decad_boundary()` as private helper functions in `data_reader.py`, near the top of the file (after imports, before `_clean_code_column`). These are 2-line functions using `calendar.monthrange`. Do NOT move or modify the copies in `postprocessing_operational.py`.
+- [ ] Step 2: Insert boundary-day filter in `_normalize_ml_forecasts()` between date parsing (line 1853) and target filter (line 1858). Drop rows where `date` is not a boundary day for the given `horizon_type`.
+- [ ] Step 3: Add tests in `test_data_reader_ml_aggregation.py` (see Testing section below).
+- [ ] Step 4: Run tests: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts`
+- [ ] Step 5 (follow-up): Clean up spurious non-boundary pentad/decad records already in the DB
+- [ ] Step 6 (follow-up): Update gap detector to only flag boundary dates
+- [ ] Step 7 (follow-up): Verify dashboard no longer shows phantom forecasts after DB cleanup
 
 ### Files to Modify
 
 | File | Changes |
 |------|---------|
-| `apps/postprocessing_forecasts/src/data_reader.py:1825-1952` | `_normalize_ml_forecasts()` — add boundary-day filter before target filtering. This is the minimal fix that covers both operational and maintenance paths. |
-| `apps/postprocessing_forecasts/postprocessing_operational.py:54-63` | Move `is_pentad_boundary()` / `is_decad_boundary()` to shared `src/date_utils.py` so `_normalize_ml_forecasts` can import them. |
-| `apps/postprocessing_forecasts/postprocessing_maintenance.py` | Verify gap detector only flags boundary dates. |
+| `apps/postprocessing_forecasts/src/data_reader.py` | Add `_is_pentad_boundary()` / `_is_decad_boundary()` helpers; insert boundary-day filter in `_normalize_ml_forecasts()` between date parsing and target filter |
+| `apps/postprocessing_forecasts/tests/test_data_reader_ml_aggregation.py` | Add `TestBoundaryDayFiltering` and `TestBoundaryFunctions` test classes |
+
+**No other production files are modified.** `postprocessing_operational.py`, `postprocessing_maintenance.py`, `gap_detector.py`, and all write paths are untouched.
 
 ---
 
@@ -229,11 +226,69 @@ The current code computes target period using `tl.get_pentad_in_year(target)`. S
 
 3. **Do NOT change the write path** in `api_writer.py` or `file_writer.py`.
 
-4. **Do NOT change `postprocessing_operational.py`** beyond extracting the boundary functions to a shared module. The existing `is_pentad_boundary`/`is_decad_boundary` guards at the entry point are correct and must remain.
+4. **Do NOT change `postprocessing_operational.py`** in any way. The existing `is_pentad_boundary`/`is_decad_boundary` guards at the entry point are correct and must remain. The boundary functions are duplicated as private helpers in `data_reader.py` — this is intentional to avoid cross-module coupling.
 
-5. **The boundary-day filter must be inserted AFTER the `pd.to_datetime` conversion** (line 1853) and BEFORE the target filter (line 1858). Exact insertion point: between lines 1853 and 1855.
+5. **Do NOT change `postprocessing_maintenance.py`** or `gap_detector.py`. The gap detector fix is deferred to a follow-up.
 
-6. **Type safety**: The `date` column is `pd.Timestamp` at the insertion point. The `is_pentad_boundary`/`is_decad_boundary` functions work with `pd.Timestamp` (verified — it has `.year`, `.month`, `.day` attributes). No type conversion needed.
+6. **Do NOT create new files** (`src/date_utils.py` or otherwise). All changes go into `data_reader.py`.
+
+7. **The boundary-day filter must be inserted AFTER the `pd.to_datetime` conversion** (line 1853) and BEFORE the target filter (line 1858). Exact insertion point: between lines 1853 and 1855.
+
+8. **Type safety**: The `date` column is `pd.Timestamp` at the insertion point. The boundary functions work with `pd.Timestamp` (verified — it has `.year`, `.month`, `.day` attributes via `calendar.monthrange`). No type conversion needed.
+
+9. **The boundary filter must run unconditionally** — it does not depend on `TAG_LIBRARY_AVAILABLE` or the presence of a `target` column. Records on non-boundary dates should be dropped regardless.
+
+### Code Example
+
+```python
+# Private helpers in data_reader.py (near top, after imports):
+
+def _is_pentad_boundary(d) -> bool:
+    """Return True if *d* is a pentad issue day (5/10/15/20/25/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (5, 10, 15, 20, 25, last_day)
+
+
+def _is_decad_boundary(d) -> bool:
+    """Return True if *d* is a decad issue day (10/20/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (10, 20, last_day)
+```
+
+```python
+# Inside _normalize_ml_forecasts(), after date parsing (line 1853),
+# BEFORE the target filter (line 1858):
+
+    # PP-031: Drop rows where date is not a boundary day for this horizon.
+    if "date" in df.columns:
+        if horizon_type == "pentad":
+            boundary_mask = df["date"].apply(_is_pentad_boundary)
+        else:
+            boundary_mask = df["date"].apply(_is_decad_boundary)
+
+        n_non_boundary = (~boundary_mask).sum()
+        if n_non_boundary > 0:
+            logger.info(
+                "Dropped %d/%d rows on non-%s-boundary dates for %s",
+                n_non_boundary,
+                len(df),
+                horizon_type,
+                model,
+            )
+        df = df[boundary_mask].copy()
+
+        if df.empty:
+            return pd.DataFrame()
+```
+
+### Callers of `_normalize_ml_forecasts` (verified)
+
+| Caller | File:Line | Effect of boundary filter |
+|--------|-----------|--------------------------|
+| `read_individual_model_forecasts` | `data_reader.py:2112` | Non-boundary rows dropped before aggregation — the fix |
+| Test files | `test_data_reader_ml_aggregation.py`, `test_data_reader.py` | All existing tests use boundary dates — unaffected |
+
+There is exactly **one** production caller. The function is private (`_` prefix).
 
 ### Required tests
 
@@ -316,6 +371,20 @@ class TestBoundaryDayFiltering:
         result = _normalize_ml_forecasts(raw, "TFT", "pentad")
         assert len(result) == 1
         assert result["forecasted_discharge"].iloc[0] == pytest.approx(30.0)
+
+    def test_short_pentad_feb25_nonleap(self):
+        """Feb 25 pentad: only 3 targets in period (Feb 26-28), not the usual 5."""
+        raw = pd.DataFrame({
+            "code": ["10001"] * 6,
+            "date": ["2025-02-25"] * 6,
+            "target": ["2025-02-26", "2025-02-27", "2025-02-28",
+                        "2025-03-01", "2025-03-02", "2025-03-03"],
+            "forecasted_discharge": [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+        })
+        result = _normalize_ml_forecasts(raw, "TFT", "pentad")
+        assert len(result) == 1
+        # Only Feb 26-28 in pentad 12; Mar 1+ is pentad 13 → dropped
+        assert result["forecasted_discharge"].iloc[0] == pytest.approx(20.0)
 
     def test_non_boundary_decad_date_dropped(self):
         """ML record with date=Jan 15 (pentad boundary but NOT decad boundary) is dropped for decad."""
@@ -405,16 +474,35 @@ class TestBoundaryDayFiltering:
         })
         result = _normalize_ml_forecasts(raw, "TFT", "pentad")
         assert result.empty
+
+    def test_non_boundary_no_target_column_returns_empty(self):
+        """Non-boundary date with no target column → empty.
+
+        Before PP-031, records without a target column were aggregated
+        regardless of date. After the fix, the boundary filter runs
+        unconditionally (before the target-presence check), so non-boundary
+        dates are dropped even without a target column.
+        """
+        raw = pd.DataFrame({
+            "code": ["10001"] * 6,
+            "date": ["2024-01-04"] * 6,  # NOT a boundary day
+            "forecasted_discharge": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+        })
+        result = _normalize_ml_forecasts(raw, "TFT", "pentad")
+        assert result.empty
 ```
 
-#### B. Unit tests for shared boundary functions (new file: `test_date_utils.py`)
+#### B. Unit tests for boundary helper functions (in `test_data_reader_ml_aggregation.py`)
+
+Same file, new classes. Import `_is_pentad_boundary` and `_is_decad_boundary` from `src.data_reader`.
 
 ```python
-"""Tests for is_pentad_boundary and is_decad_boundary (moved to src/date_utils.py)."""
 import datetime as dt
-from src.date_utils import is_pentad_boundary, is_decad_boundary
+from src.data_reader import _is_pentad_boundary, _is_decad_boundary
 
 class TestPentadBoundary:
+    """PP-031: _is_pentad_boundary covers all edge cases."""
+
     @pytest.mark.parametrize("day,expected", [
         (1, False), (4, False), (5, True), (6, False),
         (9, False), (10, True), (11, False),
@@ -423,131 +511,57 @@ class TestPentadBoundary:
         (24, False), (25, True), (26, False),
     ])
     def test_regular_days(self, day, expected):
-        assert is_pentad_boundary(dt.date(2024, 1, day)) == expected
+        assert _is_pentad_boundary(dt.date(2024, 1, day)) == expected
 
     @pytest.mark.parametrize("month,last_day", [
         (1, 31), (2, 28), (3, 31), (4, 30), (6, 30), (12, 31),
     ])
     def test_eom_is_boundary(self, month, last_day):
-        assert is_pentad_boundary(dt.date(2025, month, last_day)) is True
+        assert _is_pentad_boundary(dt.date(2025, month, last_day)) is True
+
+    def test_30day_month_non_eom_not_boundary(self):
+        """Day 26-29 in a 30-day month are NOT boundaries (only 25 and 30 are)."""
+        assert _is_pentad_boundary(dt.date(2025, 4, 26)) is False
+        assert _is_pentad_boundary(dt.date(2025, 4, 29)) is False
+        assert _is_pentad_boundary(dt.date(2025, 4, 30)) is True  # EOM
 
     def test_leap_year_feb29(self):
-        assert is_pentad_boundary(dt.date(2024, 2, 29)) is True  # EOM leap
-        assert is_pentad_boundary(dt.date(2024, 2, 28)) is False  # not EOM in leap year
+        assert _is_pentad_boundary(dt.date(2024, 2, 29)) is True  # EOM leap
+        assert _is_pentad_boundary(dt.date(2024, 2, 28)) is False  # not EOM in leap year
 
     def test_works_with_pd_timestamp(self):
         import pandas as pd
-        assert is_pentad_boundary(pd.Timestamp("2024-01-05")) is True
-        assert is_pentad_boundary(pd.Timestamp("2024-01-04")) is False
+        assert _is_pentad_boundary(pd.Timestamp("2024-01-05")) is True
+        assert _is_pentad_boundary(pd.Timestamp("2024-01-04")) is False
 
 class TestDecadBoundary:
+    """PP-031: _is_decad_boundary covers all edge cases."""
+
     @pytest.mark.parametrize("day,expected", [
         (1, False), (5, False), (9, False), (10, True),
         (15, False), (19, False), (20, True),
         (21, False), (25, False),
     ])
     def test_regular_days(self, day, expected):
-        assert is_decad_boundary(dt.date(2024, 1, day)) == expected
+        assert _is_decad_boundary(dt.date(2024, 1, day)) == expected
 
     @pytest.mark.parametrize("month,last_day", [
         (1, 31), (2, 28), (4, 30), (2, 29),  # 2024 leap year Feb
     ])
     def test_eom_is_boundary(self, month, last_day):
         year = 2024 if last_day == 29 else 2025
-        assert is_decad_boundary(dt.date(year, month, last_day)) is True
+        assert _is_decad_boundary(dt.date(year, month, last_day)) is True
 
     def test_day25_not_decad_boundary(self):
         """Day 25 is pentad boundary but NOT decad boundary."""
-        assert is_decad_boundary(dt.date(2024, 1, 25)) is False
-```
-
-#### C. Integration test for boundary-correct pipeline output (in `test_integration_postprocessing.py`)
-
-Add a new class that feeds a mix of boundary and non-boundary ML daily data
-through the full pipeline and verifies only boundary-date combined forecasts
-are produced.
-
-```python
-class TestBoundaryDatePipelineIntegrity:
-    """PP-031: Full pipeline produces combined forecasts only on boundary dates."""
-
-    def test_pentad_pipeline_only_boundary_dates_in_output(self, env_setup):
-        """Feed ML daily data for Jan 4 (non-boundary) and Jan 5 (boundary).
-        Only Jan 5 should produce EM/NE/ML pentad records."""
-        # Build fake observed data (only Jan 5 has observation — boundary date)
-        observed = pd.DataFrame({
-            "code": ["10001"], "date": pd.to_datetime(["2024-01-05"]),
-            "discharge_avg": [50.0], "pentad_in_year": [1],
-            "pentad_in_month": ["1"], "delta": [5.0],
-        })
-        # Build fake ML daily data: both Jan 4 and Jan 5 have targets
-        ml_daily = pd.DataFrame({
-            "code": ["10001"] * 12,
-            "date": (["2024-01-04"] * 6) + (["2024-01-05"] * 6),
-            "target": (["2024-01-05","2024-01-06","2024-01-07",
-                        "2024-01-08","2024-01-09","2024-01-10"]
-                      +["2024-01-06","2024-01-07","2024-01-08",
-                        "2024-01-09","2024-01-10","2024-01-11"]),
-            "forecasted_discharge": [100.0]*6 + [10.0,20.0,30.0,40.0,50.0,60.0],
-            "model_short": ["TFT"] * 12,
-        })
-        # After normalize, only Jan 5 rows should survive
-        normalized = _normalize_ml_forecasts(ml_daily, "TFT", "pentad")
-        assert len(normalized) == 1
-        assert pd.Timestamp(normalized["date"].iloc[0]) == pd.Timestamp("2024-01-05")
-
-        # Feed through ensemble creation — EM should only have Jan 5
-        # (requires skill stats with pentad_in_year=2 for the Jan 5 issue)
-        skill_stats = pd.DataFrame({
-            "pentad_in_year": [2], "code": ["10001"], "model_short": ["TFT"],
-            "sdivsigma": [0.5], "nse": [0.8], "delta": [0.1],
-            "accuracy": [0.9], "mae": [1.0], "n_pairs": [20.0],
-        })
-        # Verify no non-boundary dates leak through
-        output_dates = normalized["date"].unique()
-        for d in output_dates:
-            assert is_pentad_boundary(pd.Timestamp(d)), \
-                f"Non-boundary date {d} found in normalized output"
-
-    def test_decad_pipeline_only_boundary_dates(self, env_setup):
-        """Feed ML daily data for Jan 9 (non-boundary) and Jan 10 (boundary).
-        Only Jan 10 should produce decad records."""
-        ml_daily = pd.DataFrame({
-            "code": ["10001"] * 22,
-            "date": (["2024-01-09"] * 11) + (["2024-01-10"] * 11),
-            "target": ([f"2024-01-{d}" for d in range(10, 21)]
-                      +[f"2024-01-{d}" for d in range(11, 22)]),
-            "forecasted_discharge": [999.0]*11 + [float(i*10) for i in range(11)],
-        })
-        result = _normalize_ml_forecasts(ml_daily, "TFT", "decad")
-        assert len(result) == 1
-        assert pd.Timestamp(result["date"].iloc[0]) == pd.Timestamp("2024-01-10")
-```
-
-#### D. Gap detector test (in `test_gap_detector.py`)
-
-```python
-class TestBoundaryDateGapDetection:
-    """PP-031: Gap detector should not flag non-boundary dates."""
-
-    def test_non_boundary_date_not_flagged_as_gap(self):
-        """Combined table has ML on non-boundary date Jan 4 but no EM.
-        This should NOT be flagged as a gap (Jan 4 is not a boundary day)."""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-04"] * 2 + ["2024-01-05"] * 3),
-            "code": ["10001"] * 5,
-            "model_short": ["TFT", "TiDE", "LR", "TFT", "EM"],
-            "forecasted_discharge": [1.0] * 5,
-        })
-        result = detect_missing_ensembles(df)
-        # Jan 5 has EM → no gap. Jan 4 has no EM but is not a boundary → should not be flagged.
-        # NOTE: This test documents the DESIRED behavior after the gap detector fix.
-        # Before fix, Jan 4 WOULD be flagged as a gap.
-        gap_dates = result["date"].tolist()
-        assert pd.Timestamp("2024-01-04") not in gap_dates
+        assert _is_decad_boundary(dt.date(2024, 1, 25)) is False
 ```
 
 ### Existing test verification
+
+All existing tests in `test_data_reader_ml_aggregation.py` use boundary dates
+(Jan 5, Feb 25, Jan 10, Feb 20, etc.) — verified by inspection. The boundary
+filter is a no-op for these tests, so they pass unchanged.
 
 Run the full test suite BEFORE and AFTER the change:
 ```bash
@@ -560,11 +574,9 @@ proceeding.
 ### Test execution order
 
 1. Run existing tests → all pass (baseline)
-2. Add `TestBoundaryDayFiltering` tests → they FAIL (expected: the filter doesn't exist yet)
-3. Implement the boundary-day filter in `_normalize_ml_forecasts`
+2. Add `TestBoundaryDayFiltering`, `TestPentadBoundary`, `TestDecadBoundary` tests → boundary filter tests FAIL (expected: the filter doesn't exist yet)
+3. Implement the boundary helpers and filter in `data_reader.py`
 4. Run all tests → new tests pass AND existing tests still pass
-5. Add gap detector test → may fail if gap detector not yet updated
-6. Update gap detector → all tests pass
 
 ---
 
@@ -599,24 +611,25 @@ The existing target filter correctly handles all edge cases:
 
 ### Downstream consumers — RISKS IDENTIFIED
 
-| Consumer | Risk from non-boundary records already in DB |
-|----------|----------------------------------------------|
-| **Skill metrics** | Safe — non-boundary records drop at inner join (no matching observation) |
-| **Dashboard** | **AFFECTED** — reads API directly, shows phantom forecasts on non-boundary dates |
-| **Gap detector** | **AFFECTED** — sees non-boundary ML records, may trigger phantom EM gap alarms |
-| **iEasyHydroForecast** | Not affected — does not read combined forecasts |
+| Consumer | Risk from non-boundary records already in DB | Risk from this fix |
+|----------|----------------------------------------------|--------------------|
+| **Skill metrics** | Safe — non-boundary records drop at inner join (no matching observation) | None |
+| **Dashboard** | **AFFECTED** — reads API directly, shows phantom forecasts on non-boundary dates | None (fix prevents new records; DB cleanup is follow-up) |
+| **Gap detector** | **AFFECTED** — sees non-boundary ML records, may trigger phantom EM gap alarms | **Harmless** — maintenance reads through `_normalize_ml_forecasts`, boundary filter drops rows → empty result → no new spurious records written |
+| **iEasyHydroForecast** | Not affected — does not read combined forecasts | None |
+| **Records without `target` column** | N/A | Non-boundary dates now return empty even without `target` column. Correct behavior — tested explicitly. |
 
 ### DB cleanup requirement
 
-Adding the boundary filter to `_normalize_ml_forecasts` prevents **new** spurious records. But existing non-boundary records in the DB will continue to affect the dashboard and gap detector. A one-time cleanup is needed (delete `horizon=pentad`/`decade` records where `date` is not a boundary day). This can be a follow-up task.
+Adding the boundary filter to `_normalize_ml_forecasts` prevents **new** spurious records. But existing non-boundary records in the DB will continue to affect the dashboard and gap detector. A one-time cleanup is needed (delete `horizon=pentad`/`decade` records where `date` is not a boundary day). **This should happen within ~1 week of deploying PP-031** — until then, the gap detector will re-flag the same non-boundary dates every nightly maintenance run (harmless but noisy: unnecessary API reads and log warnings).
 
-### Write path — ALL models affected
+### Write path — ALL models affected (correctly)
 
-`_normalize_ml_forecasts` output (TFT, TiDE, TSMixer rows) flows through `save_forecast_data` → `_write_combined_forecast_to_api` which also writes NE and EM records built from the same data. LR is stripped before write (goes to separate `lr-forecast` endpoint). So the boundary filter in `_normalize_ml_forecasts` controls what all downstream model records (ML + NE + EM) get written.
+`_normalize_ml_forecasts` output (TFT, TiDE, TSMixer rows) flows through `save_forecast_data` → `_write_combined_forecast_to_api` which also writes NE and EM records built from the same data. LR is stripped before write (goes to separate `lr-forecast` endpoint). So the boundary filter in `_normalize_ml_forecasts` controls what all downstream model records (ML + NE + EM) get written. This is the desired behavior — all records should only exist on boundary dates.
 
-### Minimal fix location
+### Minimal fix location — verified
 
-The fix should be in `_normalize_ml_forecasts` (add boundary-day filter before target filtering), NOT in the API query scope. Reason: the function is called by both operational and maintenance paths. Changing the API query scope would require changes in multiple callers and could break the maintenance lookback logic.
+The fix is in `_normalize_ml_forecasts` (add boundary-day filter before target filtering). This is the single production choke point — exactly one caller (`read_individual_model_forecasts:2112`). Both operational and maintenance paths flow through it. No changes to API query scope, write paths, or entry points.
 
 ---
 
@@ -628,6 +641,9 @@ The fix should be in `_normalize_ml_forecasts` (add boundary-day filter before t
 
 - Daily ensemble creation (PP-012) — separate concern
 - Long-term forecast dating (different code path)
+- Gap detector boundary-aware filtering — deferred to follow-up (PP-033)
+- Moving `is_pentad_boundary`/`is_decad_boundary` to a shared module — premature consolidation; only 2 callers exist
+- DB cleanup of existing spurious records — separate follow-up task
 
 ## Dependencies
 
@@ -635,8 +651,10 @@ The fix should be in `_normalize_ml_forecasts` (add boundary-day filter before t
 
 ## Follow-up Tasks
 
+- PP-033: Gap detector boundary-aware filtering (only flag boundary dates as gaps)
 - DB cleanup: delete spurious non-boundary pentad/decad records from `forecast` table
 - Dashboard: verify non-boundary records no longer appear after cleanup
+- Consolidate boundary functions into shared module when a third caller appears
 
 ## Acceptance Criteria
 
@@ -645,9 +663,32 @@ The fix should be in `_normalize_ml_forecasts` (add boundary-day filter before t
 - [ ] Query by pentad issue day returns EM + NE + ML model records
 - [ ] LR forecast `date` and combined forecast `date` are aligned for the same pentad/decad
 - [ ] No spurious records on non-boundary dates
-- [ ] Maintenance gap-fill only targets boundary dates
 - [ ] Dual-boundary dates (10, 20, EOM) produce both pentad and decad records
-- [ ] Existing tests pass
+- [ ] Non-boundary dates without `target` column also return empty (tested)
+- [ ] All existing tests in `test_data_reader_ml_aggregation.py` pass unchanged
+- [ ] All existing tests in the full suite pass
+- [ ] No changes to `postprocessing_operational.py`, `postprocessing_maintenance.py`, or `gap_detector.py`
+
+---
+
+## Review Notes (2026-03-31)
+
+**Reviewer**: Opus orchestrator, critical review before implementation.
+
+**Verdict**: Plan is sound. Fix is correct, minimal, and well-tested. No showstoppers.
+
+**Findings incorporated into plan above**:
+
+1. **Must-fix** (done): Added `import calendar` requirement to Step 1 — `calendar` is not currently imported in `data_reader.py`.
+2. **Test added** (done): `test_short_pentad_feb25_nonleap` — covers the short 3-day pentad (Feb 26-28) where only 3 of 6 daily targets fall in-period. Exercises both boundary filter and target filter together.
+3. **Test added** (done): `test_30day_month_non_eom_not_boundary` — covers days 26-29 in April (30-day month) to confirm they are NOT boundaries, while day 30 (EOM) IS.
+4. **Urgency note** (done): DB cleanup follow-up should happen within ~1 week of deploy to stop nightly gap detector noise from re-flagging stale non-boundary records.
+
+**Verified correct**:
+- Boundary functions work with both `datetime.date` and `pd.Timestamp` (both have `.year`, `.month`, `.day`; `calendar.monthrange` takes ints).
+- All existing tests in `test_data_reader_ml_aggregation.py` use boundary dates (Jan 5, Jan 10, Feb 20, Feb 25, Feb 28) — boundary filter is a no-op for them.
+- Single production caller of `_normalize_ml_forecasts` (`data_reader.py:2112`).
+- PP-023 target filtering logic is untouched — the boundary filter composes cleanly before it.
 
 ---
 

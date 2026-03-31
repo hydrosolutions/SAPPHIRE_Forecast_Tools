@@ -274,6 +274,12 @@ def create_monthly_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
+    # Build groupby keys — include horizon_value when available (PP-032).
+    # Missing for CSV-sourced data or the maintenance path.
+    group_cols = ["year", "month", "code"]
+    if "horizon_value" in forecasts.columns:
+        group_cols.append("horizon_value")
+
     # --- EM (threshold-filtered average) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
     merge_keys = ["month_in_year", "code", "model_short"]
@@ -306,9 +312,12 @@ def create_monthly_ensemble_forecasts(
                 em_agg[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
             if dcol in qualifying.columns:
+                # "first" for date: assumes all models in a
+                # (year, month, code, horizon_value) group share
+                # the same issue date (single pipeline invocation).
                 em_agg[dcol] = "first"
 
-        em_avg = qualifying.groupby(["year", "month", "code"]).agg(em_agg).reset_index()
+        em_avg = qualifying.groupby(group_cols).agg(em_agg).reset_index()
         em_avg = enforce_quantile_monotonicity(
             em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
         )
@@ -328,6 +337,7 @@ def create_monthly_ensemble_forecasts(
         skill_filtered,
         baselines,
         _QUANTILE_COLS,
+        group_cols,
     )
 
     # --- Naive Mean (unweighted all-model average) ---
@@ -335,6 +345,7 @@ def create_monthly_ensemble_forecasts(
         joint,
         baselines,
         _QUANTILE_COLS,
+        group_cols,
     )
 
     return joint
@@ -345,12 +356,16 @@ def _add_skilled_mean_monthly(
     skill_filtered: pd.DataFrame,
     baselines: set,
     quantile_cols: list,
+    group_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """Add Skilled Mean rows (1/MAE weighted) to joint forecasts.
 
     Uses the same threshold-filtered model pool as EM.
     """
     from src.skill_metrics import _append_to_joint
+
+    if group_cols is None:
+        group_cols = ["year", "month", "code"]
 
     filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
@@ -407,10 +422,13 @@ def _add_skilled_mean_monthly(
             )
     for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns:
+            # "first" for date: assumes all models in a
+            # (year, month, code, horizon_value) group share
+            # the same issue date (single pipeline invocation).
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = (
-        pool.groupby(["year", "month", "code"])
+        pool.groupby(group_cols)
         .agg(
             **sm_agg,
         )
@@ -435,9 +453,13 @@ def _add_naive_mean_monthly(
     joint: pd.DataFrame,
     baselines: set,
     quantile_cols: list,
+    group_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """Add Naive Mean rows (unweighted all-model average) to joint."""
     from src.skill_metrics import _append_to_joint
+
+    if group_cols is None:
+        group_cols = ["year", "month", "code"]
 
     pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.dropna(subset=["forecasted_discharge"]).copy()
@@ -454,9 +476,12 @@ def _add_naive_mean_monthly(
             naive_agg[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns:
+            # "first" for date: assumes all models in a
+            # (year, month, code, horizon_value) group share
+            # the same issue date (single pipeline invocation).
             naive_agg[dcol] = "first"
 
-    naive_avg = pool.groupby(["year", "month", "code"]).agg(naive_agg).reset_index()
+    naive_avg = pool.groupby(group_cols).agg(naive_agg).reset_index()
     naive_avg = enforce_quantile_monotonicity(
         naive_avg, [c for c in quantile_cols if c in naive_avg.columns]
     )

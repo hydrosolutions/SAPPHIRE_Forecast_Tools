@@ -667,8 +667,9 @@ class LongForecastDataMigrator(DataMigrator):
             models.extend(model_list)
 
         horizon_value = config["operational_month_lead_time"]
+        horizon_type = config.get("horizon_type", "month")
 
-        return {"models": models, "horizon_value": horizon_value, "raw_config": config}
+        return {"models": models, "horizon_value": horizon_value, "horizon_type": horizon_type, "raw_config": config}
 
     @staticmethod
     def discover_forecast_modes(config_path: str) -> list[str]:
@@ -1069,6 +1070,7 @@ def main():
 
                 models = config_data["models"]
                 horizon_value = config_data["horizon_value"]
+                horizon_type = config_data["horizon_type"]
 
                 # Filter by --model-filter argument if provided
                 if args.model_filter:
@@ -1090,7 +1092,7 @@ def main():
                         batch_size=BATCH_SIZE,
                         horizons=horizons,
                         sub_url="long-forecast",
-                        horizon_type="month",
+                        horizon_type=horizon_type,
                         horizon_value=horizon_value,
                         forecast_mode=forecast_mode,
                     )
@@ -1098,7 +1100,7 @@ def main():
 
                 logger.info(
                     f"Configured migration for {forecast_mode}: "
-                    f"{len(models)} models, horizon_value={horizon_value}"
+                    f"{len(models)} models, horizon_type={horizon_type}, horizon_value={horizon_value}"
                 )
 
             except FileNotFoundError as e:

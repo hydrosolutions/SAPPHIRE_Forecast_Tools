@@ -1180,11 +1180,12 @@ class TestRecalcWiringIntegration:
                     if row["model_short"] in ("LR", "TFT"):
                         assert row["n_pairs"] == 5, f"Expected n_pairs=5, got {row['n_pairs']}"
 
-    def test_pentad_em_in_saved_forecasts(self, env_setup):
-        """Real recalc produces EM rows in joint forecasts.
+    def test_pentad_em_excluded_in_recalc(self, env_setup):
+        """PP-030: recalc skips EM derivation — no EM rows in saved forecasts.
 
-        Both LR and TFT are close to observed (bias ~2), so both should
-        pass thresholds, and EM = mean(LR, TFT) should be created.
+        The recalculation path now passes exclude_models=["EM"] to avoid
+        boundary-pentad date misalignment producing bad EM records.
+        Individual model rows (LR, TFT) should still be present.
         """
         observed, modelled = self._build_test_data()
 
@@ -1206,17 +1207,12 @@ class TestRecalcWiringIntegration:
 
                 saved_fc = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_fc[saved_fc["model_short"] == "EM"]
-                assert len(em_rows) == 5, f"Expected 5 EM rows (5 dates), got {len(em_rows)}"
+                assert em_rows.empty, "Recalculation should not produce EM rows (PP-030)"
 
-                # EM = mean(LR=obs+1, TFT=obs-1) = obs
-                obs_values = [80.0, 90.0, 100.0, 110.0, 120.0]
-                em_sorted = em_rows.sort_values("date")
-                for em_val, obs_val in zip(
-                    em_sorted["forecasted_discharge"], obs_values, strict=True
-                ):
-                    assert abs(em_val - obs_val) < 0.01, (
-                        f"EM discharge should be {obs_val}, got {em_val}"
-                    )
+                # Individual models should still be present
+                models = set(saved_fc["model_short"].unique())
+                assert "LR" in models, "LR should still be in output"
+                assert "TFT" in models, "TFT should still be in output"
 
     def test_timing_stats_handoff(self, env_setup):
         """timing_stats returned by calculate_skill_metrics is used.

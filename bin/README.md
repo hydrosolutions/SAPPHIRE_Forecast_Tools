@@ -197,11 +197,11 @@ See `doc/deployment.md` for the full recommended crontab. Summary:
 | 03:00 | `run_preprocessing_gateway.sh` | Gateway preprocessing |
 | 04:00 | `run_pentadal_forecasts.sh` | Pentadal forecast |
 | 05:00 | `run_decadal_forecasts.sh` | Decadal forecast |
-| 06:00 | `run_long_term_forecasts.sh` | Long-term forecast (self-gating via schedule query) |
+| 06:00 10th,25th | `run_long_term_forecasts.sh` | Long-term forecast (self-gating via schedule query) |
 | 19:00 | `run_daily_maintenance.sh` | Daily maintenance (all steps) |
 | 22:00 1st odd months | `run_periodic_maintenance.sh long_term` | Long-term postprocessing |
-| 01:00 Jan 1 | `run_periodic_maintenance.sh skill_recalc` | Yearly skill recalculation |
-| 02:00 Aug 25 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
+| 01:00 Dec 31 | `run_periodic_maintenance.sh skill_recalc` | Yearly skill recalculation |
+| 02:00 Aug 31 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
 
 Log files use timestamped names (`sapphire_*_YYYYMMDD.log`) with automatic
 cleanup of logs older than 7 days.

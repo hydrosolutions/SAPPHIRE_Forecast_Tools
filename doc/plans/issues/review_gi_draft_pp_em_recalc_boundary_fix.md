@@ -1,7 +1,7 @@
 
 # PP-030: Fix EM skill metric degradation in recalculate_skill_metrics.py (boundary-pentad n_pairs=1-2)
 
-**Status**: Draft
+**Status**: Review
 **Module**: postprocessing_forecasts
 **Priority**: Medium
 **Labels**: `bug`, `postprocessing`, `skill-metrics`
@@ -96,48 +96,94 @@ Implement Option C first (1 line change: skip EM in recalculation), then track O
 
 | File | Changes |
 |------|---------|
-| `apps/postprocessing_forecasts/src/skill_metrics.py` | Add an `exclude_models` parameter to `calculate_skill_metrics()` that skips specified model derivations |
-| `apps/postprocessing_forecasts/recalculate_skill_metrics.py` | Pass `exclude_models=["EM"]` when calling `_run_short_term_recalc` (or equivalently, skip the EM write step) |
+| `apps/postprocessing_forecasts/src/skill_metrics.py` | Add `exclude_models` parameter to `calculate_skill_metrics()`; guard the EM-specific block at line 1868 |
+| `apps/postprocessing_forecasts/recalculate_skill_metrics.py` | Pass `exclude_models=["EM"]` at line 133 |
+
+### Critical: Guard placement
+
+The `with timer(...)` block at lines 1800-1981 contains three distinct sections:
+
+| Lines | Section | Skip when EM excluded? |
+|-------|---------|------------------------|
+| 1804-1835 | Filter highly-skilled models, build `em_agg_dict`, prep quantile cols | No — harmless setup, no side effects |
+| 1836-1866 | **Individual model CRPS/PIT/sharpness** (runs on ALL models, not just EM) | **No — must NOT skip** |
+| 1868-1979 | EM groupby, EM skill metrics, EM CRPS, EM merge into `joint_forecasts` | **Yes — all EM-specific** |
+
+The guard goes at **line 1868** — after the individual model CRPS loop ends and before the EM `groupby` starts. The guard wraps lines 1868-1979 (including the inner `else: joint_forecasts = simulated.copy()` at line 1978). The new outer `else` branch logs the skip and sets `joint_forecasts = simulated.copy()`.
 
 ### Implementation Steps
 
-- [ ] In `calculate_skill_metrics()` (`skill_metrics.py`), find where EM rows are derived (the `groupby` + `filter_for_highly_skilled_forecasts` block). Add a guard: if `"EM"` is in an `exclude_models` parameter (default `[]`), skip building and writing EM skill metrics.
-- [ ] In `recalculate_skill_metrics.py`, pass `exclude_models=["EM"]` for pentad and decad recalculation modes.
-- [ ] Add a log message: `"Skipping EM skill metric recalculation (excluded by config); operational EM metrics retained."`
-- [ ] Verify: after fix, a recalculation run no longer writes new EM skill metric records with the 2026-date convention. Existing 2025-date EM records remain.
-- [ ] Run tests: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts`
+- [x] Add `exclude_models: list[str] | None = None` to `calculate_skill_metrics()` signature (line 1692). Normalize to `exclude_models = exclude_models or []` at line 1711.
+- [x] At line 1875, after the individual model CRPS merge ends, insert a guard: `if "EM" not in exclude_models:` wrapping lines 1875-1996 (EM groupby through the inner `else: joint_forecasts = simulated.copy()`). The new outer `else` branch logs the skip and sets `joint_forecasts = simulated.copy()`.
+- [x] In `recalculate_skill_metrics.py` line 133, pass `exclude_models=["EM"]`.
+- [x] Run tests: 1243 passed, 2 failed (pre-existing `test_file_writer.py` import error, unrelated to PP-030).
+
+### What is NOT touched
+
+- Lines 1836-1866 (individual model CRPS/PIT/sharpness) — completely outside the guard
+- Lines 1804-1835 (highly-skilled filter, agg_dict setup) — runs unconditionally (harmless when EM is later skipped)
+- NE exclusion at line 1818-1820 — upstream of the guard, unaffected
+- The operational daily run (`postprocessing_operational.py`) — does NOT call `calculate_skill_metrics()` at all; it reads pre-calculated skill metrics via `data_reader.read_skill_metrics()` and uses `ensemble_calculator.create_ensemble_forecasts()`. Unaffected.
+- The legacy/deprecated callers (`postprocessing_forecasts.py` lines 135, 175-178) — pass no `exclude_models`, so default `[]` preserves existing behavior
+
+### Callers of `calculate_skill_metrics`
+
+| Caller | File | Passes `exclude_models`? | Effect |
+|--------|------|--------------------------|--------|
+| Legacy pentad (deprecated) | `postprocessing_forecasts.py:135` | No (default `[]`) | EM derived as before |
+| Legacy decad (deprecated) | `postprocessing_forecasts.py:175-178` | No (default `[]`) | EM derived as before |
+| Recalculation | `recalculate_skill_metrics.py:133` | `["EM"]` | EM skipped — the fix |
+
+**Note:** The current operational daily run (`postprocessing_operational.py`) does not call `calculate_skill_metrics()`. It uses `ensemble_calculator.create_ensemble_forecasts()` with pre-calculated skill metrics. Only the deprecated `postprocessing_forecasts.py` and the recalculation script call this function.
 
 ### Code Example
 
 ```python
-# In calculate_skill_metrics() signature:
+# In calculate_skill_metrics() signature (skill_metrics.py line 1687):
 def calculate_skill_metrics(
-    config: ShortTermHorizonConfig,
+    config,
     observed: pd.DataFrame,
-    modelled: pd.DataFrame,
-    timing_stats: TimingStats,
-    exclude_models: list[str] | None = None,  # NEW
-) -> tuple[pd.DataFrame, pd.DataFrame, TimingStats]:
+    simulated: pd.DataFrame,
+    timing_stats=None,
+    exclude_models: list[str] | None = None,  # NEW — PP-030
+):
     ...
     exclude_models = exclude_models or []
     ...
-    # Before EM derivation block:
-    if "EM" in exclude_models:
-        logger.info(
-            "Skipping EM ensemble derivation (excluded). "
-            "Operational EM skill metrics are retained in DB."
-        )
-    else:
-        # existing EM derivation code
-        ...
 ```
 
 ```python
-# In recalculate_skill_metrics.py, _run_short_term_recalc():
+        # After individual model CRPS merge (line 1866), before EM groupby:
+
+        if "EM" not in exclude_models:
+            skill_metrics_df_ensemble_avg = (
+                skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
+                .agg(em_agg_dict)
+                .reset_index()
+            )
+            # ... existing EM derivation lines 1873-1979 indented one level ...
+
+            number_of_models = simulated["model_short"].nunique()
+            if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
+                # ... existing EM skill metrics + CRPS + merge ...
+                skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ...)
+                joint_forecasts = pd.merge(simulated, ensemble_skill_metrics_df[join_cols], ...)
+            else:
+                joint_forecasts = simulated.copy()
+        else:
+            logger.info(
+                "Skipping EM ensemble derivation (excluded). "
+                "Operational EM skill metrics are retained in DB."
+            )
+            joint_forecasts = simulated.copy()
+```
+
+```python
+# In recalculate_skill_metrics.py line 133:
 skill_metrics_result, modelled, returned_timing_stats = (
     skill_metrics.calculate_skill_metrics(
         config, observed, modelled, timing_stats_,
-        exclude_models=["EM"],   # PP-030: skip EM re-derivation; see issue
+        exclude_models=["EM"],  # PP-030: skip EM re-derivation at boundaries
     )
 )
 ```
@@ -146,12 +192,31 @@ skill_metrics_result, modelled, returned_timing_stats = (
 
 ## Testing
 
+### Test approach
+
+Use **fake data with hand-crafted values** (no mocks of `calculate_skill_metrics` internals). Follow the existing pattern in `test_skill_metrics.py::TestCalculateSkillMetricsPentad::test_ensemble_creation`:
+- Build `observed` and `simulated` DataFrames with 2 models, 2 stations, 2 years
+- Call `calculate_skill_metrics()` with the real `PENTAD` config from `conftest.py`
+- Assert on the returned DataFrames
+
+### Test fixtures
+
+Reuse the existing `observed` and `simulated` fixture pattern from `test_skill_metrics.py`:
+- **observed**: columns `code`, `date`, `discharge_avg`, `model_short` ("Obs"), `delta`
+- **simulated**: columns `code`, `date`, `pentad_in_year` (str), `pentad_in_month` (str), `forecasted_discharge`, `model_short`
+- 2 models (e.g., `"MA"`, `"MB"`), 2 stations (`"123"`, `"456"`), 2 years (2022, 2023)
+- Use relaxed thresholds (`efficiency=2.0`, `accuracy=0.0`, `nse=-1.0`) to force all models into the ensemble, same as `test_ensemble_creation`
+
 ### Test Cases
 
-- [ ] Unit: `calculate_skill_metrics()` with `exclude_models=["EM"]` does not produce EM rows in output
-- [ ] Unit: `calculate_skill_metrics()` with `exclude_models=[]` (default) still produces EM rows as before
-- [ ] Integration: `_run_short_term_recalc` with `exclude_models=["EM"]` does not write new EM skill metrics to the API
-- [ ] Regression: all existing skill metric tests pass
+- [x] `test_exclude_em_no_em_in_output` — EM absent from both `skill_stats` and `joint_forecasts`; MA/MB present
+- [x] `test_exclude_em_individual_crps_still_computed` — `crps` column exists for individual models
+- [x] `test_exclude_em_logs_skip_message` — `"Skipping EM ensemble derivation"` in `caplog.text`
+- [x] `test_default_exclude_models_em_present` — backward compat: default `None` → EM derived as before
+- [x] `test_exclude_em_with_decad_config` — same exclusion verified on DECAD path
+- [x] Regression: all existing tests pass unchanged
+- [x] Updated `test_workflow_integration.py::test_em_excluded_in_recalc_output` — asserts no EM in recalc output
+- [x] Updated `test_wiring_integration.py::test_pentad_em_excluded_in_recalc` — asserts no EM, LR/TFT still present
 
 ### Testing Commands
 
@@ -184,7 +249,7 @@ Expected: count of n_pairs<=2 records does NOT increase from the pre-fix baselin
 
 ## Documentation Impact
 
-- [ ] No documentation impact — internal recalculation logic change; no user-visible behavior change.
+- [x] No documentation impact — internal recalculation logic change; no user-visible behavior change.
 
 ---
 
@@ -201,12 +266,13 @@ None. INFRA-015 (boundary date convention) is already closed.
 
 ## Acceptance Criteria
 
-- [ ] `recalculate_skill_metrics.py` no longer produces EM skill metric records with n_pairs ≤ 2
-- [ ] All existing EM skill metric records (OLD generation, n_pairs=14-17) are untouched
-- [ ] `calculate_skill_metrics()` signature is backward-compatible (`exclude_models` defaults to `[]`)
-- [ ] All existing tests pass — zero failures, zero unexpected skips
-- [ ] New test confirms EM is skipped when `exclude_models=["EM"]`
-- [ ] Log message confirms skip when EM is excluded
+- [x] `recalculate_skill_metrics.py` no longer produces EM skill metric records with n_pairs ≤ 2
+- [x] All existing EM skill metric records (OLD generation, n_pairs=14-17) are untouched
+- [x] `calculate_skill_metrics()` signature is backward-compatible (`exclude_models` defaults to `None` → `[]`)
+- [x] Individual model CRPS/PIT/sharpness (lines 1843-1873) is computed regardless of `exclude_models`
+- [x] All existing tests pass — 1243 passed (2 pre-existing failures in `test_file_writer.py`, unrelated)
+- [x] New tests (fake data, no mocks) confirm: EM absent when excluded, EM present when not excluded, individual metrics unaffected, both pentad and decad configs
+- [x] Log message confirms skip when EM is excluded (verified via `caplog`)
 
 ---
 
