@@ -7,6 +7,7 @@ point to read combined forecasts for gap detection, and by the yearly
 recalculation entry point to read monthly observations and forecasts.
 """
 
+import calendar
 import datetime as dt
 import logging
 import os
@@ -1372,6 +1373,18 @@ except ImportError:
     logger.warning("tag_library not available; short-term period columns cannot be computed")
 
 
+def _is_pentad_boundary(d) -> bool:
+    """Return True if *d* is a pentad issue day (5/10/15/20/25/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (5, 10, 15, 20, 25, last_day)
+
+
+def _is_decad_boundary(d) -> bool:
+    """Return True if *d* is a decad issue day (10/20/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (10, 20, last_day)
+
+
 def _clean_code_column(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure code column is string without trailing .0."""
     if "code" in df.columns:
@@ -1851,6 +1864,27 @@ def _normalize_ml_forecasts(
     df = _clean_code_column(df)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
+
+    # PP-031: Drop rows where date is not a boundary day for this horizon.
+    if "date" in df.columns:
+        if horizon_type == "pentad":
+            boundary_mask = df["date"].apply(_is_pentad_boundary)
+        else:
+            boundary_mask = df["date"].apply(_is_decad_boundary)
+
+        n_non_boundary = (~boundary_mask).sum()
+        if n_non_boundary > 0:
+            logger.info(
+                "Dropped %d/%d rows on non-%s-boundary dates for %s",
+                n_non_boundary,
+                len(df),
+                horizon_type,
+                model,
+            )
+        df = df[boundary_mask].copy()
+
+        if df.empty:
+            return pd.DataFrame()
 
     # Filter daily targets to the forecast period boundary.
     # The forecast date is the last day of the previous period;

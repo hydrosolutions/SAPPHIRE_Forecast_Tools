@@ -164,8 +164,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-028**~~ | ~~Skill metrics writer: model=None, missing RMSE, empty decad/monthly metrics~~ (Bug 3 monthly reopened+fixed 2026-03-26: q50 fallback to q) | | Complete | [`archive/mid_prio_gi_draft_pp_skill_metrics_broken.md`](issues/archive/mid_prio_gi_draft_pp_skill_metrics_broken.md) | — |
 | **PP-029** | NaN guard in seasonal/quarterly API write (`_write_aggregated_forecasts_to_api`) | **Medium** | Draft | [`mid_prio_gi_draft_pp_seasonal_nan_guard.md`](issues/mid_prio_gi_draft_pp_seasonal_nan_guard.md) | — |
 | **PP-030** | Fix EM skill metric degradation in recalculate_skill_metrics.py (boundary-pentad n_pairs=1-2) | **Medium** | Review | [`review_gi_draft_pp_em_recalc_boundary_fix.md`](issues/review_gi_draft_pp_em_recalc_boundary_fix.md) | — |
-| **PP-031** | Pentad/decad aggregation does not select boundary issue days (shared code path in `_normalize_ml_forecasts`) | **High** | Draft | [`high_prio_gi_draft_pp_pentad_date_misalignment.md`](issues/high_prio_gi_draft_pp_pentad_date_misalignment.md) | PP-023 (complete) |
+| **PP-031** | Pentad/decad aggregation does not select boundary issue days (shared code path in `_normalize_ml_forecasts`) | **High** | Review | [`review_gi_draft_pp_pentad_date_misalignment.md`](issues/review_gi_draft_pp_pentad_date_misalignment.md) | PP-023 (complete) |
 | **PP-032** | Monthly ensemble forecasts not written to API (3 bugs: early-return, horizon_value mismatch, date mismatch) | **High** | Draft | [`mid_prio_gi_draft_pp_monthly_ensemble_api_write.md`](issues/mid_prio_gi_draft_pp_monthly_ensemble_api_write.md) | — |
+| **PP-033** | Gap detector should only flag boundary dates as missing ensembles | **Low** | Draft | [`low_prio_gi_draft_pp_gap_detector_boundary_filter.md`](issues/low_prio_gi_draft_pp_gap_detector_boundary_filter.md) | PP-031 |
 
 ### Forecast Dashboard (`fd`)
 
