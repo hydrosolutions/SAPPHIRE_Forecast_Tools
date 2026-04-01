@@ -61,6 +61,7 @@ Optional, depending on your setup:
 |----------|---------|
 | [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) (includes Compose v2) | Runs all services, pipeline, and dashboards |
 | Git | Clone the repository |
+| Bash 4.4+ | Pipeline shell scripts require Bash 4.4+ (`set -u` array syntax). Ubuntu 24.04 ships 5.x. macOS ships 3.2 — install via `brew install bash` |
 
 ### Required depending on your setup
 
@@ -256,7 +257,13 @@ lsb_release -ds
 ```
 
 ```bash
-# 2. Hardware resources
+# 2. Bash version
+bash --version | head -1
+# Expected: version 4.4 or newer (Ubuntu 24.04 ships 5.x)
+```
+
+```bash
+# 3. Hardware resources
 echo "RAM: $(free -h | awk '/Mem:/ {print $2}')"
 echo "CPUs: $(nproc)"
 echo "Disk: $(df -h / | awk 'NR==2 {print $4}') free"
@@ -264,21 +271,21 @@ echo "Disk: $(df -h / | awk 'NR==2 {print $4}') free"
 ```
 
 ```bash
-# 3. Docker and Compose
+# 4. Docker and Compose
 docker --version
 docker compose version
 # Expected: Docker 24.x or newer, Compose v2.x.x
 ```
 
 ```bash
-# 4. Outbound connectivity
+# 5. Outbound connectivity
 curl -s --max-time 5 https://registry-1.docker.io/v2/ && echo "Docker Hub: OK"
 curl -s --max-time 5 https://github.com > /dev/null && echo "GitHub: OK"
 # Expected: both print OK
 ```
 
 ```bash
-# 5. Ports are free (no existing services on our ports)
+# 6. Ports are free (no existing services on our ports)
 ss -tlnp | grep -E ':(5006|5007|8000|8002|8003|8004|8005|8082)\b' || echo "All ports free: OK"
 # Expected: "All ports free: OK"
 ```
