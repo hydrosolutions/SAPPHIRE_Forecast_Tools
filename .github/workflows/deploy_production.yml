@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "fix_pp_daily_forecast_read_horizon_type" ]
+    branches: [ "maxat_sapphire_2" ]
   #pull_request:
   #  branches: [ "main" ]
 
