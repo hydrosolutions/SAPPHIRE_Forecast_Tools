@@ -214,10 +214,20 @@ Placeholders used throughout:
   curl http://localhost:8000/health/ready
   ```
 
-### 4.3 Run data migrations (if migrating from CSV)
+### 4.3 Populate the database with historical data
 
-For a fresh deployment with no historical data, migrations may not be needed.
-If migrating existing CSV data:
+The preprocessing database **must** contain historical daily runoff data
+(horizon_type=DAY) going back multiple years before the pipeline can produce
+forecasts. Without it, `linear_regression` will crash in DECAD mode with
+`ValueError: Cannot write empty runoff_stats DataFrame to CSV` (the PENTAD
+mode silently writes empty hydrographs — equally broken, just non-fatal).
+
+There are two paths to populate the `runoffs` table:
+
+**Path A — Data migrator (bulk CSV import, inside Docker container):**
+
+Use this when you have historical CSV files already mounted in the container
+(e.g., migrating from CSV-based SAPPHIRE or restoring from backup).
 
 ```bash
 # Preprocessing
@@ -236,16 +246,42 @@ python app/data_migrator.py --type forecast
 python app/data_migrator.py --type longforecast
 ```
 
+**Path B — Initial sync mode (pipeline reads from Excel/iEH HF, writes all
+to API):**
+
+Use this for a fresh deployment where historical data lives in Excel files
+in `daily_runoff/` and/or in the iEasyHydro HF database. This runs the
+normal preprocessing pipeline but writes ALL records to the API instead of
+only today's.
+
+```bash
+SAPPHIRE_SYNC_MODE=initial \
+  ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
+  bash apps/run_locally.sh preprocessing_runoff
+```
+
+After initial sync, switch back to operational mode (the default) for daily
+runs. The `initial` mode is supported by `preprocessing_runoff`,
+`preprocessing_gateway`, and `linear_regression` — each module's
+`_write_*_to_api()` functions check `SAPPHIRE_SYNC_MODE` to decide how much
+data to write:
+- `operational` (default): today only
+- `maintenance`: last 30 days
+- `initial`: all data
+
 > `[DOC-GAP-5]` **No "fresh deployment" path for SAPPHIRE services.**
 > The migration docs assume you have existing CSV data. For a brand-new
 > deployment with no historical data, it's unclear whether:
 > (a) the databases auto-create tables on first start (via Alembic/SQLAlchemy),
 > (b) you need to run migrations even with empty data, or
 > (c) the pipeline will fail if the DBs are empty.
+> **Answer from investigation (2026-04-01):** the pipeline WILL fail if the
+> DB has no historical runoff data. Either Path A or Path B above must be
+> run before operational pipeline use.
 >
-> **Fix:** Add a "Fresh deployment (no historical data)" subsection to
-> `sapphire/README.md` clarifying what happens on first start and whether
-> any bootstrapping is needed.
+> **Fix:** Document both paths in each module README and add an `initialize`
+> target to `run_locally.sh`. See issue draft:
+> `doc/plans/issues/mid_prio_gi_draft_infra_initial_sync_docs.md`.
 
 ---
 
@@ -672,7 +708,7 @@ Practical steps (not yet documented):
 | DOC-GAP-2 | No locale/translation setup instructions | Medium | `doc/configuration.md` |
 | DOC-GAP-3 | **SAPPHIRE services missing from deployment.md entirely** | **Critical** | `doc/deployment.md` new section |
 | DOC-GAP-4 | No guidance on sapphire/.env values | Medium | `sapphire/.env.example` + `sapphire/README.md` |
-| DOC-GAP-5 | No "fresh deployment" path for services | Medium | `sapphire/README.md` |
+| DOC-GAP-5 | **No "fresh deployment" path for services — DB init required** | **High** | Phase 4.3 updated; issue `mid_prio_gi_draft_infra_initial_sync_docs.md` |
 | DOC-GAP-6 | **No minimal .env variable reference** | **High** | `doc/configuration.md` |
 | DOC-GAP-7 | iEasyHydro HF SDK vars undocumented | Medium | `doc/configuration.md` |
 | DOC-GAP-8 | Path convention explanation buried | Low | `doc/configuration.md` |

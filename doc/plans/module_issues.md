@@ -90,6 +90,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**INFRA-015**~~ | ~~Audit pentad/decade boundary date convention across modules~~ | ~~infra~~ | | Complete | [`archive/review_gi_draft_infra_pentad_decade_boundary_audit.md`](issues/archive/review_gi_draft_infra_pentad_decade_boundary_audit.md) | LR-008 (only finding) |
 | ~~**INFRA-016**~~ | ~~Switch default branch from `main` to `maxat_sapphire_2` (v2 cut)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_default_branch_switch.md`](issues/archive/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
+| **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
 
 ---
 
