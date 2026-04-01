@@ -1,6 +1,6 @@
 # INFRA-016: Switch Default Branch from `main` to `maxat_sapphire_2`
 
-**Status**: In Progress — Phases 1-4 complete (2026-03-27). Phase 5: steps 5.2 (push CI changes) and 5.3 (verify CI triggers) remain.
+**Status**: Complete (2026-04-01)
 **Module**: infra (cross-repo)
 **Priority**: High
 **Labels**: `infrastructure`, `ci-cd`, `git`, `breaking-change`
@@ -115,15 +115,9 @@ All edits below are on the `maxat_sapphire_2` branch.
 
 - [x] **5.1** Verified `remotes/origin/HEAD` points to `maxat_sapphire_2`
 
-- [ ] **5.2** Push the CI/CD and doc changes from Phase 2-3:
-  ```bash
-  git push origin maxat_sapphire_2
-  ```
+- [x] **5.2** Push the CI/CD and doc changes from Phase 2-3 (2026-04-01)
 
-- [ ] **5.3** Verify CI runs correctly:
-  - Check that `deploy_production.yml` triggers on push to `maxat_sapphire_2`
-  - Check that `build_test.yml` triggers on PRs targeting `maxat_sapphire_2`
-  - Check that `:latest` Docker images are built from `maxat_sapphire_2`
+- [x] **5.3** Verify CI runs correctly (2026-04-01)
 
 - [x] **5.4** Collaborators notified (2026-03-27)
 

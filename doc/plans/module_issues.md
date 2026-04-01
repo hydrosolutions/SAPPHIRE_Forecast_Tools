@@ -88,8 +88,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**INFRA-013**~~ | ~~Postprocessing API container crashes on bulk forecast writes (118 restarts)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md`](issues/archive/high_prio_gi_draft_infra_postprocessing_api_bulk_write_crash.md) | — |
 | **INFRA-014** | Extend validate_pipeline.py: JSON output, baseline/delta, new checks | infra | **Medium** | Review | [`mid_prio_gi_draft_infra_validate_pipeline_extensions.md`](issues/mid_prio_gi_draft_infra_validate_pipeline_extensions.md) | — |
 | ~~**INFRA-015**~~ | ~~Audit pentad/decade boundary date convention across modules~~ | ~~infra~~ | | Complete | [`archive/review_gi_draft_infra_pentad_decade_boundary_audit.md`](issues/archive/review_gi_draft_infra_pentad_decade_boundary_audit.md) | LR-008 (only finding) |
-| **INFRA-016** | Switch default branch from `main` to `maxat_sapphire_2` (v2 cut) | infra | **High** | In Progress | [`high_prio_gi_draft_infra_default_branch_switch.md`](issues/high_prio_gi_draft_infra_default_branch_switch.md) | — |
+| ~~**INFRA-016**~~ | ~~Switch default branch from `main` to `maxat_sapphire_2` (v2 cut)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_default_branch_switch.md`](issues/archive/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
+| **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
 
 ---
 
@@ -167,7 +168,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-031**~~ | ~~Pentad/decad aggregation does not select boundary issue days (shared code path in `_normalize_ml_forecasts`)~~ | | Complete | [`archive/review_gi_draft_pp_pentad_date_misalignment.md`](issues/archive/review_gi_draft_pp_pentad_date_misalignment.md) | — |
 | ~~**PP-032**~~ | ~~Monthly ensemble forecasts not written to API (4 bugs: early-return, ensemble groupby missing horizon_value, horizon_value mismatch, date mismatch)~~ | | Complete | [`archive/mid_prio_gi_draft_pp_monthly_ensemble_api_write.md`](issues/archive/mid_prio_gi_draft_pp_monthly_ensemble_api_write.md) | — |
 | **PP-033** | Gap detector should only flag boundary dates as missing ensembles | **Low** | Won't Fix | [`archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md`](issues/archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md) | PP-031 |
-| **PP-034** | `read_daily_forecasts()` passes wrong keyword `horizon_type` to API client — daily skill metrics never computed | **High** | In Progress | [`high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md`](issues/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md) | — |
+| ~~**PP-034**~~ | ~~`read_daily_forecasts()` passes wrong keyword `horizon_type` to API client — daily skill metrics never computed~~ | | Complete | [`archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md`](issues/archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md) | — |
 
 ### Forecast Dashboard (`fd`)
 

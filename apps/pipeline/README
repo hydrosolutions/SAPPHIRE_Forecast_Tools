@@ -75,14 +75,16 @@ Dependencies are explicit instead of relying on cron timing offsets.
 
 ```
 RunDailyMaintenanceWorkflow
-  ├─ PostProcessingMaintenance
-  │    ├─ LinRegMaintenance(PENTAD) → PrepRunoffMaintenance
-  │    ├─ LinRegMaintenance(DECAD)  → PrepRunoffMaintenance
-  │    └─ RunAllMLMaintenance (if ML enabled)
-  │         └─ MLMaintenance(model, mode)  [resources: ml_memory=1]
-  │              → [PrepRunoffMaintenance, GatewayMaintenance]
-  └─ FrontendUpdate → PostProcessingMaintenance
+  └─ PostProcessingMaintenance
+       ├─ LinRegMaintenance(PENTAD) → PrepRunoffMaintenance
+       ├─ LinRegMaintenance(DECAD)  → PrepRunoffMaintenance
+       └─ RunAllMLMaintenance (if ML enabled)
+            └─ MLMaintenance(model, mode)  [resources: ml_memory=1]
+                 → [PrepRunoffMaintenance, GatewayMaintenance]
 ```
+
+Frontend update is handled on the host by `bin/daily_update_sapphire_frontend.sh`
+after the Luigi pipeline completes (see `bin/run_daily_maintenance.sh`).
 
 ML concurrency is limited to 3 via Luigi resources (`--resources ml_memory=3`).
 

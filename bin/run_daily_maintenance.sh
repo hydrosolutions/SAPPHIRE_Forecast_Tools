@@ -73,3 +73,8 @@ docker compose -f bin/docker-compose-luigi.yml run \
 
 echo "| Daily maintenance task submitted to Luigi daemon"
 echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
+
+# --- Frontend update (runs on host, not in Luigi DAG) ---
+echo "| Updating frontend dashboard..."
+bash bin/daily_update_sapphire_frontend.sh "$1"
+echo "| Frontend update completed"

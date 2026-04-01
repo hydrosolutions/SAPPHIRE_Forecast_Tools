@@ -13,6 +13,11 @@ A modular toolkit for operational hydrological forecasting that works at two lev
 
 - **Standalone forecast models** — A backend module where different runoff models can be coupled, runnable independently of the full system
 
+## Maintenance Status
+
+🟢 **Active** – Developed & maintained by [hydrosolutions](https://github.com/hydrosolutions)
+
+
 ## Key Features
 
 - **Multiple forecast models** — Linear regression (temporally aggregated auto-regressive model with a direct forecasting framework), deep learning models (TIDE, TSMixer, TFT) for short-term forecasting, and airGR model suite with added glacier melt functionality

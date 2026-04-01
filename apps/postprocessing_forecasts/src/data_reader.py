@@ -770,6 +770,7 @@ def read_daily_forecasts(
                     break
                 skip += batch_size
 
+        all_records = [df for df in all_records if not df.empty]
         if not all_records:
             return empty
 
@@ -794,7 +795,12 @@ def _normalize_daily_forecasts(df: pd.DataFrame) -> pd.DataFrame:
     # Rename API columns
     if "model_type" in df.columns:
         df = df.rename(columns={"model_type": "model_short"})
-    if "target" in df.columns:
+    # API returns 'date' (issue date) and 'target' (target date).
+    # Rename 'date' → 'forecast_date' first to avoid collision when
+    # renaming 'target' → 'date'.
+    if "target" in df.columns and "date" in df.columns:
+        df = df.rename(columns={"date": "forecast_date", "target": "date"})
+    elif "target" in df.columns:
         df = df.rename(columns={"target": "date"})
 
     # Ensure types
