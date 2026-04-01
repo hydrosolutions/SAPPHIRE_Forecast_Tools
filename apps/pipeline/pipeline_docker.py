@@ -15,7 +15,6 @@ import glob
 import os
 import platform
 import re
-import subprocess
 import time
 from typing import Any
 
@@ -1876,72 +1875,14 @@ class PostProcessingMaintenance(DockerTaskBase):
         )
 
 
-class FrontendUpdate(pu.TimeoutMixin, luigi.Task):
-    """Update dashboard containers (docker compose down + pull + up).
-
-    Unlike other maintenance tasks, this uses subprocess to call
-    docker compose rather than spawning a single container.
-    """
-
-    timeout_seconds = luigi.IntParameter(default=300)
-
-    docker_logs_file_path = (
-        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
-        f"/docker_logs/log_maintenance_frontend_"
-        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    )
-
-    def requires(self):
-        return PostProcessingMaintenance()
-
-    def output(self):
-        marker = get_maintenance_marker_filepath("frontend")
-        return luigi.LocalTarget(marker)
-
-    def run(self):
-        frontend_tag = env.get("ieasyhydroforecast_frontend_docker_image_tag") or TAG
-
-        commands = [
-            ["docker", "compose", "-f", "bin/docker-compose-dashboards.yml", "down"],
-            ["docker", "pull", f"mabesa/sapphire-dashboard:{frontend_tag}"],
-            [
-                "docker",
-                "compose",
-                "-f",
-                "bin/docker-compose-dashboards.yml",
-                "up",
-                "-d",
-            ],
-        ]
-
-        os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
-        with open(self.docker_logs_file_path, "w") as log:
-            for cmd in commands:
-                log.write(f"Running: {' '.join(cmd)}\n")
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                log.write(result.stdout)
-                if result.stderr:
-                    log.write(f"STDERR: {result.stderr}\n")
-                if result.returncode != 0:
-                    raise RuntimeError(
-                        f"Frontend update failed: {' '.join(cmd)} returned {result.returncode}"
-                    )
-
-        with self.output().open("w") as f:
-            f.write("Frontend update completed")
-
-
 class RunDailyMaintenanceWorkflow(luigi.Task):
     """Top-level daily maintenance orchestrator.
 
     Triggers the full maintenance dependency chain:
     PostProcessingMaintenance (-> LinReg -> PrepRunoff, ML -> Gateway)
-    + FrontendUpdate
+
+    Frontend update is handled by bin/daily_update_sapphire_frontend.sh
+    on the host after the Luigi pipeline completes.
     """
 
     send_notifications = luigi.BoolParameter(default=True)
@@ -1953,7 +1894,7 @@ class RunDailyMaintenanceWorkflow(luigi.Task):
     )
 
     def requires(self):
-        tasks = [PostProcessingMaintenance(), FrontendUpdate()]
+        tasks = [PostProcessingMaintenance()]
         if self.send_notifications:
             return SendPipelineCompletionNotification(
                 custom_message="Daily maintenance completed",

@@ -228,31 +228,11 @@ class TestPostProcessingMaintenance:
         assert "maintenance_postproc_" in path
 
 
-class TestFrontendUpdate:
-    """Test FrontendUpdate task."""
-
-    def test_requires_postprocessing_maintenance(self, mock_env):
-        """FrontendUpdate requires PostProcessingMaintenance."""
-        from pipeline_docker import FrontendUpdate, PostProcessingMaintenance
-
-        task = FrontendUpdate()
-        dep = task.requires()
-        assert isinstance(dep, PostProcessingMaintenance)
-
-    def test_output_uses_maintenance_marker(self, mock_env):
-        """Output marker has maintenance_ prefix."""
-        from pipeline_docker import FrontendUpdate
-
-        task = FrontendUpdate()
-        path = task.output().path
-        assert "maintenance_frontend_" in path
-
-
 class TestRunDailyMaintenanceWorkflow:
     """Test RunDailyMaintenanceWorkflow orchestrator."""
 
     def test_dependency_chain_without_notifications(self, mock_env):
-        """Without notifications, requires PostProcessingMaintenance + Frontend."""
+        """Without notifications, requires PostProcessingMaintenance."""
         from pipeline_docker import (
             RunDailyMaintenanceWorkflow,
         )
@@ -262,7 +242,6 @@ class TestRunDailyMaintenanceWorkflow:
         assert isinstance(deps, list)
         class_names = [type(d).__name__ for d in deps]
         assert "PostProcessingMaintenance" in class_names
-        assert "FrontendUpdate" in class_names
 
     def test_with_notifications(self, mock_env):
         """With notifications, wraps in SendPipelineCompletionNotification."""
