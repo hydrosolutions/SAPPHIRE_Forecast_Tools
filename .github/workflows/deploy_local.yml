@@ -27,7 +27,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -97,7 +97,7 @@ jobs:
     name: Test pipeline (Python 3.12 + uv)
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -122,7 +122,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -155,7 +155,7 @@ jobs:
   #
   #   steps:
   #   - name: Checkout
-  #     uses: actions/checkout@v4
+  #     uses: actions/checkout@v6
   #
   #   - name: Build Docker image
   #     run: |
@@ -181,7 +181,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
@@ -213,7 +213,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -244,7 +244,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
@@ -272,7 +272,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -301,7 +301,7 @@ jobs:
     name: Test machine learning (Python 3.12 + uv)
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -339,7 +339,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -369,7 +369,7 @@ jobs:
     name: Test forecast dashboard (Python 3.12 + uv)
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -394,7 +394,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -423,7 +423,7 @@ jobs:
     name: Test postprocessing (Python 3.12 + uv)
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -448,7 +448,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -477,7 +477,7 @@ jobs:
     name: Test linear regression (Python 3.12 + uv)
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -502,7 +502,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
