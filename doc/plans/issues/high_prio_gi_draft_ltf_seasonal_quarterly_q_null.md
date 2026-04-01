@@ -4,6 +4,7 @@
 **Module**: long_term_forecasting
 **Priority**: High
 **Labels**: `bug`, `long-term-forecasting`, `skill-metrics`
+**Assigned**: @sandrohuni
 
 ---
 
@@ -73,15 +74,40 @@ The logic looks for `Q_{model_name}` column first, then falls back to `Q50`, the
 
 So `q` is never set.
 
-### Root Cause
+### Root Cause (confirmed 2026-04-01)
 
-Two possibilities to investigate:
+Investigation traced the divergence to the upstream `lt_forecasting` library
+(`LINEAR_REGRESSION.py`), specifically the difference between operational and
+hindcast prediction paths:
 
-1. **The LR seasonal/quarterly forecast code doesn't produce a `Q_{model_name}` column** in the hindcast DataFrame — it only produces quantile columns (Q5-Q95) via uncertainty estimation but doesn't set the point forecast.
+**Operational path** (`predict_operational`, line ~498): A row is **always**
+appended to `pred_df`, even when the prediction is NaN. So `Q_LR_Base` is
+always present in the DataFrame (possibly as NaN, but the column exists).
 
-2. **The LR model does produce `Q_{model_name}` for the operational forecast** (2026-03-25 has q=10.19) but **not during hindcast mode** — different code paths for operational vs hindcast.
+**Hindcast path** (`calibrate_model_and_hindcast`, line ~671-688): Failed
+predictions are **silently skipped** — `if not np.isnan(predictions[i])` gates
+the row append. When a station/period combination fails the training-data
+threshold check (`num_features * 2`), no record is emitted. In seasonal/
+quarterly mode, early years with insufficient training data fail this check,
+so:
+- `Q_LR_Base` is absent or NaN for those years
+- The fallback chain in `prepare_long_forecast_records()` finds nothing
+  (`Q_{model}` → `Q50` → `Q_loc` all fail)
+- `q` is never set → written as `None` to the API
 
-The fact that operational (2026-03-25) has `q` filled but hindcasts (2006-2025) don't suggests the hindcast code path is missing the point forecast assignment.
+**Call chain**:
+```
+calibrate_and_hindcast.py
+  → model.calibrate_model_and_hindcast()   # upstream library
+    → skips rows where prediction=NaN      # ← root cause
+  → post_process_lt_forecast()
+  → save_forecast() → save_forecast_to_db()
+    → prepare_long_forecast_records()       # q fallback chain fails
+```
+
+**Operational forecasts are NOT affected** — the daily scheduled run always
+produces a real `Q_LR_Base` value. The bug only manifests during yearly
+recalibration (`calibrate_and_hindcast.py`) for seasonal/quarterly modes.
 
 ### DB state summary (S1, 15189)
 
@@ -102,28 +128,43 @@ Note: Monthly LR_Base has `q` filled for all 198 records — the bug is specific
 
 ### Approach
 
-Investigate in two steps:
+Two complementary fixes, in separate repos:
 
-1. **Trace the hindcast DataFrame** for LR_Base seasonal mode to determine whether `Q_LR_Base` column exists and what value it contains
-2. **Fix**: Either ensure the hindcast code produces `Q_{model_name}`, or add a fallback in `prepare_long_forecast_records` that computes `q` from the median of quantiles when all else is null
+**Fix A (upstream library — @sandrohuni):** In `LINEAR_REGRESSION.py`,
+`calibrate_model_and_hindcast()` (line ~671-688), make the hindcast path
+always emit a row (matching `predict_operational` behavior), even when the
+prediction is NaN. This ensures `Q_LR_Base` is present in the DataFrame for
+all years. Rows with NaN predictions already get `flag=3` downstream
+(`calibrate_and_hindcast.py:241`), so the flag system handles them correctly.
 
-### Files to Investigate
+**Fix B (this repo — fallback guard):** In `lt_utils.py:354-362`, add a
+final fallback that derives `q` from quantiles when all three existing
+branches fail:
+```python
+# Fallback: derive q from quantiles when point forecast is missing
+elif "Q25" in row.index and "Q75" in row.index:
+    q25 = row.get("Q25")
+    q75 = row.get("Q75")
+    if pd.notna(q25) and pd.notna(q75):
+        record["q"] = float((q25 + q75) / 2)
+```
 
-| File | Purpose |
-|------|---------|
-| `apps/long_term_forecasting/lt_utils.py:269-377` | `prepare_long_forecast_records()` — where q is set |
-| `apps/long_term_forecasting/run_forecast.py` | Operational forecast entry point |
-| `apps/long_term_forecasting/` (model code) | Where hindcast DataFrames are constructed |
+Fix A is the proper root cause fix. Fix B is a defensive guard that prevents
+null `q` when quantiles exist, regardless of the upstream behavior.
+
+### Files to Modify
+
+| File | Repo | Owner | Change |
+|------|------|-------|--------|
+| `lt_forecasting/.../LINEAR_REGRESSION.py:671-688` | `hydrosolutions/long-term-forecasting` | @sandrohuni | Fix A: always emit hindcast row |
+| `apps/long_term_forecasting/lt_utils.py:354-362` | this repo | @mabesa | Fix B: quantile fallback guard |
 
 ### Implementation Steps
 
-- [ ] Step 1: Add debug logging to `prepare_long_forecast_records()` to dump column names and first row for seasonal LR_Base
-- [ ] Step 2: Run `seasonal_march` mode and inspect logs to find which columns exist
-- [ ] Step 3: Identify why `Q_LR_Base` is missing/NaN in hindcast but present in operational
-- [ ] Step 4: Fix the root cause (either in model code or in the record preparation)
-- [ ] Step 5: Consider adding a fallback: `q = (q25 + q75) / 2` or `q = mean(q05..q95)` when q is still None but quantiles exist
-- [ ] Step 6: Re-run hindcasts to backfill the null q values
-- [ ] Step 7: Re-run skill metric recalculation and verify n_pairs > 0
+- [ ] Step 1 (@sandrohuni): In `calibrate_model_and_hindcast()`, always append a row to the output DataFrame, even when prediction is NaN — matching `predict_operational` behavior
+- [ ] Step 2 (@mabesa): Add quantile fallback in `prepare_long_forecast_records()` after the existing Q_loc branch
+- [ ] Step 3: Re-run seasonal/quarterly hindcasts to backfill the null q values
+- [ ] Step 4: Re-run skill metric recalculation and verify n_pairs > 0
 
 ---
 

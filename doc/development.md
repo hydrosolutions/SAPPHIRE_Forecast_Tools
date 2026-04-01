@@ -6,6 +6,7 @@ This document describes how to develop the application and how to add hydrologic
   - [1.1 Installation of 3rd party software](#11-installation-of-3rd-party-software)
     - [Python](#python)
     - [uv Package Manager](#uv-package-manager)
+    - [Bash](#bash)
     - [Visual Studio Code](#visual-studio-code)
     - [R](#r)
     - [RStudio](#rstudio)
@@ -106,6 +107,31 @@ uv sync --python 3.12
 ```
 
 This will create a `.venv` directory with Python 3.12 and install all dependencies specified in `pyproject.toml`. Each module has its own `pyproject.toml` defining its dependencies. For development, Python 3.12 is used across all modules.
+
+### Bash
+
+The pipeline shell scripts (e.g., `run_locally.sh`) use Bash 4.4+ features
+(array expansion under `set -u`). Ubuntu 24.04 ships Bash 5.x, so servers are
+fine. **macOS ships Bash 3.2** (due to licensing), which will fail with
+`unbound variable` errors.
+
+To install a modern Bash on macOS:
+
+``` bash
+brew install bash
+bash --version
+# Expected: GNU bash, version 5.x
+```
+
+You can then either:
+- Invoke scripts explicitly: `/opt/homebrew/bin/bash apps/run_locally.sh daily`
+- Or make it your default shell:
+  ```bash
+  # Add Homebrew bash to allowed shells
+  echo /opt/homebrew/bin/bash | sudo tee -a /etc/shells
+  # Set as default
+  chsh -s /opt/homebrew/bin/bash
+  ```
 
 ### Visual Studio Code
 

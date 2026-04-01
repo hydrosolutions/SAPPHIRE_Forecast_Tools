@@ -5,8 +5,17 @@ Forecast dashboard — assembly script.
 Every concern lives in its own manager; this file only creates the
 objects, wires them together, and makes the result servable.
 
-Run:
+Run: 2 Options:
+Option 1: run locally with panel serve
+    1. comment out dashboard service in sapphire/docker-compose.yml
+    2. use version of .env witout any sapphire services environment varialbes 
     ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
+Option 2: run in docker
+    1. make sure dashboard services is uncommented in sapphire/docker-compose.yml
+    2. export DOCKER_DEFAULT_PLATFORM=linux/amd64
+    3. from project root, run bash bin/daily_update_sapphire_frontend.sh <ieasyhydroforecast_env_file_path>
+    Note that env file needs to end with hydromet short name. 
+
 """
 import panel as pn
 

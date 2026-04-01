@@ -5,8 +5,11 @@ RUN pip install --no-cache-dir luigi==3.5.0
 
 # Create non-root user and writable state/log dirs
 RUN useradd -ms /bin/bash luigi && \
-    mkdir -p /var/lib/luigi /var/log/luigi && \
-    chown -R luigi:luigi /var/lib/luigi /var/log/luigi
+    mkdir -p /var/lib/luigi /var/log/luigi /etc/luigi && \
+    chown -R luigi:luigi /var/lib/luigi /var/log/luigi /etc/luigi
+
+# Bake in Luigi config (resource pool limits read by luigid)
+COPY apps/pipeline/luigi.cfg /etc/luigi/luigi.cfg
 
 USER luigi
 EXPOSE 8082

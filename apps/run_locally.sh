@@ -80,6 +80,7 @@
 #   For standalone use: validate_pipeline.py --module <module_name>
 #
 # Prerequisites:
+#   - Bash 4.4+ (macOS ships 3.2; install via: brew install bash)
 #   - Each module needs a .venv: cd apps/<module> && uv sync --all-extras
 #   - A valid .env file for your organization
 # =============================================================================
@@ -436,7 +437,7 @@ run_in_venv() {
         "ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path:-}"
         "SAPPHIRE_PREDICTION_MODE=${SAPPHIRE_PREDICTION_MODE:-}"
     )
-    for ev in "${extra_env[@]}"; do
+    for ev in ${extra_env[@]+"${extra_env[@]}"}; do
         env_cmd+=("$ev")
     done
 
@@ -449,7 +450,7 @@ run_in_venv() {
     # Run in subshell from the module directory
     (
         cd "$module_dir"
-        "${env_cmd[@]}" "$python_path" "$script" "${script_args[@]}" 2>&1
+        "${env_cmd[@]}" "$python_path" "$script" ${script_args[@]+"${script_args[@]}"} 2>&1
     ) | tee -a "${tee_targets[@]}"
 
     return "${PIPESTATUS[0]}"

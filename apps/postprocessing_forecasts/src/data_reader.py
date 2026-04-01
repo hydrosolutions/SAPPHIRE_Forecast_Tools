@@ -756,7 +756,7 @@ def read_daily_forecasts(
             batch_size = 1000
             while True:
                 df_batch = client.read_forecasts(
-                    horizon_type="day",
+                    horizon="day",
                     code=code,
                     start_date=start_date,
                     end_date=end_date,
