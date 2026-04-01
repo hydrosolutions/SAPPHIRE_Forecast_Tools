@@ -1,6 +1,6 @@
 # Fix `horizon_type` keyword in daily forecast API reader
 
-**Status**: Draft
+**Status**: In Progress — fix committed (e87fdda), pending PR and server test
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `bug`, `api-integration`, `skill-metrics`

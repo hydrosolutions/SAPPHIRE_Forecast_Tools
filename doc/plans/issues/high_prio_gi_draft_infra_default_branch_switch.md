@@ -1,6 +1,6 @@
 # INFRA-016: Switch Default Branch from `main` to `maxat_sapphire_2`
 
-**Status**: In Progress — Phases 1-3 complete (2026-03-27); Phases 4-5 pending branch merge + GitHub settings
+**Status**: In Progress — Phases 1-4 complete (2026-03-27). Phase 5: steps 5.2 (push CI changes) and 5.3 (verify CI triggers) remain.
 **Module**: infra (cross-repo)
 **Priority**: High
 **Labels**: `infrastructure`, `ci-cd`, `git`, `breaking-change`

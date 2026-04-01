@@ -1,6 +1,6 @@
 # PP-020: Probabilistic Forecast Quality Metrics & Documentation
 
-**Status**: Review — implementation complete (commit `8fd2a4e`), awaiting user review
+**Status**: Draft — status header was incorrect (claimed complete but all 8 implementation steps are unchecked and code is absent). Corrected 2026-04-01.
 **Module**: postprocessing_forecasts
 **Priority**: Medium
 **Labels**: `forecast-quality`, `uncertainty`, `documentation`, `postprocessing`
