@@ -1,101 +1,75 @@
 version: 2
 updates:
   # --- Active app modules (uv + pyproject.toml) ---
+  # Version-bump PRs are disabled (limit: 0). Dependabot security updates
+  # are a separate mechanism (enabled in repo Settings > Security) and
+  # still create PRs for known CVEs regardless of this limit.
   - package-ecosystem: "pip"
     directory: "/apps/iEasyHydroForecast"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/preprocessing_runoff"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/preprocessing_gateway"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/linear_regression"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/machine_learning"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/long_term_forecasting"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/postprocessing_forecasts"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/pipeline"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/forecast_dashboard"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "pip"
     directory: "/apps/validate_pipeline"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
 
   # --- GitHub Actions ---
+  # Bundle all action bumps (including major) into a single PR per month.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
     groups:
       actions:
-        update-types: ["minor", "patch"]
+        update-types: ["major", "minor", "patch"]
