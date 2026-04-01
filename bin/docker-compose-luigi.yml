@@ -104,7 +104,7 @@ services:
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
-             '--scheduler-port', '8082', '--resources', 'ml_memory=3',
+             '--scheduler-port', '8082',
              '--workers', '6',
              '--module', 'apps.pipeline.pipeline_docker',
              'RunDailyMaintenanceWorkflow']
@@ -139,7 +139,6 @@ services:
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
              '--scheduler-port', '8082',
-             '--resources', 'lt_memory=1',
              '--module', 'apps.pipeline.pipeline_docker',
              'RunLongTermWorkflow',
              '--active-modes', '${LT_ACTIVE_MODES}',
