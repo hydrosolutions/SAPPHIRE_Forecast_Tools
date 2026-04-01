@@ -11,6 +11,7 @@ dependencies = [
     # Deep learning frameworks
     "torch==2.11.0",
     "darts==0.43.0",
+    "pytorch-lightning>=2.6.0",
     # Potential evapotranspiration calculation
     "PE-Oudin>=0.3",
     # Sunrise/sunset calculations
