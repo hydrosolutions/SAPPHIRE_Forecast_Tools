@@ -285,6 +285,7 @@ The following bugs were found in the code during FD-007 review. They are **not i
 1. **Inner `run_docker_container`: `raise ContainerError` silently caught** — The `raise` at line ~3714 is inside a `try` whose `except Exception` at line ~3728 catches it. Container failures are swallowed and the pipeline continues (e.g., postprocessing runs after a failed linreg). → **FD-008**
 2. **Inner `run_docker_container`: `ContainerError` missing `stderr` argument** — The constructor call omits the required `stderr` positional argument, causing a `TypeError` instead of `ContainerError`, which is also caught by the same `except`. → **FD-008**
 3. **`reset_rundate` in container monitoring list** — The `container_names` list in `check_containers_running` (line ~3944) included `"reset_rundate"`. Cleaned up as part of FD-007 since it was directly related to the rerun removal.
+4. **Containers skip on non-boundary days** — Both linreg and postprocessing hardcode `date.today()` and skip computation when today is not a pentad boundary (5/10/15/20/25/last). The removed `sapphire-rerun` was intended to fix this but never worked (linreg ignores `last_successful_run_file` in operational mode). The dashboard knows which pentad the user is editing but has no mechanism to pass the target date to containers. → **FD-009**
 
 ## Additional Cleanup (beyond original plan)
 

@@ -1170,49 +1170,33 @@ TODO: Bea
 
 ### 2.2.8 Manual triggering of the forecast pipeline
 
-To re-run a forecast (for example to include river runoff data that was not available at the time of the forecast), you can manually trigger the forecast pipeline. This process includes the re-setting of the last successful run date of the linear regression module to the day before the last forecast date. This is done with the module reset_forecast_run_date.
+#### From the dashboard
 
-#### How to re-run the forecast pipeline manually
+The forecast dashboard provides two mechanisms to re-run forecasts:
 
-To do so, you can run the following sequence of commands in the terminal:
+- **Save Changes** (regression tab): After editing visibility checkboxes, saves changes and reruns the `linear_regression` and `postprocessing_forecasts` containers for the selected pentad/decad boundary date.
+- **Trigger Forecasts** button: Runs the full pipeline (`preprunoff` → `linear_regression` → ML models → `postprocessing_forecasts`) for the most recent boundary date.
 
-Pull the latest image from Docker Hub (if not yet available on your server):
+Both flows pass `SAPPHIRE_FORECAST_DATE=YYYY-MM-DD` to the containers so that forecasts are produced regardless of whether today is a boundary day. The `preprunoff` container does NOT receive this override — it always fetches the latest available data.
 
-``` bash
-docker pull mabesa/sapphire-rerun:latest
-```
+#### From the command line
 
-Then we run the reset_forecast_run_date module:
-
-``` bash
-nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir> > rerun.log 2>&1 &
-```
-
-Which will reset the last successful run date of the linear regression module to the day before the last forecast date, remove the necessary containers from the last forecast and run the forecast pipeline again.
-
-nohup is used to run the command in the background and rerun.log is used to store the output of the command. The output of the command is stored in the rerun.log file. The 2\>&1 redirects the standard error output to the standard output. This way, all output is stored in the rerun.log file. & runs the command in the background so you can continue to use the terminal after starting the process.
-
-You can check up on the progress of your forecast by running the following command in the terminal:
+To manually re-run the pipeline from the server command line, use the Docker containers directly:
 
 ``` bash
-tail -f rerun.log
+# Run for a specific boundary date (e.g., pentad ending March 25)
+docker run --rm \
+  -e SAPPHIRE_FORECAST_DATE=2026-03-25 \
+  -e SAPPHIRE_PREDICTION_MODE=PENTAD \
+  -e ieasyhydroforecast_env_file_path=/app/config/.env_develop_kghm \
+  -v /path/to/config:/app/config:rw \
+  -v /path/to/data:/app/intermediate_data:rw \
+  mabesa/sapphire-linreg:latest
 ```
 
-to read the output of the command in the terminal and
+Adjust volume mounts and the `.env` file path for your deployment. The same `SAPPHIRE_FORECAST_DATE` variable works for both `sapphire-linreg` and `sapphire-postprocessing` containers.
 
-``` bash
-docker ps -a
-```
-
-to check the status of the docker containers.
-
-To inspect individual docker container logs you type:
-
-``` bash
-docker logs <container_id>
-```
-
-where <container_id> is the id of the container you want to inspect. You can find the container id by running the docker ps -a command.
+> **Note**: The `sapphire-rerun` container and `bin/rerun_latest_forecasts.sh` script are deprecated and have been removed. Use `SAPPHIRE_FORECAST_DATE` instead.
 
 ### 2.2.9 Forecast dashboard
 

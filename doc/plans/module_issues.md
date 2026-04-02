@@ -182,6 +182,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-006** | Skill metrics missing for LR and NE due to model_long merge key mismatch | **High** | Draft | [`high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md`](issues/high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md) | — |
 | **FD-007** | Update dashboard Docker dataflows to operational mode with logging | **Medium** | Implemented | [`mid_prio_gi_draft_fd_docker_dataflows_update.md`](issues/mid_prio_gi_draft_fd_docker_dataflows_update.md) | — |
 | **FD-008** | Fix error handling in inner `run_docker_container` (Save Changes) | **Low** | Draft | [`low_prio_gi_draft_fd_inner_run_docker_error_handling.md`](issues/low_prio_gi_draft_fd_inner_run_docker_error_handling.md) | — |
+| **FD-009** | Pass explicit forecast date to containers in dashboard retrigger flows | **Medium** | Draft | [`mid_prio_gi_draft_fd_retrigger_forecast_date.md`](issues/mid_prio_gi_draft_fd_retrigger_forecast_date.md) | FD-007 |
 
 ### iEasyHydro HF Migration
 
