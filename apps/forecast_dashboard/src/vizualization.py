@@ -3158,6 +3158,27 @@ def get_bind_path(relative_path):
     return relative_path
 
 
+def _write_container_log(container_name: str, container) -> None:
+    """Write container logs to a timestamped file in docker_logs/."""
+    try:
+        log_dir = os.path.join(
+            get_absolute_path(env.get('ieasyforecast_intermediate_data_path')),
+            'docker_logs',
+        )
+        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_path = os.path.join(
+            log_dir,
+            f"log_dashboard_{container_name}_{timestamp}.txt",
+        )
+        os.makedirs(log_dir, exist_ok=True)
+        logs = container.logs().decode('utf-8', errors='replace')
+        with open(log_path, 'w') as f:
+            f.write(logs)
+        logger.info("Container logs written to %s", log_path)
+    except Exception as e:
+        logger.warning("Failed to write container log: %s", e)
+
+
 # Test if the path to the configuration folder is set
 # if not os.getenv('ieasyforecast_configuration_path'):
 #    raise ValueError("The path to the configuration folder is not set.")
@@ -3712,6 +3733,11 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                 progress_bar.value = 100  # Set progress to 100% after the container is done
                 if result['StatusCode'] != 0:
                     print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")
+                    _write_container_log(container_name, container)
+                    try:
+                        container.remove(force=True)
+                    except docker.errors.APIError as e:
+                        print(f"Warning: Failed to remove container '{container_name}': {e}")
                     raise docker.errors.ContainerError(
                         container=container,
                         exit_status=result['StatusCode'],
@@ -3720,6 +3746,11 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                     )
                 else:
                     print(f"Container '{container_name}' has stopped successfully.")
+                    _write_container_log(container_name, container)
+                    try:
+                        container.remove(force=True)
+                    except docker.errors.APIError as e:
+                        print(f"Warning: Failed to remove container '{container_name}': {e}")
 
         except Exception as e:
             print(f"Error running container '{container_name}': {e}")
@@ -3821,10 +3852,11 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                 print(f"Error initializing Docker client: {e}")
 
             # Define environment variables
+            env_file_name = os.path.basename(env_file_path)
             environment = [
                 'IN_DOCKER_CONTAINER=True',
-                'SAPPHIRE_PREDICTION_MODE=' + horizon.upper(),
-                f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/.env_develop_kghm'
+                f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}',
+                f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/{env_file_name}',
             ]
 
             # Define volumes
@@ -3837,12 +3869,6 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             print("volumes: ", volumes)
 
             start_docker_runs = time.time()
-
-            # Run the reset rundate module to update the rundate for the linear regression module
-            run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate",
-                                 progress_bar)
-            temp_docker_end = time.time()
-            print(f"Time taken to run reset_rundate: {temp_docker_end - start_docker_runs:.2f} seconds")
             temp_docker_start = time.time()
 
             # Run the linear_regression container with a hardcoded full image name
@@ -3944,7 +3970,6 @@ def create_reload_button(horizon):
 
             container_names = [
                 "preprunoff",
-                "reset_rundate",
                 "linreg",
                 "prepgateway",
                 "conceptmod",
@@ -4021,12 +4046,12 @@ def create_reload_button(horizon):
                     print(f"Error initializing Docker client: {e}")
 
                 # Define environment variables
+                env_file_name = os.path.basename(env_file_path)
                 environment = [
                     'SAPPHIRE_OPDEV_ENV=True',
                     'IN_DOCKER_CONTAINER=True',
-                    # f'SAPPHIRE_PREDICTION_MODE={os.getenv("sapphire_forecast_horizon", "pentad").upper()}',
                     f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}',
-                    f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
+                    f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/{env_file_name}',
                 ]
                 print("environment: \n", environment)
 
@@ -4063,12 +4088,6 @@ def create_reload_button(horizon):
                 run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
                 temp_docker_end = time.time()
                 print(f"Time taken to run preprunoff: {temp_docker_end - start_docker_runs:.2f} seconds")
-                temp_docker_start = time.time()
-
-                # Run the reset_rundate container
-                run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
-                temp_docker_end = time.time()
-                print(f"Time taken to run reset_rundate: {temp_docker_end - temp_docker_start:.2f} seconds")
                 temp_docker_start = time.time()
 
                 # Run the linear_regression container
@@ -4235,8 +4254,9 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         else:
             print(f"Container '{container_name}' has stopped successfully.")
 
-        # Remove the container after it has finished
-        try: 
+        # Write logs and remove the container after it has finished
+        _write_container_log(container_name, container)
+        try:
             container.remove(force=True)
             print(f"Container '{container_name}' removed after completion.")
         except docker.errors.APIError as e:
