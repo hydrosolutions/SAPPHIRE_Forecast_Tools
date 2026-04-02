@@ -934,6 +934,15 @@ def plot_runoff_forecast_range_area_v2(
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
 
+        # Guard: skip models that are missing bound columns
+        if min_col not in model_data.columns or max_col not in model_data.columns:
+            logger.warning(
+                "plot_runoff_forecast_range_area_v2: skipping model %r — "
+                "missing column(s) %r and/or %r",
+                model, min_col, max_col
+            )
+            continue
+
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
         # legend_entry = model + ": " + lower_bound + "-" + upper_bound + " " + unit_string
@@ -2391,6 +2400,15 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
                                                   (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
         forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
                                                   (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
+
+    if 'fc_lower' not in forecasts.columns:
+        logger.warning(
+            "fc_lower not created (range_type=%r did not match any branch). "
+            "Falling back to forecasted_discharge.",
+            range_type
+        )
+        forecasts['fc_lower'] = forecasts['forecasted_discharge']
+        forecasts['fc_upper'] = forecasts['forecasted_discharge']
 
     # print tail of forecasts
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
