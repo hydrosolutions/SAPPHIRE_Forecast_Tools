@@ -1,6 +1,6 @@
 # FD-007: Update dashboard Docker dataflows to operational mode with logging
 
-**Status**: Draft
+**Status**: Implemented
 **Module**: forecast_dashboard
 **Priority**: Medium
 **Labels**: `forecast_dashboard`, `docker`, `operational-mode`
@@ -9,7 +9,7 @@
 
 ## Summary
 
-Update the "Save Changes" and "Trigger Forecasts" dataflows in the forecast dashboard to align with the current operational pipeline: remove deprecated `sapphire-rerun`, fix the hardcoded env file path, add persistent container logging, and trim environment variables to match what Luigi operational tasks pass.
+Update the "Save Changes" and "Trigger Forecasts" dataflows in the forecast dashboard to align with the current operational pipeline: remove deprecated `sapphire-rerun`, fix the hardcoded env file path, and add persistent container logging. Existing environment variables (`IN_DOCKER_CONTAINER`, `SAPPHIRE_OPDEV_ENV`) are preserved — they are load-bearing for `.env` file selection and host routing inside spawned containers.
 
 ## Context
 
@@ -103,7 +103,7 @@ Minimal, targeted edits to the two caller functions and small additions to both 
 
 | File | Changes |
 |------|---------|
-| `apps/forecast_dashboard/src/vizualization.py:3076-3082` | Add log directory path constant |
+| `apps/forecast_dashboard/src/vizualization.py:3131+` | Add `DOCKER_LOG_DIR` constant and `_write_container_log` helper (after `get_bind_path`) |
 | `apps/forecast_dashboard/src/vizualization.py:3597-3705` | Inner `run_docker_container`: add logging + container removal |
 | `apps/forecast_dashboard/src/vizualization.py:3711-3857` | Fix `save_to_database`: remove rerun, fix env |
 | `apps/forecast_dashboard/src/vizualization.py:3963-4114` | Fix `run_docker_pipeline`: remove rerun, fix env |
@@ -113,25 +113,21 @@ Minimal, targeted edits to the two caller functions and small additions to both 
 
 #### Phase 1: Add logging helper (no behavioral change)
 
-- [ ] **Step 1.1**: Add a `DOCKER_LOG_DIR` constant near line 3082, using the existing `env` object:
-  ```python
-  DOCKER_LOG_DIR = os.path.join(
-      get_absolute_path(env.get('ieasyforecast_intermediate_data_path')),
-      'docker_logs'
-  )
-  ```
-
-- [ ] **Step 1.2**: Add a `_write_container_log` helper function below the constants:
+- [x] **Step 1.1**: Add a `_write_container_log` helper function **after** `get_bind_path` (after line 3131). The log directory path is computed lazily inside the helper (not as a module-level constant) to avoid a `TypeError` crash at import time if `ieasyforecast_intermediate_data_path` is not set:
   ```python
   def _write_container_log(container_name: str, container) -> None:
       """Write container logs to a timestamped file in docker_logs/."""
-      timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-      log_path = os.path.join(
-          DOCKER_LOG_DIR,
-          f"log_dashboard_{container_name}_{timestamp}.txt"
-      )
       try:
-          os.makedirs(DOCKER_LOG_DIR, exist_ok=True)
+          log_dir = os.path.join(
+              get_absolute_path(env.get('ieasyforecast_intermediate_data_path')),
+              'docker_logs',
+          )
+          timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+          log_path = os.path.join(
+              log_dir,
+              f"log_dashboard_{container_name}_{timestamp}.txt",
+          )
+          os.makedirs(log_dir, exist_ok=True)
           logs = container.logs().decode('utf-8', errors='replace')
           with open(log_path, 'w') as f:
               f.write(logs)
@@ -139,11 +135,11 @@ Minimal, targeted edits to the two caller functions and small additions to both 
       except Exception as e:
           logger.warning("Failed to write container log: %s", e)
   ```
-  Note: `datetime` is already imported at the top of the file. Verify the import exists; if not, add it.
+  Note: `datetime` is imported as `dt` (line 9: `import datetime as dt`), so use `dt.datetime.now()`.
 
 #### Phase 2: Update Save Changes dataflow
 
-- [ ] **Step 2.1**: In `save_to_database` (line 3797-3801), fix the hardcoded env file path:
+- [x] **Step 2.1**: In `save_to_database` (line 3797-3801), fix the hardcoded env file path. Spawned containers always run in Docker, so the env file path must be a bind-mount-internal path. Extract the filename from the host-side `env_file_path` and combine with `bind_volume_path_config` (already computed at line 3777):
   ```python
   # Before:
   environment = [
@@ -153,43 +149,54 @@ Minimal, targeted edits to the two caller functions and small additions to both 
   ]
 
   # After:
+  env_file_name = os.path.basename(env_file_path)
   environment = [
       'IN_DOCKER_CONTAINER=True',
       f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}',
-      f'ieasyhydroforecast_env_file_path={env_file_path}',
+      f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/{env_file_name}',
   ]
   ```
+  This works because the env file always lives in the configuration directory, which is bind-mounted into spawned containers at `bind_volume_path_config`. The filename varies by organization (e.g., `.env_develop_kghm`, `.env_develop_uzhm`).
 
-- [ ] **Step 2.2**: Remove the `sapphire-rerun` call and its timing code (lines 3815-3819):
+- [x] **Step 2.2**: Remove the `sapphire-rerun` call and its timing code (lines 3815-3819), and add `temp_docker_start` initialization before the linreg call to avoid `NameError` (the removed block contained the first assignment of `temp_docker_start`):
   ```python
-  # Remove these lines:
+  # Remove these lines (3814-3819):
+  # Run the reset rundate module to update the rundate for the linear regression module
   run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate",
                        progress_bar)
   temp_docker_end = time.time()
   print(f"Time taken to run reset_rundate: {temp_docker_end - start_docker_runs:.2f} seconds")
   temp_docker_start = time.time()
+
+  # Replace with:
+  temp_docker_start = time.time()
   ```
 
-- [ ] **Step 2.3**: Add logging and container cleanup to the inner `run_docker_container` (line 3597). Currently this function does NOT remove the container after `container.wait()`, unlike the module-level version. Add `_write_container_log` and `container.remove(force=True)` after the container finishes (after the progress bar reaches 100%, around line 3695):
+- [x] **Step 2.3**: Add logging and container cleanup to the inner `run_docker_container` (line 3597). Currently this function does NOT remove the container after `container.wait()`, unlike the module-level version. Add `_write_container_log` and `container.remove(force=True)` after the container finishes (after the progress bar reaches 100%, around line 3695):
   ```python
   # After the existing success print (line 3695):
   #     print(f"Container '{container_name}' has stopped successfully.")
   # Add:
   _write_container_log(container_name, container)
-  container.remove(force=True)
+  try:
+      container.remove(force=True)
+  except docker.errors.APIError as e:
+      print(f"Warning: Failed to remove container '{container_name}': {e}")
   ```
-  Also add logging + removal in the error path (after non-zero exit, around line 3688):
+  Also add logging + removal in the error path (before the raise, around line 3688):
   ```python
-  # After the existing error handling:
-  #     raise docker.errors.ContainerError(...)
-  # Add before the raise:
+  # Before the existing raise docker.errors.ContainerError(...):
   _write_container_log(container_name, container)
-  container.remove(force=True)
+  try:
+      container.remove(force=True)
+  except docker.errors.APIError as e:
+      print(f"Warning: Failed to remove container '{container_name}': {e}")
   ```
+  The try/except around `container.remove()` matches the pattern used in the module-level `run_docker_container` (line 4212–4216).
 
 #### Phase 3: Update Trigger Forecasts dataflow
 
-- [ ] **Step 3.1**: In `run_docker_pipeline` (line 3997-4003), fix the hardcoded env file path:
+- [x] **Step 3.1**: In `run_docker_pipeline` (line 3997-4003), fix the hardcoded env file path. Same pattern as Step 2.1 — use bind path + extracted filename:
   ```python
   # Before:
   environment = [
@@ -200,32 +207,34 @@ Minimal, targeted edits to the two caller functions and small additions to both 
   ]
 
   # After:
+  env_file_name = os.path.basename(env_file_path)
   environment = [
       'SAPPHIRE_OPDEV_ENV=True',
       'IN_DOCKER_CONTAINER=True',
       f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}',
-      f'ieasyhydroforecast_env_file_path={env_file_path}',
+      f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/{env_file_name}',
   ]
   ```
 
-- [ ] **Step 3.2**: Remove the `sapphire-rerun` call and its timing code (lines 4042-4045):
+- [x] **Step 3.2**: Remove the `sapphire-rerun` call and timing code (lines 4042-4045). No `temp_docker_start` fix needed here — it is already initialized at line 4039 by the preprunoff block. After removal, the linreg timing (line 4050) will measure from end-of-preprunoff, which is acceptable:
   ```python
-  # Remove these lines:
+  # Remove these lines (4041-4045):
+  # Run the reset_rundate container
   run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
   temp_docker_end = time.time()
   print(f"Time taken to run reset_rundate: {temp_docker_end - temp_docker_start:.2f} seconds")
   temp_docker_start = time.time()
   ```
 
-- [ ] **Step 3.3**: The module-level `run_docker_container` (line 4137) already removes the container after completion (`container.remove(force=True)` at line 4213). Add `_write_container_log(container_name, container)` at line 4210 — after the success/failure print, before `container.remove()`. This is a 1-line addition.
+- [x] **Step 3.3**: The module-level `run_docker_container` (line 4137) already removes the container after completion (`container.remove(force=True)` at line 4213). Add `_write_container_log(container_name, container)` at line 4210 — after the success/failure print, before `container.remove()`. This is a 1-line addition.
 
-- [ ] **Step 3.4**: For the ML model loop (line 4065-4070), the environment already appends `SAPPHIRE_MODEL_TO_USE` and `RUN_MODE=forecast` — this is correct and matches Luigi's `RunMLModel`. No change needed to the loop, only the base `environment` list (done in Step 3.1).
+- [x] **Step 3.4**: For the ML model loop (line 4065-4070), the environment already appends `SAPPHIRE_MODEL_TO_USE` and `RUN_MODE=forecast` — this is correct and matches Luigi's `RunMLModel`. No change needed to the loop, only the base `environment` list (done in Step 3.1).
 
 #### Phase 4: Verify
 
-- [ ] **Step 4.1**: Grep the file for any remaining references to `.env_develop_kghm` — there should be none in the two dataflows.
-- [ ] **Step 4.2**: Grep for `sapphire-rerun` — should be zero matches in the file.
-- [ ] **Step 4.3**: Run `ruff check apps/forecast_dashboard/src/vizualization.py` and `ruff format` to ensure no lint issues.
+- [x] **Step 4.1**: Grep the file for any remaining references to `.env_develop_kghm` — there should be none in the two dataflows.
+- [x] **Step 4.2**: Grep for `sapphire-rerun` — should be zero matches in the file.
+- [x] **Step 4.3**: Run `ruff check apps/forecast_dashboard/src/vizualization.py` and `ruff format` to ensure no lint issues.
 
 ---
 
@@ -263,21 +272,36 @@ There are no automated tests for the Docker dataflows (they require a running Do
 - Adding retry logic or notifications (Luigi territory)
 - Volume configuration changes
 - The `plot_manager.py` reference to `select_and_plot_data`
+- Error handling bugs in inner `run_docker_container` (tracked separately in FD-008)
 
 ## Dependencies
 
 None.
 
+## Pre-existing Issues Discovered During Review
+
+The following bugs were found in the code during FD-007 review. They are **not introduced by FD-007** and are tracked separately:
+
+1. **Inner `run_docker_container`: `raise ContainerError` silently caught** — The `raise` at line ~3714 is inside a `try` whose `except Exception` at line ~3728 catches it. Container failures are swallowed and the pipeline continues (e.g., postprocessing runs after a failed linreg). → **FD-008**
+2. **Inner `run_docker_container`: `ContainerError` missing `stderr` argument** — The constructor call omits the required `stderr` positional argument, causing a `TypeError` instead of `ContainerError`, which is also caught by the same `except`. → **FD-008**
+3. **`reset_rundate` in container monitoring list** — The `container_names` list in `check_containers_running` (line ~3944) included `"reset_rundate"`. Cleaned up as part of FD-007 since it was directly related to the rerun removal.
+
+## Additional Cleanup (beyond original plan)
+
+- Removed `"reset_rundate"` from the `container_names` monitoring list in `check_containers_running` (~line 3944). This list is used to disable the reload button when pipeline containers are running. Since `reset_rundate` is no longer spawned, including it was dead code.
+
 ## Acceptance Criteria
 
-- [ ] `sapphire-rerun` removed from both Save Changes and Trigger Forecasts
-- [ ] Env file path uses `env_file_path` module variable in both dataflows
-- [ ] Existing environment variables (`IN_DOCKER_CONTAINER`, `SAPPHIRE_OPDEV_ENV`) preserved
-- [ ] Containers removed after completion in both dataflows (inner `run_docker_container` aligned with module-level one)
-- [ ] Container logs written to `docker_logs/log_dashboard_{name}_{timestamp}.txt`
-- [ ] No references to `.env_develop_kghm` in either dataflow
-- [ ] `ruff check` passes on the modified file
-- [ ] Existing UI behavior unchanged (buttons, progress, popups)
+- [x] `sapphire-rerun` removed from both Save Changes and Trigger Forecasts
+- [x] Env file path uses `env_file_path` module variable in both dataflows
+- [x] Existing environment variables (`IN_DOCKER_CONTAINER`, `SAPPHIRE_OPDEV_ENV`) preserved
+- [x] Containers removed after completion in both dataflows (inner `run_docker_container` aligned with module-level one)
+- [x] Container logs written to `docker_logs/log_dashboard_{name}_{timestamp}.txt`
+- [x] No references to `.env_develop_kghm` in either dataflow
+- [x] No references to `sapphire-rerun` or `reset_rundate` in the file
+- [x] `ruff check` shows no new issues (pre-existing lint issues remain)
+- [x] File parses without syntax errors (`ast.parse`)
+- [x] Existing UI behavior unchanged (buttons, progress, popups)
 
 ---
 
