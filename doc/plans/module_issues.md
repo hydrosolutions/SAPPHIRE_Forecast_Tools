@@ -180,6 +180,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-004** | LR forecast bounds and stats missing due to dropped delta column | **High** | Draft | [`high_prio_gi_draft_dashboard_lr_forecast_bounds_missing.md`](issues/high_prio_gi_draft_dashboard_lr_forecast_bounds_missing.md) | — |
 | **FD-005** | Daily ML forecasts not displayed due to API limit truncation | **High** | Draft | [`high_prio_gi_draft_dashboard_daily_ml_forecast_limit_truncation.md`](issues/high_prio_gi_draft_dashboard_daily_ml_forecast_limit_truncation.md) | — |
 | **FD-006** | Skill metrics missing for LR and NE due to model_long merge key mismatch | **High** | Draft | [`high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md`](issues/high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md) | — |
+| **FD-007** | Update dashboard Docker dataflows to operational mode with logging | **Medium** | Draft | [`mid_prio_gi_draft_fd_docker_dataflows_update.md`](issues/mid_prio_gi_draft_fd_docker_dataflows_update.md) | — |
 
 ### iEasyHydro HF Migration
 
