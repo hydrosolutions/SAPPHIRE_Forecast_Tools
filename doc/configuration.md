@@ -420,3 +420,16 @@ This configuration file defines the settings and parameters required to run hydr
 
 - `ieasyhydroforecast_FILE_SETUP`: Filename for the JSON configuration file.
   - Example: `config_conceptual_model.json`
+
+---
+
+## Internal Docker environment variables
+
+These variables are set automatically by the dashboard when triggering container runs. They are not user-configured.
+
+| Variable | Set by | Used by | Purpose |
+|----------|--------|---------|---------|
+| `SAPPHIRE_FORECAST_DATE` | forecast_dashboard | linear_regression, postprocessing_forecasts | Override `date.today()` with an explicit boundary date (YYYY-MM-DD). Allows dashboard-triggered runs to produce forecasts on non-boundary days. When absent, modules use `date.today()`. |
+| `SAPPHIRE_PREDICTION_MODE` | forecast_dashboard, Luigi | linear_regression, postprocessing_forecasts, machine_learning | Forecast horizon: `PENTAD`, `DECAD`, `BOTH`, or `ALL`. |
+| `IN_DOCKER_CONTAINER` | forecast_dashboard, Luigi | all modules | Flag indicating the module is running inside a Docker container. |
+| `SAPPHIRE_OPDEV_ENV` | forecast_dashboard (Trigger Forecasts only) | all modules | Flag for operational-development mode. |

@@ -725,7 +725,21 @@ def main():
     else:
         # Operational mode: run for today only.
         # Catch-up for missed days is handled by hindcast mode (--hindcast).
-        forecast_date = dt.date.today()
+        _env_date = os.getenv("SAPPHIRE_FORECAST_DATE", "").strip()
+        if _env_date:
+            try:
+                forecast_date = dt.datetime.strptime(_env_date, "%Y-%m-%d").date()
+                logger.info(
+                    "Using explicit forecast date from SAPPHIRE_FORECAST_DATE: %s", forecast_date
+                )
+            except ValueError:
+                logger.error(
+                    "Invalid SAPPHIRE_FORECAST_DATE=%r — expected YYYY-MM-DD. Falling back to today.",
+                    _env_date,
+                )
+                forecast_date = dt.date.today()
+        else:
+            forecast_date = dt.date.today()
         date_end = forecast_date
         bulletin_date = forecast_date + dt.timedelta(days=1)
 

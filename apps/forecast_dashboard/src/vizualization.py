@@ -3859,6 +3859,34 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                 f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/{env_file_name}',
             ]
 
+            # Compute the boundary date for the pentad/decad the user is editing
+            year = dt.date.today().year
+            if horizon == "pentad":
+                periods_per_month = 6
+                month = (horizon_value - 1) // periods_per_month + 1
+                period_in_month = (horizon_value - 1) % periods_per_month + 1
+                if period_in_month == periods_per_month:
+                    boundary_day = calendar.monthrange(year, month)[1]
+                else:
+                    boundary_day = period_in_month * 5
+            else:  # decad
+                periods_per_month = 3
+                month = (horizon_value - 1) // periods_per_month + 1
+                period_in_month = (horizon_value - 1) % periods_per_month + 1
+                if period_in_month == periods_per_month:
+                    boundary_day = calendar.monthrange(year, month)[1]
+                else:
+                    boundary_day = period_in_month * 10
+            forecast_date = dt.date(year, month, boundary_day)
+            # Year guard: if the computed date is in the future, the user is
+            # viewing the previous year's data.
+            if forecast_date > dt.date.today():
+                year -= 1
+                if period_in_month == periods_per_month:
+                    boundary_day = calendar.monthrange(year, month)[1]
+                forecast_date = dt.date(year, month, boundary_day)
+            environment.append(f'SAPPHIRE_FORECAST_DATE={forecast_date.strftime("%Y-%m-%d")}')
+
             # Define volumes
             volumes = {
                 absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
@@ -3941,6 +3969,26 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
         return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
 
     return callback
+
+
+def get_previous_boundary_date(today, horizon):
+    """Return the most recent boundary date <= today for the given horizon."""
+    if horizon == "pentad":
+        boundaries = [5, 10, 15, 20, 25]
+    else:  # decad
+        boundaries = [10, 20]
+    last_of_month = calendar.monthrange(today.year, today.month)[1]
+    boundaries.append(last_of_month)
+
+    # Check current month boundaries in descending order
+    for b in sorted(boundaries, reverse=True):
+        if today.day >= b:
+            return dt.date(today.year, today.month, b)
+
+    # No boundary reached yet this month — use last day of previous month
+    first_of_month = dt.date(today.year, today.month, 1)
+    last_day_prev = first_of_month - dt.timedelta(days=1)
+    return last_day_prev  # last day of previous month is always a boundary
 
 
 def create_reload_button(horizon):
@@ -4088,6 +4136,10 @@ def create_reload_button(horizon):
                 run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
                 temp_docker_end = time.time()
                 print(f"Time taken to run preprunoff: {temp_docker_end - start_docker_runs:.2f} seconds")
+
+                # Pass the most recent boundary date to linreg, ML, and postprocessing
+                forecast_date = get_previous_boundary_date(dt.date.today(), horizon)
+                environment.append(f'SAPPHIRE_FORECAST_DATE={forecast_date.strftime("%Y-%m-%d")}')
                 temp_docker_start = time.time()
 
                 # Run the linear_regression container

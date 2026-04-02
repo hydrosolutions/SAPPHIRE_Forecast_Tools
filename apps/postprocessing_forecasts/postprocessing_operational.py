@@ -186,7 +186,19 @@ def postprocessing_operational():
             sys.exit(1)
         logger.info(f"Running operational postprocessing for mode: {prediction_mode}")
 
-        today = dt.date.today()
+        _env_date = os.getenv("SAPPHIRE_FORECAST_DATE", "").strip()
+        if _env_date:
+            try:
+                today = dt.datetime.strptime(_env_date, "%Y-%m-%d").date()
+                logger.info("Using explicit forecast date from SAPPHIRE_FORECAST_DATE: %s", today)
+            except ValueError:
+                logger.error(
+                    "Invalid SAPPHIRE_FORECAST_DATE=%r — expected YYYY-MM-DD. Falling back to today.",
+                    _env_date,
+                )
+                today = dt.date.today()
+        else:
+            today = dt.date.today()
 
         if prediction_mode in ["PENTAD", "BOTH", "ALL"]:
             if not is_pentad_boundary(today):
