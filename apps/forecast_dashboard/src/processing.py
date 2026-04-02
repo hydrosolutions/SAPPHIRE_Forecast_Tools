@@ -950,21 +950,17 @@ def get_all_stations_from_iehhf():
         # if all_stations is None:
         #     all_stations = []
 
-        # Simulate delay for loading from file
-        # import time
+        ### Use when you want to test asynchronous loading from subset_stations.pkl when iehhf is not available. Comment return None, None in that case.
         # subset_file = os.path.join(
         #     os.getenv("ieasyforecast_intermediate_data_path"),
         #     os.getenv("ieasyforecast_subset_stations", "subset_stations.pkl")
         # )
         # all_stations = load_stations_from_file(subset_file)
-        # # temp = []
-        # # for station in all_stations:
-        # #     if station.code != '15189':
-        # #         temp.append(station)
-        # # all_stations = temp
-        # time.sleep(3)
-
         return None, None
+
+    ### Delay added to test asynchronous loading of station metadata in the UI in order to see the differences.
+    # import time
+    # time.sleep(10)
 
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
@@ -1001,7 +997,8 @@ def get_all_stations_from_file():
     if all_stations is None:
         all_stations = []
 
-    # # # # For testing (simulation): create a subset of stations and save to file
+    ### This snippet is used to run once and create a subset of stations and save to file.
+    ### The subset is used to test asynchrnoous background loading of station metadata in the UI.
     # subset_file = os.path.join(
     #     os.getenv("ieasyforecast_intermediate_data_path"),
     #     os.getenv("ieasyforecast_subset_stations", "subset_stations.pkl")
