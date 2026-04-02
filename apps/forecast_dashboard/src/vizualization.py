@@ -1718,6 +1718,15 @@ def plot_daily_hydrograph_data(_, dm, wm, hydrograph_day_all, linreg_predictor, 
     # print("hydrgraph_day_all station_labels unique values: ", hydrograph_day_all['station_labels'].unique())
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
+    if data.empty or data['date'].isna().all():
+        return hv.Curve([]).opts(
+            title=_("No data available for station ") + station,
+            xlabel="",
+            ylabel=_('Discharge (m³/s)'),
+            height=400,
+            responsive=True,
+            hooks=[remove_bokeh_logo],
+        )
     # print("\n\n\ncolumns of data: ", data.columns)
     # print("head and tail of data: \n", data.head(), "\n", data.tail())
     current_year = int(data['date'].dt.year.max())

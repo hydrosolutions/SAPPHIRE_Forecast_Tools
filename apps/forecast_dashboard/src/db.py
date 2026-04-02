@@ -154,8 +154,10 @@ def get_hydrograph_day_all(station) -> pd.DataFrame:
 
     if df.empty or "code" not in df.columns:
         logger.warning("get_hydrograph_day_all: no data or missing 'code' for station %s", code)
-        return pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
+        df = pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
                                      str(PREVIOUS_YEAR), str(CURRENT_YEAR)])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     df.rename(columns={
         "q05": "5%", "q25": "25%", "q50": "50%", "q75": "75%", "q95": "95%",
@@ -179,9 +181,11 @@ def get_hydrograph_pentad_all(horizon, station) -> pd.DataFrame:
 
     if df.empty or "code" not in df.columns:
         logger.warning("get_hydrograph_pentad_all: no data or missing 'code' for station %s", code)
-        return pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
+        df = pd.DataFrame(columns=["code", "date", "5%", "25%", "50%", "75%", "95%",
                                      _horizon_in_year_col(horizon),
                                      str(PREVIOUS_YEAR), str(CURRENT_YEAR)])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     renames = {
         "previous": str(PREVIOUS_YEAR),
@@ -209,7 +213,9 @@ def _get_meteo(station, meteo_type: str) -> pd.DataFrame:
             "_get_meteo: no '%s' data for station %s — returning empty DataFrame",
             meteo_type, code,
         )
-        return pd.DataFrame(columns=["code", "date", meteo_type, f"{meteo_type}_norm"])
+        df = pd.DataFrame(columns=["code", "date", meteo_type, f"{meteo_type}_norm"])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     df.rename(columns={"value": meteo_type, "norm": f"{meteo_type}_norm"}, inplace=True)
     df[meteo_type] = df[meteo_type].astype(float)
@@ -266,10 +272,12 @@ def get_ml_forecast(horizon, station) -> pd.DataFrame:
         logger.warning(
             "get_ml_forecast: no forecast data for station %s — returning empty DataFrame", code
         )
-        return pd.DataFrame(columns=[
+        df = pd.DataFrame(columns=[
             "code", "date", "forecast_date", "model_short", "model_long",
             "Q5", "Q25", "Q75", "Q95", "E[Q]", "flag", "composition",
         ])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     df.rename(columns={
         "date": "forecast_date", "target": "date",
@@ -311,9 +319,11 @@ def get_linreg_predictor(horizon, station) -> pd.DataFrame:
 
     if df.empty or "date" not in df.columns:
         logger.warning("get_linreg_predictor: no LR forecast data for station %s", code)
-        return pd.DataFrame(columns=[
+        df = pd.DataFrame(columns=[
             "code", "date", "Date", _horizon_in_year_col(horizon),
         ])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     df.rename(columns={"horizon_in_year": _horizon_in_year_col(horizon)}, inplace=True)
     df.drop(columns=["horizon_type", "horizon_value", "id"], inplace=True, errors="ignore")
@@ -376,7 +386,13 @@ def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
     
     if df_ml.empty and df_lr.empty:
         logger.warning("get_forecasts_all: no forecast data at all for station %s", code)
-        return pd.DataFrame()
+        return pd.DataFrame(columns=[
+            "code", "date", "Date", "forecast_date", "year",
+            "model_short", "model_long",
+            "forecasted_discharge", "flag",
+            "Q5", "Q25", "Q75", "Q95", "E[Q]",
+            hin,
+        ])
 
     # Union of columns, missing columns will become NaN
     combined = pd.concat([df_ml, df_lr], ignore_index=True, sort=False)
@@ -392,6 +408,12 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
+    if df.empty or "model_type" not in df.columns:
+        logger.warning("get_forecast_stats: no skill-metric data for station %s", code)
+        return pd.DataFrame(columns=[
+            "code", _horizon_in_year_col(horizon),
+            "model_short", "model_long",
+        ])
     df.rename(columns={
         "horizon_in_year": _horizon_in_year_col(horizon),
         "model_type": "model_short",
