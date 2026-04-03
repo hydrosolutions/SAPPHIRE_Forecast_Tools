@@ -143,6 +143,16 @@ class WidgetManager:
         # === NAVBAR WIDGETS ===
         self.language_buttons = widgets.create_language_buttons()
 
+        # --- Post-load callbacks (registered by other managers) ---
+        self._post_load_callbacks: list = []
+
+    # ------------------------------------------------------------------
+    # Post-load callback registration
+    # ------------------------------------------------------------------
+    def register_post_load_callback(self, fn) -> None:
+        """Register a callable to be invoked after each station/period load."""
+        self._post_load_callbacks.append(fn)
+
     # ------------------------------------------------------------------
     # Callback wiring — call once after PlotManager & layout exist
     # ------------------------------------------------------------------
@@ -168,6 +178,16 @@ class WidgetManager:
             self.refresh_warnings()
             self.refresh_model_checkbox()
             pm.render_active_tab(self._dashboard_tabs)
+
+            try:
+                _last_date, self.forecast_horizon, self.forecast_year = (
+                    dm.get_bulletin_metadata(horizon)
+                )
+            except (KeyError, IndexError):
+                pass  # no data for this horizon yet; bulletin callback handles it
+
+            for cb in self._post_load_callbacks:
+                cb()
 
         # prevent GC
         self._on_station_or_period_changed = _on_change
