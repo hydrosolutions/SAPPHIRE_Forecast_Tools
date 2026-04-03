@@ -2975,12 +2975,11 @@ class TestPointSelectionCSV:
         return pd.DataFrame(rows)
 
     # The CSV filename for pentad_in_year=1, station "TEST1":
-    #   forecast_date_str = get_date_for_last_day_in_pentad(1, 2024) = "2024-01-05"
-    #   first_day_of_forecast_horizon = 2024-01-06
-    #   pentad_in_month = get_pentad(2024-01-06) = "2"
-    #   title_month = get_month_str_en(2024-01-06) = "January"
-    #   filename: TEST1_2_pentad_of_January.csv
-    CSV_FILENAME = "TEST1_2_pentad_of_January.csv"
+    #   forecast_horizon_int=1 → month_int = (1-1)//6 + 1 = 1 (January)
+    #   pentad_in_month = (1-1)%6 + 1 = 1
+    #   title_month = "January"
+    #   filename: TEST1_1_pentad_of_January.csv
+    CSV_FILENAME = "TEST1_1_pentad_of_January.csv"
 
     # ------------------------------------------------------------------
     # Test 1 — env var absent: no filtering, all rows used
@@ -3452,18 +3451,18 @@ class TestPointSelectionAPI:
         station_data = pd.DataFrame(rows)
 
         # CSV marks the same outlier years invisible
-        # For pentad_in_year=1, forecast_date=2024-01-05:
-        #   first_day_of_forecast_horizon = 2024-01-06
-        #   pentad_in_month = get_pentad(2024-01-06) = "2"
+        # For pentad_in_year=1, forecast_horizon_int=1:
+        #   month_int = (1-1)//6 + 1 = 1  (January)
+        #   pentad_in_month = (1-1)%6 + 1 = 1
         #   title_month = "January"
-        #   filename: TEST1_2_pentad_of_January.csv
+        #   filename: TEST1_1_pentad_of_January.csv
         csv_content = pd.DataFrame(
             {
                 "year": years,
                 "visible": [False, True, True, True, False],
             }
         )
-        csv_path = selection_dir / "TEST1_2_pentad_of_January.csv"
+        csv_path = selection_dir / "TEST1_1_pentad_of_January.csv"
         csv_content.to_csv(csv_path, index=False)
 
         monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
@@ -3544,6 +3543,244 @@ class TestPointSelectionAPI:
         assert isinstance(horizon_value_passed, int), (
             f"horizon_value passed to _read_lr_visibility must be int, "
             f"got {type(horizon_value_passed).__name__!r}"
+        )
+
+
+class TestLrVisibilityParams(unittest.TestCase):
+    """Verify that perform_linear_regression computes month_int and
+    pentad_in_month (the visibility-lookup parameters) correctly for all
+    valid forecast_horizon_int values, and that the computed values match
+    the equivalent formula used by the dashboard when saving visibility data.
+    """
+
+    # ------------------------------------------------------------------
+    # Test 1 — Pentad arithmetic matches dashboard for all 72 pentads
+    # ------------------------------------------------------------------
+
+    def test_pentad_params_match_dashboard_for_all_72(self):
+        """For every forecast_horizon_int h=1..72 with periods_per_month=6,
+        the pipeline formula must produce the same (month, period) tuple
+        as the dashboard save formula."""
+        periods_per_month = 6
+        for h in range(1, 73):
+            # Pipeline formula (perform_linear_regression)
+            pipeline_month = (h - 1) // periods_per_month + 1
+            pipeline_period = (h - 1) % periods_per_month + 1
+
+            # Dashboard save formula
+            dashboard_month = math.ceil(h / periods_per_month)
+            dashboard_period = h % periods_per_month or periods_per_month
+
+            assert pipeline_month == dashboard_month, (
+                f"h={h}: pipeline month={pipeline_month} != dashboard month={dashboard_month}"
+            )
+            assert pipeline_period == dashboard_period, (
+                f"h={h}: pipeline period={pipeline_period} != dashboard period={dashboard_period}"
+            )
+
+    # ------------------------------------------------------------------
+    # Test 2 — Decad arithmetic matches dashboard for all 36 decads
+    # ------------------------------------------------------------------
+
+    def test_decad_params_match_dashboard_for_all_36(self):
+        """For every forecast_horizon_int d=1..36 with periods_per_month=3,
+        the pipeline formula must produce the same (month, period) tuple
+        as the dashboard save formula."""
+        periods_per_month = 3
+        for d in range(1, 37):
+            # Pipeline formula
+            pipeline_month = (d - 1) // periods_per_month + 1
+            pipeline_period = (d - 1) % periods_per_month + 1
+
+            # Dashboard save formula
+            dashboard_month = math.ceil(d / periods_per_month)
+            dashboard_period = d % periods_per_month or periods_per_month
+
+            assert pipeline_month == dashboard_month, (
+                f"d={d}: pipeline month={pipeline_month} != dashboard month={dashboard_month}"
+            )
+            assert pipeline_period == dashboard_period, (
+                f"d={d}: pipeline period={pipeline_period} != dashboard period={dashboard_period}"
+            )
+
+    # ------------------------------------------------------------------
+    # Test 3 — Last pentad of each month stays in that month
+    # ------------------------------------------------------------------
+
+    def test_month_boundary_pentads_no_crossover(self):
+        """The last pentad of each month (h=6,12,18,...,72) must map to
+        period_in_month=6 within the current month, never crossing into the
+        next month."""
+        periods_per_month = 6
+        last_pentads = [h for h in range(1, 73) if h % periods_per_month == 0]
+        assert len(last_pentads) == 12, "There should be exactly 12 month-boundary pentads"
+
+        for h in last_pentads:
+            expected_month = h // periods_per_month
+            month = (h - 1) // periods_per_month + 1
+            period = (h - 1) % periods_per_month + 1
+
+            assert month == expected_month, (
+                f"h={h}: expected month={expected_month}, got month={month}"
+            )
+            assert period == 6, f"h={h}: last pentad of month should have period=6, got {period}"
+            assert 1 <= month <= 12, f"h={h}: month={month} is out of range 1-12"
+
+    # ------------------------------------------------------------------
+    # Test 4 — h=72 maps to December, period 6
+    # ------------------------------------------------------------------
+
+    def test_pentad_72_is_december(self):
+        """forecast_horizon_int=72 (the last pentad of the year) must map
+        to month=12, period=6."""
+        h = 72
+        periods_per_month = 6
+        month = (h - 1) // periods_per_month + 1
+        period = (h - 1) % periods_per_month + 1
+
+        assert month == 12, f"h=72 must map to month=12, got {month}"
+        assert period == 6, f"h=72 must map to period=6, got {period}"
+
+    # ------------------------------------------------------------------
+    # Test 5 — _read_lr_visibility called with issue pentad params (h=17)
+    # ------------------------------------------------------------------
+
+    @patch("iEasyHydroForecast.forecast_library._read_lr_visibility")
+    def test_api_called_with_issue_pentad_params(self, mock_read_vis):
+        """perform_linear_regression with forecast_horizon_int=17 must call
+        _read_lr_visibility with month=3, horizon_value=5.
+
+        Pentad 17 is the 5th pentad of March:
+          month = (17-1)//6 + 1 = 16//6 + 1 = 2 + 1 = 3
+          period = (17-1)%6 + 1 = 16%6 + 1 = 4 + 1 = 5
+
+        The old (buggy) date-offset formula would produce period=6 (off by one).
+        """
+        import os
+
+        mock_read_vis.return_value = None
+
+        # Remove the CSV point-selection env var so only the API path is active.
+        # Restore it after the test so other tests are unaffected.
+        env_key = "ieasyforecast_linreg_point_selection"
+        saved = os.environ.pop(env_key, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, env_key, saved)
+
+        years = [2019, 2020, 2021, 2022, 2023]
+        rows = []
+        for i, year in enumerate(years):
+            discharge_sum = 100.0 + i * 50.0
+            rows.append(
+                {
+                    "date": pd.Timestamp(f"{year}-03-27"),
+                    "code": "TEST1",
+                    "pentad_in_year": 17,
+                    "discharge_sum": discharge_sum,
+                    "discharge_avg": discharge_sum * 0.1,
+                }
+            )
+        station_data = pd.DataFrame(rows)
+
+        fl.perform_linear_regression(
+            station_data,
+            station_col="code",
+            horizon_col="pentad_in_year",
+            predictor_col="discharge_sum",
+            discharge_avg_col="discharge_avg",
+            forecast_horizon_int=17,
+            forecast_date=dt.date(2024, 1, 1),
+        )
+
+        assert mock_read_vis.called, "_read_lr_visibility was not called"
+        call_args = mock_read_vis.call_args
+
+        month_passed = (
+            call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("month")
+        )
+        horizon_value_passed = (
+            call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("horizon_value")
+        )
+
+        assert month_passed == 3, (
+            f"forecast_horizon_int=17 must call _read_lr_visibility with month=3, "
+            f"got month={month_passed}"
+        )
+        assert horizon_value_passed == 5, (
+            f"forecast_horizon_int=17 must call _read_lr_visibility with "
+            f"horizon_value=5 (5th pentad of March), got horizon_value={horizon_value_passed}. "
+            f"The old date-offset formula produced 6 — this is the regression test."
+        )
+
+    # ------------------------------------------------------------------
+    # Test 6 — _read_lr_visibility called with boundary pentad params (h=18)
+    # ------------------------------------------------------------------
+
+    @patch("iEasyHydroForecast.forecast_library._read_lr_visibility")
+    def test_month_boundary_pentad_18_no_crossover(self, mock_read_vis):
+        """perform_linear_regression with forecast_horizon_int=18 (last pentad
+        of March, boundary day Mar 31) must call _read_lr_visibility with
+        month=3, horizon_value=6, NOT month=4, horizon_value=1.
+
+        Pentad 18 is the 6th (last) pentad of March:
+          month = (18-1)//6 + 1 = 17//6 + 1 = 2 + 1 = 3
+          period = (18-1)%6 + 1 = 17%6 + 1 = 5 + 1 = 6
+        """
+        import os
+
+        mock_read_vis.return_value = None
+
+        # Remove the CSV point-selection env var so only the API path is active.
+        # Restore it after the test so other tests are unaffected.
+        env_key = "ieasyforecast_linreg_point_selection"
+        saved = os.environ.pop(env_key, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, env_key, saved)
+
+        years = [2019, 2020, 2021, 2022, 2023]
+        rows = []
+        for i, year in enumerate(years):
+            discharge_sum = 100.0 + i * 50.0
+            rows.append(
+                {
+                    "date": pd.Timestamp(f"{year}-03-31"),
+                    "code": "TEST1",
+                    "pentad_in_year": 18,
+                    "discharge_sum": discharge_sum,
+                    "discharge_avg": discharge_sum * 0.1,
+                }
+            )
+        station_data = pd.DataFrame(rows)
+
+        fl.perform_linear_regression(
+            station_data,
+            station_col="code",
+            horizon_col="pentad_in_year",
+            predictor_col="discharge_sum",
+            discharge_avg_col="discharge_avg",
+            forecast_horizon_int=18,
+            forecast_date=dt.date(2024, 1, 1),
+        )
+
+        assert mock_read_vis.called, "_read_lr_visibility was not called"
+        call_args = mock_read_vis.call_args
+
+        month_passed = (
+            call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("month")
+        )
+        horizon_value_passed = (
+            call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("horizon_value")
+        )
+
+        assert month_passed == 3, (
+            f"forecast_horizon_int=18 (last pentad of March) must call "
+            f"_read_lr_visibility with month=3, got month={month_passed}. "
+            f"Month must NOT cross over to April."
+        )
+        assert horizon_value_passed == 6, (
+            f"forecast_horizon_int=18 (last pentad of March) must call "
+            f"_read_lr_visibility with horizon_value=6, got {horizon_value_passed}. "
+            f"The boundary day (Mar 31) must not cause a month crossover to April period 1."
         )
 
 
