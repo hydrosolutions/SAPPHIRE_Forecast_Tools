@@ -447,7 +447,7 @@ def get_data(horizon, station, all_stations) -> dict:
     # Only merge if both sides have data and the required join keys
     forecasts_all = data["forecasts_all"]
     forecast_stats = data["forecast_stats"]
-    merge_keys = ["code", hin, "model_short", "model_long"]
+    merge_keys = ["code", hin, "model_short"]
     can_merge = (
         not forecasts_all.empty
         and not forecast_stats.empty

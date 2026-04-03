@@ -289,8 +289,8 @@ class DataManager(param.Parameterized):
         # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
         # the pentad of the forecast period.
         forecast_horizon = int(
-            self.linreg_predictor[self.horizon_in_year(horizon)].tail(1).values[0]
-        ) + 1
+            self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
+        )
         return last_date, forecast_horizon, last_date.year
 
     # @property
