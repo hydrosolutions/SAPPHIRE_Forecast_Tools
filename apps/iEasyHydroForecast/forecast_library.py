@@ -1587,13 +1587,11 @@ def perform_linear_regression(
         logger.info("-- Performing linear regression for penatadal forecasting --")
         horizon_flag = "pentad"
         forecast_horizon_max = 72
-        forecast_date_str = tl.get_date_for_last_day_in_pentad(forecast_horizon_int, year=_year)
 
     elif "decad" in horizon_col:
         logger.info("-- Performing linear regression for decad forecasting --")
         horizon_flag = "decad"
         forecast_horizon_max = 36
-        forecast_date_str = tl.get_date_for_last_day_in_decad(forecast_horizon_int, year=_year)
 
     else:
         raise ValueError('horizon_col must contain the string "pentad" or "decad"')
@@ -1689,17 +1687,14 @@ def perform_linear_regression(
         # --- Point selection: filter years based on visibility ---
         logger.info("Checking point selection for station %s.", station)
 
-        # Compute date components needed by both API and CSV paths
-        first_day_of_forecast_horizon = pd.to_datetime(forecast_date_str).date() + pd.DateOffset(
-            days=1
-        )
+        # Compute visibility lookup parameters from forecast_horizon_int
+        # (issue-pentad convention — matches dashboard saves to /api/postprocessing/lr-visibility/)
         if horizon_flag == "pentad":
-            pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
-        elif horizon_flag == "decad":
-            pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
-        else:
-            raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
-        month_int = first_day_of_forecast_horizon.month
+            periods_per_month = 6
+        else:  # decad
+            periods_per_month = 3
+        month_int = (forecast_horizon_int - 1) // periods_per_month + 1
+        pentad_in_month = (forecast_horizon_int - 1) % periods_per_month + 1
 
         # Map internal horizon_flag to API enum value
         api_horizon = "decade" if horizon_flag == "decad" else horizon_flag
@@ -1721,7 +1716,7 @@ def perform_linear_regression(
                         "linreg_point_selection",
                     ),
                 )
-                title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
+                title_month = tl.get_month_str_en(f"{_year}-{month_int:02d}-01")
                 save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
                 save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
                 if os.path.exists(save_file_path):

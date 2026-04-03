@@ -183,6 +183,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-007** | Update dashboard Docker dataflows to operational mode with logging | **Medium** | Implemented | [`mid_prio_gi_draft_fd_docker_dataflows_update.md`](issues/mid_prio_gi_draft_fd_docker_dataflows_update.md) | — |
 | **FD-008** | Fix error handling in inner `run_docker_container` (Save Changes) | **Low** | Draft | [`low_prio_gi_draft_fd_inner_run_docker_error_handling.md`](issues/low_prio_gi_draft_fd_inner_run_docker_error_handling.md) | — |
 | **FD-009** | Pass explicit forecast date to containers in dashboard retrigger flows | **Medium** | Draft | [`mid_prio_gi_draft_fd_retrigger_forecast_date.md`](issues/mid_prio_gi_draft_fd_retrigger_forecast_date.md) | FD-007 |
+| **FD-010** | Fix lr-visibility parameter mismatch — linreg queries target-pentad, dashboard saves issue-pentad | **Medium** | Review | [`mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md`](issues/mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md) | FD-009 |
+| **FD-011** | Horizon selector widget passes translated strings as API enum values | **High** | Draft | [`high_prio_gi_draft_fd_horizon_selector_i18n.md`](issues/high_prio_gi_draft_fd_horizon_selector_i18n.md) | — |
 
 ### iEasyHydro HF Migration
 
