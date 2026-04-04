@@ -309,11 +309,24 @@ class DataManager(param.Parameterized):
                 return
             print("Triggered rerunning of forecasts.")
             logger.info("Data reload triggered — refreshing visualisations.")
+            _fa = self.forecasts_all
+            logger.debug(
+                "D5 Before refresh — forecasts_all: %d rows, max date=%s",
+                len(_fa) if _fa is not None else 0,
+                _fa["date"].max() if _fa is not None and not _fa.empty else "N/A",
+            )
+            logger.warning(
+                "D7 data_needs_reload fired but load_station() is NOT called "
+                "— refresh_all_visualizations() will display stale data"
+            )
             try:
-                # here dm.load_station
-                #print("---data loaded---")
                 pm.refresh_all_visualizations()
-                #print("Forecasts produced and visualizations updated successfully.")
+                _fa2 = self.forecasts_all
+                logger.debug(
+                    "D6 After refresh — forecasts_all: %d rows, max date=%s",
+                    len(_fa2) if _fa2 is not None else 0,
+                    _fa2["date"].max() if _fa2 is not None and not _fa2.empty else "N/A",
+                )
             except Exception as e:
                 logger.error("Error during forecast rerun: %s", e)
                 print(f"Error during forecast rerun: {e}")

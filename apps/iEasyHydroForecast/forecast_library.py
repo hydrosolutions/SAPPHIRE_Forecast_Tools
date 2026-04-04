@@ -1695,6 +1695,15 @@ def perform_linear_regression(
             periods_per_month = 3
         month_int = (forecast_horizon_int - 1) // periods_per_month + 1
         pentad_in_month = (forecast_horizon_int - 1) % periods_per_month + 1
+        logger.debug(
+            "D1 lr-visibility query params: horizon=%s, station=%s, "
+            "month=%d, period=%d (forecast_horizon_int=%d)",
+            horizon_flag,
+            station,
+            month_int,
+            pentad_in_month,
+            forecast_horizon_int,
+        )
 
         # Map internal horizon_flag to API enum value
         api_horizon = "decade" if horizon_flag == "decad" else horizon_flag
@@ -1703,6 +1712,13 @@ def perform_linear_regression(
 
         # Try API first
         api_result = _read_lr_visibility(api_horizon, station, month_int, int(pentad_in_month))
+        logger.debug(
+            "D2 lr-visibility API result for station %s: %s",
+            station,
+            f"{len(api_result)} rows, empty={api_result.empty}"
+            if api_result is not None
+            else "None (API failed)",
+        )
         if api_result is not None and not api_result.empty:
             point_selection = api_result[["year", "visible"]]
             logger.info("Using API point selection for station %s.", station)
@@ -1733,12 +1749,19 @@ def perform_linear_regression(
 
         # Apply point selection filter if we have visibility data
         if point_selection is not None and not point_selection.empty:
+            n_before = len(station_data)
             station_data["year"] = station_data["date"].dt.year
             station_data = station_data.merge(
                 point_selection[["year", "visible"]], on="year", how="left"
             )
             station_data = station_data[station_data["visible"] == True]
             station_data.drop(columns=["visible", "year"], inplace=True)
+            logger.debug(
+                "D3 Visibility filter for station %s: %d → %d training rows",
+                station,
+                n_before,
+                len(station_data),
+            )
 
         # if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
