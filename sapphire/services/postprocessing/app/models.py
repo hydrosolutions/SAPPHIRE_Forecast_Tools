@@ -267,8 +267,7 @@ class Bulletin(Base):
             "year",
             "horizon_value",
             "code",
-            "model_type",
-            name="uq_bulletins_horizon_year_number_code_model",
+            name="uq_bulletins_horizon_year_number_code",
         ),
     )
 

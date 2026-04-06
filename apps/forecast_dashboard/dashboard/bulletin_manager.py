@@ -123,21 +123,13 @@ def _save_bulletin_to_api(horizon_type: str, forecast_year: int, forecast_horizo
 
 
 def _delete_site_from_api(horizon_type: str, forecast_year: int, forecast_horizon: int, site) -> None:
-    """Delete every model row belonging to one site from the API bulletin table."""
-    if site.forecasts is None or site.forecasts.empty:
-        return
-
-    for _idx, row in site.forecasts.iterrows():
-        model = row.get(_('Model'), '')
-        if not model:
-            continue
-        db._delete_data(_SERVICE, _RESOURCE, {
-            "horizon":       horizon_type,
-            "year":          forecast_year,
-            "horizon_value": forecast_horizon,
-            "code":          site.code,
-            "model":         model,
-        })
+    """Delete the bulletin record for one site from the API bulletin table."""
+    db._delete_data(_SERVICE, _RESOURCE, {
+        "horizon":       horizon_type,
+        "year":          forecast_year,
+        "horizon_value": forecast_horizon,
+        "code":          site.code,
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -295,11 +295,10 @@ def delete_bulletin(
     year: int,
     horizon_value: int,
     code: str,
-    model: str,
     db: Session = Depends(get_db)
 ):
     """Delete a bulletin identified by its unique constraint fields:
-    horizon_type, year, horizon_value, code, model_type"""
+    horizon_type, year, horizon_value, code"""
     try:
         deleted = crud.delete_bulletin(
             db=db,
@@ -307,7 +306,6 @@ def delete_bulletin(
             year=year,
             horizon_value=horizon_value,
             code=code,
-            model=model
         )
         if not deleted:
             raise HTTPException(
