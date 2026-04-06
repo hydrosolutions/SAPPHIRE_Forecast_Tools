@@ -2257,18 +2257,6 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
     forecast_mean = forecasts[variable].mean() if not forecasts.empty else float('nan')
     forecast_text = f"{_('Forecast')}, {forecast_period}: {forecast_mean:.{decimals}f} {config['unit']}" if not pd.isna(forecast_mean) else _('Forecast')
 
-    hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
-        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=True)
-
-    hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
-        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=False)
-
     # Calculate y-axis limits safely
     all_values = pd.concat([current_year[variable], norm_snow[variable]]).dropna()
     if not all_values.empty:
@@ -2315,9 +2303,9 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year * hv_forecast
+        figure = vlines * hv_norm * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year
+        figure = vlines * hv_norm * hv_current_year
 
     figure.opts(
         title=title_text,
