@@ -934,6 +934,15 @@ def plot_runoff_forecast_range_area_v2(
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
 
+        # Guard: skip models that are missing bound columns
+        if min_col not in model_data.columns or max_col not in model_data.columns:
+            logger.warning(
+                "plot_runoff_forecast_range_area_v2: skipping model %r — "
+                "missing column(s) %r and/or %r",
+                model, min_col, max_col
+            )
+            continue
+
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
         # legend_entry = model + ": " + lower_bound + "-" + upper_bound + " " + unit_string
@@ -1709,6 +1718,15 @@ def plot_daily_hydrograph_data(_, dm, wm, hydrograph_day_all, linreg_predictor, 
     # print("hydrgraph_day_all station_labels unique values: ", hydrograph_day_all['station_labels'].unique())
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
+    if data.empty or data['date'].isna().all():
+        return hv.Curve([]).opts(
+            title=_("No data available for station ") + station,
+            xlabel="",
+            ylabel=_('Discharge (m³/s)'),
+            height=400,
+            responsive=True,
+            hooks=[remove_bokeh_logo],
+        )
     # print("\n\n\ncolumns of data: ", data.columns)
     # print("head and tail of data: \n", data.head(), "\n", data.tail())
     current_year = int(data['date'].dt.year.max())
@@ -2239,18 +2257,6 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
     forecast_mean = forecasts[variable].mean() if not forecasts.empty else float('nan')
     forecast_text = f"{_('Forecast')}, {forecast_period}: {forecast_mean:.{decimals}f} {config['unit']}" if not pd.isna(forecast_mean) else _('Forecast')
 
-    hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
-        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=True)
-
-    hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
-        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=False)
-
     # Calculate y-axis limits safely
     all_values = pd.concat([current_year[variable], norm_snow[variable]]).dropna()
     if not all_values.empty:
@@ -2297,9 +2303,9 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year * hv_forecast
+        figure = vlines * hv_norm * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year
+        figure = vlines * hv_norm * hv_current_year
 
     figure.opts(
         title=title_text,
@@ -2391,6 +2397,15 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
                                                   (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
         forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
                                                   (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
+
+    if 'fc_lower' not in forecasts.columns:
+        logger.warning(
+            "fc_lower not created (range_type=%r did not match any branch). "
+            "Falling back to forecasted_discharge.",
+            range_type
+        )
+        forecasts['fc_lower'] = forecasts['forecasted_discharge']
+        forecasts['fc_upper'] = forecasts['forecasted_discharge']
 
     # print tail of forecasts
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")

@@ -81,12 +81,11 @@ def create_decad_selector(last_date):
 # ============================== Widgets for sidebar content ==============================
 def create_horizon_selector():
     """Create forecast horizon selection widget."""
-    # horizon_types = [_("day"), _("pentad"), _("decade"), _("month"), _("quarter"), _("season")]
-    horizon_types = [_("pentad"), _("decade")]
+    horizon_types = {_("pentad"): "pentad", _("decade"): "decade"}
     horizon_selector = pn.widgets.Select(
         name=_("Select forecast horizon:"),
         options=horizon_types,
-        value=_("pentad"),
+        value="pentad",
         margin=(0, 0, 0, 0)
     )
     return horizon_selector

@@ -358,17 +358,17 @@ def get_skill_metric(
 
 
 def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin]:
-    """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code, model_type)"""
+    """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code)"""
     try:
         incoming = [item.model_dump() for item in bulk_data.data]
-        keys = {(i["horizon_type"], i["year"], i["horizon_value"], i["code"], i["model_type"]) for i in incoming}
+        keys = {(i["horizon_type"], i["year"], i["horizon_value"], i["code"]) for i in incoming}
 
         existing_map = {
-            (r.horizon_type, r.year, r.horizon_value, r.code, r.model_type): r
+            (r.horizon_type, r.year, r.horizon_value, r.code): r
             for r in db.query(Bulletin).filter(
                 tuple_(
                     Bulletin.horizon_type, Bulletin.year, Bulletin.horizon_value,
-                    Bulletin.code, Bulletin.model_type
+                    Bulletin.code
                 ).in_(keys)
             ).all()
         }
@@ -376,7 +376,7 @@ def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin
         db_bulletins = []
         changed = []
         for data in incoming:
-            key = (data["horizon_type"], data["year"], data["horizon_value"], data["code"], data["model_type"])
+            key = (data["horizon_type"], data["year"], data["horizon_value"], data["code"])
             existing = existing_map.get(key)
 
             if existing:
@@ -440,7 +440,6 @@ def delete_bulletin(
     year: int,
     horizon_value: int,
     code: str,
-    model: str,
 ) -> bool:
     """Delete a bulletin by its unique constraint fields. Returns True if deleted, False if not found."""
     try:
@@ -449,7 +448,6 @@ def delete_bulletin(
             Bulletin.year == year,
             Bulletin.horizon_value == horizon_value,
             Bulletin.code == code,
-            Bulletin.model_type == model
         ).first()
 
         if not existing_bulletin:
@@ -457,7 +455,7 @@ def delete_bulletin(
 
         db.delete(existing_bulletin)
         db.commit()
-        logger.info(f"Deleted bulletin: {horizon}, {year}, {horizon_value}, {code}, {model}")
+        logger.info(f"Deleted bulletin: {horizon}, {year}, {horizon_value}, {code}")
         return True
     except SQLAlchemyError as e:
         db.rollback()

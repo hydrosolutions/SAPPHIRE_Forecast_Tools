@@ -123,21 +123,13 @@ def _save_bulletin_to_api(horizon_type: str, forecast_year: int, forecast_horizo
 
 
 def _delete_site_from_api(horizon_type: str, forecast_year: int, forecast_horizon: int, site) -> None:
-    """Delete every model row belonging to one site from the API bulletin table."""
-    if site.forecasts is None or site.forecasts.empty:
-        return
-
-    for _idx, row in site.forecasts.iterrows():
-        model = row.get(_('Model'), '')
-        if not model:
-            continue
-        db._delete_data(_SERVICE, _RESOURCE, {
-            "horizon":       horizon_type,
-            "year":          forecast_year,
-            "horizon_value": forecast_horizon,
-            "code":          site.code,
-            "model":         model,
-        })
+    """Delete the bulletin record for one site from the API bulletin table."""
+    db._delete_data(_SERVICE, _RESOURCE, {
+        "horizon":       horizon_type,
+        "year":          forecast_year,
+        "horizon_value": forecast_horizon,
+        "code":          site.code,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +163,7 @@ class BulletinManager:
         # --- Initial table render & basin filter watcher ---
         self._update_bulletin_table()
         wm.basin_selector.param.watch(lambda event: self._update_bulletin_table(), 'value')
+        wm.register_post_load_callback(self._on_horizon_change)
 
         # --- Button callbacks ---
         wm.add_to_bulletin_button.on_click(self._on_add)
@@ -187,6 +180,33 @@ class BulletinManager:
             self.wm.forecast_year,
             self.wm.forecast_horizon,
         )
+
+    def _on_horizon_change(self) -> None:
+        """Reload bulletin after station/period data has finished loading.
+
+        Called via wm._post_load_callbacks so it always runs AFTER
+        dm.load_station() and dm.get_bulletin_metadata() have both
+        completed with the current horizon.
+        """
+        horizon = self.wm.horizon_selector.value
+        try:
+            _last_date, forecast_horizon, forecast_year = (
+                self.dm.get_bulletin_metadata(horizon)
+            )
+        except (KeyError, IndexError):
+            logger.info("No %s data available yet, clearing bulletin.", horizon)
+            self.bulletin_sites = []
+            self._update_bulletin_table()
+            return
+
+        self.wm.forecast_horizon = forecast_horizon
+        self.wm.forecast_year = forecast_year
+
+        self.bulletin_sites = _load_bulletin_from_api(
+            horizon, forecast_year, forecast_horizon,
+            self.dm.sites_list,
+        )
+        self._update_bulletin_table()
 
     def _update_bulletin_table(self) -> None:
         # Function to update the bulletin table

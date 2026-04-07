@@ -267,5 +267,8 @@ class PlotManager:
             wm.pentad_selector.value, wm.decad_selector.value,
             self._cfg.save_directory,
         )
+        if plot is None:
+            self.forecast_data_and_plot[:] = []
+            return
         self.forecast_data_and_plot[:] = plot.objects
         self.update_forecast_plots()
