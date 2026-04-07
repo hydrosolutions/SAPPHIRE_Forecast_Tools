@@ -3285,6 +3285,12 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     # Get API URL from environment, default to localhost
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    logger.debug(
+        "D8 _write_lr_forecast_to_api: SAPPHIRE_API_URL=%s, horizon=%s, rows=%d",
+        api_url,
+        horizon_type,
+        len(data),
+    )
 
     # Check if API writing is enabled (default: enabled)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
@@ -3295,7 +3301,9 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     client = _get_postprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
-    if not client.readiness_check():
+    ready = client.readiness_check()
+    logger.debug("D9 API readiness check: %s (url=%s)", ready, api_url)
+    if not ready:
         logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping LR forecast write")
         return False
 
