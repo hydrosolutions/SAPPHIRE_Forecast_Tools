@@ -193,6 +193,7 @@ services:
       API_BASE_URL: ${POSTPROCESSING_API_URL}
       BATCH_SIZE: ${BATCH_SIZE}
       CSV_FOLDER: ${CSV_FOLDER}
+      CONFIG_FOLDER: ${CONFIG_FOLDER}
       PYTHONPATH: /code
     networks:
       - sapphire-network
@@ -201,6 +202,7 @@ services:
     volumes:
       - ./services/postprocessing:/code
       - ${INTERMEDIATE_DATA_PATH}:/intermediate_data
+      - ${CONFIG_PATH}:/config
 
   user-api:
     build:
