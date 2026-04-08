@@ -944,3 +944,349 @@ class TestMaintenanceModeGapFilling:
                 os.environ.pop("ieasyforecast_daily_discharge_file", None)
             else:
                 os.environ["ieasyforecast_daily_discharge_file"] = orig_file
+
+
+# ---------------------------------------------------------------------------
+# Tests for uzhm wide-matrix Excel reader
+# ---------------------------------------------------------------------------
+from datetime import date as date_type  # noqa: E402
+
+import openpyxl  # noqa: E402  (appended after existing imports block)
+
+
+def _build_uzhm_xlsx(path, station_header, year_data):
+    """
+    Create a uzhm-format xlsx file at *path*.
+
+    Args:
+        path: pathlib.Path — destination file path.
+        station_header: str — e.g. "16022 Syrdariya-Chinaz", placed in E1.
+        year_data: dict mapping year (int) -> list of 31 rows, where each row
+            is a list of 12 discharge values (index 0=Jan, …, 11=Dec).
+            Use None for invalid / non-existing dates.
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove default blank sheet
+
+    for year, daily_values in year_data.items():
+        ws = wb.create_sheet(title=str(year))
+
+        # Row 1: station header in E1 (column 5)
+        ws.cell(row=1, column=5, value=station_header)
+
+        # Row 2: empty
+
+        # Row 3: "Day" label
+        ws.cell(row=3, column=1, value="Day")
+
+        # Row 4: month numbers 1-12 in cols B-M (columns 2-13)
+        for m in range(1, 13):
+            ws.cell(row=4, column=m + 1, value=m)
+
+        # Rows 5-35: day rows (days 1-31)
+        for day_idx, discharges in enumerate(daily_values, start=1):
+            row_num = 4 + day_idx  # row 5 = day 1
+            ws.cell(row=row_num, column=1, value=day_idx)
+            for month_idx, val in enumerate(discharges, start=1):
+                ws.cell(row=row_num, column=month_idx + 1, value=val)
+
+        # Row 37 (after day 31 at row 36): summary row that must be ignored
+        ws.cell(row=37, column=1, value="Average")
+        for m in range(1, 13):
+            ws.cell(row=37, column=m + 1, value=500.0)
+
+    wb.save(path)
+
+
+def _make_year_data(base_value=800.0):
+    """Return 31 rows x 12 months of discharge, with None for invalid dates."""
+    import calendar
+
+    # We'll use a simple pattern: base_value + day + month as the discharge
+    rows = []
+    for day in range(1, 32):
+        discharges = []
+        for month in range(1, 13):
+            max_day = calendar.monthrange(2000, month)[1]
+            if day > max_day:
+                discharges.append(None)
+            else:
+                discharges.append(base_value + day + month)
+        rows.append(discharges)
+    return rows
+
+
+def _make_uzhm_fixture(tmp_path):
+    """
+    Create two uzhm xlsx files in tmp_path:
+      - 16022.xlsx  (station "16022 Syrdariya-Chinaz", years 2000 & 2001)
+      - 16198.xlsx  (station "16198 AmuDarya-Termez", years 2000 & 2001)
+    Returns tmp_path.
+    """
+    # Build year_data for 2000 (leap year) and 2001 (non-leap)
+    year_data_2000 = _make_year_data(800.0)
+    year_data_2001 = _make_year_data(700.0)
+
+    # Override day=1 values for station 16022 to match test_happy_path assertion:
+    # date(2000, 1, 1) -> discharge 832.0
+    # Formula: 800 + day(1) + month(1) = 802 by default; override to 832
+    year_data_2000[0][0] = 832.0  # day=1, January
+
+    _build_uzhm_xlsx(
+        tmp_path / "16022.xlsx",
+        "16022 Syrdariya-Chinaz",
+        {2000: year_data_2000, 2001: year_data_2001},
+    )
+    _build_uzhm_xlsx(
+        tmp_path / "16198.xlsx",
+        "16198 AmuDarya-Termez",
+        {2000: _make_year_data(600.0), 2001: _make_year_data(500.0)},
+    )
+    return tmp_path
+
+
+class TestUzhmWideMatrixReader:
+    """Unit tests for the uzhm wide-matrix Excel reader functions."""
+
+    def test_happy_path(self, tmp_path):
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+        filename = fixture_dir / "16022.xlsx"
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(filename),
+            code_list=["16022"],
+            date_col="date",
+            discharge_col="discharge",
+            name_col="name",
+            code_col="code",
+        )
+
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
+
+        # Expected columns
+        for col in ["date", "discharge", "code", "name"]:
+            assert col in result.columns, f"Missing column: {col}"
+
+        # Specific value: Jan 1 2000 should be 832.0
+        jan1 = result[result["date"] == date_type(2000, 1, 1)]
+        assert not jan1.empty, "Expected a row for 2000-01-01"
+        assert float(jan1["discharge"].iloc[0]) == 832.0
+
+        # Code is int
+        assert result["code"].dtype.kind in ("i", "u"), "code column should be integer type"
+        assert int(result["code"].iloc[0]) == 16022
+
+        # Name
+        assert result["name"].iloc[0] == "Syrdariya-Chinaz"
+
+        # Dates are coercible to datetime
+        pd.to_datetime(result["date"])
+
+    def test_invalid_dates_excluded(self, tmp_path):
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+        filename = fixture_dir / "16022.xlsx"
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(filename),
+            code_list=["16022"],
+        )
+
+        # Feb 30 and Feb 31 are not valid calendar dates and must not appear.
+        # We check by filtering on year/month/day rather than constructing
+        # Python date objects (which would raise ValueError).
+        dates = result["date"]
+        feb_day30_2000 = result[
+            (dates.apply(lambda d: d.year) == 2000)
+            & (dates.apply(lambda d: d.month) == 2)
+            & (dates.apply(lambda d: d.day) == 30)
+        ]
+        assert feb_day30_2000.empty, "Feb 30 2000 should not appear in output"
+
+        feb_day30_2001 = result[
+            (dates.apply(lambda d: d.year) == 2001)
+            & (dates.apply(lambda d: d.month) == 2)
+            & (dates.apply(lambda d: d.day) == 30)
+        ]
+        assert feb_day30_2001.empty, "Feb 30 2001 should not appear in output"
+
+        # Apr 31 must never appear (April has 30 days)
+        apr_day31 = result[
+            (dates.apply(lambda d: d.month) == 4) & (dates.apply(lambda d: d.day) == 31)
+        ]
+        assert apr_day31.empty, "Apr 31 should not appear in output"
+
+        # February 2000 is a leap year (29 days)
+        feb_2000 = result[
+            (result["date"].apply(lambda d: d.year) == 2000)
+            & (result["date"].apply(lambda d: d.month) == 2)
+        ]
+        assert len(feb_2000) == 29, f"Expected 29 Feb rows for leap year 2000, got {len(feb_2000)}"
+
+        # February 2001 is not a leap year (28 days)
+        feb_2001 = result[
+            (result["date"].apply(lambda d: d.year) == 2001)
+            & (result["date"].apply(lambda d: d.month) == 2)
+        ]
+        assert len(feb_2001) == 28, f"Expected 28 Feb rows for 2001, got {len(feb_2001)}"
+
+    def test_none_discharge_excluded(self, tmp_path):
+        """Rows with None discharge values must not appear in output."""
+
+        # Build a year with explicit None for Jan 15
+        year_data = _make_year_data(800.0)
+        year_data[14][0] = None  # day=15, January -> None
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "2000"
+        ws.cell(row=1, column=1, value="16999 Test-River")
+        for m in range(1, 13):
+            ws.cell(row=4, column=m + 1, value=m)
+        for day_idx, discharges in enumerate(year_data, start=1):
+            ws.cell(row=4 + day_idx, column=1, value=day_idx)
+            for month_idx, val in enumerate(discharges, start=1):
+                ws.cell(row=4 + day_idx, column=month_idx + 1, value=val)
+        xlpath = tmp_path / "16999.xlsx"
+        wb.save(xlpath)
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(xlpath),
+            code_list=["16999"],
+        )
+
+        # Jan 15 should be absent
+        jan15 = result[result["date"] == date_type(2000, 1, 15)]
+        assert jan15.empty, "date(2000,1,15) with None discharge should be excluded"
+
+        # Jan 14 should be present (it has a valid value)
+        jan14 = result[result["date"] == date_type(2000, 1, 14)]
+        assert not jan14.empty, "date(2000,1,14) should be present"
+
+    def test_code_not_in_code_list_returns_empty(self, tmp_path):
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+        filename = fixture_dir / "16022.xlsx"
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(filename),
+            code_list=["99999"],
+        )
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+    def test_non_year_sheet_skipped(self, tmp_path):
+        """A sheet named 'Summary' must not crash the reader or add data."""
+        # Build a file that has a "Summary" sheet alongside valid year sheets
+        wb = openpyxl.Workbook()
+        ws_year = wb.active
+        ws_year.title = "2000"
+        ws_year.cell(row=1, column=1, value="16100 RiverX")
+        for m in range(1, 13):
+            ws_year.cell(row=4, column=m + 1, value=m)
+        for day in range(1, 29):  # safe days only
+            ws_year.cell(row=4 + day, column=1, value=day)
+            for m in range(1, 13):
+                ws_year.cell(row=4 + day, column=m + 1, value=100.0 + day + m)
+
+        ws_summary = wb.create_sheet(title="Summary")
+        ws_summary.cell(row=1, column=1, value="This should be ignored")
+        ws_summary.cell(row=5, column=1, value=1)
+        ws_summary.cell(row=5, column=2, value=9999.0)
+
+        xlpath = tmp_path / "16100.xlsx"
+        wb.save(xlpath)
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(xlpath),
+            code_list=["16100"],
+        )
+
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
+
+        # The value 9999.0 from the Summary sheet must not appear
+        assert 9999.0 not in result["discharge"].values, (
+            "Discharge 9999.0 from 'Summary' sheet should be excluded"
+        )
+
+    def test_summary_rows_ignored(self, tmp_path):
+        """The 'Average' summary row (col A = 'Average') must be excluded."""
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+        filename = fixture_dir / "16022.xlsx"
+
+        result = src.read_runoff_data_from_uzhm_wide_xlsx(
+            str(filename),
+            code_list=["16022"],
+        )
+
+        # The fixture inserts summary rows with discharge=500.0 at row 37.
+        # After _make_year_data the actual data values are all > 800 for 2000
+        # (base 800 + day + month, minimum = 800+1+1=802) so 500.0 can only
+        # come from a summary row.
+        assert 500.0 not in result["discharge"].values, (
+            "Summary row discharge 500.0 must not appear in output"
+        )
+
+    def test_directory_scan_pure_digits_filter(self, tmp_path):
+        """read_all_runoff_data_from_uzhm_excel must ignore non-pure-digit filenames."""
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+
+        # Create a non-pure-digits file that must be ignored
+        dummy_wb = openpyxl.Workbook()
+        dummy_ws = dummy_wb.active
+        dummy_ws.title = "2000"
+        dummy_ws.cell(row=1, column=1, value="10001 Dummy-System")
+        for m in range(1, 13):
+            dummy_ws.cell(row=4, column=m + 1, value=m)
+        for day in range(1, 5):
+            dummy_ws.cell(row=4 + day, column=1, value=day)
+            for m in range(1, 13):
+                dummy_ws.cell(row=4 + day, column=m + 1, value=7777.0)
+        dummy_wb.save(fixture_dir / "10001_Name_SYSTEM.xlsx")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(fixture_dir)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["16022"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            # Data from the dummy file (discharge 7777.0) must not appear
+            assert 7777.0 not in result["discharge"].values, (
+                "Non-pure-digit file '10001_Name_SYSTEM.xlsx' must be excluded"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_organization_router_uzhm(self, tmp_path):
+        """_read_runoff_data_by_organization('uzhm', ...) returns valid data."""
+        fixture_dir = _make_uzhm_fixture(tmp_path)
+
+        orig_path = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(fixture_dir)
+            result = src._read_runoff_data_by_organization(
+                "uzhm",
+                date_col="date",
+                discharge_col="discharge",
+                name_col="name",
+                code_col="code",
+                code_list=["16022"],
+            )
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+            assert "date" in result.columns
+            assert "discharge" in result.columns
+        finally:
+            if orig_path is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig_path

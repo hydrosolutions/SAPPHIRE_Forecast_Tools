@@ -323,7 +323,7 @@ def define_tabs(
     return tabs
 
 
-def define_tabs_2(_, wm, pm, disclaimer):
+def define_tabs_2(_, wm, pm, cfg, disclaimer):
     tabs = pn.Tabs(
         (
             _("Predictors"),
@@ -338,13 +338,19 @@ def define_tabs_2(_, wm, pm, disclaimer):
                     pn.Card(pm.daily_rainfall, title=_("Precipitation")),
                     sizing_mode="stretch_width",
                     min_height=400 if pm.daily_rainfall.object is not None else 0,
+                    visible=cfg.display_weather_data,
                 ),
                 pn.Row(
                     pn.Card(pm.daily_temperature, title=_("Temperature")),
                     sizing_mode="stretch_width",
                     min_height=400 if pm.daily_temperature.object is not None else 0,
+                    visible=cfg.display_weather_data,
                 ),
-                pn.Row(_create_snow_card(_, pm.snow_plots), sizing_mode="stretch_both"),
+                pn.Row(
+                    _create_snow_card(_, pm.snow_plots),
+                    sizing_mode="stretch_both",
+                    visible=cfg.display_snow_data,
+                ),
             ),
         ),
         (

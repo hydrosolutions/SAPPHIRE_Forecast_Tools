@@ -69,7 +69,7 @@ bulletin = BulletinManager(
 # ─── 6. Layout ──────────────────────────────────────────────────────
 disclaimer = layout.define_disclaimer(_, cfg.in_docker)
 
-dashboard_tabs = layout.define_tabs_2(_, wm, pm, disclaimer)
+dashboard_tabs = layout.define_tabs_2(_, wm, pm, cfg, disclaimer)
 
 sidebar_content=layout.define_sidebar_2(_, wm)
 

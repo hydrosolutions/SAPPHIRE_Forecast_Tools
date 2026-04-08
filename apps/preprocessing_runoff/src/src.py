@@ -1,3 +1,4 @@
+import calendar
 import concurrent.futures
 import datetime as dt
 
@@ -8,12 +9,15 @@ import io
 import json
 import os
 import os as _os
+import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
+import openpyxl
 import pandas as pd
 import pytz
 
@@ -717,6 +721,179 @@ def read_runoff_data_from_single_river_xlsx(
 
     # Make sure code_col is integer
     df[code_col] = df[code_col].astype(int)
+
+    return df
+
+
+def read_runoff_data_from_uzhm_wide_xlsx(
+    filename,
+    code_list,
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+):
+    """
+    Reads daily runoff data from a uzhm wide-matrix Excel file.
+
+    Each file covers one station. The filename stem is the station code
+    (e.g. ``16022.xlsx``). Each sheet is named with a year. Row 1 contains
+    a merged station header cell (e.g. ``"16022 Syrdariya-Chinaz"``). Row 4
+    contains month numbers 1-12 in columns B-M. Rows 5+ contain day number
+    in column A and daily discharge values in columns B-M.
+
+    Args:
+        filename: Path to the ``.xlsx`` file.
+        code_list: List of station code strings to include. Files whose stem
+            is not in this list are skipped.
+        date_col: Name of the date column in the output DataFrame.
+        discharge_col: Name of the discharge column in the output DataFrame.
+        name_col: Name of the station name column in the output DataFrame.
+        code_col: Name of the station code column in the output DataFrame.
+
+    Returns:
+        DataFrame with columns [date_col, discharge_col, code_col, name_col],
+        or an empty DataFrame if the file is skipped or contains no valid data.
+    """
+    code = Path(filename).stem
+
+    # Filter by code_list
+    if code_list is not None and code not in code_list:
+        return pd.DataFrame()
+
+    # Parse station name from row 1 of the first sheet
+    wb = openpyxl.load_workbook(filename, read_only=True, data_only=True)
+    try:
+        first_sheet = wb.worksheets[0]
+        name = code  # fallback
+        for row in first_sheet.iter_rows(min_row=1, max_row=1):
+            for cell in row:
+                if cell.value is not None:
+                    header_str = str(cell.value).strip()
+                    parts = header_str.split(" ", 1)
+                    name = parts[1] if len(parts) > 1 else header_str
+                    break
+            break
+
+        records = []
+        for sheet_name in wb.sheetnames:
+            # Extract year from sheet name
+            try:
+                year = int(sheet_name)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"read_runoff_data_from_uzhm_wide_xlsx: skipping sheet "
+                    f"'{sheet_name}' in '{filename}' — not a valid year."
+                )
+                continue
+
+            sheet = wb[sheet_name]
+            rows = list(sheet.iter_rows(values_only=True))
+
+            # Data rows start at 0-indexed row 4 (row 5 in 1-indexed)
+            for row in rows[4:]:
+                if not row:
+                    continue
+                day_val = row[0]
+                try:
+                    day = int(day_val)
+                except (ValueError, TypeError):
+                    # Skip summary or header rows
+                    continue
+
+                for month_idx in range(1, 13):
+                    if month_idx >= len(row):
+                        continue
+                    discharge_val = row[month_idx]
+                    if discharge_val is None:
+                        continue
+                    # Validate that this day exists in this month/year
+                    max_day = calendar.monthrange(year, month_idx)[1]
+                    if day > max_day:
+                        continue
+                    try:
+                        records.append(
+                            {
+                                date_col: date(year, month_idx, day),
+                                discharge_col: float(discharge_val),
+                                code_col: int(code),
+                                name_col: name,
+                            }
+                        )
+                    except (ValueError, TypeError):
+                        continue
+    finally:
+        wb.close()
+
+    if records:
+        return pd.DataFrame(records)
+    return pd.DataFrame()
+
+
+def read_all_runoff_data_from_uzhm_excel(
+    date_col="date",
+    discharge_col="discharge",
+    name_col="name",
+    code_col="code",
+    code_list=None,
+):
+    """
+    Reads daily runoff data from all uzhm wide-matrix Excel files in the
+    daily discharge directory using parallel processing.
+
+    Each file must have a pure-digits stem (e.g. ``16022.xlsx``). Temporary
+    files (stems starting with ``~``) are excluded.
+
+    Args:
+        date_col: Name of the date column in the output DataFrame.
+        discharge_col: Name of the discharge column in the output DataFrame.
+        name_col: Name of the station name column in the output DataFrame.
+        code_col: Name of the station code column in the output DataFrame.
+        code_list: List of station code strings to include. If None a
+            warning is logged and all files are processed.
+
+    Returns:
+        Combined DataFrame from all matching files, or None if no data
+        was found.
+
+    Raises:
+        FileNotFoundError: If the daily discharge directory does not exist.
+    """
+    if code_list is None:
+        logger.error("read_all_runoff_data_from_uzhm_excel: No code list provided.")
+
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
+
+    if not os.path.exists(daily_discharge_dir):
+        raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
+
+    uzhm_files = [
+        os.path.join(daily_discharge_dir, f)
+        for f in os.listdir(daily_discharge_dir)
+        if os.path.isfile(os.path.join(daily_discharge_dir, f))
+        and f.endswith(".xlsx")
+        and not f.startswith("~")
+        and re.fullmatch(r"\d+", Path(f).stem)
+    ]
+
+    if not uzhm_files:
+        logger.warning(f"No uzhm wide-matrix Excel files found in '{daily_discharge_dir}'.")
+        return None
+
+    logger.info(f"Reading {len(uzhm_files)} uzhm wide-matrix Excel files")
+    df = parallel_read_excel_files(
+        uzhm_files,
+        read_runoff_data_from_uzhm_wide_xlsx,
+        code_list=code_list,
+        date_col=date_col,
+        discharge_col=discharge_col,
+        name_col=name_col,
+        code_col=code_col,
+    )
+
+    if df is None or df.empty:
+        logger.warning("No data found in the uzhm daily discharge directory")
+        return None
 
     return df
 
@@ -2963,10 +3140,18 @@ def _read_runoff_data_by_organization(
             code_col=code_col,
             code_list=code_list,
         )
+    elif organization == "uzhm":
+        read_data = read_all_runoff_data_from_uzhm_excel(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list,
+        )
     else:
         raise ValueError(
             f"Organization '{organization}' not recognized. "
-            f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+            f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm', 'tjhm', 'demo', or 'uzhm'."
         )
     return read_data
 

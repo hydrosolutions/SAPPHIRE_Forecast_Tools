@@ -1380,6 +1380,12 @@ class SendPipelineCompletionNotification(luigi.Task):
                 message += "- LogFileCleanup\n"
                 message += "- DeleteOldGatewayFiles\n"
 
+            elif ORGANIZATION == "uzhm":
+                message += "- PreprocessingRunoff\n"
+                message += "- LinearRegression\n"
+                message += "- PostProcessingForecasts\n"
+                message += "- LogFileCleanup\n"
+
             message += "\nThis is an automated notification."
 
             # Send email notifications if recipients are specified
