@@ -10,5 +10,6 @@ class Settings(BaseSettings):
     api_base_url: str
     batch_size: int
     csv_folder: str
+    config_folder: str
 
 settings = Settings()
