@@ -104,7 +104,7 @@ def compute_boundary_date_with_year_guard(horizon_value, horizon):
         else:
             boundary_day = period_in_month * 10
     forecast_date = dt.date(year, month, boundary_day)
-    if forecast_date > dt.date.today():
+    if forecast_date > dt.date.today() + dt.timedelta(days=31):
         year -= 1
         if period_in_month == periods_per_month:
             boundary_day = calendar.monthrange(year, month)[1]
@@ -366,7 +366,7 @@ class TestBoundaryDateFromHorizonValue:
         period_in_month = (horizon_value - 1) % periods_per_month + 1  # 6
         boundary_day = calendar.monthrange(year, month)[1]  # 31
         forecast_date = dt.date(year, month, boundary_day)  # 2027-12-31
-        if forecast_date > fake_today:
+        if forecast_date > fake_today + dt.timedelta(days=31):
             year -= 1  # 2026
             boundary_day = calendar.monthrange(year, month)[1]  # 31
             forecast_date = dt.date(year, month, boundary_day)  # 2026-12-31
@@ -383,10 +383,29 @@ class TestBoundaryDateFromHorizonValue:
         period_in_month = (horizon_value - 1) % periods_per_month + 1  # 1
         boundary_day = period_in_month * 5  # 5
         forecast_date = dt.date(year, month, boundary_day)  # 2026-03-05
-        if forecast_date > fake_today:
+        if forecast_date > fake_today + dt.timedelta(days=31):
             year -= 1
             forecast_date = dt.date(year, month, boundary_day)
         assert forecast_date == dt.date(2026, 3, 5)
+
+    def test_year_guard_current_in_progress_pentad_no_rollback(self):
+        """horizon_value=20 (Apr 10) with today=2026-04-08 → no rollback.
+
+        The current pentad boundary is only 2 days ahead, well within the
+        31-day grace window. The year guard must NOT fire.
+        """
+        fake_today = dt.date(2026, 4, 8)
+        horizon_value = 20
+        year = fake_today.year
+        periods_per_month = 6
+        month = (horizon_value - 1) // periods_per_month + 1  # 4
+        period_in_month = (horizon_value - 1) % periods_per_month + 1  # 2
+        boundary_day = period_in_month * 5  # 10
+        forecast_date = dt.date(year, month, boundary_day)  # 2026-04-10
+        if forecast_date > fake_today + dt.timedelta(days=31):
+            year -= 1
+            forecast_date = dt.date(year, month, boundary_day)
+        assert forecast_date == dt.date(2026, 4, 10)
 
     # ── Feb last-of-month ─────────────────────────────────────────────────────
 
