@@ -3875,12 +3875,20 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             forecast_date = dt.date(year, month, boundary_day)
             # Year guard: if the computed date is in the future, the user is
             # viewing the previous year's data.
-            if forecast_date > dt.date.today():
+            year_guard_fired = forecast_date > dt.date.today()
+            if year_guard_fired:
                 year -= 1
                 if period_in_month == periods_per_month:
                     boundary_day = calendar.monthrange(year, month)[1]
                 forecast_date = dt.date(year, month, boundary_day)
             environment.append(f'SAPPHIRE_FORECAST_DATE={forecast_date.strftime("%Y-%m-%d")}')
+            logger.warning(
+                "D10 save_to_database: horizon=%s, horizon_value=%d, "
+                "month=%d, period_in_month=%d, boundary_day=%d, "
+                "year_guard_fired=%s, forecast_date=%s, today=%s",
+                horizon, horizon_value, month, period_in_month, boundary_day,
+                year_guard_fired, forecast_date, dt.date.today(),
+            )
 
             # Define volumes
             volumes = {

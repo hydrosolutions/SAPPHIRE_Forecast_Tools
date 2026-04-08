@@ -396,6 +396,14 @@ def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
 
     # Union of columns, missing columns will become NaN
     combined = pd.concat([df_ml, df_lr], ignore_index=True, sort=False)
+    if code == "15013" and not combined.empty:
+        logger.warning(
+            "D14 get_forecasts_all code=15013: rows=%d, max_date=%s, "
+            "unique_dates=%s, models=%s",
+            len(combined), combined["date"].max(),
+            sorted(combined["date"].dropna().dt.date.unique()),
+            list(combined["model_short"].unique()),
+        )
     return _convert_na_to_nan(combined.sort_values("Date"))
 
 @_timed
