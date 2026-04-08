@@ -64,6 +64,10 @@ def get_logos(in_docker_flag):
                 width=70,
             ),
             pn.pane.Image(
+                os.path.join("apps", "forecast_dashboard", "www", "zrb.jpg"),
+                width=150,
+            ),
+            pn.pane.Image(
                 os.path.join("apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
                 width=100,
             ),
@@ -72,6 +76,7 @@ def get_logos(in_docker_flag):
     else:
         return pn.Row(
             pn.pane.Image(os.path.join("www", "sapphire_project_logo.jpg"), width=70),
+            pn.pane.Image(os.path.join("www", "zrb.jpg"), width=260),
             pn.pane.Image(os.path.join("www", "hydrosolutionsLogo.jpg"), width=100),
             pn.pane.Image(os.path.join("www", "sdc.jpeg"), width=150),
         )
