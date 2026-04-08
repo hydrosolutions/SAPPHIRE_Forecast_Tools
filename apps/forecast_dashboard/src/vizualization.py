@@ -3875,7 +3875,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             forecast_date = dt.date(year, month, boundary_day)
             # Year guard: if the computed date is in the future, the user is
             # viewing the previous year's data.
-            year_guard_fired = forecast_date > dt.date.today()
+            year_guard_fired = forecast_date > dt.date.today() + dt.timedelta(days=31)
             if year_guard_fired:
                 year -= 1
                 if period_in_month == periods_per_month:
