@@ -3800,6 +3800,13 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             from . import db as _db
             _db._save_data("postprocessing", "lr-visibility", records)
             logger.info("Saved %d lr-visibility records for code=%s", len(records), station_code)
+            logger.debug(
+                "D4 POSTed lr-visibility: horizon_type=%s, code=%s, "
+                "month=%d, horizon_value=%d, visible_count=%d/%d",
+                horizon, station_code, month_for_horizon,
+                horizon_value_in_month,
+                sum(1 for r in records if r["visible"]), len(records),
+            )
         except Exception as api_err:
             logger.error("Failed to save lr-visibility records: %s", api_err)
             progress_message.object = _(f"Error saving to database: {api_err}")

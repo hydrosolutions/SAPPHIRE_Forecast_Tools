@@ -424,8 +424,12 @@ class TestPerformLinearRegressionForecastDate:
     """perform_linear_regression uses explicit year from forecast_date."""
 
     def test_uses_explicit_year_for_pentad_date(self):
-        """forecast_date=date(2025, 2, 20) -> year 2025 used for pentad
-        date calculation, not datetime.now().year."""
+        """forecast_date=date(2025, 2, 20) -> year 2025 used in CSV fallback
+        path via get_month_str_en, not datetime.now().year.
+
+        With forecast_horizon_int=2 the month_int is (2-1)//6+1 = 1, so
+        get_month_str_en is called with "2025-01-01".
+        """
         # Create minimal data with pentad column
         data = pd.DataFrame(
             {
@@ -448,24 +452,46 @@ class TestPerformLinearRegressionForecastDate:
         # Duplicate rows to have enough data points (>2)
         data = pd.concat([data] * 3, ignore_index=True)
 
-        with patch.object(
-            tl, "get_date_for_last_day_in_pentad", return_value="2025-01-10"
-        ) as mock_fn:
-            fl.perform_linear_regression(
-                data,
-                "station",
-                "pentad",
-                "discharge_sum",
-                "discharge_avg",
-                2,
-                forecast_date=dt.date(2025, 2, 20),
-            )
+        prev_linreg = os.environ.get("ieasyforecast_linreg_point_selection")
+        prev_config = os.environ.get("ieasyforecast_configuration_path")
+        os.environ["ieasyforecast_linreg_point_selection"] = "some_dir"
+        os.environ["ieasyforecast_configuration_path"] = "/tmp"
+        try:
+            with patch.object(
+                fl,
+                "_read_lr_visibility",
+                return_value=None,
+            ):
+                with patch.object(tl, "get_month_str_en", return_value="January") as mock_fn:
+                    fl.perform_linear_regression(
+                        data,
+                        "station",
+                        "pentad",
+                        "discharge_sum",
+                        "discharge_avg",
+                        2,
+                        forecast_date=dt.date(2025, 2, 20),
+                    )
 
-            # Verify year=2025 was passed, not the current year
-            mock_fn.assert_called_once_with(2, year=2025)
+                    # Verify year 2025 was used, not the current year
+                    mock_fn.assert_called_once_with("2025-01-01")
+        finally:
+            if prev_linreg is None:
+                os.environ.pop("ieasyforecast_linreg_point_selection", None)
+            else:
+                os.environ["ieasyforecast_linreg_point_selection"] = prev_linreg
+            if prev_config is None:
+                os.environ.pop("ieasyforecast_configuration_path", None)
+            else:
+                os.environ["ieasyforecast_configuration_path"] = prev_config
 
     def test_uses_explicit_year_for_decad_date(self):
-        """forecast_date=date(2025, 3, 10) -> year 2025 for decad."""
+        """forecast_date=date(2025, 3, 10) -> year 2025 used in CSV fallback
+        path via get_month_str_en, not datetime.now().year.
+
+        With forecast_horizon_int=2 the month_int is (2-1)//3+1 = 1, so
+        get_month_str_en is called with "2025-01-01".
+        """
         data = pd.DataFrame(
             {
                 "station": ["A"] * 3,
@@ -483,20 +509,38 @@ class TestPerformLinearRegressionForecastDate:
         )
         data = pd.concat([data] * 3, ignore_index=True)
 
-        with patch.object(
-            tl, "get_date_for_last_day_in_decad", return_value="2025-01-20"
-        ) as mock_fn:
-            fl.perform_linear_regression(
-                data,
-                "station",
-                "decad",
-                "discharge_sum",
-                "discharge_avg",
-                2,
-                forecast_date=dt.date(2025, 3, 10),
-            )
+        prev_linreg = os.environ.get("ieasyforecast_linreg_point_selection")
+        prev_config = os.environ.get("ieasyforecast_configuration_path")
+        os.environ["ieasyforecast_linreg_point_selection"] = "some_dir"
+        os.environ["ieasyforecast_configuration_path"] = "/tmp"
+        try:
+            with patch.object(
+                fl,
+                "_read_lr_visibility",
+                return_value=None,
+            ):
+                with patch.object(tl, "get_month_str_en", return_value="January") as mock_fn:
+                    fl.perform_linear_regression(
+                        data,
+                        "station",
+                        "decad",
+                        "discharge_sum",
+                        "discharge_avg",
+                        2,
+                        forecast_date=dt.date(2025, 3, 10),
+                    )
 
-            mock_fn.assert_called_once_with(2, year=2025)
+                    # Verify year 2025 was used, not the current year
+                    mock_fn.assert_called_once_with("2025-01-01")
+        finally:
+            if prev_linreg is None:
+                os.environ.pop("ieasyforecast_linreg_point_selection", None)
+            else:
+                os.environ["ieasyforecast_linreg_point_selection"] = prev_linreg
+            if prev_config is None:
+                os.environ.pop("ieasyforecast_configuration_path", None)
+            else:
+                os.environ["ieasyforecast_configuration_path"] = prev_config
 
     def test_backward_compat_no_forecast_date(self):
         """Without forecast_date, function still works (uses now().year)."""

@@ -6,7 +6,7 @@ Every concern lives in its own manager; this file only creates the
 objects, wires them together, and makes the result servable.
 
 Run: 2 Options:
-Option 1: run locally with panel serve
+Option 1 (must go this way for integration tests): run locally with panel serve
     1. comment out dashboard service in sapphire/docker-compose.yml
     2. use version of .env witout any sapphire services environment varialbes 
     ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
@@ -16,6 +16,11 @@ Option 2: run in docker
     3. from project root, run bash bin/daily_update_sapphire_frontend.sh <ieasyhydroforecast_env_file_path>
     Note that env file needs to end with hydromet short name. 
 
+    How to run integration tests: 
+    0. Make sure the dashboard is not running via docker services (see above) docker compose stop, comment out dashboard service in sapphire/docker-compose.yml, docker compose up --buil again
+    1. Make sure dashboard is running locally on port 5055 (see above)
+    2. In a separate terminal, run ieasyhydroforecast_data_dir=<path_to_data_dir> pytest tests/test_integration.py --headed -s --slowmo 300
+    3. Make sure the path to data dir has / at the end, otherwise the test will fail to find the data.
 """
 import panel as pn
 

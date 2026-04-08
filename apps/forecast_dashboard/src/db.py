@@ -419,6 +419,8 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
         "model_type": "model_short",
         "model_type_description": "model_long",
     }, inplace=True)
+    df.sort_values("date", inplace=True)  # keep only the latest recalculation run per key
+    df.drop_duplicates(subset=["code", _horizon_in_year_col(horizon), "model_short"], keep="last", inplace=True)
     df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
     return _convert_na_to_nan(df)
 
