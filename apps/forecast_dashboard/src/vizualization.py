@@ -3854,40 +3854,38 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                 f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/{env_file_name}',
             ]
 
-            # Compute the boundary date for the pentad/decad the user is editing
+            # Compute the boundary date for the issue pentad/decad (one step
+            # before the target horizon the user is editing). The linreg module
+            # expects the production date, which is the last day of the issue
+            # pentad — always in the past, so no year guard is needed.
             year = dt.date.today().year
             if horizon == "pentad":
+                periods_per_year = 72
                 periods_per_month = 6
-                month = (horizon_value - 1) // periods_per_month + 1
-                period_in_month = (horizon_value - 1) % periods_per_month + 1
-                if period_in_month == periods_per_month:
-                    boundary_day = calendar.monthrange(year, month)[1]
-                else:
-                    boundary_day = period_in_month * 5
             else:  # decad
+                periods_per_year = 36
                 periods_per_month = 3
-                month = (horizon_value - 1) // periods_per_month + 1
-                period_in_month = (horizon_value - 1) % periods_per_month + 1
-                if period_in_month == periods_per_month:
-                    boundary_day = calendar.monthrange(year, month)[1]
-                else:
-                    boundary_day = period_in_month * 10
-            forecast_date = dt.date(year, month, boundary_day)
-            # Year guard: if the computed date is in the future, the user is
-            # viewing the previous year's data.
-            year_guard_fired = forecast_date > dt.date.today() + dt.timedelta(days=31)
-            if year_guard_fired:
+            # Issue pentad is one before the target; wrap around year boundary.
+            issue_horizon = horizon_value - 1
+            if issue_horizon < 1:
+                issue_horizon = periods_per_year
                 year -= 1
-                if period_in_month == periods_per_month:
-                    boundary_day = calendar.monthrange(year, month)[1]
-                forecast_date = dt.date(year, month, boundary_day)
+            month = (issue_horizon - 1) // periods_per_month + 1
+            period_in_month = (issue_horizon - 1) % periods_per_month + 1
+            if period_in_month == periods_per_month:
+                boundary_day = calendar.monthrange(year, month)[1]
+            elif horizon == "pentad":
+                boundary_day = period_in_month * 5
+            else:
+                boundary_day = period_in_month * 10
+            forecast_date = dt.date(year, month, boundary_day)
             environment.append(f'SAPPHIRE_FORECAST_DATE={forecast_date.strftime("%Y-%m-%d")}')
             logger.warning(
-                "D10 save_to_database: horizon=%s, horizon_value=%d, "
-                "month=%d, period_in_month=%d, boundary_day=%d, "
-                "year_guard_fired=%s, forecast_date=%s, today=%s",
-                horizon, horizon_value, month, period_in_month, boundary_day,
-                year_guard_fired, forecast_date, dt.date.today(),
+                "D10 save_to_database: horizon=%s, target_horizon_value=%d, "
+                "issue_horizon=%d, month=%d, period_in_month=%d, "
+                "boundary_day=%d, forecast_date=%s, today=%s",
+                horizon, horizon_value, issue_horizon, month, period_in_month,
+                boundary_day, forecast_date, dt.date.today(),
             )
 
             # Define volumes

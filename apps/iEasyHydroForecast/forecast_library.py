@@ -1687,22 +1687,26 @@ def perform_linear_regression(
         # --- Point selection: filter years based on visibility ---
         logger.info("Checking point selection for station %s.", station)
 
-        # Compute visibility lookup parameters from forecast_horizon_int
-        # (issue-pentad convention — matches dashboard saves to /api/postprocessing/lr-visibility/)
+        # Compute visibility lookup parameters using the target pentad
+        # (target-pentad convention — matches dashboard saves to /api/postprocessing/lr-visibility/)
+        target_horizon = (
+            1 if forecast_horizon_int == forecast_horizon_max else forecast_horizon_int + 1
+        )
         if horizon_flag == "pentad":
             periods_per_month = 6
         else:  # decad
             periods_per_month = 3
-        month_int = (forecast_horizon_int - 1) // periods_per_month + 1
-        pentad_in_month = (forecast_horizon_int - 1) % periods_per_month + 1
+        month_int = (target_horizon - 1) // periods_per_month + 1
+        pentad_in_month = (target_horizon - 1) % periods_per_month + 1
         logger.debug(
             "D1 lr-visibility query params: horizon=%s, station=%s, "
-            "month=%d, period=%d (forecast_horizon_int=%d)",
+            "month=%d, period=%d (issue forecast_horizon_int=%d, target_horizon=%d)",
             horizon_flag,
             station,
             month_int,
             pentad_in_month,
             forecast_horizon_int,
+            target_horizon,
         )
 
         # Map internal horizon_flag to API enum value

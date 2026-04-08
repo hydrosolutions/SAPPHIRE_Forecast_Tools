@@ -51,7 +51,7 @@ def compute_boundary_date_from_horizon_value(horizon_value, horizon, year):
     Replica of the inline algorithm in save_to_database (apps/forecast_dashboard/
     src/vizualization.py, ~line 3836).  The year-guard branch is NOT included
     here so that callers can inject an explicit year; a separate helper
-    ``compute_boundary_date_with_year_guard`` includes the guard.
+    ``compute_issue_boundary_date`` computes the issue pentad boundary.
 
     Args:
         horizon_value: 1-based period index within the year
@@ -81,35 +81,33 @@ def compute_boundary_date_from_horizon_value(horizon_value, horizon, year):
     return dt.date(year, month, boundary_day)
 
 
-def compute_boundary_date_with_year_guard(horizon_value, horizon):
-    """Full production algorithm including the year-guard.
+def compute_issue_boundary_date(horizon_value, horizon):
+    """Production algorithm: compute SAPPHIRE_FORECAST_DATE from the issue pentad.
 
-    Calls ``dt.date.today()`` so that it can be patched in tests.
+    The issue pentad is one before the target (horizon_value). The boundary
+    date is the last day of that issue pentad — always in the past, so no
+    year guard is needed.
     """
     year = dt.date.today().year
     if horizon == "pentad":
+        periods_per_year = 72
         periods_per_month = 6
-        month = (horizon_value - 1) // periods_per_month + 1
-        period_in_month = (horizon_value - 1) % periods_per_month + 1
-        if period_in_month == periods_per_month:
-            boundary_day = calendar.monthrange(year, month)[1]
-        else:
-            boundary_day = period_in_month * 5
     else:  # decad
+        periods_per_year = 36
         periods_per_month = 3
-        month = (horizon_value - 1) // periods_per_month + 1
-        period_in_month = (horizon_value - 1) % periods_per_month + 1
-        if period_in_month == periods_per_month:
-            boundary_day = calendar.monthrange(year, month)[1]
-        else:
-            boundary_day = period_in_month * 10
-    forecast_date = dt.date(year, month, boundary_day)
-    if forecast_date > dt.date.today() + dt.timedelta(days=31):
+    issue_horizon = horizon_value - 1
+    if issue_horizon < 1:
+        issue_horizon = periods_per_year
         year -= 1
-        if period_in_month == periods_per_month:
-            boundary_day = calendar.monthrange(year, month)[1]
-        forecast_date = dt.date(year, month, boundary_day)
-    return forecast_date
+    month = (issue_horizon - 1) // periods_per_month + 1
+    period_in_month = (issue_horizon - 1) % periods_per_month + 1
+    if period_in_month == periods_per_month:
+        boundary_day = calendar.monthrange(year, month)[1]
+    elif horizon == "pentad":
+        boundary_day = period_in_month * 5
+    else:
+        boundary_day = period_in_month * 10
+    return dt.date(year, month, boundary_day)
 
 
 # ---------------------------------------------------------------------------
@@ -342,70 +340,28 @@ class TestBoundaryDateFromHorizonValue:
 
     # ── Year guard ───────────────────────────────────────────────────────────
 
-    def test_year_guard_pentad72_viewed_in_january_rolls_back(self):
-        """horizon_value=72 (Dec 31) is in the future when today is Jan 15, 2027.
+    def test_issue_pentad_for_target_20_is_apr5(self):
+        """horizon_value=20 (target: Apr 6-10) → issue pentad 19 → Apr 5."""
+        # issue_horizon = 20 - 1 = 19
+        # month = (19-1)//6 + 1 = 4, period = (19-1)%6 + 1 = 1, day = 5
+        result = compute_boundary_date_from_horizon_value(19, "pentad", 2026)
+        assert result == dt.date(2026, 4, 5)
 
-        The year guard should roll year back to 2026, so the result is
-        dt.date(2026, 12, 31).
-        """
-        fake_today = dt.date(2027, 1, 15)
-        with patch("datetime.date") as mock_date:
-            mock_date.today.return_value = fake_today
-            # Re-implement guard inline so the patch applies to calls inside
-            # compute_boundary_date_with_year_guard which uses dt.date.today().
-            # We test the helper directly here.
-            result = compute_boundary_date_with_year_guard.__wrapped__(fake_today)
-        # Manually exercise the algorithm with the patched date
-        # (compute_boundary_date_with_year_guard uses dt.date.today() internally)
-        # We replicate the guard logic directly for determinism:
-        horizon_value = 72
-        horizon = "pentad"
-        year = fake_today.year  # 2027
-        periods_per_month = 6
-        month = (horizon_value - 1) // periods_per_month + 1  # 12
-        period_in_month = (horizon_value - 1) % periods_per_month + 1  # 6
-        boundary_day = calendar.monthrange(year, month)[1]  # 31
-        forecast_date = dt.date(year, month, boundary_day)  # 2027-12-31
-        if forecast_date > fake_today + dt.timedelta(days=31):
-            year -= 1  # 2026
-            boundary_day = calendar.monthrange(year, month)[1]  # 31
-            forecast_date = dt.date(year, month, boundary_day)  # 2026-12-31
-        assert forecast_date == dt.date(2026, 12, 31)
+    def test_issue_pentad_for_target_1_wraps_to_dec31_previous_year(self):
+        """horizon_value=1 (target: Jan 1-5) → issue pentad 72 → Dec 31 prev year."""
+        # issue_horizon = 1 - 1 = 0 → wraps to 72, year - 1
+        result = compute_boundary_date_from_horizon_value(72, "pentad", 2025)
+        assert result == dt.date(2025, 12, 31)
 
-    def test_year_guard_pentad_mid_year_not_in_future_no_rollback(self):
-        """horizon_value=13 (Mar 5) with today=2026-04-02 → no rollback needed."""
-        fake_today = dt.date(2026, 4, 2)
-        horizon_value = 13
-        horizon = "pentad"
-        year = fake_today.year
-        periods_per_month = 6
-        month = (horizon_value - 1) // periods_per_month + 1  # 3
-        period_in_month = (horizon_value - 1) % periods_per_month + 1  # 1
-        boundary_day = period_in_month * 5  # 5
-        forecast_date = dt.date(year, month, boundary_day)  # 2026-03-05
-        if forecast_date > fake_today + dt.timedelta(days=31):
-            year -= 1
-            forecast_date = dt.date(year, month, boundary_day)
-        assert forecast_date == dt.date(2026, 3, 5)
+    def test_issue_pentad_for_target_13_is_feb28(self):
+        """horizon_value=13 (target: Mar 1-5) → issue pentad 12 → Feb 28."""
+        result = compute_boundary_date_from_horizon_value(12, "pentad", 2026)
+        assert result == dt.date(2026, 2, 28)
 
-    def test_year_guard_current_in_progress_pentad_no_rollback(self):
-        """horizon_value=20 (Apr 10) with today=2026-04-08 → no rollback.
-
-        The current pentad boundary is only 2 days ahead, well within the
-        31-day grace window. The year guard must NOT fire.
-        """
-        fake_today = dt.date(2026, 4, 8)
-        horizon_value = 20
-        year = fake_today.year
-        periods_per_month = 6
-        month = (horizon_value - 1) // periods_per_month + 1  # 4
-        period_in_month = (horizon_value - 1) % periods_per_month + 1  # 2
-        boundary_day = period_in_month * 5  # 10
-        forecast_date = dt.date(year, month, boundary_day)  # 2026-04-10
-        if forecast_date > fake_today + dt.timedelta(days=31):
-            year -= 1
-            forecast_date = dt.date(year, month, boundary_day)
-        assert forecast_date == dt.date(2026, 4, 10)
+    def test_issue_decad_for_target_1_wraps_to_dec31_previous_year(self):
+        """horizon_value=1 (target: Jan 1-10) → issue decad 36 → Dec 31 prev year."""
+        result = compute_boundary_date_from_horizon_value(36, "decad", 2025)
+        assert result == dt.date(2025, 12, 31)
 
     # ── Feb last-of-month ─────────────────────────────────────────────────────
 
@@ -492,6 +448,6 @@ class TestBoundaryDateFromHorizonValue:
 # Patch target helper (needed only to attach __wrapped__ attribute above)
 # ---------------------------------------------------------------------------
 
-# Attach a trivial __wrapped__ so the guard test can call it without import.
-# The attribute is never used — the guard logic is replicated inline.
-compute_boundary_date_with_year_guard.__wrapped__ = lambda today: None
+# Attach a trivial __wrapped__ for backward compatibility with any test that
+# may reference it. The function was renamed to compute_issue_boundary_date.
+compute_issue_boundary_date.__wrapped__ = lambda today: None
