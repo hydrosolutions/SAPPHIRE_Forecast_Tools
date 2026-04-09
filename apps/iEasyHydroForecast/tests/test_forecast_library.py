@@ -2979,7 +2979,8 @@ class TestPointSelectionCSV:
     #   pentad_in_month = (1-1)%6 + 1 = 1
     #   title_month = "January"
     #   filename: TEST1_1_pentad_of_January.csv
-    CSV_FILENAME = "TEST1_1_pentad_of_January.csv"
+    # Visibility lookup uses target pentad: issue=1 → target=2 → pentad_in_month=2
+    CSV_FILENAME = "TEST1_2_pentad_of_January.csv"
 
     # ------------------------------------------------------------------
     # Test 1 — env var absent: no filtering, all rows used
@@ -3452,17 +3453,18 @@ class TestPointSelectionAPI:
 
         # CSV marks the same outlier years invisible
         # For pentad_in_year=1, forecast_horizon_int=1:
-        #   month_int = (1-1)//6 + 1 = 1  (January)
-        #   pentad_in_month = (1-1)%6 + 1 = 1
+        #   target = 1 + 1 = 2
+        #   month_int = (2-1)//6 + 1 = 1  (January)
+        #   pentad_in_month = (2-1)%6 + 1 = 2
         #   title_month = "January"
-        #   filename: TEST1_1_pentad_of_January.csv
+        #   filename: TEST1_2_pentad_of_January.csv
         csv_content = pd.DataFrame(
             {
                 "year": years,
                 "visible": [False, True, True, True, False],
             }
         )
-        csv_path = selection_dir / "TEST1_1_pentad_of_January.csv"
+        csv_path = selection_dir / "TEST1_2_pentad_of_January.csv"
         csv_content.to_csv(csv_path, index=False)
 
         monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
@@ -3646,15 +3648,14 @@ class TestLrVisibilityParams(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @patch("iEasyHydroForecast.forecast_library._read_lr_visibility")
-    def test_api_called_with_issue_pentad_params(self, mock_read_vis):
+    def test_api_called_with_target_pentad_params(self, mock_read_vis):
         """perform_linear_regression with forecast_horizon_int=17 must call
-        _read_lr_visibility with month=3, horizon_value=5.
+        _read_lr_visibility with the TARGET pentad params (18):
+        month=3, horizon_value=6.
 
-        Pentad 17 is the 5th pentad of March:
-          month = (17-1)//6 + 1 = 16//6 + 1 = 2 + 1 = 3
-          period = (17-1)%6 + 1 = 16%6 + 1 = 4 + 1 = 5
-
-        The old (buggy) date-offset formula would produce period=6 (off by one).
+        Issue pentad 17 → target pentad 18 (6th pentad of March):
+          month = (18-1)//6 + 1 = 17//6 + 1 = 2 + 1 = 3
+          period = (18-1)%6 + 1 = 17%6 + 1 = 5 + 1 = 6
         """
         import os
 
@@ -3703,13 +3704,13 @@ class TestLrVisibilityParams(unittest.TestCase):
         )
 
         assert month_passed == 3, (
-            f"forecast_horizon_int=17 must call _read_lr_visibility with month=3, "
-            f"got month={month_passed}"
+            f"forecast_horizon_int=17 → target=18: must call _read_lr_visibility "
+            f"with month=3, got month={month_passed}"
         )
-        assert horizon_value_passed == 5, (
-            f"forecast_horizon_int=17 must call _read_lr_visibility with "
-            f"horizon_value=5 (5th pentad of March), got horizon_value={horizon_value_passed}. "
-            f"The old date-offset formula produced 6 — this is the regression test."
+        assert horizon_value_passed == 6, (
+            f"forecast_horizon_int=17 → target=18: must call _read_lr_visibility "
+            f"with horizon_value=6 (6th pentad of March), "
+            f"got horizon_value={horizon_value_passed}."
         )
 
     # ------------------------------------------------------------------
@@ -3717,14 +3718,14 @@ class TestLrVisibilityParams(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @patch("iEasyHydroForecast.forecast_library._read_lr_visibility")
-    def test_month_boundary_pentad_18_no_crossover(self, mock_read_vis):
+    def test_month_boundary_pentad_18_crosses_to_april(self, mock_read_vis):
         """perform_linear_regression with forecast_horizon_int=18 (last pentad
-        of March, boundary day Mar 31) must call _read_lr_visibility with
-        month=3, horizon_value=6, NOT month=4, horizon_value=1.
+        of March) must call _read_lr_visibility with the TARGET pentad (19):
+        month=4, horizon_value=1 (1st pentad of April).
 
-        Pentad 18 is the 6th (last) pentad of March:
-          month = (18-1)//6 + 1 = 17//6 + 1 = 2 + 1 = 3
-          period = (18-1)%6 + 1 = 17%6 + 1 = 5 + 1 = 6
+        Issue pentad 18 → target pentad 19 (1st pentad of April):
+          month = (19-1)//6 + 1 = 18//6 + 1 = 3 + 1 = 4
+          period = (19-1)%6 + 1 = 18%6 + 1 = 0 + 1 = 1
         """
         import os
 
@@ -3772,15 +3773,14 @@ class TestLrVisibilityParams(unittest.TestCase):
             call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("horizon_value")
         )
 
-        assert month_passed == 3, (
-            f"forecast_horizon_int=18 (last pentad of March) must call "
-            f"_read_lr_visibility with month=3, got month={month_passed}. "
+        assert month_passed == 4, (
+            f"forecast_horizon_int=18 → target=19 (1st pentad of April): must call "
+            f"_read_lr_visibility with month=4, got month={month_passed}. "
             f"Month must NOT cross over to April."
         )
-        assert horizon_value_passed == 6, (
-            f"forecast_horizon_int=18 (last pentad of March) must call "
-            f"_read_lr_visibility with horizon_value=6, got {horizon_value_passed}. "
-            f"The boundary day (Mar 31) must not cause a month crossover to April period 1."
+        assert horizon_value_passed == 1, (
+            f"forecast_horizon_int=18 → target=19 (1st pentad of April): must call "
+            f"_read_lr_visibility with horizon_value=1, got {horizon_value_passed}."
         )
 
 

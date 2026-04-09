@@ -206,11 +206,11 @@ msgstr "Оправдываемость прогноза"
 
 #: pentad_dashboard.py:988
 msgid "disclaimer_who"
-msgstr "<p>Панель прогнозов была разработана компанией <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> в рамках проекта SAPPHIRE Central Asia при финансовой поддержке <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Швейцарского Агентства Развития и Сотрудничества</a>.</p>"
+msgstr "<p>Панель прогнозов была разработана компанией <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> в рамках проектов SAPPHIRE Central Asia и «Климатоустойчивое комплексное управление водными ресурсами в бассейне реки Зарафшан» при финансовой поддержке <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Швейцарского Агентства Развития и Сотрудничества</a>.</p>"
 
 #: pentad_dashboard.py:989
 msgid "disclaimer_waranty"
-msgstr "Данные, используемые в этой панели, предоставлены системой iEasyHydro, которой управляет отдел оперативной гидрологии Кыргызгидромета."
+msgstr "Данные, используемые в этой панели, предоставлены системой iEasyHydro, которой управляет отдел оперативной гидрологии национального Гидромета. Гридированные метеоданные основаны на данных и продуктах Европейского центра среднесрочных прогнозов погоды (<a href='https://www.ecmwf.int/' target='_blank'>ECMWF</a>), предоставленных в соответствии с лицензией Creative Commons Attribution 4.0 International (CC BY 4.0), и были детализированы для региона Центральной Азии с использованием набора данных высокого разрешения <a href='https://www.chelsa-climate.org/datasets' target='_blank'>CHELSA v2.1</a>. ECMWF и консорциум проекта не несут никакой ответственности за какие-либо ошибки или упущения в данных, их доступность, а также за любые потери или ущерб, возникшие в результате их использования."
 
 #: pentad_dashboard.py:992
 msgid "Last updated on "

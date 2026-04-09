@@ -64,6 +64,10 @@ def get_logos(in_docker_flag):
                 width=70,
             ),
             pn.pane.Image(
+                os.path.join("apps", "forecast_dashboard", "www", "zrb.jpg"),
+                width=150,
+            ),
+            pn.pane.Image(
                 os.path.join("apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
                 width=100,
             ),
@@ -72,6 +76,7 @@ def get_logos(in_docker_flag):
     else:
         return pn.Row(
             pn.pane.Image(os.path.join("www", "sapphire_project_logo.jpg"), width=70),
+            pn.pane.Image(os.path.join("www", "zrb.jpg"), width=260),
             pn.pane.Image(os.path.join("www", "hydrosolutionsLogo.jpg"), width=100),
             pn.pane.Image(os.path.join("www", "sdc.jpeg"), width=150),
         )
@@ -318,7 +323,7 @@ def define_tabs(
     return tabs
 
 
-def define_tabs_2(_, wm, pm, disclaimer):
+def define_tabs_2(_, wm, pm, cfg, disclaimer):
     tabs = pn.Tabs(
         (
             _("Predictors"),
@@ -333,13 +338,19 @@ def define_tabs_2(_, wm, pm, disclaimer):
                     pn.Card(pm.daily_rainfall, title=_("Precipitation")),
                     sizing_mode="stretch_width",
                     min_height=400 if pm.daily_rainfall.object is not None else 0,
+                    visible=cfg.display_weather_data,
                 ),
                 pn.Row(
                     pn.Card(pm.daily_temperature, title=_("Temperature")),
                     sizing_mode="stretch_width",
                     min_height=400 if pm.daily_temperature.object is not None else 0,
+                    visible=cfg.display_weather_data,
                 ),
-                pn.Row(_create_snow_card(_, pm.snow_plots), sizing_mode="stretch_both"),
+                pn.Row(
+                    _create_snow_card(_, pm.snow_plots),
+                    sizing_mode="stretch_both",
+                    visible=cfg.display_snow_data,
+                ),
             ),
         ),
         (

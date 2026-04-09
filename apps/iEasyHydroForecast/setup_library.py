@@ -512,6 +512,8 @@ def get_local_timezone_from_env(organization=None):
         return pytz.timezone("Asia/Bishkek")  # Kyrgyzstan
     elif organization == "tjhm":
         return pytz.timezone("Asia/Dushanbe")  # Tajikistan
+    elif organization == "uzhm":
+        return pytz.timezone("Asia/Tashkent")  # Uzbekistan
     else:
         logger.warning(f"Unknown organization: {organization}. Defaulting to UTC.")
         return pytz.utc  # Default to UTC if organization is unknown

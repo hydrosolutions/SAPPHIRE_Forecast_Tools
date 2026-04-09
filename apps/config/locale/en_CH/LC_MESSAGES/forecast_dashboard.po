@@ -208,11 +208,11 @@ msgstr "Forecast accuracy"
 
 #: pentad_dashboard.py:988
 msgid "disclaimer_who"
-msgstr "<p>The forecast dashboard was developed by <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> under the project SAPPHIRE Central Asia funded by the <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Swiss Agency for Development and Cooperation</a>.</p>"
+msgstr "<p>The forecast dashboard was developed by <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> under the projects SAPPHIRE Central Asia and Climate Resilient Integrated Water Resources Management in the Zarafshan River Basin funded by the <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Swiss Agency for Development and Cooperation</a>.</p>"
 
 #: pentad_dashboard.py:989
 msgid "disclaimer_waranty"
-msgstr "The data used in this dashboard is provided by the iEasyHydro system, which is managed by the Operational Hydrology Department of Kyrgyz Hydromet."
+msgstr "The data used in this dashboard is provided by the iEasyHydro system, which is managed by the Operational Hydrology Department of the national Hydromet. Gridded weather data is based on data and products of the European Centre for Medium-Range Weather Forecasts (<a href='https://www.ecmwf.int/' target='_blank'>ECMWF</a>), provided under a Creative Commons Attribution 4.0 International (CC BY 4.0) and downscaled to the Central Asian region using the high-resolution <a href='https://www.chelsa-climate.org/datasets' target='_blank'>CHELSA v2.1</a> data set. ECMWF and the project consortium do not accept any liability whatsoever for any error or omission in the data, their availability, or for any loss or damage arising from their use."
 
 #: pentad_dashboard.py:992
 msgid "Last updated on "

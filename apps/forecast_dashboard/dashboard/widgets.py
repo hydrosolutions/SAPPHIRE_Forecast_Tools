@@ -505,7 +505,7 @@ def create_downloader_and_panel(horizon):
 def create_language_buttons():
     # Create language selection buttons as links that reload the page with the selected language
     buttons = []
-    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
+    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG'}.items():
         # Create a hyperlink styled as a button
         href = pn.state.location.pathname + f'?lang={lang_code}'
 

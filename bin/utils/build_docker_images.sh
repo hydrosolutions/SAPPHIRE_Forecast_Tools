@@ -24,6 +24,6 @@ if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
       docker build --no-cache -t mabesa/sapphire-prepgateway:$TAG -f ./apps/preprocessing_gateway/Dockerfile .
 fi
 
-if [ "$ieasyhydroforecast_organization" != "demo" ]; then
+if [ "$ieasyhydroforecast_organization" != "demo" ] && [ "$ieasyhydroforecast_organization" != "uzhm" ]; then
       docker build --no-cache -t mabesa/sapphire-lt-forecasting:$TAG -f ./apps/long_term_forecasting/Dockerfile .
 fi

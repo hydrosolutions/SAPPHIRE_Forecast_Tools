@@ -171,6 +171,7 @@ MAINTENANCE_MODULES=(
 # then falls back to extracting ieasyhydroforecast_organization from the .env file.
 ORG=""
 DEMO_SKIP_MODULES=(preprocessing_gateway machine_learning long_term_forecasting)
+UZHM_SKIP_MODULES=(preprocessing_gateway machine_learning long_term_forecasting)
 
 # Colors
 RED='\033[0;31m'
@@ -357,6 +358,10 @@ should_skip_module() {
     local module="$1"
     if [ "$ORG" = "demo" ]; then
         for skip in "${DEMO_SKIP_MODULES[@]}"; do
+            [ "$module" = "$skip" ] && return 0
+        done
+    elif [ "$ORG" = "uzhm" ]; then
+        for skip in "${UZHM_SKIP_MODULES[@]}"; do
             [ "$module" = "$skip" ] && return 0
         done
     fi
@@ -1520,8 +1525,8 @@ Environment variables:
   LT_OPERATIONAL_ISSUE_DAYS            Days of month for LT issue window (default: "10 25").
                                         25th runs all horizons; 10th runs monthly only.
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
-  ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm).
-                                          Demo skips: preprocessing_gateway, machine_learning, long_term_forecasting.
+  ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm, uzhm).
+                                          Demo/uzhm skip: preprocessing_gateway, machine_learning, long_term_forecasting.
   ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
                                             Set ML_MODE=BOTH to run ML for all modes.
 
