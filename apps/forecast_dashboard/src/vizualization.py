@@ -111,8 +111,9 @@ elif observed_runoff_palette == "black":
 
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_card, basin_card, reload_card, event):
+def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_card, basin_card, reload_card, event, horizon_selector=None):
     active_tab = tabs.active
+    is_month = horizon_selector is not None and horizon_selector.value == "month"
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
         horizon_card.visible = True
@@ -123,7 +124,7 @@ def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_c
     elif active_tab == 1:  # 'Forecast' tab
         horizon_card.visible = True
         station_card.visible = True
-        forecast_card.visible = True
+        forecast_card.visible = not is_month
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
@@ -2923,8 +2924,10 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
     # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
-    else:
+    elif horizon == "decade":
         horizon_in_year = "decad_in_year"
+    else:
+        horizon_in_year = None
 
     # Filter forecasts_all for selected station, date and models
     if hasattr(station, 'value'):
@@ -2967,14 +2970,27 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
             print("max_date is nan")
     # print("forecast_table\n", forecast_table)
 
-    # Drop a couple of columns
+    # Drop columns not needed in the summary table
+    cols_to_drop = ['code', 'date', 'Date', 'year', 'model_long', 'station_labels']
+    if horizon_in_year:
+        cols_to_drop.append(horizon_in_year)
+    if horizon in forecast_table.columns:
+        cols_to_drop.append(horizon)
     forecast_table.drop(
-        columns=['code', 'date', 'Date', 'year', horizon_in_year,
-                 horizon, 'model_long', 'station_labels'],
+        columns=[c for c in cols_to_drop if c in forecast_table.columns],
         inplace=True)
 
-    # Calculate the forecast range depending on the values of range_type and range_slider
-    forecast_table = processing.calculate_forecast_range(_, forecast_table, range_type, range_slider)
+    # Calculate the forecast range
+    if horizon == "month":
+        # For monthly forecasts, use quantile bounds if available
+        forecast_table['fc_lower'] = forecast_table.get('Q25', np.nan)
+        forecast_table['fc_upper'] = forecast_table.get('Q75', np.nan)
+        for col in ('delta', 'sdivsigma', 'mae', 'accuracy'):
+            if col not in forecast_table.columns:
+                forecast_table[col] = np.nan
+    else:
+        forecast_table = processing.calculate_forecast_range(
+            _, forecast_table, range_type, range_slider)
 
     # Get columns in the desired sequence
     forecast_table = forecast_table[

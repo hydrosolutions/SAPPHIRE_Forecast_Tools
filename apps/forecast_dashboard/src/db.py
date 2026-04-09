@@ -433,14 +433,59 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
     return _convert_na_to_nan(df)
 
 # ---------------------------------------------------------------------------
+# Long-term (monthly) forecasts
+# ---------------------------------------------------------------------------
+
+@_timed
+def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
+    """Fetch long-term monthly forecasts and reshape to match short-term format."""
+    code = _resolve_station(station) if station else None
+    params = {
+        "horizon_type": "month",
+        "horizon_value": horizon_value,
+        "start_date": f"{PREVIOUS_YEAR}-12-20",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    }
+    if code:
+        params["code"] = code
+
+    df = _read_data("postprocessing", "long-forecast", params)
+    if df.empty or "date" not in df.columns:
+        logger.warning("get_long_forecasts: no data for station %s", code)
+        return pd.DataFrame(columns=[
+            "code", "date", "Date", "year",
+            "model_short", "model_long",
+            "forecasted_discharge", "flag",
+            "Q5", "Q25", "Q75", "Q95", "E[Q]",
+        ])
+
+    df.rename(columns={
+        "model_type": "model_short",
+        "model_type_description": "model_long",
+        "q": "forecasted_discharge",
+        "q05": "Q5", "q10": "Q10", "q25": "Q25",
+        "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
+    }, inplace=True)
+    df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    df["Date"] = df["date"]
+    df["year"] = df["date"].dt.year
+    # print("### dbg: get_long_forecasts:", df)
+    return _convert_na_to_nan(df.sort_values("Date"))
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
 def get_data(horizon, station, all_stations) -> dict:
-    hin = _horizon_in_year_col(horizon)
-
     add_labels = lambda df: processing.add_labels_to_hydrograph(df, all_stations)
     i18n_models = lambda df: processing.internationalize_forecast_model_names(_, df)
+
+    if horizon == "month":
+        return _get_data_monthly(station, all_stations, add_labels, i18n_models)
+
+    hin = _horizon_in_year_col(horizon)
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
@@ -472,4 +517,30 @@ def get_data(horizon, station, all_stations) -> dict:
             suffixes=("", "_stats"),
         )
 
+    return data
+
+
+def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
+    """Load data for monthly horizon — only long forecasts + daily hydrograph."""
+    supported_modes = os.getenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes", ""
+    ).split(",")
+    # logger.info("Long-term supported modes: %s, month_0 enabled: %s",
+    #             supported_modes, "month_0" in supported_modes)
+    data = {
+        "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
+        "hydrograph_pentad_all": pd.DataFrame(),
+        "rain":                 get_rain(station),
+        "temp":                 get_temp(station),
+        "snow_data":            get_snow_data(station),
+        "ml_forecast":          pd.DataFrame(),
+        "linreg_predictor":     pd.DataFrame(),
+        "forecasts_all":        i18n_models(add_labels(get_long_forecasts(station, horizon_value=1))),
+        "forecast_stats":       pd.DataFrame(),
+        "long_forecasts_m0":    pd.DataFrame(),
+    }
+    if "month_0" in supported_modes:
+        data["long_forecasts_m0"] = i18n_models(
+            add_labels(get_long_forecasts(station, horizon_value=0))
+        )
     return data

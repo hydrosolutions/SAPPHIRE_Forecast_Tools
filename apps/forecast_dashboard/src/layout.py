@@ -324,6 +324,62 @@ def define_tabs(
 
 
 def define_tabs_2(_, wm, pm, cfg, disclaimer):
+    pm.linreg_card = pn.Card(
+        pn.Row(pm.forecast_data_and_plot),
+        title=_("Linear regression"),
+        sizing_mode="stretch_width",
+        collapsible=True,
+        collapsed=False,
+        min_height=560,
+        max_height=560,
+    )
+    pm.hydrograph_card = pn.Card(
+        pn.Column(
+            pn.Row(
+                pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
+                wm.aggregate_radiobutton,
+            ),
+            pm.pentad_forecast,
+        ),
+        title=_("Hydrograph"),
+        height=600,
+        # height=None,
+        collapsible=True,
+        collapsed=False,
+    )
+    pm.skill_metrics_card = pn.Card(
+        pn.Row(
+            pm.forecast_skill,
+        ),
+        title=_("Forecast skill metrics"),
+        height=800,
+        collapsible=True,
+    )
+    pm.skill_table_card = pn.Card(
+        pn.Column(
+            pm.skill_table,
+            pm.skill_download_filename,
+            pm.skill_download_button,
+        ),
+        title=_("Table of forecast skill metrics"),
+        height=600,
+        collapsible=True,
+        # sizing_mode='stretch_width',
+    )
+    pm.summary_table_card = pn.Card(
+        pn.Row(wm.add_to_bulletin_button, wm.add_to_bulletin_popup),
+        wm.forecast_summary_table,
+        title=_("Summary table"),
+        sizing_mode="stretch_both",
+        min_height=500 if len(wm.forecast_summary_table.value) > 1 else 240,
+    )
+    pm.summary_table_m0_card = pn.Card(
+        wm.forecast_summary_table_m0,
+        title=_("Current month forecast"),
+        sizing_mode="stretch_both",
+        min_height=240,
+        visible=False,
+    )
     tabs = pn.Tabs(
         (
             _("Predictors"),
@@ -357,55 +413,12 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
             _("Forecast"),
             pn.Column(
                 wm.forecast_warning,
-                pn.Card(
-                    pn.Row(pm.forecast_data_and_plot),
-                    title=_("Linear regression"),
-                    sizing_mode="stretch_width",
-                    collapsible=True,
-                    collapsed=False,
-                    min_height=560,
-                    max_height=560,
-                ),
-                pn.Card(
-                    pn.Row(wm.add_to_bulletin_button, wm.add_to_bulletin_popup),
-                    wm.forecast_summary_table,
-                    title=_("Summary table"),
-                    sizing_mode="stretch_both",
-                    min_height=500 if len(wm.forecast_summary_table.value) > 1 else 240,
-                ),
-                pn.Card(
-                    pn.Column(
-                        pn.Row(
-                            pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
-                            wm.aggregate_radiobutton,
-                        ),
-                        pm.pentad_forecast,
-                    ),
-                    title=_("Hydrograph"),
-                    height=600,
-                    # height=None,
-                    collapsible=True,
-                    collapsed=False,
-                ),
-                pn.Card(
-                    pn.Row(
-                        pm.forecast_skill,
-                    ),
-                    title=_("Forecast skill metrics"),
-                    height=800,
-                    collapsible=True,
-                ),
-                pn.Card(
-                    pn.Column(
-                        pm.skill_table,
-                        pm.skill_download_filename,
-                        pm.skill_download_button,
-                    ),
-                    title=_("Table of forecast skill metrics"),
-                    height=600,
-                    collapsible=True,
-                    # sizing_mode='stretch_width',
-                ),
+                pm.linreg_card,
+                pm.summary_table_card,
+                pm.summary_table_m0_card,
+                pm.hydrograph_card,
+                pm.skill_metrics_card,
+                pm.skill_table_card,
             ),
         ),  # end of Forecast tab
         (

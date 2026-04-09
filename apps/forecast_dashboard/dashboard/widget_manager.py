@@ -119,6 +119,12 @@ class WidgetManager:
             self.forecast_tabulator
         )
 
+        # ── Summary table (month_0) ────────────────────────────────────────
+        self.forecast_tabulator_m0 = widgets.create_forecast_tabulator()
+        self.forecast_summary_table_m0 = widgets.create_forecast_summary_table(
+            self.forecast_tabulator_m0
+        )
+
         # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
 
@@ -171,19 +177,33 @@ class WidgetManager:
         def _on_change(horizon, station_value, selected_pentad, selected_decad):
             """Reload data for the new station and refresh the model checkbox."""
             _ = self._gettext
+            is_month = horizon == "month"
             dm.load_station(horizon, station_value.split()[0])
             dm.update_sites_for_pentad(_, horizon, selected_pentad, selected_decad)
             dm.invalidate_render_cache()
 
-            self.refresh_warnings()
+            if is_month and not dm.forecasts_all.empty:
+                max_date = dm.forecasts_all['date'].max()
+                if hasattr(max_date, 'date'):
+                    self.date_picker.value = max_date.date()
+
             self.refresh_model_checkbox()
-            pm.render_active_tab(self._dashboard_tabs)
+            if is_month:
+                pm.update_forecast_tabulator()
+                pm.update_forecast_tabulator_m0()
+            else:
+                self.refresh_warnings()
+                pm.render_active_tab(self._dashboard_tabs)
+            pm.set_forecast_cards_visibility(not is_month)
+            # Only show forecast_card on Forecast tab and non-month horizon
+            is_forecast_tab = self._dashboard_tabs.active == 1
+            self.forecast_card.visible = is_forecast_tab and not is_month
 
             try:
                 _last_date, self.forecast_horizon, self.forecast_year = (
                     dm.get_bulletin_metadata(horizon)
                 )
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, TypeError, ValueError):
                 pass  # no data for this horizon yet; bulletin callback handles it
 
             for cb in self._post_load_callbacks:

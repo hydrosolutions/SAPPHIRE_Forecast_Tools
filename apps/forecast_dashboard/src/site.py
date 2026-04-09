@@ -213,7 +213,11 @@ class SapphireSite:
         #self.forecast_nse = df['NSE']  # Not available yet
         self.forecast_model = df[_('Model')].values[0]
         # Calculate percentage of norm
-        self.perc_norm = round((self.forecast_expected / self.hydrograph_norm) * 100, 2)
+        norm = getattr(self, 'hydrograph_norm', None)
+        if norm and self.forecast_expected:
+            self.perc_norm = round((self.forecast_expected / norm) * 100, 2)
+        else:
+            self.perc_norm = None
         print(f"Updated site {self.code} with forecast attributes from DataFrame.")
 
     def get_site_attributes_from_selected_forecast(cls,
