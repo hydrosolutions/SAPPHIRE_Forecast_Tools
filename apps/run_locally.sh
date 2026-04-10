@@ -843,6 +843,94 @@ run_recalculate_snow_norms() {
     return $rc
 }
 
+run_initialize_deployment() {
+    banner "Initialize: Full deployment setup"
+    local start
+    start=$(get_timestamp)
+
+    # Read start_date: shell env takes precedence, then grep from .env file
+    # (run_locally.sh never sources .env — mirrors the resolve_org() pattern)
+    local start_date="${ieasyhydroforecast_START_DATE:-}"
+    if [ -z "$start_date" ]; then
+        local env_file="${ieasyhydroforecast_env_file_path:-}"
+        if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+            start_date=$(grep -m1 '^ieasyhydroforecast_START_DATE=' "$env_file" \
+                         | cut -d'=' -f2 | tr -d '[:space:]"'"'")
+        fi
+    fi
+    if [ -z "$start_date" ]; then
+        log ERROR "ieasyhydroforecast_START_DATE must be set in .env (or shell env) for initialization"
+        return 1
+    fi
+
+    log INFO "=== SAPPHIRE Initialization ==="
+    log INFO "Start date: $start_date"
+
+    # Step 1: Read data sources and populate CSV cache (maintenance fetch + 30-day API sync)
+    log INFO "--- Step 1/5: Preprocessing runoff (maintenance) ---"
+    run_maintenance_preprocessing_runoff
+    local rc=$?
+    if [ $rc -ne 0 ]; then
+        log ERROR "Initialization failed at Step 1 (preprocessing runoff)"
+        return $rc
+    fi
+
+    # Step 2: Push full CSV history to API (initial sync)
+    # CRITICAL: This is a hard prerequisite for Step 3 — the hindcast reads
+    # observations from the preprocessing API (no CSV fallback when
+    # SAPPHIRE_API_ENABLED=true). The script sets SAPPHIRE_SYNC_MODE=initial
+    # internally; the env var below is a safety net.
+    log INFO "--- Step 2/5: Initial API sync (full history) ---"
+    CURRENT_MODULE_LOG="${ERROR_DIR}/initial_api_sync.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv preprocessing_runoff initial_api_sync.py \
+        "SAPPHIRE_SYNC_MODE=initial"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        log ERROR "Initialization failed at Step 2 (initial API sync)"
+        return $rc
+    fi
+
+    # Step 3: Hindcast for each horizon
+    # Values must be uppercase PENTAD/DECAD — linear_regression.py compares
+    # case-sensitively (lines 646-647), lowercase causes silent no-op.
+    for mode in PENTAD DECAD; do
+        log INFO "--- Step 3/5: Hindcast ($mode) ---"
+        CURRENT_MODULE_LOG="${ERROR_DIR}/linear_regression_init_${mode}.log"
+        > "$CURRENT_MODULE_LOG"
+        run_in_venv linear_regression linear_regression.py \
+            "SAPPHIRE_PREDICTION_MODE=$mode" -- \
+            --hindcast --start-date "$start_date"
+        rc=$?
+        if [ $rc -ne 0 ]; then
+            log ERROR "Initialization failed at Step 3 (hindcast $mode)"
+            return $rc
+        fi
+    done
+
+    # Step 4: Skill metrics for each horizon
+    # Values must be uppercase PENTAD/DECAD — recalculate_skill_metrics.py
+    # validates against VALID_MODES and exits on unrecognized values.
+    for mode in PENTAD DECAD; do
+        log INFO "--- Step 4/5: Skill metrics ($mode) ---"
+        CURRENT_MODULE_LOG="${ERROR_DIR}/skill_metrics_init_${mode}.log"
+        > "$CURRENT_MODULE_LOG"
+        run_in_venv postprocessing_forecasts recalculate_skill_metrics.py \
+            "SAPPHIRE_PREDICTION_MODE=$mode"
+        rc=$?
+        if [ $rc -ne 0 ]; then
+            log ERROR "Initialization failed at Step 4 (skill metrics $mode)"
+            return $rc
+        fi
+    done
+
+    log INFO "--- Step 5/5: Verification ---"
+    local elapsed=$(( $(get_timestamp) - start ))
+    log OK "Initialization complete in $(format_duration $elapsed). Start the dashboard to verify data."
+    record_result "initialize_deployment" "PASS" "$elapsed" ""
+    return 0
+}
+
 run_calibrate_long_term() {
     banner "Calibrate: long_term_forecasting"
     local start
@@ -1500,6 +1588,11 @@ Maintenance targets:
   recalculate_snow_norms  Yearly snow norm recalculation
   yearly                  All yearly tasks (snow norms + skill metrics)
 
+Initialization targets:
+  initialize              First-time deployment setup: full data sync,
+                          hindcast from START_DATE, and skill metrics.
+                          Requires ieasyhydroforecast_START_DATE in .env.
+
 Modules (for single-module operational runs):
   preprocessing_runoff    Process runoff data
   preprocessing_gateway   Quantile mapping, ERA5 extension, snow data
@@ -1529,6 +1622,7 @@ Environment variables:
                                           Demo/uzhm skip: preprocessing_gateway, machine_learning, long_term_forecasting.
   ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
                                             Set ML_MODE=BOTH to run ML for all modes.
+  ieasyhydroforecast_START_DATE        Hindcast start date for initialize target (YYYY-MM-DD)
 
 Examples:
   # Full daily run (PENTAD + DECAD + maintenance)
@@ -1588,6 +1682,11 @@ Examples:
 
   # Dry run
   bash apps/run_locally.sh --dry-run maintenance
+
+  # First-time deployment initialization
+  ieasyhydroforecast_START_DATE=2000-01-06 \
+    ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh initialize
 USAGE
 }
 
@@ -1629,7 +1728,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="daily short-term long-term long-term-operational all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term"
+    local valid_targets="daily short-term long-term long-term-operational all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term initialize"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -1664,6 +1763,8 @@ main() {
 
     if [ "$ORG" = "demo" ]; then
         log INFO "Demo org: skipping modules — ${DEMO_SKIP_MODULES[*]}"
+    elif [ "$ORG" = "uzhm" ]; then
+        log INFO "Uzhm org: skipping modules — ${UZHM_SKIP_MODULES[*]}"
     fi
 
     # Validate environment
@@ -1777,6 +1878,9 @@ main() {
             else
                 run_calibrate_long_term || exit_code=$?
             fi
+            ;;
+        initialize)
+            run_initialize_deployment || exit_code=$?
             ;;
         # Single operational module targets (with per-module validation)
         preprocessing_runoff)
