@@ -1,6 +1,6 @@
 # Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter to preprocessing_runoff
 
-**Status**: Draft
+**Status**: Complete — adapter implemented, tested, and merged (commit 69d1334, 2026-04-07)
 **Module**: preprocessing_runoff
 **Priority**: High
 **Labels**: `uzhm`, `adapter`, `preprocessing`

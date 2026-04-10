@@ -53,7 +53,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**ML-013**~~ | ~~recalculate_nan_forecasts API write overwrites valid operational rows~~ | ~~ml~~ | | Complete | [`archive/review_gi_draft_ml_recalc_api_overwrite.md`](issues/archive/review_gi_draft_ml_recalc_api_overwrite.md) | — |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
-| **PREPQ-001** | Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter | prepq | **High** | In Progress | [`high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`](issues/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md) | — |
+| ~~**PREPQ-001**~~ | ~~Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter~~ | ~~prepq~~ | | Complete | [`archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`](issues/archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md) | — |
 | **FD-001** | Fix forecast dashboard for LR-only deployments | fd | **High** | Review | [`archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md`](issues/archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md) | — |
 | **FD-002** | Fix range_type label mismatch and inverted math in summary table | fd | **Mid** | Review | [`archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md`](issues/archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md) | ~~FD-001~~ |
 | **INFRA-014** | Add deployment initialization workflow | infra | **High** | Draft | [`high_prio_gi_draft_infra_new_deployment_initialization.md`](issues/high_prio_gi_draft_infra_new_deployment_initialization.md) | FD-001 (partial) |
