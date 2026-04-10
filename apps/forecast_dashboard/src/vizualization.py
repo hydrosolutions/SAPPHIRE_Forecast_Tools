@@ -2343,7 +2343,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
         horizon_column_name = _('pentad_of_year column name')
     else:
         horizon_in_year = "decad_in_year"
-        horizon_in_month = 'decad_in_year'
+        horizon_in_month = 'decad_in_month'
         title_day_end = tl.get_decad_last_day(forecast_date.strftime("%Y-%m-%d"))
         horizon_column_name = _('decad_of_year column name')
 
@@ -2373,6 +2373,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
     forecasts = forecasts[forecasts['date'] <= pd.to_datetime(title_date + dt.timedelta(days=1))]
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
+    has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()
+    delta_offset = forecasts['delta'] if has_delta else 0
     # Calculate the forecast ranges depending on the values of range_type and range_slider
     if range_type == _('delta'):
         if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
@@ -2380,22 +2382,22 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
             # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
             forecasts['fc_lower'] = forecasts['Q25'].where(
                 ~forecasts['Q25'].isna(),
-                forecasts['forecasted_discharge'] - forecasts['delta'])
+                forecasts['forecasted_discharge'] - delta_offset)
             forecasts['fc_upper'] = forecasts['Q75'].where(
                 ~forecasts['Q75'].isna(),
-                forecasts['forecasted_discharge'] + forecasts['delta'])
-        else: 
-            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - forecasts['delta']
-            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + forecasts['delta']
-        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta']
-        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta']
+                forecasts['forecasted_discharge'] + delta_offset)
+        else:
+            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - delta_offset
+            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + delta_offset
+        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - delta_offset
+        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + delta_offset
     elif range_type == _("Manual range, select value below"):
         forecasts['fc_lower'] = (1 - range_slider / 100.0) * forecasts['forecasted_discharge']
         forecasts['fc_upper'] = (1 + range_slider / 100.0) * forecasts['forecasted_discharge']
     elif range_type == _("min[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - delta_offset,
                                                   (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + delta_offset,
                                                   (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
     if 'fc_lower' not in forecasts.columns:
@@ -2495,7 +2497,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
                     'model_short': 'Model'})
         # Add pentad_in_month and pentad_in_year to latest_rram_forecast
         latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-            0] if not forecasts_current.empty else None
+            0] if not forecasts_current.empty and horizon_in_month in forecasts_current.columns else None
         latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
             0] if not forecasts_current.empty else None
         latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
@@ -2514,7 +2516,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
                      'model_short': 'Model'})
         # Add pentad_in_month and pentad_in_year to latest_ml_forecast
         latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-            0] if not forecasts_current.empty else None
+            0] if not forecasts_current.empty and horizon_in_month in forecasts_current.columns else None
         latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
             0] if not forecasts_current.empty else None
         # Filter for selected models
@@ -2723,25 +2725,29 @@ def plot_pentad_forecast_hydrograph_data(_, horizon, hydrograph_pentad_all, fore
     forecasts = forecasts[forecasts['date'] <= pd.Timestamp(title_date) + dt.timedelta(days=1)]
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
+    has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()
+    delta_offset = forecasts['delta'] if has_delta else 0
     # Calculate the forecast ranges depending on the values of range_type and range_slider
     if range_type == _('delta'):
-        # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
-        # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
-        forecasts['fc_lower'] = forecasts['Q25'].where(
-            ~forecasts['Q25'].isna(),
-            forecasts['forecasted_discharge'] - forecasts['delta'])
-        forecasts['fc_upper'] = forecasts['Q75'].where(
-            ~forecasts['Q75'].isna(),
-            forecasts['forecasted_discharge'] + forecasts['delta'])
-        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta']
-        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta']
+        if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
+            forecasts['fc_lower'] = forecasts['Q25'].where(
+                ~forecasts['Q25'].isna(),
+                forecasts['forecasted_discharge'] - delta_offset)
+            forecasts['fc_upper'] = forecasts['Q75'].where(
+                ~forecasts['Q75'].isna(),
+                forecasts['forecasted_discharge'] + delta_offset)
+        else:
+            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - delta_offset
+            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + delta_offset
+        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - delta_offset
+        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + delta_offset
     elif range_type == _("Manual range, select value below"):
         forecasts['fc_lower'] = (1 - range_slider / 100.0) * forecasts['forecasted_discharge']
         forecasts['fc_upper'] = (1 + range_slider / 100.0) * forecasts['forecasted_discharge']
     elif range_type == _("min[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - delta_offset,
                                                   (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + delta_offset,
                                                   (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
     # Print column names of hydrograph_pentad_all
@@ -2977,8 +2983,9 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
     forecast_table = processing.calculate_forecast_range(_, forecast_table, range_type, range_slider)
 
     # Get columns in the desired sequence
-    forecast_table = forecast_table[
-        ['model_short', 'forecasted_discharge', 'fc_lower', 'fc_upper', 'delta', 'sdivsigma', 'mae', 'accuracy']]
+    expected_cols = ['model_short', 'forecasted_discharge', 'fc_lower', 'fc_upper',
+                     'delta', 'sdivsigma', 'mae', 'accuracy']
+    forecast_table = forecast_table.reindex(columns=expected_cols)
 
     # Round delta, sdivsigma and mae to 2 decimals each
     forecast_table['delta'] = forecast_table['delta'].round(2)
@@ -4483,6 +4490,8 @@ def add_month_pentad_per_month_to_df(horizon, df):
 
 def create_skill_table(_, horizon,forecast_stats):
     """Creates a tabulator widget for the forecast statistics."""
+    if forecast_stats.empty:
+        return pn.widgets.Tabulator(pd.DataFrame())
     # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"

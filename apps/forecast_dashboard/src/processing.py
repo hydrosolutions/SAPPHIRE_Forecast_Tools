@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import pandas as pd
@@ -6,6 +7,8 @@ import param
 import re
 import pickle
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 from .gettext_config import _
 
@@ -922,6 +925,47 @@ def load_stations_from_file(filename):
         return None
 
 
+def _create_manual_sites() -> list:
+    """Create fl.Site objects for manually configured stations.
+
+    Reads manual station entries from the configuration (e.g., Google Sheets
+    entries) and converts them to fl.Site objects so they appear in the
+    dashboard station selector alongside iEasyHydro HF stations.
+
+    Returns:
+        list[fl.Site]: A list of Site objects for each manual entry. Returns
+        an empty list if no manual entries are found or on any exception.
+    """
+    try:
+        entries = sl._read_manual_entries_from_config()
+        sites = []
+        for code_str, entry in entries.items():
+            basin = entry.get("basin", [None])[0]
+            if not basin:
+                logger.warning(
+                    "Manual station %s has no basin configured; it will appear "
+                    "under the default 'Basin' category in the station selector.",
+                    code_str,
+                )
+            site = fl.Site(
+                code=code_str,
+                name=entry.get("name_ru", [None])[0],
+                river_name=entry.get("river_ru", [None])[0],
+                punkt_name=entry.get("punkt_ru", [None])[0],
+                lat=entry.get("lat", [0.0])[0],
+                lon=entry.get("long", [0.0])[0],
+                region=entry.get("region", [None])[0],
+                basin=basin if basin else "Basin",
+                qdanger=entry.get("qdanger", [None])[0],
+                bulletin_order=entry.get("bulletin_order", [0])[0],
+            )
+            sites.append(site)
+        return sites
+    except Exception as e:
+        logger.warning("Failed to load manual stations: %s", e)
+        return []
+
+
 def save_stations_to_file(stations, filename):
     with open(filename, "wb") as f:
         pickle.dump(stations, f)
@@ -941,6 +985,9 @@ def get_all_stations_from_iehhf():
         # iehhf_warning = None
         # Get a list of site objects from iEH HF
         all_stations, _, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+        manual_sites = _create_manual_sites()
+        existing_codes = {s.code for s in all_stations}
+        all_stations.extend(s for s in manual_sites if s.code not in existing_codes)
         # Save to file for later use
         save_stations_to_file(all_stations, all_stations_file)
     except Exception as e:
@@ -1010,6 +1057,10 @@ def get_all_stations_from_file():
     #         subset.append(station)
     #         # print("ADDED:", station.code, station.name)
     # save_stations_to_file(subset, subset_file)
+
+    manual_sites = _create_manual_sites()
+    existing_codes = {s.code for s in all_stations}
+    all_stations.extend(s for s in manual_sites if s.code not in existing_codes)
 
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
@@ -1180,9 +1231,11 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
     if not isinstance(range_type, str):
         range_type = range_type.value
 
+    has_delta = 'delta' in forecast_table.columns and not forecast_table['delta'].isna().all()
+    delta_offset = forecast_table['delta'] if has_delta else 0
     if range_type == _('delta'):
-        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
-        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
+        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - delta_offset
+        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + delta_offset
     elif range_type == _("Manual range, select value below"):
         if hasattr(range_slider, 'value'):
             forecast_table['fc_lower'] = (1 - range_slider.value / 100.0) * forecast_table['forecasted_discharge']
@@ -1190,22 +1243,22 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
         else:
             forecast_table['fc_lower'] = (1 - range_slider / 100.0) * forecast_table['forecasted_discharge']
             forecast_table['fc_upper'] = (1 + range_slider / 100.0) * forecast_table['forecasted_discharge']
-    elif range_type == _("max[delta, %]"):
+    elif range_type == _("min[delta, %]"):
         if hasattr(range_slider, 'value'):
-            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
+            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - delta_offset,
                                                     (1 - range_slider.value / 100.0) * forecast_table[
                                                         'forecasted_discharge'])
-            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
+            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + delta_offset,
                                                     (1 + range_slider.value / 100.0) * forecast_table[
                                                         'forecasted_discharge'])
         else:
-            forecast_table['fc_lower'] = np.minimum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
+            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - delta_offset,
                                                     (1 - range_slider / 100.0) * forecast_table['forecasted_discharge'])
-            forecast_table['fc_upper'] = np.maximum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
+            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + delta_offset,
                                                     (1 + range_slider / 100.0) * forecast_table['forecasted_discharge'])
     else:
-        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
-        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
+        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - delta_offset
+        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + delta_offset
 
     return forecast_table
 

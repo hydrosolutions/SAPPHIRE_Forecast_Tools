@@ -396,6 +396,13 @@ def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
 
     # Union of columns, missing columns will become NaN
     combined = pd.concat([df_ml, df_lr], ignore_index=True, sort=False)
+    # --- Normalize horizon-in-month columns across ML / LR rows ---
+    if "pentad_in_month" in combined.columns and "pentad" in combined.columns:
+        combined["pentad_in_month"] = combined["pentad_in_month"].fillna(combined["pentad"])
+    elif "pentad" in combined.columns:
+        combined["pentad_in_month"] = combined["pentad"]
+    if "decade" in combined.columns:
+        combined["decad_in_month"] = combined["decade"]
     if code == "15013" and not combined.empty:
         logger.warning(
             "D14 get_forecasts_all code=15013: rows=%d, max_date=%s, "

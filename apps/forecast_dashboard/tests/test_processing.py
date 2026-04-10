@@ -127,15 +127,15 @@ class TestCalculateForecastRange:
         assert result["fc_lower"].iloc[0] == pytest.approx(90.0)
         assert result["fc_upper"].iloc[0] == pytest.approx(110.0)
 
-    def test_max_delta_pct_scalar(self, identity_gettext, forecast_table):
-        # max[delta, %] with 5% → pct = 5.0, delta = 10.0
+    def test_min_delta_pct_scalar(self, identity_gettext, forecast_table):
+        # min[delta, %] with 5% → pct = 5.0, delta = 10.0
         # For row 0: delta range = [90, 110], pct range = [95, 105]
-        # fc_lower = min(90, 95) = 90; fc_upper = max(110, 105) = 110
+        # Intersection: fc_lower = max(90, 95) = 95; fc_upper = min(110, 105) = 105
         result = processing.calculate_forecast_range(
-            identity_gettext, forecast_table, "max[delta, %]", 5
+            identity_gettext, forecast_table, "min[delta, %]", 5
         )
-        assert result["fc_lower"].iloc[0] == pytest.approx(90.0)
-        assert result["fc_upper"].iloc[0] == pytest.approx(110.0)
+        assert result["fc_lower"].iloc[0] == pytest.approx(95.0)
+        assert result["fc_upper"].iloc[0] == pytest.approx(105.0)
 
     def test_unknown_range_type_falls_back_to_delta(self, identity_gettext, forecast_table):
         result = processing.calculate_forecast_range(

@@ -332,7 +332,7 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
                 pn.Row(
                     pn.Card(pm.daily_hydrograph, title=_("Hydrograph")),
                     sizing_mode="stretch_width",
-                    min_height=400 if pm.daily_hydrograph.object is not None else 0,
+                    min_height=250 if pm.daily_hydrograph.object is not None else 0,
                 ),
                 pn.Row(
                     pn.Card(pm.daily_rainfall, title=_("Precipitation")),
