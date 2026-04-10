@@ -53,6 +53,10 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**ML-013**~~ | ~~recalculate_nan_forecasts API write overwrites valid operational rows~~ | ~~ml~~ | | Complete | [`archive/review_gi_draft_ml_recalc_api_overwrite.md`](issues/archive/review_gi_draft_ml_recalc_api_overwrite.md) | — |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
+| **PREPQ-001** | Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter | prepq | **High** | In Progress | [`high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`](issues/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md) | — |
+| **FD-001** | Fix forecast dashboard for LR-only deployments | fd | **High** | Review | [`archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md`](issues/archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md) | — |
+| **FD-002** | Fix range_type label mismatch and inverted math in summary table | fd | **Mid** | Review | [`archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md`](issues/archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md) | ~~FD-001~~ |
+| **INFRA-014** | Add deployment initialization workflow | infra | **High** | Draft | [`high_prio_gi_draft_infra_new_deployment_initialization.md`](issues/high_prio_gi_draft_infra_new_deployment_initialization.md) | FD-001 (partial) |
 
 ---
 
@@ -174,15 +178,15 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
-| **FD-001** | Dashboard crashes when current year data missing | **Low** | Draft | [`low_prio_gi_draft_dashboard_missing_current_year_data.md`](issues/low_prio_gi_draft_dashboard_missing_current_year_data.md) | — |
+| **FD-012** | Dashboard crashes when current year data missing | **Low** | Draft | [`low_prio_gi_draft_dashboard_missing_current_year_data.md`](issues/low_prio_gi_draft_dashboard_missing_current_year_data.md) | — |
 | **FD-002** | Add new skill metrics visualization with plain-language interpretation | **Medium** | Draft | [`mid_prio_gi_draft_dashboard_skill_metrics_visualization.md`](issues/mid_prio_gi_draft_dashboard_skill_metrics_visualization.md) | Phase 4c/4d |
 | **FD-003** | Duplicate forecast rows caused by skill metric merge fan-out | **High** | Draft | [`high_prio_gi_draft_dashboard_duplicate_forecasts_skill_merge.md`](issues/high_prio_gi_draft_dashboard_duplicate_forecasts_skill_merge.md) | — |
 | **FD-004** | LR forecast bounds and stats missing due to dropped delta column | **High** | Draft | [`high_prio_gi_draft_dashboard_lr_forecast_bounds_missing.md`](issues/high_prio_gi_draft_dashboard_lr_forecast_bounds_missing.md) | — |
 | **FD-005** | Daily ML forecasts not displayed due to API limit truncation | **High** | Draft | [`high_prio_gi_draft_dashboard_daily_ml_forecast_limit_truncation.md`](issues/high_prio_gi_draft_dashboard_daily_ml_forecast_limit_truncation.md) | — |
 | **FD-006** | Skill metrics missing for LR and NE due to model_long merge key mismatch | **High** | Draft | [`high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md`](issues/high_prio_gi_draft_dashboard_skill_metrics_model_long_mismatch.md) | — |
-| **FD-007** | Update dashboard Docker dataflows to operational mode with logging | **Medium** | Implemented | [`mid_prio_gi_draft_fd_docker_dataflows_update.md`](issues/mid_prio_gi_draft_fd_docker_dataflows_update.md) | — |
+| ~~**FD-007**~~ | ~~Update dashboard Docker dataflows to operational mode with logging~~ | ~~**Medium**~~ | Complete | [`archive/mid_prio_gi_draft_fd_docker_dataflows_update.md`](issues/archive/mid_prio_gi_draft_fd_docker_dataflows_update.md) | — |
 | **FD-008** | Fix error handling in inner `run_docker_container` (Save Changes) | **Low** | Draft | [`low_prio_gi_draft_fd_inner_run_docker_error_handling.md`](issues/low_prio_gi_draft_fd_inner_run_docker_error_handling.md) | — |
-| **FD-009** | Pass explicit forecast date to containers in dashboard retrigger flows | **Medium** | Draft | [`mid_prio_gi_draft_fd_retrigger_forecast_date.md`](issues/mid_prio_gi_draft_fd_retrigger_forecast_date.md) | FD-007 |
+| ~~**FD-009**~~ | ~~Pass explicit forecast date to containers in dashboard retrigger flows~~ | ~~**Medium**~~ | Complete | [`archive/mid_prio_gi_draft_fd_retrigger_forecast_date.md`](issues/archive/mid_prio_gi_draft_fd_retrigger_forecast_date.md) | ~~FD-007~~ |
 | **FD-010** | Fix lr-visibility parameter mismatch — linreg queries target-pentad, dashboard saves issue-pentad | **Medium** | Review | [`mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md`](issues/mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md) | FD-009 |
 | **FD-011** | Horizon selector widget passes translated strings as API enum values | **High** | Draft | [`high_prio_gi_draft_fd_horizon_selector_i18n.md`](issues/high_prio_gi_draft_fd_horizon_selector_i18n.md) | — |
 

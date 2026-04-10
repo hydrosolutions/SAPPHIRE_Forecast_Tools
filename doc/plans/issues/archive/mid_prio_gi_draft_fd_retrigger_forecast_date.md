@@ -1,6 +1,6 @@
 # FD-009: Pass explicit forecast date to containers in dashboard retrigger flows
 
-**Status**: Review
+**Status**: Complete — save/retrigger dataflow verified on server (2026-04-09)
 **Module**: forecast_dashboard, linear_regression, postprocessing_forecasts
 **Priority**: Medium
 **Labels**: `forecast_dashboard`, `linear_regression`, `postprocessing`, `docker`

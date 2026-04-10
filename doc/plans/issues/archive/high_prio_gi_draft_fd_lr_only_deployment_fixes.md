@@ -1,6 +1,6 @@
 # Fix forecast dashboard for LR-only deployments (no ML models)
 
-**Status**: Draft
+**Status**: Review — implementation complete, all 215 tests pass (2026-04-09)
 **Module**: forecast_dashboard, iEasyHydroForecast
 **Priority**: High
 **Labels**: `uzhm`, `forecast_dashboard`, `LR-only`
@@ -58,16 +58,26 @@ When only LR data exists, `pd.concat` produces a DataFrame with column `"pentad"
 
 `horizon_in_month` is set to `'pentad_in_month'` at line 2341.
 
-**Confirmed:** No downstream code in the dashboard reads a column named `"pentad"` (only `"pentad_in_month"` and `"pentad_in_year"`). The rename is safe.
+**Current column state after `pd.concat` (line 398):** For pentad, `forecasts_all` has TWO columns: `"pentad_in_month"` (ML rows, NaN for LR) and `"pentad"` (LR rows, NaN for ML). For decade, both paths produce `"decade"` — a single unified column. The `"pentad"` and `"decade"` columns are consumed downstream: `vizualization.py:2467` renames `horizon` (= `"pentad"` / `"decade"`) for plot display; `vizualization.py:2972` drops `horizon` from `forecast_table`. Renaming these columns in `db.py` would break both consumers.
 
-**Note on decad path:** The ML path (`db.py:336`) sets `hv_col = "decade"` for decad. The LR path (`db.py:370`) also sets `lr_hv = "decade"` for decad. These match — no inconsistency between ML/LR for decad. However, the column name `"decade"` is inconsistent with the pentad pattern (`"pentad_in_month"`). This matters for Bug 4 — see below.
+**Note on decad path:** The ML path (`db.py:336`) sets `hv_col = "decade"` for decad. The LR path (`db.py:370`) also sets `lr_hv = "decade"` for decad. These match — no inconsistency between ML/LR for decad. However, no `"decad_in_month"` column exists, which matters for Bug 4 — see below.
 
 **Fix (two parts):**
 
-1. **Column naming in `db.py`**: Normalize BOTH pentad and decad column names to the `*_in_month` pattern:
-   - Line 336 (ML): change `"decade"` to `"decad_in_month"` → `hv_col = "decad_in_month" if horizon == "decade" else "pentad_in_month"`
-   - Line 370 (LR): change `"decade"` to `"decad_in_month"` and `"pentad"` to `"pentad_in_month"` → `lr_hv = "decad_in_month" if horizon == "decade" else "pentad_in_month"`
-   - **Verified safe:** No downstream code reads a column named `"decade"` — only `db.py:336` and `db.py:370` define it.
+1. **Add normalized columns in `db.py`** (purely additive — do NOT rename or remove existing columns): After `pd.concat` at line 398, add code to ensure `*_in_month` columns are populated for ALL rows:
+   - **Pentad:** Fill `"pentad_in_month"` from `"pentad"` where NaN (LR rows):
+     ```python
+     if "pentad_in_month" in combined.columns and "pentad" in combined.columns:
+         combined["pentad_in_month"] = combined["pentad_in_month"].fillna(combined["pentad"])
+     elif "pentad" in combined.columns:
+         combined["pentad_in_month"] = combined["pentad"]
+     ```
+   - **Decade:** Add `"decad_in_month"` as a copy of `"decade"`:
+     ```python
+     if "decade" in combined.columns:
+         combined["decad_in_month"] = combined["decade"]
+     ```
+   - Existing `"pentad"` and `"decade"` columns are **preserved** — downstream code that drops or renames via `horizon` (the string `"pentad"` / `"decade"`) continues to work unchanged.
 
 2. **Defensive guards in `vizualization.py`**: Add a column-existence check at lines 2497 and 2516. These lines already have inline `if not forecasts_current.empty else None` ternaries — the missing guard is column existence (`horizon_in_month in forecasts_current.columns`), which should be added to the existing condition. **Note:** When this guard triggers, the value is set to `None` (becomes NaN in the DataFrame). This produces a silent no-op — the RRAM/ML forecast point simply won't appear on the plot. This is acceptable behavior when no RRAM/ML data exists.
 
@@ -81,9 +91,9 @@ horizon_in_month = 'decad_in_year'   # WRONG — should be 'decad_in_month'
 
 The pentad branch correctly sets `horizon_in_month = 'pentad_in_month'` (line 2341). The decad branch incorrectly sets it to `'decad_in_year'`, which is the same as `horizon_in_year`. This means lines 2497/2516 would read/write the wrong column for decad forecasts. This bug affects all decad deployments, not just LR-only.
 
-**Why `'decad_in_month'` is correct (not `'decade'`):** The data from `get_forecasts_all()` currently has a column `"decade"` (from `db.py:336`), which would make `horizon_in_month = 'decade'` seem like the minimal fix. However, `"decade"` is a naming inconsistency — Bug 1's fix renames it to `"decad_in_month"` in `db.py` (see above). The `create_skill_table` function already uses `'decad_in_month'` (line 4470, 4494). After the Bug 1 db.py fix, the data column IS `"decad_in_month"`.
+**Why `'decad_in_month'` is correct (not `'decade'`):** Bug 1's fix adds a `"decad_in_month"` column to `forecasts_all` (copied from `"decade"`). The `create_skill_table` function already uses `'decad_in_month'` (line 4470, 4494). After the Bug 1 db.py fix, the `"decad_in_month"` column exists in `forecasts_all`.
 
-**Fix:** Change `'decad_in_year'` to `'decad_in_month'` at line 2346. This depends on the Bug 1 db.py column rename being applied first (both are in Phase 1).
+**Fix:** Change `'decad_in_year'` to `'decad_in_month'` at line 2346. This depends on the Bug 1 db.py column addition being applied first (both are in Phase 1).
 
 ### Bug 2: Manual stations missing from `all_stations.pkl`
 
@@ -199,7 +209,21 @@ Then replace all 4 occurrences of `forecasts['delta']` with `delta_offset`:
 
 When `delta_offset` is `0`, `fc_lower = fc_upper = forecasted_discharge` (zero-width range). This avoids nested ternaries inside `.where()` calls and works uniformly across all branches.
 
-Apply the same pattern in the legacy `plot_pentad_forecast_hydrograph_data` function at lines 2730-2745.
+Apply the same `delta_offset` pattern in the legacy `plot_pentad_forecast_hydrograph_data` function at lines 2730-2745. **Additionally**, the legacy function's `"delta"` branch (lines 2730-2735) directly accesses `forecasts['Q25']` and `forecasts['Q75']` without a column existence check — unlike the v2 function which guards with `if 'Q25' in forecasts.columns` at line 2378. In pure LR-only mode (Scenario A), Q25/Q75 columns don't exist, so `forecasts['Q25']` crashes *before* `forecasts['delta']` is reached. Wrap the legacy "delta" branch with the same guard:
+
+```python
+if range_type == _('delta'):
+    if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
+        forecasts['fc_lower'] = forecasts['Q25'].where(
+            ~forecasts['Q25'].isna(),
+            forecasts['forecasted_discharge'] - delta_offset)
+        forecasts['fc_upper'] = forecasts['Q75'].where(
+            ~forecasts['Q75'].isna(),
+            forecasts['forecasted_discharge'] + delta_offset)
+    else:
+        forecasts['fc_lower'] = forecasts['forecasted_discharge'] - delta_offset
+        forecasts['fc_upper'] = forecasts['forecasted_discharge'] + delta_offset
+```
 
 **Note:** The fallback handler at lines 2401-2408 (`if 'fc_lower' not in forecasts.columns`) already uses only `forecasted_discharge` — it's safe and doesn't need changes.
 
@@ -266,13 +290,13 @@ Then replace all 8 occurrences of `forecast_table['delta']` (lines 1184, 1185, 1
 
 ### Approach
 
-Fix each bug with targeted changes. The column naming fix in `db.py` (Bug 1) addresses the root cause rather than papering over it with guards. All other fixes are defensive guards or early-returns. Bug 2 uses a shared helper to avoid triplicating the manual-station-to-Site logic.
+Fix each bug with targeted, additive changes. The `db.py` fix (Bug 1) adds normalized `*_in_month` columns after concat without renaming or removing existing columns — this preserves all downstream consumers that reference the original `"pentad"` / `"decade"` column names. All other fixes are defensive guards or early-returns. Bug 2 uses a shared helper to avoid triplicating the manual-station-to-Site logic.
 
 ### Files to Modify
 
 | File | Phase | Changes |
 |------|-------|---------|
-| `apps/forecast_dashboard/src/db.py` | P1 | Bug 1: normalize column names in both paths — line 336 (ML): `"decade"` → `"decad_in_month"`; line 370 (LR): `"decade"` → `"decad_in_month"` and `"pentad"` → `"pentad_in_month"`. (Bug 3 fallback at line 421 is left unchanged — see analysis.) |
+| `apps/forecast_dashboard/src/db.py` | P1 | Bug 1: after `pd.concat` (line 398), add code to fill `"pentad_in_month"` from `"pentad"` for LR rows, and add `"decad_in_month"` as copy of `"decade"`. Do NOT rename or remove existing columns. (Bug 3 fallback at line 421 is left unchanged — see analysis.) |
 | `apps/forecast_dashboard/src/vizualization.py` | P1 | Bug 1: add `horizon_in_month in forecasts_current.columns` to existing ternary guards at lines 2497, 2516. Bug 4: fix `'decad_in_year'` → `'decad_in_month'` at line 2346. Bug 3: early-return guard in `create_skill_table` (line 4484) — if `forecast_stats.empty`, return empty Tabulator. Bug 6: add `delta` column guard in range calculation at lines 2381-2398 and 2730-2745. Bug 7: replace hard-coded column selection at line 2980 with `reindex` to handle missing skill metric columns. |
 | `apps/forecast_dashboard/src/layout.py` | P1 | Bug 5: reduce `min_height` from `400` to `250` at line 335. |
 | `apps/forecast_dashboard/src/processing.py` | P1 | Bug 8: add `delta_offset` guard in `calculate_forecast_range` (lines 1184-1208). Same pattern as Bug 6. |
@@ -287,12 +311,12 @@ All seven bugs touch `vizualization.py`, `db.py`, `processing.py`, and/or `layou
 - **Goal**: Fix `KeyError: 'pentad_in_month'` crash, decad copy-paste bug, skill table crash on empty stats, hydrograph height, delta/Q25/Q75 range crash, summary table crash on missing skill metrics, and `calculate_forecast_range` crash on missing delta
 - **Files**: `db.py`, `vizualization.py`, `layout.py`, `processing.py`
 - **Agent 1**:
-  - Bug 1: Normalize column names in `db.py` — line 336 (ML): `"decade"` → `"decad_in_month"`; line 370 (LR): `"decade"` → `"decad_in_month"` and `"pentad"` → `"pentad_in_month"`. Both paths should use: `lr_hv = "decad_in_month" if horizon == "decade" else "pentad_in_month"` (and same pattern for `hv_col`).
+  - Bug 1: Add normalized columns in `db.py` — after `pd.concat` at line 398, insert additive code (do NOT rename or remove existing columns). For pentad: fill `"pentad_in_month"` from `"pentad"` where NaN (`combined["pentad_in_month"] = combined["pentad_in_month"].fillna(combined["pentad"])`; if only `"pentad"` exists, create `"pentad_in_month"` from it). For decade: add `combined["decad_in_month"] = combined["decade"]`. Guard each with column-existence checks. See Bug 1 analysis for exact code.
   - Bug 1: Add column-existence check to existing ternaries at `vizualization.py:2497` and `vizualization.py:2516` (these already guard on `not forecasts_current.empty` — add `and horizon_in_month in forecasts_current.columns`)
   - Bug 4: Fix `'decad_in_year'` → `'decad_in_month'` at `vizualization.py:2346`
   - Bug 3: Do NOT change `db.py:421-424` (the 4-column fallback is needed by `i18n_models` at `db.py:454`). Only add early-return guard in `create_skill_table` (`vizualization.py:4484`): if `forecast_stats.empty`, return `pn.widgets.Tabulator(pd.DataFrame())`. Do NOT return `pn.pane.Markdown` — the caller in `plot_manager.py:103` calls `.download_menu()` on the result, which requires a Tabulator.
   - Bug 5: Reduce `min_height` from `400` to `250` at `layout.py:335`
-  - Bug 6: In the forecast range calculation (`vizualization.py:2377-2399`), insert at line 2375 (before the `# Calculate the forecast ranges` comment): `has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()` and `delta_offset = forecasts['delta'] if has_delta else 0`. Then replace all 4 occurrences of `forecasts['delta']` (lines 2381, 2384, 2388-2389, 2396/2398) with `delta_offset`. When delta is unavailable, `delta_offset = 0` produces zero-width range (fc_lower = fc_upper = forecasted_discharge). Apply the same pattern in the legacy function `plot_pentad_forecast_hydrograph_data` at lines 2730-2745.
+  - Bug 6: In the forecast range calculation (`vizualization.py:2377-2399`), insert at line 2375 (before the `# Calculate the forecast ranges` comment): `has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()` and `delta_offset = forecasts['delta'] if has_delta else 0`. Then replace all 4 occurrences of `forecasts['delta']` (lines 2381, 2384, 2388-2389, 2396/2398) with `delta_offset`. When delta is unavailable, `delta_offset = 0` produces zero-width range (fc_lower = fc_upper = forecasted_discharge). In the legacy function `plot_pentad_forecast_hydrograph_data` at lines 2727-2745: (a) insert the same `has_delta`/`delta_offset` guard, (b) replace all 4 occurrences of `forecasts['delta']` with `delta_offset`, AND (c) wrap the legacy "delta" branch (lines 2730-2735) with a Q25/Q75 column existence guard (`if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:`) with an else-branch that falls back to `forecasts['forecasted_discharge'] ± delta_offset`. The v2 function already has this guard at line 2378 but the legacy function does not — in pure LR-only mode, `forecasts['Q25']` would crash before delta is reached.
   - Bug 7: In `create_forecast_summary_table` (`vizualization.py:2980`), replace the hard-coded column list `forecast_table = forecast_table[['model_short', ...]]` with `forecast_table = forecast_table.reindex(columns=['model_short', 'forecasted_discharge', 'fc_lower', 'fc_upper', 'delta', 'sdivsigma', 'mae', 'accuracy'])`. This fills missing skill metric columns with NaN instead of crashing.
   - Bug 8: In `calculate_forecast_range` (`processing.py:1183`), insert `has_delta = 'delta' in forecast_table.columns and not forecast_table['delta'].isna().all()` and `delta_offset = forecast_table['delta'] if has_delta else 0` before the range_type branching. Replace all 8 occurrences of `forecast_table['delta']` (lines 1184, 1185, 1195, 1198, 1201, 1204, 1207, 1208) with `delta_offset`.
 - **Acceptance**: No `KeyError` on Forecast tab with LR-only data; decad path uses correct column; skill table shows empty Tabulator when no stats exist; hydrograph card is shorter; forecast range handles missing delta/Q25/Q75 without crash; summary table handles missing skill metric columns without crash; `calculate_forecast_range` handles missing delta without crash
@@ -324,7 +348,7 @@ All seven bugs touch `vizualization.py`, `db.py`, `processing.py`, and/or `layou
   **Tests to write** (create `test_vizualization.py` and/or add to existing files):
   - **Bug 3**: `create_skill_table(identity_gettext, 'pentad', pd.DataFrame())` → assert returns `pn.widgets.Tabulator` with empty DataFrame (not crash). Also test with `sample_skill_df` to verify normal path still works.
   - **Bug 6**: Create a DataFrame with only LR columns (no delta/Q25/Q75/Q95). Call the range calculation logic or verify `delta_offset = 0` produces zero-width range. Test both the "delta column missing" and "delta column exists but all NaN" scenarios.
-  - **Bug 1**: Create a DataFrame with column `"pentad"` (not `"pentad_in_month"`) and verify the column rename in `db.py` normalizes it. Or verify that `vizualization.py` guards handle missing `horizon_in_month` column gracefully.
+  - **Bug 1**: Create a DataFrame with column `"pentad"` (LR-only, no `"pentad_in_month"`) and verify the additive fill in `db.py` produces a populated `"pentad_in_month"` column while preserving `"pentad"`. Also test the mixed case (both columns present with NaN gaps) and the decade case (`"decade"` → `"decad_in_month"` added). Verify `vizualization.py` guards handle missing `horizon_in_month` column gracefully.
   - **Bug 2**: Test `_create_manual_sites()` (in `processing.py`) by mocking env vars and writing a temp config JSON with `monkeypatch` + `tmp_path`. Assert returned Sites have correct `code`, `name`, `basin`, and `qdanger=None`. Also test the deduplication logic: if a code already exists in `all_stations`, it should not be added again.
   - Do NOT test Panel server rendering or Playwright integration — only test data transformation logic.
 - ~~Agent 2~~: `bootstrap_stations.py` deletion deferred — still referenced in `high_prio_gi_draft_infra_new_deployment_initialization.md` as a workaround for new deployments. Will be removed after that plan is executed.
@@ -342,7 +366,7 @@ All seven bugs touch `vizualization.py`, `db.py`, `processing.py`, and/or `layou
 
 ### Risks
 
-- **R1 (Bug 1)**: Renaming `"pentad"` to `"pentad_in_month"` in `db.py` could break downstream code that reads column `"pentad"`. **Mitigated:** verified no consumers depend on raw `"pentad"` column name in the dashboard codebase.
+- **R1 (Bug 1)**: Adding `"pentad_in_month"` / `"decad_in_month"` columns is purely additive — existing `"pentad"` and `"decade"` columns are preserved. Two downstream consumers use `horizon` (the string `"pentad"` / `"decade"`) as a column name: `vizualization.py:2467` (`.rename()` for plot display) and `vizualization.py:2972` (`.drop()` in summary table). Both continue to work because the original columns remain. **No downstream breakage.**
 - **R2 (Bug 2)**: `fl.Site.__init__` converts `qdanger=None` to `-10000.0` (sentinel) at line 5824. No TypeError occurs. The helper should read `qdanger` from config when the field is present (it's optional — many stations lack it). When absent, the sentinel `-10000.0` is used, which displays as `-10000` in bulletins — acceptable for stations that aren't bulletin targets. The helper should also read `bulletin_order` from config (controls site ordering in bulletin reports at `bulletins.py:276-285`; defaults to `0` when absent). The shared helper must NOT add entries to `site_ids` — those are passed to the iEH HF API which would reject invalid IDs.
 - **R3 (Bug 3)**: The early-return returns an empty Tabulator instead of a populated one. The download button will produce an empty file, which is acceptable for new deployments with no skill data.
 - **R4 (Bug 2)**: Manual stations with missing `basin` field in config JSON will default to `basin="Basin"`, creating a spurious dropdown category in the station selector (`processing.py:980` groups stations by basin). **Mitigation:** The config documentation (`doc/configuration.md`) should note that `basin` is required for correct dropdown grouping. The helper should log a warning if `basin` is missing.
@@ -421,7 +445,7 @@ SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard
 
 - uzhm adapter plan: `doc/plans/issues/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`
 - Deployment initialization: `doc/plans/issues/high_prio_gi_draft_infra_new_deployment_initialization.md`
-- Column naming inconsistency: `apps/forecast_dashboard/src/db.py:336` (ML) vs `db.py:370` (LR) — affects both pentad (`pentad_in_month` vs `pentad`) and decad (`decade` naming)
+- Column naming inconsistency: `apps/forecast_dashboard/src/db.py:336` (ML) vs `db.py:370` (LR) — affects pentad (`pentad_in_month` vs `pentad`); decade has no `decad_in_month`. Fix: additive fill/copy after concat (line 398), preserving original columns
 - Manual station gap: `apps/iEasyHydroForecast/setup_library.py:1490`, `1332`, `1567` (root cause; fix applied in `processing.py` to avoid pipeline impact)
 - Skill metrics API schema: `sapphire/services/postprocessing/app/schemas.py:169-173`
 - Empty fallback stub: `apps/forecast_dashboard/src/db.py:419-424` (preserved as-is — needed by `i18n_models`)
