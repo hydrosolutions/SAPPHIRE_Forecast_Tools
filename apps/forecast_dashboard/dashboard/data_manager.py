@@ -12,6 +12,7 @@ import datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+import pandas as pd
 import param
 
 from src.site import SapphireSite as Site
@@ -138,6 +139,10 @@ class DataManager(param.Parameterized):
     def forecast_stats(self):
         return self._data.get("forecast_stats")
 
+    @property
+    def long_forecasts_m0(self):
+        return self._data.get("long_forecasts_m0", pd.DataFrame())
+
     def get(self, key, default=None):
         """Generic access for less-common keys."""
         return self._data.get(key, default)
@@ -186,6 +191,12 @@ class DataManager(param.Parameterized):
 
     def get_best_models(self, horizon, station_code: str, pentad, decad) -> list:
         """Return the best models for a station/pentad combination."""
+        if horizon == "month":
+            # No pentad/decad-level skill data for monthly; return all models
+            df = self.forecasts_all
+            if df is None or df.empty:
+                return []
+            return df["model_short"].unique().tolist()
         horizon_value = ""
         if horizon == "pentad":
             horizon_value = pentad
@@ -223,6 +234,8 @@ class DataManager(param.Parameterized):
 
     def update_sites_for_pentad(self, _, horizon, pentad, decad) -> None:
         """Refresh hydrograph statistics + linear regression predictor on sites."""
+        if horizon == "month":
+            return  # no pentad/decad-level stats for monthly horizon
         # Initial site attribute computation
         self._sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(
             _=_, sites=self._sites_list,
@@ -284,13 +297,20 @@ class DataManager(param.Parameterized):
     def get_bulletin_metadata(self, horizon):
         """Return (last_date, forecast_horizon, forecast_year) for bulletin saving."""
         # Get the last available date in the data
-        last_date = self.forecasts_all['date'].max() + dt.timedelta(days=1)
-        # The forecast is produced on the day before the first day of the forecast
-        # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
-        # the pentad of the forecast period.
-        forecast_horizon = int(
-            self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
-        )
+        max_date = self.forecasts_all['date'].max()
+        if not isinstance(max_date, (dt.date, dt.datetime)) or pd.isna(max_date):
+            raise ValueError("No valid forecast dates available")
+        last_date = max_date + dt.timedelta(days=1)
+
+        if horizon == "month":
+            forecast_horizon = dt.datetime.now().month
+        else:
+            # The forecast is produced on the day before the first day of the forecast
+            # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
+            # the pentad of the forecast period.
+            forecast_horizon = int(
+                self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
+            )
         return last_date, forecast_horizon, last_date.year
 
     # @property

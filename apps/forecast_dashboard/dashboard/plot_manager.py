@@ -45,11 +45,38 @@ class PlotManager:
         )
         dashboard_tabs.param.watch(
             lambda event: self._cfg.viz.update_sidepane_card_visibility(
-                dashboard_tabs, self._wm.horizon_card, self._wm.station_card, 
+                dashboard_tabs, self._wm.horizon_card, self._wm.station_card,
                 self._wm.forecast_card, self._wm.basin_card, self._wm.reload_card, event,
+                horizon_selector=self._wm.horizon_selector,
             ),
             "active",
         )
+
+    # ------------------------------------------------------------------
+    # Forecast-tab card visibility (month horizon hides plots)
+    # ------------------------------------------------------------------
+    def set_forecast_cards_visibility(self, visible: bool) -> None:
+        """Show/hide forecast-tab cards that are irrelevant for monthly horizon."""
+        for attr in ("linreg_card", "hydrograph_card",
+                     "skill_metrics_card", "skill_table_card"):
+            card = getattr(self, attr, None)
+            if card is not None:
+                card.visible = visible
+        # Hide month_0 card when switching away from month
+        m0_card = getattr(self, "summary_table_m0_card", None)
+        if m0_card is not None and visible:
+            m0_card.visible = False
+        # Adjust summary table height for month vs pentad/decade
+        st_card = getattr(self, "summary_table_card", None)
+        if st_card is not None:
+            if visible:
+                st_card.sizing_mode = "stretch_both"
+                st_card.height = None
+            else:
+                st_card.sizing_mode = "stretch_width"
+                st_card.height = 600 if len(self._wm.forecast_summary_table.value) > 1 else 240
+        # Also toggle the forecast warning pane
+        self._wm.forecast_warning.visible = visible
 
     # ------------------------------------------------------------------
     # Pane factories and initilisation helpers
@@ -163,6 +190,29 @@ class PlotManager:
             self._wm.forecast_tabulator,
         )
 
+    def update_forecast_tabulator_m0(self):
+        """Update the month_0 summary table."""
+        m0 = self._dm.long_forecasts_m0
+        if m0 is None or m0.empty:
+            self.summary_table_m0_card.visible = False
+            return
+        self.summary_table_m0_card.visible = True
+        # Use m0's own max date instead of the shared date_picker
+        m0_max_date = m0['date'].max()
+        if hasattr(m0_max_date, 'date'):
+            m0_max_date = m0_max_date.date()
+        self._cfg.viz.create_forecast_summary_tabulator(
+            self._,
+            self._wm,
+            m0,
+            self._wm.station_selector,
+            m0_max_date,
+            self._wm.model_checkbox,
+            self._wm.range_selector,
+            self._wm.range_slider,
+            self._wm.forecast_tabulator_m0,
+        )
+
     # ------------------------------------------------------------------
     # Forecast-tab plots (2nd, 3rd, 4th panels)
     # ------------------------------------------------------------------
@@ -224,6 +274,8 @@ class PlotManager:
     # ------------------------------------------------------------------
     def render_active_tab(self, dashboard_tabs, event=None):
         """Render plots only when a tab is first activated for a station."""
+        if self._wm.horizon_selector.value == "month":
+            return  # monthly horizon only shows summary table
         active = dashboard_tabs.active  # 0 = Predictors, 1 = Forecast
         wm, dm, viz = self._wm, self._dm, self._cfg.viz
 
@@ -260,6 +312,7 @@ class PlotManager:
                             "No snow data from SAPPHIRE Data Gateway available."
                         )
                     )
+
 
     def _render_forecast_tab(self, viz, dm, wm):
         plot = viz.select_and_plot_data(

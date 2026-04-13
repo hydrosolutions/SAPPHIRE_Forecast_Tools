@@ -193,7 +193,7 @@ class BulletinManager:
             _last_date, forecast_horizon, forecast_year = (
                 self.dm.get_bulletin_metadata(horizon)
             )
-        except (KeyError, IndexError):
+        except (KeyError, IndexError, TypeError, ValueError):
             logger.info("No %s data available yet, clearing bulletin.", horizon)
             self.bulletin_sites = []
             self._update_bulletin_table()
