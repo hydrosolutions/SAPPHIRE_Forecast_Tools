@@ -1334,8 +1334,8 @@ class TestPointForecastFallback:
         assert pd.notna(gbt_stats.iloc[0]["nse"]), "nse should be computed"
         assert pd.notna(gbt_stats.iloc[0]["mae"]), "mae should be computed"
 
-    def test_q50_preferred_over_q_when_both_present(self):
-        """When both q50 and q are populated, q50 should be used (MC_ALD case)."""
+    def test_q_preferred_over_q50_when_both_present(self):
+        """When both q and q50 are populated, q should be used (authoritative point forecast)."""
         obs = _make_obs(
             [
                 ("S1", 2024, 1, 10.0),
@@ -1349,7 +1349,7 @@ class TestPointForecastFallback:
                 "month": [1, 2],
                 "model_short": ["MC_ALD", "MC_ALD"],
                 "q": [9.0, 11.0],  # different from q50
-                "q50": [9.5, 11.5],  # q50 should be preferred
+                "q50": [9.5, 11.5],  # q50 is fallback only
                 "q05": [7.0, 9.0],
                 "q10": [7.5, 9.5],
                 "q25": [8.0, 10.0],
@@ -1361,10 +1361,10 @@ class TestPointForecastFallback:
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         mc_stats = stats[stats["model_short"] == "MC_ALD"]
         assert mc_stats.iloc[0]["n_pairs"] > 0
-        # MAE should be computed against q50 values (9.5, 11.5), not q values (9.0, 11.0)
-        # obs = (10, 12), q50 = (9.5, 11.5) → errors = (0.5, 0.5) → MAE = 0.5
-        assert abs(mc_stats.iloc[0]["mae"] - 0.5) < 0.01, (
-            f"MAE should be ~0.5 (using q50), got {mc_stats.iloc[0]['mae']}"
+        # MAE should be computed against q values (9.0, 11.0), not q50 values (9.5, 11.5)
+        # obs = (10, 12), q = (9.0, 11.0) → errors = (1.0, 1.0) → MAE = 1.0
+        assert abs(mc_stats.iloc[0]["mae"] - 1.0) < 0.01, (
+            f"MAE should be ~1.0 (using q), got {mc_stats.iloc[0]['mae']}"
         )
 
     def test_mixed_models_q50_and_q_only(self):
@@ -1518,6 +1518,38 @@ class TestPointForecastFallback:
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         mixed_stats = stats[stats["model_short"] == "MIXED"]
         assert not mixed_stats.empty
-        # All 4 rows should produce pairs (q50 used where available, q elsewhere)
+        # All 4 rows should produce pairs (q used where available, q50 as fallback)
         # With 2 years x 2 months, grouped by month_in_year, each group has 2 pairs
         assert mixed_stats.iloc[0]["n_pairs"] >= 2
+
+    def test_q50_column_absent_produces_metrics(self):
+        """When q50 column is entirely absent (stripped by dropna), q is used."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        # No q50 column at all — simulates dropna(axis=1, how="all") stripping
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["GBT"] * 4,
+                "q": [9.5, 11.0, 10.5, 12.5],
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        gbt_stats = stats[stats["model_short"] == "GBT"]
+        assert not gbt_stats.empty, "GBT should have skill metrics"
+        assert gbt_stats.iloc[0]["n_pairs"] > 0, "n_pairs should be > 0"
+        assert pd.notna(gbt_stats.iloc[0]["mae"]), "MAE should be computed"

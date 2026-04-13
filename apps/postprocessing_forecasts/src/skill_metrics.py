@@ -1087,6 +1087,25 @@ _ENSEMBLE_JOINT_COLS = (
 )
 
 
+def _resolve_forecasted_discharge(df: pd.DataFrame) -> pd.Series | None:
+    """Resolve the point forecast column from q or q50.
+
+    Priority: q first (authoritative point forecast from the model),
+    q50 as fallback (median quantile, rarely populated).
+
+    Returns None if neither column is available.
+    """
+    has_q = "q" in df.columns
+    has_q50 = "q50" in df.columns
+    if has_q and has_q50:
+        return df["q"].fillna(df["q50"]).astype(float)
+    elif has_q:
+        return df["q"].astype(float)
+    elif has_q50:
+        return df["q50"].astype(float)
+    return None
+
+
 def _append_to_joint(
     joint_forecasts: pd.DataFrame,
     ensemble_df: pd.DataFrame,
@@ -1153,10 +1172,11 @@ def calculate_monthly_skill_metrics(
         on=["code", "year", "month"],
         how="inner",
     )
-    if "q" in merged.columns:
-        merged["forecasted_discharge"] = merged["q50"].fillna(merged["q"]).astype(float)
-    else:
-        merged["forecasted_discharge"] = merged["q50"].astype(float)
+    fc = _resolve_forecasted_discharge(merged)
+    if fc is None:
+        logger.warning("No q or q50 column in merged data — cannot compute monthly skill metrics")
+        return empty_stats, empty_joint, timing_stats
+    merged["forecasted_discharge"] = fc
 
     if merged.empty:
         # No overlap — Naive Mean needs merged data (forecast+obs pairs)
@@ -2120,8 +2140,12 @@ def _calculate_aggregated_skill_metrics(
     if obs_suffix in merged.columns:
         merged = merged.drop(columns=[obs_suffix])
 
-    if "forecasted_discharge" not in merged.columns and "q50" in merged.columns:
-        merged["forecasted_discharge"] = merged["q50"].astype(float)
+    if "forecasted_discharge" not in merged.columns:
+        fc = _resolve_forecasted_discharge(merged)
+        if fc is None:
+            logger.warning("No q or q50 column — cannot compute skill metrics")
+            return empty_stats, empty_joint, timing_stats
+        merged["forecasted_discharge"] = fc
 
     if merged.empty:
         return empty_stats, empty_joint, timing_stats

@@ -6,6 +6,7 @@ Phase 4b Step 3.
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -337,3 +338,88 @@ class TestSeasonalMetricsEnsembles:
         skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
         naive_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert not naive_rows.empty
+
+
+class TestQFallbackQuarterly:
+    """Quarterly skill metrics when q50 column is absent."""
+
+    def test_q50_column_absent_produces_metrics(self):
+        """When q50 is absent and q is present, quarterly metrics compute."""
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+            ]
+        )
+        # No q50 column — only q
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1", "S1"],
+                "year": [2020, 2021],
+                "quarter_in_year": [1, 1],
+                "model_short": ["GBT", "GBT"],
+                "q": [95.0, 105.0],
+                "forecasted_discharge": [95.0, 105.0],
+                "q05": [np.nan, np.nan],
+                "q10": [np.nan, np.nan],
+                "q25": [np.nan, np.nan],
+                "q75": [np.nan, np.nan],
+                "q90": [np.nan, np.nan],
+                "q95": [np.nan, np.nan],
+            }
+        )
+        stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        gbt_stats = stats[stats["model_short"] == "GBT"]
+        assert not gbt_stats.empty, "GBT should have quarterly skill metrics"
+        assert gbt_stats.iloc[0]["n_pairs"] > 0, "n_pairs should be > 0"
+
+    def test_q50_absent_no_forecasted_discharge_resolves_from_q(self):
+        """When q50 and forecasted_discharge are absent, q is used as fallback."""
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+            ]
+        )
+        # No q50, no forecasted_discharge — only q
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1", "S1"],
+                "year": [2020, 2021],
+                "quarter_in_year": [1, 1],
+                "model_short": ["GBT", "GBT"],
+                "q": [95.0, 105.0],
+                "q05": [np.nan, np.nan],
+                "q10": [np.nan, np.nan],
+                "q25": [np.nan, np.nan],
+                "q75": [np.nan, np.nan],
+                "q90": [np.nan, np.nan],
+                "q95": [np.nan, np.nan],
+            }
+        )
+        stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        gbt_stats = stats[stats["model_short"] == "GBT"]
+        assert not gbt_stats.empty, "GBT should have quarterly skill metrics"
+        assert gbt_stats.iloc[0]["n_pairs"] > 0, "n_pairs should be > 0"
+        assert pd.notna(gbt_stats.iloc[0]["mae"]), "MAE should be computed"
+
+    def test_q50_absent_no_q_no_forecasted_discharge_returns_empty(self):
+        """When no q, q50, or forecasted_discharge exist, return empty gracefully."""
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1", "S1"],
+                "year": [2020, 2021],
+                "quarter_in_year": [1, 1],
+                "model_short": ["GBT", "GBT"],
+            }
+        )
+        stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        # Should return empty stats, not crash
+        gbt_stats = stats[stats["model_short"] == "GBT"]
+        assert gbt_stats.empty or gbt_stats.iloc[0]["n_pairs"] == 0
