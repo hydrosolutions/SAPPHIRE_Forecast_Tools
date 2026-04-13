@@ -15,7 +15,7 @@ The skill-metric API endpoint supports `horizon=month` and stores monthly skill 
 
 ## Root Cause Analysis
 
-Two gaps prevent monthly skill metrics from reaching the dashboard table:
+Three gaps prevent monthly skill metrics from reaching the dashboard table:
 
 ### Gap 1: `_horizon_in_year_col()` has no `"month"` case
 
@@ -42,15 +42,17 @@ This affects two downstream functions:
 
 This is hardcoded empty. It should call `get_forecast_stats("month", station)` and then merge the result into `forecasts_all`, similar to how pentad/decad does it in `get_data()` (lines 510-525).
 
-### Not a gap: `get_long_forecasts()` already retains `horizon_in_year`
+### Gap 3: `get_long_forecasts()` has no `month_in_year` column to join on
 
-Line 477 drops `["id", "horizon_type", "horizon_value"]` but **keeps** `horizon_in_year` (the month number 1-12). This column is already present in the returned DataFrame and is the correct join key for skill metrics.
+The `LongForecast` DB model (`models.py:105-157`) does **not** have a `horizon_in_year` column — unlike the regular `Forecast` model. It stores the target period via `valid_from`/`valid_to` date columns instead. After `get_long_forecasts()` returns, the DataFrame has no month-number column that can serve as the merge key with skill metrics.
 
-Note: `horizon_value` (0 or 1) is the forecast lead time (month_0 vs month_1), **not** the month number. These are distinct fields in the long-forecast DB model (`models.py:69-70`).
+The month number must be **computed** from `valid_from` (e.g. `valid_from.month`).
+
+Note: `horizon_value` (0 or 1) is the forecast lead time (month_0 vs month_1), **not** the month number.
 
 ## Implementation Plan
 
-### Phase 1: Fix the two gaps in `db.py`
+### Phase 1: Fix the three gaps in `db.py`
 
 **Files to modify**: `apps/forecast_dashboard/src/db.py`
 
@@ -69,22 +71,17 @@ def _horizon_in_year_col(horizon: str) -> str:
 
 This ensures `get_forecast_stats("month", station)` renames `horizon_in_year` → `month_in_year` in the skill-metric response.
 
-#### Step 1b: Rename `horizon_in_year` in `get_long_forecasts()` to match
+#### Step 1b: Compute `month_in_year` in `get_long_forecasts()`
 
-Add a rename after the existing renames (line ~476, before the drop):
+The `LongForecast` model has no `horizon_in_year` column. Derive the month number from `valid_from` after the existing renames (line ~477, after the drop):
 
 ```python
-df.rename(columns={
-    "model_type": "model_short",
-    "model_type_description": "model_long",
-    "q": "forecasted_discharge",
-    "q05": "Q5", "q10": "Q10", "q25": "Q25",
-    "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
-    "horizon_in_year": "month_in_year",
-}, inplace=True)
+df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+df["valid_from"] = pd.to_datetime(df["valid_from"])
+df["month_in_year"] = df["valid_from"].dt.month
 ```
 
-This gives both `forecasts_all` and `forecast_stats` a consistent `month_in_year` column for the merge.
+This gives `forecasts_all` a `month_in_year` column that matches the one `get_forecast_stats("month", station)` produces from the skill-metric API's `horizon_in_year` field.
 
 #### Step 1c: Fetch and merge skill metrics in `_get_data_monthly()`
 
@@ -157,7 +154,7 @@ After the merge, these columns will come from the skill-metric data and the `if 
 ```json
 {
   "phases": {
-    "P1": { "depends_on": [], "parallel_agents": 1, "note": "Fix two gaps in db.py" },
+    "P1": { "depends_on": [], "parallel_agents": 1, "note": "Fix three gaps in db.py" },
     "P2": { "depends_on": ["P1"], "parallel_agents": 0, "note": "Verify vizualization.py — read-only check" }
   }
 }
