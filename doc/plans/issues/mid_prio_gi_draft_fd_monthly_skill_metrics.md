@@ -15,7 +15,7 @@ The skill-metric API endpoint supports `horizon=month` and stores monthly skill 
 
 ## Root Cause Analysis
 
-Three gaps prevent monthly skill metrics from reaching the dashboard table:
+Two gaps prevent monthly skill metrics from reaching the dashboard table:
 
 ### Gap 1: `_horizon_in_year_col()` has no `"month"` case
 
@@ -28,17 +28,11 @@ def _horizon_in_year_col(horizon: str) -> str:
 
 For `horizon="month"`, this returns `"pentad_in_year"`, which is wrong. It should return `"month_in_year"`.
 
-### Gap 2: `get_long_forecasts()` drops the join key
+This affects two downstream functions:
+- `get_forecast_stats("month", station)` — renames `horizon_in_year` to wrong column name and deduplicates on it
+- The merge in `_get_data_monthly()` — needs a consistent join key between forecasts and skill metrics
 
-**File**: `apps/forecast_dashboard/src/db.py:477`
-
-```python
-df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
-```
-
-`horizon_value` is the month number needed to join forecasts with skill metrics. It gets dropped here. It should be renamed to `month_in_year` instead.
-
-### Gap 3: `_get_data_monthly()` never fetches or merges skill metrics
+### Gap 2: `_get_data_monthly()` never fetches or merges skill metrics
 
 **File**: `apps/forecast_dashboard/src/db.py:546`
 
@@ -48,9 +42,15 @@ df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="i
 
 This is hardcoded empty. It should call `get_forecast_stats("month", station)` and then merge the result into `forecasts_all`, similar to how pentad/decad does it in `get_data()` (lines 510-525).
 
+### Not a gap: `get_long_forecasts()` already retains `horizon_in_year`
+
+Line 477 drops `["id", "horizon_type", "horizon_value"]` but **keeps** `horizon_in_year` (the month number 1-12). This column is already present in the returned DataFrame and is the correct join key for skill metrics.
+
+Note: `horizon_value` (0 or 1) is the forecast lead time (month_0 vs month_1), **not** the month number. These are distinct fields in the long-forecast DB model (`models.py:69-70`).
+
 ## Implementation Plan
 
-### Phase 1: Fix the three gaps in `db.py`
+### Phase 1: Fix the two gaps in `db.py`
 
 **Files to modify**: `apps/forecast_dashboard/src/db.py`
 
@@ -67,14 +67,24 @@ def _horizon_in_year_col(horizon: str) -> str:
     return "pentad_in_year"
 ```
 
-#### Step 1b: Retain `horizon_value` as `month_in_year` in `get_long_forecasts()`
+This ensures `get_forecast_stats("month", station)` renames `horizon_in_year` → `month_in_year` in the skill-metric response.
 
-In `get_long_forecasts()`, instead of dropping `horizon_value`, rename it:
+#### Step 1b: Rename `horizon_in_year` in `get_long_forecasts()` to match
+
+Add a rename after the existing renames (line ~476, before the drop):
 
 ```python
-df.rename(columns={"horizon_value": "month_in_year"}, inplace=True)
-df.drop(columns=["id", "horizon_type"], inplace=True, errors="ignore")
+df.rename(columns={
+    "model_type": "model_short",
+    "model_type_description": "model_long",
+    "q": "forecasted_discharge",
+    "q05": "Q5", "q10": "Q10", "q25": "Q25",
+    "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
+    "horizon_in_year": "month_in_year",
+}, inplace=True)
 ```
+
+This gives both `forecasts_all` and `forecast_stats` a consistent `month_in_year` column for the merge.
 
 #### Step 1c: Fetch and merge skill metrics in `_get_data_monthly()`
 
@@ -126,7 +136,7 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
     return data
 ```
 
-### Phase 2: Verify table rendering handles merged columns
+### Phase 2: Verify no fan-out risk and table rendering handles merged columns
 
 **File**: `apps/forecast_dashboard/src/vizualization.py:2990-2996`
 
@@ -140,12 +150,14 @@ for col in ('delta', 'sdivsigma', 'mae', 'accuracy'):
 
 After the merge, these columns will come from the skill-metric data and the `if col not in` guard will skip them. **No changes needed here** — verify only.
 
+**Fan-out risk (FD-003)**: `get_forecast_stats()` already deduplicates at line 438 via `drop_duplicates(subset=["code", hin, "model_short"], keep="last")`, keeping only the latest recalculation per key. The monthly merge reuses this function, so fan-out is not a concern.
+
 ## Dependency Graph
 
 ```json
 {
   "phases": {
-    "P1": { "depends_on": [], "parallel_agents": 1, "note": "Fix three gaps in db.py" },
+    "P1": { "depends_on": [], "parallel_agents": 1, "note": "Fix two gaps in db.py" },
     "P2": { "depends_on": ["P1"], "parallel_agents": 0, "note": "Verify vizualization.py — read-only check" }
   }
 }
