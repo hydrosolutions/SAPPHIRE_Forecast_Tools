@@ -1522,6 +1522,42 @@ class TestPointForecastFallback:
         # With 2 years x 2 months, grouped by month_in_year, each group has 2 pairs
         assert mixed_stats.iloc[0]["n_pairs"] >= 2
 
+    def test_q_nan_falls_back_to_q50(self):
+        """When q is NaN for a row but q50 has a value, q50 is used for that row."""
+        obs = _make_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),
+                ("S1", 2025, 2, 13.0),
+            ]
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": ["S1"] * 4,
+                "year": [2024, 2024, 2025, 2025],
+                "month": [1, 2, 1, 2],
+                "model_short": ["M1"] * 4,
+                "q": [np.nan, 11.0, np.nan, 12.5],  # 2 NaN
+                "q50": [9.5, np.nan, 10.5, np.nan],  # fill where q is NaN
+                "q05": [np.nan] * 4,
+                "q10": [np.nan] * 4,
+                "q25": [np.nan] * 4,
+                "q75": [np.nan] * 4,
+                "q90": [np.nan] * 4,
+                "q95": [np.nan] * 4,
+            }
+        )
+        # After q.fillna(q50): forecasted_discharge = [9.5, 11.0, 10.5, 12.5]
+        # All 4 rows should have valid pairs — none lost
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        m1_stats = stats[stats["model_short"] == "M1"]
+        assert not m1_stats.empty
+        assert m1_stats.iloc[0]["n_pairs"] >= 2, (
+            f"Should have >=2 pairs (q50 fills q's NaN rows), got {m1_stats.iloc[0]['n_pairs']}"
+        )
+        assert pd.notna(m1_stats.iloc[0]["mae"]), "MAE should be computed"
+
     def test_q50_column_absent_produces_metrics(self):
         """When q50 column is entirely absent (stripped by dropna), q is used."""
         obs = _make_obs(
