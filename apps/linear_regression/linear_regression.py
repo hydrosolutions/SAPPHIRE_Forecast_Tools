@@ -526,7 +526,16 @@ def get_hindcast_start_date_from_output(prediction_mode="BOTH", site_list=None):
     gauge_dates = get_last_forecast_dates_per_gauge(prediction_mode)
 
     if gauge_dates:
-        logger.info(f"Found forecast history for {len(gauge_dates)} gauges")
+        logger.info(f"Found forecast history for {len(gauge_dates)} gauges in DB")
+        # Filter to only our org's gauges if site_list is provided
+        if site_list:
+            site_codes_filter = set(str(s) for s in site_list)
+            filtered = {c: d for c, d in gauge_dates.items() if c in site_codes_filter}
+            logger.info(
+                f"Filtered to {len(filtered)} gauges matching site_list "
+                f"(skipped {len(gauge_dates) - len(filtered)} from other orgs)"
+            )
+            gauge_dates = filtered
         for code, last_date in sorted(gauge_dates.items()):
             logger.debug(f"  Gauge {code}: last forecast {last_date}")
 
@@ -563,6 +572,7 @@ def get_hindcast_start_date_from_output(prediction_mode="BOTH", site_list=None):
     start_dates = []
 
     # Add start dates for existing gauges (last date + 1)
+    # gauge_dates is already filtered to site_list above.
     if gauge_dates:
         for code, last_date in gauge_dates.items():
             gauge_start = last_date + dt.timedelta(days=1)
@@ -773,13 +783,16 @@ def main():
 
     # Save pentadal data
     if run_pentad:
-        if not fl.write_pentad_hydrograph_data(data_pentad):
-            logger.error(
-                "CRITICAL: API write failed for %s. Data written to CSV only. "
-                "API database is now behind CSV.",
-                "write_pentad_hydrograph_data",
-            )
-            api_write_failures = True
+        try:
+            if not fl.write_pentad_hydrograph_data(data_pentad):
+                logger.error(
+                    "CRITICAL: API write failed for %s. Data written to CSV only. "
+                    "API database is now behind CSV.",
+                    "write_pentad_hydrograph_data",
+                )
+                api_write_failures = True
+        except ValueError as e:
+            logger.warning("Skipping pentad hydrograph write (insufficient historical data): %s", e)
         if not fl.write_pentad_time_series_data(data_pentad):
             logger.error(
                 "CRITICAL: API write failed for %s. Data written to CSV only. "
@@ -790,13 +803,16 @@ def main():
 
     # Save decadal data
     if run_decad:
-        if not fl.write_decad_hydrograph_data(data_decad):
-            logger.error(
-                "CRITICAL: API write failed for %s. Data written to CSV only. "
-                "API database is now behind CSV.",
-                "write_decad_hydrograph_data",
-            )
-            api_write_failures = True
+        try:
+            if not fl.write_decad_hydrograph_data(data_decad):
+                logger.error(
+                    "CRITICAL: API write failed for %s. Data written to CSV only. "
+                    "API database is now behind CSV.",
+                    "write_decad_hydrograph_data",
+                )
+                api_write_failures = True
+        except ValueError as e:
+            logger.warning("Skipping decad hydrograph write (insufficient historical data): %s", e)
         if not fl.write_decad_time_series_data(data_decad):
             logger.error(
                 "CRITICAL: API write failed for %s. Data written to CSV only. "
@@ -807,6 +823,7 @@ def main():
 
     # Iterate over the dates
     current_day = forecast_date
+    hindcast_errors = []
     while current_day <= date_end:
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
@@ -845,106 +862,116 @@ def main():
             # Print discharge_data for code == '15194' for april and may 2024
             # logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
 
-            # Write the predictor to the Site objects
-            logger.debug(f"Predictor dates: {predictor_dates.pentad}")
-            fl.get_predictors(
-                data_df=discharge_pentad,
-                start_date=max(predictor_dates.pentad),
-                fc_sites=fc_sites_pentad,
-                date_col="date",
-                code_col="code",
-                predictor_col="discharge_sum",
-            )
-
-            # Calculate norm discharge for the pentad forecast
-            forecast_pentad_of_year = tl.get_pentad_in_year(current_day)
-            fl.save_discharge_avg(
-                discharge_pentad,
-                fc_sites_pentad,
-                group_id=forecast_pentad_of_year,
-                code_col="code",
-                group_col="pentad_in_year",
-                value_col="discharge_avg",
-            )
-
-            # Perform linear regression for the current forecast horizon
-            # The linear regression is performed on past data. Here, the slope and
-            # intercept of the linear regression model are calculated for each site for
-            # the current forecast.
-            # We take into account saved points from the pentad forecast dashboard.
-            logger.debug("Performing linear regression ...")
-            linreg_pentad = fl.perform_linear_regression(
-                data_df=discharge_pentad,
-                station_col="code",
-                horizon_col="pentad_in_year",
-                predictor_col="discharge_sum",
-                discharge_avg_col="discharge_avg",
-                forecast_horizon_int=int(forecast_pentad_of_year),
-                forecast_date=current_day,
-            )
-
-            # logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
-            logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
-
-            # Generate the forecast for the current forecast horizon
-            fl.perform_forecast(
-                fc_sites_pentad,
-                group_id=forecast_pentad_of_year,
-                result_df=linreg_pentad,
-                code_col="code",
-                group_col="pentad_in_year",
-            )
-
-            # Rename the column discharge_sum to predictor
-            linreg_pentad.rename(
-                columns={"discharge_sum": "predictor", "pentad": "pentad_in_month"}, inplace=True
-            )
-            # logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
-
-            # Override pentad metadata for API/CSV: horizon_in_year and
-            # horizon_value must reflect the TARGET period, not the issue
-            # date. The LR DataFrame indexes by issue date, so we convert
-            # here. forecast_pentad_of_year (training, norms, visibility)
-            # is unchanged. See doc/data_flow_short_term.md.
-            _issue_pentad = int(forecast_pentad_of_year)
-            _target_pentad = 1 if _issue_pentad == 72 else _issue_pentad + 1
-            linreg_pentad["pentad_in_year"] = str(_target_pentad)
-            linreg_pentad["pentad_in_month"] = str(((_target_pentad - 1) % 6) + 1)
-
-            # Write output files for the current forecast horizon
-            try:
-                # Diagnostics: log env and date coverage about to be written
-                env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
-                env_last_success = os.getenv("ieasyforecast_last_successful_run_file")
-                logger.info(
-                    f"[linreg] intermediate_data_path={env_intermediate}, last_run_file={env_last_success}"
+            if discharge_pentad.empty:
+                logger.warning(
+                    f"Skipping pentadal forecast for {current_day}: "
+                    f"no discharge data available after filtering."
+                )
+                hindcast_errors.append(current_day)
+            else:
+                # Write the predictor to the Site objects
+                logger.debug(f"Predictor dates: {predictor_dates.pentad}")
+                fl.get_predictors(
+                    data_df=discharge_pentad,
+                    start_date=max(predictor_dates.pentad),
+                    fc_sites=fc_sites_pentad,
+                    date_col="date",
+                    code_col="code",
+                    predictor_col="discharge_sum",
                 )
 
-                # Ensure date is datetime for diagnostics using robust parsing
-                if "date" in linreg_pentad.columns:
-                    _dates = fl.parse_dates_robust(linreg_pentad["date"], "date")
-                    _years = (
-                        sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
-                        if not _dates.empty
-                        else []
-                    )
+                # Calculate norm discharge for the pentad forecast
+                forecast_pentad_of_year = tl.get_pentad_in_year(current_day)
+                fl.save_discharge_avg(
+                    discharge_pentad,
+                    fc_sites_pentad,
+                    group_id=forecast_pentad_of_year,
+                    code_col="code",
+                    group_col="pentad_in_year",
+                    value_col="discharge_avg",
+                )
+
+                # Perform linear regression for the current forecast horizon
+                logger.debug("Performing linear regression ...")
+                linreg_pentad = fl.perform_linear_regression(
+                    data_df=discharge_pentad,
+                    station_col="code",
+                    horizon_col="pentad_in_year",
+                    predictor_col="discharge_sum",
+                    discharge_avg_col="discharge_avg",
+                    forecast_horizon_int=int(forecast_pentad_of_year),
+                    forecast_date=current_day,
+                )
+
+                # logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
+                logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
+
+                # Generate the forecast for the current forecast horizon
+                fl.perform_forecast(
+                    fc_sites_pentad,
+                    group_id=forecast_pentad_of_year,
+                    result_df=linreg_pentad,
+                    code_col="code",
+                    group_col="pentad_in_year",
+                )
+
+                # Rename the column discharge_sum to predictor
+                linreg_pentad.rename(
+                    columns={"discharge_sum": "predictor", "pentad": "pentad_in_month"},
+                    inplace=True,
+                )
+                # logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
+
+                # Override pentad metadata for API/CSV: horizon_in_year and
+                # horizon_value must reflect the TARGET period, not the issue
+                # date. The LR DataFrame indexes by issue date, so we convert
+                # here. forecast_pentad_of_year (training, norms, visibility)
+                # is unchanged. See doc/data_flow_short_term.md.
+                _issue_pentad = int(forecast_pentad_of_year)
+                _target_pentad = 1 if _issue_pentad == 72 else _issue_pentad + 1
+                linreg_pentad["pentad_in_year"] = str(_target_pentad)
+                linreg_pentad["pentad_in_month"] = str(((_target_pentad - 1) % 6) + 1)
+
+                # Write output files for the current forecast horizon
+                try:
+                    # Diagnostics: log env and date coverage about to be written
+                    env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
+                    env_last_success = os.getenv("ieasyforecast_last_successful_run_file")
                     logger.info(
-                        f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
+                        f"[linreg] intermediate_data_path={env_intermediate}, "
+                        f"last_run_file={env_last_success}"
                     )
-                else:
-                    logger.warning("[linreg] pentad write: 'date' column missing in output frame")
 
-            except Exception as _e:
-                logger.warning(f"[linreg] diagnostics before write failed: {_e}")
+                    # Ensure date is datetime for diagnostics using robust parsing
+                    if "date" in linreg_pentad.columns:
+                        _dates = fl.parse_dates_robust(linreg_pentad["date"], "date")
+                        _years = (
+                            sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
+                            if not _dates.empty
+                            else []
+                        )
+                        logger.info(
+                            f"[linreg] pentad write rows={len(linreg_pentad)}, "
+                            f"date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
+                        )
+                    else:
+                        logger.warning(
+                            "[linreg] pentad write: 'date' column missing in output frame"
+                        )
 
-            if not fl.write_linreg_pentad_forecast_data(linreg_pentad, forecast_date=current_day):
-                logger.error(
-                    "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
-                    "API database is now behind CSV.",
-                    "write_linreg_pentad_forecast_data",
-                    current_day,
-                )
-                api_write_failures = True
+                except Exception as _e:
+                    logger.warning(f"[linreg] diagnostics before write failed: {_e}")
+
+                if not fl.write_linreg_pentad_forecast_data(
+                    linreg_pentad, forecast_date=current_day
+                ):
+                    logger.error(
+                        "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
+                        "API database is now behind CSV.",
+                        "write_linreg_pentad_forecast_data",
+                        current_day,
+                    )
+                    api_write_failures = True
 
         else:
             logger.info(f"No pentadal forecast for {current_day}.")
@@ -963,87 +990,98 @@ def main():
                 date_col="date",
             )
 
-            # Write the predictor to the Site objects
-            logger.debug(f"Predictor dates: {predictor_dates.decad}")
-            fl.get_predictors(
-                data_df=discharge_decad,
-                start_date=max(predictor_dates.decad),
-                fc_sites=fc_sites_decad,
-                date_col="date",
-                code_col="code",
-                predictor_col="predictor",
-            )
-
-            # Calculate norm discharge for the decad forecast
-            forecast_decad_of_year = tl.get_decad_in_year(current_day)
-            fl.save_discharge_avg(
-                discharge_decad,
-                fc_sites_decad,
-                group_id=forecast_decad_of_year,
-                code_col="code",
-                group_col="decad_in_year",
-                value_col="discharge_avg",
-            )
-
-            # Perform linear regression for the current forecast horizon
-            # TODO: Once the decad forecast dashboard is finished, filter for
-            # selected points.
-            linreg_decad = fl.perform_linear_regression(
-                data_df=discharge_decad,
-                station_col="code",
-                horizon_col="decad_in_year",
-                predictor_col="predictor",
-                discharge_avg_col="discharge_avg",
-                forecast_horizon_int=int(forecast_decad_of_year),
-                forecast_date=current_day,
-            )
-
-            # logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
-
-            # Generate the forecast for the current forecast horizon
-            fl.perform_forecast(
-                fc_sites_decad,
-                group_id=forecast_decad_of_year,
-                result_df=linreg_decad,
-                code_col="code",
-                group_col="decad_in_year",
-            )
-
-            # Override decad metadata for API/CSV — same pattern as pentad.
-            _issue_decad = int(forecast_decad_of_year)
-            _target_decad = 1 if _issue_decad == 36 else _issue_decad + 1
-            linreg_decad["decad_in_year"] = str(_target_decad)
-            linreg_decad["decad_in_month"] = str(((_target_decad - 1) % 3) + 1)
-
-            # Write output files for the current forecast horizon
-            try:
-                env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
-                logger.info(f"[linreg] intermediate_data_path={env_intermediate}")
-
-                if "date" in linreg_decad.columns:
-                    _dates = fl.parse_dates_robust(linreg_decad["date"], "date")
-                    _years = (
-                        sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
-                        if not _dates.empty
-                        else []
-                    )
-                    logger.info(
-                        f"[linreg] decad write rows={len(linreg_decad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}"
-                    )
-                else:
-                    logger.warning("[linreg] decad write: 'date' column missing in output frame")
-
-            except Exception as _e:
-                logger.warning(f"[linreg] decad diagnostics before write failed: {_e}")
-
-            if not fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day):
-                logger.error(
-                    "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
-                    "API database is now behind CSV.",
-                    "write_linreg_decad_forecast_data",
-                    current_day,
+            if discharge_decad.empty:
+                logger.warning(
+                    f"Skipping decadal forecast for {current_day}: "
+                    f"no discharge data available after filtering."
                 )
-                api_write_failures = True
+                hindcast_errors.append(current_day)
+            else:
+                # Write the predictor to the Site objects
+                logger.debug(f"Predictor dates: {predictor_dates.decad}")
+                fl.get_predictors(
+                    data_df=discharge_decad,
+                    start_date=max(predictor_dates.decad),
+                    fc_sites=fc_sites_decad,
+                    date_col="date",
+                    code_col="code",
+                    predictor_col="predictor",
+                )
+
+                # Calculate norm discharge for the decad forecast
+                forecast_decad_of_year = tl.get_decad_in_year(current_day)
+                fl.save_discharge_avg(
+                    discharge_decad,
+                    fc_sites_decad,
+                    group_id=forecast_decad_of_year,
+                    code_col="code",
+                    group_col="decad_in_year",
+                    value_col="discharge_avg",
+                )
+
+                # Perform linear regression for the current forecast horizon
+                # TODO: Once the decad forecast dashboard is finished, filter for
+                # selected points.
+                linreg_decad = fl.perform_linear_regression(
+                    data_df=discharge_decad,
+                    station_col="code",
+                    horizon_col="decad_in_year",
+                    predictor_col="predictor",
+                    discharge_avg_col="discharge_avg",
+                    forecast_horizon_int=int(forecast_decad_of_year),
+                    forecast_date=current_day,
+                )
+
+                # logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
+
+                # Generate the forecast for the current forecast horizon
+                fl.perform_forecast(
+                    fc_sites_decad,
+                    group_id=forecast_decad_of_year,
+                    result_df=linreg_decad,
+                    code_col="code",
+                    group_col="decad_in_year",
+                )
+
+                # Override decad metadata for API/CSV — same pattern as pentad.
+                _issue_decad = int(forecast_decad_of_year)
+                _target_decad = 1 if _issue_decad == 36 else _issue_decad + 1
+                linreg_decad["decad_in_year"] = str(_target_decad)
+                linreg_decad["decad_in_month"] = str(((_target_decad - 1) % 3) + 1)
+
+                # Write output files for the current forecast horizon
+                try:
+                    env_intermediate = os.getenv("ieasyforecast_intermediate_data_path")
+                    logger.info(f"[linreg] intermediate_data_path={env_intermediate}")
+
+                    if "date" in linreg_decad.columns:
+                        _dates = fl.parse_dates_robust(linreg_decad["date"], "date")
+                        _years = (
+                            sorted(set([int(y) for y in _dates.dt.year.dropna().unique()]))
+                            if not _dates.empty
+                            else []
+                        )
+                        logger.info(
+                            f"[linreg] decad write rows={len(linreg_decad)}, "
+                            f"date_min={_dates.min()}, date_max={_dates.max()}, "
+                            f"years={_years}"
+                        )
+                    else:
+                        logger.warning(
+                            "[linreg] decad write: 'date' column missing in output frame"
+                        )
+
+                except Exception as _e:
+                    logger.warning(f"[linreg] decad diagnostics before write failed: {_e}")
+
+                if not fl.write_linreg_decad_forecast_data(linreg_decad, forecast_date=current_day):
+                    logger.error(
+                        "CRITICAL: API write failed for %s on %s. Data written to CSV only. "
+                        "API database is now behind CSV.",
+                        "write_linreg_decad_forecast_data",
+                        current_day,
+                    )
+                    api_write_failures = True
 
         else:
             logger.info(f"No decadal forecast for {current_day}.")
@@ -1054,6 +1092,12 @@ def main():
         logger.info(f"Iteration for {current_day} completed successfully.")
         current_day = get_next_forecast_day(current_day + dt.timedelta(days=1), prediction_mode)
 
+    if hindcast_errors:
+        logger.warning(
+            f"Hindcast completed with {len(hindcast_errors)} skipped dates "
+            f"(insufficient data). First skipped: {hindcast_errors[0]}, "
+            f"last skipped: {hindcast_errors[-1]}"
+        )
     if api_write_failures:
         logger.error(
             "Pipeline completed but one or more API writes failed. "

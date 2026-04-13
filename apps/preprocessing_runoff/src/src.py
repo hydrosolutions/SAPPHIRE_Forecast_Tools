@@ -759,6 +759,10 @@ def read_runoff_data_from_uzhm_wide_xlsx(
 
     # Filter by code_list
     if code_list is not None and code not in code_list:
+        logger.debug(
+            f"read_runoff_data_from_uzhm_wide_xlsx: code '{code}' not in "
+            f"code_list {code_list}. Skipping {filename}."
+        )
         return pd.DataFrame()
 
     # Parse station name from row 1 of the first sheet
@@ -3550,6 +3554,9 @@ def get_runoff_data_for_sites_HF(
         read_data = _load_cached_data(date_col, discharge_col, name_col, code_col, code_list)
 
     # Ensure date is a normalized timestamp object if read_data is not empty
+    if read_data is None:
+        logger.error("No runoff data could be read. Check input files and code_list.")
+        return None
     if not read_data.empty:
         read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
 
