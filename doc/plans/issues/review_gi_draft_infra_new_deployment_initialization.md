@@ -1,6 +1,6 @@
 # Add deployment initialization workflow to run_locally.sh and Docker pipeline
 
-**Status**: Draft (revised 2026-04-10 — technical analysis + implementation plan corrected after code review; reviewed against codebase 2026-04-10)
+**Status**: Review (implemented 2026-04-13, commit efc8d09; revised 2026-04-10)
 **Module**: infrastructure (run_locally.sh, pipeline_docker.py)
 **Priority**: High
 **Labels**: `uzhm`, `deployment`, `infrastructure`, `initialization`
@@ -142,11 +142,11 @@ Codify the existing manual process as a single `run_locally.sh` target. **No cha
 
 ### Implementation Steps
 
-- [ ] **Step 0**: Commit `apps/preprocessing_runoff/initial_api_sync.py` to git
+- [x] **Step 0**: Commit `apps/preprocessing_runoff/initial_api_sync.py` to git
 
   This file is currently untracked (`??` in git status). It must be committed before the `initialize` target can work on any other machine or in Docker. Review the file for any hardcoded paths or sensitive data before committing.
 
-- [ ] **Step 1**: Add `run_initialize_deployment()` function to `run_locally.sh`
+- [x] **Step 1**: Add `run_initialize_deployment()` function to `run_locally.sh`
 
   ```bash
   run_initialize_deployment() {
@@ -207,7 +207,7 @@ Codify the existing manual process as a single `run_locally.sh` target. **No cha
 
   Add `initialize)` case to the dispatch and `initialize` to `valid_targets`.
 
-- [ ] **Step 2**: Add Docker initialization tasks to `pipeline_docker.py`
+- [x] **Step 2**: Add Docker initialization tasks to `pipeline_docker.py`
 
   Follow existing patterns:
   - **No `PrepRunoffInitial`** — reuse `PrepRunoffMaintenance` directly. It already sets `SAPPHIRE_SYNC_MODE=maintenance` (correct fetch behavior). Creating a duplicate task that does the exact same thing introduces maintenance burden and divergence risk.
@@ -223,11 +223,11 @@ Codify the existing manual process as a single `run_locally.sh` target. **No cha
 
   Use distinct marker prefix: `get_marker_filepath("initial_<task>")` for tasks that differ from their maintenance equivalents (`InitialApiSync`, `LinRegInitial`, `SkillMetricsInitial`). `PrepRunoffMaintenance` keeps its existing marker.
 
-- [ ] **Step 3**: Delete `apps/forecast_dashboard/bootstrap_stations.py`
+- [x] **Step 3**: Delete `apps/forecast_dashboard/bootstrap_stations.py`
 
   FD-001 Bug 2 handles manual stations natively. Verify by checking that the dashboard loads manual stations without `bootstrap_stations.py` on a fresh deployment.
 
-- [ ] **Step 4**: Document the initialization process
+- [x] **Step 4**: Document the initialization process
 
   - Add `initialize` to `run_locally.sh` help text
   - Add `ieasyhydroforecast_START_DATE=YYYY-MM-DD` to `sapphire/.env.example` with a comment explaining it is only needed for initialization
