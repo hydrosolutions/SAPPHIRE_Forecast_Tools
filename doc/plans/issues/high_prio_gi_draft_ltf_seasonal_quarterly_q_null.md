@@ -1,8 +1,8 @@
 # LT seasonal/quarterly hindcasts: `q` field null for LR models, blocking skill computation
 
-**Status**: Draft
+**Status**: Draft (downstream crash mitigated by PP-028b, 2026-04-13; upstream root cause in lt_utils.py still open)
 **Module**: long_term_forecasting
-**Priority**: High
+**Priority**: Medium (downgraded — downstream no longer crashes)
 **Labels**: `bug`, `long-term-forecasting`, `skill-metrics`
 **Assigned**: @sandrohuni
 

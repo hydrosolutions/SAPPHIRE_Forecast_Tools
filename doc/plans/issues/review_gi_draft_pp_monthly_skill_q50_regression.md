@@ -1,6 +1,6 @@
 # PP-028b: Skill metrics crash/silent failure — missing `q50` column across all horizons
 
-**Status**: Draft
+**Status**: Review (implemented 2026-04-13, commits 90fd2a7 + 86b8640)
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `bug`, `regression`, `skill-metrics`, `long-term-forecasting`
