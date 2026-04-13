@@ -245,6 +245,8 @@ def aggregate_monthly_fc_to_quarterly(
             agg_dict[qcol] = (qcol, "mean")
     if "forecasted_discharge" in df.columns:
         agg_dict["forecasted_discharge"] = ("forecasted_discharge", "mean")
+    if "q" in df.columns:
+        agg_dict["q"] = ("q", "mean")
 
     grouped = (
         df.groupby(["code", "year", "quarter_in_year", "model_short"]).agg(**agg_dict).reset_index()
@@ -270,9 +272,12 @@ def aggregate_monthly_fc_to_quarterly(
         axis=1,
     )
 
-    # Ensure forecasted_discharge exists (from q50)
-    if "forecasted_discharge" not in grouped.columns and "q50" in grouped.columns:
-        grouped["forecasted_discharge"] = grouped["q50"].astype(float)
+    # Ensure forecasted_discharge exists (q first, q50 fallback)
+    if "forecasted_discharge" not in grouped.columns:
+        if "q" in grouped.columns:
+            grouped["forecasted_discharge"] = pd.to_numeric(grouped["q"], errors="coerce")
+        elif "q50" in grouped.columns:
+            grouped["forecasted_discharge"] = grouped["q50"].astype(float)
 
     return grouped
 

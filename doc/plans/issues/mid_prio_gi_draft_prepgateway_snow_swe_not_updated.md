@@ -2,7 +2,7 @@
 
 **Priority**: Mid
 **Module**: `preprocessing_gateway`
-**Status**: Draft — Investigation
+**Status**: Draft — likely resolved. Local pipeline run 2026-04-13 confirmed current-year SWE data through Apr 21 for both S1 (15189) and S2 (16059). Year-2000 records are norms (day-of-year index), not artifacts. Operational snow writes are working. Verify on server before archiving.
 **Date**: 2026-03-19
 **Branch**: `develop_long_term_fix_api_postprocessing_forecasts`
 

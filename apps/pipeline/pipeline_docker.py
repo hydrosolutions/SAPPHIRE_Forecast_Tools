@@ -2223,5 +2223,201 @@ class RunLongTermWorkflow(luigi.Task):
             f.write("Long-term workflow completed")
 
 
+# =============================================================================
+# Initialization tasks
+#
+# These tasks perform first-time database population for a new SAPPHIRE
+# deployment: full historical data sync, hindcast from a configurable start
+# date, and skill metrics computation.
+#
+# Workflow dependency chain:
+#   PrepRunoffMaintenance → InitialApiSync → LinRegInitial(PENTAD/DECAD)
+#   → SkillMetricsInitial(PENTAD/DECAD) → RunInitializeWorkflow
+# =============================================================================
+
+
+class InitialApiSync(DockerTaskBase):
+    """Push full CSV history to the preprocessing API.
+
+    Runs initial_api_sync.py which reads all cached CSV files (daily,
+    pentadal, decadal) and writes them to the API with
+    SAPPHIRE_SYNC_MODE=initial (all records, no date filter).
+
+    Must run after PrepRunoffMaintenance (which populates the CSV cache).
+    """
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_initial_api_sync_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    def requires(self):
+        return PrepRunoffMaintenance()
+
+    def output(self):
+        marker = get_marker_filepath("initial_api_sync")
+        return luigi.LocalTarget(marker)
+
+    def run(self):
+        volumes = _standard_maintenance_volumes(
+            extra_volume_keys=["ieasyforecast_daily_discharge_path"]
+        )
+        environment = _common_maintenance_env() + [
+            "SAPPHIRE_SYNC_MODE=initial",
+        ]
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-preprunoff",
+                container_name="initial-api-sync",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="4g",
+                memswap_limit="6g",
+                command=["uv", "run", "initial_api_sync.py"],
+            )
+        )
+
+
+class LinRegInitial(DockerTaskBase):
+    """Run hindcast with explicit start date for initialization.
+
+    Unlike LinRegMaintenance (which uses the Docker CMD's RUN_MODE
+    conditional and auto-detects the start date), this task passes
+    --start-date explicitly via a command override.
+    """
+
+    prediction_mode = luigi.Parameter()  # PENTAD or DECAD
+
+    @property
+    def docker_logs_file_path(self):
+        return (
+            f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+            f"/docker_logs/log_initial_linreg_{self.prediction_mode}_"
+            f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+
+    def requires(self):
+        return InitialApiSync()
+
+    def output(self):
+        marker = get_marker_filepath(f"initial_linreg_{self.prediction_mode}")
+        return luigi.LocalTarget(marker)
+
+    def run(self):
+        start_date = os.environ.get("ieasyhydroforecast_START_DATE", "")
+        if not start_date:
+            raise ValueError("ieasyhydroforecast_START_DATE must be set for initialization")
+
+        volumes = _standard_maintenance_volumes(
+            extra_volume_keys=["ieasyforecast_daily_discharge_path"]
+        )
+        environment = _common_maintenance_env() + [
+            f"SAPPHIRE_PREDICTION_MODE={self.prediction_mode}",
+            "SAPPHIRE_SYNC_MODE=initial",
+        ]
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-linreg",
+                container_name=f"initial-linreg-{self.prediction_mode}",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="4g",
+                memswap_limit="6g",
+                command=[
+                    "uv",
+                    "run",
+                    "linear_regression.py",
+                    "--hindcast",
+                    "--start-date",
+                    start_date,
+                ],
+            )
+        )
+
+
+class SkillMetricsInitial(DockerTaskBase):
+    """Recalculate skill metrics for a single prediction mode after initialization hindcast."""
+
+    prediction_mode = luigi.Parameter()  # PENTAD or DECAD
+
+    @property
+    def docker_logs_file_path(self):
+        return (
+            f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+            f"/docker_logs/log_initial_skill_{self.prediction_mode}_"
+            f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+
+    def requires(self):
+        return LinRegInitial(prediction_mode=self.prediction_mode)
+
+    def output(self):
+        marker = get_marker_filepath(f"initial_skill_{self.prediction_mode}")
+        return luigi.LocalTarget(marker)
+
+    def run(self):
+        volumes = _standard_maintenance_volumes()
+        environment = _common_maintenance_env() + [
+            f"SAPPHIRE_PREDICTION_MODE={self.prediction_mode}",
+        ]
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-postprocessing",
+                container_name=f"initial-skill-{self.prediction_mode}",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="8g",
+                memswap_limit="12g",
+                command=["uv", "run", "recalculate_skill_metrics.py"],
+                network="host",
+            )
+        )
+
+
+class RunInitializeWorkflow(luigi.Task):
+    """Top-level initialization orchestrator.
+
+    Triggers the full initialization dependency chain:
+    PrepRunoffMaintenance → InitialApiSync → LinRegInitial(PENTAD/DECAD)
+    → SkillMetricsInitial(PENTAD/DECAD)
+
+    Usage:
+        ieasyhydroforecast_START_DATE=2000-01-06 \\
+        luigi --module pipeline_docker RunInitializeWorkflow
+    """
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_initialize_workflow_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    def requires(self):
+        return [
+            SkillMetricsInitial(prediction_mode="PENTAD"),
+            SkillMetricsInitial(prediction_mode="DECAD"),
+        ]
+
+    def output(self):
+        return luigi.LocalTarget(get_marker_filepath("initial_workflow_complete"))
+
+    def run(self):
+        os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
+        with open(self.docker_logs_file_path, "w") as f:
+            f.write(
+                f"Initialization completed at "
+                f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        with self.output().open("w") as f:
+            f.write("Initialization completed")
+
+
 if __name__ == "__main__":
     luigi.build([RunWorkflow()])

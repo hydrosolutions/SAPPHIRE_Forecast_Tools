@@ -1,4 +1,4 @@
-# GitHub Issue: FD-001
+# GitHub Issue: FD-012
 
 **Title**: `fix(forecast_dashboard): Handle missing current year data gracefully in weather plots`
 

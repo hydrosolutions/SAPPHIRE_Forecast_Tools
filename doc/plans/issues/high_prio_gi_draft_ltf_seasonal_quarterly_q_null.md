@@ -1,8 +1,8 @@
 # LT seasonal/quarterly hindcasts: `q` field null for LR models, blocking skill computation
 
-**Status**: Draft
+**Status**: Draft (PP-028b prevents the KeyError crash but does NOT produce skill metrics for affected models — q and q50 are both None at row level, so the downstream fallback yields NaN which gets dropped)
 **Module**: long_term_forecasting
-**Priority**: High
+**Priority**: High (seasonal/quarterly skill metrics still zero for all LR models)
 **Labels**: `bug`, `long-term-forecasting`, `skill-metrics`
 **Assigned**: @sandrohuni
 
@@ -131,15 +131,21 @@ Note: Monthly LR_Base has `q` filled for all 198 records — the bug is specific
 Two complementary fixes, in separate repos:
 
 **Fix A (upstream library — @sandrohuni):** In `LINEAR_REGRESSION.py`,
-`calibrate_model_and_hindcast()` (line ~671-688), make the hindcast path
-always emit a row (matching `predict_operational` behavior), even when the
-prediction is NaN. This ensures `Q_LR_Base` is present in the DataFrame for
-all years. Rows with NaN predictions already get `flag=3` downstream
-(`calibrate_and_hindcast.py:241`), so the flag system handles them correctly.
+investigate why seasonal/quarterly hindcasts produce NaN for `Q_LR_Base`
+in early years. The rows are emitted (flag=3 set at
+`calibrate_and_hindcast.py:241`) but the Q value is NaN. The root cause
+is likely a training data threshold check (`num_features * 2`) that
+rejects early years with insufficient data. Consider:
+- Lowering the threshold for seasonal/quarterly modes
+- Or using a simpler fallback model for years with insufficient data
+
+This is a model quality improvement, not strictly a bug fix.
 
 **Fix B (this repo — fallback guard):** In `lt_utils.py:354-362`, add a
 final fallback that derives `q` from quantiles when all three existing
-branches fail:
+branches fail. The quantiles (Q5-Q95) ARE populated even when
+`Q_{model_name}` is NaN (verified: lines 364-367 write quantiles
+independently). Using `(Q25 + Q75) / 2` as a pragmatic point estimate:
 ```python
 # Fallback: derive q from quantiles when point forecast is missing
 elif "Q25" in row.index and "Q75" in row.index:
@@ -149,8 +155,14 @@ elif "Q25" in row.index and "Q75" in row.index:
         record["q"] = float((q25 + q75) / 2)
 ```
 
-Fix A is the proper root cause fix. Fix B is a defensive guard that prevents
-null `q` when quantiles exist, regardless of the upstream behavior.
+Note: `(Q25 + Q75) / 2` is the IQR midpoint, not the true median (Q50
+is not populated). For symmetric distributions this approximates the
+median. For skill metrics (NSE, MAE) this is acceptable — the quantile
+forecast already exists, we just need a representative point value.
+
+**Fix B is independently actionable** in this repo. Fix A is a model
+improvement for the upstream library. Fix B alone unblocks seasonal/
+quarterly skill metrics for all LR models.
 
 ### Files to Modify
 
@@ -161,10 +173,11 @@ null `q` when quantiles exist, regardless of the upstream behavior.
 
 ### Implementation Steps
 
-- [ ] Step 1 (@sandrohuni): In `calibrate_model_and_hindcast()`, always append a row to the output DataFrame, even when prediction is NaN — matching `predict_operational` behavior
-- [ ] Step 2 (@mabesa): Add quantile fallback in `prepare_long_forecast_records()` after the existing Q_loc branch
-- [ ] Step 3: Re-run seasonal/quarterly hindcasts to backfill the null q values
-- [ ] Step 4: Re-run skill metric recalculation and verify n_pairs > 0
+- [ ] Step 1 (@mabesa): Add quantile fallback in `prepare_long_forecast_records()` after the existing Q_loc branch — this is Fix B, independently actionable
+- [ ] Step 2: Add unit test for the fallback in `apps/long_term_forecasting/tests/`
+- [ ] Step 3: Re-run `calibrate_long_term` to regenerate seasonal/quarterly hindcasts with backfilled q values
+- [ ] Step 4: Re-run `recalculate_skill_metrics` with `SAPPHIRE_PREDICTION_MODE=ALL` and verify n_pairs > 0
+- [ ] Step 5 (separate, @sandrohuni): Investigate upstream model threshold for seasonal/quarterly — Fix A
 
 ---
 
