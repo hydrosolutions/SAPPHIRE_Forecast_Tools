@@ -330,22 +330,31 @@ class DataManager(param.Parameterized):
             if not event.new:
                 return
             print("Triggered rerunning of forecasts.")
-            logger.info("Data reload triggered — refreshing visualisations.")
+            logger.info("Data reload triggered — reloading data and refreshing visualisations.")
             _fa = self.forecasts_all
             logger.debug(
-                "D5 Before refresh — forecasts_all: %d rows, max date=%s",
+                "D5 Before reload — forecasts_all: %d rows, max date=%s",
                 len(_fa) if _fa is not None else 0,
                 _fa["date"].max() if _fa is not None and not _fa.empty else "N/A",
             )
-            logger.warning(
-                "D7 data_needs_reload fired but load_station() is NOT called "
-                "— refresh_all_visualizations() will display stale data"
-            )
             try:
+                # Reload data from the API so visualisations use fresh results
+                horizon = pm._wm.horizon_selector.value
+                station_code = pm._wm.station_selector.value.split()[0]
+                self.load_station(horizon, station_code)
+                self.invalidate_render_cache()
+
+                # Update date picker to reflect newly available data
+                if not self.forecasts_all.empty:
+                    max_date = self.forecasts_all['date'].max()
+                    if hasattr(max_date, 'date'):
+                        pm._wm.date_picker.value = max_date.date()
+
+                pm._wm.refresh_model_checkbox()
                 pm.refresh_all_visualizations()
                 _fa2 = self.forecasts_all
                 logger.debug(
-                    "D6 After refresh — forecasts_all: %d rows, max date=%s",
+                    "D6 After reload — forecasts_all: %d rows, max date=%s",
                     len(_fa2) if _fa2 is not None else 0,
                     _fa2["date"].max() if _fa2 is not None and not _fa2.empty else "N/A",
                 )
