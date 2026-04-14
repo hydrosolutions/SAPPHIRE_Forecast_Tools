@@ -186,7 +186,7 @@ class WidgetManager:
             dm.update_sites_for_pentad(_, horizon, selected_pentad, selected_decad)
             dm.invalidate_render_cache()
 
-            if is_month and not dm.forecasts_all.empty:
+            if not dm.forecasts_all.empty:
                 max_date = dm.forecasts_all['date'].max()
                 if hasattr(max_date, 'date'):
                     self.date_picker.value = max_date.date()
