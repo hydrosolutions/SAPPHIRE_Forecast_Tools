@@ -582,6 +582,25 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
             season_start = get_season_months()[0]
             df_rec["_date"] = dt_module.date(year, season_start, 1).strftime("%Y-%m-%d")
 
+        # --- Deduplicate on DB upsert key ---
+        # The DB unique constraint is (horizon_type, code, model_type, date,
+        # horizon_in_year).  composition is NOT part of the constraint.
+        # Monthly/quarterly/seasonal ensemble baselines (EM, Naive Mean,
+        # Skilled Mean) produce multiple rows per key with different
+        # composition values due to the CRPS merge fan-out.  Retain the row
+        # with a non-None composition (the true ensemble record).
+        upsert_key = ["code", "model_type", "_date", horizon_in_year_col]
+        n_before = len(df_rec)
+        df_rec = df_rec.sort_values("_composition", na_position="first")
+        df_rec = df_rec.drop_duplicates(subset=upsert_key, keep="last")
+        n_dupes = n_before - len(df_rec)
+        if n_dupes > 0:
+            logger.warning(
+                "Dropped %d duplicate skill metric records before API write (%s)",
+                n_dupes,
+                horizon_type,
+            )
+
         # Build nullable float columns
         metric_cols = {}
         for col in (
