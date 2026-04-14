@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 from src import db
 
 # ── _convert_na_to_nan ─────────────────────────────────────────────────────
@@ -53,6 +54,9 @@ class TestHorizonInYearCol:
     def test_decade(self):
         assert db._horizon_in_year_col("decade") == "decad_in_year"
 
+    def test_month(self):
+        assert db._horizon_in_year_col("month") == "month_in_year"
+
 
 # ── _resolve_station ──────────────────────────────────────────────────────
 
@@ -70,3 +74,265 @@ class TestResolveStation:
         widget = MagicMock()
         widget.value = "99001 Test Station Extra Words"
         assert db._resolve_station(widget) == "99001"
+
+
+# ── get_long_forecasts ────────────────────────────────────────────────────
+
+# Shared fixture data used across multiple tests.
+_LONG_FORECAST_RECORD = {
+    "id": 1,
+    "horizon_type": "month",
+    "horizon_value": 1,
+    "code": "99001",
+    "date": "2026-03-22",
+    "model_type": "GBT",
+    "model_type_description": "Gradient Boosted Trees (GBT)",
+    "valid_from": "2026-04-01",
+    "valid_to": "2026-04-30",
+    "flag": 0,
+    "composition": "",
+    "q": 123.45,
+    "q_obs": None,
+    "q_xgb": None,
+    "q_lgbm": None,
+    "q_catboost": None,
+    "q_loc": None,
+    "q05": 100.0,
+    "q10": 105.0,
+    "q25": 110.0,
+    "q50": 120.0,
+    "q75": 130.0,
+    "q90": 135.0,
+    "q95": 140.0,
+}
+
+_SKILL_METRIC_RECORD = {
+    "id": 1,
+    "horizon_type": "month",
+    "horizon_in_year": 4,
+    "code": "99001",
+    "model_type": "GBT",
+    "model_type_description": "Gradient Boosted Trees (GBT)",
+    "date": "2026-03-15",
+    "sdivsigma": 0.5,
+    "nse": 0.8,
+    "delta": 1.0,
+    "accuracy": 90.0,
+    "mae": 1.0,
+    "n_pairs": 12,
+    "crps": None,
+    "pbias": None,
+    "kgelf": None,
+    "nse_log": None,
+    "fhv": None,
+    "flv": None,
+}
+
+
+def _make_mock_response(json_data, status_code=200):
+    """Return a lightweight fake requests.Response."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+class TestGetLongForecasts:
+    def test_month_in_year_computed_from_valid_from(self, monkeypatch):
+        """month_in_year is derived from valid_from (April → 4), horizon_value dropped."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_LONG_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts(station="99001", horizon_value=1)
+
+        assert "month_in_year" in result.columns
+        assert result["month_in_year"].iloc[0] == 4
+        assert "horizon_value" not in result.columns
+        assert "forecasted_discharge" in result.columns
+
+    def test_empty_api_response(self, monkeypatch):
+        """Empty API payload returns an empty DataFrame that still declares key columns."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts(station="99001", horizon_value=1)
+
+        assert result.empty
+        assert "month_in_year" in result.columns
+        assert "valid_from" in result.columns
+
+
+# ── get_forecast_stats ────────────────────────────────────────────────────
+
+
+class TestGetForecastStats:
+    def test_month_horizon_renames_to_month_in_year(self, monkeypatch):
+        """horizon_in_year is renamed to month_in_year for month horizon."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_SKILL_METRIC_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "99001")
+
+        assert "month_in_year" in result.columns
+        assert result["month_in_year"].iloc[0] == 4
+        assert "pentad_in_year" not in result.columns
+        assert "delta" in result.columns
+        assert "sdivsigma" in result.columns
+        assert "mae" in result.columns
+        assert "accuracy" in result.columns
+        assert "date" not in result.columns
+
+    def test_month_deduplicates_keeping_latest(self, monkeypatch):
+        """When two rows share (code, month_in_year, model_type), only the later date survives."""
+        records = [
+            {**_SKILL_METRIC_RECORD, "id": 1, "date": "2026-03-01", "delta": 1.0},
+            {**_SKILL_METRIC_RECORD, "id": 2, "date": "2026-03-15", "delta": 2.0},
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "99001")
+
+        assert len(result) == 1
+        assert result["delta"].iloc[0] == 2.0
+
+
+# ── _get_data_monthly / get_data ──────────────────────────────────────────
+
+
+class TestGetDataMonthly:
+    """Integration tests for get_data("month", ...) — all HTTP mocked."""
+
+    def _make_dispatch_mock(self, monkeypatch):
+        """Patch requests.get to dispatch by URL segment."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_LONG_FORECAST_RECORD])
+            if "/skill-metric/" in url:
+                return _make_mock_response([_SKILL_METRIC_RECORD])
+            # All other endpoints (hydrograph, meteo, snow, …) return empty.
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _all_stations_df(self):
+        return pd.DataFrame(
+            {"code": ["99001"], "station_labels": ["Test River A"]}
+        )
+
+    def test_merges_skill_metrics_into_forecasts(self, monkeypatch):
+        """Skill metric columns (delta, sdivsigma, mae, accuracy) appear in forecasts_all."""
+        self._make_dispatch_mock(monkeypatch)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "99001", self._all_stations_df())
+
+        fa = data["forecasts_all"]
+        assert "delta" in fa.columns
+        assert "sdivsigma" in fa.columns
+        assert "mae" in fa.columns
+        assert "accuracy" in fa.columns
+        # The GBT row should carry delta=1.0 from the skill-metric fixture.
+        gbt_rows = fa[fa["model_short"] == "GBT"]
+        assert len(gbt_rows) > 0
+        assert gbt_rows["delta"].iloc[0] == 1.0
+
+        assert not data["forecast_stats"].empty
+
+    def test_no_skill_metrics_still_returns_forecasts(self, monkeypatch):
+        """When skill-metric API returns nothing, forecasts_all still has forecast data."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_LONG_FORECAST_RECORD])
+            # skill-metric and all other endpoints return empty.
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "99001", self._all_stations_df())
+
+        fa = data["forecasts_all"]
+        assert not fa.empty
+        assert "forecasted_discharge" in fa.columns
+        assert "delta" not in fa.columns
+        assert data["forecast_stats"].empty
+
+    def test_merges_skill_metrics_into_month0_forecasts(self, monkeypatch):
+        """Skill metric columns appear in long_forecasts_m0 when month_0 is enabled."""
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
+        )
+        self._make_dispatch_mock(monkeypatch)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "99001", self._all_stations_df())
+
+        m0 = data["long_forecasts_m0"]
+        assert not m0.empty
+        assert "delta" in m0.columns
+        assert "sdivsigma" in m0.columns
+        assert "mae" in m0.columns
+        assert "accuracy" in m0.columns
+        # The GBT row should carry delta=1.0 from the skill-metric fixture.
+        gbt_rows = m0[m0["model_short"] == "GBT"]
+        assert len(gbt_rows) > 0
+        assert gbt_rows["delta"].iloc[0] == 1.0
+
+    def test_month0_without_skill_metrics_still_returns_forecasts(self, monkeypatch):
+        """When skill-metric API returns nothing, month_0 forecasts are still present."""
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
+        )
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_LONG_FORECAST_RECORD])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "99001", self._all_stations_df())
+
+        m0 = data["long_forecasts_m0"]
+        assert not m0.empty
+        assert "forecasted_discharge" in m0.columns
+        assert "delta" not in m0.columns
+
+    def test_month0_disabled_returns_empty_dataframe(self, monkeypatch):
+        """When month_0 is not in supported modes, long_forecasts_m0 is empty."""
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "month_1"
+        )
+        self._make_dispatch_mock(monkeypatch)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "99001", self._all_stations_df())
+
+        assert data["long_forecasts_m0"].empty
