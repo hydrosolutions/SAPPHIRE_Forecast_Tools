@@ -20,11 +20,13 @@ Three files have the same `call_hindcast_script()` pattern:
 
 | File | Subprocess call | Caller catches RuntimeError? |
 |------|----------------|------------------------------|
-| `recalculate_nan_forecasts.py` (line 99) | `subprocess.run(command, capture_output=True, text=True, env=env)` | Yes (line 305) |
-| `fill_ml_gaps.py` (line 98) | Same | Yes (line 306) — but only catches the new timeout RuntimeError, since the function does not raise on non-zero returncode |
-| `add_new_station.py` (line 85) | Same | **No** — pre-existing issue |
+| `recalculate_nan_forecasts.py` (line 93) | `subprocess.run(command, capture_output=True, text=True, env=env)` | Yes (line 307) — catches `(FileNotFoundError, RuntimeError)` |
+| `fill_ml_gaps.py` (line 92) | Same | Yes (line 307) — catches `(FileNotFoundError, RuntimeError)`, but only the new timeout RuntimeError can reach here since the function does not raise on non-zero returncode |
+| `add_new_station.py` (line 79) | Same | **No** — pre-existing issue |
 
-All three files still have `if os.getenv("IN_DOCKER") == "True":` branching (lines 89/88/75 respectively) that sets different command paths for Docker vs local. Branch `fix_ml_hindcast_subprocess_path` (commit `b9270dc`) removes this branching, but is **not yet merged into `maxat_sapphire_2`**. The replacement snippet below only touches the `result = subprocess.run(...)` line, not the command construction, so it is safe to apply on the current code regardless of whether that branch is merged first.
+Branch `fix_ml_hindcast_subprocess_path` (commit `b9270dc`) removed the `IN_DOCKER` branching from all three files. The replacement snippet below only touches the `result = subprocess.run(...)` line, not the command construction.
+
+In all three files, `MODEL_TO_USE` and `PREDICTION_MODE` are **function parameters** (not globals), confirmed in scope at the subprocess call site.
 
 ### Why not Popen + read loop?
 
@@ -39,9 +41,9 @@ A `Popen` + `for line in proc.stdout` + `proc.wait(timeout=...)` pattern was con
 **Goal:** Add `timeout=` parameter to `subprocess.run()` and output logging in all three `call_hindcast_script()` functions.
 
 **Files:**
-- `apps/machine_learning/recalculate_nan_forecasts.py` — `call_hindcast_script()`, the `result = subprocess.run(...)` line (line 99)
-- `apps/machine_learning/fill_ml_gaps.py` — same (line 98)
-- `apps/machine_learning/add_new_station.py` — same (line 85)
+- `apps/machine_learning/recalculate_nan_forecasts.py` — `call_hindcast_script()`, the `result = subprocess.run(...)` line (line 93)
+- `apps/machine_learning/fill_ml_gaps.py` — same (line 92)
+- `apps/machine_learning/add_new_station.py` — same (line 79)
 
 **Depends on:** Nothing
 
@@ -113,22 +115,27 @@ The resulting code structure in each file must be:
 **Goal:** Add tests for timeout behavior, env var parsing, and output logging in `call_hindcast_script()`.
 
 **Files:**
-- `apps/machine_learning/test/test_hindcast.py` (add new test functions — file exists but has no `call_hindcast_script` tests)
+- `apps/machine_learning/test/test_recalculate_nan_api_write.py` — add new test class `TestCallHindcastScriptTimeout` adjacent to the existing `TestCallHindcastScriptRaisesOnFailure` (line ~437). Existing tests already cover non-zero returncode and successful CSV read; new tests cover timeout-specific behavior only.
 
 **Depends on:** Phase 1
 
 **Agents:** 1
 
+**Existing tests to be aware of (do NOT duplicate):**
+- `TestCallHindcastScriptRaisesOnFailure.test_raises_runtime_error_on_nonzero_returncode` (line ~450)
+- `TestCallHindcastScriptRaisesOnFailure.test_success_reads_csv` (line ~480)
+
+**Note:** No `conftest.py` exists in `apps/machine_learning/test/` — fixtures are managed inline per test file.
+
 **Test cases to implement:**
 - Subprocess timeout fires correctly (mock `subprocess.run` to raise `TimeoutExpired`, verify `RuntimeError` raised)
 - Env var parsing: empty string → 14400, valid int → parsed, missing → 14400
-- Successful hindcast still works (mock returncode 0, verify no exception)
-- Failed hindcast (mock non-zero returncode) — verify `recalculate_nan_forecasts` raises RuntimeError, verify `fill_ml_gaps`/`add_new_station` do NOT raise
 - Hindcast stdout/stderr appear in logger output (use `caplog` or mock logger)
 
 **Acceptance criteria:**
 - All new tests pass with `SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning`
 - Zero unexpected skips
+- No duplication with existing `TestCallHindcastScriptRaisesOnFailure` tests
 
 ### Phase 3 — Verify
 
@@ -170,13 +177,17 @@ The resulting code structure in each file must be:
 
 ## Testing
 
-### Test Cases (unit tests in `apps/machine_learning/test/test_hindcast.py`)
+### Test Cases
+
+New tests in `apps/machine_learning/test/test_recalculate_nan_api_write.py` (class `TestCallHindcastScriptTimeout`, adjacent to existing `TestCallHindcastScriptRaisesOnFailure`):
 
 - [ ] Subprocess timeout fires correctly (mock `subprocess.run` to raise `TimeoutExpired`, verify `RuntimeError` raised with correct message)
 - [ ] Env var parsing: empty string → 14400, valid int → parsed, missing → 14400
-- [ ] Successful hindcast still works identically (mock returncode 0, verify no exception)
-- [ ] Failed hindcast (non-zero exit): `recalculate_nan_forecasts` raises `RuntimeError`; `fill_ml_gaps`/`add_new_station` do NOT raise (print and continue)
 - [ ] Hindcast stdout/stderr logged via `logger.info`/`logger.warning` (verify with `caplog` or mock logger)
+
+Already covered by existing tests (do NOT duplicate):
+- Successful hindcast (returncode 0) → `test_success_reads_csv`
+- Failed hindcast (non-zero exit) raises `RuntimeError` → `test_raises_runtime_error_on_nonzero_returncode`
 
 ### Testing Commands
 
@@ -252,4 +263,4 @@ On failure, stderr will be logged twice: once by the new `logger.warning("[hindc
 | `apps/machine_learning/recalculate_nan_forecasts.py` | Add timeout + log output in `call_hindcast_script()` |
 | `apps/machine_learning/fill_ml_gaps.py` | Same |
 | `apps/machine_learning/add_new_station.py` | Same |
-| `apps/machine_learning/test/test_hindcast.py` | Add unit tests for timeout, env var parsing, output logging |
+| `apps/machine_learning/test/test_recalculate_nan_api_write.py` | Add `TestCallHindcastScriptTimeout` class for timeout, env var parsing, output logging |

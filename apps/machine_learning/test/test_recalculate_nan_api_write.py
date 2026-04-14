@@ -9,11 +9,13 @@ Covers:
 
 import logging
 import os
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 # Mock heavy dependencies before importing the module under test
 sys.modules["darts"] = MagicMock()
@@ -494,6 +496,168 @@ class TestCallHindcastScriptRaisesOnFailure:
 
         assert result.equals(expected_df)
         mock_read_csv.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test class: call_hindcast_script() timeout guard (ML-014)
+# ---------------------------------------------------------------------------
+
+
+class TestCallHindcastScriptTimeout:
+    """ML-014: subprocess.run has timeout; TimeoutExpired → RuntimeError."""
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    def test_timeout_raises_runtime_error(self, mock_run):
+        """TimeoutExpired from subprocess is wrapped in RuntimeError."""
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd=["python", "hindcast_ML_models.py"], timeout=14400
+        )
+
+        with pytest.raises(RuntimeError, match="timed out after 14400s"):
+            recalculate_nan_forecasts.call_hindcast_script(
+                min_missing_date="2024-06-01",
+                max_missing_date="2024-06-10",
+                MODEL_TO_USE="TFT",
+                intermediate_data_path="/tmp/test",
+                codes_with_nan=[12345],
+                PREDICTION_MODE="PENTAD",
+            )
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+            "SAPPHIRE_HINDCAST_TIMEOUT_SECONDS": "",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    @patch("recalculate_nan_forecasts.pd.read_csv")
+    def test_empty_env_var_defaults_to_14400(self, mock_read_csv, mock_run):
+        """Empty SAPPHIRE_HINDCAST_TIMEOUT_SECONDS falls back to 14400."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_read_csv.return_value = pd.DataFrame()
+
+        recalculate_nan_forecasts.call_hindcast_script(
+            min_missing_date="2024-06-01",
+            max_missing_date="2024-06-10",
+            MODEL_TO_USE="TFT",
+            intermediate_data_path="/tmp/test",
+            codes_with_nan=[12345],
+            PREDICTION_MODE="PENTAD",
+        )
+
+        # Verify timeout= was passed to subprocess.run
+        _, kwargs = mock_run.call_args
+        assert kwargs["timeout"] == 14400
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+            "SAPPHIRE_HINDCAST_TIMEOUT_SECONDS": "7200",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    @patch("recalculate_nan_forecasts.pd.read_csv")
+    def test_custom_timeout_from_env_var(self, mock_read_csv, mock_run):
+        """SAPPHIRE_HINDCAST_TIMEOUT_SECONDS=7200 is parsed correctly."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_read_csv.return_value = pd.DataFrame()
+
+        recalculate_nan_forecasts.call_hindcast_script(
+            min_missing_date="2024-06-01",
+            max_missing_date="2024-06-10",
+            MODEL_TO_USE="TFT",
+            intermediate_data_path="/tmp/test",
+            codes_with_nan=[12345],
+            PREDICTION_MODE="PENTAD",
+        )
+
+        _, kwargs = mock_run.call_args
+        assert kwargs["timeout"] == 7200
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    @patch("recalculate_nan_forecasts.pd.read_csv")
+    def test_missing_env_var_defaults_to_14400(self, mock_read_csv, mock_run):
+        """Missing SAPPHIRE_HINDCAST_TIMEOUT_SECONDS falls back to 14400."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_read_csv.return_value = pd.DataFrame()
+
+        # Ensure the key is NOT in the environment
+        os.environ.pop("SAPPHIRE_HINDCAST_TIMEOUT_SECONDS", None)
+
+        recalculate_nan_forecasts.call_hindcast_script(
+            min_missing_date="2024-06-01",
+            max_missing_date="2024-06-10",
+            MODEL_TO_USE="TFT",
+            intermediate_data_path="/tmp/test",
+            codes_with_nan=[12345],
+            PREDICTION_MODE="PENTAD",
+        )
+
+        _, kwargs = mock_run.call_args
+        assert kwargs["timeout"] == 14400
+
+    @patch.dict(
+        os.environ,
+        {
+            **_BASE_ENV,
+            "IN_DOCKER": "False",
+            "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "output",
+        },
+        clear=False,
+    )
+    @patch("recalculate_nan_forecasts.subprocess.run")
+    @patch("recalculate_nan_forecasts.pd.read_csv")
+    def test_stdout_stderr_logged(self, mock_read_csv, mock_run, caplog):
+        """Hindcast stdout/stderr are forwarded to the logger."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Epoch 1/10\nEpoch 2/10",
+            stderr="UserWarning: some warning",
+        )
+        mock_read_csv.return_value = pd.DataFrame()
+
+        with caplog.at_level(logging.INFO, logger="recalculate_nan_forecasts"):
+            recalculate_nan_forecasts.call_hindcast_script(
+                min_missing_date="2024-06-01",
+                max_missing_date="2024-06-10",
+                MODEL_TO_USE="TFT",
+                intermediate_data_path="/tmp/test",
+                codes_with_nan=[12345],
+                PREDICTION_MODE="PENTAD",
+            )
+
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        warn_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+
+        assert any("[hindcast] Epoch 1/10" in m for m in info_messages)
+        assert any("[hindcast] Epoch 2/10" in m for m in info_messages)
+        assert any("[hindcast stderr] UserWarning: some warning" in m for m in warn_messages)
 
 
 # ---------------------------------------------------------------------------
