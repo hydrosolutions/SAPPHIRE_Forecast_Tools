@@ -4,7 +4,7 @@
 |-------------|---------------------------------------------------------|
 | **Module**  | `forecast_dashboard`                                    |
 | **Priority**| Mid                                                     |
-| **Status**  | Draft                                                   |
+| **Status**  | Complete                                                |
 | **Branch**  | `fix_fd_monthly_skill_metrics`                          |
 
 ## Problem
@@ -44,7 +44,7 @@ This is hardcoded empty. It should call `get_forecast_stats("month", station)` a
 
 ### Gap 3: `get_long_forecasts()` has no `month_in_year` column to join on
 
-The `LongForecast` DB model (`models.py:105-157`) does **not** have a `horizon_in_year` column — unlike the regular `Forecast` model. It stores the target period via `valid_from`/`valid_to` date columns instead. After `get_long_forecasts()` returns, the DataFrame has no month-number column that can serve as the merge key with skill metrics.
+The `LongForecast` DB model (`sapphire/services/postprocessing/app/models.py:105-157`) does **not** have a `horizon_in_year` column — unlike the regular `Forecast` model. It stores the target period via `valid_from`/`valid_to` date columns instead. After `get_long_forecasts()` returns, the DataFrame has no month-number column that can serve as the merge key with skill metrics.
 
 The month number must be **computed** from `valid_from` (e.g. `valid_from.month`).
 
@@ -73,7 +73,9 @@ This ensures `get_forecast_stats("month", station)` renames `horizon_in_year` �
 
 #### Step 1b: Compute `month_in_year` in `get_long_forecasts()`
 
-The `LongForecast` model has no `horizon_in_year` column. Derive the month number from `valid_from` after the existing renames (line ~477, after the drop):
+The `LongForecast` model has no `horizon_in_year` column. Derive the month number from `valid_from` after the existing renames (line ~477, after the drop).
+
+`_read_data()` only auto-converts the `date` column to datetime (db.py:78-79). `valid_from` arrives as a string and needs explicit conversion:
 
 ```python
 df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
@@ -82,6 +84,18 @@ df["month_in_year"] = df["valid_from"].dt.month
 ```
 
 This gives `forecasts_all` a `month_in_year` column that matches the one `get_forecast_stats("month", station)` produces from the skill-metric API's `horizon_in_year` field.
+
+Also add `"month_in_year"` and `"valid_from"` to the empty fallback DataFrame in `get_long_forecasts()` (the early return when the API returns no data):
+
+```python
+return pd.DataFrame(columns=[
+    "code", "date", "Date", "year",
+    "model_short", "model_long",
+    "forecasted_discharge", "flag",
+    "Q5", "Q25", "Q75", "Q95", "E[Q]",
+    "valid_from", "month_in_year",
+])
+```
 
 #### Step 1c: Fetch and merge skill metrics in `_get_data_monthly()`
 
@@ -149,6 +163,8 @@ After the merge, these columns will come from the skill-metric data and the `if 
 
 **Fan-out risk (FD-003)**: `get_forecast_stats()` already deduplicates at line 438 via `drop_duplicates(subset=["code", hin, "model_short"], keep="last")`, keeping only the latest recalculation per key. The monthly merge reuses this function, so fan-out is not a concern.
 
+**`create_skill_table` (vizualization.py:4507)**: This function has no `"month"` branch and would crash if called with non-empty monthly stats. However, it is called only once at startup (`_init_skill_table`, plot_manager.py:32) and the card is hidden for monthly (`set_forecast_cards_visibility`, plot_manager.py:58-64). The crash is unreachable. Fixing it is a separate feature — see Out of Scope.
+
 ## Dependency Graph
 
 ```json
@@ -160,14 +176,69 @@ After the merge, these columns will come from the skill-metric data and the `if 
 }
 ```
 
+## Tests
+
+**File to modify**: `apps/forecast_dashboard/tests/test_db.py`
+
+All tests mock `requests.get` via `monkeypatch` to avoid live API calls. Tests use inline DataFrame/JSON construction following the existing conftest patterns.
+
+### Test 1: `TestHorizonInYearCol::test_month`
+
+Verify the new mapping returns `"month_in_year"`.
+
+### Test 2: `TestGetLongForecasts::test_month_in_year_computed_from_valid_from`
+
+Mock `requests.get` to return a long-forecast JSON with `valid_from: "2026-04-01"`. Assert:
+- `month_in_year` column exists with value `4`
+- `horizon_value` column does NOT exist (dropped)
+- `forecasted_discharge` exists (renamed from `q`)
+
+### Test 3: `TestGetLongForecasts::test_empty_api_response`
+
+Mock `requests.get` to return `[]`. Assert the returned DataFrame is empty with expected fallback columns.
+
+### Test 4: `TestGetForecastStats::test_month_horizon_renames_to_month_in_year`
+
+Mock `requests.get` to return a skill-metric JSON with `horizon_type: "month"`, `horizon_in_year: 4`. Assert:
+- `month_in_year` column exists with value `4`
+- `pentad_in_year` column does NOT exist
+- Skill columns (`delta`, `sdivsigma`, `mae`, `accuracy`) are present
+- `date` column does NOT exist (dropped)
+
+### Test 5: `TestGetForecastStats::test_month_deduplicates_keeping_latest`
+
+Mock API to return 2 skill-metric rows for same (code, month_in_year=4, model=GBT) but different dates (2026-03-01 and 2026-03-15). Assert only the row with the latest date (2026-03-15) survives.
+
+### Test 6: `TestGetDataMonthly::test_merges_skill_metrics_into_forecasts`
+
+Integration test. Mock `requests.get` to dispatch by URL path:
+- `/long-forecast/` → long-forecast fixture with `valid_from` in April
+- `/skill-metric/` → skill-metric fixture with `horizon_in_year: 4`, model GBT
+- All other endpoints → `[]`
+
+Also mock `processing.add_labels_to_hydrograph` as `lambda df, stations: df` and `processing.internationalize_forecast_model_names` as `lambda fn, df, **kw: df` (must match their 2-arg signatures).
+
+Call `get_data("month", "99001", all_stations_df)`. Assert:
+- `data["forecasts_all"]` has `delta`, `sdivsigma`, `mae`, `accuracy` columns
+- The `delta` value for model GBT matches the skill-metric fixture
+- `data["forecast_stats"]` is not empty
+
+### Test 7: `TestGetDataMonthly::test_no_skill_metrics_still_returns_forecasts`
+
+Same as Test 6 but skill-metric endpoint returns `[]`. Assert:
+- `forecasts_all` still has forecast data (no crash)
+- Skill metric columns are **absent** from `forecasts_all` (e.g. `"delta" not in data["forecasts_all"].columns`). The merge is skipped when `forecast_stats` is empty, so these columns won't exist. (vizualization.py adds NaN later in the summary table via its guard at line 2994.)
+
 ## Verification
 
 1. `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` — all tests pass, zero skips
-2. Run dashboard locally, select "month" horizon, station 15013 — skill metric columns should show values (if skill metrics exist in DB for that station/month)
-3. Confirm pentad/decad horizons still work unchanged (no regression)
+2. Run dashboard locally, select "month" horizon, station 15013 — skill columns should show values if metrics exist in DB
+3. Switch to pentad/decad — confirm no regression
 
 ## Out of Scope
 
 - Adding LR model forecasts to the monthly table (LR forecasts are short-term only)
 - Creating monthly skill metrics if they don't exist in the database (pipeline concern, not dashboard)
 - Refactoring the pentad/decad merge logic to share code with monthly (tech debt, separate issue)
+- Showing the skill table card for monthly (`create_skill_table` has no month branch; the card is hidden by `set_forecast_cards_visibility`; fixing requires both the function and UI wiring)
+- Merging skill metrics into `long_forecasts_m0` (month_0 forecasts share the same per-target-month skill metrics as month_1; this is a design question)
