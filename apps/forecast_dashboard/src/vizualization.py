@@ -2989,8 +2989,10 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
     # Calculate the forecast range
     if horizon == "month":
         # For monthly forecasts, use quantile bounds if available
-        forecast_table['fc_lower'] = forecast_table.get('Q25', np.nan)
-        forecast_table['fc_upper'] = forecast_table.get('Q75', np.nan)
+        forecast_table['fc_lower'] = pd.to_numeric(
+            forecast_table.get('Q25', np.nan), errors='coerce')
+        forecast_table['fc_upper'] = pd.to_numeric(
+            forecast_table.get('Q75', np.nan), errors='coerce')
         for col in ('delta', 'sdivsigma', 'mae', 'accuracy'):
             if col not in forecast_table.columns:
                 forecast_table[col] = np.nan

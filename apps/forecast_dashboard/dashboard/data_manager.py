@@ -180,8 +180,10 @@ class DataManager(param.Parameterized):
     # Model filtering helpers
     # ------------------------------------------------------------------
 
-    def get_available_models(self, station_code: str, selected_date) -> dict:
+    def get_available_models(self, station_code: str, selected_date, horizon: str = "") -> dict:
         """Return models available for a given station + date."""
+        if horizon == "month":
+            return dict(self._all_models)
         # Update the model_dict with the models we have results for for the selected station
         # Model dict can be empty if no forecasts at all are available for the selected station
         return processing.update_model_dict_date(

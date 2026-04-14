@@ -244,7 +244,8 @@ class WidgetManager:
         
         # First get the updated model dictionary
         available_models = self._dm.get_available_models(
-            self.station_selector.value, self.date_picker.value
+            self.station_selector.value, self.date_picker.value,
+            horizon=self.horizon_selector.value,
         )
         print("\nAfter update_model_dict:")
         print(f"  Updated model dict: {available_models}")
