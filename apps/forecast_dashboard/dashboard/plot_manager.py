@@ -7,10 +7,38 @@ and rendering-related callback wiring.
 
 import panel as pn
 import holoviews as hv
+from calendar import month_name
 
 from dashboard.logger import setup_logger
 
 logger = setup_logger()
+
+
+def _ordinal(n: int) -> str:
+    """Return day number with English ordinal suffix (1st, 2nd, 3rd, 4th, ...)."""
+    if 11 <= (n % 100) <= 13:
+        return f"{n}th"
+    return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
+
+
+def _format_forecast_info(issue_date, horizon_label: str) -> str:
+    """Build the info text for a monthly forecast card.
+
+    Args:
+        issue_date: The forecast issue date (datetime-like with .month, .day, .year).
+        horizon_label: "month_1" or "month_0".
+    """
+    if horizon_label == "month_1":
+        target_month_num = (issue_date.month % 12) + 1
+    else:
+        target_month_num = issue_date.month
+    target = month_name[target_month_num]
+    issue_month = month_name[issue_date.month]
+    day = _ordinal(issue_date.day)
+    return (
+        f"Monthly runoff forecast for {target}  \n"
+        f"Forecast issue date: {day} of {issue_month} {issue_date.year} ({horizon_label})"
+    )
 
 
 class PlotManager:
@@ -189,6 +217,17 @@ class PlotManager:
             self._wm.range_slider,
             self._wm.forecast_tabulator,
         )
+        # Update m1 info text for monthly horizon
+        if self._wm.horizon_selector.value == "month":
+            df = self._dm.forecasts_all
+            if df is not None and not df.empty:
+                issue_date = df['date'].max()
+                self._wm.forecast_info_m1.object = _format_forecast_info(
+                    issue_date, "month_1")
+            else:
+                self._wm.forecast_info_m1.object = ""
+        else:
+            self._wm.forecast_info_m1.object = ""
 
     def update_forecast_tabulator_m0(self):
         """Update the month_0 summary table."""
@@ -212,6 +251,9 @@ class PlotManager:
             self._wm.range_slider,
             self._wm.forecast_tabulator_m0,
         )
+        # Update m0 info text
+        self._wm.forecast_info_m0.object = _format_forecast_info(
+            m0_max_date, "month_0")
 
     # ------------------------------------------------------------------
     # Forecast-tab plots (2nd, 3rd, 4th panels)

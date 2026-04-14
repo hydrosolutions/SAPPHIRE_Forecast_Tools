@@ -124,6 +124,10 @@ class WidgetManager:
         self.forecast_summary_table_m0 = widgets.create_forecast_summary_table(
             self.forecast_tabulator_m0
         )
+        self.add_to_bulletin_m0_button = widgets.create_add_to_bulletin_button()
+        self.add_to_bulletin_m0_popup = widgets.create_add_to_bulletin_popup()
+        self.forecast_info_m1 = widgets.create_forecast_info_pane()
+        self.forecast_info_m0 = widgets.create_forecast_info_pane()
 
         # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
@@ -313,6 +317,7 @@ class WidgetManager:
             (self.aggregate_radiobutton, "value"),
             (self.basin_selector, "value"),
             (self.add_to_bulletin_button, "clicks"),
+            (self.add_to_bulletin_m0_button, "clicks"),
             (self.write_bulletin_button, "clicks"),
             (self.remove_bulletin_button, "clicks"),
             (self.forecast_tabulator, "selection"),

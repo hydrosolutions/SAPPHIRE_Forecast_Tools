@@ -367,13 +367,14 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
         # sizing_mode='stretch_width',
     )
     pm.summary_table_card = pn.Card(
-        pn.Row(wm.add_to_bulletin_button, wm.add_to_bulletin_popup),
+        pn.Row(wm.add_to_bulletin_button, wm.forecast_info_m1, wm.add_to_bulletin_popup),
         wm.forecast_summary_table,
         title=_("Summary table"),
         sizing_mode="stretch_both",
         min_height=500 if len(wm.forecast_summary_table.value) > 1 else 240,
     )
     pm.summary_table_m0_card = pn.Card(
+        pn.Row(wm.add_to_bulletin_m0_button, wm.forecast_info_m0, wm.add_to_bulletin_m0_popup),
         wm.forecast_summary_table_m0,
         title=_("Current month forecast"),
         sizing_mode="stretch_both",
