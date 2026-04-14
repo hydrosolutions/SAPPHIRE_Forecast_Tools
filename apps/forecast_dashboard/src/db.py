@@ -30,7 +30,11 @@ NE_QUANTILE_COLS = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
 # ---------------------------------------------------------------------------
 
 def _horizon_in_year_col(horizon: str) -> str:
-    return "decad_in_year" if horizon == "decade" else "pentad_in_year"
+    if horizon == "decade":
+        return "decad_in_year"
+    if horizon == "month":
+        return "month_in_year"
+    return "pentad_in_year"
 
 
 def _resolve_station(station) -> str:
@@ -465,6 +469,7 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
             "model_short", "model_long",
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
+            "valid_from", "month_in_year",
         ])
 
     df.rename(columns={
@@ -475,6 +480,8 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
     df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["month_in_year"] = df["valid_from"].dt.month
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
     # print("### dbg: get_long_forecasts:", df)
@@ -532,8 +539,27 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
     supported_modes = os.getenv(
         "ieasyhydroforecast_ml_long_term_supported_modes", ""
     ).split(",")
-    # logger.info("Long-term supported modes: %s, month_0 enabled: %s",
-    #             supported_modes, "month_0" in supported_modes)
+
+    forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=1)))
+    forecast_stats = i18n_models(get_forecast_stats("month", station))
+
+    # Merge skill metrics into forecasts (same pattern as pentad/decad in get_data)
+    hin = "month_in_year"
+    merge_keys = ["code", hin, "model_short"]
+    can_merge = (
+        not forecasts_all.empty
+        and not forecast_stats.empty
+        and all(k in forecasts_all.columns for k in merge_keys)
+        and all(k in forecast_stats.columns for k in merge_keys)
+    )
+    if can_merge:
+        forecasts_all = forecasts_all.merge(
+            forecast_stats,
+            on=merge_keys,
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -542,12 +568,24 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
         "snow_data":            get_snow_data(station),
         "ml_forecast":          pd.DataFrame(),
         "linreg_predictor":     pd.DataFrame(),
-        "forecasts_all":        i18n_models(add_labels(get_long_forecasts(station, horizon_value=1))),
-        "forecast_stats":       pd.DataFrame(),
+        "forecasts_all":        forecasts_all,
+        "forecast_stats":       forecast_stats,
         "long_forecasts_m0":    pd.DataFrame(),
     }
     if "month_0" in supported_modes:
-        data["long_forecasts_m0"] = i18n_models(
-            add_labels(get_long_forecasts(station, horizon_value=0))
+        m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=0)))
+        can_merge_m0 = (
+            not m0.empty
+            and not forecast_stats.empty
+            and all(k in m0.columns for k in merge_keys)
+            and all(k in forecast_stats.columns for k in merge_keys)
         )
+        if can_merge_m0:
+            m0 = m0.merge(
+                forecast_stats,
+                on=merge_keys,
+                how="left",
+                suffixes=("", "_stats"),
+            )
+        data["long_forecasts_m0"] = m0
     return data

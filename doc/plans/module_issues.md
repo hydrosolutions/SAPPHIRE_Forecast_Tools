@@ -136,6 +136,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**LTF-002**~~ | ~~SQL org-scoping for long-term forecasting queries~~ | | Complete | [`archive/review_gi_draft_ltf_sql_org_scoping.md`](issues/archive/review_gi_draft_ltf_sql_org_scoping.md) | — |
 | ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 | **LTF-004** | Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation (root cause: upstream `calibrate_model_and_hindcast` skips NaN rows) | **High** | Draft | [`high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Fix A: @sandrohuni (upstream library); Fix B: @mabesa (fallback guard) |
+| **LTF-005** | Add delta-based quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Draft | [`mid_prio_gi_draft_lt_gbt_quantile_bounds.md`](issues/mid_prio_gi_draft_lt_gbt_quantile_bounds.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -173,6 +174,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-032**~~ | ~~Monthly ensemble forecasts not written to API (4 bugs: early-return, ensemble groupby missing horizon_value, horizon_value mismatch, date mismatch)~~ | | Complete | [`archive/mid_prio_gi_draft_pp_monthly_ensemble_api_write.md`](issues/archive/mid_prio_gi_draft_pp_monthly_ensemble_api_write.md) | — |
 | **PP-033** | Gap detector should only flag boundary dates as missing ensembles | **Low** | Won't Fix | [`archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md`](issues/archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md) | PP-031 |
 | ~~**PP-034**~~ | ~~`read_daily_forecasts()` passes wrong keyword `horizon_type` to API client — daily skill metrics never computed~~ | | Complete | [`archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md`](issues/archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md) | — |
+| **PP-035** | Deduplicate skill metrics before API write to fix monthly/quarterly/seasonal bulk upsert | **Medium** | Review | [`review_gi_draft_pp_skill_metric_dedup.md`](issues/review_gi_draft_pp_skill_metric_dedup.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -189,6 +191,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**FD-009**~~ | ~~Pass explicit forecast date to containers in dashboard retrigger flows~~ | ~~**Medium**~~ | Complete | [`archive/mid_prio_gi_draft_fd_retrigger_forecast_date.md`](issues/archive/mid_prio_gi_draft_fd_retrigger_forecast_date.md) | ~~FD-007~~ |
 | **FD-010** | Fix lr-visibility parameter mismatch — linreg queries target-pentad, dashboard saves issue-pentad | **Medium** | Review | [`mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md`](issues/mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md) | FD-009 |
 | **FD-011** | Horizon selector widget passes translated strings as API enum values | **High** | Draft | [`high_prio_gi_draft_fd_horizon_selector_i18n.md`](issues/high_prio_gi_draft_fd_horizon_selector_i18n.md) | — |
+| ~~**FD-013**~~ | ~~Monthly skill metrics not loaded from API — all columns show "-"~~ | ~~**Mid**~~ | Complete | [`archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md`](issues/archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md) | — |
 
 ### iEasyHydro HF Migration
 

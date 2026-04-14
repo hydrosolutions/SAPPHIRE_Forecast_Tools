@@ -82,6 +82,131 @@ def _read_station_codes():
     return codes
 
 
+def _add_climatological_quantile_bounds(
+    forecast: pd.DataFrame,
+    temporal_data: pd.DataFrame,
+    model_name: str,
+    today: pd.Timestamp,
+) -> pd.DataFrame:
+    """Add climatological Q25/Q75 bounds to a GBT forecast DataFrame.
+
+    Uses the standard deviation of historical observed monthly mean discharge
+    (the same 0.674 * std pattern used in data_reader.py and aggregation.py)
+    to create uncertainty bounds for GBT-family models that lack native
+    quantile estimation.
+
+    Args:
+        forecast: DataFrame with Q_{model_name}, code, date, valid_from,
+            valid_to, flag columns.
+        temporal_data: Daily DataFrame with date, code, discharge columns
+            (full historical record).
+        model_name: Model identifier (e.g. "GBT", "SM_GBT").
+        today: Forecast issue date.
+
+    Returns:
+        forecast DataFrame with Q25 and Q75 columns added. Groups with
+        insufficient data (< 3 years) will have NaN bounds.
+    """
+    if forecast.empty:
+        return forecast
+
+    main_q_col = f"Q_{model_name}"
+    if main_q_col not in forecast.columns:
+        logger.warning("Cannot add quantile bounds: %s not in forecast columns", main_q_col)
+        return forecast
+
+    # Extract target month from the forecast's valid_from column
+    if "valid_from" not in forecast.columns:
+        logger.warning("Cannot add quantile bounds: valid_from column missing")
+        return forecast
+
+    target_months = pd.to_datetime(forecast["valid_from"]).dt.month
+
+    # Filter temporal_data to rows with valid discharge
+    discharge = temporal_data[["date", "code", "discharge"]].copy()
+    discharge = discharge.dropna(subset=["discharge"])
+
+    if discharge.empty:
+        logger.warning("Cannot add quantile bounds: no valid discharge data")
+        return forecast
+
+    discharge["date"] = pd.to_datetime(discharge["date"])
+    discharge["year"] = discharge["date"].dt.year
+    discharge["month"] = discharge["date"].dt.month
+    discharge["days_in_month"] = discharge["date"].dt.days_in_month
+
+    # Aggregate to monthly means per (code, year, month)
+    monthly = (
+        discharge.groupby(["code", "year", "month"])
+        .agg(
+            discharge_mean=("discharge", "mean"),
+            non_missing_days=("discharge", "count"),
+            days_in_month=("days_in_month", "first"),
+        )
+        .reset_index()
+    )
+
+    # Filter: require >= 50% non-missing days
+    monthly = monthly[monthly["non_missing_days"] >= monthly["days_in_month"] * 0.5]
+
+    # Leave-one-out: exclude the forecast year
+    forecast_year = today.year
+    monthly = monthly[monthly["year"] != forecast_year]
+
+    if monthly.empty:
+        logger.warning("Cannot add quantile bounds: no valid monthly data after filtering")
+        return forecast
+
+    # Compute std per (code, month) — ddof=1 (sample std) to match
+    # long-term postprocessing convention (data_reader.py, aggregation.py)
+    stats = (
+        monthly.groupby(["code", "month"])
+        .agg(
+            std_monthly=("discharge_mean", "std"),
+            n_years=("discharge_mean", "count"),
+        )
+        .reset_index()
+    )
+
+    # Require at least 3 years of data
+    stats = stats[stats["n_years"] >= 3]
+
+    if stats.empty:
+        logger.warning("Cannot add quantile bounds: no (code, month) groups with >= 3 years")
+        return forecast
+
+    # Merge std into forecast on (code, month)
+    forecast = forecast.copy()
+    forecast["_target_month"] = target_months
+    forecast = forecast.merge(
+        stats[["code", "month", "std_monthly"]],
+        left_on=["code", "_target_month"],
+        right_on=["code", "month"],
+        how="left",
+    )
+
+    # Compute Q25 and Q75
+    forecast["Q25"] = forecast[main_q_col] - 0.674 * forecast["std_monthly"]
+    forecast["Q75"] = forecast[main_q_col] + 0.674 * forecast["std_monthly"]
+
+    # Clip to >= 0 (discharge cannot be negative)
+    forecast["Q25"] = forecast["Q25"].clip(lower=0)
+    forecast["Q75"] = forecast["Q75"].clip(lower=0)
+
+    # Clean up temporary columns added by this function and the merge
+    forecast = forecast.drop(columns=["_target_month", "month", "std_monthly"], errors="ignore")
+
+    n_with_bounds = forecast["Q25"].notna().sum()
+    logger.info(
+        "Added climatological Q25/Q75 bounds for %d/%d forecast rows (model: %s)",
+        n_with_bounds,
+        len(forecast),
+        model_name,
+    )
+
+    return forecast
+
+
 def run_single_model(
     data_interface: DataInterface | DataInterfaceDB,
     forecast_configs: ForecastConfig,
@@ -286,6 +411,16 @@ def run_single_model(
             forecast.loc[nan_mask, "flag"] = 2  # no forecast produced,
             forecast.loc[~nan_mask, "flag"] = 0  # forecast produced
             success = True
+
+        # Add climatological quantile bounds for GBT-family models (monthly mode)
+        is_monthly = forecast_configs.get_calendar_month_adjustment()
+        if model_type == "sciregressor" and success and is_monthly:
+            forecast = _add_climatological_quantile_bounds(
+                forecast=forecast,
+                temporal_data=temporal_data,
+                model_name=model_name,
+                today=today,
+            )
 
     else:
         logger.error(f"Cannot run model {model_name} due to missing or outdated data.")
