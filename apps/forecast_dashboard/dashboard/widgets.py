@@ -479,6 +479,11 @@ def create_add_to_bulletin_popup():
     return add_to_bulletin_popup
 
 
+def create_forecast_info_pane():
+    """Create a Markdown pane for displaying forecast info text."""
+    return pn.pane.Markdown("", sizing_mode="stretch_width")
+
+
 # Used for Forecast bulletin Plot (Bulletin Tab)
 def create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bulletin_popup):
     bulletin_table = pn.Column(

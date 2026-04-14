@@ -157,6 +157,7 @@ class BulletinManager:
         # --- Disable "Add to Bulletin" while pipeline runs ---
         # Set the initial state of the button based on whether the pipeline is running
         wm.add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
+        wm.add_to_bulletin_m0_button.disabled = cfg.viz.app_state.pipeline_running
         # Watch for changes in pipeline_running and update the add_to_bulletin_button
         cfg.viz.app_state.param.watch(self._sync_add_button_to_pipeline, 'pipeline_running')
 
@@ -167,6 +168,7 @@ class BulletinManager:
 
         # --- Button callbacks ---
         wm.add_to_bulletin_button.on_click(self._on_add)
+        wm.add_to_bulletin_m0_button.on_click(self._on_add_m0)
         wm.remove_bulletin_button.on_click(self._on_remove)
         wm.write_bulletin_button.on_click(self._on_write)
 
@@ -219,6 +221,7 @@ class BulletinManager:
         """Disable 'Add to Bulletin' while the pipeline is running."""
         # Update the state of 'Add to Bulletin' button based on pipeline_running status.
         self.wm.add_to_bulletin_button.disabled = event.new
+        self.wm.add_to_bulletin_m0_button.disabled = event.new
 
     def _show_popup(self, message: str, alert_type: str = "success") -> None:
         self.wm.add_to_bulletin_popup.object = message
@@ -226,6 +229,15 @@ class BulletinManager:
         self.wm.add_to_bulletin_popup.visible = True
         pn.state.add_periodic_callback(
             lambda: setattr(self.wm.add_to_bulletin_popup, 'visible', False),
+            2000, count=1,
+        )
+
+    def _show_popup_m0(self, message: str, alert_type: str = "success") -> None:
+        self.wm.add_to_bulletin_m0_popup.object = message
+        self.wm.add_to_bulletin_m0_popup.alert_type = alert_type
+        self.wm.add_to_bulletin_m0_popup.visible = True
+        pn.state.add_periodic_callback(
+            lambda: setattr(self.wm.add_to_bulletin_m0_popup, 'visible', False),
             2000, count=1,
         )
 
@@ -272,8 +284,42 @@ class BulletinManager:
         # Update bulletin table
         self._update_bulletin_table()
         self._show_popup(_("Added to bulletin table"))
-    
-    # Function to remove selected forecasts from the bulletin    
+
+    def _on_add_m0(self, event=None) -> None:
+        """Handle adding the m0 forecast selection to the bulletin."""
+        if self.cfg.viz.app_state.pipeline_running:
+            print("Cannot add to bulletin while containers are running.")
+            return
+
+        forecast_df = self.wm.forecast_tabulator_m0.value
+        if forecast_df is None or forecast_df.empty:
+            print("Forecast m0 summary table is empty.")
+            return
+
+        selected_indices = self.wm.forecast_tabulator_m0.selection or ([0] if len(forecast_df) > 0 else [])
+        selected_rows = forecast_df.iloc[selected_indices]
+        selected_station = self.wm.station_selector.value
+        selected_site = next(
+            (s for s in self.dm.sites_list if s.station_label == selected_station), None
+        )
+        if selected_site is None:
+            print(f"Site '{selected_station}' not found in sites_list.")
+            return
+
+        selected_site.forecasts = selected_rows.reset_index(drop=True)
+        selected_site.get_forecast_attributes_for_site(_, selected_rows)
+
+        existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
+        if existing is None:
+            self.bulletin_sites.append(selected_site)
+        else:
+            self.bulletin_sites[self.bulletin_sites.index(existing)] = selected_site
+
+        _save_bulletin_to_api(*self._horizon_context(), [selected_site])
+        self._update_bulletin_table()
+        self._show_popup_m0(_("Added to bulletin table"))
+
+    # Function to remove selected forecasts from the bulletin
     def _on_remove(self, event=None) -> None:
         """Handle removing selected forecasts from the bulletin."""
         # List of selected row indices
