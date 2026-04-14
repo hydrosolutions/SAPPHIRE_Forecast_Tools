@@ -1,10 +1,10 @@
 # ML-014: Hindcast subprocess has no timeout — maintenance containers hang indefinitely
 
-**Status**: Ready
+**Status**: Complete
 **Module**: machine_learning, pipeline
 **Priority**: High
 **Labels**: `bug`, `timeout`, `maintenance`
-**Branch**: `fix_ml_hindcast_subprocess_path` (build on top of commit `b9270dc`)
+**Branch**: `fix_ml_hindcast_subprocess_path` (commit `9916877`)
 
 ---
 
@@ -181,9 +181,9 @@ The resulting code structure in each file must be:
 
 New tests in `apps/machine_learning/test/test_recalculate_nan_api_write.py` (class `TestCallHindcastScriptTimeout`, adjacent to existing `TestCallHindcastScriptRaisesOnFailure`):
 
-- [ ] Subprocess timeout fires correctly (mock `subprocess.run` to raise `TimeoutExpired`, verify `RuntimeError` raised with correct message)
-- [ ] Env var parsing: empty string → 14400, valid int → parsed, missing → 14400
-- [ ] Hindcast stdout/stderr logged via `logger.info`/`logger.warning` (verify with `caplog` or mock logger)
+- [x] Subprocess timeout fires correctly (mock `subprocess.run` to raise `TimeoutExpired`, verify `RuntimeError` raised with correct message)
+- [x] Env var parsing: empty string → 14400, valid int → parsed, missing → 14400
+- [x] Hindcast stdout/stderr logged via `logger.info`/`logger.warning` (verify with `caplog` or mock logger)
 
 Already covered by existing tests (do NOT duplicate):
 - Successful hindcast (returncode 0) → `test_success_reads_csv`
@@ -199,15 +199,15 @@ cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning
 
 ## Acceptance Criteria
 
-- [ ] All three `call_hindcast_script()` functions have `timeout=` on `subprocess.run()`
-- [ ] Timeout value is configurable via `SAPPHIRE_HINDCAST_TIMEOUT_SECONDS` env var
-- [ ] Empty/missing env var falls back to 14400s without crashing
-- [ ] Hindcast output (stdout/stderr) is logged after subprocess completion
-- [ ] Existing `if result.returncode` blocks and `print()` calls preserved unchanged in all three files
-- [ ] No changes to function signatures, caller code, or CSV reading logic
-- [ ] Unit tests cover timeout, env var parsing, output logging, and returncode behavior
-- [ ] Existing successful hindcast data flow is unaffected
-- [ ] All tests pass with zero unexpected skips
+- [x] All three `call_hindcast_script()` functions have `timeout=` on `subprocess.run()`
+- [x] Timeout value is configurable via `SAPPHIRE_HINDCAST_TIMEOUT_SECONDS` env var
+- [x] Empty/missing env var falls back to 14400s without crashing
+- [x] Hindcast output (stdout/stderr) is logged after subprocess completion
+- [x] Existing `if result.returncode` blocks and `print()` calls preserved unchanged in all three files
+- [x] No changes to function signatures, caller code, or CSV reading logic
+- [x] Unit tests cover timeout, env var parsing, output logging, and returncode behavior
+- [x] Existing successful hindcast data flow is unaffected
+- [x] All tests pass with zero unexpected skips
 
 ---
 
