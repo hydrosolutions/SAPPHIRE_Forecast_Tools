@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import panel as pn
 import param
 
 from src.site import SapphireSite as Site
@@ -331,38 +332,46 @@ class DataManager(param.Parameterized):
                 return
             print("Triggered rerunning of forecasts.")
             logger.info("Data reload triggered — reloading data and refreshing visualisations.")
-            _fa = self.forecasts_all
-            logger.debug(
-                "D5 Before reload — forecasts_all: %d rows, max date=%s",
-                len(_fa) if _fa is not None else 0,
-                _fa["date"].max() if _fa is not None and not _fa.empty else "N/A",
-            )
-            try:
-                # Reload data from the API so visualisations use fresh results
-                horizon = pm._wm.horizon_selector.value
-                station_code = pm._wm.station_selector.value.split()[0]
-                self.load_station(horizon, station_code)
-                self.invalidate_render_cache()
 
-                # Update date picker to reflect newly available data
-                if not self.forecasts_all.empty:
-                    max_date = self.forecasts_all['date'].max()
-                    if hasattr(max_date, 'date'):
-                        pm._wm.date_picker.value = max_date.date()
-
-                pm._wm.refresh_model_checkbox()
-                pm.refresh_all_visualizations()
-                _fa2 = self.forecasts_all
+            def _do_reload():
+                _fa = self.forecasts_all
                 logger.debug(
-                    "D6 After reload — forecasts_all: %d rows, max date=%s",
-                    len(_fa2) if _fa2 is not None else 0,
-                    _fa2["date"].max() if _fa2 is not None and not _fa2.empty else "N/A",
+                    "D5 Before reload — forecasts_all: %d rows, max date=%s",
+                    len(_fa) if _fa is not None else 0,
+                    _fa["date"].max() if _fa is not None and not _fa.empty else "N/A",
                 )
-            except Exception as e:
-                logger.error("Error during forecast rerun: %s", e)
-                print(f"Error during forecast rerun: {e}")
-            finally:
-                processing.data_reloader.data_needs_reload = False
+                try:
+                    # Reload data from the API so visualisations use fresh results
+                    horizon = pm._wm.horizon_selector.value
+                    station_code = pm._wm.station_selector.value.split()[0]
+                    self.load_station(horizon, station_code)
+                    self.invalidate_render_cache()
+
+                    # Update date picker to reflect newly available data
+                    if not self.forecasts_all.empty:
+                        max_date = self.forecasts_all['date'].max()
+                        if hasattr(max_date, 'date'):
+                            pm._wm.date_picker.value = max_date.date()
+
+                    pm._wm.refresh_model_checkbox()
+                    pm.refresh_all_visualizations()
+                    _fa2 = self.forecasts_all
+                    logger.debug(
+                        "D6 After reload — forecasts_all: %d rows, max date=%s",
+                        len(_fa2) if _fa2 is not None else 0,
+                        _fa2["date"].max() if _fa2 is not None and not _fa2.empty else "N/A",
+                    )
+                except Exception as e:
+                    logger.error("Error during forecast rerun: %s", e)
+                    print(f"Error during forecast rerun: {e}")
+                finally:
+                    processing.data_reloader.data_needs_reload = False
+
+            # Schedule on the document thread so UI updates reach the browser.
+            # The param.watch callback fires from a background thread (Docker
+            # container completion); without this, widget changes are applied
+            # server-side but never pushed to the client.
+            pn.state.execute(_do_reload)
 
         # Attach watcher only once
         if not getattr(processing.data_reloader, "watcher_attached", False):
