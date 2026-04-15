@@ -13,7 +13,7 @@ env:
   PREPG_IMAGE_NAME: mabesa/sapphire-prepgateway
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
   ML_IMAGE_NAME: mabesa/sapphire-ml
-  LT_IMAGE_NAME: mabesa/sapphire-ltforecast
+  LT_IMAGE_NAME: mabesa/sapphire-lt-forecasting
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
   RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
