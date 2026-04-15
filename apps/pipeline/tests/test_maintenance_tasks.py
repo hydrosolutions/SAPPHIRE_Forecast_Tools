@@ -2,7 +2,7 @@
 
 Covers:
 - Preprocessing maintenance tasks (GatewayMaintenance, PrepRunoffMaintenance)
-- Forecasting maintenance tasks (LinRegMaintenance, MLMaintenance, RunAllMLMaintenance)
+- Forecasting maintenance tasks (LinRegMaintenance, MLMaintenance)
 - Postprocessing and frontend tasks
 - Workflow orchestrators (RunDailyMaintenanceWorkflow, RunPeriodicMaintenanceWorkflow)
 - Dependency chains
@@ -158,29 +158,6 @@ class TestMLMaintenance:
         assert "maintenance_ml_TIDE_DECAD_" in path
 
 
-class TestRunAllMLMaintenance:
-    """Test RunAllMLMaintenance wrapper task."""
-
-    def test_yields_all_model_horizon_combos(self, mock_env):
-        """Yields MLMaintenance for each model x horizon."""
-        from pipeline_docker import MLMaintenance, RunAllMLMaintenance
-
-        task = RunAllMLMaintenance()
-        deps = list(task.requires())
-
-        # Default: TFT,TIDE models x PENTAD,DECAD modes = 4 tasks
-        assert len(deps) == 4
-        for d in deps:
-            assert isinstance(d, MLMaintenance)
-
-        # Verify all combinations present
-        combos = {(d.model_type, d.prediction_mode) for d in deps}
-        assert ("TFT", "PENTAD") in combos
-        assert ("TFT", "DECAD") in combos
-        assert ("TIDE", "PENTAD") in combos
-        assert ("TIDE", "DECAD") in combos
-
-
 class TestPostProcessingMaintenance:
     """Test PostProcessingMaintenance task."""
 
@@ -200,24 +177,30 @@ class TestPostProcessingMaintenance:
         assert modes == {"PENTAD", "DECAD"}
 
     def test_includes_ml_when_enabled(self, mock_env, monkeypatch):
-        """Includes RunAllMLMaintenance when ML models are enabled."""
+        """Includes MLMaintenance tasks when ML models are enabled."""
         import pipeline_docker
 
         monkeypatch.setattr(pipeline_docker, "RUN_ML_MODELS", "True")
 
         task = pipeline_docker.PostProcessingMaintenance()
         deps = task.requires()
-        class_names = [type(d).__name__ for d in deps]
-        assert "RunAllMLMaintenance" in class_names
+        ml_tasks = [d for d in deps if isinstance(d, pipeline_docker.MLMaintenance)]
+        # TFT,TIDE x PENTAD,DECAD = 4 ML tasks
+        assert len(ml_tasks) == 4
+        combos = {(d.model_type, d.prediction_mode) for d in ml_tasks}
+        assert ("TFT", "PENTAD") in combos
+        assert ("TFT", "DECAD") in combos
+        assert ("TIDE", "PENTAD") in combos
+        assert ("TIDE", "DECAD") in combos
 
     def test_excludes_ml_when_disabled(self, mock_env):
         """Excludes ML tasks when ML models are disabled."""
-        from pipeline_docker import PostProcessingMaintenance
+        from pipeline_docker import MLMaintenance, PostProcessingMaintenance
 
         task = PostProcessingMaintenance()
         deps = task.requires()
-        class_names = [type(d).__name__ for d in deps]
-        assert "RunAllMLMaintenance" not in class_names
+        ml_tasks = [d for d in deps if isinstance(d, MLMaintenance)]
+        assert len(ml_tasks) == 0
 
     def test_output_uses_maintenance_marker(self, mock_env):
         """Output marker has maintenance_ prefix."""

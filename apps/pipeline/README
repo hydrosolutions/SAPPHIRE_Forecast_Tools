@@ -78,9 +78,8 @@ RunDailyMaintenanceWorkflow
   └─ PostProcessingMaintenance
        ├─ LinRegMaintenance(PENTAD) → PrepRunoffMaintenance
        ├─ LinRegMaintenance(DECAD)  → PrepRunoffMaintenance
-       └─ RunAllMLMaintenance (if ML enabled)
-            └─ MLMaintenance(model, mode)  [resources: ml_memory=1]
-                 → [PrepRunoffMaintenance, GatewayMaintenance]
+       └─ MLMaintenance(model, mode) (if ML enabled)  [resources: ml_memory=1]
+            → [PrepRunoffMaintenance, GatewayMaintenance]
 ```
 
 Frontend update is handled on the host by `bin/daily_update_sapphire_frontend.sh`
