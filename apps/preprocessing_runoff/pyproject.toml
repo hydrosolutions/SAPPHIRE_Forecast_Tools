@@ -37,7 +37,7 @@ google-sheets = [
     "gspread>=6.0,<7",
 ]
 dev = [
-    "pytest>=8.2.0",
+    "pytest>=9.0.3",
 ]
 
 [tool.uv]

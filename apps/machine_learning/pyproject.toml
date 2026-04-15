@@ -27,12 +27,12 @@ dependencies = [
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a196e1728f2447ec416c77cd54c9d6899a86d9e6",
     # Local library dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
-    "pillow>=12.1.1",
+    "pillow>=12.2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.2.0",
+    "pytest>=9.0.3",
 ]
 
 [tool.uv]

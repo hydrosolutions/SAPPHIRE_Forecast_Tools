@@ -11,7 +11,7 @@ dependencies = [
     # ML frameworks
     "catboost==1.2.10",
     "lightgbm>=4.6.0",
-    "xgboost==2.0.3",
+    "xgboost>=3.2.0",
     "scikit-learn>=1.4.0",
     # Deep learning
     "torch>=2.9.0",
@@ -42,7 +42,7 @@ dependencies = [
     "alembic>=1.17.0",
     # HTTP
     "requests>=2.32.0",
-    "aiohttp>=3.13.0",
+    "aiohttp>=3.13.4",
     "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk",
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a196e1728f2447ec416c77cd54c9d6899a86d9e6",
     # Local library dependency
@@ -52,7 +52,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.0.0",
+    "pytest>=9.0.3",
 ]
 
 [tool.uv]
@@ -77,5 +77,5 @@ python_functions = ["test_*"]
 
 [dependency-groups]
 dev = [
-    "pytest==9.0.2",
+    "pytest>=9.0.3",
 ]
