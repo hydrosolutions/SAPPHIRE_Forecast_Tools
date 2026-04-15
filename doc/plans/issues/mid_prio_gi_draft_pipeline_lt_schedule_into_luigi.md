@@ -83,17 +83,33 @@ to stdout and logs to stderr. The shell redirect writes the JSON to a file on
 the shared `intermediate_data` volume, which is mounted in both the
 lt-forecasting child container and the pipeline container.
 
-**Note:** `lt_schedule_query.py` calls `setup_library.load_environment()` at
-startup, which reads the `.env` file and may set additional env vars. The
-container environment (`ieasyhydroforecast_env_file_path`, `IN_DOCKER=True`)
-must be sufficient for this call to succeed — same as the current bare
-`docker run` provides.
+**Note:** `lt_schedule_query.py` calls `setup_library.load_environment()`
+inside `query_schedule()` (not at module top-level), which reads the `.env`
+file and may set additional env vars. The container environment
+(`ieasyhydroforecast_env_file_path`, `IN_DOCKER=True`) must be sufficient
+for this call to succeed — same as the current bare `docker run` provides.
+
+**JSON output contract** (verified against `lt_schedule_query.py`):
+- `active_modes`: `list[str]` — always present
+- `skipped_modes`: `dict[str, str]` — always present (may be `{}`)
+- `skill_metric_types`: `list[str]`, sorted — always present
+- stdout is clean JSON (all logging goes to stderr via explicit
+  `logging.StreamHandler(sys.stderr)`)
+- `--today` is the only CLI argument (type `str`, parsed as
+  `pd.Timestamp(args.today)`)
 
 ### D3: `RunLongTermWorkflow.run()` uses Luigi dynamic dependencies
 
 Luigi's `yield` in `run()` is the standard pattern for dynamic DAGs (supported
-since Luigi 2.x; this codebase uses >= 3.5.0). Verified in Luigi source:
-`worker.py` `_run_get_new_deps()` explicitly handles generator tasks.
+since Luigi 2.x; this codebase uses Luigi 3.6.0). Verified in Luigi 3.6.0
+source: `worker.py` `_run_get_new_deps()` explicitly handles generator tasks.
+
+**Why `requires()` cannot be used instead:** `requires()` is evaluated once at
+DAG construction time (`worker.py:884`, `_add()` method). It is NOT
+re-evaluated after upstream tasks complete. Since `LTScheduleQuery` has not
+yet run when the DAG is built, the JSON file does not exist, and `requires()`
+cannot read it. Dynamic deps via `yield` in `run()` are the only correct
+Luigi mechanism for this pattern.
 
 The workflow:
 
@@ -103,8 +119,11 @@ The workflow:
 
 **Critical Luigi semantics** (verified against Luigi source + docs):
 
-- `run()` **restarts from the top** on every re-execution cycle. After yielded
-  tasks complete, Luigi calls `run()` fresh — it does NOT resume the generator.
+- `run()` **restarts from the top** on every re-execution cycle. Luigi calls
+  `task.run()` fresh each cycle (`worker.py:138`). If yielded deps are not
+  yet complete, the generator is discarded and `run()` is called again from
+  line 1. When all deps are complete, Luigi calls `task_gen.send(paths)` to
+  resume the generator past the yield point and execute post-yield code.
   All code before `yield` must be idempotent. Reading a JSON file and
   constructing task objects are both idempotent, so this is safe.
 - A **failed dynamic dep** does NOT raise an exception in `run()`. The parent
@@ -170,14 +189,23 @@ lt-forecasting container and writes JSON to the shared volume.
 
 **Details:**
 
+- Add `import json` to the stdlib imports block (lines 13–18) — needed by
+  `_read_schedule_result()` in Phase 2
 - Add class `LTScheduleQuery(DockerTaskBase)` near the other long-term tasks
   (~line 2055)
 - `SCHEDULE_RESULT_PATH` — **class attribute**, evaluated at import time using
-  the module-level `env` dict (line 31 of `pipeline_docker.py`), same pattern
-  as `LongTermPostProcessing.docker_logs_file_path` (lines 2124–2128).
+  the module-level `env` object (line 32 of `pipeline_docker.py`; `env` is an
+  `Environment` instance, not a dict — accessed via `env.get(key)`, which
+  delegates to `os.getenv(key)`). Same pattern as
+  `LongTermPostProcessing.docker_logs_file_path` (lines 2124–2128).
   Value: `get_bind_path(env.get('ieasyforecast_intermediate_data_path'))` +
-  `/lt_schedule_result.json` — both the lt-forecasting child container and the
-  pipeline container see this path (same volume mount, same bind path)
+  `'/lt_schedule_result.json'` — both the lt-forecasting child container and
+  the pipeline container see this path (same volume mount, same bind path).
+  **Safety:** If `ieasyforecast_intermediate_data_path` is unset,
+  `get_bind_path(None)` raises `TypeError` at import time — same failure mode
+  as the existing `MARKER_DIR` module-level expression. Tests are protected
+  by `conftest.py` `setdefault` (line 36). Production `.env` always contains
+  the key.
 - `today = luigi.Parameter(default="")` — optional date override for testing.
   When non-empty, appended as `--today {self.today}` to the container command
 - `output()` → `luigi.LocalTarget("/app/log_schedule_query.txt")` (standard
@@ -192,13 +220,19 @@ lt-forecasting container and writes JSON to the shared volume.
   cause a deadlock: the workflow waits for the query, but the query can't
   acquire `lt_memory` until a forecast finishes — and no forecast has started
 - `run()`:
-  - **Delete stale JSON before launch:** `os.remove(SCHEDULE_RESULT_PATH)` if
-    the file exists. This prevents reading a valid-but-stale result from a
-    previous pipeline run if the current container fails to start (see
-    "Known Pre-Existing Issues — Exit code ignored"). The stdout redirect
-    (`> file`) truncates on container exec, but if the container never starts
-    (Docker daemon error, OOM before exec), no truncation occurs and the old
-    file would be silently reused.
+  - **Delete stale JSON before launch:**
+    ```python
+    if os.path.exists(SCHEDULE_RESULT_PATH):
+        os.remove(SCHEDULE_RESULT_PATH)
+    ```
+    The `os.path.exists` guard is required — on first run, the file does not
+    exist and bare `os.remove()` would raise `FileNotFoundError`. This
+    prevents reading a valid-but-stale result from a previous pipeline run
+    if the current container fails to start (see "Known Pre-Existing Issues —
+    Exit code ignored"). The stdout redirect (`> file`) truncates on
+    container exec, but if the container never starts (Docker daemon error,
+    OOM before exec), no truncation occurs and the old file would be
+    silently reused.
   - Volumes: `setup_docker_volumes(env, ["ieasyforecast_configuration_path",
     "ieasyforecast_intermediate_data_path"])` — same as `RunLongTermForecast`
   - Environment: `ieasyhydroforecast_env_file_path`, `IN_DOCKER=True`
@@ -253,8 +287,9 @@ lt-forecasting container and writes JSON to the shared volume.
 
 3. Add module-level helper `_read_schedule_result()`:
    - Reads `LTScheduleQuery.SCHEDULE_RESULT_PATH`
-   - Validates JSON structure: must have `active_modes` (list of strings)
-     and `skill_metric_types` (list of strings). Validate element types —
+   - Validates JSON structure: must have `active_modes` (list of strings),
+     `skill_metric_types` (list of strings), and `skipped_modes` (dict of
+     str→str, always present but may be `{}`). Validate element types —
      `all(isinstance(m, str) for m in result["active_modes"])` — to prevent
      a `None` or integer element from causing a confusing error deep in
      Docker container setup
@@ -266,6 +301,7 @@ lt-forecasting container and writes JSON to the shared volume.
      schedule query logs at {LTScheduleQuery.docker_logs_file_path}"`
    - This function is pure and idempotent (required by Luigi's re-execution
      semantics — see D3)
+   - Requires `import json` (added in Phase 1)
 
 4. Rewrite `run()` — full pseudocode of the new body:
 
@@ -288,7 +324,7 @@ lt-forecasting container and writes JSON to the shared volume.
            schedule = _read_schedule_result()
            modes = schedule["active_modes"]
            skill_types = ",".join(
-               schedule.get("skill_metric_types", ["MONTHLY"]))
+               schedule["skill_metric_types"])  # always present in JSON
 
        # --- Step 1b: Log schedule decisions for operator visibility ---
        # (Replaces the shell script's "Schedule query result: ..." line)
@@ -336,11 +372,14 @@ lt-forecasting container and writes JSON to the shared volume.
            yield base_tasks
 
        # --- Step 5: Guard + write completion markers ---
-       # Post-yield code may execute before dynamic deps complete
-       # (depends on Luigi's generator iteration strategy — see D3).
-       # Guard: verify forecast markers exist before writing our own
-       # output, to prevent a false "complete" signal if a forecast
-       # task failed silently (exit code bug) or never started.
+       # Luigi only resumes the generator past yield after confirming
+       # all yielded deps are complete (worker.py:157). So this code
+       # runs AFTER deps complete, not before. However, the pre-existing
+       # exit-code-not-checked bug means a failed container can write
+       # its marker (DockerTaskBase reports exit_status=0 unconditionally),
+       # causing complete() to return True on a failed task. This guard
+       # provides defense-in-depth: if a forecast marker is absent despite
+       # Luigi thinking the task completed, we fail loudly.
        for mode in modes:
            marker = f"/app/log_lt_forecast_{mode}.txt"
            if not os.path.exists(marker):
@@ -365,17 +404,22 @@ lt-forecasting container and writes JSON to the shared volume.
    re-creating the same `RunLongTermForecast(forecast_mode="month_0")` on
    the second cycle yields the already-completed task and fast-forwards.
 
-   **Post-yield guard (Step 5):** Python generator semantics mean code after
-   `yield` executes when Luigi iterates past the yield point. Depending on
-   whether the Luigi version in use iterates the generator fully in one pass
-   or stops at each yield, Step 5 may run before dynamic deps complete.
-   The marker-existence guard prevents writing the output target prematurely:
-   on the first cycle (before forecasts run), the guard raises, so the output
-   is never created; on the final cycle (after forecasts complete), the guard
-   passes and the output is written correctly. The pipeline container is
-   ephemeral (`--rm`), so the raised exception on a premature cycle is
-   harmless — Luigi's in-memory scheduler state is authoritative during the
-   run.
+   **Post-yield guard (Step 5):** Verified in Luigi 3.6.0 source
+   (`worker.py:137–164`): Luigi only resumes the generator (via
+   `task_gen.send(paths)`) after confirming all yielded deps are complete
+   via `requires.complete()`. If deps are incomplete, the generator is
+   discarded and `run()` is called fresh on the next cycle. Post-yield code
+   therefore runs only after all deps complete — Luigi does NOT resume the
+   generator prematurely.
+
+   The guard's real value is defense against the **pre-existing exit-code
+   bug**: `run_docker_container()` sets `exit_status = 0` unconditionally
+   (line 331), so a failed forecast container may still write its marker.
+   Luigi then considers it complete and resumes the generator. The guard
+   catches the case where a marker file is genuinely absent (e.g. container
+   never started). If the guard raises `RuntimeError`, Luigi marks
+   `RunLongTermWorkflow` as FAILED — recovery happens on the next pipeline
+   invocation.
 
 **Acceptance criteria:**
 
@@ -411,12 +455,14 @@ command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
 **Changes to `bin/run_long_term_forecasts.sh`:**
 
 Remove:
-- The schedule query block: starts at `# --- Schedule query: determine which
-  long-term modes are active today ---` and ends at the `fi` after
-  `"No long-term forecast modes active today. Exiting."` — includes the bare
-  `docker run`, the `python3 -c` JSON parsing, and the early exit on no modes
-- The environment variable exports: `export LT_ACTIVE_MODES` and
-  `export LT_SKILL_METRIC_TYPES` (two lines before `temp_luigi.cfg` creation)
+- The schedule query block (lines 89–121): starts at `# --- Schedule query:
+  determine which long-term modes are active today ---` (line 89), bare
+  `docker run` at lines 93–100, JSON parsing at lines 111–112 (`python3 -c`),
+  early exit on no modes at lines 118–121. This is three separate `if`
+  statements, not a single block.
+- The environment variable exports: `export LT_ACTIVE_MODES` (line 147) and
+  `export LT_SKILL_METRIC_TYPES` (line 148), immediately before the compose
+  invocation
 
 Replace the dry-run block (starts at `if $DRY_RUN;` with the schedule query
 echo lines, ends at `exit 0` / `fi`) with a simplified version that no
@@ -470,11 +516,41 @@ cleanup trap exists for exactly this case.
 
 ### Phase 4: Tests
 
-**Goal:** Verify data flows with meaningful tests.
+**Goal:** Verify data flows with meaningful tests, and update existing tests
+broken by the Phase 2 rewrite.
 
-**Files:** `apps/pipeline/tests/test_lt_schedule_workflow.py` (new)
+**Files:**
+- `apps/pipeline/tests/test_lt_schedule_workflow.py` (new)
+- `apps/pipeline/tests/test_long_term_tasks.py` (update `TestRunLongTermWorkflow`)
 
 **Depends on:** Phases 1–3
+
+**CRITICAL — existing tests that break:** 6 of 7 tests in
+`TestRunLongTermWorkflow` (lines 106–188 of `test_long_term_tasks.py`) test
+`requires()` returning a task list. After Phase 2, `requires()` returns
+`LTScheduleQuery()` or `[]`, and task construction moves into `run()`. These
+tests must be rewritten:
+
+| Test (line) | Current assertion | Why it breaks |
+|---|---|---|
+| `test_requires_forecasts_and_postproc` (109) | `requires()` has 2 forecast + 1 postproc | `requires()` → `[]` |
+| `test_includes_cleanup_tasks` (127) | `requires()` has LogFileCleanup + DeleteOldMarkerFiles | Same |
+| `test_with_notifications` (139) | `requires()` is SendPipelineCompletionNotification | Same |
+| `test_task_count_single_mode` (157) | `len(requires()) == 4` | `len([]) != 4` |
+| `test_task_count_multiple_modes` (165) | `len(requires()) == 5` | `len([]) != 5` |
+| `test_passes_skill_metric_types_to_postproc` (173) | postproc in `requires()` has correct param | `requires()` → `[]`, IndexError |
+
+Only `test_output_path` (150) survives — `output()` is unchanged.
+
+**Replacement test strategy:** The test intent (given modes, correct tasks are
+produced) now applies to `run()` as a generator, not `requires()`. New tests
+should:
+- Test `requires()` contract: returns `LTScheduleQuery()` when
+  `active_modes=""`, returns `[]` when modes provided
+- Test `run()` generator: write fake schedule JSON, iterate generator,
+  verify yielded tasks match expected forecast + postproc + cleanup tasks
+- Follow existing repo pattern: test graph structure, avoid `luigi.build()`
+  unless strictly necessary (see Test 9 note below)
 
 **Test 1 — `LTScheduleQuery` container parameters:**
 - Verify `image_name` is `"sapphire-lt-forecasting"`
@@ -503,6 +579,8 @@ cleanup trap exists for exactly this case.
 - If `execute_with_retries` is mocked to succeed without writing a new file,
   `_read_schedule_result()` should raise (file missing), NOT silently reuse
   the stale data
+- Verify `run()` does NOT raise `FileNotFoundError` when `SCHEDULE_RESULT_PATH`
+  does not exist (first-run case — the `os.path.exists` guard must work)
 
 **Test 3 — `RunLongTermWorkflow` with schedule-driven modes:**
 - Write fake schedule JSON:
@@ -534,18 +612,29 @@ cleanup trap exists for exactly this case.
 - Verify the container command includes `--today 2026-03-15`
 - Set `today=""` (default) → verify command does NOT include `--today`
 
-**Test 8 — `RunLongTermWorkflow` completion guard (post-yield safety):**
+**Test 8 — `RunLongTermWorkflow` completion guard (defense-in-depth):**
 - Write valid schedule JSON with `active_modes: ["month_0"]`
 - Iterate the generator returned by `run()` to collect yielded tasks
-- Verify that continuing the generator (calling `next()` again to trigger
-  post-yield code) raises `RuntimeError` when the forecast marker file
-  `/app/log_lt_forecast_month_0.txt` does NOT exist
-- Create the marker file, re-run `run()`, iterate past yield → verify
+- Use `gen.send(None)` to resume past yield (simulating Luigi's
+  `task_gen.send(paths)` after deps complete) — verify `RuntimeError`
+  raised when forecast marker `/app/log_lt_forecast_month_0.txt` is absent
+- Create the marker file, re-run `run()`, send past yield → verify
   output marker IS written and no exception raised
-- This test validates the Step 5 guard against premature output marker
-  writing, independent of Luigi's generator iteration strategy
+- This test validates the Step 5 guard against the pre-existing exit-code
+  bug (failed containers that write markers), not against premature
+  generator resumption (which Luigi prevents at the framework level)
 
-**Test 9 — Luigi `LocalScheduler` integration test:**
+**Test 9 — Luigi `LocalScheduler` integration test (optional, higher effort):**
+
+**Note on repo testing patterns:** All existing pipeline tests (including
+`TestRunLongTermWorkflow`) test graph structure only — `requires()`,
+`output()`, parameters. None call `luigi.build()` or invoke `.run()`. Test 9
+requires mocking the entire Docker execution chain (`docker.from_env()`,
+`run_docker_container`, container wait, etc.), which is significantly more
+complex than existing tests. Consider deferring this test to a follow-up if
+Phase 4 is already large.
+
+If implemented:
 - Use `luigi.build()` with `local_scheduler=True` (no daemon needed)
 - Mock `DockerTaskBase.run_docker_container` to:
   - For `LTScheduleQuery`: write valid schedule JSON to `SCHEDULE_RESULT_PATH`
@@ -624,8 +713,9 @@ Partial deploys fail as follows:
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `yield` in `run()` is new to this codebase | Medium | Thorough tests (Tests 3–5, 7–9), documented comments, full pseudocode in plan. Test 9 uses `luigi.build()` with `LocalScheduler` to validate actual generator behavior |
-| Post-yield code may execute before dynamic deps complete | Medium | Step 5 guard checks forecast marker files exist before writing output marker. If markers absent, raises `RuntimeError` instead of writing a false completion signal. Test 8 validates this guard |
+| `yield` in `run()` is new to this codebase | Medium | Verified viable against Luigi 3.6.0 source (`_run_get_new_deps`). `requires()` alternative is not possible (evaluated once at DAG construction). Thorough tests (Tests 3–5, 7–9). Test 9 optional (higher effort) |
+| Post-yield guard purpose | Low | Luigi 3.6.0 only resumes generator after deps confirmed complete — the guard does NOT prevent premature resumption. Its real value is defense-in-depth against the exit-code-not-checked pre-existing bug. Test 8 validates the guard |
+| 6 existing `RunLongTermWorkflow` tests break | Medium | Phase 4 includes rewriting these tests: `requires()` contract tests + `run()` generator tests. Only `test_output_path` survives unchanged |
 | `run()` restarts from top on re-execution | Medium | All code before `yield` is idempotent (file read + task construction). Documented in D3 |
 | Failed dynamic dep → silent `UPSTREAM_FAILED` | Medium | Visible in Luigi web UI; no in-code catch possible. Document for operators |
 | Stale schedule JSON from previous run | Medium | `LTScheduleQuery.run()` deletes old file before container launch; if container fails to start, file is absent and `_read_schedule_result()` raises clear error |
@@ -652,6 +742,50 @@ Partial deploys fail as follows:
   when they are missing or outdated. On air-gapped servers, images must be
   pre-loaded manually — this is a pre-existing limitation, not introduced here.
 
+## Code Review Findings (2026-04-15)
+
+### RESOLVED — Incorporated into plan above
+
+#### C1: `active_modes` empty-string safety → VERIFIED SAFE
+`"".split(",")` returns `['']`, but the list comprehension `if m.strip()`
+filters it to `[]`. No `RunLongTermForecast(forecast_mode="")` is ever
+created. The shell script also exits before empty modes reach Luigi.
+
+#### C2: `env` is `Environment` object, not dict → FIXED
+Plan corrected to reference `env = Environment(env_file_path)` at line 32.
+`env.get(key)` delegates to `os.getenv(key)`. `SCHEDULE_RESULT_PATH` class
+attribute follows the same pattern as `MARKER_DIR` — safe in production and
+tests.
+
+#### C3: `import json` missing → FIXED
+Added to Phase 1 as an explicit required change.
+
+#### C5: `yield` in `run()` confirmed viable → VERIFIED
+Verified against Luigi 3.6.0 source. `requires()` is not viable (called once
+at DAG construction). `yield` is the only correct mechanism. Plan's D3
+section updated with source-level verification.
+
+#### C6: Post-yield guard reframed → FIXED
+Guard does NOT prevent premature generator resumption (Luigi prevents that at
+framework level). Guard is defense-in-depth against the exit-code-not-checked
+pre-existing bug. Plan updated with correct explanation.
+
+#### C7: `skipped_modes` always present → FIXED
+Plan corrected: `skipped_modes` is always emitted (possibly `{}`), not
+optional. `_read_schedule_result()` validation updated.
+
+#### C8: 6 existing tests break → FIXED
+Phase 4 now includes rewriting 6 of 7 `TestRunLongTermWorkflow` tests.
+Replacement strategy documented.
+
+#### M1: `os.remove()` guard → FIXED
+Explicit `if os.path.exists(...)` guard added to Phase 1 `run()` description
+with code snippet. Test 2b includes first-run case.
+
+#### M2: Test 9 contradicts repo patterns → NOTED
+Test 9 marked as optional/higher-effort. All existing pipeline tests avoid
+`luigi.build()` and test graph structure only.
+
 ## What Is NOT Changed
 
 - `lt_schedule_query.py` — no modifications
@@ -665,8 +799,9 @@ Partial deploys fail as follows:
 
 | File | Change type |
 |---|---|
-| `apps/pipeline/pipeline_docker.py` | Add `LTScheduleQuery`, modify `RunLongTermWorkflow`, add `_read_schedule_result()` |
+| `apps/pipeline/pipeline_docker.py` | Add `import json`, add `LTScheduleQuery`, modify `RunLongTermWorkflow`, add `_read_schedule_result()` |
 | `bin/docker-compose-luigi.yml` | Remove `--active-modes`, `--skill-metric-types` from `long-term` command |
 | `bin/run_long_term_forecasts.sh` | Remove schedule query block, simplify to pentadal pattern |
 | `bin/utils/common_functions.sh` | Add `lt_schedule_query` to cleanup trap |
 | `apps/pipeline/tests/test_lt_schedule_workflow.py` | New test file |
+| `apps/pipeline/tests/test_long_term_tasks.py` | Rewrite 6 of 7 `TestRunLongTermWorkflow` tests for new `requires()` + `run()` contract |
