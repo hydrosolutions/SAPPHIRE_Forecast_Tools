@@ -51,6 +51,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**ML-011**~~ | ~~flag=2 semantic collision in make_forecast.py~~ | ~~ml~~ | | Deleted | — | Deleted 2026-03-20: no behavioral impact |
 | ~~**ML-012**~~ | ~~recalculate_nan_forecasts crashes on NaN flag values (astype crash)~~ | ~~ml~~ | | Complete | [`archive/high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/archive/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
 | ~~**ML-013**~~ | ~~recalculate_nan_forecasts API write overwrites valid operational rows~~ | ~~ml~~ | | Complete | [`archive/review_gi_draft_ml_recalc_api_overwrite.md`](issues/archive/review_gi_draft_ml_recalc_api_overwrite.md) | — |
+| ~~**ML-014**~~ | ~~Hindcast subprocess has no timeout — maintenance containers hang indefinitely~~ | ~~ml~~ | | Complete | [`archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md`](issues/archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md) | — |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 | ~~**PREPQ-001**~~ | ~~Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter~~ | ~~prepq~~ | | Complete | [`archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`](issues/archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md) | — |

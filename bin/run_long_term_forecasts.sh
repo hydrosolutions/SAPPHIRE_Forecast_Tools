@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # This script runs the LONG-TERM forecasting for SAPPHIRE forecast tools.
-# It queries lt_schedule_query.py to determine which modes are active today,
-# then submits the RunLongTermWorkflow to Luigi with the active modes.
+# It submits RunLongTermWorkflow to Luigi, which internally runs
+# LTScheduleQuery to determine which modes are active today.
 #
 # Usage: bash bin/run_long_term_forecasts.sh [--dry-run] <env_file_path>
 #
@@ -61,17 +61,12 @@ echo "| Luigi scheduler URL set to: http://${LUIGI_SCHEDULER_HOST}:${LUIGI_SCHED
 # ---------------------------------------------------------------------------
 if $DRY_RUN; then
     echo "|"
-    echo "| [DRY RUN] Schedule query command that would run:"
-    echo "|   docker run --rm --network host \\"
-    echo "|     -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \\"
-    echo "|     -v ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data \\"
-    echo "|     -e ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path} \\"
-    echo "|     -e IN_DOCKER=True \\"
-    echo "|     mabesa/sapphire-lt-forecasting:${ieasyhydroforecast_backend_docker_image_tag} \\"
-    echo "|     uv run python lt_schedule_query.py"
-    echo "|"
-    echo "| [DRY RUN] If active modes are found, Luigi submission would run:"
-    echo "|   docker compose -f bin/docker-compose-luigi.yml run --rm long-term"
+    echo "| [DRY RUN] Would submit RunLongTermWorkflow to Luigi."
+    echo "| Luigi will run LTScheduleQuery internally to determine active modes."
+    echo "|   Schedule query image: mabesa/sapphire-lt-forecasting:${ieasyhydroforecast_backend_docker_image_tag}"
+    echo "|   Config: ${ieasyhydroforecast_env_file_path}"
+    echo "|   Pipeline submission:"
+    echo "|     docker compose -f bin/docker-compose-luigi.yml run --rm long-term"
     echo "|"
     echo "| [DRY RUN] Validation complete. Exiting without starting containers."
     exit 0
@@ -85,40 +80,6 @@ trap cleanup_long_term_forecasting_containers EXIT
 
 # Ensure a stable Compose project so services share the same network
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
-
-# --- Schedule query: determine which long-term modes are active today ---
-echo "|"
-echo "| Running schedule query to determine active long-term modes..."
-
-SCHEDULE_JSON=$(docker run --rm \
-    --network host \
-    -v "${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config" \
-    -v "${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data" \
-    -e "ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}" \
-    -e "IN_DOCKER=True" \
-    "mabesa/sapphire-lt-forecasting:${ieasyhydroforecast_backend_docker_image_tag}" \
-    uv run python lt_schedule_query.py 2>/dev/null)
-
-if [ $? -ne 0 ] || [ -z "$SCHEDULE_JSON" ]; then
-    echo "| ERROR: Schedule query failed or returned empty result"
-    echo "| Exiting without running long-term forecasts"
-    exit 1
-fi
-
-echo "| Schedule query result: $SCHEDULE_JSON"
-
-# Parse active_modes and skill_metric_types from JSON
-LT_ACTIVE_MODES=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(','.join(d['active_modes']))" "$SCHEDULE_JSON")
-LT_SKILL_METRIC_TYPES=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(','.join(d['skill_metric_types']))" "$SCHEDULE_JSON")
-
-echo "| Active modes: ${LT_ACTIVE_MODES:-none}"
-echo "| Skill metric types: ${LT_SKILL_METRIC_TYPES:-none}"
-
-# If no active modes, exit early
-if [ -z "$LT_ACTIVE_MODES" ]; then
-    echo "| No long-term forecast modes active today. Exiting."
-    exit 0
-fi
 
 # --- Ensure Luigi daemon is running ---
 DAEMON_CID=$(docker compose -f bin/docker-compose-luigi.yml ps -q luigi-daemon)
@@ -142,10 +103,6 @@ done
 
 # --- Submit long-term workflow to Luigi ---
 echo "| Starting long-term forecasting workflow..."
-echo "| Active modes: ${LT_ACTIVE_MODES}"
-
-export LT_ACTIVE_MODES
-export LT_SKILL_METRIC_TYPES
 
 # Create a luigi.cfg file with explicit scheduler host/port
 cat > temp_luigi.cfg <<EOF

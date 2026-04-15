@@ -128,8 +128,8 @@ services:
     container_name: sapphire-pipeline-periodic-maintenance
 
   # Long-term forecast workflow
-  # Runs schedule query results passed via LT_ACTIVE_MODES env var
-  # Usage: LT_ACTIVE_MODES=month_0,quarter docker compose -f bin/docker-compose-luigi.yml run --rm long-term
+  # Schedule query runs inside Luigi via LTScheduleQuery task
+  # Usage: docker compose -f bin/docker-compose-luigi.yml run --rm long-term
   long-term:
     extends: pipeline-base
     environment:
@@ -140,9 +140,7 @@ services:
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
              '--scheduler-port', '8082',
              '--module', 'apps.pipeline.pipeline_docker',
-             'RunLongTermWorkflow',
-             '--active-modes', '${LT_ACTIVE_MODES}',
-             '--skill-metric-types', '${LT_SKILL_METRIC_TYPES:-MONTHLY}']
+             'RunLongTermWorkflow']
     container_name: sapphire-pipeline-long-term
 
   # Luigi scheduler daemon

@@ -106,47 +106,6 @@ class TestLongTermPostProcessing:
 class TestRunLongTermWorkflow:
     """Test RunLongTermWorkflow orchestrator."""
 
-    def test_requires_forecasts_and_postproc(self, mock_env):
-        """Without notifications, requires forecast tasks + postprocessing + cleanup."""
-        from pipeline_docker import (
-            LongTermPostProcessing,
-            RunLongTermForecast,
-            RunLongTermWorkflow,
-        )
-
-        task = RunLongTermWorkflow(active_modes="month_0,quarter", send_notifications=False)
-        deps = task.requires()
-        assert isinstance(deps, list)
-
-        forecast_tasks = [d for d in deps if isinstance(d, RunLongTermForecast)]
-        assert len(forecast_tasks) == 2
-
-        postproc_tasks = [d for d in deps if isinstance(d, LongTermPostProcessing)]
-        assert len(postproc_tasks) == 1
-
-    def test_includes_cleanup_tasks(self, mock_env):
-        """Includes LogFileCleanup and DeleteOldMarkerFiles."""
-        from pipeline_docker import (
-            RunLongTermWorkflow,
-        )
-
-        task = RunLongTermWorkflow(active_modes="month_0", send_notifications=False)
-        deps = task.requires()
-        class_names = [type(d).__name__ for d in deps]
-        assert "LogFileCleanup" in class_names
-        assert "DeleteOldMarkerFiles" in class_names
-
-    def test_with_notifications(self, mock_env):
-        """With notifications, wraps in SendPipelineCompletionNotification."""
-        from pipeline_docker import (
-            RunLongTermWorkflow,
-            SendPipelineCompletionNotification,
-        )
-
-        task = RunLongTermWorkflow(active_modes="month_0", send_notifications=True)
-        dep = task.requires()
-        assert isinstance(dep, SendPipelineCompletionNotification)
-
     def test_output_path(self, mock_env):
         """Output is /app/log_long_term_workflow_complete.txt."""
         from pipeline_docker import RunLongTermWorkflow
@@ -154,34 +113,84 @@ class TestRunLongTermWorkflow:
         task = RunLongTermWorkflow(active_modes="month_0")
         assert task.output().path == "/app/log_long_term_workflow_complete.txt"
 
-    def test_task_count_single_mode(self, mock_env):
-        """Single mode: 1 forecast + 1 postproc + 2 cleanup = 4 tasks."""
+    def test_requires_schedule_query_when_no_override(self, mock_env):
+        """Default active_modes triggers LTScheduleQuery dependency."""
+        from pipeline_docker import LTScheduleQuery, RunLongTermWorkflow
+
+        task = RunLongTermWorkflow(send_notifications=False)
+        dep = task.requires()
+        assert isinstance(dep, LTScheduleQuery)
+
+    def test_requires_empty_when_override(self, mock_env):
+        """Explicit active_modes skips schedule query."""
         from pipeline_docker import RunLongTermWorkflow
 
         task = RunLongTermWorkflow(active_modes="month_0", send_notifications=False)
         deps = task.requires()
-        assert len(deps) == 4
+        assert deps == []
 
-    def test_task_count_multiple_modes(self, mock_env):
-        """Two modes: 2 forecasts + 1 postproc + 2 cleanup = 5 tasks."""
-        from pipeline_docker import RunLongTermWorkflow
+    def test_parse_override_modes_truthy_but_empty(self, mock_env):
+        """Truthy-but-empty active_modes (e.g. ',', ' ') parse to empty list."""
+        from pipeline_docker import LTScheduleQuery, RunLongTermWorkflow
 
-        task = RunLongTermWorkflow(active_modes="month_0,quarter", send_notifications=False)
-        deps = task.requires()
-        assert len(deps) == 5
+        task_comma = RunLongTermWorkflow(active_modes=",", send_notifications=False)
+        assert task_comma._parse_override_modes() == []
+        assert isinstance(task_comma.requires(), LTScheduleQuery)
 
-    def test_passes_skill_metric_types_to_postproc(self, mock_env):
-        """skill_metric_types is forwarded to LongTermPostProcessing."""
+        task_space = RunLongTermWorkflow(active_modes=" ", send_notifications=False)
+        assert task_space._parse_override_modes() == []
+        assert isinstance(task_space.requires(), LTScheduleQuery)
+
+    def test_run_with_override_yields_tasks(self, mock_env):
+        """Override path: run() yields forecast + postproc + cleanup tasks."""
         from pipeline_docker import (
             LongTermPostProcessing,
+            RunLongTermForecast,
             RunLongTermWorkflow,
         )
+
+        task = RunLongTermWorkflow(active_modes="month_0,quarter", send_notifications=False)
+        gen = task.run()
+        yielded = next(gen)
+
+        # yielded should be a list of tasks
+        assert isinstance(yielded, list)
+
+        forecast_tasks = [t for t in yielded if isinstance(t, RunLongTermForecast)]
+        assert len(forecast_tasks) == 2
+        modes = {t.forecast_mode for t in forecast_tasks}
+        assert modes == {"month_0", "quarter"}
+
+        postproc_tasks = [t for t in yielded if isinstance(t, LongTermPostProcessing)]
+        assert len(postproc_tasks) == 1
+        assert postproc_tasks[0].active_modes == "month_0,quarter"
+
+        class_names = [type(t).__name__ for t in yielded]
+        assert "LogFileCleanup" in class_names
+        assert "DeleteOldMarkerFiles" in class_names
+
+    def test_run_with_notifications_yields_notification(self, mock_env):
+        """Notification path: run() yields SendPipelineCompletionNotification."""
+        from pipeline_docker import (
+            RunLongTermWorkflow,
+            SendPipelineCompletionNotification,
+        )
+
+        task = RunLongTermWorkflow(active_modes="month_0", send_notifications=True)
+        gen = task.run()
+        yielded = next(gen)
+        assert isinstance(yielded, SendPipelineCompletionNotification)
+
+    def test_run_passes_skill_metric_types(self, mock_env):
+        """skill_metric_types is forwarded to LongTermPostProcessing via run()."""
+        from pipeline_docker import LongTermPostProcessing, RunLongTermWorkflow
 
         task = RunLongTermWorkflow(
             active_modes="month_0",
             skill_metric_types="QUARTERLY",
             send_notifications=False,
         )
-        deps = task.requires()
-        postproc = [d for d in deps if isinstance(d, LongTermPostProcessing)]
+        gen = task.run()
+        yielded = next(gen)
+        postproc = [t for t in yielded if isinstance(t, LongTermPostProcessing)]
         assert postproc[0].skill_metric_types == "QUARTERLY"

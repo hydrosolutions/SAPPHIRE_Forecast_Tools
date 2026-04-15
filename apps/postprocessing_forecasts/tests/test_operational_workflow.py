@@ -163,6 +163,8 @@ class TestOperationalWorkflow:
                 horizons = [c[0][0] for c in calls]
                 assert "pentad" in horizons
                 assert "decad" in horizons
+                # Verify save is called once per horizon (2 total)
+                assert mocks["file_writer"].save_forecast_data.call_count == 2
 
     def test_error_accumulation(self, mock_data, mock_skill):
         """Save errors are accumulated and cause exit code 1."""

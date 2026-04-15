@@ -75,8 +75,30 @@ def call_hindcast_script(
     command = [sys.executable, "hindcast_ML_models.py"]
     logger.info("Running hindcast command: %s", command)
 
-    # Call the script
-    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    # Call the script with timeout guard
+    _timeout_raw = os.getenv("SAPPHIRE_HINDCAST_TIMEOUT_SECONDS", "").strip()
+    hindcast_timeout = int(_timeout_raw) if _timeout_raw else 14400
+    logger.info("Hindcast timeout: %d seconds", hindcast_timeout)
+    env["PYTHONUNBUFFERED"] = "1"
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=hindcast_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Hindcast subprocess timed out after {hindcast_timeout}s "
+            f"for {MODEL_TO_USE} {PREDICTION_MODE}"
+        ) from exc
+    if result.stdout:
+        for line in result.stdout.splitlines():
+            logger.info("[hindcast] %s", line)
+    if result.stderr:
+        for line in result.stderr.splitlines():
+            logger.warning("[hindcast stderr] %s", line)
 
     # Check if the script ran successfully
     if result.returncode == 0:
