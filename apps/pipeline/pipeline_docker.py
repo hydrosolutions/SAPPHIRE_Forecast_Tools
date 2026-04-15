@@ -1828,17 +1828,6 @@ class MLMaintenance(DockerTaskBase):
         )
 
 
-class RunAllMLMaintenance(luigi.WrapperTask):
-    """Wrapper that yields MLMaintenance for each model x horizon."""
-
-    def requires(self):
-        models = env.get("ieasyhydroforecast_available_ML_models").split(",")
-        prediction_modes = ["PENTAD", "DECAD"]
-        for model in models:
-            for mode in prediction_modes:
-                yield MLMaintenance(model_type=model, prediction_mode=mode)
-
-
 class PostProcessingMaintenance(DockerTaskBase):
     """Run postprocessing in maintenance mode (gap-fill ensembles)."""
 
@@ -1854,7 +1843,10 @@ class PostProcessingMaintenance(DockerTaskBase):
             LinRegMaintenance(prediction_mode="DECAD"),
         ]
         if RUN_ML_MODELS == "True":
-            deps.append(RunAllMLMaintenance())
+            models = env.get("ieasyhydroforecast_available_ML_models").split(",")
+            for model in models:
+                for mode in ["PENTAD", "DECAD"]:
+                    deps.append(MLMaintenance(model_type=model, prediction_mode=mode))
         return deps
 
     def output(self):
