@@ -277,15 +277,31 @@ lt-forecasting container and writes JSON to the shared volume.
 
 1. Change `active_modes` parameter: `luigi.Parameter(default="")`
 
-2. Replace `requires()`:
+2. Add a helper method to centralize the override-vs-schedule decision:
+   ```python
+   def _parse_override_modes(self):
+       """Parse active_modes parameter into a clean list.
+
+       Returns empty list if active_modes is empty, whitespace-only,
+       or contains only separators (e.g. ","). Both requires() and
+       run() use this to make a consistent override-vs-schedule
+       decision — they must never diverge.
+       """
+       if not self.active_modes.strip():
+           return []
+       return [m.strip() for m in self.active_modes.split(",")
+               if m.strip()]
+   ```
+
+3. Replace `requires()`:
    ```python
    def requires(self):
-       if not self.active_modes:
+       if not self._parse_override_modes():
            return LTScheduleQuery()
        return []
    ```
 
-3. Add module-level helper `_read_schedule_result()`:
+4. Add module-level helper `_read_schedule_result()`:
    - Reads `LTScheduleQuery.SCHEDULE_RESULT_PATH`
    - Validates JSON structure: must have `active_modes` (list of strings),
      `skill_metric_types` (list of strings), and `skipped_modes` (dict of
@@ -303,15 +319,18 @@ lt-forecasting container and writes JSON to the shared volume.
      semantics — see D3)
    - Requires `import json` (added in Phase 1)
 
-4. Rewrite `run()` — full pseudocode of the new body:
+5. Rewrite `run()` — full pseudocode of the new body:
 
    ```python
    def run(self):
        # --- Step 1: Determine active modes ---
-       if self.active_modes:
+       # _parse_override_modes() is shared with requires() to ensure
+       # the override-vs-schedule decision is always consistent.
+       override_modes = self._parse_override_modes()
+
+       if override_modes:
            # Override path: modes provided directly, no schedule query
-           modes = [m.strip() for m in self.active_modes.split(",")
-                    if m.strip()]
+           modes = override_modes
            skill_types = self.skill_metric_types
            if skill_types == "MONTHLY" and any(
                    m not in ("month_0",) for m in modes):
@@ -328,17 +347,17 @@ lt-forecasting container and writes JSON to the shared volume.
 
        # --- Step 1b: Log schedule decisions for operator visibility ---
        # (Replaces the shell script's "Schedule query result: ..." line)
-       if not self.active_modes and modes:
+       if not override_modes and modes:
            print(f"Schedule query: {len(modes)} active mode(s): {modes}")
            for mode, reason in schedule.get("skipped_modes", {}).items():
                print(f"  Skipped {mode}: {reason}")
-       elif self.active_modes:
+       elif override_modes:
            print(f"Override: using manually provided modes: {modes}")
 
        # --- Step 2: Early exit if nothing to do ---
        if not modes:
            print("No long-term forecast modes active today.")
-           if not self.active_modes:
+           if not override_modes:
                for mode, reason in schedule.get(
                        "skipped_modes", {}).items():
                    print(f"  Skipped {mode}: {reason}")
@@ -427,6 +446,9 @@ lt-forecasting container and writes JSON to the shared volume.
   forecast tasks created
 - `active_modes="month_0"` (override): no schedule query, tasks created
   directly
+- `active_modes=","` or `" "` (truthy-but-empty): `_parse_override_modes()`
+  returns `[]`, so `requires()` runs `LTScheduleQuery` and `run()` reads
+  the schedule JSON — same behavior as `active_modes=""`
 - Empty `active_modes` in schedule JSON: workflow completes with "no active
   modes" message, marker written
 - Missing/malformed JSON: workflow fails with clear `RuntimeError`
@@ -595,6 +617,14 @@ should:
 - Verify `LTScheduleQuery` is NOT in `requires()`
 - Verify single `RunLongTermForecast(forecast_mode="month_0")` task
 
+**Test 4b — `RunLongTermWorkflow` with truthy-but-empty override:**
+- Set `active_modes=","` → verify `_parse_override_modes()` returns `[]`
+- Verify `requires()` returns `LTScheduleQuery()` (schedule query path,
+  NOT the override path)
+- Set `active_modes=" "` → same assertions
+- This tests that `requires()` and `run()` agree on the override-vs-schedule
+  decision via the shared `_parse_override_modes()` helper
+
 **Test 5 — `RunLongTermWorkflow` with empty schedule:**
 - Write schedule JSON: `{"active_modes": [], "skill_metric_types": []}`
 - Verify workflow completes cleanly, marker written, no forecast tasks yielded
@@ -728,6 +758,7 @@ Partial deploys fail as follows:
 | Timeout notification dead code (pre-existing) | Low | Documented in "Known Pre-Existing Issues". Operators must monitor Luigi web UI for timeouts |
 | Volume path mismatch between containers | Low | Verified: both use `get_bind_path()` → same container-internal path |
 | Backward compat: manual `--active-modes` | Low | Parameter kept as optional; when provided, skips schedule query |
+| Truthy-but-empty `active_modes` (e.g. `","`, `" "`) | Medium | `_parse_override_modes()` normalizes before branching; shared by `requires()` and `run()` to prevent divergence. Test 4b validates edge cases |
 | Manual `--active-modes` with default `skill_metric_types` | Low | `run()` prints warning when override path uses default `"MONTHLY"` with non-month_0 modes. Operator must pass `--skill-metric-types` explicitly for quarterly/seasonal |
 | Operator visibility regression (schedule decisions) | Low | `run()` prints active modes, skipped modes, and skip reasons — replaces the shell script's `Schedule query result: ...` output |
 | `SendPipelineCompletionNotification` task_id ignores `depends_on` | Low | `depends_on` kwarg bypasses Luigi Parameter (stored as `self._depends_on`); task_id is based on `custom_message` only. Safe because only one notification per workflow, but add code comment for future maintainers |
@@ -746,10 +777,19 @@ Partial deploys fail as follows:
 
 ### RESOLVED — Incorporated into plan above
 
-#### C1: `active_modes` empty-string safety → VERIFIED SAFE
+#### C1: `active_modes` empty-string safety → VERIFIED SAFE + EDGE CASE FIXED
 `"".split(",")` returns `['']`, but the list comprehension `if m.strip()`
 filters it to `[]`. No `RunLongTermForecast(forecast_mode="")` is ever
 created. The shell script also exits before empty modes reach Luigi.
+
+**Edge case found during review (2026-04-15):** Truthy-but-empty values
+like `","` or `" "` would cause `requires()` and `run()` to diverge —
+`requires()` (testing `if not self.active_modes`) would skip the schedule
+query, but `run()` (testing the parsed list) would try to read the
+schedule JSON that was never created. Fixed by extracting
+`_parse_override_modes()` as a shared helper used by both methods. This
+also ensures operators see skip-reason diagnostics instead of silent
+"No active modes today" for malformed override inputs.
 
 #### C2: `env` is `Environment` object, not dict → FIXED
 Plan corrected to reference `env = Environment(env_file_path)` at line 32.
@@ -793,13 +833,15 @@ Test 9 marked as optional/higher-effort. All existing pipeline tests avoid
 - `RunLongTermForecast` — unchanged
 - `LongTermPostProcessing` — unchanged
 - `run_pentadal_forecasts.sh`, `run_decadal_forecasts.sh` — not affected
+- `apps/run_locally.sh` — independent code path (no Luigi, no Docker),
+  uses its own `LT_ACTIVE_MODES` shell variable; unaffected
 - Any code in `sapphire/services/` — not touched
 
 ## What IS Changed (complete file list)
 
 | File | Change type |
 |---|---|
-| `apps/pipeline/pipeline_docker.py` | Add `import json`, add `LTScheduleQuery`, modify `RunLongTermWorkflow`, add `_read_schedule_result()` |
+| `apps/pipeline/pipeline_docker.py` | Add `import json`, add `LTScheduleQuery`, modify `RunLongTermWorkflow` (add `_parse_override_modes()`, rewrite `requires()` + `run()`), add `_read_schedule_result()` |
 | `bin/docker-compose-luigi.yml` | Remove `--active-modes`, `--skill-metric-types` from `long-term` command |
 | `bin/run_long_term_forecasts.sh` | Remove schedule query block, simplify to pentadal pattern |
 | `bin/utils/common_functions.sh` | Add `lt_schedule_query` to cleanup trap |
