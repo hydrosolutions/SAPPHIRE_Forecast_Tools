@@ -4231,6 +4231,8 @@ def create_reload_button(horizon):
                     warning_message.visible = False
                     reload_button.disabled = False
                     app_state.pipeline_running = False  # Update shared state
+                    # Trigger data reload so the dashboard shows fresh results
+                    processing.data_reloader.data_needs_reload = True
 
                 reset_ui_after_pipeline()  # Safely update the UI after the process
 
