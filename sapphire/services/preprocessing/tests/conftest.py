@@ -1,8 +1,9 @@
 """
 Pytest configuration for preprocessing service tests.
 
-IMPORTANT: All env vars must be set before any app imports because
-app/config.py instantiates Settings() at module level.
+IMPORTANT: DATABASE_URL must be set before any app imports because
+app/database.py reads it at module level and app/main.py
+runs Base.metadata.create_all(bind=engine) at import time.
 """
 
 import os
@@ -16,6 +17,70 @@ os.environ["API_BASE_URL"] = "http://localhost:8000"
 os.environ["BATCH_SIZE"] = "1000"
 os.environ["CSV_FOLDER"] = "/tmp"
 
-# Add app directory to Python path for imports
-app_dir = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_dir))
+# Add project root so `from app.xxx import ...` works
+sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add tests dir so `from factories import ...` works
+sys.path.insert(0, str(Path(__file__).parent))
+# Keep app dir on path for existing test_data_migrator.py imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
+
+import pytest
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+
+from app.database import Base, get_db
+from app.main import app
+
+# ---------------------------------------------------------------------------
+# Test engine: SQLite in-memory with StaticPool so all threads/connections
+# share the same database (required for TestClient which runs in a thread).
+# ---------------------------------------------------------------------------
+engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestSessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=engine
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    """Create all tables before each test, drop after."""
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def db_session():
+    """Provide a fresh SQLAlchemy session for CRUD tests."""
+    session = TestSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def client():
+    """FastAPI TestClient with database dependency override."""
+    def override_get_db():
+        session = TestSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()

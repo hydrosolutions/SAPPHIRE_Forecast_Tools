@@ -409,6 +409,7 @@ class TestMeteoDataMigrator:
             pd.DataFrame({
                 "date": ["2024-01-01", "2024-01-02"],
                 "code": ["12345", "12345"],
+                "T": [10.0, 12.0],
                 "T_norm": [8.0, 9.0],
             }).to_csv(dashboard_path, index=False)
 

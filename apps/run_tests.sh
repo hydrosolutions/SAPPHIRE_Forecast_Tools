@@ -145,6 +145,7 @@ MODULES=(
 # List of sapphire services with tests (in sapphire/services/<name>/)
 SERVICE_MODULES=(
     "postprocessing"
+    "preprocessing"
 )
 
 # If a specific module is provided as argument, only run that one
