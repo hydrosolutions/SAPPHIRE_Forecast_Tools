@@ -12,6 +12,7 @@
 
 import datetime
 import glob
+import json
 import os
 import platform
 import re
@@ -2058,6 +2059,75 @@ class RunPeriodicMaintenanceWorkflow(luigi.Task):
 # --- Operational long-term forecasting tasks ---
 
 
+class LTScheduleQuery(DockerTaskBase):
+    """Run lt_schedule_query.py to determine which long-term modes are active.
+
+    Writes JSON result to the shared intermediate_data volume so that
+    RunLongTermWorkflow can read it via _read_schedule_result().
+    """
+
+    today = luigi.Parameter(default="")  # optional date override for testing
+
+    SCHEDULE_RESULT_PATH = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/lt_schedule_result.json"
+    )
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_lt_schedule_query_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    # No resources — do NOT add lt_memory here (would deadlock).
+
+    def requires(self):
+        return []
+
+    def output(self):
+        return luigi.LocalTarget("/app/log_schedule_query.txt")
+
+    def run(self):
+        # Delete stale JSON from a previous pipeline run. If the container
+        # fails to start, the old file must not be silently reused.
+        if os.path.exists(self.SCHEDULE_RESULT_PATH):
+            os.remove(self.SCHEDULE_RESULT_PATH)
+
+        volumes = setup_docker_volumes(
+            env,
+            [
+                "ieasyforecast_configuration_path",
+                "ieasyforecast_intermediate_data_path",
+            ],
+        )
+
+        environment = [
+            f"ieasyhydroforecast_env_file_path={env_file_path}",
+            "IN_DOCKER=True",
+        ]
+        # Do NOT add RUN_MODE=forecast — this is a schedule query, not a
+        # forecast run.
+        # Do NOT call get_docker_host_env_overrides() — the schedule query
+        # reads local config files only.
+
+        base_cmd = "uv run python lt_schedule_query.py"
+        if self.today:
+            base_cmd += f" --today {self.today}"
+        command = ["sh", "-c", f"{base_cmd} > {self.SCHEDULE_RESULT_PATH}"]
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name="sapphire-lt-forecasting",
+                container_name=f"lt_schedule_query_{attempt}",
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                command=command,
+                mem_limit="2g",
+                network="host",
+            )
+        )
+
+
 class RunLongTermForecast(DockerTaskBase):
     """Run a single long-term forecast mode (e.g. month_0, quarter).
 
@@ -2158,14 +2228,78 @@ class LongTermPostProcessing(DockerTaskBase):
         )
 
 
+def _read_schedule_result():
+    """Read and validate the schedule query JSON from the shared volume.
+
+    Raises RuntimeError with diagnostic paths if the file is missing,
+    empty, or malformed.
+    """
+    path = LTScheduleQuery.SCHEDULE_RESULT_PATH
+    log_path = LTScheduleQuery.docker_logs_file_path
+
+    if not os.path.exists(path):
+        raise RuntimeError(
+            f"Schedule result file not found at {path}. Check schedule query logs at {log_path}"
+        )
+
+    with open(path) as f:
+        content = f.read()
+
+    if not content.strip():
+        raise RuntimeError(
+            f"Schedule result file is empty at {path}. Check schedule query logs at {log_path}"
+        )
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Schedule result file contains invalid JSON at {path}: {e}. "
+            f"Check schedule query logs at {log_path}"
+        ) from e
+
+    # Validate required keys and types
+    for key in ("active_modes", "skill_metric_types", "skipped_modes"):
+        if key not in result:
+            raise RuntimeError(
+                f"Schedule result missing required key '{key}' at {path}. "
+                f"Check schedule query logs at {log_path}"
+            )
+
+    if not isinstance(result["active_modes"], list) or not all(
+        isinstance(m, str) for m in result["active_modes"]
+    ):
+        raise RuntimeError(
+            f"active_modes must be a list of strings, got {result['active_modes']!r} at {path}"
+        )
+
+    if not isinstance(result["skill_metric_types"], list) or not all(
+        isinstance(t, str) for t in result["skill_metric_types"]
+    ):
+        raise RuntimeError(
+            f"skill_metric_types must be a list of strings, got "
+            f"{result['skill_metric_types']!r} at {path}"
+        )
+
+    if not isinstance(result["skipped_modes"], dict):
+        raise RuntimeError(
+            f"skipped_modes must be a dict, got {type(result['skipped_modes']).__name__} at {path}"
+        )
+
+    return result
+
+
 class RunLongTermWorkflow(luigi.Task):
     """Top-level orchestrator for operational long-term forecasting.
 
-    The bash entry script runs lt_schedule_query.py to determine which
-    modes are active, then passes them as the active_modes parameter.
+    When active_modes is empty (default), runs LTScheduleQuery to
+    determine which modes are active today, then dispatches forecast
+    tasks via dynamic dependencies (yield in run()). When active_modes
+    is provided explicitly, skips the schedule query and uses the
+    given modes directly.
     """
 
-    active_modes = luigi.Parameter()  # comma-separated
+    active_modes = luigi.Parameter(default="")  # comma-separated override
     skill_metric_types = luigi.Parameter(default="MONTHLY")
     send_notifications = luigi.BoolParameter(default=True)
     custom_message = luigi.Parameter(default="")
@@ -2176,41 +2310,101 @@ class RunLongTermWorkflow(luigi.Task):
         f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     )
 
+    def _parse_override_modes(self):
+        """Parse active_modes parameter into a clean list.
+
+        Returns empty list if active_modes is empty, whitespace-only,
+        or contains only separators (e.g. ","). Both requires() and
+        run() use this to make a consistent override-vs-schedule
+        decision — they must never diverge.
+        """
+        if not self.active_modes.strip():
+            return []
+        return [m.strip() for m in self.active_modes.split(",") if m.strip()]
+
     def requires(self):
-        modes = [m.strip() for m in self.active_modes.split(",") if m.strip()]
-
-        base_tasks = []
-
-        # Individual forecast tasks per mode
-        for mode in modes:
-            base_tasks.append(RunLongTermForecast(forecast_mode=mode))
-
-        # Postprocessing after all forecasts
-        base_tasks.append(
-            LongTermPostProcessing(
-                active_modes=self.active_modes,
-                skill_metric_types=self.skill_metric_types,
-            )
-        )
-
-        # Cleanup tasks
-        base_tasks.append(LogFileCleanup())
-        base_tasks.append(DeleteOldMarkerFiles())
-
-        # Wrap with notification if enabled
-        if self.send_notifications:
-            return SendPipelineCompletionNotification(
-                custom_message=f"LONG_TERM {self.custom_message}",
-                depends_on=base_tasks,
-            )
-        else:
-            return base_tasks
+        if not self._parse_override_modes():
+            return LTScheduleQuery()
+        return []
 
     def output(self):
         return luigi.LocalTarget("/app/log_long_term_workflow_complete.txt")
 
     def run(self):
-        print("Long-term workflow completed.")
+        # --- Step 1: Determine active modes ---
+        # _parse_override_modes() is shared with requires() to ensure
+        # the override-vs-schedule decision is always consistent.
+        override_modes = self._parse_override_modes()
+
+        if override_modes:
+            # Override path: modes provided directly, no schedule query
+            modes = override_modes
+            skill_types = self.skill_metric_types
+            if skill_types == "MONTHLY" and any(m not in ("month_0",) for m in modes):
+                print(
+                    "Warning: active_modes provided manually but "
+                    "skill_metric_types defaults to MONTHLY. "
+                    "Pass --skill-metric-types if needed."
+                )
+        else:
+            # Schedule query path: read result from shared volume
+            schedule = _read_schedule_result()
+            modes = schedule["active_modes"]
+            skill_types = ",".join(schedule["skill_metric_types"])  # always present in JSON
+
+        # --- Step 1b: Log schedule decisions for operator visibility ---
+        if not override_modes and modes:
+            print(f"Schedule query: {len(modes)} active mode(s): {modes}")
+            for mode, reason in schedule.get("skipped_modes", {}).items():
+                print(f"  Skipped {mode}: {reason}")
+        elif override_modes:
+            print(f"Override: using manually provided modes: {modes}")
+
+        # --- Step 2: Early exit if nothing to do ---
+        if not modes:
+            print("No long-term forecast modes active today.")
+            if not override_modes:
+                for mode, reason in schedule.get("skipped_modes", {}).items():
+                    print(f"  Skipped {mode}: {reason}")
+            os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
+            with open(self.docker_logs_file_path, "w") as f:
+                f.write("No active modes today")
+            with self.output().open("w") as f:
+                f.write("No active modes today")
+            return
+
+        # --- Step 3: Build task list (same logic as old requires()) ---
+        modes_str = ",".join(modes)
+        base_tasks = []
+        for mode in modes:
+            base_tasks.append(RunLongTermForecast(forecast_mode=mode))
+        base_tasks.append(
+            LongTermPostProcessing(active_modes=modes_str, skill_metric_types=skill_types)
+        )
+        base_tasks.append(LogFileCleanup())
+        base_tasks.append(DeleteOldMarkerFiles())
+
+        # --- Step 4: Yield dynamic dependencies ---
+        if self.send_notifications:
+            yield SendPipelineCompletionNotification(
+                custom_message=f"LONG_TERM {self.custom_message}", depends_on=base_tasks
+            )
+        else:
+            yield base_tasks
+
+        # --- Step 5: Guard + write completion markers ---
+        # Luigi resumes the generator only after all yielded deps are
+        # complete. The guard is defense-in-depth against the pre-existing
+        # exit-code bug (DockerTaskBase reports exit_status=0
+        # unconditionally).
+        for mode in modes:
+            marker = f"/app/log_lt_forecast_{mode}.txt"
+            if not os.path.exists(marker):
+                raise RuntimeError(
+                    f"Forecast task for mode '{mode}' did not produce "
+                    f"marker {marker}. Check Luigi web UI for "
+                    f"UPSTREAM_FAILED status."
+                )
 
         os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
         with open(self.docker_logs_file_path, "w") as f:
@@ -2218,7 +2412,6 @@ class RunLongTermWorkflow(luigi.Task):
                 f"Long-term workflow for {ORGANIZATION} completed at "
                 f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
-
         with self.output().open("w") as f:
             f.write("Long-term workflow completed")
 

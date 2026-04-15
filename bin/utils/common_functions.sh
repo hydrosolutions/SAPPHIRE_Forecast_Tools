@@ -345,6 +345,7 @@ cleanup_long_term_forecasting_containers() {
     echo "| ------"
     echo "| Cleaning up long-term forecasting containers"
     echo "| ------"
+    stop_and_remove_container lt_schedule_query
     stop_and_remove_container lt_forecast
     stop_and_remove_container lt-postprocessing
 }
