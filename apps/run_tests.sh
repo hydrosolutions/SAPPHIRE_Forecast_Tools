@@ -147,6 +147,7 @@ SERVICE_MODULES=(
     "postprocessing"
     "preprocessing"
     "user"
+    "auth"
 )
 
 # If a specific module is provided as argument, only run that one
