@@ -10,17 +10,21 @@ from datetime import date
 import pytest
 
 from app import crud
-from app.models import Forecast, LongForecast, LRForecast, SkillMetric
+from app.models import Bulletin, Forecast, LongForecast, LRForecast, LRVisibility, SkillMetric
 from app.schemas import (
+    BulletinBulkCreate,
     ForecastBulkCreate,
     LongForecastBulkCreate,
     LRForecastBulkCreate,
+    LRVisibilityBulkCreate,
     SkillMetricBulkCreate,
 )
 from factories import (
+    make_bulletin,
     make_forecast,
     make_long_forecast,
     make_lr_forecast,
+    make_lr_visibility,
     make_skill_metric,
 )
 
@@ -385,6 +389,193 @@ class TestMonthlySkillMetricCRUD:
         for r in results:
             assert r.horizon_type.value == "month"
 
+
+# -------------------------------------------------------------------
+# Bulletin CRUD
+# -------------------------------------------------------------------
+
+class TestBulletinCRUD:
+    """Tests for create_bulletin / get_bulletin / delete_bulletin."""
+
+    def test_create_single(self, db_session):
+        item = make_bulletin()
+        bulk = BulletinBulkCreate(data=[item])
+        results = crud.create_bulletin(db_session, bulk)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.id is not None
+        assert r.code == "15013"
+        assert r.model_type == "LR"
+        assert r.horizon_type == "pentad"
+        assert r.year == 2024
+        assert r.horizon_value == 3
+        assert r.forecasted_discharge == 100.0
+        assert r.basin_name == "Test Basin"
+        assert r.station_label == "15013 - Test Station"
+        assert r.fc_lower == 90.0
+        assert r.fc_upper == 110.0
+        assert r.accuracy == 0.85
+
+    def test_create_bulk(self, db_session):
+        items = [
+            make_bulletin(code="15013"),
+            make_bulletin(code="15014"),
+            make_bulletin(code="15015"),
+        ]
+        bulk = BulletinBulkCreate(data=items)
+        results = crud.create_bulletin(db_session, bulk)
+
+        assert len(results) == 3
+        codes = {r.code for r in results}
+        assert codes == {"15013", "15014", "15015"}
+
+    def test_upsert(self, db_session):
+        """Insert then re-insert with same unique keys but new forecasted_discharge."""
+        item1 = make_bulletin(forecasted_discharge=100.0)
+        crud.create_bulletin(db_session, BulletinBulkCreate(data=[item1]))
+
+        item2 = make_bulletin(forecasted_discharge=999.0)
+        results = crud.create_bulletin(
+            db_session, BulletinBulkCreate(data=[item2])
+        )
+
+        assert len(results) == 1
+        assert results[0].forecasted_discharge == 999.0
+        # Should be exactly 1 row in the table, not 2
+        total = db_session.query(Bulletin).count()
+        assert total == 1
+
+    def test_filter_by_horizon_and_year(self, db_session):
+        items = [
+            make_bulletin(code="15013", year=2024),
+            make_bulletin(code="15014", year=2025),
+        ]
+        crud.create_bulletin(db_session, BulletinBulkCreate(data=items))
+
+        results = crud.get_bulletin(db_session, year=2024)
+        assert len(results) == 1
+        assert results[0].year == 2024
+        assert results[0].code == "15013"
+
+    def test_empty(self, db_session):
+        results = crud.get_bulletin(db_session, year=9999)
+        assert results == []
+
+    def test_delete(self, db_session):
+        item = make_bulletin()
+        crud.create_bulletin(db_session, BulletinBulkCreate(data=[item]))
+
+        deleted = crud.delete_bulletin(
+            db_session,
+            horizon="pentad",
+            year=2024,
+            horizon_value=3,
+            code="15013",
+        )
+
+        assert deleted is True
+        total = db_session.query(Bulletin).count()
+        assert total == 0
+
+    def test_delete_nonexistent(self, db_session):
+        deleted = crud.delete_bulletin(
+            db_session,
+            horizon="pentad",
+            year=2024,
+            horizon_value=3,
+            code="NONEXISTENT",
+        )
+        assert deleted is False
+
+
+# -------------------------------------------------------------------
+# LRVisibility CRUD
+# -------------------------------------------------------------------
+
+class TestLRVisibilityCRUD:
+    """Tests for create_lr_visibility / get_lr_visibility."""
+
+    def test_create_single(self, db_session):
+        item = make_lr_visibility()
+        bulk = LRVisibilityBulkCreate(data=[item])
+        results = crud.create_lr_visibility(db_session, bulk)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.id is not None
+        assert r.code == "15013"
+        assert r.month == 6
+        assert r.horizon_type == "pentad"
+        assert r.horizon_value == 3
+        assert r.year == 2024
+        assert r.visible is True
+
+    def test_create_bulk(self, db_session):
+        items = [
+            make_lr_visibility(code="15013"),
+            make_lr_visibility(code="15014"),
+            make_lr_visibility(code="15015"),
+        ]
+        bulk = LRVisibilityBulkCreate(data=items)
+        results = crud.create_lr_visibility(db_session, bulk)
+
+        assert len(results) == 3
+        codes = {r.code for r in results}
+        assert codes == {"15013", "15014", "15015"}
+
+    def test_upsert(self, db_session):
+        """Insert then re-insert with same unique keys but new visible value."""
+        item1 = make_lr_visibility(visible=True)
+        crud.create_lr_visibility(
+            db_session, LRVisibilityBulkCreate(data=[item1])
+        )
+
+        item2 = make_lr_visibility(visible=False)
+        results = crud.create_lr_visibility(
+            db_session, LRVisibilityBulkCreate(data=[item2])
+        )
+
+        assert len(results) == 1
+        assert results[0].visible is False
+        # Should be exactly 1 row in the table, not 2
+        total = db_session.query(LRVisibility).count()
+        assert total == 1
+
+    def test_filter_by_code(self, db_session):
+        items = [
+            make_lr_visibility(code="15013"),
+            make_lr_visibility(code="15014"),
+        ]
+        crud.create_lr_visibility(
+            db_session, LRVisibilityBulkCreate(data=items)
+        )
+
+        results = crud.get_lr_visibility(db_session, code="15013")
+        assert len(results) == 1
+        assert results[0].code == "15013"
+
+    def test_filter_by_month(self, db_session):
+        items = [
+            make_lr_visibility(code="15013", month=6),
+            make_lr_visibility(code="15014", month=7),
+        ]
+        crud.create_lr_visibility(
+            db_session, LRVisibilityBulkCreate(data=items)
+        )
+
+        results = crud.get_lr_visibility(db_session, month=6)
+        assert len(results) == 1
+        assert results[0].month == 6
+
+    def test_empty(self, db_session):
+        results = crud.get_lr_visibility(db_session, code="NONEXISTENT")
+        assert results == []
+
+
+# -------------------------------------------------------------------
+# Edge cases
+# -------------------------------------------------------------------
 
 class TestCRUDEdgeCases:
     """Cross-cutting edge case tests."""
