@@ -397,13 +397,15 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
                 if exit_status == 124:  # Timeout
                     final_status = "Timeout"
                     details = f"Task timed out after {self.timeout_seconds} seconds"
-                    break
-
-                    # Send failure notification for timeout
                     self.send_failure_notification(
-                        f"Task timed out after {self.timeout_seconds} seconds", logs
+                        f"Task timed out after {self.timeout_seconds}s "
+                        f"on attempt {attempts}/{self.max_retries}",
+                        logs,
                     )
-                    break
+                    raise RuntimeError(
+                        f"Task timed out after {self.timeout_seconds} seconds "
+                        f"(attempt {attempts}/{self.max_retries})"
+                    )
 
                 if attempts < self.max_retries:
                     print(

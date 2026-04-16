@@ -36,6 +36,9 @@ echo "| Tasks will be submitted to Luigi daemon at $LUIGI_SCHEDULER_URL"
 # Create a modified luigi.cfg file
 echo "[core]" > temp_luigi.cfg
 echo "default_scheduler_url = $LUIGI_SCHEDULER_URL" >> temp_luigi.cfg
+echo "" >> temp_luigi.cfg
+echo "[worker]" >> temp_luigi.cfg
+echo "check_complete_on_run = true" >> temp_luigi.cfg
 
 # Regular command
 # Note: PYTHONPATH=/app is set in docker-compose-luigi.yml for Luigi module resolution

@@ -59,7 +59,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-001** | Fix forecast dashboard for LR-only deployments | fd | **High** | Review | [`archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md`](issues/archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md) | — |
 | **FD-002** | Fix range_type label mismatch and inverted math in summary table | fd | **Mid** | Review | [`archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md`](issues/archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md) | ~~FD-001~~ |
 | **INFRA-014** | Add deployment initialization workflow | infra | **High** | Review | [`review_gi_draft_infra_new_deployment_initialization.md`](issues/review_gi_draft_infra_new_deployment_initialization.md) | FD-001 (partial) |
-| **P-004** | Fix silent timeout failure in `execute_with_retries` — timed-out tasks marked DONE | pipeline | **High** | Draft | [`high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md`](issues/high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md) |
+| **P-004** | Fix silent timeout failure in `execute_with_retries` — timed-out tasks marked DONE | pipeline | **High** | Review | [`high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md`](issues/high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md) |
 
 ---
 
