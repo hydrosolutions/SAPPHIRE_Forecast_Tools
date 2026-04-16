@@ -1,8 +1,8 @@
 """Yearly snow norm recalculation.
 
-Reads historical snow CSVs, computes climatological daily norms using
-``dg_utils.calculate_snow_norms()``, and writes full-year norm records
-to the SAPPHIRE preprocessing API.
+Computes climatological daily norms from the SAPPHIRE preprocessing API
+using ``dg_utils.calculate_snow_norms_from_api()``, and writes full-year
+norm records back to the API.
 
 Designed to run once a year (e.g., end of August via cron) after the
 snow reanalysis files have been updated.
@@ -43,13 +43,14 @@ def recalculate_norms(
     year: int,
     env_overrides: dict | None = None,
 ) -> bool:
-    """Calculate snow norms from historical CSVs and write to API.
+    """Calculate snow norms from API historical data and write back.
 
     Args:
-        snow_path: Root directory containing per-variable snow CSV
-            subdirectories (e.g., ``{snow_path}/SWE/HRU01_SWE.csv``).
+        snow_path: Deprecated — no longer used (CSV migration complete).
+            Kept for backward compatibility with ``main()`` entry point.
         variables: Snow variable names (e.g., ``["SWE", "HS", "RoF"]``).
-        hru_codes: HRU codes (e.g., ``["HRU_SNOW01"]``).
+        hru_codes: Deprecated — station codes are now discovered from
+            API data. Kept for backward compatibility.
         year: Target year to write norms for (all 365/366 days).
         env_overrides: Optional dict of env var overrides for testing
             (e.g., ``{"SAPPHIRE_API_ENABLED": "true"}``).
@@ -83,29 +84,9 @@ def _recalculate_norms_impl(
     year: int,
 ) -> bool:
     """Internal implementation of norm recalculation."""
-    # 1. Compute norms from historical CSVs
-    logger.info(
-        "Calculating snow norms from %s for variables %s, HRUs %s",
-        snow_path,
-        variables,
-        hru_codes,
-    )
-    norms_df = dg_utils.calculate_snow_norms(snow_path, variables, hru_codes)
-
-    if norms_df.empty:
-        logger.warning("No snow norms computed — no historical data found")
-        return False
-
-    logger.info(
-        "Computed %d norm entries across %d variables and %d codes",
-        len(norms_df),
-        norms_df["snow_type"].nunique(),
-        norms_df["code"].nunique(),
-    )
-
-    # 2. Check API availability
+    # 1. Check API availability and create client
     if not dg_utils.SAPPHIRE_API_AVAILABLE:
-        logger.warning("sapphire-api-client not installed, cannot write norms")
+        logger.warning("sapphire-api-client not installed, cannot compute or write norms")
         return False
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
@@ -117,8 +98,26 @@ def _recalculate_norms_impl(
     client = dg_utils.SapphirePreprocessingClient(base_url=api_url)
 
     if not client.readiness_check():
-        logger.warning("API at %s not ready, skipping norm write", api_url)
+        logger.warning("API at %s not ready, skipping norm recalculation", api_url)
         return False
+
+    # 2. Compute norms from API data
+    logger.info(
+        "Calculating snow norms from API for variables %s",
+        variables,
+    )
+    norms_df = dg_utils.calculate_snow_norms_from_api(client, variables)
+
+    if norms_df.empty:
+        logger.warning("No snow norms computed — no historical data found in API")
+        return False
+
+    logger.info(
+        "Computed %d norm entries across %d variables and %d codes",
+        len(norms_df),
+        norms_df["snow_type"].nunique(),
+        norms_df["code"].nunique(),
+    )
 
     # 3. Build date range for the target year
     is_leap = dg_utils.is_leap_year(year)

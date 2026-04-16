@@ -308,6 +308,10 @@ def calculate_snow_norms(
 ) -> pd.DataFrame:
     """Calculate climatological daily snow norms from historical CSVs.
 
+    .. deprecated::
+        Use ``calculate_snow_norms_from_api()`` instead. CSV-based
+        computation is deprecated as part of the CSV-to-API migration.
+
     Reads CSV files at ``{path}/{variable}/{hru}_{variable}.csv``,
     groups by (code, dayofyear), and computes the mean value for each
     day of the year.
@@ -365,6 +369,106 @@ def calculate_snow_norms(
                 norms["snow_type"] = variable
                 norms["code"] = str(code)
                 result_frames.append(norms[["snow_type", "code", "dayofyear", "norm"]])
+
+    if result_frames:
+        return pd.concat(result_frames, ignore_index=True)
+
+    return pd.DataFrame(columns=["snow_type", "code", "dayofyear", "norm"])
+
+
+def calculate_snow_norms_from_api(
+    client,
+    variables: list[str],
+) -> pd.DataFrame:
+    """Calculate climatological daily snow norms from API data.
+
+    Reads all historical snow data from the preprocessing API for each
+    variable (no code filter — discovers station codes from the response).
+    Groups by ``(code, dayofyear)`` and computes the mean of the
+    ``value`` column across all years.
+
+    Args:
+        client: SapphirePreprocessingClient instance.
+        variables: Snow variable names (e.g., ``["SWE", "HS", "RoF"]``).
+
+    Returns:
+        DataFrame with columns ``[snow_type, code, dayofyear, norm]``.
+        Returns an empty DataFrame with those columns if no data is
+        found.
+    """
+    result_frames = []
+    batch_size = 10000
+
+    for variable in variables:
+        # Paginate through all historical data for this variable
+        pages = []
+        skip = 0
+        try:
+            while True:
+                page = client.read_snow(
+                    snow_type=variable.upper(),
+                    skip=skip,
+                    limit=batch_size,
+                )
+                if page.empty:
+                    break
+                pages.append(page)
+                if len(page) < batch_size:
+                    break
+                skip += batch_size
+        except Exception as e:
+            logger.warning(
+                "Could not read snow data for %s: %s",
+                variable,
+                e,
+            )
+            continue
+
+        if not pages:
+            logger.info("No API data for %s, skipping", variable)
+            continue
+
+        df = pd.concat(pages, ignore_index=True)
+        df = df.drop_duplicates(subset=["snow_type", "code", "date"])
+        logger.info(
+            "Fetched %d unique rows for %s in %d pages",
+            len(df),
+            variable,
+            len(pages),
+        )
+
+        if "value" not in df.columns:
+            logger.warning(
+                "No 'value' column for %s, skipping",
+                variable,
+            )
+            continue
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date", "value"])
+
+        if df.empty:
+            continue
+
+        df["dayofyear"] = df["date"].dt.dayofyear
+
+        # Compute norms per station code, per day of year
+        for code in df["code"].unique():
+            code_df = df[df["code"] == code]
+
+            n_years = code_df["date"].dt.year.nunique()
+            logger.info(
+                "Computing norm for %s/%s from %d years of data",
+                variable,
+                code,
+                n_years,
+            )
+
+            norms = code_df.groupby("dayofyear")["value"].mean().reset_index()
+            norms.columns = ["dayofyear", "norm"]
+            norms["snow_type"] = variable
+            norms["code"] = str(code)
+            result_frames.append(norms[["snow_type", "code", "dayofyear", "norm"]])
 
     if result_frames:
         return pd.concat(result_frames, ignore_index=True)
