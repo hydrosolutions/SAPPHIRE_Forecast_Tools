@@ -316,12 +316,12 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     # Show the loading spinner
     #indicator.value = True
 
-    # Get the forecast horizon — prefer explicit parameter, fall back to env var
-    sapphire_forecast_horizon = horizon or os.getenv("sapphire_forecast_horizon")
+    # Get the forecast horizon from the caller (widget value)
+    sapphire_forecast_horizon = horizon
     if sapphire_forecast_horizon is None:
-        raise ValueError("sapphire_forecast_horizon is not set — pass horizon parameter or set the environment variable")
+        raise ValueError("horizon parameter is required")
     if sapphire_forecast_horizon not in ['pentad', 'decad']:
-        raise ValueError(f"sapphire_forecast_horizon must be either 'pentad' or 'decad', got '{sapphire_forecast_horizon}'")
+        raise ValueError(f"horizon must be either 'pentad' or 'decad', got '{sapphire_forecast_horizon}'")
     print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
 
 

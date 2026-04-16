@@ -214,19 +214,9 @@ def display_weather_and_snow_data():
 
 
 def get_horizon():
-    # Print forecast horizon variable from environment
-    horizon = os.getenv('sapphire_forecast_horizon')
-    if horizon:
-        print(f"INFO: Forecast horizon: {horizon}")
-    else:
-        print("WARNING: Forecast horizon not set. Assuming default 'decad'.")
-        horizon = 'decad'
-    
-    if horizon == "pentad":
-        horizon_in_year = "pentad_in_year"
-        # dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
-    else:
-        horizon_in_year = "decad_in_year"
-        # dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
-    
-    return horizon, horizon_in_year#, dashboard_title
+    # Default horizon — the widget starts at "pentad" regardless.
+    # The env var sapphire_forecast_horizon is no longer used; the
+    # active horizon always comes from the horizon_selector widget.
+    horizon = "pentad"
+    horizon_in_year = "pentad_in_year"
+    return horizon, horizon_in_year

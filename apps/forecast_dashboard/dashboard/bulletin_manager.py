@@ -374,13 +374,14 @@ class BulletinManager:
             for site in filtered:
                 print(f"DEBUG: Writing site '{site.code}' with forecasts: {site.forecasts}")
 
+            horizon = self.wm.horizon_selector.value
             last_date, forecast_horizon, forecast_year = self.dm.get_bulletin_metadata(
-                self.wm.horizon_selector.value
+                horizon
             )
-            bulletin_header_info = self._processing.get_bulletin_header_info(last_date, self.cfg.horizon)
+            bulletin_header_info = self._processing.get_bulletin_header_info(last_date, horizon)
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
-                self.cfg.env_file_path, horizon=self.wm.horizon_selector.value,
+                self.cfg.env_file_path, horizon=horizon,
             )
             print("DEBUG: Bulletin written to Excel successfully.")
             # Refresh the file downloader panel
