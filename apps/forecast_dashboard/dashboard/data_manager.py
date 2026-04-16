@@ -327,11 +327,13 @@ class DataManager(param.Parameterized):
 
     def wire_data_reload(self, pm: PlotManager) -> None:
         """Watch the data_reloader flag and refresh plots when it fires."""
-        def _on_data_needs_reload(event):
-            if not event.new:
-                return
-            print("Triggered rerunning of forecasts.")
-            logger.info("Data reload triggered — reloading data and refreshing visualisations.")
+        # Capture the Bokeh document while we are on the document thread.
+        # Background threads and deferred callbacks lose this context, so
+        # we store it once and use doc.add_next_tick_callback explicitly.
+        _doc = pn.state.curdoc
+
+        def _do_reload():
+            """Reload data and refresh all visualisations."""
             _fa = self.forecasts_all
             logger.debug(
                 "D5 Before reload — forecasts_all: %d rows, max date=%s",
@@ -339,13 +341,11 @@ class DataManager(param.Parameterized):
                 _fa["date"].max() if _fa is not None and not _fa.empty else "N/A",
             )
             try:
-                # Reload data from the API so visualisations use fresh results
                 horizon = pm._wm.horizon_selector.value
                 station_code = pm._wm.station_selector.value.split()[0]
                 self.load_station(horizon, station_code)
                 self.invalidate_render_cache()
 
-                # Update date picker to reflect newly available data
                 if not self.forecasts_all.empty:
                     max_date = self.forecasts_all['date'].max()
                     if hasattr(max_date, 'date'):
@@ -364,6 +364,19 @@ class DataManager(param.Parameterized):
                 print(f"Error during forecast rerun: {e}")
             finally:
                 processing.data_reloader.data_needs_reload = False
+
+        def _on_data_needs_reload(event):
+            if not event.new:
+                return
+            print("Triggered rerunning of forecasts.")
+            logger.info("Data reload triggered — reloading data and refreshing visualisations.")
+            # Schedule on the captured document so Bokeh pushes widget
+            # changes to the browser regardless of which thread we are on.
+            if _doc and _doc.session_context:
+                _doc.add_next_tick_callback(_do_reload)
+            else:
+                # Fallback: no document (e.g. during tests) — run directly
+                _do_reload()
 
         # Attach watcher only once
         if not getattr(processing.data_reloader, "watcher_attached", False):
