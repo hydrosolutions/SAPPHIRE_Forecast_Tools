@@ -196,9 +196,9 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
     """Base class for Docker-based Luigi tasks with common functionality."""
 
     # Common timeout parameters
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
+    timeout_seconds = luigi.OptionalIntParameter(default=None)
+    max_retries = luigi.OptionalIntParameter(default=None)
+    retry_delay = luigi.OptionalIntParameter(default=None)
 
     # Log file path
     docker_logs_file_path = None
@@ -865,9 +865,9 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     days_old = luigi.IntParameter(default=2)
 
     # Set timeout to 5 minutes (300 seconds) - should be plenty for a file deletion task
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
+    timeout_seconds = luigi.OptionalIntParameter(default=None)
+    max_retries = luigi.OptionalIntParameter(default=None)
+    retry_delay = luigi.OptionalIntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get("ieasyforecast_intermediate_data_path"))
@@ -1038,9 +1038,9 @@ class DeleteOldMarkerFiles(pu.TimeoutMixin, luigi.Task):
     days_old = luigi.IntParameter(default=3)
 
     # Set timeout to 5 minutes (300 seconds) - should be plenty for a file deletion task
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
+    timeout_seconds = luigi.OptionalIntParameter(default=None)
+    max_retries = luigi.OptionalIntParameter(default=None)
+    retry_delay = luigi.OptionalIntParameter(default=None)
 
     # Use the intermediate_data_path for log files
     intermediate_data_path = get_bind_path(env.get("ieasyforecast_intermediate_data_path"))
@@ -1210,9 +1210,9 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_dockerLogsFileCleanup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
+    timeout_seconds = luigi.OptionalIntParameter(default=None)
+    max_retries = luigi.OptionalIntParameter(default=None)
+    retry_delay = luigi.OptionalIntParameter(default=None)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
