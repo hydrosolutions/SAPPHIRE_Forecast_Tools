@@ -8,9 +8,11 @@ Override any field via keyword arguments.
 from datetime import date
 
 from app.schemas import (
+    BulletinCreate,
     ForecastCreate,
     LongForecastCreate,
     LRForecastCreate,
+    LRVisibilityCreate,
     SkillMetricCreate,
 )
 
@@ -102,3 +104,39 @@ def make_skill_metric(**overrides):
     }
     defaults.update(overrides)
     return SkillMetricCreate(**defaults)
+
+
+def make_bulletin(**overrides):
+    """Create a BulletinCreate with sensible defaults."""
+    defaults = {
+        "horizon_type": "pentad",
+        "year": 2024,
+        "horizon_value": 3,
+        "code": "15013",
+        "model_type": "LR",
+        "basin_name": "Test Basin",
+        "station_label": "15013 - Test Station",
+        "forecasted_discharge": 100.0,
+        "fc_lower": 90.0,
+        "fc_upper": 110.0,
+        "delta": 5.0,
+        "sdivsigma": 0.8,
+        "mae": 10.5,
+        "accuracy": 0.85,
+    }
+    defaults.update(overrides)
+    return BulletinCreate(**defaults)
+
+
+def make_lr_visibility(**overrides):
+    """Create a LRVisibilityCreate with sensible defaults."""
+    defaults = {
+        "horizon_type": "pentad",
+        "code": "15013",
+        "month": 6,
+        "horizon_value": 3,
+        "year": 2024,
+        "visible": True,
+    }
+    defaults.update(overrides)
+    return LRVisibilityCreate(**defaults)

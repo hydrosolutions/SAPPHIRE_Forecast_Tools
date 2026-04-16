@@ -144,8 +144,11 @@ MODULES=(
 
 # List of sapphire services with tests (in sapphire/services/<name>/)
 SERVICE_MODULES=(
+    "api-gateway"
     "postprocessing"
     "preprocessing"
+    "user"
+    "auth"
 )
 
 # If a specific module is provided as argument, only run that one

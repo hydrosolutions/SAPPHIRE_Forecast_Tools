@@ -389,6 +389,194 @@ class TestSkillMetricEndpoints:
 
 
 # -------------------------------------------------------------------
+# Bulletin endpoints
+# -------------------------------------------------------------------
+
+class TestBulletinEndpoints:
+    """Tests for POST /bulletin/, GET /bulletin/, DELETE /bulletin/."""
+
+    def _payload(self, **overrides):
+        """Build a single-item bulletin payload."""
+        defaults = {
+            "horizon_type": "pentad",
+            "year": 2024,
+            "horizon_value": 3,
+            "code": "15013",
+            "model_type": "LR",
+            "basin_name": "Test Basin",
+            "station_label": "15013 - Test Station",
+            "forecasted_discharge": 100.0,
+            "fc_lower": 90.0,
+            "fc_upper": 110.0,
+            "delta": 5.0,
+            "sdivsigma": 0.8,
+            "mae": 10.5,
+            "accuracy": 0.85,
+        }
+        defaults.update(overrides)
+        return {"data": [defaults]}
+
+    def test_post_creates(self, client):
+        resp = client.post("/bulletin/", json=self._payload())
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["code"] == "15013"
+        assert data[0]["model_type"] == "LR"
+        assert data[0]["year"] == 2024
+        assert data[0]["horizon_value"] == 3
+        assert data[0]["forecasted_discharge"] == 100.0
+        assert data[0]["basin_name"] == "Test Basin"
+        assert data[0]["id"] is not None
+
+    def test_get_empty(self, client):
+        resp = client.get("/bulletin/")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_get_with_filters(self, client):
+        payload = {"data": [
+            {
+                "horizon_type": "pentad", "year": 2024, "horizon_value": 3,
+                "code": "15013", "model_type": "LR",
+                "forecasted_discharge": 100.0,
+            },
+            {
+                "horizon_type": "pentad", "year": 2025, "horizon_value": 3,
+                "code": "15013", "model_type": "LR",
+                "forecasted_discharge": 200.0,
+            },
+        ]}
+        client.post("/bulletin/", json=payload)
+
+        resp = client.get("/bulletin/", params={"year": 2024})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["year"] == 2024
+        assert data[0]["forecasted_discharge"] == 100.0
+
+    def test_delete(self, client):
+        client.post("/bulletin/", json=self._payload())
+
+        resp = client.delete(
+            "/bulletin/",
+            params={
+                "horizon": "pentad",
+                "year": 2024,
+                "horizon_value": 3,
+                "code": "15013",
+            },
+        )
+        assert resp.status_code == 204
+
+        # Record should be gone
+        get_resp = client.get("/bulletin/")
+        assert get_resp.json() == []
+
+    def test_delete_not_found(self, client):
+        resp = client.delete(
+            "/bulletin/",
+            params={
+                "horizon": "pentad",
+                "year": 2024,
+                "horizon_value": 3,
+                "code": "NONEXISTENT",
+            },
+        )
+        assert resp.status_code == 404
+
+    def test_upsert_via_endpoint(self, client):
+        """POST same unique key twice, second call updates forecasted_discharge."""
+        client.post("/bulletin/", json=self._payload())
+
+        updated_payload = self._payload(forecasted_discharge=999.0)
+        resp = client.post("/bulletin/", json=updated_payload)
+        assert resp.status_code == 201
+        assert resp.json()[0]["forecasted_discharge"] == 999.0
+
+        # Only 1 record should exist
+        all_resp = client.get("/bulletin/")
+        assert len(all_resp.json()) == 1
+
+
+# -------------------------------------------------------------------
+# LRVisibility endpoints
+# -------------------------------------------------------------------
+
+class TestLRVisibilityEndpoints:
+    """Tests for POST /lr-visibility/ and GET /lr-visibility/."""
+
+    def _payload(self, **overrides):
+        """Build a single-item LR visibility payload."""
+        defaults = {
+            "horizon_type": "pentad",
+            "code": "15013",
+            "month": 6,
+            "horizon_value": 3,
+            "year": 2024,
+            "visible": True,
+        }
+        defaults.update(overrides)
+        return {"data": [defaults]}
+
+    def test_post_creates(self, client):
+        resp = client.post("/lr-visibility/", json=self._payload())
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["code"] == "15013"
+        assert data[0]["month"] == 6
+        assert data[0]["horizon_value"] == 3
+        assert data[0]["year"] == 2024
+        assert data[0]["visible"] is True
+        assert data[0]["id"] is not None
+
+    def test_get_empty(self, client):
+        resp = client.get("/lr-visibility/")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_get_with_filters(self, client):
+        payload = {"data": [
+            {
+                "horizon_type": "pentad", "code": "15013",
+                "month": 6, "horizon_value": 3,
+                "year": 2024, "visible": True,
+            },
+            {
+                "horizon_type": "pentad", "code": "15014",
+                "month": 6, "horizon_value": 3,
+                "year": 2024, "visible": False,
+            },
+        ]}
+        client.post("/lr-visibility/", json=payload)
+
+        resp = client.get("/lr-visibility/", params={"code": "15013"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["code"] == "15013"
+        assert data[0]["visible"] is True
+
+    def test_upsert_via_endpoint(self, client):
+        """POST same unique key twice with different visible, verify updated."""
+        client.post("/lr-visibility/", json=self._payload(visible=True))
+
+        resp = client.post(
+            "/lr-visibility/", json=self._payload(visible=False)
+        )
+        assert resp.status_code == 201
+        assert resp.json()[0]["visible"] is False
+
+        # Only 1 record should exist
+        all_resp = client.get("/lr-visibility/")
+        assert len(all_resp.json()) == 1
+
+
+# -------------------------------------------------------------------
 # Endpoint edge cases
 # -------------------------------------------------------------------
 

@@ -34,7 +34,6 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 @pytest.fixture(autouse=True)
 def _dashboard_env(monkeypatch):
     """Set env vars expected by dashboard code."""
-    monkeypatch.setenv("sapphire_forecast_horizon", "pentad")
     monkeypatch.setenv("SAPPHIRE_TEST_ENV", "True")
 
 
