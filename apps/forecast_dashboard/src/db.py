@@ -242,7 +242,7 @@ def _get_snow_single(station_code: str, snow_type: str, col_name: str) -> pd.Dat
     df = _read_data("preprocessing", "snow", {
         "snow_type": snow_type,
         "code": station_code,
-        "start_date": f"{CURRENT_YEAR}-01-01",
+        "start_date": f"{PREVIOUS_YEAR}-01-01",
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 10000,
     })

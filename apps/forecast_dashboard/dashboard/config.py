@@ -21,6 +21,8 @@ class DashboardConfig:
     dashboard_title: str
     display_weather_data: bool
     display_snow_data: bool
+    snow_display_start_month: int
+    snow_display_start_day: int
 
 
 def init_dashboard(pn) -> DashboardConfig:
@@ -39,6 +41,14 @@ def init_dashboard(pn) -> DashboardConfig:
     dashboard_title = _('SAPPHIRE Central Asia - Forecast dashboard')
     display_weather, display_snow = display_weather_and_snow_data()
 
+    snow_start = os.getenv('ieasyhydroforecast_SNOW_DISPLAY_START_MMDD', '01-01')
+    try:
+        snow_month, snow_day = int(snow_start[:2]), int(snow_start[3:])
+        from datetime import date as _date
+        _date(2001, snow_month, snow_day)  # validate range, reject Feb 29
+    except (ValueError, IndexError):
+        snow_month, snow_day = 1, 1
+
     return DashboardConfig(
         env_file_path=env_file_path,
         in_docker=in_docker,
@@ -50,6 +60,8 @@ def init_dashboard(pn) -> DashboardConfig:
         dashboard_title=dashboard_title,
         display_weather_data=display_weather,
         display_snow_data=display_snow,
+        snow_display_start_month=snow_month,
+        snow_display_start_day=snow_day,
     )
 
 

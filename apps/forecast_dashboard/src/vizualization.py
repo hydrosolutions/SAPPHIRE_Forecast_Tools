@@ -2170,7 +2170,25 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
 
     return figure
 
-def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linreg_predictor):
+
+def _snow_display_window(start_month, start_day, ref_date):
+    """Return (begin, end) Timestamps for the snow display window."""
+    from datetime import date, timedelta
+    if start_month == 1 and start_day == 1:
+        return (pd.Timestamp(ref_date.year, 1, 1),
+                pd.Timestamp(ref_date.year, 12, 31))
+    year_start = date(ref_date.year, start_month, start_day)
+    if ref_date >= year_start:
+        begin = year_start
+    else:
+        begin = date(ref_date.year - 1, start_month, start_day)
+    end = date(begin.year + 1, start_month, start_day) - timedelta(days=1)
+    return pd.Timestamp(begin), pd.Timestamp(end)
+
+
+def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
+                         linreg_predictor, snow_display_start_month=1,
+                         snow_display_start_day=1):
     """
     Plot snow data for a specific variable.
     """
@@ -2186,7 +2204,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
     # Variable-specific settings
     variable_config = {
         'SWE': {'label': _('Snow Water Equivalent'), 'unit': 'mm', 'ylabel': _('SWE (mm)'), 'decimals': 1},
-        'HS': {'label': _('Snow Height'), 'unit': 'm', 'ylabel': _('Snow Height (m)'), 'decimals': 2},
+        'HS': {'label': _('Snow Height'), 'unit': 'cm', 'ylabel': _('Snow Height (cm)'), 'decimals': 1},
         'RoF': {'label': _('Snowmelt Runoff & P Runoff'), 'unit': 'mm', 'ylabel': _('Snowmelt & P Runoff (mm)'), 'decimals': 1}
     }
     config = variable_config.get(variable, {'label': variable, 'unit': '', 'ylabel': variable, 'decimals': 1})
@@ -2213,8 +2231,19 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
     station_data['year'] = station_data['date'].dt.year
     station_data['doy'] = station_data['date'].dt.dayofyear
 
-    # Get current year data
-    current_year = station_data[station_data['year'] == date_picker.year].copy()
+    # Convert HS from meters to centimeters
+    if variable == 'HS':
+        station_data[variable] = station_data[variable] * 100
+        station_data['norm'] = station_data['norm'] * 100
+
+    # Get data for the configured display window
+    display_begin, display_end = _snow_display_window(
+        snow_display_start_month, snow_display_start_day,
+        date_picker.date() if hasattr(date_picker, 'date') else date_picker)
+    current_year = station_data[
+        (station_data['date'] >= display_begin) &
+        (station_data['date'] <= display_end)
+    ].copy()
     current_year = current_year.sort_values('date')
     norm_snow = current_year[['doy', 'norm', 'date']].copy()
     norm_snow.rename(columns={"norm": variable}, inplace=True)
@@ -2255,8 +2284,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
     current_year_text = f"{_('Current year')}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else _('Current year')
 
     # Forecast label
-    forecast_mean = forecasts[variable].mean() if not forecasts.empty else float('nan')
-    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecast_mean:.{decimals}f} {config['unit']}" if not pd.isna(forecast_mean) else _('Forecast')
+    forecast_text = _('Forecast')
 
     # Calculate y-axis limits safely
     all_values = pd.concat([current_year[variable], norm_snow[variable]]).dropna()
@@ -2265,11 +2293,6 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
         y_max = all_values.max() * 1.1
     else:
         y_min, y_max = 0, 1
-
-    if variable == 'HS':
-        vlines = create_cached_vlines_hs_special_case(_, horizon, for_dates=True)
-    else:
-        vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=y_min * 1.05)
 
     # Norm curve
     hv_norm = hv.Curve(
@@ -2304,9 +2327,9 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = vlines * hv_norm * hv_current_year * hv_forecast
+        figure = hv_norm * hv_current_year * hv_forecast
     else:
-        figure = vlines * hv_norm * hv_current_year
+        figure = hv_norm * hv_current_year
 
     figure.opts(
         title=title_text,
@@ -2319,7 +2342,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker, linre
         hooks=[remove_bokeh_logo],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
         ylim=(y_min, y_max),
-        xlim=(min(norm_snow['date']), max(norm_snow['date'])),
+        xlim=(display_begin, display_end),
         tools=['hover'],
         toolbar='right',
         shared_axes=False
