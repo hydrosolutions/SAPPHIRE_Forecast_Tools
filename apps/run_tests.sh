@@ -144,6 +144,7 @@ MODULES=(
 
 # List of sapphire services with tests (in sapphire/services/<name>/)
 SERVICE_MODULES=(
+    "api-gateway"
     "postprocessing"
     "preprocessing"
     "user"
