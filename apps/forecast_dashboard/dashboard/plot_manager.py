@@ -285,31 +285,7 @@ class PlotManager:
     # ------------------------------------------------------------------
     def refresh_all_visualizations(self):
         """Re-render every forecast-related visualisation."""
-        # Re-bind the plots to use the updated data
-        kw = self._common_plot_kwargs()
-
-        #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
-        self._cfg.viz.plot_pentad_forecast_hydrograph_data(
-            self._,
-            horizon=self._wm.horizon_selector.value,
-            hydrograph_pentad_all=self._dm.hydrograph_pentad_all,
-            **kw,
-        )
-        #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
-        #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
-        self._cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
-            self._,
-            horizon=self._wm.horizon_selector.value,
-            hydrograph_day_all=self._dm.hydrograph_day_all,
-            linreg_predictor=self._dm.linreg_predictor,
-            rram_forecast=self._dm.rram_forecast,
-            ml_forecast=self._dm.ml_forecast,
-            **kw,
-        )
-        #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
-        #print('---   ---update_forecast_tabulator---   ---')
-        self.update_forecast_tabulator()
-        #print('---   ---done with update_forecast_tabulator---   ---')
+        self.update_forecast_plots()
 
     # ------------------------------------------------------------------
     # Tab-activation renderer (lazy rendering per station)

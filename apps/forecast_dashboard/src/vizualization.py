@@ -3956,7 +3956,11 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
             save_button.disabled = False
             progress_bar.value = 100  # Set progress to complete when done
             print("Docker container completed.")
-            processing.data_reloader.data_needs_reload = True
+
+            @pn.io.with_lock
+            def _trigger_reload():
+                processing.data_reloader.data_needs_reload = True
+            _trigger_reload()
 
         pn.state.onload(
             lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
