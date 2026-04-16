@@ -281,7 +281,10 @@ typically set in the deployment `.env` file alongside the standard
 |----------|-------------|
 | `ieasyhydroforecast_SNOW_VARS` | Available snow variables (e.g., `SWE,ROF,HS`) |
 | `ieasyhydroforecast_HRU_SNOW_DATA` | Available HRU codes for snow data |
-| `DB_POSTPROCESS_CONNECTION_STRING` | PostgreSQL connection string for `DataInterfaceDB` |
+| `POSTGRES_USER` | PostgreSQL username (shared with sapphire services) |
+| `POSTGRES_PASSWORD` | PostgreSQL password (shared with sapphire services) |
+| `POSTPROCESSING_DB` | Postprocessing database name (shared with sapphire services) |
+| `POSTPROCESSING_DB_PORT` | External port for postprocessing DB (default: 5434, ignored inside Docker) |
 | `ieasyhydroforecast_ECMWF_IFS_lead_time` | ECMWF IFS forecast lead time in days |
 
 ## Data Interface
@@ -292,7 +295,11 @@ The `data_interface.py` module provides three data interface classes for loading
 Retrieves data from PostgreSQL database via SAPPHIRE services.
 
 **Environment Variables:**
-- `DB_POSTPROCESS_CONNECTION_STRING` - PostgreSQL connection string
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTPROCESSING_DB` - DB credentials
+  (shared with sapphire services; URL built automatically by
+  `_build_postprocessing_db_url()`)
+- `POSTPROCESSING_DB_PORT` - External port override (default: 5434, ignored
+  inside Docker)
 - `ieasyhydroforecast_models_and_scalers_path` - Path to models/scalers
 - `ieasyhydroforecast_ml_long_term_path_to_static` - Static features CSV path
 - `ieasyhydroforecast_SNOW_VARS` - Available snow variables (SWE, ROF, HS)
@@ -323,6 +330,12 @@ CSV-based interface retained for backward compatibility; being phased out.
 
 ### BasePredictorDataInterface
 Retrieves forecast predictions from postprocessing database for models that depend on other models' outputs.
+
+**Environment Variables:**
+- Uses the same `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTPROCESSING_DB` env
+  vars as `DataInterfaceDB`. URL built by `_build_postprocessing_db_url()`.
+  Required only when `sapphire_api_client` is installed; CSV-only mode does
+  not need it (connection errors are deferred to first DB access).
 
 **Key Methods:**
 - `get_base_predictor_data_database(model_name, horizon_type, horizon_value)` - Load predictions from `long_forecasts` table

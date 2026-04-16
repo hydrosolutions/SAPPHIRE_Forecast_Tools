@@ -47,7 +47,14 @@ HORIZON_TYPE_TO_SKILL = {
     "season": "SEASONAL",
 }
 
-ISSUE_DAY_TOLERANCE = 5
+# Temoporarily relaxed to 10 days to allow more modes to be active for testing and calibration.
+# Must be changed back to 5 days for operational use to avoid running modes too far from their issue day.
+ISSUE_DAY_TOLERANCE = 10
+
+# Modes used only for calibration / retraining, not operational scheduling.
+# Keep them in ieasyhydroforecast_ml_long_term_supported_modes so the
+# maintenance pipeline can reference them, but skip in query_schedule().
+NON_OPERATIONAL_MODES = {"monthly"}
 
 
 def day_distance(today_dom: int, issue_day: int) -> int:
@@ -79,6 +86,10 @@ def query_schedule(today: pd.Timestamp) -> dict:
     skill_types = set()
 
     for mode in supported_modes:
+        if mode in NON_OPERATIONAL_MODES:
+            skipped_modes[mode] = "non-operational (calibration/retraining only)"
+            continue
+
         try:
             config.load_forecast_config(forecast_mode=mode)
         except Exception as e:
