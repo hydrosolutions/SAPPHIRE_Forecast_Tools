@@ -194,7 +194,12 @@ def check_valid_forecast_issue_date(forecast_configs: ForecastConfig, model_name
     day_offset = (today - scheduled_issue_date).days  # negative = early, positive = late
 
     # If more than 5 days off, skip gracefully (not an error)
-    if abs(day_offset) > 5:
+    #
+    # IMPORTANT NOTE:
+    # Temporarily allow a wider window for the first few runs to accommodate
+    # any initial scheduling issues, but log a warning. After the first few
+    # successful runs on the server, we can tighten this back to 5 days.
+    if abs(day_offset) > 10:
         logger.info(
             "Model %s not scheduled: %d days from issue date %s — skipping",
             model_name,

@@ -2377,12 +2377,16 @@ class RunLongTermWorkflow(luigi.Task):
         base_tasks.append(DeleteOldMarkerFiles())
 
         # --- Step 4: Yield dynamic dependencies ---
+        # Yield base_tasks first. Luigi pauses the generator until all
+        # complete, so the notification runs only after forecasts finish.
+        # Do NOT pass depends_on=base_tasks — Luigi Parameters serialize
+        # Task objects to strings, which crashes the remote scheduler.
+        yield base_tasks
+
         if self.send_notifications:
             yield SendPipelineCompletionNotification(
-                custom_message=f"LONG_TERM {self.custom_message}", depends_on=base_tasks
+                custom_message=f"LONG_TERM {self.custom_message}",
             )
-        else:
-            yield base_tasks
 
         # --- Step 5: Guard + write completion markers ---
         # Luigi resumes the generator only after all yielded deps are

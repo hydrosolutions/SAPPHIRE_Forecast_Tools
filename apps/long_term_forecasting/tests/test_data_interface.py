@@ -44,7 +44,12 @@ if ENV_AVAILABLE:
 
 # Always import the DB/scoping classes — they are tested with mocks
 # and do not require a live database or real .env file.
-from data_interface import BasePredictorDataInterface, DataInterfaceDB
+from data_interface import (
+    BasePredictorDataInterface,
+    DataInterfaceDB,
+    _build_postprocessing_db_url,
+    _build_preprocessing_db_url,
+)
 
 
 @pytest.mark.skipif(not ENV_AVAILABLE, reason=SKIP_REASON)
@@ -455,6 +460,141 @@ class TestReadStationCodes:
         _read_station_codes = _import_read_station_codes()
         codes = _read_station_codes()
         assert codes == []
+
+
+class TestBuildPostprocessingDbUrl:
+    """Tests for _build_postprocessing_db_url helper."""
+
+    def test_outside_docker_default_port(self, monkeypatch):
+        """Outside Docker: uses localhost:5434."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+        monkeypatch.delenv("IN_DOCKER", raising=False)
+        monkeypatch.delenv("POSTPROCESSING_DB_PORT", raising=False)
+
+        url = _build_postprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@localhost:5434/test_db"
+
+    def test_inside_docker(self, monkeypatch):
+        """Inside Docker: uses postprocessing-db:5432."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+        monkeypatch.setenv("IN_DOCKER", "True")
+
+        url = _build_postprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@postprocessing-db:5432/test_db"
+
+    def test_custom_port(self, monkeypatch):
+        """POSTPROCESSING_DB_PORT overrides default 5434."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+        monkeypatch.setenv("POSTPROCESSING_DB_PORT", "5555")
+        monkeypatch.delenv("IN_DOCKER", raising=False)
+
+        url = _build_postprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@localhost:5555/test_db"
+
+    def test_custom_port_ignored_in_docker(self, monkeypatch):
+        """Inside Docker, port is always 5432 regardless of POSTPROCESSING_DB_PORT."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+        monkeypatch.setenv("IN_DOCKER", "True")
+        monkeypatch.setenv("POSTPROCESSING_DB_PORT", "5555")
+
+        url = _build_postprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@postprocessing-db:5432/test_db"
+
+    def test_special_chars_in_password(self, monkeypatch):
+        """Passwords with special chars are URL-encoded."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss/word")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+        monkeypatch.delenv("IN_DOCKER", raising=False)
+        monkeypatch.delenv("POSTPROCESSING_DB_PORT", raising=False)
+
+        url = _build_postprocessing_db_url()
+
+        assert "p%40ss%2Fword" in url
+
+    def test_missing_user_raises(self, monkeypatch):
+        """Missing POSTGRES_USER raises ValueError."""
+        monkeypatch.delenv("POSTGRES_USER", raising=False)
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+
+        with pytest.raises(ValueError, match="POSTGRES_USER"):
+            _build_postprocessing_db_url()
+
+    def test_missing_password_raises(self, monkeypatch):
+        """Missing POSTGRES_PASSWORD raises ValueError."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
+
+        with pytest.raises(ValueError, match="POSTGRES_PASSWORD"):
+            _build_postprocessing_db_url()
+
+    def test_missing_db_name_raises(self, monkeypatch):
+        """Missing POSTPROCESSING_DB raises ValueError."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.delenv("POSTPROCESSING_DB", raising=False)
+
+        with pytest.raises(ValueError, match="POSTPROCESSING_DB"):
+            _build_postprocessing_db_url()
+
+    def test_multiple_missing_lists_all(self, monkeypatch):
+        """All components missing: error lists all three."""
+        monkeypatch.delenv("POSTGRES_USER", raising=False)
+        monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+        monkeypatch.delenv("POSTPROCESSING_DB", raising=False)
+
+        with pytest.raises(ValueError, match="POSTGRES_USER.*POSTGRES_PASSWORD.*POSTPROCESSING_DB"):
+            _build_postprocessing_db_url()
+
+
+class TestBuildPreprocessingDbUrl:
+    """Tests for _build_preprocessing_db_url helper."""
+
+    def test_outside_docker_default_port(self, monkeypatch):
+        """Outside Docker: uses localhost:5433."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("PREPROCESSING_DB", "test_db")
+        monkeypatch.delenv("IN_DOCKER", raising=False)
+        monkeypatch.delenv("PREPROCESSING_DB_PORT", raising=False)
+
+        url = _build_preprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@localhost:5433/test_db"
+
+    def test_inside_docker(self, monkeypatch):
+        """Inside Docker: uses preprocessing-db:5432."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.setenv("PREPROCESSING_DB", "test_db")
+        monkeypatch.setenv("IN_DOCKER", "True")
+
+        url = _build_preprocessing_db_url()
+
+        assert url == "postgresql://testuser:testpass@preprocessing-db:5432/test_db"
+
+    def test_missing_db_name_raises(self, monkeypatch):
+        """Missing PREPROCESSING_DB raises ValueError."""
+        monkeypatch.setenv("POSTGRES_USER", "testuser")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+        monkeypatch.delenv("PREPROCESSING_DB", raising=False)
+
+        with pytest.raises(ValueError, match="PREPROCESSING_DB"):
+            _build_preprocessing_db_url()
 
 
 # Run with "ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" python -m tests.test_data_interface"

@@ -150,16 +150,21 @@ class TestQuerySchedule:
 
     @patch("lt_schedule_query.ForecastConfig")
     @patch("lt_schedule_query.sl")
-    def test_day_18_no_modes_active(self, mock_sl, mock_fc_cls):
-        """Day 18: too far from both issue_day=10 and issue_day=25."""
+    def test_no_modes_active_when_far_from_all_issue_days(self, mock_sl, mock_fc_cls):
+        """Day 13: >10 days from both issue_day=1 and issue_day=25.
+
+        ISSUE_DAY_TOLERANCE is temporarily 10 (widened from 5).
+        day_distance(13, 1) = min(12, 18) = 12 > 10 → skipped
+        day_distance(13, 25) = min(12, 18) = 12 > 10 → skipped
+        """
         mock_fc_cls.return_value = make_multi_mode_config(
             {
-                "month_0": {"issue_day": 10, "models": ["LR_Base"]},
+                "month_0": {"issue_day": 1, "models": ["LR_Base"]},
                 "month_1": {"issue_day": 25, "models": ["LR_Base"]},
             }
         )
 
-        result = query_schedule(pd.Timestamp("2026-03-18"))
+        result = query_schedule(pd.Timestamp("2026-03-13"))
 
         assert result["active_modes"] == []
         assert len(result["skipped_modes"]) == 2
@@ -280,6 +285,40 @@ class TestQuerySchedule:
         assert "broken" in result["skipped_modes"]
         assert "config load error" in result["skipped_modes"]["broken"]
 
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_monthly_mode_skipped_as_non_operational(self, mock_sl, mock_fc_cls):
+        """monthly mode is skipped as non-operational even when issue_day matches."""
+        mock_fc_cls.return_value = make_multi_mode_config(
+            {
+                "monthly": {"issue_day": 10, "models": ["LR_Base"]},
+                "month_0": {"issue_day": 10, "models": ["LR_Base"]},
+            }
+        )
+
+        result = query_schedule(pd.Timestamp("2026-03-12"))
+
+        assert "monthly" in result["skipped_modes"]
+        assert "non-operational" in result["skipped_modes"]["monthly"]
+        assert "month_0" in result["active_modes"]
+        assert "monthly" not in result["active_modes"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_non_operational_mode_not_loaded(self, mock_sl, mock_fc_cls):
+        """monthly mode is skipped before load_forecast_config is ever called."""
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["monthly"],
+            issue_day=10,
+            models=["LR_Base"],
+        )
+
+        result = query_schedule(pd.Timestamp("2026-03-12"))
+
+        assert result["active_modes"] == []
+        assert "monthly" in result["skipped_modes"]
+        assert mock_fc_cls.return_value.load_forecast_config.call_count == 0
+
 
 class TestMainStdoutContract:
     """Verify that main() prints valid JSON as its last stdout line.
@@ -296,7 +335,7 @@ class TestMainStdoutContract:
         """main() with --today 2026-03-24 prints valid JSON as its last line.
 
         month_1 has issue_day=25, today is day 24 — distance is 1 which is
-        within ISSUE_DAY_TOLERANCE (5), so month_1 is active.
+        within ISSUE_DAY_TOLERANCE, so month_1 is active.
         """
         # Arrange
         mock_fc_cls.return_value = make_multi_mode_config(

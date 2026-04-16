@@ -7,6 +7,7 @@ import os
 import sys
 from time import time
 from typing import Any
+from urllib.parse import quote_plus
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,62 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
+def _build_db_url(
+    db_name_var: str,
+    docker_host: str,
+    default_external_port: int,
+    port_env_var: str,
+) -> str:
+    """Build a PostgreSQL URL from component env vars.
+
+    Args:
+        db_name_var: Env var holding the database name
+            (e.g. "PREPROCESSING_DB", "POSTPROCESSING_DB").
+        docker_host: Docker DNS hostname
+            (e.g. "preprocessing-db", "postprocessing-db").
+        default_external_port: Port used outside Docker
+            (e.g. 5433, 5434).
+        port_env_var: Env var for optional port override
+            (e.g. "PREPROCESSING_DB_PORT", "POSTPROCESSING_DB_PORT").
+    """
+    user = os.getenv("POSTGRES_USER")
+    password = os.getenv("POSTGRES_PASSWORD")
+    db_name = os.getenv(db_name_var)
+
+    missing = []
+    if not user:
+        missing.append("POSTGRES_USER")
+    if not password:
+        missing.append("POSTGRES_PASSWORD")
+    if not db_name:
+        missing.append(db_name_var)
+    if missing:
+        raise ValueError(
+            f"Missing env var(s) for {db_name_var} connection: "
+            f"{', '.join(missing)}. Set them in your .env file."
+        )
+
+    in_docker = os.getenv("IN_DOCKER", "").lower() == "true"
+    if in_docker:
+        host = docker_host
+        port = 5432
+    else:
+        host = "localhost"
+        port = int(os.getenv(port_env_var, str(default_external_port)))
+
+    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db_name}"
+
+
+def _build_preprocessing_db_url() -> str:
+    """Build PostgreSQL URL for the preprocessing database (port 5433)."""
+    return _build_db_url("PREPROCESSING_DB", "preprocessing-db", 5433, "PREPROCESSING_DB_PORT")
+
+
+def _build_postprocessing_db_url() -> str:
+    """Build PostgreSQL URL for the postprocessing database (port 5434)."""
+    return _build_db_url("POSTPROCESSING_DB", "postprocessing-db", 5434, "POSTPROCESSING_DB_PORT")
+
+
 class DataInterfaceDB:
     """SQL-based data interface using PostgreSQL."""
 
@@ -36,7 +93,7 @@ class DataInterfaceDB:
     ):
         sl.load_environment()
 
-        self.connection_string = connection_string or os.getenv("DB_POSTPROCESS_CONNECTION_STRING")
+        self.connection_string = connection_string or _build_preprocessing_db_url()
         self.engine = create_engine(self.connection_string)
         self.station_codes = station_codes
         self._get_paths()
@@ -695,17 +752,26 @@ class BasePredictorDataInterface:
         sl.load_environment()
         self.station_codes = station_codes  # list[str] | None
 
-        # Postprocessing DB connection (port 5434 externally, 5432 in Docker)
-        self.postprocessing_connection_string = os.getenv(
-            "POSTPROCESSING_DB_CONNECTION_STRING",
-            "postgresql://postgres:password@localhost:5434/postprocessing_db",
-        )
+        # Postprocessing DB connection — built from component env vars.
+        # Wrapped in try/except because this class is instantiated
+        # unconditionally, but the DB is only needed when
+        # SAPPHIRE_API_AVAILABLE=True. The CSV-only path must not crash.
+        try:
+            self.postprocessing_connection_string = _build_postprocessing_db_url()
+        except ValueError:
+            self.postprocessing_connection_string = None
         self._postprocessing_engine = None
 
     @property
     def postprocessing_engine(self):
         """Lazy initialization of the database engine."""
         if self._postprocessing_engine is None:
+            if self.postprocessing_connection_string is None:
+                raise ValueError(
+                    "Postprocessing DB connection not available. "
+                    "Set POSTGRES_USER, POSTGRES_PASSWORD, and "
+                    "POSTPROCESSING_DB in your .env file."
+                )
             self._postprocessing_engine = create_engine(self.postprocessing_connection_string)
         return self._postprocessing_engine
 

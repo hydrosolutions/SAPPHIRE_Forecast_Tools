@@ -90,8 +90,12 @@ class TestCheckValidForecastIssueDate:
 
     @patch("lt_utils.get_today")
     def test_returns_none_when_outside_window(self, mock_get_today):
-        """When >5 days from issue date, returns None (not raises)."""
-        mock_get_today.return_value = pd.Timestamp("2024-03-20")
+        """When >10 days from issue date, returns None (not raises).
+
+        The tolerance is temporarily widened from 5 to 10 days
+        (see lt_utils.py check_valid_forecast_issue_date).
+        """
+        mock_get_today.return_value = pd.Timestamp("2024-03-25")
         config = self._make_mock_config(issue_day=10)
 
         result = check_valid_forecast_issue_date(config, "LR_Base")

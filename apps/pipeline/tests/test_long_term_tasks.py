@@ -170,7 +170,7 @@ class TestRunLongTermWorkflow:
         assert "DeleteOldMarkerFiles" in class_names
 
     def test_run_with_notifications_yields_notification(self, mock_env):
-        """Notification path: run() yields SendPipelineCompletionNotification."""
+        """Notification path: run() yields base_tasks then notification."""
         from pipeline_docker import (
             RunLongTermWorkflow,
             SendPipelineCompletionNotification,
@@ -178,8 +178,10 @@ class TestRunLongTermWorkflow:
 
         task = RunLongTermWorkflow(active_modes="month_0", send_notifications=True)
         gen = task.run()
-        yielded = next(gen)
-        assert isinstance(yielded, SendPipelineCompletionNotification)
+        first = next(gen)
+        assert isinstance(first, list)  # base_tasks yielded first
+        second = next(gen)
+        assert isinstance(second, SendPipelineCompletionNotification)
 
     def test_run_passes_skill_metric_types(self, mock_env):
         """skill_metric_types is forwarded to LongTermPostProcessing via run()."""
