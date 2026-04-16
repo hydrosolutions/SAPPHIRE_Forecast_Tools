@@ -2,7 +2,7 @@
 
 **Priority**: High
 **Module**: pipeline
-**Status**: Draft
+**Status**: Complete (PR #329, commit 306105d — merged 2026-04-15)
 
 ## Problem
 

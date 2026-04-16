@@ -53,12 +53,13 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**ML-013**~~ | ~~recalculate_nan_forecasts API write overwrites valid operational rows~~ | ~~ml~~ | | Complete | [`archive/review_gi_draft_ml_recalc_api_overwrite.md`](issues/archive/review_gi_draft_ml_recalc_api_overwrite.md) | — |
 | ~~**ML-014**~~ | ~~Hindcast subprocess has no timeout — maintenance containers hang indefinitely~~ | ~~ml~~ | | Complete | [`archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md`](issues/archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md) | — |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
-| **SEC-006** | Remove hardcoded DB password and add fail-fast validation for connection env vars | ltf | **High** | Draft | [`high_prio_gi_draft_ltf_remove_hardcoded_db_credentials.md`](issues/high_prio_gi_draft_ltf_remove_hardcoded_db_credentials.md) |
+| **SEC-006** | Remove hardcoded DB password and add fail-fast validation for connection env vars | ltf | **High** | Review | [`review_gi_draft_ltf_remove_hardcoded_db_credentials.md`](issues/review_gi_draft_ltf_remove_hardcoded_db_credentials.md) |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 | ~~**PREPQ-001**~~ | ~~Add Uzbek Hydromet (uzhm) wide-matrix Excel adapter~~ | ~~prepq~~ | | Complete | [`archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md`](issues/archive/high_prio_gi_draft_prepq_uzhm_wide_matrix_adapter.md) | — |
 | **FD-001** | Fix forecast dashboard for LR-only deployments | fd | **High** | Review | [`archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md`](issues/archive/high_prio_gi_draft_fd_lr_only_deployment_fixes.md) | — |
 | **FD-002** | Fix range_type label mismatch and inverted math in summary table | fd | **Mid** | Review | [`archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md`](issues/archive/mid_prio_gi_draft_fd_range_type_label_mismatch.md) | ~~FD-001~~ |
 | **INFRA-014** | Add deployment initialization workflow | infra | **High** | Review | [`review_gi_draft_infra_new_deployment_initialization.md`](issues/review_gi_draft_infra_new_deployment_initialization.md) | FD-001 (partial) |
+| **P-004** | Fix silent timeout failure in `execute_with_retries` — timed-out tasks marked DONE | pipeline | **High** | Review | [`high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md`](issues/high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md) |
 
 ---
 
@@ -97,6 +98,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**INFRA-016**~~ | ~~Switch default branch from `main` to `maxat_sapphire_2` (v2 cut)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_default_branch_switch.md`](issues/archive/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
 | **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
+| ~~**P-006**~~ | ~~Move long-term schedule query into Luigi pipeline~~ | ~~pipeline~~ | | Complete | [`review_gi_draft_pipeline_lt_schedule_into_luigi.md`](issues/review_gi_draft_pipeline_lt_schedule_into_luigi.md) | — |
 
 ---
 
@@ -110,6 +112,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PREPG-002** | Add coverage endpoints to preprocessing service | **Low** | Draft | [`low_prio_gi_draft_preprocessing_coverage_endpoints.md`](issues/low_prio_gi_draft_preprocessing_coverage_endpoints.md) | — |
 | ~~**PREPG-003**~~ | ~~Snow operational API write discards all data — wall-clock-anchored window vs DG lag~~ | | Closed (Not a Bug) | [`archive/high_prio_gi_draft_prepg_snow_api_operational_window.md`](issues/archive/high_prio_gi_draft_prepg_snow_api_operational_window.md) | — |
 | ~~**PREPG-005**~~ | ~~Meteo API write discards all forecast rows — `date <= today` upper bound~~ | **High** | Complete | [`archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md`](issues/archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md) | — |
+| **PREPG-006** | Migrate snow norm computation from CSV to API | **Medium** | Draft | [`mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md`](issues/mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md) | PREPG-001, API must have historical snow data |
 
 ### Preprocessing Runoff (`prepq`)
 
@@ -138,7 +141,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**LTF-002**~~ | ~~SQL org-scoping for long-term forecasting queries~~ | | Complete | [`archive/review_gi_draft_ltf_sql_org_scoping.md`](issues/archive/review_gi_draft_ltf_sql_org_scoping.md) | — |
 | ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 | **LTF-004** | Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation (root cause: upstream `calibrate_model_and_hindcast` skips NaN rows) | **High** | Draft | [`high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Fix A: @sandrohuni (upstream library); Fix B: @mabesa (fallback guard) |
-| **LTF-005** | Add delta-based quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Draft | [`mid_prio_gi_draft_lt_gbt_quantile_bounds.md`](issues/mid_prio_gi_draft_lt_gbt_quantile_bounds.md) | — |
+| **LTF-005** | Add climatological quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Review | [`review_gi_draft_lt_gbt_quantile_bounds.md`](issues/review_gi_draft_lt_gbt_quantile_bounds.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -177,6 +180,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-033** | Gap detector should only flag boundary dates as missing ensembles | **Low** | Won't Fix | [`archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md`](issues/archive/low_prio_gi_draft_pp_gap_detector_boundary_filter.md) | PP-031 |
 | ~~**PP-034**~~ | ~~`read_daily_forecasts()` passes wrong keyword `horizon_type` to API client — daily skill metrics never computed~~ | | Complete | [`archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md`](issues/archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md) | — |
 | **PP-035** | Deduplicate skill metrics before API write to fix monthly/quarterly/seasonal bulk upsert | **Medium** | Review | [`review_gi_draft_pp_skill_metric_dedup.md`](issues/review_gi_draft_pp_skill_metric_dedup.md) | — |
+| **PP-028b** | Skill metrics crash/silent failure — missing `q50` column across all horizons | **High** | Review | [`review_gi_draft_pp_monthly_skill_q50_regression.md`](issues/review_gi_draft_pp_monthly_skill_q50_regression.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -194,6 +198,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-010** | Fix lr-visibility parameter mismatch — linreg queries target-pentad, dashboard saves issue-pentad | **Medium** | Review | [`mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md`](issues/mid_prio_gi_draft_iEHF_lr_visibility_param_mismatch.md) | FD-009 |
 | **FD-011** | Horizon selector widget passes translated strings as API enum values | **High** | Draft | [`high_prio_gi_draft_fd_horizon_selector_i18n.md`](issues/high_prio_gi_draft_fd_horizon_selector_i18n.md) | — |
 | ~~**FD-013**~~ | ~~Monthly skill metrics not loaded from API — all columns show "-"~~ | ~~**Mid**~~ | Complete | [`archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md`](issues/archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md) | — |
+| **FD-014** | Snow visualization — configurable year start, units & labels | **Medium** | In Progress | [`mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md`](issues/mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md) | Phase 2 blocked on colleague (services) |
 
 ### iEasyHydro HF Migration
 
@@ -298,6 +303,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|------|
 | P-002 | Gateway double-run | 2026-02-03 | [`archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md`](../archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md) |
 | P-003 | Consolidate maintenance scripts into Luigi pipeline | 2026-02-27 | See plan: `ethereal-dazzling-zebra.md` |
+| P-005 | Remove RunAllMLMaintenance WrapperTask to fix unfulfilled dependencies | 2026-04-15 | [`archive/high_prio_gi_draft_pipeline_remove_wrapper_task.md`](issues/archive/high_prio_gi_draft_pipeline_remove_wrapper_task.md) |
+| P-006 | Move long-term schedule query into Luigi pipeline | 2026-04-15 | [`review_gi_draft_pipeline_lt_schedule_into_luigi.md`](issues/review_gi_draft_pipeline_lt_schedule_into_luigi.md) |
 
 ---
 
@@ -349,4 +356,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-04-01 — Archived 27 completed issues (ML-001/004/006/008b/009/010/012/013, LR-006/007/008, PP-019/021/025/027/029/030/031/032, INFRA-006/007/009/010/012/015, LTF-001/002, API-002, ML hindcast consistency/utils). Updated LTF-004 with root cause and @sandrohuni assignment. PP-034 → In Progress.*
+*Last updated: 2026-04-16 — Issue draft audit: SEC-006 Draft→Review (implemented, PR #330). P-005 (wrapper task) → Complete/archived. P-006 (LT schedule into Luigi) → Complete. LTF-005 Draft→Review (implemented). Added P-004 (pipeline timeout, Draft), FD-014 (snow visualization, In Progress), PP-028b (q50 regression, Review).*

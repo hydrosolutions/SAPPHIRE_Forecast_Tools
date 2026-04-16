@@ -323,6 +323,8 @@ class PlotManager:
                     self.snow_plots[var].object = viz.plot_daily_snow_data(
                         self._, wm, dm.snow_data, var, wm.station_selector.value,
                         wm.date_picker.value, dm.linreg_predictor,
+                        snow_display_start_month=self._cfg.snow_display_start_month,
+                        snow_display_start_day=self._cfg.snow_display_start_day,
                     )
                 else:
                     self.snow_plots[var].object = pn.pane.Markdown(

@@ -72,6 +72,9 @@ cat > temp_luigi.cfg <<EOF
 [core]
 scheduler_host = ${LUIGI_SCHEDULER_HOST}
 scheduler_port = ${LUIGI_SCHEDULER_PORT}
+
+[worker]
+check_complete_on_run = true
 EOF
 
 # Run the periodic maintenance workflow

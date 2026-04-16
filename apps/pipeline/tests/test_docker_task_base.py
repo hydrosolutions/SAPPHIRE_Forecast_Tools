@@ -216,7 +216,7 @@ class TestExecuteWithRetries:
                 task.execute_with_retries(always_fail)
 
     def test_timeout_stops_retrying(self, mock_env, tmp_path):
-        """Exit code 124 (timeout) → no retry, status is Timeout."""
+        """Exit code 124 (timeout) → no retry, raises RuntimeError."""
         from pipeline_docker import PreprocessingRunoff
 
         task = PreprocessingRunoff()
@@ -231,9 +231,38 @@ class TestExecuteWithRetries:
             call_count += 1
             return ("cid_123", 124, "timeout logs")
 
-        status, details = task.execute_with_retries(timeout_func)
-        assert status == "Timeout"
+        with patch.object(task, "send_failure_notification"):
+            with pytest.raises(RuntimeError, match="timed out"):
+                task.execute_with_retries(timeout_func)
+
         assert call_count == 1  # No retry after timeout
+
+    def test_timeout_sends_failure_notification(self, mock_env, tmp_path):
+        """Exit code 124 (timeout) → send_failure_notification is called once
+        with a message containing the timeout seconds and attempt info."""
+        from pipeline_docker import PreprocessingRunoff
+
+        task = PreprocessingRunoff()
+        task.max_retries = 3
+        task.timeout_seconds = 900
+        log_path = str(tmp_path / "test_log.txt")
+        task.docker_logs_file_path = log_path
+
+        def timeout_func(attempt):
+            return ("cid_123", 124, "timeout logs")
+
+        with patch.object(task, "send_failure_notification") as mock_notify:
+            with pytest.raises(RuntimeError, match="timed out"):
+                task.execute_with_retries(timeout_func)
+
+        mock_notify.assert_called_once()
+        call_args = mock_notify.call_args
+        message = call_args[0][0]
+        logs_arg = call_args[0][1]
+        assert "900" in message
+        assert "1" in message  # attempt 1
+        assert "3" in message  # max_retries
+        assert logs_arg == "timeout logs"
 
 
 class TestSendFailureNotification:
