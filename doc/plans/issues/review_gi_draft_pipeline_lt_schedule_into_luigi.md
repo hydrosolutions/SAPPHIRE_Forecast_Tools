@@ -4,8 +4,8 @@
 |-------------|-------------------------------------------------------------|
 | **Module**  | `pipeline`, `bin/`                                          |
 | **Priority**| Mid                                                         |
-| **Status**  | Draft                                                       |
-| **Branch**  | TBD (branch from `maxat_sapphire_2`)                        |
+| **Status**  | Review (implemented, commit c2754eb — merged into maxat_sapphire_2) |
+| **Branch**  | `maxat_sapphire_2` (merged)                                 |
 
 ## Problem
 
