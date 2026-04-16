@@ -378,7 +378,10 @@ class BulletinManager:
                 self.wm.horizon_selector.value
             )
             bulletin_header_info = self._processing.get_bulletin_header_info(last_date, self.cfg.horizon)
-            self._write_to_excel(self.dm.sites_list, filtered, bulletin_header_info, self.cfg.env_file_path)
+            self._write_to_excel(
+                self.dm.sites_list, filtered, bulletin_header_info,
+                self.cfg.env_file_path, horizon=self.wm.horizon_selector.value,
+            )
             print("DEBUG: Bulletin written to Excel successfully.")
             # Refresh the file downloader panel
             self.wm.downloader.refresh_file_list()

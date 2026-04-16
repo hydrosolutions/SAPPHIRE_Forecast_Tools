@@ -172,8 +172,8 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         print(f'Error in round_discharge: {e}')
         return None
 
-def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, 
-                   header_df):
+def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
+                   header_df, horizon):
     """
     Copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin.
 
@@ -186,7 +186,7 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
     Returns:
         None
     """
-    sapphire_forecast_horizon = os.getenv("sapphire_forecast_horizon")
+    sapphire_forecast_horizon = horizon
     if sapphire_forecast_horizon == 'pentad':
         horizon_string_ru = "пентада"
     elif sapphire_forecast_horizon == 'decad':
@@ -297,7 +297,7 @@ def oder_sites_list_according_to_bulletin_order(sites_list):
 
 # Function to write data to Excel
 def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
-                   tag_settings=None):
+                   tag_settings=None, horizon=None):
     """
     Writes data to an Excel file.
 
@@ -316,13 +316,12 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     # Show the loading spinner
     #indicator.value = True
 
-    # Get the forecast horizon from environment
-    sapphire_forecast_horizon = os.getenv("sapphire_forecast_horizon")
+    # Get the forecast horizon — prefer explicit parameter, fall back to env var
+    sapphire_forecast_horizon = horizon or os.getenv("sapphire_forecast_horizon")
     if sapphire_forecast_horizon is None:
-        raise ValueError("sapphire_forecast_horizon is not set in the environment variables")
+        raise ValueError("sapphire_forecast_horizon is not set — pass horizon parameter or set the environment variable")
     if sapphire_forecast_horizon not in ['pentad', 'decad']:
-        raise ValueError("sapphire_forecast_horizon must be either 'pentad' or 'decad'")
-    # Print the forecast horizon
+        raise ValueError(f"sapphire_forecast_horizon must be either 'pentad' or 'decad', got '{sapphire_forecast_horizon}'")
     print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
 
 
@@ -571,8 +570,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         )
 
         copy_worksheet(
-            report_settings, temp_bulletin_file_name, bulletin_file_name, 
-            header_df)
+            report_settings, temp_bulletin_file_name, bulletin_file_name,
+            header_df, sapphire_forecast_horizon)
 
 
     # Done with the report generation
