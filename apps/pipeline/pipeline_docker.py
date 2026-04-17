@@ -1310,8 +1310,11 @@ class SendPipelineCompletionNotification(luigi.Task):
     # Custom message parameter
     custom_message = luigi.Parameter(default="")
 
-    # Tasks this notification depends on
-    depends_on = luigi.Parameter(default=[])
+    # Declared so Luigi's metaclass accepts the kwarg; actual task list
+    # is handled by __init__ / self._depends_on. Must be a string default
+    # — a non-string default (e.g. []) gets serialized as "()" and crashes
+    # the remote scheduler.
+    depends_on = luigi.Parameter(default="")
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get("ieasyforecast_intermediate_data_path"))
