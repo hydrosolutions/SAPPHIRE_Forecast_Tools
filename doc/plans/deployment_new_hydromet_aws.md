@@ -746,7 +746,7 @@ Practical steps (not yet documented):
 | ~~DOC-GAP-7~~ | ~~iEasyHydro HF SDK vars undocumented~~ | ~~Medium~~ | ✅ Fixed (covered in `doc/configuration.md` reference table + Add-ons) |
 | ~~DOC-GAP-8~~ | ~~Path convention explanation buried~~ | ~~Low~~ | ✅ Fixed (tree diagram + worked example added to `doc/configuration.md`) |
 | DOC-GAP-9 | ~~**Deployment order not documented**~~ | **High** | ✅ Fixed (`doc/deployment.md`) |
-| DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
+| ~~DOC-GAP-10~~ | ~~No reverse proxy / HTTPS instructions~~ | ~~Medium~~ | ✅ Fixed (general-recommendations section `doc/deployment.md#reverse-proxy-and-https`; nginx vs Caddy, WebSocket upgrade, cert auto-renew, expose-vs-hide guidance) |
 | ~~DOC-GAP-11~~ | ~~Crontab template is deployment-specific~~ | ~~Low~~ | ✅ Fixed (crontab placeholders + TZ reference table in deployment.md) |
 | ~~DOC-GAP-12~~ | ~~Testing section outdated~~ | ~~Low~~ | ✅ Fixed (rewrote `doc/deployment.md#testing-the-deployment` for headless server: CLI health checks, API curl, log grep, initialize workflow) |
 | ~~DOC-GAP-13~~ | ~~**Deprecated `deploy_sapphire_forecast_tools.sh` still recommended in `doc/deployment.md`**~~ | ~~**Medium**~~ | ✅ Fixed (deprecated-script references removed from deployment.md) |
@@ -803,6 +803,7 @@ Changes already applied to the docs as part of deployment preparation.
 | DOC-GAP-8 | Added directory-tree diagram and worked example for the `../../../<data_folder>/` path convention in doc/configuration.md | <branch> |
 | DOC-GAP-12 | Rewrote the Testing section in doc/deployment.md for headless server operations (CLI checks, API curl, log grep, initialize workflow for first-time deployments); removed Docker Desktop / GUI / .yaml references and stale hindcast dates | <branch> |
 | DOC-GAP-2 | Added locale directory layout, .po/.mo explanation, and an "Adding a new language" workflow (copy → edit msgstr → msgfmt → set ieasyforecast_locale → restart) to doc/configuration.md, emphasising the operational locale lives under `<data_folder>/config/locale/`, not in the repo | <branch> |
+| DOC-GAP-10 | General reverse-proxy + HTTPS recommendations in doc/deployment.md (when needed, what to expose vs hide, nginx vs Caddy, Let's Encrypt, WebSocket upgrade requirement, optional API-key/rate-limit gateway hardening, HTTP→HTTPS redirect) | <branch> |
 
 ---
 

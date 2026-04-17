@@ -20,6 +20,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
       - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
       - [SAPPHIRE services (API stack)](#sapphire-services-api-stack)
+      - [Reverse proxy and HTTPS](#reverse-proxy-and-https)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -546,6 +547,47 @@ For the first-time-deployment walkthrough see
 [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md).
 For updates to an existing deployment see
 [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
+### Reverse proxy and HTTPS
+
+These are general recommendations — not a step-by-step recipe. Pick tooling that matches what your hydromet IT team already supports; the specifics of nginx/Caddy/Traefik configuration are outside this document.
+
+**When you need one.** If SAPPHIRE is running on a LAN accessible only from inside the hydromet, a reverse proxy is optional — users can hit `http://<server>:5006/forecast_dashboard` directly. If the server is internet-facing (AWS, VPS, any public IP), you **must** terminate TLS and gate public access through a reverse proxy. The SAPPHIRE services were not designed to be directly exposed to the internet.
+
+**What to expose, what to hide.** On a public-facing deployment, only these should be reachable from the internet, and only over HTTPS:
+
+| Target | Path / hostname |
+|--------|-----------------|
+| Pentad dashboard | `https://fc.pentad.<base_url>/forecast_dashboard` → `localhost:5006` |
+| Decad dashboard | `https://fc.decad.<base_url>/forecast_dashboard` → `localhost:5007` |
+
+Everything else stays bound to `localhost` on the server: API gateway (`8000`), the four services (`8002`–`8005`), their databases (`5433`–`5436`), and the Luigi daemon UI (`8082`). If any hydromet operator needs the API gateway or Luigi UI remotely, tunnel them over SSH rather than exposing them publicly. On AWS, mirror this in the security group — only `80`/`443` inbound from the internet, everything else from your office IP range or SSH bastion only.
+
+**TLS certificates.** Use Let's Encrypt for free, auto-renewing certificates. Two common approaches:
+
+- **nginx + certbot** — the traditional path. Install nginx, configure a server block per dashboard hostname, then `certbot --nginx` to obtain and install the certificate. Certbot installs a cron/systemd timer for renewal.
+- **Caddy** — single binary, automatic HTTPS out of the box. A three-line `Caddyfile` per hostname (reverse_proxy to `localhost:5006` / `5007`) and Caddy handles the cert lifecycle itself. Lower-overhead choice if you don't already run nginx.
+
+Either way, the DNS records (`fc.pentad.<base_url>`, `fc.decad.<base_url>`) must point to the server's public IP before you request certificates — ACME verifies by connecting back to your host.
+
+**WebSocket upgrade is mandatory.** The Panel/Bokeh dashboards communicate with the browser over a WebSocket after the initial page load. If the reverse proxy strips or rewrites the `Upgrade` and `Connection` headers, the page loads but every interaction hangs. For nginx, the relevant directives are `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` on the dashboard `location` block. Caddy and Traefik do this by default. Test after deploying by loading a dashboard and watching the browser's network tab for a WebSocket connection that stays open; if it repeatedly reconnects, the upgrade is not working.
+
+**Also set `ALLOWED_WEBSOCKET_ORIGINS`** on the Panel/Bokeh container to match your public hostname — otherwise Panel rejects the WebSocket even if the proxy is configured correctly. The dashboard image already reads `ieasyhydroforecast_url_pentad` / `..._decad` from the env file for this; set those to the full `https://fc.pentad.<base_url>` URLs.
+
+**Harden the API gateway if exposed.** If you have a reason to route the API gateway through the reverse proxy (remote admin, federation, etc.), turn on the optional defences that are off by default in `sapphire/.env.example`:
+
+```
+API_KEY_ENABLED=true
+API_KEY=<generate-strong-random-secret>   # openssl rand -hex 32
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT=100                             # requests per minute per client IP
+```
+
+Distribute the API key only to clients that need to write (the pipeline scripts run on the same server, so they don't; they talk to the gateway over the Docker bridge and bypass the proxy).
+
+**Force HTTPS.** Whichever proxy you pick, add a redirect from `http://` to `https://` for each dashboard hostname. Both nginx (`return 301 https://$host$request_uri;`) and Caddy (default behaviour) handle this with a one-line addition.
+
+**Before going live.** Run the dashboard HTTP check from the Testing section above against the proxied URL instead of `localhost:5006`; verify the browser shows a valid TLS certificate, that the WebSocket stays connected for at least a minute, and that a forecast page renders data end-to-end. If the deployment serves sensitive hydrological data, also verify the dashboards require login before showing any data.
 
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
