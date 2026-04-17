@@ -1,12 +1,16 @@
+import contextlib
 import logging
 import os
-import sys
-import pandas as pd
-import numpy as np
-import param
-import re
 import pickle
+import re
+import shutil
+import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
+
+import numpy as np
+import pandas as pd
+import param
 
 logger = logging.getLogger(__name__)
 
@@ -967,8 +971,20 @@ def _create_manual_sites() -> list:
 
 
 def save_stations_to_file(stations, filename):
-    with open(filename, "wb") as f:
-        pickle.dump(stations, f)
+    """Atomically write stations to pickle using temp file + rename."""
+    target_dir = os.path.dirname(filename) or "."
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".tmp", dir=target_dir)
+    try:
+        os.close(temp_fd)
+        with open(temp_path, "wb") as f:
+            pickle.dump(stations, f)
+        os.chmod(temp_path, 0o644)
+        shutil.move(temp_path, filename)
+    except Exception:
+        if os.path.exists(temp_path):
+            with contextlib.suppress(OSError):
+                os.remove(temp_path)
+        raise
 
 
 def get_all_stations_from_iehhf():
