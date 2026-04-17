@@ -738,7 +738,7 @@ Practical steps (not yet documented):
 | ID | Gap | Severity | Where to fix |
 |----|-----|----------|--------------|
 | ~~DOC-GAP-1~~ | ~~SAPPHIRE services ports not in deployment.md~~ | ~~Low~~ | ✅ Fixed |
-| DOC-GAP-2 | No locale/translation setup instructions | Medium | `doc/configuration.md` |
+| ~~DOC-GAP-2~~ | ~~No locale/translation setup instructions~~ | ~~Medium~~ | ✅ Fixed (rudimentary .po/.mo workflow + add-a-language steps in `doc/configuration.md#localization`) |
 | DOC-GAP-3 | ~~**SAPPHIRE services missing from deployment.md entirely**~~ | **Critical** | ✅ Fixed (`doc/deployment.md` new section) |
 | ~~DOC-GAP-4~~ | ~~No guidance on sapphire/.env values~~ | ~~Medium~~ | ✅ Fixed (sapphire/.env.example commented + sapphire/README.md Environment setup expanded) |
 | ~~DOC-GAP-5~~ | ~~**No "fresh deployment" path for services — DB init required**~~ | ~~**High**~~ | ✅ Fixed (initialize target implemented; Phase 4.3 updated) |
@@ -802,6 +802,7 @@ Changes already applied to the docs as part of deployment preparation.
 | DOC-GAP-7 | iEasyHydro HF SDK variables now documented in doc/configuration.md reference table and Add-ons section | <branch> |
 | DOC-GAP-8 | Added directory-tree diagram and worked example for the `../../../<data_folder>/` path convention in doc/configuration.md | <branch> |
 | DOC-GAP-12 | Rewrote the Testing section in doc/deployment.md for headless server operations (CLI checks, API curl, log grep, initialize workflow for first-time deployments); removed Docker Desktop / GUI / .yaml references and stale hindcast dates | <branch> |
+| DOC-GAP-2 | Added locale directory layout, .po/.mo explanation, and an "Adding a new language" workflow (copy → edit msgstr → msgfmt → set ieasyforecast_locale → restart) to doc/configuration.md, emphasising the operational locale lives under `<data_folder>/config/locale/`, not in the repo | <branch> |
 
 ---
 

@@ -477,7 +477,61 @@ ieasyforecast_locale=ru_KG
 
 For new deployments, copy the `locale/` directory from `apps/config/locale/` into your data folder's `config/` directory. The locale files contain `.mo` and `.po` translation files required by the forecast dashboard.
 
-TODO: Document the contents of the locale directory and what is needed for adding a new language (e.g., Uzbek).
+> **Important:** The dashboard reads locale files from `<data_folder>/config/locale/` (the path in `ieasyforecast_locale_dir`), **not** from `apps/config/locale/` in the repository. `apps/config/locale/` is a source template — edits there have no effect on a running deployment until the files are copied into the data folder. Conversely, translations edited in the data folder survive repository updates.
+
+#### Locale directory layout
+
+Each language has its own subdirectory, following the standard gettext layout:
+
+```
+<data_folder>/config/locale/
+├── messages.pot                          # translation template (source strings)
+├── en_CH/
+│   └── LC_MESSAGES/
+│       ├── messages.po                   # human-editable translations
+│       └── messages.mo                   # compiled, read by the dashboard
+└── ru_KG/
+    └── LC_MESSAGES/
+        ├── messages.po
+        └── messages.mo
+```
+
+The `.po` file is the editable text source; the `.mo` file is the compiled binary that Python's `gettext` module reads at runtime. The dashboard will not pick up edits to a `.po` file until the corresponding `.mo` is regenerated.
+
+#### Adding a new language
+
+Rudimentary workflow for adding a language such as Uzbek (`uz_UZ`):
+
+1. Copy an existing locale as the starting point:
+   ```bash
+   cp -r <data_folder>/config/locale/en_CH <data_folder>/config/locale/uz_UZ
+   ```
+2. Open `<data_folder>/config/locale/uz_UZ/LC_MESSAGES/messages.po` and translate each `msgstr` value. Leave the `msgid` lines (the English source strings) untouched — they are the lookup keys.
+3. Compile the `.po` into a `.mo`:
+   ```bash
+   msgfmt <data_folder>/config/locale/uz_UZ/LC_MESSAGES/messages.po \
+     -o <data_folder>/config/locale/uz_UZ/LC_MESSAGES/messages.mo
+   ```
+   `msgfmt` is part of GNU gettext; install with `sudo apt-get install gettext` if not present.
+4. Point the dashboard at the new locale by setting `ieasyforecast_locale=uz_UZ` in your env file.
+5. Restart the dashboard container(s) so the new `.mo` is loaded.
+
+#### When dashboard source strings change
+
+If a SAPPHIRE release adds new user-facing strings, the `messages.pot` template is refreshed upstream. To bring your translations in line:
+
+```bash
+# Extract the current template from apps/config/locale/ in the updated repo
+# (do not edit it — it is regenerated from the source code)
+msgmerge --update \
+  <data_folder>/config/locale/<lang>/LC_MESSAGES/messages.po \
+  apps/config/locale/messages.pot
+# Fill in any new/changed msgstr entries, then recompile:
+msgfmt <data_folder>/config/locale/<lang>/LC_MESSAGES/messages.po \
+  -o <data_folder>/config/locale/<lang>/LC_MESSAGES/messages.mo
+```
+
+This workflow is deliberately minimal; a deeper treatment (extraction from source, handling plurals, fuzzy matches) is out of scope for this document.
 
 ### Configuration to facilitate testing of the tools
 During development or deployment, you may want to focus only on selected stations. While all stations can be selected in the forecast configuration dashboard, you may want to limit the stations for which the actual forecast is produced. We use this option during the development of the forecast tools where we focus on a few stations for the implementation of the backend and the forecast dashboard. List the stations you wish to produce forecasts for in the file config_development_restrict_station_selection.json. The file has the same format as config_station_selection.json.
