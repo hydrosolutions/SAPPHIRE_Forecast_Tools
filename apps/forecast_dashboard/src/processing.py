@@ -1065,6 +1065,10 @@ def get_all_stations_from_file():
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
 
+    if all_stations.empty:
+        logger.warning("No station data available (pickle missing or corrupt)")
+        return None, None
+
     all_stations['code'] = all_stations['code'].astype(str)
     all_stations.rename(columns={'name': 'station_labels'}, inplace=True)
 
