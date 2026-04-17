@@ -745,7 +745,7 @@ Practical steps (not yet documented):
 | DOC-GAP-8 | Path convention explanation buried | Low | `doc/configuration.md` |
 | DOC-GAP-9 | ~~**Deployment order not documented**~~ | **High** | ✅ Fixed (`doc/deployment.md`) |
 | DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
-| DOC-GAP-11 | Crontab template is deployment-specific | Low | `doc/deployment.md` |
+| ~~DOC-GAP-11~~ | ~~Crontab template is deployment-specific~~ | ~~Low~~ | ✅ Fixed (crontab placeholders + TZ reference table in deployment.md) |
 | DOC-GAP-12 | Testing section outdated | Low | `doc/deployment.md` |
 | ~~DOC-GAP-13~~ | ~~**Deprecated `deploy_sapphire_forecast_tools.sh` still recommended in `doc/deployment.md`**~~ | ~~**Medium**~~ | ✅ Fixed (deprecated-script references removed from deployment.md) |
 
@@ -794,6 +794,7 @@ Changes already applied to the docs as part of deployment preparation.
 | DOC-GAP-3 + DOC-GAP-9 | Added "Deployment order" and "SAPPHIRE services (API stack)" sections to doc/deployment.md | <branch> |
 | DOC-GAP-5 | Added `initialize` target (see review_gi_draft_infra_new_deployment_initialization.md) + Phase 4.3 updated in this plan | <branch> |
 | DOC-GAP-13 | Removed deprecated deploy_sapphire_forecast_tools.sh / run_sapphire_forecast_tools.sh references from doc/deployment.md | <branch> |
+| DOC-GAP-11 | Generalised crontab in doc/deployment.md (placeholders + timezone reference table) | <branch> |
 
 ---
 
