@@ -668,10 +668,83 @@ To check if the cron jobs have been set up correctly, you can list them with `cr
 
 
 ## Testing the deployment
-After correct deployment, forecast bulletins should now be produced automatically one day before the beginning of each pentad. We recommend the following strategy to test if the deployment has been successful:
-1. Check the logs of the backend container in the Docker Desktop application. If there are no error messages displayed at the bottom of the log tab, the backend is running correctly.
-2. Check if the forecast bulletins are produced correctly. You can do this by checking the folder data/reports (if you have not reconfigured the output directory for the bulletins).
-3. Run hindcasts for the period 2004-12-30 to the present date. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application. Note that we recommend producing bulletins for the pervious years forecasts that can be cross-examined with your forecasts from the previous year. This is an important step.
-4. Check if the forecast dashboard is operational by doubble-clicking the dashboard icon. If the dashboard is displayed correctly and the displayed data makes sense, you can close the browser window.
-5. Check if the configuration dashboard is operational by double-clicking the icon of the configuration dashboard. Test if the selection of stations has an effect on the results produced by the forecast tools by manually trigggering a re-run of the latest forecast and checking if the changes have an effect on the forecast bulletins and the forecast dashboard. Note that the station selection may still be limited by the apps/config/config_development_restrict_station_selection.yaml.
+
+After completing the setup steps above, work through the checks below to confirm each layer is healthy. Deployments run on headless servers over SSH — use `curl` and `docker logs` rather than GUI tools like Docker Desktop. If any check fails, the log at `/home/ubuntu/logs/sapphire_*.log` usually shows why.
+
+### 1. Services are running
+
+```bash
+docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}"
+```
+
+All five API containers (`sapphire-api-gateway`, `sapphire-preprocessing-api`, `sapphire-postprocessing-api`, `sapphire-user-api`, `sapphire-auth-api`) and their four PostgreSQL containers (`sapphire-preprocessing-db`, `sapphire-postprocessing-db`, `sapphire-user-db`, `sapphire-auth-db`) should show `Up`. The Luigi daemon and dashboards appear as `luigi-daemon`, `sapphire-dashboard-pentad`, `sapphire-dashboard-decad` in their own compose projects.
+
+### 2. API gateway responds
+
+```bash
+curl -sf http://localhost:8000/health && echo OK
+curl -sf http://localhost:8000/health/ready && echo READY
+```
+
+Both should return 200. `/health/ready` additionally confirms the backend services behind the gateway are reachable.
+
+### 3. Data is reaching the API
+
+Spot-check that the pipeline has written something for the current year:
+
+```bash
+curl -s "http://localhost:8000/api/preprocessing/runoff/?limit=1" | head
+curl -s "http://localhost:8000/api/postprocessing/forecasts/?limit=1" | head
+```
+
+An empty array means the pipeline has not run yet — check step 6.
+
+### 4. Forecast bulletins are written
+
+```bash
+ls /data/<data_folder>/reports/bulletins/pentad/$(date +%Y)/
+```
+
+You should see Excel bulletins named for the current pentad (e.g., `<year>_04_aprel_<basin>_short_term_forecast_bulletin.xlsx`). If the directory is empty, check the most recent `sapphire_pentadal_*.log` in `/home/ubuntu/logs/` for errors. Your output directory may differ if you overrode `ieasyreports_report_output_path` in the env file.
+
+### 5. Dashboards serve HTTP
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/forecast_dashboard
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard
+```
+
+Both should return `200`. To confirm the UI renders end-to-end, open the dashboards through your reverse proxy in a local browser.
+
+### 6. Verify the pipeline logs
+
+```bash
+grep -iE "error|critical|exception" /home/ubuntu/logs/sapphire_*.log | tail -20
+```
+
+No matches is ideal. A handful of `ERROR` lines from transient network issues is expected; repeated errors from the same module indicate a real problem.
+
+### 7. First-time deployments: run the initialization workflow
+
+For a new deployment, compute historical forecasts so the dashboard's skill statistics reflect your data. The `initialize` target wraps the full sequence (preprocessing maintenance → full-history API sync → LR hindcast for PENTAD and DECAD → skill-metric recalculation):
+
+```bash
+# Set ieasyhydroforecast_START_DATE in your env file first, e.g.
+#   ieasyhydroforecast_START_DATE=2000-01-01
+# The script exits with an error if it is missing.
+ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
+  bash apps/run_locally.sh initialize
+```
+
+This takes several hours to days depending on the start date and number of stations. Follow progress with:
+
+```bash
+tail -f /home/ubuntu/logs/sapphire_*.log
+```
+
+After initialization completes, verify the dashboards now show historical skill metrics (not just the current year) and that the "Norm" curve diverges from the "Current year" curve for gauges with multi-year history. For the full walkthrough see [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md) Phase 12.
+
+### 8. Optional: restrict the station selection during initial testing
+
+If you want to validate the pipeline against a small subset before running it over all stations, point `ieasyforecast_restrict_stations_file` to a JSON file listing 2–3 station codes (e.g. `config_development_restrict_station_selection.json`). Once everything works, set `ieasyforecast_restrict_stations_file=null` to release the restriction and re-run the pipeline.
 

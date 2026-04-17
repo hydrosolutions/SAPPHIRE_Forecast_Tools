@@ -748,7 +748,7 @@ Practical steps (not yet documented):
 | DOC-GAP-9 | ~~**Deployment order not documented**~~ | **High** | ✅ Fixed (`doc/deployment.md`) |
 | DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
 | ~~DOC-GAP-11~~ | ~~Crontab template is deployment-specific~~ | ~~Low~~ | ✅ Fixed (crontab placeholders + TZ reference table in deployment.md) |
-| DOC-GAP-12 | Testing section outdated | Low | `doc/deployment.md` |
+| ~~DOC-GAP-12~~ | ~~Testing section outdated~~ | ~~Low~~ | ✅ Fixed (rewrote `doc/deployment.md#testing-the-deployment` for headless server: CLI health checks, API curl, log grep, initialize workflow) |
 | ~~DOC-GAP-13~~ | ~~**Deprecated `deploy_sapphire_forecast_tools.sh` still recommended in `doc/deployment.md`**~~ | ~~**Medium**~~ | ✅ Fixed (deprecated-script references removed from deployment.md) |
 
 ### Priority for pre-deployment fixes
@@ -801,6 +801,7 @@ Changes already applied to the docs as part of deployment preparation.
 | DOC-GAP-6 | Added categorised `.env variable reference` with minimal deployment profile to doc/configuration.md | <branch> |
 | DOC-GAP-7 | iEasyHydro HF SDK variables now documented in doc/configuration.md reference table and Add-ons section | <branch> |
 | DOC-GAP-8 | Added directory-tree diagram and worked example for the `../../../<data_folder>/` path convention in doc/configuration.md | <branch> |
+| DOC-GAP-12 | Rewrote the Testing section in doc/deployment.md for headless server operations (CLI checks, API curl, log grep, initialize workflow for first-time deployments); removed Docker Desktop / GUI / .yaml references and stale hindcast dates | <branch> |
 
 ---
 
