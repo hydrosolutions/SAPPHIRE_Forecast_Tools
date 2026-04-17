@@ -144,43 +144,43 @@ Placeholders used throughout:
 
 **Ref:** `sapphire/README.md`
 
-### 4.1 Create services .env
+### 4.1 Note the services-layer variables (file itself is created in Phase 5)
 
-- [ ] Copy the template
-  ```bash
-  cp /data/SAPPHIRE_Forecast_Tools/sapphire/.env.example \
-     /data/SAPPHIRE_Forecast_Tools/sapphire/.env
-  ```
+The SAPPHIRE services read their configuration from the same external env file the pipeline uses (`/data/<data_folder>/config/<env_file>`). The file is created in Phase 5 (by copying `apps/config/.env` as a template); this step only inventories the variables the services need so they are filled in when you edit that file. `sapphire/.env.example` is a **reference only** — do not commit edits to it for a deployment.
 
-- [ ] Edit `sapphire/.env` — fill in:
-  ```
-  POSTGRES_USER=postgres
-  POSTGRES_PASSWORD=<generate-strong-password>
-  PREPROCESSING_DB=preprocessing_db
-  POSTPROCESSING_DB=postprocessing_db
-  USER_DB=user_db
-  AUTH_DB=auth_db
-  JWT_SECRET_KEY=<generate-strong-random-secret>
-  # Service URLs (internal Docker network names)
-  PREPROCESSING_API_URL=http://preprocessing-api:8002
-  POSTPROCESSING_API_URL=http://postprocessing-api:8003
-  USER_API_URL=http://user-api:8004
-  AUTH_API_URL=http://auth-api:8005
-  ```
+Services-layer variables to include in `<env_file>` (added to the pipeline variables that Phase 5 copies from `apps/config/.env`):
 
-  > `[DOC-GAP-4]` ✅ **Resolved** — `sapphire/.env.example` annotated with placeholder values and inline comments; `sapphire/README.md` Environment setup expanded with a per-group walkthrough.
+```bash
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<generate-strong-password>       # openssl rand -base64 24
+PREPROCESSING_DB=preprocessing_db
+POSTPROCESSING_DB=postprocessing_db
+USER_DB=user_db
+AUTH_DB=auth_db
+JWT_SECRET_KEY=<generate-strong-random-secret>     # openssl rand -hex 32
+# Internal Docker-network service URLs — keep as-is unless you run a service outside docker compose
+PREPROCESSING_API_URL=http://preprocessing-api:8002
+POSTPROCESSING_API_URL=http://postprocessing-api:8003
+USER_API_URL=http://user-api:8004
+AUTH_API_URL=http://auth-api:8005
+```
+
+Per-variable explanation: `sapphire/README.md` > `Environment setup` > `What to set`. Categorised reference (required / required-if / optional): `doc/configuration.md` > `.env variable reference`.
+
+> `[DOC-GAP-4]` ✅ **Resolved** — `sapphire/.env.example` annotated with placeholder values and inline comments; `sapphire/README.md` Environment setup expanded with a per-group walkthrough.
 
 ### 4.2 Start the services
 
-- [ ] Start all services
+This step runs AFTER Phase 5 (`<env_file>` must exist and contain both the pipeline and services-layer variables). Come back here after completing Phase 5.
+
+- [ ] Start all services, passing the external env file explicitly
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools/sapphire
-  docker compose --env-file .env up -d
+  docker compose --env-file /data/<data_folder>/config/<env_file> up -d
   ```
 
 - [ ] Wait for databases to be healthy
   ```bash
-  # Check all containers
   docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}"
   ```
 
