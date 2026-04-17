@@ -2953,22 +2953,22 @@ class TestRecalculateSkillMetricsIntegration:
                 "src.data_reader.read_observed_and_modelled_data",
                 return_value=(
                     pd.DataFrame(
-                        columns=[
-                            "code",
-                            "date",
-                            "discharge_avg",
-                            "delta",
-                        ]
+                        {
+                            "code": ["19999"],
+                            "date": [pd.Timestamp("2024-01-05")],
+                            "discharge_avg": [100.0],
+                            "delta": [0.1],
+                        }
                     ),
                     pd.DataFrame(
-                        columns=[
-                            "code",
-                            "date",
-                            "pentad_in_year",
-                            "pentad_in_month",
-                            "forecasted_discharge",
-                            "model_short",
-                        ]
+                        {
+                            "code": ["19999"],
+                            "date": [pd.Timestamp("2024-01-05")],
+                            "pentad_in_year": [1],
+                            "pentad_in_month": [1],
+                            "forecasted_discharge": [95.0],
+                            "model_short": ["LR"],
+                        }
                     ),
                 ),
             ) as mock_read,
@@ -3030,22 +3030,22 @@ class TestRecalculateSkillMetricsIntegration:
                 "src.data_reader.read_observed_and_modelled_data",
                 return_value=(
                     pd.DataFrame(
-                        columns=[
-                            "code",
-                            "date",
-                            "discharge_avg",
-                            "delta",
-                        ]
+                        {
+                            "code": ["19999"],
+                            "date": [pd.Timestamp("2024-01-05")],
+                            "discharge_avg": [100.0],
+                            "delta": [0.1],
+                        }
                     ),
                     pd.DataFrame(
-                        columns=[
-                            "code",
-                            "date",
-                            "pentad_in_year",
-                            "pentad_in_month",
-                            "forecasted_discharge",
-                            "model_short",
-                        ]
+                        {
+                            "code": ["19999"],
+                            "date": [pd.Timestamp("2024-01-05")],
+                            "pentad_in_year": [1],
+                            "pentad_in_month": [1],
+                            "forecasted_discharge": [95.0],
+                            "model_short": ["LR"],
+                        }
                     ),
                 ),
             ),

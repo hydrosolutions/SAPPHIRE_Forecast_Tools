@@ -553,6 +553,7 @@ def _read_ml_forecasts_from_api(
     start_date: str | None = None,
     end_date: str | None = None,
     code: str | None = None,
+    timeout: int = 30,
 ) -> pd.DataFrame:
     """Read ML forecasts from the SAPPHIRE postprocessing API.
 
@@ -569,6 +570,7 @@ def _read_ml_forecasts_from_api(
         start_date: ISO date string for forecast_date (issue date) filter
         end_date: ISO date string for forecast_date (issue date) filter
         code: station code to filter; None means all codes
+        timeout: Request timeout in seconds per API call (default: 30)
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed; cannot read ML forecasts from API")
@@ -579,7 +581,7 @@ def _read_ml_forecasts_from_api(
         return pd.DataFrame()
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = SapphirePostprocessingClient(base_url=api_url, timeout=timeout)
 
     try:
         if not client.readiness_check():

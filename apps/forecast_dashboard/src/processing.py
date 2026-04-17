@@ -921,7 +921,7 @@ def load_stations_from_file(filename):
     try:
         with open(filename, "rb") as f:
             return pickle.load(f)
-    except (FileNotFoundError, pickle.PickleError):
+    except (FileNotFoundError, pickle.PickleError, EOFError):
         return None
 
 
