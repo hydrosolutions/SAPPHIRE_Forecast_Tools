@@ -11,6 +11,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
     - [Install software on the server](#install-software-on-the-server)
     - [Verify server readiness](#verify-server-readiness)
 - [Step-by-step instructions](#step-by-step-instructions)
+  - [Deployment order](#deployment-order)
   - [Download this repository](#download-this-repository)
   - [General information for deployment](#general-information-for-deployment)
   - [Deployment of demo version on a local machine](#deployment-of-demo-version-on-a-local-machine)
@@ -18,6 +19,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
     - [Configuring your server](#configuring-your-server)
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
       - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
+      - [SAPPHIRE services (API stack)](#sapphire-services-api-stack)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -301,6 +303,32 @@ If any check fails, fix the issue before continuing. Common problems:
 | A port is already in use | Another service is listening | Identify it with `ss -tlnp | grep :<port>` and stop or reconfigure it |
 
 # Step-by-step instructions
+
+## Deployment order
+
+Deploy the components in the order below. Every later component depends on
+the ones above it, so skipping ahead will result in failures that are hard
+to diagnose.
+
+1. **SAPPHIRE services (databases + APIs)** — the FastAPI stack at
+   `sapphire/services/` and its PostgreSQL databases. Everything else reads
+   and writes through the `api-gateway`, so these must be up first.
+2. **Luigi daemon** — orchestrates the pipeline scripts. Must be running
+   before any pipeline task is triggered, either manually or from cron.
+3. **Pipeline scripts** (preprocessing, linear regression, ML, long-term,
+   postprocessing) — produce the forecasts. They call the services on each
+   run to read inputs and persist outputs.
+4. **Dashboards** — present forecasts to end users. They query the API
+   gateway and expect the postprocessing service to contain forecast data.
+
+If the order is broken — most commonly when the SAPPHIRE services are down
+while the pipeline runs — the pipeline either fails hard or silently falls
+back to CSV-only mode (depending on the module). A silent fallback is the
+more dangerous outcome: nothing visibly breaks, but no new data reaches the
+databases, and the dashboards keep showing stale forecasts until a human
+notices. Always confirm `curl http://localhost:8000/health/ready` returns
+OK before starting the Luigi daemon or triggering a pipeline run.
+
 ## Download this repository
 Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. This will give you the folder structure with which you can quickly deploy the forecast tools. You can, however, also build your own folder structure. If you choose to do so, you will have to adapt the paths in the .env file and the run commands accordingly.
 <details>
@@ -318,14 +346,12 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 </details>
 
 ## General information for deployment
-We provide a script the should take care of most deployment steps for you and run the forecast tools for the first time.
-The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
-```bash
-ieasyhydroforecast_url=<base url> nohup bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path> > deployment.log 2>&1 &
-```
-where the env_file_path is the absolute path to your .env file. This command will log all output of the command to a file deployment.log in your folder SAPPHIRE_Forecast_Tools. You can view the progress of the deployment script by looking at the log file, for example with `less deployment.log`, and by checking the progress of the individual containers with `docker ps -a` and `docker logs <container_name>`.
+Deployment is performed as a sequence of manual steps rather than a single script. Follow the [Deployment order](#deployment-order) above for the high-level sequence, and refer to the following documents for the detailed walkthroughs:
 
-Please note that the deployment script assumes that the pentad forecast dashboard will be deployed at fc.pentad.<base url> and the decad dashboard will be deployed at fc.decad.<base url>. 
+- For a first-time deployment on a new server, see [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md).
+- For updates to an existing deployment, see [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
+The deployment assumes that the pentad forecast dashboard will be deployed at `fc.pentad.<base url>` and the decad dashboard at `fc.decad.<base url>`. You will have to configure your proxy manager and domain manager to forward port 5006 to `fc.pentad.<base url>` and port 5007 to `fc.decad.<base url>`.
 
 
 ## Deployment of demo version on a local machine
@@ -408,6 +434,119 @@ If the SAPPHIRE forecast tools need to access an iEasyHydro High Frequency (HF) 
 
 For the full step-by-step instructions with all commands, see the [Update Deployment Checklist — Section 1.2, Option B or C](prod/update_deployment_checklist.md#12-ieasyhydro-hf-connectivity-if-applicable).
 
+### SAPPHIRE services (API stack)
+
+The SAPPHIRE services are four FastAPI microservices (`preprocessing`,
+`postprocessing`, `user`, `auth`) fronted by an `api-gateway`, each backed
+by its own PostgreSQL database. They are orchestrated by
+`sapphire/docker-compose.yml` and hold the runoff, forecast, skill-metric,
+user, and authentication data that the pipeline and dashboards read and
+write through the gateway.
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `api-gateway` | 8000 | Routes requests to the backend services |
+| `preprocessing` | 8002 | Runoff, hydrograph, meteo, and snow data |
+| `postprocessing` | 8003 | Forecast results and skill metrics |
+| `user` | 8004 | User management |
+| `auth` | 8005 | Authentication and authorization |
+
+Each backend service has a dedicated PostgreSQL database exposed on a
+localhost-only port (5433–5436). Do not expose any of these ports to the
+internet.
+
+#### Starting the services
+
+Full configuration and operational notes are in
+[`sapphire/README.md`](../sapphire/README.md). In a deployment, the
+services read their configuration (database credentials, JWT secret,
+internal service URLs) from the same external `.env` file that the
+pipeline uses — not from `sapphire/.env`. The `sapphire/.env.example` file
+lists the required variables and is intended as a reference only.
+
+```bash
+# Variables to fill into your external <env_file> before starting the
+# services (see sapphire/.env.example for the full list):
+#   POSTGRES_USER=postgres
+#   POSTGRES_PASSWORD=<generate-strong-password>
+#   PREPROCESSING_DB=preprocessing_db
+#   POSTPROCESSING_DB=postprocessing_db
+#   USER_DB=user_db
+#   AUTH_DB=auth_db
+#   JWT_SECRET_KEY=<generate-strong-random-secret>
+#   PREPROCESSING_API_URL=http://preprocessing-api:8002
+#   POSTPROCESSING_API_URL=http://postprocessing-api:8003
+#   USER_API_URL=http://user-api:8004
+#   AUTH_API_URL=http://auth-api:8005
+
+# Start all services, passing the external env file explicitly
+cd /data/SAPPHIRE_Forecast_Tools/sapphire
+docker compose --env-file /absolute/path/to/<data_folder>/config/<env_file> up -d
+
+# Health check (expect 200 OK on both)
+curl http://localhost:8000/health
+curl http://localhost:8000/health/ready
+```
+
+Verify all containers are up with `docker ps --filter "name=sapphire"`
+before moving on.
+
+#### Populating historical data
+
+The preprocessing database must contain historical daily runoff going back
+multiple years before the pipeline can produce useful forecasts. There are
+two paths, depending on where your history lives.
+
+**Path A — migrate from existing CSV data.** Use this when you are
+migrating from a CSV-based SAPPHIRE deployment or restoring from backup.
+Run the data migrators from inside the service containers:
+
+```bash
+docker exec -it sapphire-preprocessing-api /bin/bash
+# Inside the container:
+python app/data_migrator.py --type runoff
+python app/data_migrator.py --type hydrograph
+python app/data_migrator.py --type meteo
+python app/data_migrator.py --type snow
+exit
+
+docker exec -it sapphire-postprocessing-api /bin/bash
+# Inside the container:
+python app/data_migrator.py --type skillmetric --batch-size 1
+python app/data_migrator.py --type lrforecast
+python app/data_migrator.py --type combinedforecast
+python app/data_migrator.py --type forecast
+```
+
+**Path B — initialize from Excel or iEasyHydro HF.** Use this for a
+greenfield deployment where historical data lives in Excel files under
+`daily_runoff/` and/or in an iEasyHydro HF database. The `initialize`
+target in `run_locally.sh` wraps the full first-time setup: it runs
+preprocessing in `maintenance` mode (re-reads Excel, detects gaps), pushes
+the full CSV history to the API via `initial_api_sync.py`, then runs the
+LR hindcast and skill-metric recalculation for both PENTAD and DECAD
+horizons. The hindcast start date is read from `ieasyhydroforecast_START_DATE`
+in your env file (a new required variable — the script exits with an
+error if it is missing).
+
+```bash
+# Set ieasyhydroforecast_START_DATE in your external env file first
+# (e.g., ieasyhydroforecast_START_DATE=2000-01-01 for a full hindcast).
+ieasyhydroforecast_env_file_path=/absolute/path/to/<data_folder>/config/<env_file> \
+  bash apps/run_locally.sh initialize
+```
+
+Note that `initialize` also populates the postprocessing database (LR
+forecasts and skill metrics), not just the preprocessing runoff history.
+For the full walkthrough of both paths and the mode semantics see
+[`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md)
+Phase 4.3.
+
+For the first-time-deployment walkthrough see
+[`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md).
+For updates to an existing deployment see
+[`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
 
@@ -427,23 +566,13 @@ Note that you might have to authenticate yourself with a password. You can also 
 To be described.
 
 ### Deploy the forecast tools
-We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
-```bash
-ieasyhydroforecast_url=<base url> bash ./bin/deploy_sapphire_forecast_tools.sh <absolute_path_to_data_directory>/config/.env_develop_kghm
-```
-The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data.
-For deployment with sensitive data, we recommend a separate data folder which is located at the same hierarchical level as the SAPPHIRE_Forecast_Tools folder. In this case the path to the data root folder would be:
-```bash
-ieasyhydroforecast_url=<base url> bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/parent/directory/of/SAPPHIRE_Forecast_Tools
-```
+Follow the components in the sequence given by [Deployment order](#deployment-order): bring up the SAPPHIRE services, then the Luigi daemon, then the pipeline scripts, and finally the dashboards.
 
-Please note that the deployment script assumes that the pentad forecast dashboard will be deployed at fc.pentad.<base url> and the decad dashboard will be deployed at fc.decad.<base url>. You will have to configure your proxy manager and domain manager to forward port 5006 to fc.pentad.<base url> and port 5007 to fc.decad.<base url>. 
+For deployment with sensitive data, we recommend keeping a separate data folder at the same hierarchical level as the `SAPPHIRE_Forecast_Tools` folder. The data folder holds your discharge files, bulletin templates, and configuration files (including `<env_file>`). Paths passed to the pipeline scripts point into this data folder.
 
-For convenience sake you may want to run the forecast tools in the background and redirect the output to a log file. You can do this by running the following command:
-```bash
-nohup bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Forecast_Tools > logfile.log 2>&1 &
-```
-This will run the forecast tools in the background and redirect the output to a log file called logfile.log. The log file will be stored in the SAPPHIRE_Forecast_Tools folder.
+Detailed, step-by-step commands for first-time deployment (including `docker compose` invocations for the services and dashboards) are in [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md), Phases 4 and 8–9. For updates to an existing deployment, use [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
+The deployment assumes that the pentad forecast dashboard will be served at `fc.pentad.<base url>` and the decad dashboard at `fc.decad.<base url>`. You will have to configure your proxy manager and domain manager to forward port 5006 to `fc.pentad.<base url>` and port 5007 to `fc.decad.<base url>`.
 
 ### Accessing the outputs
 You should now be able to view the configuration dashboard in your browser under <your servers url> and the forecast dashboard under <your servers url>:5006/forecast_dashboard for pentadal or <your servers url>:5007/forecast_dashboard for decadal forecasts. You can trigger the writing of the forecast bulletins from the forecast dashboard.

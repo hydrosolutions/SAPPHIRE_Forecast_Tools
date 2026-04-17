@@ -28,18 +28,243 @@ To set up a new SAPPHIRE deployment, create a **data folder** outside the code r
 
 **Path convention**: All paths in the `.env` file are relative to the module working directory (`apps/<module>/`). For an external data folder at `../<country>_data_forecast_tools/`, use `../../../<country>_data_forecast_tools/` (three levels up from `apps/<module>/` to reach the parent of the repo root).
 
-TODO: Document the minimal set of required .env variables for a deployment that only uses linear regression with manual sites (no iEasyHydro HF, no data gateway, no ML models, no conceptual models). Many variables in the current .env examples are only needed for specific modules.
+### .env variable reference
 
-### Connecting to iEasyHydro HF
+The `.env` file drives every pipeline module. Variables fall into three categories: **Required** (the pipeline will not start without them), **Required-if** (needed only when a specific feature or module is enabled), and **Optional** (sensible default, or the feature is simply off when unset). The pipeline-side variables live in the external data folder (e.g. `<data_folder>/config/.env_develop_<country>`); the services-side variables are loaded by the FastAPI stack. In production both sets share a single `.env` file — see [SAPPHIRE services (API stack)](deployment.md#sapphire-services-api-stack) in the deployment guide.
 
-The `ieasyhydroforecast_connect_to_iEH` variable controls whether the pipeline attempts to connect to the iEasyHydro High Frequency database. Set to `True` to enable the iEH HF connection (requires `IEASYHYDROHF_HOST`, `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD`). Set to `False` for deployments without an iEH HF database — the pipeline will use config JSON files for site discovery and skip all SDK fetch calls.
+#### Minimal deployment profile
 
-```
-# Set to True to connect to iEasyHydro HF, False for config-file-only mode
+The minimal deployment runs linear regression against manual sites only — no iEasyHydro HF database, no SAPPHIRE Data Gateway, no ML models, no conceptual models, no long-term forecasts. Copy the block below into `<data_folder>/config/.env_develop_<country>`, replace the `<…>` placeholders, and the pipeline is runnable end-to-end. All other variables in the full reference table can be omitted.
+
+```bash
+# --- Identity and mode ---
+ieasyhydroforecast_organization=demo
 ieasyhydroforecast_connect_to_iEH=False
+ieasyhydroforecast_run_ML_models=false
+ieasyhydroforecast_run_CM_models=false
+
+# --- Station + output config files (kept under <data_folder>/config) ---
+ieasyforecast_configuration_path=../../../<data_folder>/config
+ieasyforecast_config_file_all_stations=config_all_stations_library.json
+ieasyforecast_config_file_station_selection=config_station_selection.json
+ieasyforecast_config_file_output=config_output.json
+ieasyforecast_restrict_stations_file=null
+
+# --- Intermediate data + last-run marker ---
+ieasyforecast_intermediate_data_path=../../../<data_folder>/intermediate_data
+ieasyforecast_last_successful_run_file=last_successful_run.txt
+
+# --- Bulletin templates and report output ---
+ieasyreports_templates_directory_path=../../../<data_folder>/templates
+ieasyforecast_template_pentad_bulletin_file=pentad_forecast_bulletin_template.xlsx
+ieasyforecast_template_pentad_sheet_file=short_term_trad_sheet_template.xlsx
+ieasyreports_report_output_path=../../../<data_folder>/reports
+ieasyforecast_bulletin_file_name=pentadal_forecast_bulletin.xlsx
+ieasyforecast_sheet_file_name=pentadal_forecast_sheet.xlsx
+
+# --- Dashboard map + daily discharge excel files ---
+ieasyforecast_gis_directory_path=../../../<data_folder>/GIS
+ieasyforecast_country_borders_file_name=<adm_boundaries>.shp
+ieasyforecast_daily_discharge_path=../../../<data_folder>/daily_runoff
+
+# --- Localization + logging ---
+ieasyforecast_locale_dir=../../../<data_folder>/config/locale
+ieasyforecast_locale=en_CH
+log_file=./forecast_logs.txt
+log_level=INFO
+
+# --- SAPPHIRE services (must point at the running API gateway) ---
+SAPPHIRE_API_ENABLED=true
+SAPPHIRE_API_URL=http://localhost:8000
+POSTGRES_USER=<db_user>
+POSTGRES_PASSWORD=<db_password>
+PREPROCESSING_DB=preprocessing_db
+POSTPROCESSING_DB=postprocessing_db
+USER_DB=user_db
+AUTH_DB=auth_db
+JWT_SECRET_KEY=<generate_strong_random_secret>
 ```
 
-TODO: Document `IEASYHYDROHF_HOST`, `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD` (the iEasyHydro HF SDK variables, distinct from the legacy `IEASYHYDRO_HOST` etc.). These are used by `preprocessing_runoff` and are separate from the legacy iEasyHydro SDK variables documented below.
+For deployments that enable more features, keep the minimal block as the base and layer on the variables listed in ["Add-ons"](#add-ons--what-to-flip-on-when-you-need-more) below.
+
+#### Full variable reference
+
+Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_<country>`):
+
+| Variable | Category | Module(s) | Purpose | Default / Notes |
+|----------|----------|-----------|---------|-----------------|
+| `ieasyhydroforecast_organization` | Required | all | Deployment identifier (`demo`, `kghm`, `tjhm`, `uzhm`) | — |
+| `ieasyhydroforecast_connect_to_iEH` | Required | all | `True`/`False` — toggles iEH HF SDK fetch | — |
+| `ieasyhydroforecast_run_ML_models` | Required | dashboard, pipeline | `true`/`false` — gates ML forecast container | — |
+| `ieasyhydroforecast_run_CM_models` | Required | dashboard, pipeline | `true`/`false` — gates conceptual-model container | — |
+| `ieasyforecast_configuration_path` | Required | all | Path to station/output config JSON files | — |
+| `ieasyforecast_config_file_all_stations` | Required | all | Station library filename | `config_all_stations_library.json` |
+| `ieasyforecast_config_file_station_selection` | Required | all | Selected-stations filename | `config_station_selection.json` |
+| `ieasyforecast_config_file_output` | Required | all | Output config filename | `config_output.json` |
+| `ieasyforecast_intermediate_data_path` | Required | all | Where pipeline writes intermediate CSV/pkl | — |
+| `ieasyforecast_last_successful_run_file` | Required | linear_regression | Marker file for last successful run date | `last_successful_run.txt` |
+| `ieasyreports_templates_directory_path` | Required | postprocessing_forecasts | Bulletin/sheet template directory | — |
+| `ieasyforecast_template_pentad_bulletin_file` | Required | postprocessing_forecasts | Pentad bulletin template filename | — |
+| `ieasyforecast_template_pentad_sheet_file` | Required | postprocessing_forecasts | Pentad sheet template filename | — |
+| `ieasyreports_report_output_path` | Required | postprocessing_forecasts | Root for generated bulletins/sheets | — |
+| `ieasyforecast_bulletin_file_name` | Required | postprocessing_forecasts | Base name for pentad bulletins | — |
+| `ieasyforecast_sheet_file_name` | Required | postprocessing_forecasts | Base name for pentad sheets | — |
+| `ieasyforecast_gis_directory_path` | Required | dashboard | Directory holding admin boundary shapefiles | — |
+| `ieasyforecast_country_borders_file_name` | Required | dashboard | Admin boundaries shapefile (WGS84, EPSG:4326) | — |
+| `ieasyforecast_daily_discharge_path` | Required | preprocessing_runoff | Excel files with historical discharge | — |
+| `ieasyforecast_locale_dir` | Required | dashboard | Directory with `.mo`/`.po` locale files | — |
+| `ieasyforecast_locale` | Required | dashboard | Active locale (`ru_KG` or `en_CH`) | `en_CH` |
+| `log_file` | Required | all | Log file path (relative to module cwd) | `./forecast_logs.txt` |
+| `log_level` | Required | all | Python logging level | `INFO` |
+| `SAPPHIRE_API_ENABLED` | Required | all | `true`/`false` — use API vs CSV-only | `true` |
+| `SAPPHIRE_API_URL` | Required | all | API gateway base URL | `http://localhost:8000` |
+| `ieasyforecast_restrict_stations_file` | Required-if: dev restriction | all | Restrict to subset of stations; `null` to disable | — |
+| `IEASYHYDROHF_HOST` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEasyHydro HF API endpoint (e.g. `http://host.docker.internal:5555/api/v1/`) | — |
+| `IEASYHYDROHF_USERNAME` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEH HF API username | — |
+| `IEASYHYDROHF_PASSWORD` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEH HF API password | — |
+| `ieasyhydroforecast_ssh_to_iEH` | Required-if: SSH tunnel to iEH | preprocessing_runoff | `True` if reaching iEH through an SSH tunnel | `False` |
+| `IEASYHYDRO_HOST` | Required-if: legacy iEH SDK | backend (legacy) | Legacy iEasyHydro (non-HF) endpoint | — |
+| `IEASYHYDRO_USERNAME` | Required-if: legacy iEH SDK | backend (legacy) | Legacy iEH username | — |
+| `IEASYHYDRO_PASSWORD` | Required-if: legacy iEH SDK | backend (legacy) | Legacy iEH password | — |
+| `ORGANIZATION_ID` | Required-if: legacy iEH SDK | backend (legacy) | Organization ID in legacy iEH | `1` |
+| `IEASYHYDRO_SPOTCHECK_SITES` | Required-if: spot-check enabled | preprocessing_runoff | Comma-separated site codes to spot-check | — |
+| `GOOGLE_SHEETS_ENABLED` | Required-if: manual-site sheet ingestion | preprocessing_runoff | `true`/`false` | `false` |
+| `GOOGLE_SHEETS_DISCHARGE_ID` | Required-if: `GOOGLE_SHEETS_ENABLED=true` | preprocessing_runoff | Spreadsheet ID | — |
+| `GOOGLE_SHEETS_CREDENTIALS_PATH` | Required-if: `GOOGLE_SHEETS_ENABLED=true` | preprocessing_runoff | Path to Google service account JSON key | — |
+| `GOOGLE_SHEETS_SITE_CODES` | Required-if: `GOOGLE_SHEETS_ENABLED=true` | preprocessing_runoff | Comma-separated manual site codes | — |
+| `ieasyhydroforecast_API_KEY_GATEAWAY` | Required-if: gateway used | preprocessing_gateway, ML, conceptual | API key for SAPPHIRE Data Gateway | — |
+| `SAPPHIRE_DG_HOST` | Required-if: gateway used | preprocessing_gateway, dashboard | Gateway base URL | — |
+| `SAPPHIRE_DG_API_KEY` | Required-if: gateway used | preprocessing_gateway | Gateway API key (alternative name) | — |
+| `ieasyhydroforecast_HRU_CONTROL_MEMBER` | Required-if: gateway used | preprocessing_gateway | HRU shapefile identifier for control member | — |
+| `ieasyhydroforecast_HRU_ENSEMBLE` | Required-if: gateway used | preprocessing_gateway | Comma-separated HRUs needing ensemble forecasts | — |
+| `ieasyhydroforecast_OUTPUT_PATH_DG` | Required-if: gateway used | preprocessing_gateway | Subdir under intermediate for gateway output | `data_gateway` |
+| `ieasyhydroforecast_OUTPUT_PATH_CM` | Required-if: gateway used | preprocessing_gateway | Subdir for control-member forcing | `control_member_forcing` |
+| `ieasyhydroforecast_OUTPUT_PATH_ENS` | Required-if: gateway used | preprocessing_gateway | Subdir for ensemble forcing | `ensemble_forcing` |
+| `ieasyhydroforecast_OUTPUT_PATH_REANALYSIS` | Required-if: gateway used | preprocessing_gateway | Subdir for ERA5 reanalysis output | — |
+| `ieasyhydroforecast_OUTPUT_PATH_SNOW` | Required-if: gateway used | preprocessing_gateway | Subdir for snow data output | — |
+| `ieasyhydroforecast_OUTPUT_PATH_DISCHARGE` | Required-if: ML used | ML | Subdir for ML prediction output | `predictions` |
+| `ieasyhydroforecast_models_and_scalers_path` | Required-if: ML or quantile mapping | preprocessing_gateway, ML | Path to trained scalers / QM params | — |
+| `ieasyhydroforecast_Q_MAP_PARAM_PATH` | Required-if: quantile mapping | preprocessing_gateway | Subdir under models_and_scalers for QM params | `params_quantile_mapping` |
+| `ieasyhydroforecast_PATH_TO_QMAPPED_ERA5` | Required-if: gateway used | preprocessing_gateway | Output subdir for QMapped ERA5 | `control_member_forcing` |
+| `ieasyhydroforecast_available_ML_models` | Required-if: `run_ML_models=true` | ML, dashboard | Comma-separated model tags | `TFT,TIDE,TSMIXER` |
+| `ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts` | Required-if: `run_ML_models=true` | ML | JSON listing hydroposts eligible for ML | — |
+| `ieasyhydroforecast_ml_hru_models` | Required-if: `run_ML_models=true` | ML | Mapping from model → HRU | — |
+| `ieasyhydroforecast_SNOW_VARS` | Required-if: snow data used | preprocessing_gateway, long_term | Comma-separated snow vars (e.g. `SWE,HS,RoF`) | — |
+| `ieasyhydroforecast_HRU_SNOW_DATA` | Required-if: snow data used | preprocessing_gateway | HRU id for snow data | — |
+| `ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD` | Required-if: snow in dashboard | dashboard | HRU id exposed on snow visualization | — |
+| `ieasyhydroforecast_ECMWF_IFS_lead_time` | Required-if: ML used | ML | Forecast lead time in days for IFS | — |
+| `ieasyhydroforecast_NEW_STATIONS` | Required-if: onboarding new stations | preprocessing_gateway, ML | Comma-separated codes for backfill | — |
+| `ieasyhydroforecast_ml_long_term_configuration` | Required-if: long_term used | long_term | Path to long-term forecast config JSON | — |
+| `ieasyhydroforecast_ml_long_term_output_path` | Required-if: long_term used | long_term | Output subdir under intermediate data | — |
+| `ieasyhydroforecast_ml_long_term_path_to_static` | Required-if: long_term used | long_term | Static features CSV for long-term models | — |
+| `ieasyhydroforecast_ml_long_term_supported_modes` | Required-if: long_term used | long_term | Comma-separated modes (e.g. `month_1,seasonal`) | — |
+| `lt_forecast_mode` | Required-if: long_term used | long_term | Mode selected for a given run | — |
+| `SAPPHIRE_PIPELINE_SMTP_SERVER` | Required-if: email alerts | pipeline | SMTP host | `smtp.example.com` |
+| `SAPPHIRE_PIPELINE_SMTP_PORT` | Required-if: email alerts | pipeline | SMTP port | `587` |
+| `SAPPHIRE_PIPELINE_SMTP_USERNAME` | Required-if: email alerts | pipeline | SMTP login | — |
+| `SAPPHIRE_PIPELINE_SMTP_PASSWORD` | Required-if: email alerts | pipeline | SMTP password | — |
+| `SAPPHIRE_PIPELINE_SENDER_EMAIL` | Required-if: email alerts | pipeline | From-address for pipeline alerts | — |
+| `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Required-if: email alerts | pipeline | Comma-separated recipient list | — |
+| `ieasyhydroforecast_config_file_data_gateway_name_twins` | Optional | preprocessing_gateway | JSON mapping gateway-name → iEH-name | — |
+| `ieasyforecast_hydrograph_day_file` | Optional | linear_regression, dashboard | Daily hydrograph filename | `hydrograph_day.csv` |
+| `ieasyforecast_hydrograph_pentad_file` | Optional | linear_regression, dashboard | Pentad hydrograph filename | `hydrograph_pentad.csv` |
+| `ieasyforecast_hydrograph_decad_file` | Optional | linear_regression, dashboard | Decad hydrograph filename | `hydrograph_decad.csv` |
+| `ieasyforecast_pentad_results_file` | Optional | linear_regression | Pentad forecast CSV filename | `forecasts_pentad.csv` |
+| `ieasyforecast_decad_results_file` | Optional | linear_regression | Decad forecast CSV filename | `forecasts_decad.csv` |
+| `ieasyforecast_daily_discharge_file` | Optional | preprocessing_runoff | Daily discharge CSV filename | `runoff_day.csv` |
+| `ieasyforecast_pentad_discharge_file` | Optional | linear_regression | Pentad runoff CSV filename | `runoff_pentad.csv` |
+| `ieasyforecast_decad_discharge_file` | Optional | linear_regression | Decad runoff CSV filename | `runoff_decad.csv` |
+| `ieasyforecast_analysis_pentad_file` | Optional | linear_regression | Pentad analysis CSV | `forecast_pentad_linreg.csv` |
+| `ieasyforecast_analysis_decad_file` | Optional | linear_regression | Decad analysis CSV | `forecast_decad_linreg.csv` |
+| `ieasyforecast_pentadal_skill_metrics_file` | Optional | postprocessing_forecasts | Pentad skill CSV backup filename | `skill_metrics_pentad.csv` |
+| `ieasyforecast_decadal_skill_metrics_file` | Optional | postprocessing_forecasts | Decad skill CSV backup filename | `skill_metrics_decad.csv` |
+| `ieasyforecast_monthly_skill_metrics_file` | Optional | postprocessing_forecasts | Monthly skill CSV backup filename | `skill_metrics_monthly.csv` |
+| `ieasyforecast_combined_forecast_pentad_file` | Optional | postprocessing_forecasts | Combined pentad forecast CSV | `combined_forecasts_pentad.csv` |
+| `ieasyforecast_combined_forecast_decad_file` | Optional | postprocessing_forecasts | Combined decad forecast CSV | `combined_forecasts_decad.csv` |
+| `ieasyforecast_monthly_combined_forecast_file` | Optional | postprocessing_forecasts | Monthly combined forecast CSV | `combined_forecasts_monthly.csv` |
+| `ieasyforecast_template_decad_bulletin_file` | Optional | postprocessing_forecasts | Decad bulletin template | — |
+| `ieasyforecast_template_decad_sheet_file` | Optional | postprocessing_forecasts | Decad sheet template | — |
+| `ieasyhydroforecast_backend_docker_image_tag` | Optional | dashboard (triggers) | Docker tag for backend images | `latest` |
+| `ieasyhydroforecast_frontend_docker_image_tag` | Optional | dashboard | Docker tag for frontend | `latest` |
+| `ieasyhydroforecast_data_root_dir` | Optional | dashboard (Docker triggers) | Host path of `<data_folder>` for Docker binds | — |
+| `ieasyhydroforecast_bin_path` | Optional | dashboard (Docker triggers) | Host path to `bin/` for Docker binds | — |
+| `ieasyhydroforecast_env_file_path` | Optional | run_locally.sh | Absolute path to `.env` (required by `run_locally.sh`) | — |
+| `ieasyhydroforecast_START_DATE` | Optional | linear_regression, long_term | Hindcast start date (YYYY-MM-DD) | — |
+| `ieasyhydroforecast_END_DATE` | Optional | linear_regression, long_term | Hindcast end date (YYYY-MM-DD) | — |
+| `ieasyhydroforecast_reanalysis_START_DATE` | Optional | preprocessing_gateway | ERA5 reanalysis window start | — |
+| `ieasyhydroforecast_reanalysis_END_DATE` | Optional | preprocessing_gateway | ERA5 reanalysis window end | — |
+| `ieasyhydroforecast_CODES_HINDECAST` | Optional | ML, long_term | Codes to hindcast | — |
+| `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD` | Optional | dashboard | Snow viz start day (MM-DD) | — |
+| `SAPPHIRE_API_TOKEN` | Optional | all | Bearer token for API gateway | — |
+| `SAPPHIRE_API_FAILURE_MODE` | Optional | all | Failure policy when API unreachable (`warn`/`fail`) | `warn` |
+| `SAPPHIRE_SYNC_MODE` | Optional | preprocessing_gateway | `operational` or `historical` | `operational` |
+| `SAPPHIRE_CONSISTENCY_CHECK` | Optional | preprocessing_gateway | `true`/`false` — enable data consistency check | `false` |
+| `SAPPHIRE_CONSISTENCY_STRICT` | Optional | preprocessing_gateway | Fail on consistency mismatch | `false` |
+| `SAPPHIRE_SKILL_METRICS_START_YEAR` | Optional | postprocessing_forecasts | Override rolling window start year | current year − 20 |
+| `SAPPHIRE_SKILL_METRICS_YEAR` | Optional | postprocessing_forecasts | Target year for recalculation run | — |
+| `SAPPHIRE_RECALC_START_YEAR` | Optional | postprocessing_forecasts | Skill recalc window start | — |
+| `SAPPHIRE_RECALC_END_YEAR` | Optional | postprocessing_forecasts | Skill recalc window end | — |
+| `SAPPHIRE_SEASON_START_MONTH` | Optional | long_term | Hydrological season start month | — |
+| `SAPPHIRE_SEASON_END_MONTH` | Optional | long_term | Hydrological season end month | — |
+| `SAPPHIRE_HINDCAST_MODE` | Optional | ML, long_term | Enable hindcast code paths | — |
+| `SAPPHIRE_HINDCAST_TIMEOUT_SECONDS` | Optional | ML | ML hindcast container timeout | — |
+| `SAPPHIRE_MODEL_TO_USE` | Optional | long_term | Model override for a single run | — |
+| `FRESHNESS_THRESHOLD_DAYS` | Optional | validate_pipeline | Warn if intermediate data older than N days | `7` |
+| `POSTPROCESSING_GAPFILL_MAX_MONTHS` | Optional | postprocessing_forecasts | Max months to gap-fill | — |
+| `POSTPROCESSING_GAPFILL_WINDOW_DAYS` | Optional | postprocessing_forecasts | Gap-fill window (days) | — |
+| `POSTPROCESSING_GAPFILL_WINDOW_MONTHS` | Optional | postprocessing_forecasts | Gap-fill window (months) | — |
+| `POSTPROCESSING_GAPFILL_WINDOW_QUARTERS` | Optional | postprocessing_forecasts | Gap-fill window (quarters) | — |
+| `POSTPROCESSING_GAPFILL_WINDOW_SEASONS` | Optional | postprocessing_forecasts | Gap-fill window (seasons) | — |
+| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Optional | preprocessing_runoff | Maintenance pipeline lookback | — |
+
+Services-side variables (loaded by the FastAPI stack — in production they sit in the same `.env` as above; `sapphire/.env.example` is the reference). See [SAPPHIRE services (API stack)](deployment.md#sapphire-services-api-stack):
+
+| Variable | Category | Module(s) | Purpose | Default / Notes |
+|----------|----------|-----------|---------|-----------------|
+| `POSTGRES_USER` | Required | services | Postgres superuser for all service DBs | — |
+| `POSTGRES_PASSWORD` | Required | services | Postgres password | — |
+| `PREPROCESSING_DB` | Required | services | Preprocessing DB name | `preprocessing_db` |
+| `POSTPROCESSING_DB` | Required | services | Postprocessing DB name | `postprocessing_db` |
+| `USER_DB` | Required | services | User DB name | `user_db` |
+| `AUTH_DB` | Required | services | Auth DB name | `auth_db` |
+| `PREPROCESSING_DATABASE_URL` | Required | services | SQLAlchemy URL for preprocessing DB | Built from above |
+| `POSTPROCESSING_DATABASE_URL` | Required | services | SQLAlchemy URL for postprocessing DB | Built from above |
+| `USER_DATABASE_URL` | Required | services | SQLAlchemy URL for user DB | Built from above |
+| `AUTH_DATABASE_URL` | Required | services | SQLAlchemy URL for auth DB | Built from above |
+| `PREPROCESSING_API_URL` | Required | services | Internal URL the gateway uses for preprocessing | `http://preprocessing-api:8002` |
+| `POSTPROCESSING_API_URL` | Required | services | Internal URL for postprocessing | `http://postprocessing-api:8003` |
+| `USER_API_URL` | Required | services | Internal URL for user service | `http://user-api:8004` |
+| `AUTH_API_URL` | Required | services | Internal URL for auth service | `http://auth-api:8005` |
+| `JWT_SECRET_KEY` | Required | services | Signing key for JWT tokens (generate random) | — |
+| `JWT_ALGORITHM` | Optional | services | JWT algorithm | `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Optional | services | Access token lifetime | `30` |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Optional | services | Refresh token lifetime | `7` |
+| `REQUEST_TIMEOUT` | Optional | services | API gateway request timeout (s) | `30` |
+| `HEALTH_CHECK_TIMEOUT` | Optional | services | Health-check timeout (s) | `5` |
+| `API_KEY_ENABLED` | Optional | services | Enable API-key protection on gateway | `false` |
+| `API_KEY` | Required-if: `API_KEY_ENABLED=true` | services | Gateway API key | — |
+| `RATE_LIMIT_ENABLED` | Optional | services | Enable rate limiting | `false` |
+| `RATE_LIMIT` | Optional | services | Requests per minute when enabled | `100` |
+| `LOG_LEVEL` | Optional | services | Services log level | `INFO` |
+| `BATCH_SIZE` | Optional | services | Default batch size for migrations | `1000` |
+| `CSV_FOLDER` | Optional | services | CSV folder mounted into services | — |
+| `INTERMEDIATE_DATA_PATH` | Optional | services | Path to intermediate data (container side) | — |
+| `CONFIG_PATH` | Optional | services | Path to config (container side) | — |
+| `CONFIG_FOLDER` | Optional | services | Mount point inside containers | `/config` |
+
+Internal / Docker-only variables injected by the dashboard or Luigi at runtime (`SAPPHIRE_FORECAST_DATE`, `SAPPHIRE_PREDICTION_MODE`, `IN_DOCKER_CONTAINER`, `SAPPHIRE_OPDEV_ENV`) are documented separately under [Internal Docker environment variables](#internal-docker-environment-variables) and are not meant to be set in `.env`.
+
+#### Add-ons — what to flip on when you need more
+
+- **Connect to iEasyHydro HF.** Set `ieasyhydroforecast_connect_to_iEH=True`. Also set `IEASYHYDROHF_HOST`, `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD`. Add `ieasyhydroforecast_ssh_to_iEH=True` if reaching the HF API through an SSH tunnel.
+- **Legacy iEasyHydro SDK (non-HF).** Distinct from the HF variables above. Set `IEASYHYDRO_HOST`, `IEASYHYDRO_USERNAME`, `IEASYHYDRO_PASSWORD`, `ORGANIZATION_ID`. Used by the legacy `backend/` module only.
+- **SAPPHIRE Data Gateway.** Set `ieasyhydroforecast_API_KEY_GATEAWAY`, `SAPPHIRE_DG_HOST`, `ieasyhydroforecast_HRU_CONTROL_MEMBER`, `ieasyhydroforecast_models_and_scalers_path`. Required before enabling ML or conceptual models.
+- **ML models.** Set `ieasyhydroforecast_run_ML_models=true`. Also set the gateway block above, plus `ieasyhydroforecast_available_ML_models`, `ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts`, `ieasyhydroforecast_ml_hru_models`, `ieasyhydroforecast_ECMWF_IFS_lead_time`.
+- **Long-term monthly forecasts.** Set `ieasyhydroforecast_ml_long_term_configuration`, `ieasyhydroforecast_ml_long_term_output_path`, `ieasyhydroforecast_ml_long_term_path_to_static`, `ieasyhydroforecast_ml_long_term_supported_modes`. Gateway block is also required if the models consume weather forcing.
+- **Conceptual rainfall-runoff.** Set `ieasyhydroforecast_run_CM_models=true`. Also set the gateway block plus the conceptual-model paths documented in [Configuration of the conceptual rainfall-runoff module](#configuration-of-the-conceptual-rainfall-runoff-module) below.
+- **Manual-site ingestion from Google Sheets.** Set `GOOGLE_SHEETS_ENABLED=true`. Also set `GOOGLE_SHEETS_DISCHARGE_ID`, `GOOGLE_SHEETS_CREDENTIALS_PATH`, `GOOGLE_SHEETS_SITE_CODES`. Sites must be marked `"data_source": "manual"` in `config_all_stations_library.json`.
+- **Email alerts on pipeline failure.** Set `SAPPHIRE_PIPELINE_SMTP_SERVER`, `SAPPHIRE_PIPELINE_SMTP_PORT`, `SAPPHIRE_PIPELINE_SMTP_USERNAME`, `SAPPHIRE_PIPELINE_SMTP_PASSWORD`, `SAPPHIRE_PIPELINE_SENDER_EMAIL`, `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS`.
+- **Spot-check validation of iEH HF data.** Set `IEASYHYDRO_SPOTCHECK_SITES` to a comma-separated list of site codes (e.g. `19999,19998`).
 
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
