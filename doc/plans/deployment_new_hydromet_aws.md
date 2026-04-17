@@ -608,8 +608,10 @@ Practical steps (not yet documented):
   # The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
   0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 
-  # (5) Daily maintenance (evening UTC)
-  0 14 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
+  # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
+  # Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
+  # ML concurrency is limited to 3 via Luigi resources.
+  0 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
 
   # (6) Periodic maintenance
   # Bimonthly long-term postprocessing (1st of odd months)
@@ -740,8 +742,8 @@ Practical steps (not yet documented):
 | DOC-GAP-3 | ~~**SAPPHIRE services missing from deployment.md entirely**~~ | **Critical** | ✅ Fixed (`doc/deployment.md` new section) |
 | ~~DOC-GAP-4~~ | ~~No guidance on sapphire/.env values~~ | ~~Medium~~ | ✅ Fixed (sapphire/.env.example commented + sapphire/README.md Environment setup expanded) |
 | ~~DOC-GAP-5~~ | ~~**No "fresh deployment" path for services — DB init required**~~ | ~~**High**~~ | ✅ Fixed (initialize target implemented; Phase 4.3 updated) |
-| DOC-GAP-6 | **No minimal .env variable reference** | **High** | `doc/configuration.md` |
-| DOC-GAP-7 | iEasyHydro HF SDK vars undocumented | Medium | `doc/configuration.md` |
+| ~~DOC-GAP-6~~ | ~~**No minimal .env variable reference**~~ | ~~**High**~~ | ✅ Fixed (`.env variable reference` section added to `doc/configuration.md`) |
+| ~~DOC-GAP-7~~ | ~~iEasyHydro HF SDK vars undocumented~~ | ~~Medium~~ | ✅ Fixed (covered in `doc/configuration.md` reference table + Add-ons) |
 | DOC-GAP-8 | Path convention explanation buried | Low | `doc/configuration.md` |
 | DOC-GAP-9 | ~~**Deployment order not documented**~~ | **High** | ✅ Fixed (`doc/deployment.md`) |
 | DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
@@ -796,6 +798,8 @@ Changes already applied to the docs as part of deployment preparation.
 | DOC-GAP-5 | Added `initialize` target (see review_gi_draft_infra_new_deployment_initialization.md) + Phase 4.3 updated in this plan | <branch> |
 | DOC-GAP-13 | Removed deprecated deploy_sapphire_forecast_tools.sh / run_sapphire_forecast_tools.sh references from doc/deployment.md | <branch> |
 | DOC-GAP-11 | Generalised crontab in doc/deployment.md (placeholders + timezone reference table) | <branch> |
+| DOC-GAP-6 | Added categorised `.env variable reference` with minimal deployment profile to doc/configuration.md | <branch> |
+| DOC-GAP-7 | iEasyHydro HF SDK variables now documented in doc/configuration.md reference table and Add-ons section | <branch> |
 
 ---
 
