@@ -47,6 +47,30 @@ Two options:
 
 The `sapphire/.env` file is gitignored — each developer maintains their own copy.
 
+#### What to set
+
+The `.env.example` file is organised into nine groups. Below is an operator-oriented walkthrough; the inline comments in `.env.example` give short reminders, this section gives the "why".
+
+**Postgres credentials** — `POSTGRES_USER`, `POSTGRES_PASSWORD`. The compose stack uses a single pair of credentials for all four service databases. Keep `POSTGRES_USER=postgres` (the conventional default the psql examples below assume) and generate a strong password with `openssl rand -base64 24`. Do not commit the resulting value.
+
+**Database names** — `PREPROCESSING_DB`, `POSTPROCESSING_DB`, `USER_DB`, `AUTH_DB`. Conventional names (`preprocessing_db`, `postprocessing_db`, `user_db`, `auth_db`) match the `docker exec ... psql -d <db>` examples later in this README. Change them only if you have a specific reason.
+
+**Database URLs** — `PREPROCESSING_DATABASE_URL` and friends. These are pre-wired via variable interpolation against the values above, so operators normally do not edit them. Important caveat: Postgres only applies `POSTGRES_PASSWORD` the **first** time a database volume is initialised. If you edit `.env` to change credentials after services have booted, you must drop the DB volumes (`docker compose down -v`) before the new password takes effect.
+
+**Service URLs** — `PREPROCESSING_API_URL` etc. These are the inter-service URLs on the `sapphire-network` Docker bridge (`http://preprocessing-api:8002` and friends), not `localhost`. Most operators keep the Docker defaults. Only change them if you are running one of the services on bare metal outside the compose stack, in which case use `http://localhost:<port>`.
+
+**Auth / JWT** — `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`. Generate the secret once per deployment with `openssl rand -hex 32` and store it safely — rotating it invalidates every outstanding access and refresh token, forcing all users and service clients to re-authenticate. The algorithm (`HS256`) and token lifetimes (30-minute access, 7-day refresh) have sensible defaults and rarely need tuning.
+
+**API gateway** — `REQUEST_TIMEOUT`, `HEALTH_CHECK_TIMEOUT`, `API_KEY_ENABLED`, `API_KEY`, `RATE_LIMIT_ENABLED`, `RATE_LIMIT`. The two optional features (API-key gating and rate limiting) are off by default and reasonable to enable in production-facing deployments. Rate limit is expressed as requests per minute per client IP. Enabling `API_KEY_ENABLED` requires setting `API_KEY` to a strong random string and distributing it to every client of the gateway.
+
+**Shared service config** — `LOG_LEVEL`, `BATCH_SIZE`, `CSV_FOLDER`. `LOG_LEVEL` defaults to `INFO`; bump to `DEBUG` when troubleshooting. `BATCH_SIZE` controls default chunk size for the API migration scripts. `CSV_FOLDER` is the host-side mount target for the CSV data used by the `data_migrator.py` scripts — leave it blank for deployments that do not run the migrators.
+
+**Initialization** — `ieasyhydroforecast_START_DATE` is used **only** by the one-time `run_locally.sh initialize` path for first-time deployment. For standard operational runs it is unused. See [`doc/plans/deployment_new_hydromet_aws.md`](../doc/plans/deployment_new_hydromet_aws.md) Phase 4.3 for the initialization workflow.
+
+**Data paths** — `INTERMEDIATE_DATA_PATH`, `CONFIG_PATH`, `CONFIG_FOLDER`. The first two are **host-side** absolute paths that get bind-mounted into the `preprocessing-api` and `postprocessing-api` containers at `/intermediate_data` and `/config` respectively. `CONFIG_FOLDER=/config` is the **container-side** path of that mount and should normally be left unchanged.
+
+For a categorised variable reference (which variables are required, conditional, or optional) across the pipeline AND services, see [`doc/configuration.md`](../doc/configuration.md) under `.env variable reference`. For a minimal deployment profile, see the same section.
+
 ### Start all services
 
 ```bash

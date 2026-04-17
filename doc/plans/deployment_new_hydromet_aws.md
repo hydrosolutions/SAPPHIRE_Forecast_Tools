@@ -738,7 +738,7 @@ Practical steps (not yet documented):
 | ~~DOC-GAP-1~~ | ~~SAPPHIRE services ports not in deployment.md~~ | ~~Low~~ | ✅ Fixed |
 | DOC-GAP-2 | No locale/translation setup instructions | Medium | `doc/configuration.md` |
 | DOC-GAP-3 | ~~**SAPPHIRE services missing from deployment.md entirely**~~ | **Critical** | ✅ Fixed (`doc/deployment.md` new section) |
-| DOC-GAP-4 | No guidance on sapphire/.env values | Medium | `sapphire/.env.example` + `sapphire/README.md` |
+| ~~DOC-GAP-4~~ | ~~No guidance on sapphire/.env values~~ | ~~Medium~~ | ✅ Fixed (sapphire/.env.example commented + sapphire/README.md Environment setup expanded) |
 | ~~DOC-GAP-5~~ | ~~**No "fresh deployment" path for services — DB init required**~~ | ~~**High**~~ | ✅ Fixed (initialize target implemented; Phase 4.3 updated) |
 | DOC-GAP-6 | **No minimal .env variable reference** | **High** | `doc/configuration.md` |
 | DOC-GAP-7 | iEasyHydro HF SDK vars undocumented | Medium | `doc/configuration.md` |
@@ -792,6 +792,7 @@ Changes already applied to the docs as part of deployment preparation.
 |----|---------------|-----------------|
 | DOC-GAP-1 | Added structured port table with SAPPHIRE services ports and security guidance to `doc/deployment.md` > "Configuring your server" | `develop_long_term_fix_api_postprocessing_forecasts` |
 | DOC-GAP-3 + DOC-GAP-9 | Added "Deployment order" and "SAPPHIRE services (API stack)" sections to doc/deployment.md | <branch> |
+| DOC-GAP-4 | Added inline comments and placeholder values to sapphire/.env.example; expanded sapphire/README.md Environment setup section with per-group guidance | <branch> |
 | DOC-GAP-5 | Added `initialize` target (see review_gi_draft_infra_new_deployment_initialization.md) + Phase 4.3 updated in this plan | <branch> |
 | DOC-GAP-13 | Removed deprecated deploy_sapphire_forecast_tools.sh / run_sapphire_forecast_tools.sh references from doc/deployment.md | <branch> |
 | DOC-GAP-11 | Generalised crontab in doc/deployment.md (placeholders + timezone reference table) | <branch> |
