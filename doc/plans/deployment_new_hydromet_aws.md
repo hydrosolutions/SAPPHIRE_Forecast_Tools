@@ -134,30 +134,13 @@ Placeholders used throughout:
         /data/<data_folder>/config/
   ```
 
-  > `[DOC-GAP-2]` **No instructions for adding a new locale.**
-  > `doc/configuration.md` has an explicit TODO: "Document the contents of the
-  > locale directory and what is needed for adding a new language." For now,
-  > deploy with `ru_KG` (Russian) or `en_CH` (English) and add a new language
-  > later.
-  >
-  > **Fix:** Document the `.po`/`.mo` workflow: how to create a new locale
-  > folder, what strings need translation, how to compile `.mo` files.
+  > `[DOC-GAP-2]` ✅ **Resolved** — rudimentary `.po`/`.mo` workflow + "Adding a new language" steps in `doc/configuration.md#localization`.
 
 ---
 
 ## Phase 4: SAPPHIRE Services (API Stack)
 
-> `[DOC-GAP-3]` **SAPPHIRE services not mentioned in `doc/deployment.md` at
-> all.** The main deployment guide covers only the pipeline + dashboards. The
-> entire API stack (PostgreSQL databases, API gateway, preprocessing/
-> postprocessing/user/auth services) is documented only in `sapphire/README.md`
-> and is not referenced from the deployment flow. Since the pipeline modules now
-> depend on these APIs, this is a critical gap.
->
-> **Fix:** Add a new section "SAPPHIRE Services (API Stack)" to
-> `doc/deployment.md` between "Configuring your server" and "Copy your data",
-> referencing `sapphire/README.md` and including the steps below. Also document
-> the deployment order: services must be running before the pipeline.
+> `[DOC-GAP-3]` ✅ **Resolved** — SAPPHIRE services section added to `doc/deployment.md#sapphire-services-api-stack`.
 
 **Ref:** `sapphire/README.md`
 
@@ -185,14 +168,7 @@ Placeholders used throughout:
   AUTH_API_URL=http://auth-api:8005
   ```
 
-  > `[DOC-GAP-4]` **No guidance on what values to set in `sapphire/.env`.**
-  > The `.env.example` lists the variable names but leaves all values blank.
-  > There are no instructions on what `PREPROCESSING_API_URL` etc. should be
-  > set to (Docker service names vs localhost), or how to generate
-  > `JWT_SECRET_KEY`.
-  >
-  > **Fix:** Add commented example values to `.env.example` and add a
-  > "Configuration" section to `sapphire/README.md` explaining each group.
+  > `[DOC-GAP-4]` ✅ **Resolved** — `sapphire/.env.example` annotated with placeholder values and inline comments; `sapphire/README.md` Environment setup expanded with a per-group walkthrough.
 
 ### 4.2 Start the services
 
@@ -300,19 +276,7 @@ recognises `operational` and `maintenance` as fetch modes (see
 demoted to `operational` (today only) even though the API write would
 try to send "all data" that was never fetched.
 
-> `[DOC-GAP-5]` **No "fresh deployment" path for SAPPHIRE services.**
-> The migration docs assume you have existing CSV data. For a brand-new
-> deployment with no historical data, it's unclear whether:
-> (a) the databases auto-create tables on first start (via Alembic/SQLAlchemy),
-> (b) you need to run migrations even with empty data, or
-> (c) the pipeline will fail if the DBs are empty.
-> **Answer from investigation (2026-04-01):** the pipeline WILL fail if the
-> DB has no historical runoff data. Either Path A or Path B above must be
-> run before operational pipeline use.
->
-> **Fix:** Document both paths in each module README and add an `initialize`
-> target to `run_locally.sh`. See issue draft:
-> `doc/plans/issues/mid_prio_gi_draft_infra_initial_sync_docs.md`.
+> `[DOC-GAP-5]` ✅ **Resolved** — `initialize` target implemented in `apps/run_locally.sh` (see `review_gi_draft_infra_new_deployment_initialization.md`); Path B above is the fresh-deployment recipe.
 
 ---
 
@@ -348,24 +312,9 @@ try to send "all data" that was never fetched.
   | `SAPPHIRE_PIPELINE_SMTP_*` | SMTP config for alerts | In monitoring doc |
   | `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Alert recipients | In monitoring doc |
 
-  > `[DOC-GAP-6]` **No minimal .env variable reference.**
-  > `doc/configuration.md` has an explicit TODO: "Document the minimal set of
-  > required .env variables for a deployment that only uses linear regression
-  > with manual sites." The current example .env files have 100+ variables and
-  > it's unclear which are required vs optional vs module-specific.
-  >
-  > **Fix:** Create a table in `doc/configuration.md` categorizing every .env
-  > variable as: required (all deployments), required-if (conditional on
-  > module), or optional. Mark which module uses each variable.
+  > `[DOC-GAP-6]` ✅ **Resolved** — categorised `.env variable reference` with minimal deployment profile added to `doc/configuration.md`.
 
-  > `[DOC-GAP-7]` **iEasyHydro HF SDK variables undocumented.**
-  > `doc/configuration.md` has a TODO: "Document `IEASYHYDROHF_HOST`,
-  > `IEASYHYDROHF_USERNAME`, `IEASYHYDROHF_PASSWORD`." These are the new SDK
-  > variables used by `preprocessing_runoff`, distinct from the legacy
-  > `IEASYHYDRO_HOST` etc.
-  >
-  > **Fix:** Add a section to `doc/configuration.md` documenting these
-  > variables, when they're needed, and how they differ from the legacy ones.
+  > `[DOC-GAP-7]` ✅ **Resolved** — `IEASYHYDROHF_HOST`/`USERNAME`/`PASSWORD` covered in the `doc/configuration.md` reference table and Add-ons section.
 
 - [ ] Update all relative paths to point to your `<data_folder>`
   ```bash
@@ -377,13 +326,7 @@ try to send "all data" that was never fetched.
   `../../../<data_folder>/` (three levels up). Confirm this
   matches the actual directory layout on the server.
 
-  > `[DOC-GAP-8]` **Path convention explanation is buried.**
-  > The `../../../` convention is explained in one sentence in
-  > `doc/configuration.md` but is easy to miss. For a new deployment this is
-  > a common source of confusion.
-  >
-  > **Fix:** Add a clear diagram or example showing the directory tree and
-  > how relative paths resolve from `apps/<module>/` to the data folder.
+  > `[DOC-GAP-8]` ✅ **Resolved** — directory-tree diagram and walk-up table added to `doc/configuration.md` for the `../../../<data_folder>/` convention.
 
 ---
 
@@ -509,18 +452,7 @@ and generic — this section works well.
 
 - [ ] Check Luigi UI at `http://<server-ip>:8082`
 
-> `[DOC-GAP-9]` **Deployment order not documented.**
-> The relationship between Phase 4 (SAPPHIRE services) and Phase 8 (pipeline)
-> is not documented anywhere. The pipeline modules use `sapphire_api_client`
-> to write to the APIs, so the services MUST be running before the pipeline.
-> If services are down, the pipeline will either fail or silently fall back
-> to CSV-only mode (depending on the module).
->
-> **Fix:** Add a "Deployment Order" section to `doc/deployment.md`:
-> 1. SAPPHIRE services (databases + APIs)
-> 2. Luigi daemon
-> 3. Pipeline scripts
-> 4. Dashboards
+> `[DOC-GAP-9]` ✅ **Resolved** — `## Deployment order` section added to `doc/deployment.md` (services → Luigi → pipeline → dashboards).
 
 ---
 
@@ -544,17 +476,7 @@ and generic — this section works well.
 
 ### 9.2 Reverse proxy & HTTPS
 
-> `[DOC-GAP-10]` **No reverse proxy / HTTPS setup instructions.**
-> `doc/deployment.md` mentions nginx on port 81 and says dashboards should be
-> at `fc.pentad.<base_url>` and `fc.decad.<base_url>`, but provides no
-> instructions for setting up nginx, Let's Encrypt, or any reverse proxy.
->
-> **Fix:** Add a "Reverse Proxy & HTTPS" section to `doc/deployment.md` with:
-> - nginx or Nginx Proxy Manager setup
-> - Let's Encrypt / certbot for SSL
-> - Example nginx config forwarding to ports 5006/5007
-> - WebSocket proxy configuration (needed for Bokeh/Panel dashboards)
-> - Optionally proxy 8000 (API gateway) and 8082 (Luigi) behind auth
+> `[DOC-GAP-10]` ✅ **Resolved** — `### Reverse proxy and HTTPS` general recommendations added to `doc/deployment.md` (nginx vs Caddy, Let's Encrypt, WebSocket upgrade, gateway hardening).
 
 Practical steps (not yet documented):
 
@@ -622,12 +544,7 @@ Practical steps (not yet documented):
   0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
   ```
 
-  > `[DOC-GAP-11]` **Crontab template in `doc/deployment.md` is
-  > deployment-specific.** The crontab in `doc/deployment.md` hardcodes paths
-  > and timezone comments for a single deployment. There's no generic template.
-  >
-  > **Fix:** Replace hardcoded paths with `<data_folder>` and `<env_file>`
-  > placeholders. Add a timezone reference table for common deployments.
+  > `[DOC-GAP-11]` ✅ **Resolved** — crontab in `doc/deployment.md` now uses `<data_folder>`/`<env_file>` placeholders and includes a timezone reference table.
 
 - [ ] Verify
   ```bash
@@ -664,16 +581,7 @@ Practical steps (not yet documented):
 
 **Ref:** `doc/deployment.md` > Testing the deployment
 
-> `[DOC-GAP-12]` **Testing section is outdated.**
-> The testing section in `doc/deployment.md` references:
-> - "Docker Desktop application" (we're on a headless server)
-> - "double-clicking the dashboard icon" (no GUI)
-> - `config_output.yaml` (now `.json`)
-> - `apps/internal_data/last_successful_run.txt` (path may have changed)
-> - No mention of verifying SAPPHIRE services or API health
->
-> **Fix:** Rewrite the testing section for headless server deployment,
-> add API health checks, and update file references.
+> `[DOC-GAP-12]` ✅ **Resolved** — Testing section in `doc/deployment.md` rewritten for headless servers (CLI checks, API curl, log grep, initialize workflow).
 
 ### Validation checklist
 
@@ -775,14 +683,7 @@ actual deployment. These notes feed back into doc improvements.*
 
 ---
 
-> `[DOC-GAP-13]` **`deploy_sapphire_forecast_tools.sh` is deprecated with no
-> replacement.** The script is marked deprecated in `bin/README.md` but there's
-> no single "first-time deployment" script or guide that replaces it. The
-> current approach is to follow the manual steps, but this isn't stated.
->
-> **Fix:** Either remove the deprecated script and add a note saying "follow
-> doc/deployment.md for first-time setup", or create a new first-time
-> deployment script that includes SAPPHIRE services startup.
+> `[DOC-GAP-13]` ✅ **Resolved** — deprecated `deploy_sapphire_forecast_tools.sh` / `run_sapphire_forecast_tools.sh` references removed from `doc/deployment.md`.
 
 ---
 
