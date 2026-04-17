@@ -4557,10 +4557,13 @@ def create_skill_table(_, horizon,forecast_stats):
     # Do not show column model_long and pentad_in_year
     forecast_stats_loc = forecast_stats.drop(columns=['model_long', horizon_in_year, 'date']).copy()
 
-    # Order the columns in the dataframe as follows:
-    # code, model_short, month, pentad_in_month, sdivsigma, nse, delta, accuracy, mae
-    forecast_stats_loc = forecast_stats_loc[
-        ['code', 'model_short', 'month', horizon_in_month, 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae']]
+    # Order the columns in the dataframe
+    cols = ['code', 'model_short', 'month', horizon_in_month,
+            'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
+            'crps', 'pbias', 'kgelf', 'nse_log', 'fhv', 'flv']
+    # Only include columns that exist in the data
+    cols = [c for c in cols if c in forecast_stats_loc.columns]
+    forecast_stats_loc = forecast_stats_loc[cols]
 
     # Sort the columns by code, month and pentad_in_month
     forecast_stats_loc = forecast_stats_loc.sort_values(by=['code', 'month', horizon_in_month])
@@ -4582,6 +4585,12 @@ def create_skill_table(_, horizon,forecast_stats):
         'delta': _('δ'),
         'accuracy': _('Accuracy'),
         'mae': _('MAE'),
+        'crps': _('CRPS'),
+        'pbias': _('PBIAS'),
+        'kgelf': _('KGElf'),
+        'nse_log': _('NSE_log'),
+        'fhv': _('FHV'),
+        'flv': _('FLV'),
     }, inplace=True)
 
     # Define formatters for numeric columns
@@ -4591,6 +4600,12 @@ def create_skill_table(_, horizon,forecast_stats):
         _('δ'): {'type': 'number', 'precision': 3},
         _('Accuracy'): {'type': 'number', 'max': 1.0, 'precision': 3},
         _('MAE'): {'type': 'number', 'precision': 3},
+        _('CRPS'): {'type': 'number', 'precision': 3},
+        _('PBIAS'): {'type': 'number', 'precision': 2},
+        _('KGElf'): {'type': 'number', 'precision': 3},
+        _('NSE_log'): {'type': 'number', 'precision': 3},
+        _('FHV'): {'type': 'number', 'precision': 2},
+        _('FLV'): {'type': 'number', 'precision': 2},
     }
 
     # Add tabulator editors for the header_filters with predefined values
@@ -4616,6 +4631,9 @@ def create_skill_table(_, horizon,forecast_stats):
             'placeholder': _('Filter by code')
         },
     }
+
+    # Replace NaN with empty string so cells show blank instead of "NaN"
+    forecast_stats_loc = forecast_stats_loc.fillna("")
 
     # Create a Tabulator widget for the forecast statistics
     forecast_stats_table = pn.widgets.Tabulator(
