@@ -26,7 +26,47 @@ To set up a new SAPPHIRE deployment, create a **data folder** outside the code r
 └── reports/                   # Generated forecast bulletins (created automatically)
 ```
 
-**Path convention**: All paths in the `.env` file are relative to the module working directory (`apps/<module>/`). For an external data folder at `../<country>_data_forecast_tools/`, use `../../../<country>_data_forecast_tools/` (three levels up from `apps/<module>/` to reach the parent of the repo root).
+**Path convention**: All paths in the `.env` file are relative to the module working directory (`apps/<module>/`). For an external data folder sitting alongside the repository, use `../../../<country>_data_forecast_tools/` (three levels up from `apps/<module>/` to reach the shared parent directory).
+
+#### Why three levels up
+
+The pipeline scripts run with their working directory set to `apps/<module>/` (e.g. `apps/linear_regression/`). The repository and the data folder are siblings in a shared parent directory:
+
+```
+parent/                                  ← ../../../ from apps/<module>/
+├── SAPPHIRE_Forecast_Tools/             ← the repository
+│   ├── apps/
+│   │   ├── linear_regression/           ← scripts run from here (cwd)
+│   │   ├── preprocessing_runoff/
+│   │   ├── machine_learning/
+│   │   └── ...
+│   ├── bin/
+│   └── sapphire/
+└── <country>_data_forecast_tools/       ← external data folder
+    ├── config/
+    │   └── <env_file>
+    ├── daily_runoff/
+    ├── intermediate_data/
+    └── ...
+```
+
+Walking back up from `apps/linear_regression/`:
+
+| `..` step | Lands in |
+|-----------|----------|
+| `..` | `apps/` |
+| `../..` | `SAPPHIRE_Forecast_Tools/` |
+| `../../..` | `parent/` (shared with the data folder) |
+
+Concrete example: an `.env` line like
+
+```bash
+ieasyforecast_configuration_path=../../../<data_folder>/config
+```
+
+resolves to `parent/<country>_data_forecast_tools/config/` when a script runs from `apps/linear_regression/`, `apps/preprocessing_runoff/`, or any other module — the relative path is the same for all modules because they share the `apps/<module>/` depth.
+
+If your deployment places the data folder somewhere else (e.g. a separate mount point, or at the same level as `SAPPHIRE_Forecast_Tools/`), adjust the `..` count accordingly. The rule is always "walk up until you hit the directory that contains your data folder, then descend in."
 
 ### .env variable reference
 
