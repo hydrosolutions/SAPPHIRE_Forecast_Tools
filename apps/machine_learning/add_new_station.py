@@ -46,6 +46,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    get_permitted_station_codes,
 )
 
 
@@ -168,17 +169,41 @@ def main():
 
     # --------------------------------------------------------------------
     # Read in the decad and pentad forecast files (API-primary, CSV fallback)
+    # Per-code reads — no date filter so stale stations are still found
+    # (prevents daily re-triggering of hindcasts for inactive stations).
+    # Invariant: rivers_to_predict (below) is always a subset of
+    # permitted_codes because rivers_to_predict = (pentad_selection UNION
+    # decad_selection) INTERSECT ml_available, and permitted_codes =
+    # pentad_selection UNION decad_selection.
     # --------------------------------------------------------------------
+    permitted_codes = get_permitted_station_codes()
 
-    # Try API first to get date range and full forecasts
-    decad_api = _read_ml_forecasts_from_api(
-        model_type=MODEL_TO_USE,
-        horizon_type="decade",
-    )
-    pentad_api = _read_ml_forecasts_from_api(
-        model_type=MODEL_TO_USE,
-        horizon_type="pentad",
-    )
+    def _read_scoped(horizon_type: str) -> pd.DataFrame:
+        """Read ML forecasts per-code to avoid full-table scan timeouts."""
+        if permitted_codes is not None and len(permitted_codes) > 0:
+            frames = []
+            for code in sorted(permitted_codes):
+                df = _read_ml_forecasts_from_api(
+                    model_type=MODEL_TO_USE,
+                    horizon_type=horizon_type,
+                    code=code,
+                )
+                if not df.empty:
+                    frames.append(df)
+            return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            logger.warning(
+                "add_new_station: org config unavailable — falling back to "
+                "all-codes read with extended timeout"
+            )
+            return _read_ml_forecasts_from_api(
+                model_type=MODEL_TO_USE,
+                horizon_type=horizon_type,
+                timeout=120,
+            )
+
+    decad_api = _read_scoped("decade")
+    pentad_api = _read_scoped("pentad")
 
     if not decad_api.empty and not pentad_api.empty:
         decad_forecast = decad_api

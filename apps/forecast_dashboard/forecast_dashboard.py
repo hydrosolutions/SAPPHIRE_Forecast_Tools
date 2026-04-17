@@ -45,6 +45,25 @@ cfg = config.init_dashboard(pn)
 
 # ─── 2. Station metadata & DataManager ──────────────────────────────
 all_stations, station_dict = processing.get_all_stations_from_file()
+if not station_dict:
+    logger.warning(
+        "Station cache unavailable — fetching from iEasyHydro HF "
+        "(may take up to 30 s)"
+    )
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(processing.get_all_stations_from_iehhf)
+    try:
+        all_stations, station_dict = future.result(timeout=30)
+    except Exception as e:  # includes TimeoutError, ImportError, etc.
+        logger.error("HF fetch failed or timed out: %s", e)
+        all_stations, station_dict = None, None
+    finally:
+        executor.shutdown(wait=False)
+if not station_dict:
+    raise RuntimeError(
+        "Cannot start dashboard: no station data from cache or iEasyHydro HF"
+    )
 horizon = "pentad"
 
 dm = DataManager(all_stations=all_stations)

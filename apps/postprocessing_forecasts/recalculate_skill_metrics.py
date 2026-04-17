@@ -103,6 +103,11 @@ def _read_station_codes(config):
     Returns:
         list[str]: Station codes for the given horizon.
     """
+    override = os.getenv("SAPPHIRE_RECALC_STATION_CODE", "").strip()
+    if override:
+        logger.info("Scoped recalculation for station %s (%s)", override, config.name)
+        return [override]
+
     config_path = os.path.join(
         os.getenv("ieasyforecast_configuration_path", ""),
         os.getenv(config.station_selection_env, ""),
@@ -124,7 +129,25 @@ def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, co
             config.name,
             codes=codes,
         )
-        modelled = sl.calculate_virtual_stations_data(modelled)
+        if observed.empty and modelled.empty:
+            logger.warning(
+                "No observed or modelled data for %s codes=%s — skipping skill recalc",
+                config.name,
+                codes,
+            )
+            return timing_stats_
+        if observed.empty:
+            logger.warning("No observed data for %s codes=%s — skipping", config.name, codes)
+            return timing_stats_
+        if modelled.empty:
+            logger.warning("No modelled data for %s codes=%s — skipping", config.name, codes)
+            return timing_stats_
+
+        # Skip virtual station computation for scoped recalcs — the
+        # scoped DataFrame lacks the other contributing stations, so
+        # calculate_virtual_stations_data would produce incorrect partial sums.
+        if not os.getenv("SAPPHIRE_RECALC_STATION_CODE", "").strip():
+            modelled = sl.calculate_virtual_stations_data(modelled)
         modelled = config.neural_ensemble_func(modelled)
 
     with timer(timing_stats_, f"calculating skill metrics {config.name}"):

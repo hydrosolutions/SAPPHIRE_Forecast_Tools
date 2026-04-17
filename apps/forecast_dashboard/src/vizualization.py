@@ -3678,7 +3678,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
     progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)
     progress_message = pn.pane.Alert(_("Processing..."), alert_type="info", visible=False)
 
-    def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
+    def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar, command=None):
         """
         Runs a Docker container and blocks until it completes.
 
@@ -3693,6 +3693,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
         Raises:
             docker.errors.ContainerError: If the container exits with a non-zero status.
         """
+        environment = list(environment)  # avoid mutating caller's list
         # Define network_name at the function level so it's accessible everywhere
         network_name = 'ssh-tunnel-network'
 
@@ -3741,6 +3742,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                 # Now run the new container
                 container = client.containers.run(
                     full_image_name,
+                    command=command,
                     detach=True,
                     environment=environment,
                     volumes=volumes,
@@ -3959,6 +3961,28 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
                                  "postprocessing", progress_bar)
             temp_docker_end = time.time()
             print(f"Time taken to run postprocessing: {temp_docker_end - temp_docker_start:.2f} seconds")
+
+            # Recalculate skill metrics for this station only.
+            # Non-fatal: if this fails, the data reload still proceeds
+            # with the pre-existing skill metrics.
+            try:
+                temp_docker_start = time.time()
+                run_docker_container(
+                    client,
+                    "mabesa/sapphire-postprocessing:latest",
+                    volumes,
+                    environment + [
+                        f"SAPPHIRE_RECALC_STATION_CODE={station_code}",
+                    ],
+                    "skill_recalc",
+                    progress_bar,
+                    command=["uv", "run", "recalculate_skill_metrics.py"],
+                )
+                temp_docker_end = time.time()
+                print(f"Time taken to run skill_recalc: {temp_docker_end - temp_docker_start:.2f} seconds")
+            except Exception as e:
+                logger.warning("Skill metric recalculation failed (non-fatal): %s", e)
+
             overall_time = temp_docker_end - start_docker_runs
             print(f"Overall time taken to run all containers: {overall_time:.2f} seconds")
 

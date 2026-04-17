@@ -246,28 +246,59 @@ python app/data_migrator.py --type forecast
 python app/data_migrator.py --type longforecast
 ```
 
-**Path B — Initial sync mode (pipeline reads from Excel/iEH HF, writes all
-to API):**
+**Path B — `initialize` target (fresh deployment: Excel/iEH HF → API →
+hindcast → skill metrics):**
 
 Use this for a fresh deployment where historical data lives in Excel files
-in `daily_runoff/` and/or in the iEasyHydro HF database. This runs the
-normal preprocessing pipeline but writes ALL records to the API instead of
-only today's.
+in `daily_runoff/` and/or in the iEasyHydro HF database. The `initialize`
+target in `apps/run_locally.sh` wraps the full first-time sequence in a
+single command (added per the reviewed issue
+`doc/plans/issues/review_gi_draft_infra_new_deployment_initialization.md`):
+
+1. **Preprocessing (maintenance fetch)** — re-reads Excel files and
+   detects gaps. `operational` mode would only fetch today, so
+   `maintenance` is required for a cold start.
+2. **`initial_api_sync.py`** — pushes the full CSV history to the
+   preprocessing API. This sets `SAPPHIRE_SYNC_MODE=initial` internally
+   so every record is written, not just today's.
+3. **LR hindcast (PENTAD + DECAD)** — runs `linear_regression.py
+   --hindcast --start-date $ieasyhydroforecast_START_DATE` for each
+   horizon. Populates the postprocessing database with historical
+   forecasts used by the skill-metric calculation.
+4. **Skill metrics (PENTAD + DECAD)** — runs
+   `recalculate_skill_metrics.py` for each horizon.
 
 ```bash
-SAPPHIRE_SYNC_MODE=initial \
-  ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
-  bash apps/run_locally.sh preprocessing_runoff
+# ieasyhydroforecast_START_DATE is a new REQUIRED env variable for the
+# initialize path (per R7 in the reviewed issue). Set it in your external
+# env file first, e.g. ieasyhydroforecast_START_DATE=2000-01-01 for a
+# full hindcast. If it is missing, `run_locally.sh initialize` exits
+# with an error.
+ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
+  bash apps/run_locally.sh initialize
 ```
 
-After initial sync, switch back to operational mode (the default) for daily
-runs. The `initial` mode is supported by `preprocessing_runoff`,
-`preprocessing_gateway`, and `linear_regression` — each module's
-`_write_*_to_api()` functions check `SAPPHIRE_SYNC_MODE` to decide how much
-data to write:
+After initialization completes, daily runs use the normal targets
+(`short-term`, `long-term`, `daily`, `maintenance`, etc.) which default
+to `operational` mode.
+
+For reference, `SAPPHIRE_SYNC_MODE` is the internal mechanism that the
+`_write_*_to_api()` functions in `preprocessing_runoff`,
+`preprocessing_gateway`, and `linear_regression` check to decide how much
+data to push on each run:
 - `operational` (default): today only
 - `maintenance`: last 30 days
 - `initial`: all data
+
+`run_locally.sh initialize` sets `SAPPHIRE_SYNC_MODE=initial` internally
+for the `initial_api_sync.py` step; you should not need to set it
+manually at the command line. Note in particular that setting
+`SAPPHIRE_SYNC_MODE=initial` on a plain `preprocessing_runoff` run does
+**not** work as a substitute — `get_runoff_data_for_sites_HF` only
+recognises `operational` and `maintenance` as fetch modes (see
+`apps/preprocessing_runoff/src/src.py:3520-3524`), so the fetch is
+demoted to `operational` (today only) even though the API write would
+try to send "all data" that was never fetched.
 
 > `[DOC-GAP-5]` **No "fresh deployment" path for SAPPHIRE services.**
 > The migration docs assume you have existing CSV data. For a brand-new
@@ -577,8 +608,10 @@ Practical steps (not yet documented):
   # The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
   0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 
-  # (5) Daily maintenance (evening UTC)
-  0 14 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
+  # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
+  # Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
+  # ML concurrency is limited to 3 via Luigi resources.
+  0 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
 
   # (6) Periodic maintenance
   # Bimonthly long-term postprocessing (1st of odd months)
@@ -706,16 +739,17 @@ Practical steps (not yet documented):
 |----|-----|----------|--------------|
 | ~~DOC-GAP-1~~ | ~~SAPPHIRE services ports not in deployment.md~~ | ~~Low~~ | ✅ Fixed |
 | DOC-GAP-2 | No locale/translation setup instructions | Medium | `doc/configuration.md` |
-| DOC-GAP-3 | **SAPPHIRE services missing from deployment.md entirely** | **Critical** | `doc/deployment.md` new section |
-| DOC-GAP-4 | No guidance on sapphire/.env values | Medium | `sapphire/.env.example` + `sapphire/README.md` |
-| DOC-GAP-5 | **No "fresh deployment" path for services — DB init required** | **High** | Phase 4.3 updated; issue `mid_prio_gi_draft_infra_initial_sync_docs.md` |
-| DOC-GAP-6 | **No minimal .env variable reference** | **High** | `doc/configuration.md` |
-| DOC-GAP-7 | iEasyHydro HF SDK vars undocumented | Medium | `doc/configuration.md` |
-| DOC-GAP-8 | Path convention explanation buried | Low | `doc/configuration.md` |
-| DOC-GAP-9 | **Deployment order not documented** | **High** | `doc/deployment.md` |
+| DOC-GAP-3 | ~~**SAPPHIRE services missing from deployment.md entirely**~~ | **Critical** | ✅ Fixed (`doc/deployment.md` new section) |
+| ~~DOC-GAP-4~~ | ~~No guidance on sapphire/.env values~~ | ~~Medium~~ | ✅ Fixed (sapphire/.env.example commented + sapphire/README.md Environment setup expanded) |
+| ~~DOC-GAP-5~~ | ~~**No "fresh deployment" path for services — DB init required**~~ | ~~**High**~~ | ✅ Fixed (initialize target implemented; Phase 4.3 updated) |
+| ~~DOC-GAP-6~~ | ~~**No minimal .env variable reference**~~ | ~~**High**~~ | ✅ Fixed (`.env variable reference` section added to `doc/configuration.md`) |
+| ~~DOC-GAP-7~~ | ~~iEasyHydro HF SDK vars undocumented~~ | ~~Medium~~ | ✅ Fixed (covered in `doc/configuration.md` reference table + Add-ons) |
+| ~~DOC-GAP-8~~ | ~~Path convention explanation buried~~ | ~~Low~~ | ✅ Fixed (tree diagram + worked example added to `doc/configuration.md`) |
+| DOC-GAP-9 | ~~**Deployment order not documented**~~ | **High** | ✅ Fixed (`doc/deployment.md`) |
 | DOC-GAP-10 | No reverse proxy / HTTPS instructions | Medium | `doc/deployment.md` |
-| DOC-GAP-11 | Crontab template is deployment-specific | Low | `doc/deployment.md` |
+| ~~DOC-GAP-11~~ | ~~Crontab template is deployment-specific~~ | ~~Low~~ | ✅ Fixed (crontab placeholders + TZ reference table in deployment.md) |
 | DOC-GAP-12 | Testing section outdated | Low | `doc/deployment.md` |
+| ~~DOC-GAP-13~~ | ~~**Deprecated `deploy_sapphire_forecast_tools.sh` still recommended in `doc/deployment.md`**~~ | ~~**Medium**~~ | ✅ Fixed (deprecated-script references removed from deployment.md) |
 
 ### Priority for pre-deployment fixes
 
@@ -759,6 +793,14 @@ Changes already applied to the docs as part of deployment preparation.
 | ID | What was done | Commit / branch |
 |----|---------------|-----------------|
 | DOC-GAP-1 | Added structured port table with SAPPHIRE services ports and security guidance to `doc/deployment.md` > "Configuring your server" | `develop_long_term_fix_api_postprocessing_forecasts` |
+| DOC-GAP-3 + DOC-GAP-9 | Added "Deployment order" and "SAPPHIRE services (API stack)" sections to doc/deployment.md | <branch> |
+| DOC-GAP-4 | Added inline comments and placeholder values to sapphire/.env.example; expanded sapphire/README.md Environment setup section with per-group guidance | <branch> |
+| DOC-GAP-5 | Added `initialize` target (see review_gi_draft_infra_new_deployment_initialization.md) + Phase 4.3 updated in this plan | <branch> |
+| DOC-GAP-13 | Removed deprecated deploy_sapphire_forecast_tools.sh / run_sapphire_forecast_tools.sh references from doc/deployment.md | <branch> |
+| DOC-GAP-11 | Generalised crontab in doc/deployment.md (placeholders + timezone reference table) | <branch> |
+| DOC-GAP-6 | Added categorised `.env variable reference` with minimal deployment profile to doc/configuration.md | <branch> |
+| DOC-GAP-7 | iEasyHydro HF SDK variables now documented in doc/configuration.md reference table and Add-ons section | <branch> |
+| DOC-GAP-8 | Added directory-tree diagram and worked example for the `../../../<data_folder>/` path convention in doc/configuration.md | <branch> |
 
 ---
 
