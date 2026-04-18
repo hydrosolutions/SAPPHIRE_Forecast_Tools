@@ -148,8 +148,11 @@ class PlotManager:
         self.forecast_skill = pn.Column(self.effectiveness, self.accuracy)
 
     def _init_skill_table(self):
+        horizon = self._wm.horizon_selector.value
         self.skill_table = pn.panel(
-            self._cfg.viz.create_skill_table(self._, self._wm.horizon_selector.value, self._dm.forecast_stats),
+            self._cfg.viz.create_skill_table(
+                self._, horizon, self._dm.get_forecast_stats_all(horizon)
+            ),
             sizing_mode="stretch_width",
         )
         (
@@ -280,12 +283,40 @@ class PlotManager:
 
         self.update_forecast_tabulator()
 
+    def update_skill_table(self, event=None):
+        """Refresh the all-stations skill metrics table (horizon-scoped).
+
+        Replaces the Tabulator + download menu widgets inside the skill
+        table card because column structure differs between pentad and
+        decade horizons and the download menu is tied to a specific
+        Tabulator instance.
+        """
+        horizon = self._wm.horizon_selector.value
+        new_table = self._cfg.viz.create_skill_table(
+            self._, horizon, self._dm.get_forecast_stats_all(horizon)
+        )
+        new_filename, new_button = new_table.download_menu(
+            text_kwargs={"name": self._("Enter filename:"),
+                         "value": "forecast_skill_metrics.csv"},
+            button_kwargs={"name": self._("Download currently visible table")},
+        )
+
+        self.skill_table = new_table
+        self.skill_download_filename = new_filename
+        self.skill_download_button = new_button
+
+        # Swap the widgets inside the Card's Column (if the card has been built)
+        card = getattr(self, "skill_table_card", None)
+        if card is not None:
+            card[0][:] = [new_table, new_filename, new_button]
+
     # ------------------------------------------------------------------
     # Full visualisation refresh (used after data reload)
     # ------------------------------------------------------------------
     def refresh_all_visualizations(self):
         """Re-render every forecast-related visualisation."""
         self.update_forecast_plots()
+        self.update_skill_table()
 
     # ------------------------------------------------------------------
     # Tab-activation renderer (lazy rendering per station)

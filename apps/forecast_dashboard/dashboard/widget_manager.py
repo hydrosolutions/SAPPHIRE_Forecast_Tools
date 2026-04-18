@@ -175,6 +175,8 @@ class WidgetManager:
         self._wire_station_period_change(dm, pm)
         self._wire_range_slider_visibility()
         self._wire_site_object_binding(dm)
+        # Skill metrics table depends only on horizon, not on station
+        self.horizon_selector.param.watch(pm.update_skill_table, "value")
 
     def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
         @pn.depends(self.horizon_selector, self.station_selector, self.pentad_selector, self.decad_selector, watch=True)

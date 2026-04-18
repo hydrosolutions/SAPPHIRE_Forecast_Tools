@@ -443,6 +443,51 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
     df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
     return _convert_na_to_nan(df)
 
+
+@_timed
+def get_forecast_stats_all(horizon) -> pd.DataFrame:
+    """Fetch skill metrics for ALL stations, paginating through the API."""
+    page_size = 1000
+    skip = 0
+    frames = []
+    while True:
+        df = _read_data("postprocessing", "skill-metric", {
+            "horizon": horizon,
+            "start_date": f"{PREVIOUS_YEAR}-12-31",
+            "end_date": f"{CURRENT_YEAR}-12-31",
+            "skip": skip,
+            "limit": page_size,
+        })
+        if df.empty:
+            break
+        frames.append(df)
+        if len(df) < page_size:
+            break
+        skip += page_size
+
+    if not frames:
+        logger.warning("get_forecast_stats_all: no skill-metric data")
+        return pd.DataFrame(columns=[
+            "code", _horizon_in_year_col(horizon),
+            "model_short", "model_long",
+        ])
+
+    df = pd.concat(frames, ignore_index=True)
+    if "model_type" not in df.columns:
+        return pd.DataFrame(columns=[
+            "code", _horizon_in_year_col(horizon),
+            "model_short", "model_long",
+        ])
+    df.rename(columns={
+        "horizon_in_year": _horizon_in_year_col(horizon),
+        "model_type": "model_short",
+        "model_type_description": "model_long",
+    }, inplace=True)
+    df.sort_values("date", inplace=True)
+    df.drop_duplicates(subset=["code", _horizon_in_year_col(horizon), "model_short"], keep="last", inplace=True)
+    df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
+    return _convert_na_to_nan(df)
+
 # ---------------------------------------------------------------------------
 # Long-term (monthly) forecasts
 # ---------------------------------------------------------------------------

@@ -64,6 +64,9 @@ class DataManager(param.Parameterized):
         # Core data dict from db.get_data()
         self._data: dict = {}
 
+        # Skill metrics for ALL stations (loaded separately from single-station data)
+        self._forecast_stats_all: dict = {}
+
         # Derived / cached values
         self._all_models: dict = {}
         self._rram_forecast = None
@@ -139,6 +142,16 @@ class DataManager(param.Parameterized):
     @property
     def forecast_stats(self):
         return self._data.get("forecast_stats")
+
+    def get_forecast_stats_all(self, horizon: str) -> pd.DataFrame:
+        """Return skill metrics for all stations (cached per horizon)."""
+        if horizon not in self._forecast_stats_all:
+            self._forecast_stats_all[horizon] = db.get_forecast_stats_all(horizon)
+        return self._forecast_stats_all[horizon]
+
+    def invalidate_forecast_stats_all(self) -> None:
+        """Clear the cached all-stations skill metrics (call after a pipeline run)."""
+        self._forecast_stats_all = {}
 
     @property
     def long_forecasts_m0(self):
@@ -345,6 +358,7 @@ class DataManager(param.Parameterized):
                 station_code = pm._wm.station_selector.value.split()[0]
                 self.load_station(horizon, station_code)
                 self.invalidate_render_cache()
+                self.invalidate_forecast_stats_all()
 
                 if not self.forecasts_all.empty:
                     max_date = self.forecasts_all['date'].max()
