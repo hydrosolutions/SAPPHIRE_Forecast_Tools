@@ -282,44 +282,63 @@ try to send "all data" that was never fetched.
 
 ## Phase 5: Pipeline .env Configuration
 
-**Ref:** `doc/configuration.md`, `apps/config/.env` (as template)
+**Refs:**
+- `doc/configuration.md` > `.env variable reference` — Minimal Profile, full categorised table, Add-ons.
+- `sapphire/README.md` > `Environment setup` > `What to set` — services-side guidance.
+- `apps/config/.env_develop` — reference example (variable names and structure). **Do not `cp` it to your data folder** — build `<env_file>` from the documented Minimal Profile instead. The in-repo files under `apps/config/` are examples only.
 
-- [ ] Create `<env_file>` by copying an existing example and adapting
-  ```bash
-  cp /data/SAPPHIRE_Forecast_Tools/apps/config/.env \
-     /data/<data_folder>/config/<env_file>
-  ```
+The deployment's real env file is `/data/<data_folder>/config/<env_file>`. It holds **both** pipeline variables and the services-layer variables from Phase 4.1; Phase 4.2 passes the same file to `docker compose --env-file`.
 
-- [ ] Edit the file — key variables to change:
+- [ ] Create `<env_file>` from the Minimal Deployment Profile
+      (LR-only, manual sites, no iEH HF, no gateway, no ML/CM — ~33 variables) in
+      `doc/configuration.md` > `Minimal deployment profile`. Paste the block into
+      `/data/<data_folder>/config/<env_file>` and fill in the `<...>` placeholders.
 
-  | Variable | What to set | Documented? |
-  |----------|------------|-------------|
-  | `ieasyhydroforecast_organization` | `<org>` | Yes |
-  | All data paths (`../../../...`) | Point to `../../../<data_folder>/` | Implicit |
-  | `IEASYHYDRO_HOST` | Endpoint or `False` | Yes |
-  | `IEASYHYDROHF_HOST` | Endpoint or `False` | **No** |
-  | `IEASYHYDROHF_USERNAME` | Credentials | **No** |
-  | `IEASYHYDROHF_PASSWORD` | Credentials | **No** |
-  | `ieasyhydroforecast_connect_to_iEH` | `True` or `False` | Yes |
-  | `ieasyhydroforecast_ssh_to_iEH` | Depends on network setup | Yes |
-  | `ieasyhydroforecast_API_KEY_GATEAWAY` | API key or empty | Yes |
-  | `ieasyhydroforecast_run_ML_models` | `true` or `false` | Yes |
-  | `ieasyhydroforecast_run_CM_models` | `true` or `false` | Yes |
-  | `ieasyhydroforecast_locale` | `ru_KG` or `en_CH` | Yes |
-  | `ieasyforecast_country_borders_file_name` | GADM shapefile for your country | Yes |
-  | `ieasyhydroforecast_backend_docker_image_tag` | `local` or `latest` | Yes |
-  | `ieasyhydroforecast_frontend_docker_image_tag` | `local` or `latest` | Yes |
-  | `SAPPHIRE_PIPELINE_SMTP_*` | SMTP config for alerts | In monitoring doc |
-  | `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Alert recipients | In monitoring doc |
+- [ ] Append the services-layer block listed in Phase 4.1 to the same file
+      (POSTGRES_USER, POSTGRES_PASSWORD, the four DB names, JWT_SECRET_KEY, the four
+      service URLs).
+
+- [ ] Enable the add-ons your deployment needs. For each, follow the corresponding
+      bullet under `doc/configuration.md` > `Add-ons — what to flip on when you
+      need more`:
+      - iEasyHydro HF connectivity (if the hydromet runs iEH HF)
+      - SAPPHIRE Data Gateway + ML models
+      - Long-term forecasts
+      - Conceptual-model (TopoPyScale/FSM)
+      - SMTP / email alerts for pipeline monitoring
+
+- [ ] Required variables to set explicitly (double-check before moving on):
+
+  | Variable | What to set | Category |
+  |----------|-------------|----------|
+  | `ieasyhydroforecast_organization` | `<org>` (e.g. `uzhm`) | Required |
+  | All `ieasyforecast_*_path` and `ieasyhydroforecast_*_path` | `../../../<data_folder>/...` — see tree diagram in `doc/configuration.md` | Required |
+  | `SAPPHIRE_API_ENABLED` | **`true`** — CSV-only mode is deprecated; almost every pipeline read/write goes through the preprocessing and postprocessing APIs | Required |
+  | `SAPPHIRE_API_URL` | `http://localhost:8000` (default) or wherever the api-gateway listens | Required |
+  | `ieasyhydroforecast_connect_to_iEH` | `True` if the hydromet has iEasyHydro HF, else `False` | Required |
+  | `ieasyhydroforecast_run_ML_models` | `true` / `false` — ML container is optional | Required |
+  | `ieasyhydroforecast_run_CM_models` | `true` / `false` — conceptual-model container is optional | Required |
+  | `ieasyhydroforecast_locale` | `ru_KG`, `en_CH`, or a locale you added per `doc/configuration.md#localization` | Required |
+  | `ieasyforecast_country_borders_file_name` | GADM shapefile for your country (under `<data_folder>/GIS/`) | Required |
+  | `ieasyhydroforecast_backend_docker_image_tag` | `local` or `latest` | Required |
+  | `ieasyhydroforecast_frontend_docker_image_tag` | `local` or `latest` | Required |
+  | `ieasyhydroforecast_START_DATE` | `YYYY-MM-DD` — the Phase 4.3 `initialize` path exits with an error if this is missing. Can be omitted after initialization has run. | Required-if (initialize) |
+  | `IEASYHYDROHF_HOST` | iEH HF endpoint (e.g. `http://localhost:<tunnel-port>` with Phase 7's SSH tunnel) | Required-if `connect_to_iEH=True` |
+  | `IEASYHYDROHF_USERNAME` | iEH HF user | Required-if `connect_to_iEH=True` |
+  | `IEASYHYDROHF_PASSWORD` | iEH HF password | Required-if `connect_to_iEH=True` |
+  | `ieasyhydroforecast_ssh_to_iEH` | `false` when the tunnel is managed by systemd (see Phase 7) | Required-if tunnel |
+  | `ieasyhydroforecast_API_KEY_GATEAWAY` | SAPPHIRE Data Gateway API key | Required-if gateway used |
+  | `SAPPHIRE_PIPELINE_SMTP_*` + `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Alert settings | Required-if monitoring (`doc/monitoring/forecast_tools_monitoring.md`) |
+
+  For the exhaustive list categorised by module see `doc/configuration.md` > `.env variable reference`.
 
   > `[DOC-GAP-6]` ✅ **Resolved** — categorised `.env variable reference` with minimal deployment profile added to `doc/configuration.md`.
 
   > `[DOC-GAP-7]` ✅ **Resolved** — `IEASYHYDROHF_HOST`/`USERNAME`/`PASSWORD` covered in the `doc/configuration.md` reference table and Add-ons section.
 
-- [ ] Update all relative paths to point to your `<data_folder>`
+- [ ] Replace any remaining `<...>` placeholders with your actual values. Quick sanity check:
   ```bash
-  sed -i 's/<old_data_folder>/<data_folder>/g' \
-    /data/<data_folder>/config/<env_file>
+  grep -n '<[a-z_]\+>' /data/<data_folder>/config/<env_file> || echo "No unresolved placeholders."
   ```
 
 - [ ] Verify path convention: from `apps/<module>/`, the data folder is at
