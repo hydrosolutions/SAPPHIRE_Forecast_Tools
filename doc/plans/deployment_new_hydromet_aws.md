@@ -426,50 +426,103 @@ and generic — this section works well.
 
 ## Phase 8: Luigi Daemon & Pipeline Images
 
-**Ref:** `doc/deployment.md` > Set up Luigi Daemon, `bin/README.md`
+**Refs:** `doc/deployment.md` > `Deployment order`; `bin/README.md` > `Shell Script Patterns` and `Cron Schedule`.
+
+**Prerequisites from earlier phases** (8.3's smoke test will fail without them — check each before starting):
+- Phase 4.2 — SAPPHIRE services up (`curl http://localhost:8000/health/ready` returns 200).
+- Phase 4.3 — preprocessing database has historical runoff data (Path A or Path B).
+- Phase 5 — external `<env_file>` contains both pipeline and services-layer variables.
+- Phase 6 — station config JSON files and discharge Excel files in place.
+- Phase 7 — iEH HF tunnel running, only if `ieasyhydroforecast_connect_to_iEH=True`.
 
 ### 8.1 Pull Docker images
 
-- [ ] Pull all required images
+- [ ] Run the setup script. It reads `ieasyhydroforecast_backend_docker_image_tag` from your env file and pulls images tagged accordingly.
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools
   bash bin/setup_docker.sh /data/<data_folder>/config/<env_file>
   ```
-  Or pull manually:
+
+  > **DESTRUCTIVE — do not run blindly on an existing deployment.** `setup_docker.sh` first calls `bin/utils/clean_docker.sh --execute`, which removes **every non-nginx Docker container and image on the host**. This includes the SAPPHIRE services stack, the Luigi daemon, the dashboards, and any other Docker workloads running alongside SAPPHIRE. On a brand-new server this is the intended behaviour. On an existing deployment the script will:
+  > - stop and remove all running sapphire containers (brief service outage);
+  > - delete the cached images, forcing a full re-pull of the tagged versions from Docker Hub;
+  > - remove anonymous volumes attached to the removed containers. Named volumes — including the four SAPPHIRE DB volumes — survive, so **DB data is not lost**, but any scratch state kept inside a container is.
+  >
+  > If you only need to add or refresh specific images on an existing deployment, **skip the script** and pull individually using the tag from your env file:
+  > ```bash
+  > TAG=$(grep -E '^ieasyhydroforecast_backend_docker_image_tag=' /data/<data_folder>/config/<env_file> | cut -d= -f2)
+  > docker pull mabesa/sapphire-<name>:"${TAG:-latest}"
+  > ```
+
+- [ ] Confirm the images that should now be on the server:
+
+  | Image | Pulled by `setup_docker.sh`? | Condition |
+  |-------|------------------------------|-----------|
+  | `mabesa/sapphire-pythonbaseimage` | yes | always |
+  | `mabesa/sapphire-preprunoff` | yes | always |
+  | `mabesa/sapphire-linreg` | yes | always |
+  | `mabesa/sapphire-postprocessing` | yes | always |
+  | `mabesa/sapphire-rerun` | yes | always |
+  | `mabesa/sapphire-prepgateway` | yes | `run_ML_models=true` OR `run_CM_models=true` |
+  | `mabesa/sapphire-ml` | yes | `run_ML_models=true` |
+  | `mabesa/sapphire-conceptmod` | yes | `run_CM_models=true` |
+  | `mabesa/sapphire-pipeline` | **no** | used by every Luigi-orchestrated service — Docker auto-pulls it on first `docker compose run` in 8.3, provided Docker Hub is reachable |
+  | `mabesa/sapphire-lt-forecasting` | **no** | required if you will run `run_long_term_forecasts.sh` — pull it manually (see below) |
+  | `mabesa/sapphire-dashboard` | no — belongs to the sapphire stack | pulled by Phase 4.2 / `restart_sapphire_stack.sh` |
+
+  If long-term forecasting is part of this deployment, pull the image explicitly using the tag from your env file:
   ```bash
-  export TAG=latest  # or "local" depending on CI/CD branch
-  docker pull mabesa/sapphire-pythonbaseimage:$TAG
-  docker pull mabesa/sapphire-pipeline:$TAG
-  docker pull mabesa/sapphire-preprunoff:$TAG
-  docker pull mabesa/sapphire-linreg:$TAG
-  docker pull mabesa/sapphire-postprocessing:$TAG
-  docker pull mabesa/sapphire-dashboard:$TAG
-  # If ML models enabled:
-  docker pull mabesa/sapphire-prepgateway:$TAG
-  docker pull mabesa/sapphire-ml:$TAG
+  TAG=$(grep -E '^ieasyhydroforecast_backend_docker_image_tag=' /data/<data_folder>/config/<env_file> | cut -d= -f2)
+  docker pull mabesa/sapphire-lt-forecasting:"${TAG:-latest}"
   ```
 
-### 8.2 Start Luigi daemon
+  Sanity check:
+  ```bash
+  docker images 'mabesa/sapphire-*' --format 'table {{.Repository}}\t{{.Tag}}'
+  ```
 
-- [ ] Start the daemon
+### 8.2 Start the Luigi daemon
+
+- [ ] Start the daemon (persistent — `restart: unless-stopped` in the compose, so it survives host reboots and container crashes):
   ```bash
   docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
   ```
 
-- [ ] Verify
+  The daemon's image `sapphire/luigi-daemon` is **built locally** from `bin/luigi-daemon.Dockerfile` on first start — expect the first invocation to take a minute or two. Subsequent starts are instant.
+
+- [ ] Verify the daemon is up and the scheduler API responds:
   ```bash
-  docker ps | grep luigi-daemon
-  curl -s http://localhost:8082/ > /dev/null && echo "OK" || echo "FAIL"
+  docker ps --filter "name=luigi-daemon" --format "table {{.Names}}\t{{.Status}}"
+  curl -sf http://localhost:8082/ >/dev/null && echo OK || echo FAIL
   ```
+  `OK` from the curl confirms the scheduler is accepting HTTP — the pipeline runners (daily/pentadal/decadal scripts) connect to this endpoint.
 
 ### 8.3 Test a pipeline run
 
-- [ ] Run preprocessing as a smoke test
+This is the first end-to-end check that services, env, station config, and (if applicable) iEH tunnel all work together. Errors here almost always point at one of the Prerequisites above.
+
+- [ ] Run preprocessing as a smoke test. The script uses `docker compose run --rm preprocessing-runoff`, so the pipeline container is one-shot and the Luigi daemon (started in 8.2, left running) orchestrates task dependencies.
   ```bash
   bash bin/run_preprocessing_runoff.sh /data/<data_folder>/config/<env_file>
+  echo "Exit code: $?"
   ```
+  Exit code `0` means the Luigi task tree completed. A non-zero exit usually indicates:
+  - an unset or wrong env variable — re-check against Phase 5;
+  - a SAPPHIRE service unreachable — re-run the 4.2 health checks;
+  - an iEH HF tunnel that isn't up — re-check Phase 7.
 
-- [ ] Check Luigi UI at `http://<server-ip>:8082`
+- [ ] Confirm the pipeline actually wrote data to the preprocessing API (the smoke test's real purpose is to exercise the `apps → api-gateway → preprocessing service → DB` path). The gateway gates data endpoints with an API key when `API_KEY_ENABLED=true` in your env file — pass the key in the `x-api-key` header.
+  ```bash
+  # If API_KEY_ENABLED=false (the default), no auth needed:
+  curl -s 'http://localhost:8000/api/preprocessing/runoff/?limit=1'
+
+  # If API_KEY_ENABLED=true:
+  API_KEY=$(grep -E '^API_KEY=' /data/<data_folder>/config/<env_file> | cut -d= -f2)
+  curl -s -H "x-api-key: ${API_KEY}" 'http://localhost:8000/api/preprocessing/runoff/?limit=1'
+  ```
+  A non-empty JSON array means `sapphire_api_client` wrote at least one row. An empty array after the runoff script exited 0 usually means your station selection is empty or `SAPPHIRE_API_ENABLED=false` in the env file. A `401 Unauthorized` response means the API key is wrong or the header is missing.
+
+- [ ] Optionally inspect the Luigi task graph. On a headless server the daemon's JSON scheduler API is enough — the curl in 8.2 already confirms it. From a browser-capable workstation on the same network, open `http://<server-ip>:8082/` for a graphical view.
 
 > `[DOC-GAP-9]` ✅ **Resolved** — `## Deployment order` section added to `doc/deployment.md` (services → Luigi → pipeline → dashboards).
 
