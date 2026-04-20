@@ -777,59 +777,93 @@ The recipient should receive an alert within ~30 seconds. Alert timestamps use t
 
 ### Validation checklist
 
+Work through these in order. Most checks here are re-runs of health probes from earlier phases — the point is to confirm everything that worked in isolation still works once the whole stack is wired up.
+
 **Services health:**
+
+- [ ] All sapphire containers up
+  ```bash
+  docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}"
+  ```
+  Expect the five API containers (`sapphire-api-gateway`, `sapphire-preprocessing-api`, `sapphire-postprocessing-api`, `sapphire-user-api`, `sapphire-auth-api`), the four PostgreSQL containers, `sapphire-dashboard` (pentadal, port 5006), and the decadal dashboard container from `bin/docker-compose-dashboards.yml` all reporting `Up`.
 
 - [ ] SAPPHIRE API gateway responds
   ```bash
-  curl http://localhost:8000/health
-  curl http://localhost:8000/health/ready
+  curl -sf http://localhost:8000/health && echo OK
+  curl -sf http://localhost:8000/health/ready && echo READY
   ```
 
-- [ ] Luigi daemon is running
+- [ ] Luigi daemon responds
   ```bash
-  curl -s http://localhost:8082/ > /dev/null && echo "OK"
+  curl -sf http://localhost:8082/ >/dev/null && echo OK
   ```
 
-- [ ] Dashboards respond
+- [ ] Dashboards return HTTP 200
   ```bash
-  curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
-  curl -s -o /dev/null -w "%{http_code}" http://localhost:5007/forecast_dashboard
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/forecast_dashboard   # pentadal, sapphire stack
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard   # decadal, legacy compose
   ```
 
 **Pipeline smoke test:**
 
-- [ ] Run gateway preprocessing
+- [ ] Run gateway preprocessing (capture exit code):
   ```bash
   bash bin/run_preprocessing_gateway.sh /data/<data_folder>/config/<env_file>
+  echo "Exit: $?"
   ```
 
-- [ ] Run pentadal forecast
+- [ ] Run pentadal forecast (capture exit code):
   ```bash
   bash bin/run_pentadal_forecasts.sh /data/<data_folder>/config/<env_file>
+  echo "Exit: $?"
   ```
+  Both commands should return `0`. A non-zero exit indicates a failed Luigi task — check stderr and the pipeline log below before moving on. (On a browser-capable workstation you can also open `http://<server-ip>:8082/` for a graphical task graph.)
 
-- [ ] Check Luigi UI for green tasks
-
-- [ ] Check for errors in logs
+- [ ] Check for errors in pipeline logs
   ```bash
   grep -iE "error|critical|exception" /home/ubuntu/logs/sapphire_*.log | tail -20
   ```
+  A handful of transient errors (network hiccups, retried API calls) is expected. Repeated errors from the same module indicate a real problem.
 
 **Data verification:**
 
-- [ ] Verify data reached the API
+- [ ] Verify data reached the preprocessing and postprocessing APIs. Include the API key header if `API_KEY_ENABLED=true` in your env file (same pattern as Phase 8.3):
   ```bash
-  curl "http://localhost:8000/api/preprocessing/runoff/?limit=5"
-  curl "http://localhost:8000/api/postprocessing/forecasts/?limit=5"
+  # API_KEY_ENABLED=false (the default) — no auth needed:
+  curl -s 'http://localhost:8000/api/preprocessing/runoff/?limit=5'
+  curl -s 'http://localhost:8000/api/postprocessing/forecasts/?limit=5'
+
+  # API_KEY_ENABLED=true:
+  API_KEY=$(grep -E '^API_KEY=' /data/<data_folder>/config/<env_file> | cut -d= -f2)
+  curl -s -H "x-api-key: ${API_KEY}" 'http://localhost:8000/api/preprocessing/runoff/?limit=5'
+  curl -s -H "x-api-key: ${API_KEY}" 'http://localhost:8000/api/postprocessing/forecasts/?limit=5'
   ```
+  Non-empty JSON arrays from both endpoints confirm the pipeline wrote through to the database.
 
-- [ ] Check dashboards display data correctly (via browser or curl)
+- [ ] Verify forecast bulletins are on disk for the current year:
+  ```bash
+  ls /data/<data_folder>/reports/bulletins/pentad/$(date +%Y)/
+  ```
+  Excel bulletins named for the current pentad should appear (e.g., `<year>_04_aprel_<basin>_short_term_forecast_bulletin.xlsx`). If empty, the pentadal forecast step completed but no bulletin was written — check the postprocessing log.
 
-**Hindcast run (optional but recommended):**
+- [ ] Open the dashboards interactively. On a public-facing deployment use the reverse-proxy URLs (`https://fc.pentad.<base_url>/forecast_dashboard`, `https://fc.decad.<base_url>/forecast_dashboard`); on a LAN-only deployment use `http://<server>:5006/forecast_dashboard` and `:5007`. Confirm the forecast chart renders with non-empty data for a known station, and that the WebSocket stays connected during interaction (DevTools → Network → WS tab).
 
-- [ ] Start with restricted station selection (2-3 stations)
-- [ ] Run hindcasts from a recent date to verify pipeline end-to-end
-- [ ] Once verified, expand to full station selection
+**First-time deployment sanity check:**
+
+- [ ] Confirm the Phase 4.3 `initialize` workflow has run for a fresh deployment. Skill metrics should be present:
+  ```bash
+  # API_KEY_ENABLED=true variant shown; drop -H for =false
+  curl -s -H "x-api-key: ${API_KEY}" 'http://localhost:8000/api/postprocessing/skill-metric/?limit=5'
+  ```
+  An empty array means Phase 4.3 did not run successfully — go back and run `bash apps/run_locally.sh initialize` (with `ieasyhydroforecast_START_DATE` set in the env file) before announcing the deployment to end users. Do **not** skip this — the dashboards will show a "Current year" curve but no meaningful "Norm" curve until the hindcast has populated multi-year history.
+
+**Alerting end-to-end (only if Phase 11 was configured):**
+
+- [ ] Monitoring daemons healthy:
+  ```bash
+  systemctl status docker-monitor.service docker-log-watcher.service
+  ```
+- [ ] Trigger the synthetic log error from Phase 11.6 and confirm the alert email arrives at `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` within ~30 seconds. This is the only end-to-end proof that container crashes will actually reach a human.
 
 ---
 
