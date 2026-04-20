@@ -72,6 +72,7 @@ logger = logging.getLogger("hindcast_ML_models")
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 import warnings
 
