@@ -51,11 +51,15 @@ bin/
 ├── yearly_skill_metrics_recalculation.sh  # [Legacy] Full skill metric recalc
 ├── yearly_snow_norm_recalculation.sh      # [Legacy] Snow norm recalc
 │
-├── deploy_sapphire_forecast_tools.sh   # First-time deployment
-├── run_sapphire_forecast_tools.sh      # Full daily run (all steps)
-├── rerun_latest_forecasts.sh           # Re-run the most recent forecast
-├── locally_run_forecast_tools.sh       # [Deprecated] Use apps/run_locally.sh
 ├── setup_docker.sh                     # Pull images + check Docker daemon
+├── restart_sapphire_stack.sh           # Restart sapphire/docker-compose.yml (DBs + APIs + pentadal dashboard on 5006)
+├── reset_sapphire_db.sh                # Destructive: wipe DB volumes, rebuild, re-migrate
+├── backup_sapphire_db.sh               # pg_dump all four SAPPHIRE DBs (see doc/operations/backup_restore.md)
+├── rerun_latest_forecasts.sh           # Re-run the most recent forecast
+│
+├── deploy_sapphire_forecast_tools.sh   # [Deprecated] Use the step-by-step flow in doc/deployment.md
+├── run_sapphire_forecast_tools.sh      # [Deprecated] Superseded by the individual Luigi runners above
+├── locally_run_forecast_tools.sh       # [Deprecated] Use apps/run_locally.sh
 │
 ├── utils/
 │   ├── common_functions.sh         # Shared functions (read_configuration, etc.)
@@ -121,16 +125,16 @@ MAINTENANCE_TASK_TYPE=skill_recalc \
   docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
 ```
 
-### `docker-compose-dashboards.yml` — Dashboards
+### `docker-compose-dashboards.yml` — Legacy dashboards compose
 
-Forecast dashboards built with Panel (Python, served via Bokeh Server).
+Historically both forecast dashboards (pentad on 5006, decad on 5007) were served from this compose file. The **pentadal dashboard** has moved to `sapphire/docker-compose.yml` and is now part of the integrated SAPPHIRE stack. This compose is kept for the decadal dashboard, and as a fallback for deployments that have not yet migrated to the integrated stack.
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| `pentaddashboard` | 5006 | Pentadal forecast dashboard |
-| `decaddashboard` | 5007 | Decadal forecast dashboard |
+| Service | Port | Status |
+|---------|------|--------|
+| `pentaddashboard` | 5006 | **Legacy** — migrated to `sapphire/docker-compose.yml` → service `dashboard` |
+| `decaddashboard` | 5007 | Still served from here |
 
-Both have health checks and `restart: always`.
+Both services (when used) have health checks and `restart: always`. To avoid a port-5006 conflict between the legacy pentadal service and the integrated one, `bin/restart_sapphire_stack.sh` stops this compose before starting the sapphire stack.
 
 ## Shell Script Patterns
 
@@ -170,6 +174,28 @@ debugging but are superseded by `run_daily_maintenance.sh` and
 `run_periodic_maintenance.sh` for automated cron scheduling. The Luigi
 alternatives enforce dependency ordering explicitly instead of relying on cron
 timing offsets.
+
+## Operational scripts
+
+Non-cron helpers for day-to-day management of a running deployment. All three require the external env-file path as their single argument.
+
+### `restart_sapphire_stack.sh <env_file>`
+
+Restart the SAPPHIRE services stack (4 databases + 5 FastAPI services + integrated pentadal dashboard on 5006). Stops the legacy dashboards compose first to prevent a port-5006 conflict, then pulls the latest dashboard image, then brings the sapphire stack back up. Does **not** touch Luigi, pipeline scripts, or SSH tunnels.
+
+Typical use: after changing the env file, after pulling a new dashboard image, or after migrating from the legacy two-compose dashboards setup.
+
+### `reset_sapphire_db.sh [flags]`
+
+Destructive reset of the SAPPHIRE service databases. Stops services, removes DB volumes (wiping all data), rebuilds images, restarts services, waits for health, and re-runs the data migrators. Supports `--preprocessing-only`, `--postprocessing-only`, `--skip-migration`, `--skip-rebuild`, and `-y` to skip the confirmation prompt. User and auth databases are **not** affected.
+
+Typical use: after a breaking schema change when Base.metadata.create_all() cannot migrate in place. **Take a backup first** (see next script).
+
+### `backup_sapphire_db.sh [-d DIR] [-r DAYS] [--dry-run]`
+
+`pg_dump` all four active SAPPHIRE databases (preprocessing, postprocessing, user, auth) to the backup directory (default `/var/backups/sapphire`). Verifies each archive with `pg_restore --list`, renames failures to `.FAILED`, and prunes `.dump` files older than the retention window.
+
+Typical use: nightly cron (see `doc/operations/backup_restore.md` for the full restore and drill procedure).
 
 ## Shared Utilities (`utils/common_functions.sh`)
 
