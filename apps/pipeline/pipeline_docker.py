@@ -2120,7 +2120,7 @@ class LTScheduleQuery(DockerTaskBase):
                 attempt_number=attempt,
                 command=command,
                 mem_limit="2g",
-                network="host",
+                network="sapphire_sapphire-network",
             )
         )
 
@@ -2167,6 +2167,7 @@ class RunLongTermForecast(DockerTaskBase):
             "RUN_MODE=forecast",
         ]
         environment.extend(get_docker_host_env_overrides())
+        environment.append("SAPPHIRE_API_URL=http://api-gateway:8000")
 
         status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
@@ -2177,7 +2178,7 @@ class RunLongTermForecast(DockerTaskBase):
                 attempt_number=attempt,
                 mem_limit="12g",
                 memswap_limit="16g",
-                network="host",
+                network="sapphire_sapphire-network",
             )
         )
 
@@ -2205,6 +2206,7 @@ class LongTermPostProcessing(DockerTaskBase):
         volumes = _standard_maintenance_volumes()
         environment = _common_maintenance_env()
         environment.append(f"SAPPHIRE_SKILL_METRIC_TYPES={self.skill_metric_types}")
+        environment.append("SAPPHIRE_API_URL=http://api-gateway:8000")
 
         status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
@@ -2220,7 +2222,7 @@ class LongTermPostProcessing(DockerTaskBase):
                     "run",
                     "postprocessing_operational_long_term.py",
                 ],
-                network="host",
+                network="sapphire_sapphire-network",
             )
         )
 

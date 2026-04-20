@@ -633,13 +633,13 @@ class TestCallHindcastScriptTimeout:
     )
     @patch("recalculate_nan_forecasts.subprocess.run")
     @patch("recalculate_nan_forecasts.pd.read_csv")
-    def test_stdout_stderr_logged(self, mock_read_csv, mock_run, caplog):
-        """Hindcast stdout/stderr are forwarded to the logger."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="Epoch 1/10\nEpoch 2/10",
-            stderr="UserWarning: some warning",
-        )
+    def test_success_logs_hindcast_ran(self, mock_read_csv, mock_run, caplog):
+        """On success (returncode=0) the 'Hindcast ran successfully' message is logged.
+
+        stdout/stderr are inherited (fd inheritance, not captured), so
+        result.stdout and result.stderr are None — no post-hoc log forwarding.
+        """
+        mock_run.return_value = MagicMock(returncode=0, stdout=None, stderr=None)
         mock_read_csv.return_value = pd.DataFrame()
 
         with caplog.at_level(logging.INFO, logger="recalculate_nan_forecasts"):
@@ -653,11 +653,7 @@ class TestCallHindcastScriptTimeout:
             )
 
         info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
-        warn_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-
-        assert any("[hindcast] Epoch 1/10" in m for m in info_messages)
-        assert any("[hindcast] Epoch 2/10" in m for m in info_messages)
-        assert any("[hindcast stderr] UserWarning: some warning" in m for m in warn_messages)
+        assert any("Hindcast ran successfully" in m for m in info_messages)
 
 
 # ---------------------------------------------------------------------------

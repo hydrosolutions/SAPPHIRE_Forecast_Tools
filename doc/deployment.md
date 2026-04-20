@@ -20,6 +20,8 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
       - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
       - [SAPPHIRE services (API stack)](#sapphire-services-api-stack)
+      - [Dashboards](#dashboards)
+      - [Reverse proxy and HTTPS](#reverse-proxy-and-https)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -439,9 +441,12 @@ For the full step-by-step instructions with all commands, see the [Update Deploy
 The SAPPHIRE services are four FastAPI microservices (`preprocessing`,
 `postprocessing`, `user`, `auth`) fronted by an `api-gateway`, each backed
 by its own PostgreSQL database. They are orchestrated by
-`sapphire/docker-compose.yml` and hold the runoff, forecast, skill-metric,
-user, and authentication data that the pipeline and dashboards read and
-write through the gateway.
+`sapphire/docker-compose.yml` together with the **pentadal forecast dashboard**,
+which was migrated into this compose during PR #332 so it shares the same
+lifecycle and env file as the APIs. The stack holds the runoff, forecast,
+skill-metric, user, and authentication data that the pipeline reads and writes
+through the gateway, and serves the pentadal dashboard that end-users reach on
+port 5006.
 
 | Service | Port | Description |
 |---------|------|-------------|
@@ -450,10 +455,13 @@ write through the gateway.
 | `postprocessing` | 8003 | Forecast results and skill metrics |
 | `user` | 8004 | User management |
 | `auth` | 8005 | Authentication and authorization |
+| `dashboard` | 5006 | Pentadal forecast dashboard (Panel/Bokeh) |
 
 Each backend service has a dedicated PostgreSQL database exposed on a
 localhost-only port (5433–5436). Do not expose any of these ports to the
-internet.
+internet. The **decadal dashboard** (port 5007) is **not** part of this compose
+— it is still served from the legacy `bin/docker-compose-dashboards.yml` (see
+"Dashboards" below).
 
 #### Starting the services
 
@@ -546,6 +554,73 @@ For the first-time-deployment walkthrough see
 [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md).
 For updates to an existing deployment see
 [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
+### Dashboards
+
+The two forecast dashboards are in different compose files — a mid-migration state you need to be aware of:
+
+| Dashboard | Port | Compose file | Started by |
+|-----------|------|--------------|------------|
+| Pentadal | 5006 | `sapphire/docker-compose.yml` (service `dashboard`) | `docker compose -f sapphire/docker-compose.yml up -d` (i.e. Phase 4.2) or `bin/restart_sapphire_stack.sh <env_file>` |
+| Decadal | 5007 | `bin/docker-compose-dashboards.yml` (legacy) | `docker compose -f bin/docker-compose-dashboards.yml up -d decaddashboard` |
+
+**Consequence for first-time deployment:** the pentadal dashboard is already running after Phase 4.2; only the decadal dashboard needs a separate start command. Trying to start both from the legacy compose (`docker compose -f bin/docker-compose-dashboards.yml up -d` with no service name) will attempt to bind port 5006 and conflict with the pentadal service from the sapphire stack.
+
+To start just the decadal dashboard:
+
+```bash
+docker compose -f bin/docker-compose-dashboards.yml \
+  --env-file /absolute/path/to/<data_folder>/config/<env_file> \
+  up -d decaddashboard
+
+# Health check (expect 200)
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard
+```
+
+**Restarting after a config change:** use `bash bin/restart_sapphire_stack.sh <env_file>` — it stops the legacy dashboards compose first to free port 5006, then restarts the sapphire stack (including the pentadal dashboard). Restart the decadal dashboard separately with `docker compose -f bin/docker-compose-dashboards.yml restart decaddashboard` if needed.
+
+The migration of the decadal dashboard into `sapphire/docker-compose.yml` is planned but not yet done; until then, treat `bin/docker-compose-dashboards.yml` as "for the decadal dashboard only."
+
+### Reverse proxy and HTTPS
+
+These are general recommendations — not a step-by-step recipe. Pick tooling that matches what your hydromet IT team already supports; the specifics of nginx/Caddy/Traefik configuration are outside this document.
+
+**When you need one.** If SAPPHIRE is running on a LAN accessible only from inside the hydromet, a reverse proxy is optional — users can hit `http://<server>:5006/forecast_dashboard` directly. If the server is internet-facing (AWS, VPS, any public IP), you **must** terminate TLS and gate public access through a reverse proxy. The SAPPHIRE services were not designed to be directly exposed to the internet.
+
+**What to expose, what to hide.** On a public-facing deployment, only these should be reachable from the internet, and only over HTTPS:
+
+| Target | Path / hostname |
+|--------|-----------------|
+| Pentad dashboard | `https://fc.pentad.<base_url>/forecast_dashboard` → `localhost:5006` |
+| Decad dashboard | `https://fc.decad.<base_url>/forecast_dashboard` → `localhost:5007` |
+
+Everything else stays bound to `localhost` on the server: API gateway (`8000`), the four services (`8002`–`8005`), their databases (`5433`–`5436`), and the Luigi daemon UI (`8082`). If any hydromet operator needs the API gateway or Luigi UI remotely, tunnel them over SSH rather than exposing them publicly. On AWS, mirror this in the security group — only `80`/`443` inbound from the internet, everything else from your office IP range or SSH bastion only.
+
+**TLS certificates.** Use Let's Encrypt for free, auto-renewing certificates. Two common approaches:
+
+- **nginx + certbot** — the traditional path. Install nginx, configure a server block per dashboard hostname, then `certbot --nginx` to obtain and install the certificate. Certbot installs a cron/systemd timer for renewal.
+- **Caddy** — single binary, automatic HTTPS out of the box. A three-line `Caddyfile` per hostname (reverse_proxy to `localhost:5006` / `5007`) and Caddy handles the cert lifecycle itself. Lower-overhead choice if you don't already run nginx.
+
+Either way, the DNS records (`fc.pentad.<base_url>`, `fc.decad.<base_url>`) must point to the server's public IP before you request certificates — ACME verifies by connecting back to your host.
+
+**WebSocket upgrade is mandatory.** The Panel/Bokeh dashboards communicate with the browser over a WebSocket after the initial page load. If the reverse proxy strips or rewrites the `Upgrade` and `Connection` headers, the page loads but every interaction hangs. For nginx, the relevant directives are `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` on the dashboard `location` block. Caddy and Traefik do this by default. Test after deploying by loading a dashboard and watching the browser's network tab for a WebSocket connection that stays open; if it repeatedly reconnects, the upgrade is not working.
+
+**Also set `ALLOWED_WEBSOCKET_ORIGINS`** on the Panel/Bokeh container to match your public hostname — otherwise Panel rejects the WebSocket even if the proxy is configured correctly. The dashboard image already reads `ieasyhydroforecast_url_pentad` / `..._decad` from the env file for this; set those to the full `https://fc.pentad.<base_url>` URLs.
+
+**Harden the API gateway if exposed.** If you have a reason to route the API gateway through the reverse proxy (remote admin, federation, etc.), turn on the optional defences that are off by default in `sapphire/.env.example`:
+
+```
+API_KEY_ENABLED=true
+API_KEY=<generate-strong-random-secret>   # openssl rand -hex 32
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT=100                             # requests per minute per client IP
+```
+
+Distribute the API key only to clients that need to write (the pipeline scripts run on the same server, so they don't; they talk to the gateway over the Docker bridge and bypass the proxy).
+
+**Force HTTPS.** Whichever proxy you pick, add a redirect from `http://` to `https://` for each dashboard hostname. Both nginx (`return 301 https://$host$request_uri;`) and Caddy (default behaviour) handle this with a one-line addition.
+
+**Before going live.** Run the dashboard HTTP check from the Testing section above against the proxied URL instead of `localhost:5006`; verify the browser shows a valid TLS certificate, that the WebSocket stays connected for at least a minute, and that a forecast page renders data end-to-end. If the deployment serves sensitive hydrological data, also verify the dashboards require login before showing any data.
 
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
@@ -668,10 +743,83 @@ To check if the cron jobs have been set up correctly, you can list them with `cr
 
 
 ## Testing the deployment
-After correct deployment, forecast bulletins should now be produced automatically one day before the beginning of each pentad. We recommend the following strategy to test if the deployment has been successful:
-1. Check the logs of the backend container in the Docker Desktop application. If there are no error messages displayed at the bottom of the log tab, the backend is running correctly.
-2. Check if the forecast bulletins are produced correctly. You can do this by checking the folder data/reports (if you have not reconfigured the output directory for the bulletins).
-3. Run hindcasts for the period 2004-12-30 to the present date. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application. Note that we recommend producing bulletins for the pervious years forecasts that can be cross-examined with your forecasts from the previous year. This is an important step.
-4. Check if the forecast dashboard is operational by doubble-clicking the dashboard icon. If the dashboard is displayed correctly and the displayed data makes sense, you can close the browser window.
-5. Check if the configuration dashboard is operational by double-clicking the icon of the configuration dashboard. Test if the selection of stations has an effect on the results produced by the forecast tools by manually trigggering a re-run of the latest forecast and checking if the changes have an effect on the forecast bulletins and the forecast dashboard. Note that the station selection may still be limited by the apps/config/config_development_restrict_station_selection.yaml.
+
+After completing the setup steps above, work through the checks below to confirm each layer is healthy. Deployments run on headless servers over SSH — use `curl` and `docker logs` rather than GUI tools like Docker Desktop. If any check fails, the log at `/home/ubuntu/logs/sapphire_*.log` usually shows why.
+
+### 1. Services are running
+
+```bash
+docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}"
+```
+
+All five API containers (`sapphire-api-gateway`, `sapphire-preprocessing-api`, `sapphire-postprocessing-api`, `sapphire-user-api`, `sapphire-auth-api`) and their four PostgreSQL containers (`sapphire-preprocessing-db`, `sapphire-postprocessing-db`, `sapphire-user-db`, `sapphire-auth-db`) should show `Up`. The Luigi daemon and dashboards appear as `luigi-daemon`, `sapphire-dashboard-pentad`, `sapphire-dashboard-decad` in their own compose projects.
+
+### 2. API gateway responds
+
+```bash
+curl -sf http://localhost:8000/health && echo OK
+curl -sf http://localhost:8000/health/ready && echo READY
+```
+
+Both should return 200. `/health/ready` additionally confirms the backend services behind the gateway are reachable.
+
+### 3. Data is reaching the API
+
+Spot-check that the pipeline has written something for the current year:
+
+```bash
+curl -s "http://localhost:8000/api/preprocessing/runoff/?limit=1" | head
+curl -s "http://localhost:8000/api/postprocessing/forecasts/?limit=1" | head
+```
+
+An empty array means the pipeline has not run yet — check step 6.
+
+### 4. Forecast bulletins are written
+
+```bash
+ls /data/<data_folder>/reports/bulletins/pentad/$(date +%Y)/
+```
+
+You should see Excel bulletins named for the current pentad (e.g., `<year>_04_aprel_<basin>_short_term_forecast_bulletin.xlsx`). If the directory is empty, check the most recent `sapphire_pentadal_*.log` in `/home/ubuntu/logs/` for errors. Your output directory may differ if you overrode `ieasyreports_report_output_path` in the env file.
+
+### 5. Dashboards serve HTTP
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/forecast_dashboard
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard
+```
+
+Both should return `200`. To confirm the UI renders end-to-end, open the dashboards through your reverse proxy in a local browser.
+
+### 6. Verify the pipeline logs
+
+```bash
+grep -iE "error|critical|exception" /home/ubuntu/logs/sapphire_*.log | tail -20
+```
+
+No matches is ideal. A handful of `ERROR` lines from transient network issues is expected; repeated errors from the same module indicate a real problem.
+
+### 7. First-time deployments: run the initialization workflow
+
+For a new deployment, compute historical forecasts so the dashboard's skill statistics reflect your data. The `initialize` target wraps the full sequence (preprocessing maintenance → full-history API sync → LR hindcast for PENTAD and DECAD → skill-metric recalculation):
+
+```bash
+# Set ieasyhydroforecast_START_DATE in your env file first, e.g.
+#   ieasyhydroforecast_START_DATE=2000-01-01
+# The script exits with an error if it is missing.
+ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
+  bash apps/run_locally.sh initialize
+```
+
+This takes several hours to days depending on the start date and number of stations. Follow progress with:
+
+```bash
+tail -f /home/ubuntu/logs/sapphire_*.log
+```
+
+After initialization completes, verify the dashboards now show historical skill metrics (not just the current year) and that the "Norm" curve diverges from the "Current year" curve for gauges with multi-year history. For the full walkthrough see [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md) Phase 12.
+
+### 8. Optional: restrict the station selection during initial testing
+
+If you want to validate the pipeline against a small subset before running it over all stations, point `ieasyforecast_restrict_stations_file` to a JSON file listing 2–3 station codes (e.g. `config_development_restrict_station_selection.json`). Once everything works, set `ieasyforecast_restrict_stations_file=null` to release the restriction and re-run the pipeline.
 

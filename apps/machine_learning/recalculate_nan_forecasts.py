@@ -97,8 +97,6 @@ def call_hindcast_script(
     try:
         result = subprocess.run(
             command,
-            capture_output=True,
-            text=True,
             env=env,
             timeout=hindcast_timeout,
         )
@@ -107,21 +105,14 @@ def call_hindcast_script(
             f"Hindcast subprocess timed out after {hindcast_timeout}s "
             f"for {MODEL_TO_USE} {PREDICTION_MODE}"
         ) from exc
-    if result.stdout:
-        for line in result.stdout.splitlines():
-            logger.info("[hindcast] %s", line)
-    if result.stderr:
-        for line in result.stderr.splitlines():
-            logger.warning("[hindcast stderr] %s", line)
 
     # Check if the script ran successfully
     if result.returncode == 0:
         logger.info("Hindcast ran successfully")
     else:
         logger.error(
-            "Hindcast failed with return code %s. Stderr: %s",
+            "Hindcast failed with return code %s",
             result.returncode,
-            result.stderr,
         )
         raise RuntimeError(
             f"Hindcast subprocess failed with return code "

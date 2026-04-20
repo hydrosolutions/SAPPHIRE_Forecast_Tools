@@ -54,13 +54,13 @@ SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<your_recipient_emails_comma_separated>
 The Docker healthcheck is set up in the `docker-compose-dashboards.yml` file. It checks if the dashboard is running and sends a notification if it is not. No need to set up any additional environment variables for this feature.
 
 ## Systemd Service for Docker Container Monitoring
-The `bin/docker_monitor.sh` script is designed to monitor the health of Docker containers running the SAPPHIRE Forecast Tools dashboards. It checks for unexpected crashes and healthcheck failures, and sends email alerts with recent logs.
+The `bin/monitoring/docker.sh` script is designed to monitor the health of Docker containers running the SAPPHIRE Forecast Tools dashboards. It checks for unexpected crashes and healthcheck failures, and sends email alerts with recent logs.
 
 ### 🔧 Installation Steps
 After cloning the repository (see doployment guide), make sure the bash script is executable:
 
 ```bash
-chmod +x /path/to/SAPPHIRE_FORECAST_TOOLS/bin/docker_monitor.sh
+chmod +x /path/to/SAPPHIRE_FORECAST_TOOLS/bin/monitoring/docker.sh
 ```
 
 ### 📧 Email Configuration
@@ -76,7 +76,7 @@ SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<your_recipient_emails_comma_separated>
 ```
 
 ### 📜 Systemd Service Configuration
-Create a systemd service file for the docker monitor. This service will run the `docker_monitor.sh` script to check the health of the Docker containers.
+Create a systemd service file for the docker monitor. This service will run the `bin/monitoring/docker.sh` script to check the health of the Docker containers.
 Create a file named `docker_monitor.service` in `/etc/systemd/system/` with the following content:
 
 ```ini
@@ -89,7 +89,7 @@ Requires=docker.service
 
 [Service]
 Environment="DOCKER_MONITOR_ENV_PATH=/path/to/.env"
-ExecStart=/path/to/SAPPHIRE_Forecast_Tools/bin/docker_monitor.sh
+ExecStart=/path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker.sh
 Restart=on-failure
 RestartSec=10s
 
@@ -97,7 +97,7 @@ RestartSec=10s
 WantedBy=multi-user.target
 ```
 
-Make susre to replace `/path/to/your/.env` with the actual path to your `.env` file and `/path/to/your/docker_monitor.sh` with the path to the `docker_monitor.sh` script.
+Make sure to replace `/path/to/.env` with the actual path to your `.env` file and `/path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker.sh` with the absolute path on your server.
 
 ### 📋 Enable and Start the Service
 
@@ -126,14 +126,14 @@ To simulate a healthcheck failure, you can modify the healthcheck command in you
 
 ## Systemd Service for Dashboard Log Monitoring
 
-The `bin/docker_log_watcher.sh` script monitors the logs of the SAPPHIRE dashboard containers for error patterns such as HTTP 404 errors, general errors, and exceptions. When such patterns are detected, the script sends email alerts with the relevant log lines.
+The `bin/monitoring/docker_log_watcher.sh` script monitors the logs of the SAPPHIRE dashboard containers for error patterns such as HTTP 404 errors, general errors, and exceptions. When such patterns are detected, the script sends email alerts with the relevant log lines.
 
 ### 🔧 Installation Steps
 
 After cloning the repository, make the bash script executable:
 
 ```bash
-chmod +x /path/to/SAPPHIRE_FORECAST_TOOLS/bin/docker_log_watcher.sh
+chmod +x /path/to/SAPPHIRE_FORECAST_TOOLS/bin/monitoring/docker_log_watcher.sh
 ```
 
 ### 📋 Configuration
@@ -171,7 +171,7 @@ Requires=docker.service
 
 [Service]
 Environment="DOCKER_MONITOR_ENV_PATH=/path/to/.env"
-ExecStart=/path/to/SAPPHIRE_Forecast_Tools/bin/docker_log_watcher.sh
+ExecStart=/path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker_log_watcher.sh
 Restart=on-failure
 RestartSec=10s
 
@@ -179,7 +179,7 @@ RestartSec=10s
 WantedBy=multi-user.target
 ```
 
-Replace `/path/to/.env` with the actual path to your `.env` file, and `/path/to/SAPPHIRE_Forecast_Tools/bin/docker_log_watcher.sh` with the path to the script.
+Replace `/path/to/.env` with the actual path to your `.env` file, and `/path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker_log_watcher.sh` with the path to the script.
 
 ### 📋 Enable and Start the Service
 
@@ -301,8 +301,8 @@ If everything is set up correctly, you should receive an email alert containing 
 3. **Script Permission Issues**
    ```bash
    # Ensure scripts are executable
-   sudo chmod +x /path/to/SAPPHIRE_Forecast_Tools/bin/docker_monitor.sh
-   sudo chmod +x /path/to/SAPPHIRE_Forecast_Tools/bin/docker_log_watcher.sh
+   sudo chmod +x /path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker.sh
+   sudo chmod +x /path/to/SAPPHIRE_Forecast_Tools/bin/monitoring/docker_log_watcher.sh
    
    # Check script ownership
    ls -la /path/to/SAPPHIRE_Forecast_Tools/bin/docker_*.sh
