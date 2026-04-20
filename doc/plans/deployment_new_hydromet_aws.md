@@ -13,7 +13,6 @@ Placeholders used throughout:
 - `<country>` — country code (e.g., `che`)
 - `<data_folder>` — `<country>_data_forecast_tools`
 - `<env_file>` — `.env_<org>`
-- `<tz_offset>` — UTC offset for the target timezone
 
 ---
 
@@ -587,25 +586,33 @@ Skip this section if the deployment is LAN-only — users can reach the dashboar
 
 ## Phase 10: Cron Jobs
 
-**Ref:** `doc/deployment.md` > Set up cron job
+**Ref:** `doc/deployment.md` > `Set up cron job` (timezone reference table, log-rotation rationale, full commentary on each scheduled job).
+
+**Prerequisites** (re-confirm the earlier phases' health checks before enabling cron — a failing cron job with a broken prerequisite is much harder to diagnose than a failing manual run):
+- Phase 4.2 — SAPPHIRE services healthy: `curl -sf http://localhost:8000/health/ready` returns 200.
+- Phase 5 — `<env_file>` populated with both pipeline and services-layer variables.
+- Phase 6 — station config JSONs and historical discharge Excel files in place.
+- Phase 8.2 — Luigi daemon running: `curl -sf http://localhost:8082/ >/dev/null && echo OK`.
+- Phase 7 — iEH HF tunnel up (only if `ieasyhydroforecast_connect_to_iEH=True`).
 
 - [ ] Create log directory
   ```bash
   mkdir -p /home/ubuntu/logs
   ```
 
+  Each cron job below writes to a timestamped file (`sapphire_<job>_YYYYMMDD.log`), and the first cron line deletes anything in `/home/ubuntu/logs/` matching `sapphire_*.log` older than 7 days — this keeps the log directory bounded. If you change the log path or filename pattern, update **both** the `find` command and each job's `>> /home/ubuntu/logs/...` redirect to match.
+
 - [ ] Edit crontab
   ```bash
   crontab -e
   ```
 
-- [ ] Add schedule (adapt times for your timezone — replace `<tz_offset>`
-  comments with local times):
+- [ ] Add the schedule below. Times are UTC; use the timezone reference table in `doc/deployment.md` > `Set up cron job` to pick an operational window that fits your hydromet (pentadal forecast usually runs in the morning local time, daily maintenance in the evening local time).
   ```bash
   # m h  dom mon dow   command
   # ---------------------------------------------------------------------------
   # SAPPHIRE Forecast Tools Schedule (Times in UTC)
-  # Adapt paths and timezone comments for your deployment.
+  # Replace <data_folder> and <env_file> with the values for your deployment.
   # ---------------------------------------------------------------------------
 
   # Log cleanup: delete logs older than 7 days
@@ -644,6 +651,8 @@ Skip this section if the deployment is LAN-only — users can reach the dashboar
   ```bash
   crontab -l
   ```
+
+- [ ] **Wire cron to your alerting (optional).** If you configure SMTP in Phase 11, failures of any of the jobs scheduled above will email the recipients listed in `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS`. Without SMTP configured, check the per-job log files in `/home/ubuntu/logs/sapphire_*.log` manually (grep for `ERROR`/`CRITICAL` lines from the Testing section's log-grep one-liner).
 
 ---
 
