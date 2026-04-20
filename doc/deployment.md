@@ -20,6 +20,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
       - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
       - [Set up SSH tunnel to iEasyHydro HF (if required)](#set-up-ssh-tunnel-to-ieasyhydro-hf-if-required)
       - [SAPPHIRE services (API stack)](#sapphire-services-api-stack)
+      - [Dashboards](#dashboards)
       - [Reverse proxy and HTTPS](#reverse-proxy-and-https)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
@@ -440,9 +441,12 @@ For the full step-by-step instructions with all commands, see the [Update Deploy
 The SAPPHIRE services are four FastAPI microservices (`preprocessing`,
 `postprocessing`, `user`, `auth`) fronted by an `api-gateway`, each backed
 by its own PostgreSQL database. They are orchestrated by
-`sapphire/docker-compose.yml` and hold the runoff, forecast, skill-metric,
-user, and authentication data that the pipeline and dashboards read and
-write through the gateway.
+`sapphire/docker-compose.yml` together with the **pentadal forecast dashboard**,
+which was migrated into this compose during PR #332 so it shares the same
+lifecycle and env file as the APIs. The stack holds the runoff, forecast,
+skill-metric, user, and authentication data that the pipeline reads and writes
+through the gateway, and serves the pentadal dashboard that end-users reach on
+port 5006.
 
 | Service | Port | Description |
 |---------|------|-------------|
@@ -451,10 +455,13 @@ write through the gateway.
 | `postprocessing` | 8003 | Forecast results and skill metrics |
 | `user` | 8004 | User management |
 | `auth` | 8005 | Authentication and authorization |
+| `dashboard` | 5006 | Pentadal forecast dashboard (Panel/Bokeh) |
 
 Each backend service has a dedicated PostgreSQL database exposed on a
 localhost-only port (5433–5436). Do not expose any of these ports to the
-internet.
+internet. The **decadal dashboard** (port 5007) is **not** part of this compose
+— it is still served from the legacy `bin/docker-compose-dashboards.yml` (see
+"Dashboards" below).
 
 #### Starting the services
 
@@ -547,6 +554,32 @@ For the first-time-deployment walkthrough see
 [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md).
 For updates to an existing deployment see
 [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md).
+
+### Dashboards
+
+The two forecast dashboards are in different compose files — a mid-migration state you need to be aware of:
+
+| Dashboard | Port | Compose file | Started by |
+|-----------|------|--------------|------------|
+| Pentadal | 5006 | `sapphire/docker-compose.yml` (service `dashboard`) | `docker compose -f sapphire/docker-compose.yml up -d` (i.e. Phase 4.2) or `bin/restart_sapphire_stack.sh <env_file>` |
+| Decadal | 5007 | `bin/docker-compose-dashboards.yml` (legacy) | `docker compose -f bin/docker-compose-dashboards.yml up -d decaddashboard` |
+
+**Consequence for first-time deployment:** the pentadal dashboard is already running after Phase 4.2; only the decadal dashboard needs a separate start command. Trying to start both from the legacy compose (`docker compose -f bin/docker-compose-dashboards.yml up -d` with no service name) will attempt to bind port 5006 and conflict with the pentadal service from the sapphire stack.
+
+To start just the decadal dashboard:
+
+```bash
+docker compose -f bin/docker-compose-dashboards.yml \
+  --env-file /absolute/path/to/<data_folder>/config/<env_file> \
+  up -d decaddashboard
+
+# Health check (expect 200)
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard
+```
+
+**Restarting after a config change:** use `bash bin/restart_sapphire_stack.sh <env_file>` — it stops the legacy dashboards compose first to free port 5006, then restarts the sapphire stack (including the pentadal dashboard). Restart the decadal dashboard separately with `docker compose -f bin/docker-compose-dashboards.yml restart decaddashboard` if needed.
+
+The migration of the decadal dashboard into `sapphire/docker-compose.yml` is planned but not yet done; until then, treat `bin/docker-compose-dashboards.yml` as "for the decadal dashboard only."
 
 ### Reverse proxy and HTTPS
 

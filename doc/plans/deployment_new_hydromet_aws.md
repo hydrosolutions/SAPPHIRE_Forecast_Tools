@@ -481,16 +481,26 @@ and generic — this section works well.
 
 ### 9.1 Start dashboards
 
-- [ ] Start both dashboards
+**Migration state:** the pentadal dashboard (port 5006) was moved into `sapphire/docker-compose.yml` during PR #332 and comes up with the rest of the sapphire stack (Phase 4.2). Only the decadal dashboard (port 5007) is still served from the legacy `bin/docker-compose-dashboards.yml`. See `doc/deployment.md` > `Dashboards` for the full picture.
+
+- [ ] Confirm the pentadal dashboard is already running (started by Phase 4.2)
   ```bash
-  docker compose -f bin/docker-compose-dashboards.yml \
-    --env-file /data/<data_folder>/config/<env_file> up -d
+  docker ps --filter "name=sapphire-dashboard" --format "table {{.Names}}\t{{.Status}}"
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/forecast_dashboard   # expect 200
   ```
 
-- [ ] Verify health
+  If it is not running, `bash bin/restart_sapphire_stack.sh /data/<data_folder>/config/<env_file>` brings the integrated stack (including the pentadal dashboard) up cleanly — it stops the legacy dashboards compose first to free port 5006.
+
+- [ ] Start only the decadal dashboard from the legacy compose (specify the service name to avoid starting `pentaddashboard` and colliding on port 5006)
   ```bash
-  curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
-  curl -s -o /dev/null -w "%{http_code}" http://localhost:5007/forecast_dashboard
+  docker compose -f bin/docker-compose-dashboards.yml \
+    --env-file /data/<data_folder>/config/<env_file> up -d decaddashboard
+  ```
+
+- [ ] Verify health of both
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/forecast_dashboard   # pentadal, from sapphire stack
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard   # decadal, from legacy compose
   ```
 
 ### 9.2 Reverse proxy & HTTPS
