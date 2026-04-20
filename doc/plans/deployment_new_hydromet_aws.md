@@ -560,16 +560,28 @@ This is the first end-to-end check that services, env, station config, and (if a
 
 > `[DOC-GAP-10]` ✅ **Resolved** — `### Reverse proxy and HTTPS` general recommendations added to `doc/deployment.md` (nginx vs Caddy, Let's Encrypt, WebSocket upgrade, gateway hardening).
 
-Practical steps (not yet documented):
+Skip this section if the deployment is LAN-only — users can reach the dashboards directly at `http://<server>:5006/forecast_dashboard` and `http://<server>:5007/forecast_dashboard`. For any internet-facing deployment (AWS and friends), work through the checklist below and cross-reference `doc/deployment.md` > `Reverse proxy and HTTPS` for the detailed recipe.
 
-- [ ] Install nginx or Nginx Proxy Manager
-- [ ] Configure DNS: `fc.pentad.<domain>` → server IP,
-  `fc.decad.<domain>` → server IP
-- [ ] Set up SSL certificates (Let's Encrypt)
-- [ ] Configure reverse proxy rules:
-  - `fc.pentad.<domain>` → `localhost:5006`
-  - `fc.decad.<domain>` → `localhost:5007`
-  - Include WebSocket upgrade headers for Panel/Bokeh
+- [ ] **DNS** — add A records for `fc.pentad.<base_url>` and `fc.decad.<base_url>` pointing at the server's public IP. Both must resolve before certificate acquisition (ACME verifies by connecting back to your host).
+- [ ] **Install a reverse proxy** — pick whichever your IT team already supports:
+  - `nginx` + `certbot` for TLS (traditional Ubuntu path)
+  - `Caddy` (single binary, automatic HTTPS)
+- [ ] **Obtain TLS certificates** via Let's Encrypt (`certbot --nginx` or Caddy's built-in ACME). Both tools install renewal timers automatically.
+- [ ] **Configure proxy routes** — two hostnames, two backends:
+  - `https://fc.pentad.<base_url>/forecast_dashboard` → `localhost:5006` (served by the sapphire stack from Phase 4.2)
+  - `https://fc.decad.<base_url>/forecast_dashboard` → `localhost:5007` (served by `bin/docker-compose-dashboards.yml` from 9.1)
+- [ ] **Add the WebSocket upgrade** to each route. nginx needs `proxy_http_version 1.1` + `Upgrade` / `Connection` headers on the dashboard location block; Caddy does this by default. Panel/Bokeh dashboards appear loaded but stop responding to clicks without the upgrade.
+- [ ] **Set the WebSocket-origin env vars** in `<env_file>` and restart the dashboards so Panel's origin check accepts the new public hostnames:
+  ```bash
+  ieasyhydroforecast_url_pentad=https://fc.pentad.<base_url>
+  ieasyhydroforecast_url_decad=https://fc.decad.<base_url>
+  ```
+  These can be set directly in the env file, or derived from a base `ieasyhydroforecast_url` by `bin/utils/common_functions.sh` (the derivation hard-codes org prefixes for existing hydromets — check the script before relying on it for a new org). Multiple origins are supported as a comma-separated list.
+- [ ] **Force HTTPS** — add a permanent redirect from `http://` to `https://` for both hostnames (one line per proxy flavour — see `doc/deployment.md` > `Reverse proxy and HTTPS` > "Force HTTPS").
+- [ ] **Verify end-to-end before announcing the URLs to users**:
+  - Load each `https://fc.*.<base_url>/forecast_dashboard` in a browser; confirm a valid TLS certificate is shown.
+  - Open DevTools → Network → WS tab, reload the page, confirm the WebSocket connection stays open for at least a minute (no repeated reconnects).
+  - Exercise one interactive element (station select, date change) to confirm data round-trips through the proxy end-to-end.
 
 ---
 

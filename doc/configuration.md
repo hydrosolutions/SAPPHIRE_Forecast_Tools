@@ -159,6 +159,9 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `SAPPHIRE_API_ENABLED` | Required | all | `true`/`false` — use API vs CSV-only | `true` |
 | `SAPPHIRE_API_URL` | Required | all | API gateway base URL | `http://localhost:8000` |
 | `ieasyforecast_restrict_stations_file` | Required-if: dev restriction | all | Restrict to subset of stations; `null` to disable | — |
+| `ieasyhydroforecast_url` | Required-if: public-facing deployment | dashboard | Base public domain (used by `bin/utils/common_functions.sh` to derive per-dashboard URLs via hard-coded org prefixes). Unused for LAN-only deployments. | — |
+| `ieasyhydroforecast_url_pentad` | Required-if: public-facing deployment | dashboard | Full public URL(s) for the pentadal dashboard — feeds Panel's `ALLOWED_WEBSOCKET_ORIGINS` so the origin check accepts the reverse-proxied hostname. Comma-separated if multiple origins. | Derived from `ieasyhydroforecast_url` by `common_functions.sh` if unset |
+| `ieasyhydroforecast_url_decad` | Required-if: public-facing deployment | dashboard | Full public URL(s) for the decadal dashboard — same as above, for port 5007. | Derived from `ieasyhydroforecast_url` by `common_functions.sh` if unset |
 | `IEASYHYDROHF_HOST` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEasyHydro HF API endpoint (e.g. `http://host.docker.internal:5555/api/v1/`) | — |
 | `IEASYHYDROHF_USERNAME` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEH HF API username | — |
 | `IEASYHYDROHF_PASSWORD` | Required-if: `connect_to_iEH=True` | preprocessing_runoff | iEH HF API password | — |
