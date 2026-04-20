@@ -59,6 +59,7 @@ Placeholders used throughout:
   - DB ports (5433–5436): **do not expose** — localhost only
   - API ports (8000–8005): localhost only unless using reverse proxy
   - Dashboard ports (5006, 5007): expose directly or via reverse proxy
+  - Outbound SMTP (587/tcp): permitted by default on EC2 ("all outbound"). If the account uses a restricted outbound policy, allow TCP 587 for Phase 11 email alerts. AWS throttles outbound port 25 at the EC2 level — the monitoring scripts use STARTTLS on 587, so this is only a concern if you later customise them.
 - [ ] Set up SSH access (key-based)
 - [ ] Confirm sudo privileges
 
@@ -83,6 +84,10 @@ Placeholders used throughout:
 - [ ] Install autossh (needed later if SSH tunnel required)
   ```bash
   sudo apt-get install -y autossh
+  ```
+- [ ] Install msmtp (only needed if Phase 11 monitoring email alerts will be enabled; the two monitoring scripts invoke `msmtp` directly and their systemd services fail to start without it)
+  ```bash
+  sudo apt-get install -y msmtp
   ```
 - [ ] Create directory structure
   ```bash
@@ -658,25 +663,109 @@ Skip this section if the deployment is LAN-only — users can reach the dashboar
 
 ## Phase 11: Monitoring
 
-**Ref:** `doc/monitoring/forecast_tools_monitoring.md`
+**Refs:**
+- `doc/monitoring/forecast_tools_monitoring.md` — systemd unit templates and operational walkthrough.
+- `bin/monitoring/` — the actual scripts: `docker.sh` (container health) and `docker_log_watcher.sh` (dashboard log scanner).
 
-- [ ] Configure SMTP variables in `<env_file>`:
-  ```
-  SAPPHIRE_PIPELINE_SMTP_SERVER=<smtp_server>
-  SAPPHIRE_PIPELINE_SMTP_PORT=<port>
-  SAPPHIRE_PIPELINE_SMTP_USERNAME=<username>
-  SAPPHIRE_PIPELINE_SMTP_PASSWORD=<password>
-  SAPPHIRE_PIPELINE_SENDER_EMAIL=<sender>
-  SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<recipients>
-  ```
+**Phase 11 is optional but strongly recommended.** Without it, cron-job failures (Phase 10) and container crashes are invisible until someone reads the logs. The systemd daemons here and the cron-level alerts from `apps/pipeline/src/notification_manager.py` share the same `SAPPHIRE_PIPELINE_*` SMTP variables — configure once, covers both.
 
-- [ ] Set up Docker container monitoring (systemd service)
-  - Follow `doc/monitoring/forecast_tools_monitoring.md`
+**Prerequisites:**
+- Phase 2 — `msmtp` installed: `which msmtp` returns a path.
+- Phase 4.2 / 9 — Docker containers running (`docker ps` lists the sapphire containers to monitor).
+- Phase 5 — `<env_file>` contains the 6 `SAPPHIRE_PIPELINE_*` variables below.
+- `sudo` access — systemd unit installation writes to `/etc/systemd/system/` and `/var/log/docker_monitor/` both need elevation.
 
-- [ ] Set up dashboard log monitoring (systemd service)
-  - Follow `doc/monitoring/forecast_tools_monitoring.md`
+### 11.1 Confirm msmtp is installed
 
-- [ ] Test email alerts
+```bash
+which msmtp && msmtp --version | head -1
+```
+If missing (Phase 2 should have covered this): `sudo apt-get install -y msmtp`.
+
+### 11.2 Set SMTP variables in `<env_file>`
+
+Append to `/data/<data_folder>/config/<env_file>` (or confirm present):
+```
+SAPPHIRE_PIPELINE_SMTP_SERVER=<smtp_server>
+SAPPHIRE_PIPELINE_SMTP_PORT=587                      # STARTTLS; 465/25 not supported by the scripts as-is
+SAPPHIRE_PIPELINE_SMTP_USERNAME=<username>
+SAPPHIRE_PIPELINE_SMTP_PASSWORD=<password>
+SAPPHIRE_PIPELINE_SENDER_EMAIL=<sender>
+SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<recipient1>,<recipient2>   # comma-separated
+```
+
+Notes:
+- Port 587 is **required** — `bin/monitoring/docker.sh` and `docker_log_watcher.sh` hardcode `--tls=on --tls-starttls=on`. Providers using implicit TLS (port 465) or no TLS (port 25) need the script edits.
+- Gmail as provider: 2FA must be enabled on the account and an App Password generated as the SMTP password (regular Google password will not work).
+- All 6 variables are required by the systemd daemons — any missing one causes `exit 1` before the service connects. The pipeline-level `notification_manager.py` is more lenient and silently skips, but that's not the path Phase 11 uses.
+
+### 11.3 Standalone SMTP smoke test
+
+Before touching systemd, confirm `msmtp` can send via your provider. If this fails the systemd daemons will fail the same way:
+```bash
+set -a; source /data/<data_folder>/config/<env_file>; set +a
+
+printf "From: %s\nTo: %s\nSubject: SAPPHIRE Phase 11 smoke test\n\nFrom %s at %s\n" \
+  "$SAPPHIRE_PIPELINE_SENDER_EMAIL" \
+  "${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS%%,*}" \
+  "$(hostname)" "$(date -u)" | \
+msmtp --host="$SAPPHIRE_PIPELINE_SMTP_SERVER" \
+      --port="$SAPPHIRE_PIPELINE_SMTP_PORT" \
+      --tls=on --tls-starttls=on --auth=on \
+      --user="$SAPPHIRE_PIPELINE_SMTP_USERNAME" \
+      --passwordeval="echo \"$SAPPHIRE_PIPELINE_SMTP_PASSWORD\"" \
+      --from="$SAPPHIRE_PIPELINE_SENDER_EMAIL" \
+      "${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS%%,*}"
+```
+The first recipient should receive the message within seconds.
+
+As an alternative, the pipeline's smoke script sends a test through the pipeline notification path (edit the hardcoded recipient first):
+```bash
+# NOTE: hardcoded recipient — edit apps/pipeline/tests/test_email_notification.py before running
+ieasyhydroforecast_env_file_path=/data/<data_folder>/config/<env_file> \
+  python apps/pipeline/tests/test_email_notification.py
+```
+
+### 11.4 Install the systemd units
+
+Follow `doc/monitoring/forecast_tools_monitoring.md` for the two unit templates. The key items to customise:
+
+- `Environment="DOCKER_MONITOR_ENV_PATH=/data/<data_folder>/config/<env_file>"` — tells the scripts where to find the SMTP vars. Without this, the scripts fall back to `./apps/config/.env` (which does not exist at systemd's working directory) and exit immediately.
+- `ExecStart=/data/SAPPHIRE_Forecast_Tools/bin/monitoring/docker.sh` for the container monitor.
+- `ExecStart=/data/SAPPHIRE_Forecast_Tools/bin/monitoring/docker_log_watcher.sh` for the log watcher.
+
+Make both scripts executable, then enable + start:
+```bash
+chmod +x /data/SAPPHIRE_Forecast_Tools/bin/monitoring/docker.sh
+chmod +x /data/SAPPHIRE_Forecast_Tools/bin/monitoring/docker_log_watcher.sh
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now docker-monitor.service
+sudo systemctl enable --now docker-log-watcher.service
+```
+
+### 11.5 Sensitive-data caveat
+
+`bin/monitoring/docker_log_watcher.sh` attaches the **last 1000 lines of the affected container's logs** to each alert email. Dashboard containers may log station codes, discharge values, or user session information. Email is an uncontrolled channel for that data. Before enabling the log watcher:
+- Confirm with your hydromet that attaching container logs to external email is acceptable for this deployment.
+- If not: reduce dashboard log verbosity to keep sensitive data out of the logs, or customise the script to send a message-only notification.
+
+### 11.6 Verify end-to-end
+
+```bash
+systemctl status docker-monitor.service
+systemctl status docker-log-watcher.service
+journalctl -u docker-monitor.service -n 20
+journalctl -u docker-log-watcher.service -n 20
+```
+Both services should report `Active: active (running)`.
+
+Trigger a synthetic alert and watch for the email:
+```bash
+# Emit an error line into a dashboard container's stderr
+docker exec <dashboard-container-name> sh -c 'echo "ERROR: synthetic test, please ignore" >&2'
+```
+The recipient should receive an alert within ~30 seconds. Alert timestamps use the server's clock (UTC on AWS) — adjust expectations if your hydromet is in a different time zone.
 
 ---
 

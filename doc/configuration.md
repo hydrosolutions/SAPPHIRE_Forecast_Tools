@@ -206,6 +206,7 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `SAPPHIRE_PIPELINE_SMTP_PORT` | Required-if: email alerts | pipeline | SMTP port | `587` |
 | `SAPPHIRE_PIPELINE_SMTP_USERNAME` | Required-if: email alerts | pipeline | SMTP login | — |
 | `SAPPHIRE_PIPELINE_SMTP_PASSWORD` | Required-if: email alerts | pipeline | SMTP password | — |
+| `DOCKER_MONITOR_ENV_PATH` | Required-if: Phase 11 monitoring | monitoring | Absolute host-side path to the deployment's env file, passed to `bin/monitoring/docker.sh` and `docker_log_watcher.sh` via the systemd unit's `Environment=` directive | Falls back to `./apps/config/.env` (does not exist at systemd's working dir) |
 | `SAPPHIRE_PIPELINE_SENDER_EMAIL` | Required-if: email alerts | pipeline | From-address for pipeline alerts | — |
 | `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS` | Required-if: email alerts | pipeline | Comma-separated recipient list | — |
 | `ieasyhydroforecast_config_file_data_gateway_name_twins` | Optional | preprocessing_gateway | JSON mapping gateway-name → iEH-name | — |
