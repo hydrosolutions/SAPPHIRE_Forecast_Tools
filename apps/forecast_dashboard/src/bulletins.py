@@ -191,8 +191,19 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         horizon_string_ru = "пентада"
     elif sapphire_forecast_horizon == 'decad':
         horizon_string_ru = "декада"
+    elif sapphire_forecast_horizon == 'month':
+        horizon_string_ru = "месяц"
     else:
         raise ValueError(f"Invalid sapphire_forecast_horizon: {sapphire_forecast_horizon}")
+
+    def _sheet_key(hdf, horizon):
+        if horizon == 'pentad':
+            return int(hdf['pentad'].values[0])
+        elif horizon == 'decad':
+            return int(hdf['decad'].values[0])
+        elif horizon == 'month':
+            return int(hdf['month_number'].values[0])
+        return 0
     
     # Now copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin
     # Load the generated report
@@ -213,10 +224,10 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
 
         print(f"DEBUG: write_to_excel: initial final_bulletin.sheetnames: {final_bulletin.sheetnames}")
 
-        if f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}" in final_bulletin.sheetnames:
-                print(f"DEBUG: write_to_excel: Removing sheet for {sapphire_forecast_horizon} {int(header_df[sapphire_forecast_horizon].values[0])}")
-                # Remove the sheet for the current pentad
-                final_bulletin.remove(final_bulletin[f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"])
+        if f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}" in final_bulletin.sheetnames:
+                print(f"DEBUG: write_to_excel: Removing sheet for {sapphire_forecast_horizon} {_sheet_key(header_df, sapphire_forecast_horizon)}")
+                # Remove the sheet for the current pentad/decad/month
+                final_bulletin.remove(final_bulletin[f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"])
         '''if sapphire_forecast_horizon == 'pentad':
             # Test if we have a sheet already for the current pentad & remove if it exists
             if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
@@ -232,8 +243,8 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         # Get the sheet 1 of the generated report
         generated_sheet = generated_report.active
 
-        # Rename the sheet to the pentad number
-        generated_sheet.title = f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"
+        # Rename the sheet to the pentad/decad/month number
+        generated_sheet.title = f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"
         '''if sapphire_forecast_horizon == 'pentad':
             generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
         elif sapphire_forecast_horizon == 'decad':
@@ -262,8 +273,8 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         # Test if the sheet name is correct (it should be the pentad number)
         # Load the final bulletin
         final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
-        # Rename the sheet to the pentad number
-        final_bulletin.active.title = f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"
+        # Rename the sheet to the pentad/decad/month number
+        final_bulletin.active.title = f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"
         '''if sapphire_forecast_horizon == 'pentad':
             final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
         elif sapphire_forecast_horizon == 'decad':
@@ -320,8 +331,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     sapphire_forecast_horizon = horizon
     if sapphire_forecast_horizon is None:
         raise ValueError("horizon parameter is required")
-    if sapphire_forecast_horizon not in ['pentad', 'decad']:
-        raise ValueError(f"horizon must be either 'pentad' or 'decad', got '{sapphire_forecast_horizon}'")
+    if sapphire_forecast_horizon not in ['pentad', 'decad', 'month']:
+        raise ValueError(f"horizon must be 'pentad', 'decad', or 'month', got '{sapphire_forecast_horizon}'")
     print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
 
 
@@ -351,12 +362,12 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             get_value_fn=header_df['day_end_pentad'].values[0],
             tag_settings=tag_settings)
 
-    else: 
+    elif sapphire_forecast_horizon == 'decad':
         decad_tag = Tag(
             name='DEKAD',
             get_value_fn=header_df['decad'].values[0],
             tag_settings=tag_settings)
-        
+
         day_start_decad_tag = Tag(
             name='DAY_START_DEKAD',
             get_value_fn=header_df['day_start_decad'].values[0],
@@ -366,6 +377,131 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             name='DAY_END_DEKAD',
             get_value_fn=header_df['day_end_decad'].values[0],
             tag_settings=tag_settings)
+
+    if sapphire_forecast_horizon == 'month':
+        # Tag names must match the last segment of the template tag
+        # (ieasyreports splits on '.' and uses only the suffix).
+        # Prefixes like HEADER./DATA./ in the template route the tag to
+        # the header or data category; general tags have no prefix.
+        def _as_float(v):
+            """Convert numpy/pandas scalars to Python float; return None on failure."""
+            if v is None:
+                return None
+            try:
+                import math as _math
+                fv = float(v)
+                if _math.isnan(fv):
+                    return None
+                return fv
+            except (TypeError, ValueError):
+                return None
+
+        def _fmt_discharge(v):
+            """Render a float as comma-separated string, or blank for None/NaN."""
+            fv = _as_float(v)
+            if fv is None:
+                return ''
+            return round_discharge_to_comma_separated_string(fv) or ''
+
+        def _fmt_percentage(v):
+            """Render a percentage as int string, or blank for None/NaN."""
+            fv = _as_float(v)
+            if fv is None:
+                return ''
+            return round_percentage_to_integer_string(fv) or ''
+        fc_month_tag = Tag(
+            name='MONTH',
+            get_value_fn=header_df['month_str_nom_ru'].values[0],
+            tag_settings=tag_settings,
+        )
+        fc_year_tag = Tag(
+            name='YEAR',
+            get_value_fn=header_df['year'].values[0],
+            tag_settings=tag_settings,
+        )
+        fc_prevyear_tag = Tag(
+            name='PrevYear',
+            get_value_fn=header_df['prev_year'].values[0],
+            tag_settings=tag_settings,
+        )
+        # Quarterly section (placeholder — same month for start/end)
+        fc_month_start_tag = Tag(
+            name='MONTH_START',
+            get_value_fn=header_df['month_str_nom_ru'].values[0],
+            tag_settings=tag_settings,
+        )
+        fc_month_end_tag = Tag(
+            name='MONTH_END',
+            get_value_fn=header_df['month_str_nom_ru'].values[0],
+            tag_settings=tag_settings,
+        )
+
+        basin_name_tag = Tag(
+            name='BASIN_NAME',
+            get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+            tag_settings=tag_settings,
+            header=True,
+        )
+        river_name_tag = Tag(
+            name='RIVER_NAME',
+            get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+            tag_settings=tag_settings,
+            data=True,
+        )
+        punkt_name_tag = Tag(
+            name='PUNKT_NAME',
+            get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_q_min_tag = Tag(
+            name='Q_MIN',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_q_max_tag = Tag(
+            name='Q_MAX',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_v_min_tag = Tag(
+            name='V_MIN',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_v_max_tag = Tag(
+            name='V_MAX',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_norm_tag = Tag(
+            name='NORM',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_vnorm_tag = Tag(
+            name='VNORM',
+            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_perc_norm_tag = Tag(
+            name='PERC_NORM',
+            get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
+        fc_perc_prevyear_tag = Tag(
+            name='PERC_PREVYEAR',
+            get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+            tag_settings=tag_settings,
+            data=True,
+        )
 
     month_string_nom_ru_tag = Tag(
         name='MONTH_STR_NOM_RU',
@@ -523,8 +659,24 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             "bulletins",
             "decad",
             str(header_df['year'].values[0]))
-        template_file_name=os.getenv("ieasyforecast_template_decad_bulletin_file")
-    
+        template_file_name = os.getenv("ieasyforecast_template_decad_bulletin_file")
+
+    elif sapphire_forecast_horizon == 'month':
+        tag_list = [
+            fc_month_tag, fc_year_tag, fc_prevyear_tag,
+            fc_month_start_tag, fc_month_end_tag,
+            basin_name_tag, river_name_tag, punkt_name_tag,
+            fc_q_min_tag, fc_q_max_tag,
+            fc_v_min_tag, fc_v_max_tag,
+            fc_norm_tag, fc_vnorm_tag,
+            fc_perc_norm_tag, fc_perc_prevyear_tag,
+        ]
+        report_settings.report_output_path = os.path.join(
+            report_settings.report_output_path,
+            "bulletins", "month",
+            str(header_df['year'].values[0]))
+        template_file_name = os.getenv("ieasyforecast_template_month_bulletin_file")
+
     # From bulletin_sites get site lists for each unique basin
     # Create a list of unique basins
     basins = [site.basin_ru for site in bulletin_sites]

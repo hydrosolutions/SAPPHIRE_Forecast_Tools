@@ -220,6 +220,43 @@ class SapphireSite:
             self.perc_norm = None
         print(f"Updated site {self.code} with forecast attributes from DataFrame.")
 
+    def get_monthly_forecast_attributes_for_site(self, _, df: pd.DataFrame, days_in_month: int):
+        """Populate monthly-specific forecast attributes on the site.
+
+        Args:
+            _: Gettext translation callable for column name lookup.
+            df: DataFrame row(s) containing forecast data for this site.
+            days_in_month: Number of days in the forecast month, used for
+                computing volume from discharge.
+        """
+        self.forecast_model = df[_('Model')].values[0] if _('Model') in df.columns else ''
+        self.forecast_expected = (
+            df[_('Forecasted discharge')].values[0]
+            if _('Forecasted discharge') in df.columns else None
+        )
+
+        q_min = df[_('Forecast lower bound')].values[0] if _('Forecast lower bound') in df.columns else None
+        q_max = df[_('Forecast upper bound')].values[0] if _('Forecast upper bound') in df.columns else None
+        self.forecast_q_min = q_min
+        self.forecast_q_max = q_max
+
+        seconds = days_in_month * 86400
+        self.forecast_v_min = (q_min * seconds / 1_000_000) if pd.notna(q_min) and q_min is not None else None
+        self.forecast_v_max = (q_max * seconds / 1_000_000) if pd.notna(q_max) and q_max is not None else None
+
+        norm = getattr(self, 'hydrograph_norm', None)
+        self.forecast_norm = norm
+        self.forecast_vnorm = (norm * seconds / 1_000_000) if norm else None
+
+        if norm and self.forecast_expected:
+            self.perc_norm = round((self.forecast_expected / norm) * 100, 2)
+        else:
+            self.perc_norm = None
+
+        # Not yet available for monthly
+        self.perc_prevyear = None
+        print(f"Updated site {self.code} with monthly forecast attributes from DataFrame.")
+
     def get_site_attributes_from_selected_forecast(cls,
             _,
             sites: list,

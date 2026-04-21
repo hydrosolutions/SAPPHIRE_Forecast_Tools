@@ -265,10 +265,20 @@ class BulletinManager:
             print(f"Site '{selected_station}' not found in sites_list.")
             return
         
-        # Assign forecasts to selected site object        
+        # Assign forecasts to selected site object
         selected_site.forecasts = selected_rows.reset_index(drop=True)
         # Add forecast attributes to site object
-        selected_site.get_forecast_attributes_for_site(_, selected_rows)
+        horizon = self.wm.horizon_selector.value
+        if horizon == "month":
+            import calendar
+            from datetime import date as _date
+            now = _date.today()
+            days_in_month = calendar.monthrange(now.year, now.month)[1]
+            selected_site.get_monthly_forecast_attributes_for_site(
+                _, selected_rows, days_in_month,
+            )
+        else:
+            selected_site.get_forecast_attributes_for_site(_, selected_rows)
         # Debugging: Print site details
         print(f"DEBUG: Adding site '{selected_site.code}' to bulletin: {selected_site.forecasts}")
 
@@ -307,7 +317,17 @@ class BulletinManager:
             return
 
         selected_site.forecasts = selected_rows.reset_index(drop=True)
-        selected_site.get_forecast_attributes_for_site(_, selected_rows)
+        horizon = self.wm.horizon_selector.value
+        if horizon == "month":
+            import calendar
+            from datetime import date as _date
+            now = _date.today()
+            days_in_month = calendar.monthrange(now.year, now.month)[1]
+            selected_site.get_monthly_forecast_attributes_for_site(
+                _, selected_rows, days_in_month,
+            )
+        else:
+            selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
         existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
         if existing is None:
