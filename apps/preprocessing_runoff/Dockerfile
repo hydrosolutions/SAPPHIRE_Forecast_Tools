@@ -26,7 +26,7 @@ COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
 # This creates a virtual environment and installs from uv.lock for reproducibility
 WORKDIR /app/apps/preprocessing_runoff
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --extra google-sheets
 
 # Expose the port that the application listens on
 EXPOSE 8881
