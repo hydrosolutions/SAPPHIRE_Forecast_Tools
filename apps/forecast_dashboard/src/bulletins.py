@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Local imports
 from .reports import SapphireReport
+import tag_library as tl
 
 
 # Custom class
@@ -48,6 +49,227 @@ class MultiSheetReportGenerator(DefaultReportGenerator):
         self.header_tag_info = {}
         self.data_tags_info = []
         self.general_tags = {}
+
+class MultiSectionReportGenerator(DefaultReportGenerator):
+    """Report generator that supports multiple DATA rows in one sheet.
+
+    The template may have DATA tags on multiple rows (one per section).
+    Each section is processed independently; only one section may carry a
+    HEADER tag.  Sections are identified by the row number of their DATA tags.
+
+    Args:
+        tags_per_section: Optional list of per-section tag lists.  When
+            supplied, each section's DATA tags are resolved from the
+            corresponding list rather than from ``tags``.  Tag matching is
+            by name so that multiple sections can share tag names with
+            different ``get_value_fn`` implementations.
+    """
+
+    def __init__(
+        self,
+        tags: List[Tag],
+        template: str,
+        templates_directory_path: str,
+        reports_directory_path: str,
+        tag_settings: TagSettings,
+        requires_header: bool = False,
+        tags_per_section: "list[list[Tag]] | None" = None,
+    ):
+        super().__init__(
+            tags=tags,
+            template=template,
+            templates_directory_path=templates_directory_path,
+            reports_directory_path=reports_directory_path,
+            tag_settings=tag_settings,
+            requires_header=requires_header,
+        )
+        # per-section tag lookup: list[dict[name -> Tag]]
+        self._tags_per_section: "list[dict[str, Tag]] | None" = None
+        if tags_per_section is not None:
+            self._tags_per_section = [
+                {t.name: t for t in section_tags}
+                for section_tags in tags_per_section
+            ]
+            # Seed "special" context so per-section tags produce the
+            # correct {{DATA.X}} / {{HEADER.X}} form when tag.replace
+            # looks them up by name during substitution.
+            for section_tags in tags_per_section:
+                for t in section_tags:
+                    if t.data:
+                        t.set_context({"special": tag_settings.data_tag})
+                    elif t.header:
+                        t.set_context({"special": tag_settings.header_tag})
+        # sections: ordered list of {"data_row": int, "cells": [{"tag": Tag, "cell": Cell}]}
+        self.sections: "list[dict]" = []
+        self._header_section_idx: "int | None" = None
+
+    # ------------------------------------------------------------------
+    # Validation overrides
+    # ------------------------------------------------------------------
+
+    def _check_template_tags(self) -> None:
+        """Scan template cells; group DATA tags by row into self.sections."""
+        sections_by_row: "dict[int, list[dict]]" = {}
+        for cell in self.iter_cells():
+            if cell.value is None:
+                continue
+            for tag in self._parse_template_tag(cell.value):
+                tag_info = self._decode_template_tag(tag)
+                if tag_info["tag"] not in self.tags:
+                    from ieasyreports.exceptions import InvalidTagException
+                    raise InvalidTagException(
+                        f"The following tag is not supported: {tag_info['tag']}"
+                    )
+                tag_obj = self.tags[tag_info["tag"]]
+                if tag_info["tag_type"] == self.tag_settings.header_tag:
+                    if self.header_tag_info:
+                        from ieasyreports.exceptions import MultipleHeaderTagsException
+                        raise MultipleHeaderTagsException("Multiple header tags found.")
+                    tag_obj.set_context({"special": self.tag_settings.header_tag})
+                    self.header_tag_info["tag"] = tag_obj
+                    self.header_tag_info["cell"] = cell
+                    self.header_tag_info["row"] = cell.row
+                elif tag_info["tag_type"] == self.tag_settings.data_tag:
+                    tag_obj.set_context({"special": self.tag_settings.data_tag})
+                    row = cell.row
+                    if row not in sections_by_row:
+                        sections_by_row[row] = []
+                    sections_by_row[row].append({"tag": tag_obj, "cell": cell})
+                else:
+                    if tag_obj not in self.general_tags:
+                        self.general_tags[tag_obj] = []
+                    self.general_tags[tag_obj].append(cell)
+
+        # Build ordered sections list
+        data_rows = sorted(sections_by_row.keys())
+        for idx, row in enumerate(data_rows):
+            self.sections.append({"data_row": row, "cells": sections_by_row[row]})
+
+        # Populate legacy data_tags_info for compatibility with parent helpers
+        if self.sections:
+            self.data_tags_info = self.sections[0]["cells"]
+
+        # Identify which section contains the header tag
+        if self.header_tag_info:
+            header_row = self.header_tag_info.get("row")
+            for idx, section in enumerate(self.sections):
+                if section["data_row"] == header_row + 1:
+                    self._header_section_idx = idx
+                    break
+
+    def _validate_data_tags(self) -> None:
+        """Allow multiple data rows; each section's tags must be in the same row."""
+        if not self.sections:
+            from ieasyreports.exceptions import MissingDataTagException
+            raise MissingDataTagException("At least one DATA tag is required.")
+        for section in self.sections:
+            rows = {info["cell"].row for info in section["cells"]}
+            if len(rows) > 1:
+                from ieasyreports.exceptions import InvalidTagException
+                raise InvalidTagException(
+                    f"All DATA tags within a section must be in the same row, got rows {rows}."
+                )
+
+    # ------------------------------------------------------------------
+    # Multi-section report generation
+    # ------------------------------------------------------------------
+
+    def generate_report_multi(
+        self,
+        list_objects_per_section: "list[list | None]",
+        output_path: "str | None" = None,
+        output_filename: "str | None" = None,
+    ) -> None:
+        """Render each section with its own list of objects.
+
+        Args:
+            list_objects_per_section: One entry per section (ordered by
+                ascending data-row).  ``None`` or an empty list causes the
+                section rows to be deleted.
+            output_path: Directory for the output file.
+            output_filename: File name for the output file.
+        """
+        if not self.validated:
+            from ieasyreports.exceptions import TemplateNotValidatedException
+            raise TemplateNotValidatedException(
+                "Template must be validated first."
+            )
+
+        # Determine section bounds (start_row, end_row) — used for deletion.
+        # Template layout: section i spans from (data_rows[i-1]+2) to (data_rows[i]+1).
+        # For the first section it starts at row 1.
+        data_rows = [s["data_row"] for s in self.sections]
+        section_bounds = []
+        for i, dr in enumerate(data_rows):
+            start = (data_rows[i - 1] + 2) if i > 0 else 1
+            end = dr + 1  # include the one blank separator row after data row
+            section_bounds.append((start, end))
+
+        # Process sections in reverse order so row shifts don't affect earlier sections
+        for idx in range(len(self.sections) - 1, -1, -1):
+            section = self.sections[idx]
+            objects = list_objects_per_section[idx] if idx < len(list_objects_per_section) else None
+
+            if not objects:
+                # Delete this section's rows
+                start_row, end_row = section_bounds[idx]
+                row_count = end_row - start_row + 1
+                self.sheet.delete_rows(start_row, row_count)
+                continue
+
+            data_row = section["data_row"]
+            section_cells = section["cells"]
+
+            # Resolve tags for this section
+            if self._tags_per_section and idx < len(self._tags_per_section):
+                section_tag_map = self._tags_per_section[idx]
+            else:
+                section_tag_map = None
+
+            if idx == self._header_section_idx:
+                # Header-bearing section: use parent group-by-header logic
+                # temporarily swap data_tags_info to this section's cells
+                saved_data_tags_info = self.data_tags_info
+                self.data_tags_info = section_cells
+                if section_tag_map:
+                    for cell_info in self.data_tags_info:
+                        name = cell_info["tag"].name
+                        if name in section_tag_map:
+                            cell_info["tag"] = section_tag_map[name]
+                grouped = self._create_header_grouping(objects)
+                self._prepare_structure(grouped)
+                self._handle_header_and_data_tags(grouped)
+                self.data_tags_info = saved_data_tags_info
+            else:
+                # Header-less section: flat list rendering.
+                # Replicate the data-row template (values + styles + merged cells)
+                # into each new row via _copy_cell_range — mirrors _prepare_structure.
+                n_extra = len(objects) - 1
+                if n_extra > 0:
+                    self._insert_rows(data_row, n_extra)
+                    dest_ranges = [(data_row + i, 1) for i in range(1, n_extra + 1)]
+                    self._copy_cell_range(
+                        (data_row, 1),
+                        (data_row, 25),
+                        dest_ranges,
+                    )
+
+                current_row = data_row
+                for obj in objects:
+                    for cell_info in section_cells:
+                        tag = cell_info["tag"]
+                        if section_tag_map and tag.name in section_tag_map:
+                            tag = section_tag_map[tag.name]
+                        tag.set_context({"obj": obj})
+                        dest_cell = self.sheet.cell(
+                            row=current_row, column=cell_info["cell"].column
+                        )
+                        dest_cell.value = tag.replace(dest_cell.value)
+                    current_row += 1
+
+        self._handle_general_tags()
+        self.save_report(output_filename, output_path)
+
 
 def round_percentage_to_integer_string(value: float) -> int:
     '''
@@ -424,83 +646,27 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             get_value_fn=header_df['prev_year'].values[0],
             tag_settings=tag_settings,
         )
-        # Quarterly section (placeholder — same month for start/end)
+        # Quarterly section: derive month labels from the selected quarter row.
+        # Pick the first reservoir with quarterly bounds; all share the same
+        # upcoming quarter so any representative is fine.
+        _month_start_ru = header_df['month_str_nom_ru'].values[0]
+        _month_end_ru = header_df['month_str_nom_ru'].values[0]
+        for _site in bulletin_sites:
+            vf = getattr(_site, 'quarterly_valid_from', None)
+            vt = getattr(_site, 'quarterly_valid_to', None)
+            if vf is not None and vt is not None:
+                _month_start_ru = tl.get_month_str_case1(vf)
+                _month_end_ru = tl.get_month_str_case1(vt)
+                break
         fc_month_start_tag = Tag(
             name='MONTH_START',
-            get_value_fn=header_df['month_str_nom_ru'].values[0],
+            get_value_fn=_month_start_ru,
             tag_settings=tag_settings,
         )
         fc_month_end_tag = Tag(
             name='MONTH_END',
-            get_value_fn=header_df['month_str_nom_ru'].values[0],
+            get_value_fn=_month_end_ru,
             tag_settings=tag_settings,
-        )
-
-        basin_name_tag = Tag(
-            name='BASIN_NAME',
-            get_value_fn=lambda obj, **kwargs: obj.basin_ru,
-            tag_settings=tag_settings,
-            header=True,
-        )
-        river_name_tag = Tag(
-            name='RIVER_NAME',
-            get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
-            tag_settings=tag_settings,
-            data=True,
-        )
-        punkt_name_tag = Tag(
-            name='PUNKT_NAME',
-            get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_q_min_tag = Tag(
-            name='Q_MIN',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_q_max_tag = Tag(
-            name='Q_MAX',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_v_min_tag = Tag(
-            name='V_MIN',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_v_max_tag = Tag(
-            name='V_MAX',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_norm_tag = Tag(
-            name='NORM',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_vnorm_tag = Tag(
-            name='VNORM',
-            get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_perc_norm_tag = Tag(
-            name='PERC_NORM',
-            get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
-            tag_settings=tag_settings,
-            data=True,
-        )
-        fc_perc_prevyear_tag = Tag(
-            name='PERC_PREVYEAR',
-            get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
-            tag_settings=tag_settings,
-            data=True,
         )
 
     month_string_nom_ru_tag = Tag(
@@ -662,20 +828,134 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         template_file_name = os.getenv("ieasyforecast_template_decad_bulletin_file")
 
     elif sapphire_forecast_horizon == 'month':
-        tag_list = [
-            fc_month_tag, fc_year_tag, fc_prevyear_tag,
-            fc_month_start_tag, fc_month_end_tag,
-            basin_name_tag, river_name_tag, punkt_name_tag,
-            fc_q_min_tag, fc_q_max_tag,
-            fc_v_min_tag, fc_v_max_tag,
-            fc_norm_tag, fc_vnorm_tag,
-            fc_perc_norm_tag, fc_perc_prevyear_tag,
-        ]
         report_settings.report_output_path = os.path.join(
             report_settings.report_output_path,
             "bulletins", "month",
             str(header_df['year'].values[0]))
         template_file_name = os.getenv("ieasyforecast_template_month_bulletin_file")
+
+        # Split sites into non-reservoirs (section 0) and reservoirs (sections 1 & 2)
+        non_reservoirs = [s for s in bulletin_sites if 'вдхр' not in (s.punkt_name_ru or '')]
+        reservoirs = [s for s in bulletin_sites if 'вдхр' in (s.punkt_name_ru or '')]
+        has_quarterly = any(
+            getattr(s, 'forecast_q_min_q', None) is not None
+            or getattr(s, 'forecast_q_max_q', None) is not None
+            for s in reservoirs
+        )
+
+        non_reservoirs = oder_sites_list_according_to_bulletin_order(non_reservoirs)
+        reservoirs = oder_sites_list_according_to_bulletin_order(reservoirs)
+
+        # Section 0: non-reservoirs with HEADER tag — monthly attributes
+        sec0_tags = [
+            Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                tag_settings=tag_settings, header=True),
+            Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
+        ]
+
+        # Section 1: reservoirs monthly — same monthly attributes
+        sec1_tags = [
+            Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
+        ]
+
+        # Section 2: reservoirs quarterly — _q-suffixed attributes
+        sec2_tags = [
+            Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm_q', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear_q', None)),
+                tag_settings=tag_settings, data=True),
+        ]
+
+        # Union of all per-section tags plus general tags for the generator's tag registry
+        all_section_tags = sec0_tags + sec1_tags + sec2_tags
+        seen_names: "set[str]" = set()
+        union_tags = [
+            fc_month_tag, fc_year_tag, fc_prevyear_tag,
+            fc_month_start_tag, fc_month_end_tag,
+        ]
+        for t in all_section_tags:
+            if t.name not in seen_names:
+                union_tags.append(t)
+                seen_names.add(t.name)
+
+        year = int(header_df['year'].values[0])
+        month_num = int(header_df['month_number'].values[0])
+        month_name = header_df['month_str_nom_ru'].values[0]
+        bulletin_file_name = f"{year}_{month_num:02}_{month_name}_monthly_forecast_bulletin.xlsx"
+
+        report_generator = MultiSectionReportGenerator(
+            tags=union_tags,
+            template=template_file_name,
+            templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
+            reports_directory_path=report_settings.report_output_path,
+            tag_settings=tag_settings,
+            requires_header=True,
+            tags_per_section=[sec0_tags, sec1_tags, sec2_tags],
+        )
+        report_generator.validate()
+        report_generator.generate_report_multi(
+            list_objects_per_section=[
+                non_reservoirs or None,
+                reservoirs or None,
+                reservoirs if has_quarterly else None,
+            ],
+            output_filename=bulletin_file_name,
+        )
+        return
 
     # From bulletin_sites get site lists for each unique basin
     # Create a list of unique basins

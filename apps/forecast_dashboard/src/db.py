@@ -533,6 +533,46 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
     return _convert_na_to_nan(df.sort_values("Date"))
 
 
+@_timed
+def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
+    """Fetch long-term quarterly forecasts and reshape to match monthly format."""
+    code = _resolve_station(station) if station else None
+    params = {
+        "horizon_type": "quarter",
+        "horizon_value": horizon_value,
+        "start_date": f"{PREVIOUS_YEAR}-12-20",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    }
+    if code:
+        params["code"] = code
+
+    df = _read_data("postprocessing", "long-forecast", params)
+    if df.empty or "date" not in df.columns:
+        logger.warning("get_long_forecasts_quarter: no data for station %s", code)
+        return pd.DataFrame(columns=[
+            "code", "date", "Date", "year",
+            "model_short", "model_long",
+            "forecasted_discharge", "flag",
+            "Q5", "Q25", "Q75", "Q95", "E[Q]",
+            "valid_from", "month_in_year",
+        ])
+
+    df.rename(columns={
+        "model_type": "model_short",
+        "model_type_description": "model_long",
+        "q": "forecasted_discharge",
+        "q05": "Q5", "q10": "Q10", "q25": "Q25",
+        "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
+    }, inplace=True)
+    df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["month_in_year"] = df["valid_from"].dt.month
+    df["Date"] = df["date"]
+    df["year"] = df["date"].dt.year
+    return _convert_na_to_nan(df.sort_values("Date"))
+
+
 # ---------------------------------------------------------------------------
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
@@ -616,6 +656,7 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
         "forecasts_all":        forecasts_all,
         "forecast_stats":       forecast_stats,
         "long_forecasts_m0":    pd.DataFrame(),
+        "long_forecasts_quarter": i18n_models(add_labels(get_long_forecasts_quarter(station, horizon_value=1))),
     }
     if "month_0" in supported_modes:
         m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=0)))

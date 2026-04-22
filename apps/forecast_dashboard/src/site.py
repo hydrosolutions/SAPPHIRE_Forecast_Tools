@@ -257,6 +257,57 @@ class SapphireSite:
         self.perc_prevyear = None
         print(f"Updated site {self.code} with monthly forecast attributes from DataFrame.")
 
+    def get_quarterly_forecast_attributes_for_site(self, _, df: pd.DataFrame, seconds_in_quarter: int):
+        """Populate quarterly forecast attributes on the site (reservoir inflow).
+
+        Args:
+            _: Gettext translation callable for column name lookup.
+            df: DataFrame row(s) containing quarterly forecast data for this site.
+            seconds_in_quarter: Number of seconds in the forecast quarter, used
+                for computing volume from discharge.
+        """
+        if df is None or df.empty or _('Forecast lower bound') not in df.columns:
+            self.forecast_q_min_q = None
+            self.forecast_q_max_q = None
+            self.forecast_v_min_q = None
+            self.forecast_v_max_q = None
+            self.forecast_norm_q = None
+            self.forecast_vnorm_q = None
+            self.perc_norm_q = None
+            self.perc_prevyear_q = None
+            self.quarterly_valid_from = None
+            self.quarterly_valid_to = None
+            return
+
+        q_min = df[_('Forecast lower bound')].values[0] if _('Forecast lower bound') in df.columns else None
+        q_max = df[_('Forecast upper bound')].values[0] if _('Forecast upper bound') in df.columns else None
+        self.forecast_q_min_q = q_min
+        self.forecast_q_max_q = q_max
+
+        self.forecast_v_min_q = (q_min * seconds_in_quarter / 1_000_000) if pd.notna(q_min) and q_min is not None else None
+        self.forecast_v_max_q = (q_max * seconds_in_quarter / 1_000_000) if pd.notna(q_max) and q_max is not None else None
+
+        norm = getattr(self, 'hydrograph_norm', None)
+        self.forecast_norm_q = norm
+        self.forecast_vnorm_q = (norm * seconds_in_quarter / 1_000_000) if norm else None
+
+        expected = df[_('Forecasted discharge')].values[0] if _('Forecasted discharge') in df.columns else None
+        if norm and expected:
+            self.perc_norm_q = round((expected / norm) * 100, 2)
+        else:
+            self.perc_norm_q = None
+
+        self.perc_prevyear_q = None
+
+        if "valid_from" in df.columns and "valid_to" in df.columns:
+            vf = df["valid_from"].values[0]
+            vt = df["valid_to"].values[0]
+            self.quarterly_valid_from = pd.to_datetime(vf) if pd.notna(vf) else None
+            self.quarterly_valid_to = pd.to_datetime(vt) if pd.notna(vt) else None
+        else:
+            self.quarterly_valid_from = None
+            self.quarterly_valid_to = None
+
     def get_site_attributes_from_selected_forecast(cls,
             _,
             sites: list,

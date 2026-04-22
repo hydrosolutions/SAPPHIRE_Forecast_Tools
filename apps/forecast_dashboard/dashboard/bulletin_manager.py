@@ -1,3 +1,4 @@
+import calendar
 import pandas as pd
 import panel as pn
 
@@ -18,6 +19,22 @@ _HYDROGRAPH_DEFAULTS = {
     "last_year_q_pentad_mean": float('nan'),
     "linreg_predictor":        float('nan'),
 }
+
+def _reshape_long_forecast_for_bulletin(q_df: pd.DataFrame, _) -> pd.DataFrame:
+    """Rename raw long-forecast columns into the gettext schema that
+    get_{monthly,quarterly}_forecast_attributes_for_site reads."""
+    if q_df is None or q_df.empty:
+        return pd.DataFrame()
+    out = q_df.copy()
+    renames = {
+        "model_short":          _('Model'),
+        "forecasted_discharge": _('Forecasted discharge'),
+        "Q25":                  _('Forecast lower bound'),
+        "Q75":                  _('Forecast upper bound'),
+    }
+    out = out.rename(columns={k: v for k, v in renames.items() if k in out.columns})
+    return out
+
 
 def _ensure_site_defaults(site) -> None:
     """Set hydrograph/predictor attributes to None if not yet hydrated.
@@ -98,7 +115,29 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
             ])
             site.forecasts = site.forecasts.where(site.forecasts.notna(), other=float('nan'))
             _ensure_site_defaults(site)
-            site.get_forecast_attributes_for_site(_, site.forecasts)
+            if horizon_type == 'month':
+                days_in_month = calendar.monthrange(forecast_year, forecast_horizon)[1]
+                site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
+                if 'вдхр' in (site.punkt_name_ru or ''):
+                    q_df = db.get_long_forecasts_quarter(site.code, horizon_value=1)
+                    if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
+                        filtered_q = q_df[q_df["code"] == site.code]
+                        if not filtered_q.empty:
+                            filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
+                    else:
+                        filtered_q = pd.DataFrame()
+                    if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
+                        vf = pd.to_datetime(filtered_q["valid_from"].values[0])
+                        vt = pd.to_datetime(filtered_q["valid_to"].values[0])
+                        seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+                    else:
+                        seconds_in_quarter = 0
+                    filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
+                    site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
+                else:
+                    site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+            else:
+                site.get_forecast_attributes_for_site(_, site.forecasts)
             bulletin_sites.append(site)
 
         logger.info("Loaded %d bulletin sites from API", len(bulletin_sites))
@@ -277,6 +316,25 @@ class BulletinManager:
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
+            # Populate quarterly attributes for reservoir sites
+            if 'вдхр' in (selected_site.punkt_name_ru or ''):
+                q_df = db.get_long_forecasts_quarter(selected_station, horizon_value=1)
+                if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
+                    filtered_q = q_df[q_df["code"] == selected_site.code]
+                    if not filtered_q.empty:
+                        filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
+                else:
+                    filtered_q = pd.DataFrame()
+                if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
+                    vf = pd.to_datetime(filtered_q["valid_from"].values[0])
+                    vt = pd.to_datetime(filtered_q["valid_to"].values[0])
+                    seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+                else:
+                    seconds_in_quarter = 0
+                filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
+                selected_site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
+            else:
+                selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
         else:
             selected_site.get_forecast_attributes_for_site(_, selected_rows)
         # Debugging: Print site details
@@ -326,6 +384,25 @@ class BulletinManager:
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
+            # Populate quarterly attributes for reservoir sites
+            if 'вдхр' in (selected_site.punkt_name_ru or ''):
+                q_df = db.get_long_forecasts_quarter(selected_station, horizon_value=1)
+                if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
+                    filtered_q = q_df[q_df["code"] == selected_site.code]
+                    if not filtered_q.empty:
+                        filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
+                else:
+                    filtered_q = pd.DataFrame()
+                if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
+                    vf = pd.to_datetime(filtered_q["valid_from"].values[0])
+                    vt = pd.to_datetime(filtered_q["valid_to"].values[0])
+                    seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+                else:
+                    seconds_in_quarter = 0
+                filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
+                selected_site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
+            else:
+                selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
         else:
             selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
