@@ -13,7 +13,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -818,7 +818,7 @@ def read_runoff_data_from_uzhm_wide_xlsx(
                     try:
                         records.append(
                             {
-                                date_col: date(year, month_idx, day),
+                                date_col: pd.Timestamp(year, month_idx, day),
                                 discharge_col: float(discharge_val),
                                 code_col: int(code),
                                 name_col: name,
@@ -842,19 +842,28 @@ def read_all_runoff_data_from_uzhm_excel(
     code_list=None,
 ):
     """
-    Reads daily runoff data from all uzhm wide-matrix Excel files in the
-    daily discharge directory using parallel processing.
+    Reads daily runoff data from all uzhm Excel files in the daily discharge
+    directory using parallel processing.
 
-    Each file must have a pure-digits stem (e.g. ``16022.xlsx``). Temporary
-    files (stems starting with ``~``) are excluded.
+    Two filename conventions are supported:
+
+    * **Wide-matrix** — pure-digit stem, e.g. ``16022.xlsx``.  Each sheet is
+      named with a year; rows represent days 1-31 and columns represent months.
+    * **Single-river** — exactly-5-digit code prefix followed by
+      ``_{name}_SYSTEM``, e.g. ``19999_Demo_River_UZB_SYSTEM.xlsx``.  Each
+      sheet is named with a year; column A is the date string and column B is
+      the discharge value.
+
+    Temporary files (names starting with ``~``) are excluded. Files whose stems
+    match neither pattern are silently skipped.
 
     Args:
         date_col: Name of the date column in the output DataFrame.
         discharge_col: Name of the discharge column in the output DataFrame.
         name_col: Name of the station name column in the output DataFrame.
         code_col: Name of the station code column in the output DataFrame.
-        code_list: List of station code strings to include. If None a
-            warning is logged and all files are processed.
+        code_list: List of station code strings to include. If None an
+            error is logged and all files are processed.
 
     Returns:
         Combined DataFrame from all matching files, or None if no data
@@ -871,35 +880,91 @@ def read_all_runoff_data_from_uzhm_excel(
     if not os.path.exists(daily_discharge_dir):
         raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
 
-    uzhm_files = [
-        os.path.join(daily_discharge_dir, f)
-        for f in os.listdir(daily_discharge_dir)
-        if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith(".xlsx")
-        and not f.startswith("~")
-        and re.fullmatch(r"\d+", Path(f).stem)
-    ]
+    # Partition directory into two buckets based on filename stem pattern.
+    wide_matrix_files = []
+    single_river_files = []
+    for f in os.listdir(daily_discharge_dir):
+        full_path = os.path.join(daily_discharge_dir, f)
+        if not os.path.isfile(full_path):
+            continue
+        if not f.endswith(".xlsx"):
+            continue
+        if f.startswith("~"):
+            continue
+        stem = Path(f).stem
+        if re.fullmatch(r"\d+", stem):
+            wide_matrix_files.append(full_path)
+        # Exactly-5-digit prefix matches read_runoff_data_from_single_river_xlsx's
+        # hardcoded filename[:5] (code) and filename[6:-16] (name) slicing.
+        # Do NOT relax to \d+_... or to kghm's f[0].isdigit() without first
+        # generalising the reader's name/code extraction — otherwise 6-digit codes
+        # get silently truncated.
+        elif re.fullmatch(r"\d{5}_.+_SYSTEM", stem):
+            single_river_files.append(full_path)
+        else:
+            logger.debug(
+                f"read_all_runoff_data_from_uzhm_excel: skipping '{f}' — "
+                f"filename does not match wide-matrix or single-river pattern."
+            )
 
-    if not uzhm_files:
-        logger.warning(f"No uzhm wide-matrix Excel files found in '{daily_discharge_dir}'.")
-        return None
+    # Duplicate-code detection — runs before any file I/O, purely from filenames.
+    wide_matrix_codes = {Path(f).stem for f in wide_matrix_files}
+    single_river_codes = {Path(f).stem[:5] for f in single_river_files}
+    for code in wide_matrix_codes & single_river_codes:
+        logger.warning(
+            f"uzhm xlsx ingest: station {code} appears in BOTH wide-matrix and "
+            f"single-river files — both will be ingested, downstream dedup is not "
+            f"performed here"
+        )
 
-    logger.info(f"Reading {len(uzhm_files)} uzhm wide-matrix Excel files")
-    df = parallel_read_excel_files(
-        uzhm_files,
-        read_runoff_data_from_uzhm_wide_xlsx,
-        code_list=code_list,
-        date_col=date_col,
-        discharge_col=discharge_col,
-        name_col=name_col,
-        code_col=code_col,
-    )
+    # Read wide-matrix files in parallel.
+    df_wide = pd.DataFrame()
+    if wide_matrix_files:
+        logger.info(f"Reading {len(wide_matrix_files)} uzhm wide-matrix Excel files")
+        df_wide = parallel_read_excel_files(
+            wide_matrix_files,
+            read_runoff_data_from_uzhm_wide_xlsx,
+            code_list=code_list,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+        )
 
-    if df is None or df.empty:
+    # Read single-river files in parallel.
+    df_sr = pd.DataFrame()
+    if single_river_files:
+        logger.info(f"Reading {len(single_river_files)} uzhm single-river Excel files")
+        df_sr = parallel_read_excel_files(
+            single_river_files,
+            read_runoff_data_from_single_river_xlsx,
+            code_list=code_list,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+        )
+
+    # Empty-safe combine.
+    wide_empty = df_wide is None or (isinstance(df_wide, pd.DataFrame) and df_wide.empty)
+    sr_empty = df_sr is None or (isinstance(df_sr, pd.DataFrame) and df_sr.empty)
+
+    if wide_empty and sr_empty:
         logger.warning("No data found in the uzhm daily discharge directory")
         return None
+    elif wide_empty:
+        result = df_sr
+    elif sr_empty:
+        result = df_wide
+    else:
+        result = pd.concat([df_wide, df_sr], ignore_index=True)
 
-    return df
+    logger.info(
+        f"uzhm xlsx ingest: {len(wide_matrix_files)} wide-matrix + "
+        f"{len(single_river_files)} single-river files, "
+        f"{0 if result is None else len(result)} rows"
+    )
+    return result
 
 
 def parallel_read_excel_files(

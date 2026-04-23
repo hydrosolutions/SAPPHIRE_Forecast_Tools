@@ -949,7 +949,6 @@ class TestMaintenanceModeGapFilling:
 # ---------------------------------------------------------------------------
 # Tests for uzhm wide-matrix Excel reader
 # ---------------------------------------------------------------------------
-from datetime import date as date_type  # noqa: E402
 
 import openpyxl  # noqa: E402  (appended after existing imports block)
 
@@ -1069,7 +1068,9 @@ class TestUzhmWideMatrixReader:
             assert col in result.columns, f"Missing column: {col}"
 
         # Specific value: Jan 1 2000 should be 832.0
-        jan1 = result[result["date"] == date_type(2000, 1, 1)]
+        # Use pd.Timestamp for comparison — the reader now returns datetime64[ns]
+        # values (pd.Timestamp), so comparing with datetime.date would not match.
+        jan1 = result[result["date"] == pd.Timestamp(2000, 1, 1)]
         assert not jan1.empty, "Expected a row for 2000-01-01"
         assert float(jan1["discharge"].iloc[0]) == 832.0
 
@@ -1156,11 +1157,12 @@ class TestUzhmWideMatrixReader:
         )
 
         # Jan 15 should be absent
-        jan15 = result[result["date"] == date_type(2000, 1, 15)]
+        # Use pd.Timestamp for comparison — the reader now returns datetime64[ns] values.
+        jan15 = result[result["date"] == pd.Timestamp(2000, 1, 15)]
         assert jan15.empty, "date(2000,1,15) with None discharge should be excluded"
 
         # Jan 14 should be present (it has a valid value)
-        jan14 = result[result["date"] == date_type(2000, 1, 14)]
+        jan14 = result[result["date"] == pd.Timestamp(2000, 1, 14)]
         assert not jan14.empty, "date(2000,1,14) should be present"
 
     def test_code_not_in_code_list_returns_empty(self, tmp_path):
@@ -1228,36 +1230,50 @@ class TestUzhmWideMatrixReader:
             "Summary row discharge 500.0 must not appear in output"
         )
 
-    def test_directory_scan_pure_digits_filter(self, tmp_path):
-        """read_all_runoff_data_from_uzhm_excel must ignore non-pure-digit filenames."""
-        fixture_dir = _make_uzhm_fixture(tmp_path)
-
-        # Create a non-pure-digits file that must be ignored
-        dummy_wb = openpyxl.Workbook()
-        dummy_ws = dummy_wb.active
-        dummy_ws.title = "2000"
-        dummy_ws.cell(row=1, column=1, value="10001 Dummy-System")
-        for m in range(1, 13):
-            dummy_ws.cell(row=4, column=m + 1, value=m)
-        for day in range(1, 5):
-            dummy_ws.cell(row=4 + day, column=1, value=day)
-            for m in range(1, 13):
-                dummy_ws.cell(row=4 + day, column=m + 1, value=7777.0)
-        dummy_wb.save(fixture_dir / "10001_Name_SYSTEM.xlsx")
+    def test_directory_scan_pure_digits_goes_to_wide_matrix(self, tmp_path):
+        """A pure-digit stem (19001.xlsx) is routed to the wide-matrix reader."""
+        _build_uzhm_xlsx(
+            tmp_path / "19001.xlsx",
+            "19001 Test-River",
+            {2000: _make_year_data(800.0)},
+        )
 
         orig = os.environ.get("ieasyforecast_daily_discharge_path")
         try:
-            os.environ["ieasyforecast_daily_discharge_path"] = str(fixture_dir)
-            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["16022"])
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001"])
 
             assert result is not None
             assert isinstance(result, pd.DataFrame)
             assert not result.empty
 
-            # Data from the dummy file (discharge 7777.0) must not appear
-            assert 7777.0 not in result["discharge"].values, (
-                "Non-pure-digit file '10001_Name_SYSTEM.xlsx' must be excluded"
+            # The wide-matrix file must contribute rows for code 19001
+            codes_in_result = set(result["code"].unique())
+            assert 19001 in codes_in_result, (
+                "Expected code 19001 from wide-matrix file '19001.xlsx' in result"
             )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_directory_scan_system_suffix_goes_to_single_river(self, tmp_path):
+        """A SYSTEM-suffix stem (19002_Demo_UZB_SYSTEM.xlsx) is routed to the single-river reader."""
+        _make_single_river_fixture(tmp_path, code="19002", river_name="Demo")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19002"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            # The single-river file must contribute rows for code 19002
+            codes_in_result = set(result["code"].unique())
+            assert 19002 in codes_in_result, "Expected code 19002 from single-river file in result"
         finally:
             if orig is None:
                 os.environ.pop("ieasyforecast_daily_discharge_path", None)
@@ -1290,3 +1306,568 @@ class TestUzhmWideMatrixReader:
                 os.environ.pop("ieasyforecast_daily_discharge_path", None)
             else:
                 os.environ["ieasyforecast_daily_discharge_path"] = orig_path
+
+    def test_organization_router_uzhm_mixed_formats(self, tmp_path):
+        """Org router combines wide-matrix and single-river results correctly.
+
+        A directory with one wide-matrix file (19001.xlsx) and one single-river
+        file (19999_Demo_River_UZB_SYSTEM.xlsx) must produce a DataFrame that
+        contains rows for both station codes with correct column names and
+        datetime dtypes.
+        """
+
+        # Wide-matrix file: pure-digit stem
+        _build_uzhm_xlsx(
+            tmp_path / "19001.xlsx",
+            "19001 Test-River",
+            {2000: _make_year_data(800.0)},
+        )
+        # Single-river file: SYSTEM suffix
+        _make_single_river_fixture(tmp_path, code="19999", river_name="Demo_River")
+
+        orig_path = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src._read_runoff_data_by_organization(
+                "uzhm",
+                date_col="date",
+                discharge_col="discharge",
+                name_col="name",
+                code_col="code",
+                code_list=["19001", "19999"],
+            )
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            for col in ("date", "discharge", "code", "name"):
+                assert col in result.columns, f"Expected column '{col}' in result"
+
+            codes_in_result = set(result["code"].unique())
+            assert 19001 in codes_in_result, (
+                "Expected code 19001 from wide-matrix file '19001.xlsx' in result"
+            )
+            assert 19999 in codes_in_result, "Expected code 19999 from single-river file in result"
+
+            assert result["date"].dtype.kind == "M", (
+                f"Expected datetime64 dtype for 'date' column, got {result['date'].dtype}"
+            )
+        finally:
+            if orig_path is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig_path
+
+    def test_organization_router_uzhm_logs_summary(self, tmp_path, caplog):
+        """The dispatcher emits a summary INFO log mentioning both format counts.
+
+        After processing a directory with one wide-matrix file and one
+        single-river file, read_all_runoff_data_from_uzhm_excel must emit at
+        least one INFO record matching the pattern
+        ``uzhm xlsx ingest: <N> wide-matrix + <M> single-river .* rows`` where
+        N=1 and M=1.
+        """
+        import logging  # noqa: F811 — already imported later in module; safe here
+        import re as _re
+
+        # Wide-matrix file: pure-digit stem
+        _build_uzhm_xlsx(
+            tmp_path / "19001.xlsx",
+            "19001 Test-River",
+            {2000: _make_year_data(800.0)},
+        )
+        # Single-river file: SYSTEM suffix
+        _make_single_river_fixture(tmp_path, code="19999", river_name="Demo_River")
+
+        orig_path = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            with caplog.at_level(logging.INFO):
+                src.read_all_runoff_data_from_uzhm_excel(
+                    date_col="date",
+                    discharge_col="discharge",
+                    name_col="name",
+                    code_col="code",
+                    code_list=["19001", "19999"],
+                )
+        finally:
+            if orig_path is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig_path
+
+        pattern = _re.compile(r"uzhm xlsx ingest:.*wide-matrix.*single-river.*rows", _re.IGNORECASE)
+        matching_records = [
+            r for r in caplog.records if r.levelno == logging.INFO and pattern.search(r.message)
+        ]
+        assert matching_records, (
+            "Expected at least one INFO record matching "
+            f"'{pattern.pattern}', but none found. "
+            f"Captured log records: {[r.message for r in caplog.records]}"
+        )
+
+        # The matched record must mention count 1 for wide-matrix and 1 for single-river.
+        summary_msg = matching_records[0].message
+        count_pattern = _re.compile(r"(\d+)\s+wide-matrix\s*\+\s*(\d+)\s+single-river")
+        m = count_pattern.search(summary_msg)
+        assert m is not None, (
+            f"Could not extract wide-matrix/single-river counts from: '{summary_msg}'"
+        )
+        wide_count = int(m.group(1))
+        sr_count = int(m.group(2))
+        assert wide_count == 1, (
+            f"Expected 1 wide-matrix file in log, got {wide_count}. Message: '{summary_msg}'"
+        )
+        assert sr_count == 1, (
+            f"Expected 1 single-river file in log, got {sr_count}. Message: '{summary_msg}'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fixture helper for single-river xlsx files
+# ---------------------------------------------------------------------------
+
+
+def _build_single_river_xlsx(path, code, river_name, year_data):
+    """
+    Create a single-river-format xlsx file at *path*.
+
+    Mirrors the format produced by
+    ``apps/preprocessing_runoff/dev_code/convert_daily_runoff.py``
+    ``write_single_river_excel()`` and consumed by
+    ``read_runoff_data_from_single_river_xlsx()``.
+
+    Args:
+        path: pathlib.Path — destination file path.  The caller is responsible
+            for using a filename that follows the convention
+            ``{code}_{river_name}_UZB_SYSTEM.xlsx`` (exactly 5-digit code,
+            exactly 16-char suffix ``_UZB_SYSTEM.xlsx``).
+        code: str — 5-digit station code string (used only for documentation;
+            the reader extracts the code from the filename, not the workbook).
+        river_name: str — station name (again for documentation only; extracted
+            from the filename by the reader).
+        year_data: dict mapping year (int) -> list of (date_str, discharge)
+            tuples.  date_str must be in ``dd.mm.YYYY`` format.  discharge may
+            be a float, the string ``"-"``, or None (empty cell).
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove default blank sheet
+
+    for year, rows in year_data.items():
+        ws = wb.create_sheet(title=str(year))
+        # Header row — the reader uses header=0 and overrides column names, so
+        # actual values here don't matter, but we write canonical names for
+        # readability.
+        ws.append(["date", "discharge"])
+        for date_str, discharge in rows:
+            ws.append([date_str, discharge])
+
+    wb.save(path)
+
+
+def _make_single_river_fixture(tmp_path, code="19999", river_name="Demo_River"):
+    """
+    Create a single single-river xlsx file in tmp_path.
+
+    Filename follows the ``{code}_{river_name}_UZB_SYSTEM.xlsx`` convention.
+    Returns the full path to the created file.
+    """
+    filename = f"{code}_{river_name}_UZB_SYSTEM.xlsx"
+    path = tmp_path / filename
+
+    year_data = {
+        2000: [
+            ("01.01.2000", 100.5),
+            ("02.01.2000", 101.5),
+            ("03.01.2000", 102.5),
+        ],
+        2001: [
+            ("01.01.2001", 200.5),
+            ("02.01.2001", 201.5),
+        ],
+    }
+    _build_single_river_xlsx(path, code, river_name, year_data)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Tests for read_runoff_data_from_single_river_xlsx (documenting existing
+# behavior — all tests in this class MUST pass against current src.py)
+# ---------------------------------------------------------------------------
+
+
+import logging  # noqa: E402  (appended after existing imports block)
+
+
+class TestSingleRiverReader:
+    """Unit tests for the single-river xlsx reader (no existing tests before P1)."""
+
+    def test_happy_path(self, tmp_path):
+        """Two-year file: returns rows with correct dtypes and known values."""
+        filepath = _make_single_river_fixture(tmp_path, code="19999", river_name="Demo_River")
+
+        result = src.read_runoff_data_from_single_river_xlsx(str(filepath), code_list=["19999"])
+
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
+
+        # Column presence (order-independent)
+        assert {"date", "discharge", "code", "name"} <= set(result.columns)
+
+        # Date dtype must be datetime64
+        assert result["date"].dtype.kind == "M", (
+            f"Expected datetime64 dtype for date column, got {result['date'].dtype}"
+        )
+
+        # Code dtype must be integer
+        assert result["code"].dtype.kind in ("i", "u"), (
+            f"Expected integer dtype for code column, got {result['code'].dtype}"
+        )
+
+        # Discharge dtype must be float
+        assert result["discharge"].dtype.kind == "f", (
+            f"Expected float dtype for discharge column, got {result['discharge'].dtype}"
+        )
+
+        # Specific-row assertion: Jan 2 2000 should have discharge 101.5
+        jan2 = result[result["date"] == pd.Timestamp("2000-01-02")]
+        assert not jan2.empty, "Expected a row for 2000-01-02"
+        assert float(jan2["discharge"].iloc[0]) == 101.5
+
+        # Rows from both years are present
+        years = result["date"].dt.year.unique()
+        assert 2000 in years
+        assert 2001 in years
+
+        # Total row count: 3 + 2 = 5
+        assert len(result) == 5
+
+    def test_code_list_filter_excludes(self, tmp_path, caplog):
+        """File with code 19999 is skipped when code_list contains 19001 only."""
+        filepath = _make_single_river_fixture(tmp_path, code="19999", river_name="Demo")
+
+        with caplog.at_level(logging.DEBUG, logger="src"):
+            result = src.read_runoff_data_from_single_river_xlsx(str(filepath), code_list=["19001"])
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+        # A debug log mentioning "not in code_list" must be emitted
+        assert any(
+            "not in code_list" in record.message.lower()
+            or "not in code_list" in record.getMessage().lower()
+            for record in caplog.records
+        ), (
+            "Expected a debug log message mentioning 'not in code_list' when "
+            "code 19999 is excluded by code_list=['19001']"
+        )
+
+    def test_code_list_filter_includes(self, tmp_path):
+        """File with code 19999 is included when code_list=['19999']."""
+        filepath = _make_single_river_fixture(tmp_path, code="19999", river_name="Demo")
+
+        result = src.read_runoff_data_from_single_river_xlsx(str(filepath), code_list=["19999"])
+
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
+
+    def test_missing_values_handled(self, tmp_path):
+        """Rows with '-' or empty discharge cells become NaN in output."""
+        path = tmp_path / "19876_MissingTest_UZB_SYSTEM.xlsx"
+        year_data = {
+            2000: [
+                ("01.01.2000", 50.5),
+                ("02.01.2000", "-"),  # explicit dash — must become NaN
+                ("03.01.2000", None),  # empty cell — must become NaN
+                ("04.01.2000", 55.5),
+            ],
+        }
+        _build_single_river_xlsx(path, "19876", "MissingTest", year_data)
+
+        result = src.read_runoff_data_from_single_river_xlsx(str(path), code_list=["19876"])
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 4  # all rows returned, even with NaN
+
+        discharges = result.sort_values("date")["discharge"].values
+        # Jan 1: 50.5
+        assert float(discharges[0]) == 50.5
+        # Jan 2: NaN (from "-")
+        assert pd.isna(discharges[1]), "Expected NaN for '-' discharge"
+        # Jan 3: NaN (from empty cell)
+        assert pd.isna(discharges[2]), "Expected NaN for empty discharge cell"
+        # Jan 4: 55.5
+        assert float(discharges[3]) == 55.5
+
+    def test_file_not_found(self, tmp_path):
+        """Nonexistent file path raises FileNotFoundError."""
+        nonexistent = str(tmp_path / "99999_NoFile_UZB_SYSTEM.xlsx")
+
+        with pytest.raises(FileNotFoundError):
+            src.read_runoff_data_from_single_river_xlsx(nonexistent, code_list=["99999"])
+
+
+# ---------------------------------------------------------------------------
+# Tests for the new dispatch behavior of read_all_runoff_data_from_uzhm_excel
+# (these MUST fail against current src.py — they describe P2's new behavior)
+# ---------------------------------------------------------------------------
+
+
+class TestUzhmExcelDispatch:
+    """
+    Dispatch tests for read_all_runoff_data_from_uzhm_excel.
+
+    ALL tests in this class are expected to FAIL against current src.py.
+    They pin the behavior that P2 will implement.  Assertion-level failures
+    (not import/collection errors) confirm the gap.
+    """
+
+    def _make_wide_fixture(self, tmp_path, code="19001"):
+        """Create a minimal wide-matrix xlsx in tmp_path and return path."""
+        year_data = {2000: _make_year_data(800.0)}
+        _build_uzhm_xlsx(
+            tmp_path / f"{code}.xlsx",
+            f"{code} Test-River",
+            year_data,
+        )
+        return tmp_path / f"{code}.xlsx"
+
+    def _make_single_river_in_dir(self, directory, code="19999", river_name="Demo_River"):
+        """Create a single-river xlsx in directory and return path."""
+        filename = f"{code}_{river_name}_UZB_SYSTEM.xlsx"
+        path = directory / filename
+        year_data = {
+            2000: [
+                ("01.01.2000", 300.5),
+                ("02.01.2000", 301.5),
+            ],
+        }
+        _build_single_river_xlsx(path, code, river_name, year_data)
+        return path
+
+    def test_uzhm_excel_dispatches_single_river_format(self, tmp_path):
+        """Dir has both formats; result must contain rows for both codes."""
+        self._make_wide_fixture(tmp_path, code="19001")
+        self._make_single_river_in_dir(tmp_path, code="19999", river_name="Demo_River")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001", "19999"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            codes_in_result = set(result["code"].unique())
+            assert 19001 in codes_in_result, "Expected code 19001 (wide-matrix) in result"
+            assert 19999 in codes_in_result, (
+                "Expected code 19999 (single-river) in result — "
+                "single-river dispatch not yet implemented (P2)"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_single_river_only(self, tmp_path):
+        """Dir has only a single-river file; result has code 19999."""
+        self._make_single_river_in_dir(tmp_path, code="19999", river_name="Demo_River")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19999"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            codes_in_result = set(result["code"].unique())
+            assert 19999 in codes_in_result, (
+                "Expected code 19999 (single-river) in result — "
+                "single-river dispatch not yet implemented (P2)"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_skips_unknown_filename_pattern(self, tmp_path):
+        """Dir has a valid wide-matrix file and a garbage-named file; no exception raised."""
+        self._make_wide_fixture(tmp_path, code="19001")
+
+        # Create a garbage file with wide-matrix *content* but unrecognised name
+        garbage_path = tmp_path / "garbage_file.xlsx"
+        _build_uzhm_xlsx(
+            garbage_path,
+            "19002 Garbage-River",
+            {2000: _make_year_data(400.0)},
+        )
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            # Should not raise; data for 19001 returned; garbage data (400-range) absent
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001", "19002"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            # Data from garbage file uses base_value=400 → discharge > 400
+            # Data from wide-matrix 19001 uses base_value=800 → discharge > 800
+            # Garbage file's code 19002 must NOT appear in result
+            codes_in_result = set(result["code"].unique())
+            assert 19002 not in codes_in_result, (
+                "Garbage file 'garbage_file.xlsx' must be skipped — unknown filename pattern"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_ignores_excel_temp_files(self, tmp_path):
+        """Temp file ~$19001.xlsx must be skipped; no duplicate rows from it."""
+        self._make_wide_fixture(tmp_path, code="19001")
+
+        # Create a zero-byte temp file (as Excel would create it)
+        temp_file = tmp_path / "~$19001.xlsx"
+        temp_file.write_bytes(b"")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            # Count rows with code 19001; should come from exactly one file
+            n_rows = len(result[result["code"] == 19001])
+            # Wide-matrix for year 2000 has at most 366 rows; temp file would double it
+            # We assert no duplication by checking the result is sensible (< 500 rows)
+            assert n_rows < 500, (
+                f"Too many rows ({n_rows}) for code 19001 — temp file may have been read"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_date_dtype_is_datetime64(self, tmp_path):
+        """Combined result from both formats must have datetime64 date column."""
+        self._make_wide_fixture(tmp_path, code="19001")
+        self._make_single_river_in_dir(tmp_path, code="19999", river_name="Demo_River")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001", "19999"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            assert result["date"].dtype.kind == "M", (
+                f"Expected datetime64[ns] for date column, got {result['date'].dtype} — "
+                "wide-matrix reader returns datetime.date objects (P2 Part A) and "
+                "single-river dispatch not yet implemented (P2 Part B)"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_column_set(self, tmp_path):
+        """Combined result must have exactly columns {date, discharge, code, name}."""
+        self._make_wide_fixture(tmp_path, code="19001")
+        self._make_single_river_in_dir(tmp_path, code="19999", river_name="Demo_River")
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["19001", "19999"])
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+
+            assert set(result.columns) == {"date", "discharge", "code", "name"}, (
+                f"Expected column set exactly {{'date', 'discharge', 'code', 'name'}}, "
+                f"got {set(result.columns)} — "
+                "single-river dispatch not yet implemented (P2)"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_warns_on_duplicate_code(self, tmp_path, caplog):
+        """When both 19001.xlsx and 19001_Demo_UZB_SYSTEM.xlsx exist, warn about duplicate."""
+        # Wide-matrix file for 19001
+        self._make_wide_fixture(tmp_path, code="19001")
+
+        # Single-river file for the same code 19001
+        sr_path = tmp_path / "19001_Demo_UZB_SYSTEM.xlsx"
+        year_data = {2000: [("01.01.2000", 500.0)]}
+        _build_single_river_xlsx(sr_path, "19001", "Demo", year_data)
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            with caplog.at_level(logging.WARNING):
+                src.read_all_runoff_data_from_uzhm_excel(code_list=["19001"])
+
+            warning_messages = [
+                r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+            ]
+            assert any("19001" in msg for msg in warning_messages), (
+                "Expected a WARNING mentioning code 19001 for duplicate across "
+                "wide-matrix and single-river formats — "
+                "duplicate detection not yet implemented (P2)"
+            )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+    def test_uzhm_excel_routes_six_digit_stem_to_neither(self, tmp_path):
+        """A 6-digit-prefix single-river file must NOT be routed to any reader."""
+        # 6-digit prefix: reader would silently extract '12345' from '123456_...'[:5]
+        six_digit_path = tmp_path / "123456_Demo_UZB_SYSTEM.xlsx"
+        year_data = {2000: [("01.01.2000", 999.0)]}
+        _build_single_river_xlsx(six_digit_path, "123456", "Demo", year_data)
+
+        orig = os.environ.get("ieasyforecast_daily_discharge_path")
+        try:
+            os.environ["ieasyforecast_daily_discharge_path"] = str(tmp_path)
+            # Pass both possible codes; neither should yield data from this file
+            result = src.read_all_runoff_data_from_uzhm_excel(code_list=["12345", "123456"])
+
+            # Either None or empty DataFrame — the 6-digit file must be skipped
+            if result is not None and not result.empty:
+                # Verify no rows came from the 6-digit file (discharge 999.0)
+                assert 999.0 not in result["discharge"].values, (
+                    "File '123456_Demo_UZB_SYSTEM.xlsx' (6-digit prefix) must be "
+                    "skipped — the \\d{5} width constraint in P2 must be enforced"
+                )
+                # Neither code must appear in result
+                codes_in_result = set(result["code"].unique())
+                assert 12345 not in codes_in_result and 123456 not in codes_in_result, (
+                    "6-digit-prefix file must not route any code into the result"
+                )
+        finally:
+            if orig is None:
+                os.environ.pop("ieasyforecast_daily_discharge_path", None)
+            else:
+                os.environ["ieasyforecast_daily_discharge_path"] = orig
