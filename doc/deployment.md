@@ -866,6 +866,15 @@ Add the following to the crontab file:
 # The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
 0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 #
+# (4b) Bimonthly long-term skill recalc at 10:00 UTC on the 10th and 25th
+# (4 hours after the 06:00 UTC long-term forecast cron). Refreshes MONTHLY,
+# QUARTERLY, SEASONAL skill metrics in that order so long-term skill tiles on
+# the dashboard don't stay stale for a year. Log-and-continue: one failing
+# mode does not block the others, but the job exits non-zero so errors still
+# surface in the cron log. The yearly Dec 31 entry below is retained as a
+# full-history safety net; this job does not replace it.
+0 10 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_bimonthly_longterm_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
+#
 # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
 # Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
 # ML concurrency is limited to 3 via Luigi resources.
