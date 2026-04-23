@@ -378,7 +378,7 @@ logic in four places.
       functions #2 and #3 both preserve manual codes regardless of execution
       order (run both in sequence, verify manual code present after each)
 - [ ] Integration: full pipeline run via `run_locally.sh all` with a test manual site in config
-  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -457,12 +457,12 @@ config-file path in LR is safe — no third return value is needed.
 
 - [x] Existing `linear_regression` tests pass without iEH HF SDK available
 - [ ] Integration test: pipeline runs with a mix of iEH HF and manual sites
-  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 - [x] Verify decadal forecasts still work with the config-file path
 - [ ] Unit test: LR produces valid forecast output when `qdanger is None`
       (manual site without dangerous discharge threshold)
 - [ ] Full pipeline run: `run_locally.sh short-term` with test manual site
-  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -780,7 +780,7 @@ calendar date at the gauging station), not the date at their current location.
 - [x] Unit test: discharge column contains non-numeric string (not `-`) →
       row skipped with warning, other rows processed
 - [ ] Full pipeline: `run_locally.sh all` with a mock Google Sheet
-  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -926,7 +926,7 @@ This is architecturally independent from the data ingestion changes above.
 
 Deployment wiring, input hardening, env-flow integration test, and operator
 documentation completed by the operational-deployment plan at
-[`doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`](issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md).
+[`doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`](issues/review_gi_draft_infra_gsheets_operational_deployment.md).
 
 Summary of changes landed in that plan's PR:
 

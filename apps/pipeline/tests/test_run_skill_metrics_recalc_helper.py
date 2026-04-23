@@ -7,7 +7,7 @@ argv so we can assert the helper plumbs ``SAPPHIRE_PREDICTION_MODE`` and
 propagates the container's exit code.
 
 Covers Phase P3a of
-``doc/plans/issues/high_prio_gi_draft_pipeline_longterm_skill_recalc_cadence.md``.
+``doc/plans/issues/review_gi_draft_pipeline_longterm_skill_recalc_cadence.md``.
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ We also stub ``docker`` on PATH with a minimal success-only version so the
 without touching the real Docker daemon.
 
 Covers Phase P3b of
-``doc/plans/issues/high_prio_gi_draft_pipeline_longterm_skill_recalc_cadence.md``.
+``doc/plans/issues/review_gi_draft_pipeline_longterm_skill_recalc_cadence.md``.
 """
 
 from __future__ import annotations

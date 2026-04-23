@@ -503,7 +503,7 @@ and update `doc/plans/module_issues.md` to match.
   `doc/plans/external_site_data_ingestion_plan.md` lines 380, 458, 462,
   779. Next to each checkbox, append: "— partially addressed by
   env-flow integration test (P3 of
-  `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`);
+  `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`);
   full `run_locally.sh all` run deferred to operator rollout (P6)."
   The boxes stay unchecked until an operator confirms the rollout
   step succeeded; a follow-up commit after rollout can tick them.
@@ -511,7 +511,7 @@ and update `doc/plans/module_issues.md` to match.
   `external_site_data_ingestion_plan.md` noting: "Deployment wiring,
   input hardening, env-flow integration test, and operator docs
   completed by the operational-deployment plan at
-  `doc/plans/issues/high_prio_gi_draft_infra_gsheets_operational_deployment.md`.
+  `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`.
   Full-pipeline end-to-end validation is pending operator rollout."
 - Update `doc/plans/module_issues.md:122` PREPQ-007 status:
   change the existing "Done" qualifier to "Code complete; deployment
