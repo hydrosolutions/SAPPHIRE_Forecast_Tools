@@ -8,12 +8,9 @@ from typing import List, Optional
 from app import crud
 from app.models import Runoff
 from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, MeteoResponse, HydrographBulkCreate, MeteoBulkCreate, SnowResponse, SnowBulkCreate
-from app.database import engine, Base, get_db
+from app.database import get_db
 from app.logger import logger
 from app.config import settings
-
-# Create tables
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.app_name,
