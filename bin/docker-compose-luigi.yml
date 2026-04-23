@@ -111,7 +111,7 @@ services:
     container_name: sapphire-pipeline-daily-maintenance
 
   # Periodic maintenance workflow (bimonthly/yearly tasks)
-  # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc, snow_norms
+  # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc, snow_norms, monthly_norms
   # Usage: MAINTENANCE_TASK_TYPE=long_term docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
   periodic-maintenance:
     extends: pipeline-base
