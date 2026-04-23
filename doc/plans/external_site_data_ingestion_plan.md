@@ -378,6 +378,7 @@ logic in four places.
       functions #2 and #3 both preserve manual codes regardless of execution
       order (run both in sequence, verify manual code present after each)
 - [ ] Integration: full pipeline run via `run_locally.sh all` with a test manual site in config
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -456,10 +457,12 @@ config-file path in LR is safe — no third return value is needed.
 
 - [x] Existing `linear_regression` tests pass without iEH HF SDK available
 - [ ] Integration test: pipeline runs with a mix of iEH HF and manual sites
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 - [x] Verify decadal forecasts still work with the config-file path
 - [ ] Unit test: LR produces valid forecast output when `qdanger is None`
       (manual site without dangerous discharge threshold)
 - [ ] Full pipeline run: `run_locally.sh short-term` with test manual site
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -777,6 +780,7 @@ calendar date at the gauging station), not the date at their current location.
 - [x] Unit test: discharge column contains non-numeric string (not `-`) →
       row skipped with warning, other rows processed
 - [ ] Full pipeline: `run_locally.sh all` with a mock Google Sheet
+  - _note: partially addressed by env-flow integration test (P3 of `doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`); full `run_locally.sh all` run deferred to operator rollout (P6 of the same plan)._
 
 ---
 
@@ -915,3 +919,29 @@ This is architecturally independent from the data ingestion changes above.
 - `doc/plans/issues/gi_draft_infra_model_registry.md` — model registry plan
 
 *Last updated: 2026-03-07 (Phases 1-3 implemented, Google Sheets reader verified with live UZB test sheet, Phase 4 removed from scope, added end-to-end validation section with Path A/B depending on iEH HF access)*
+
+---
+
+## Deployment wiring and hardening (2026-04-23)
+
+Deployment wiring, input hardening, env-flow integration test, and operator
+documentation completed by the operational-deployment plan at
+[`doc/plans/issues/review_gi_draft_infra_gsheets_operational_deployment.md`](issues/review_gi_draft_infra_gsheets_operational_deployment.md).
+
+Summary of changes landed in that plan's PR:
+
+- Four `GOOGLE_SHEETS_*` env vars plumbed through `bin/docker-compose-luigi.yml`
+  and `apps/pipeline/pipeline_docker.py` (compose + Luigi sub-container env
+  lists) so the reader sees them at runtime.
+- Input validation hardened in `apps/preprocessing_runoff/src/google_sheets_reader.py`:
+  row-count cap, discharge upper-bound, date range bounds, negative-discharge
+  reject, defensive `None`/empty-arg handling, env-overridable thresholds,
+  and a top-level summary log line per invocation.
+- Env-flow integration test in `apps/pipeline/tests/test_preprocessing_runoff_gsheets_env_flow.py`
+  proving the four vars propagate through compose config and that the
+  opt-in default (unset vars → empty strings → reader no-op) holds.
+- Operator setup section added to `doc/deployment.md`.
+
+Full-pipeline end-to-end validation (the four items above) is pending
+operator rollout on a staging server. Tick those boxes once the rollout
+step succeeds.

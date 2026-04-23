@@ -429,7 +429,16 @@ GOOGLE_SHEETS_SITE_CODES=10001,10002
 | `GOOGLE_SHEETS_CREDENTIALS_PATH` | If enabled | — | Path to Google service account JSON key file |
 | `GOOGLE_SHEETS_SITE_CODES` | If enabled | — | Comma-separated site codes; each must match a worksheet tab name |
 
-Sites listed in `GOOGLE_SHEETS_SITE_CODES` must also be marked with `"data_source": "manual"` in `config_all_stations_library.json`. See the [external site data ingestion plan](plans/external_site_data_ingestion_plan.md) for full deployment setup instructions.
+Sites listed in `GOOGLE_SHEETS_SITE_CODES` must also be marked with
+`"data_source": ["google_sheets"]` in `config_all_stations_library.json`
+(see the [station library reference](#the-config-all-stations-library-file)
+above). For server-side setup — credential file placement, container path
+conventions, first-run verification, and optional tuning thresholds — see
+[**Google Sheets data source (optional)**](deployment.md#google-sheets-data-source-optional)
+in the deployment guide. For the original design rationale and the GCP
+service-account creation procedure, see the
+[external site data ingestion plan](plans/external_site_data_ingestion_plan.md)
+section 3.5.
 
 ### Configuration of the iEasyReports library
 The ieasyreports library reads a template file for a report, fills in the data for the current forecast and stores the data in a file. The path to the template directory is given in ieasyreports_templates_directory_path. The template for the traditional forecast bulletin with the overview over the rivers in one or several basins is given in ieasyforecast_template_pentad_bulletin_file. The template for the traditional forecast sheet with the detailed forecast for one station is given in ieasyforecast_template_pentad_sheet_file. Please consult the example files provided in the data/templates folder for guidance.

@@ -119,7 +119,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **PREPQ-004** | Swiss data source integration & module refactoring | **Low** | Blocked | [`low_prio_gi_PR-003_swiss_data_source_refactor.md`](issues/low_prio_gi_PR-003_swiss_data_source_refactor.md) | Swiss API docs unavailable |
-| **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Done | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
+| **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Code complete; deployment wiring + hardening landed; pending operator rollout | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
 
 ### Linear Regression (`lr`)
 

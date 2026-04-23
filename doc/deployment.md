@@ -436,6 +436,146 @@ If the SAPPHIRE forecast tools need to access an iEasyHydro High Frequency (HF) 
 
 For the full step-by-step instructions with all commands, see the [Update Deployment Checklist — Section 1.2, Option B or C](prod/update_deployment_checklist.md#12-ieasyhydro-hf-connectivity-if-applicable).
 
+### Google Sheets data source (optional)
+
+This section only applies to hydromet deployments that use a shared Google
+Sheet as a discharge data source. Organizations that do not use Google
+Sheets should leave all four `GOOGLE_SHEETS_*` variables unset — the
+pipeline will skip Google Sheets entirely with no additional configuration.
+
+#### 1. Create the GCP service account
+
+Create a Google Cloud project, enable the Sheets API and Drive API, create a
+service account, and download the JSON key file. The step-by-step procedure
+is documented in
+[`doc/plans/external_site_data_ingestion_plan.md`, section 3.5, steps 1–2](plans/external_site_data_ingestion_plan.md)
+(GCP project creation through JSON key download). Follow those instructions,
+then return here for the deployment-specific placement steps.
+
+#### 2. Place the credential file on the server
+
+Copy the JSON key file into your deployment's `config/` directory:
+
+```bash
+cp /path/to/downloaded-key.json \
+  /data/<data_folder>/config/google_sheets_sa.json
+chmod 600 /data/<data_folder>/config/google_sheets_sa.json
+```
+
+The filename `google_sheets_sa.json` is a convention — any name works. The
+`config/` directory is already volume-mounted by the `pipeline-base` service
+in `bin/docker-compose-luigi.yml`, so the file is automatically reachable
+inside the container at:
+
+```
+${ieasyhydroforecast_container_data_ref_dir}/config/google_sheets_sa.json
+```
+
+> **Security note:** The JSON key lives in `<data_folder>/config/`, which is
+> a sibling directory of the `SAPPHIRE_Forecast_Tools` repository
+> (see [`doc/plans/deployment_new_hydromet_aws.md`](plans/deployment_new_hydromet_aws.md)
+> for the directory layout). The JSON is therefore physically **outside** the
+> repository — there is nothing for `.gitignore` to guard. Protect it via
+> filesystem permissions (`chmod 600`) and share the Google Sheet only with
+> the service account email address, never with broader access.
+
+#### 3. Set the env vars in your org's `.env` file
+
+Add the following four lines to `<data_folder>/config/.env_<org>`:
+
+```bash
+GOOGLE_SHEETS_ENABLED=True
+GOOGLE_SHEETS_DISCHARGE_ID=<spreadsheet-id>
+GOOGLE_SHEETS_CREDENTIALS_PATH=${ieasyhydroforecast_container_data_ref_dir}/config/google_sheets_sa.json
+GOOGLE_SHEETS_SITE_CODES=<code1>,<code2>,...
+```
+
+Replace `<spreadsheet-id>` with the ID from the sheet's URL
+(`https://docs.google.com/spreadsheets/d/<spreadsheet-id>/edit`) and
+`<code1>,<code2>,...` with the comma-separated station codes. Site codes must
+be digits-only strings (e.g., `19999,19998`) — codes containing letters are
+rejected by the reader.
+
+#### 4. Register each site in the station library
+
+For every site code listed in `GOOGLE_SHEETS_SITE_CODES`, add an entry in
+`<data_folder>/config/config_all_stations_library.json` with
+`"data_source": ["google_sheets"]`:
+
+```json
+"19999": {
+    "data_source": ["google_sheets"],
+    "code": [19999],
+    "name_ru": ["My River - My Location"],
+    "river_ru": ["My River"],
+    "punkt_ru": ["My Location"],
+    "lat": [41.3],
+    "long": [69.3],
+    "basin": ["My Basin"],
+    "region": ["My Region"]
+}
+```
+
+Both the env var allowlist (`GOOGLE_SHEETS_SITE_CODES`) **and** the config
+entry (`"data_source": ["google_sheets"]`) are required. If either is missing
+the site is silently skipped.
+
+> **ML models note:** A Google Sheets site that has no pre-trained ML model,
+> no ERA5 forcing tile, and no static features will receive no machine-learning
+> forecast. Linear-regression and long-term forecast paths are unaffected.
+> Provision ML training data separately if ML forecasts are needed for the site.
+
+#### 5. Share the Google Sheet with the service account
+
+Open the Google Sheet, click **Share**, and add the service account email
+address (visible on the JSON key file as the `client_email` field) as a
+**Viewer**.
+
+#### 6. First-run verification
+
+Run the preprocessing-runoff service manually:
+
+```bash
+cd /data/SAPPHIRE_Forecast_Tools
+bash bin/run_preprocessing_runoff.sh /data/<data_folder>/config/<env_file>
+```
+
+Check the log output for the INFO summary line:
+
+```
+Google Sheets: read N valid rows across M sites (skipped K rows due to validation)
+```
+
+If `N > 0`, the integration is working. If `N = 0` or the line is absent,
+check for `ERROR` lines mentioning the credential path or the spreadsheet ID.
+
+You can also confirm the data reached the pipeline by inspecting the daily
+discharge CSV:
+
+```bash
+ls /data/<data_folder>/intermediate_data/*/daily_discharge.csv
+```
+
+#### 7. Optional: tune validation thresholds
+
+The reader enforces four bounds by default. Override any of them in your
+`.env_<org>` file if your deployment requires different limits:
+
+| Variable | Default | When to change |
+|----------|---------|----------------|
+| `GOOGLE_SHEETS_MAX_ROWS_PER_SITE` | 10000 | Very long historical records (decades of daily values) |
+| `GOOGLE_SHEETS_MAX_DISCHARGE_M3_S` | 50000 | Major river systems (e.g., Amu Darya, Syr Darya main stems) |
+| `GOOGLE_SHEETS_MIN_DATE` | 1900-01-01 | Backfilling pre-1900 historical records (unlikely) |
+| `GOOGLE_SHEETS_MAX_FUTURE_DAYS` | 365 | Sheets containing forward-looking scenario data |
+
+#### Verification for organizations NOT using Google Sheets
+
+Organizations that are not using Google Sheets can verify the feature is
+safely off by running the preprocessing-runoff service once after the upgrade
+and confirming that logs contain no Google-Sheets-related warnings or errors.
+
+---
+
 ### SAPPHIRE services (API stack)
 
 The SAPPHIRE services are four FastAPI microservices (`preprocessing`,
@@ -725,6 +865,15 @@ Add the following to the crontab file:
 # (4) Long-term Forecast at 06:00 UTC on the 10th and 25th of each month.
 # The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
 0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
+#
+# (4b) Bimonthly long-term skill recalc at 10:00 UTC on the 10th and 25th
+# (4 hours after the 06:00 UTC long-term forecast cron). Refreshes MONTHLY,
+# QUARTERLY, SEASONAL skill metrics in that order so long-term skill tiles on
+# the dashboard don't stay stale for a year. Log-and-continue: one failing
+# mode does not block the others, but the job exits non-zero so errors still
+# surface in the cron log. The yearly Dec 31 entry below is retained as a
+# full-history safety net; this job does not replace it.
+0 10 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_bimonthly_longterm_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 #
 # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
 # Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend

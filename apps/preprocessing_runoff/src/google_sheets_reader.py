@@ -13,6 +13,14 @@ try:
 except ImportError:
     gspread = None
 
+# Validation thresholds — overridable per-deployment via env vars.
+# Chosen to be operationally sane: real glacial rivers can reach ~5000 m³/s;
+# 50000 is a conservative upper cap. Row cap prevents memory exhaustion.
+_DEFAULT_MAX_ROWS_PER_SITE = 10000
+_DEFAULT_MAX_DISCHARGE_M3_S = 50000.0
+_DEFAULT_MIN_DATE = "1900-01-01"
+_DEFAULT_MAX_FUTURE_DAYS = 365
+
 
 def is_google_sheets_enabled() -> bool:
     """Check if Google Sheets ingestion is configured and enabled."""
@@ -83,6 +91,58 @@ def read_discharge_from_google_sheet(
     """
     empty = pd.DataFrame(columns=["code", "date", "discharge"])
 
+    # Defensive arg check — must come before gspread path so opt-in safety
+    # (env vars unset → caller passes None/"") never touches gspread.
+    if not sheet_id:
+        logger.info("Google Sheets: sheet_id is None or empty — skipping.")
+        return empty
+    if credentials_path is None or (isinstance(credentials_path, str) and not credentials_path):
+        logger.info("Google Sheets: credentials_path is None or empty — skipping.")
+        return empty
+
+    # Read env-override thresholds once (not per-row). Fall back to defaults
+    # on malformed values so a typo in an env var never breaks the pipeline.
+    def _read_int_env(var: str, default: int) -> int:
+        raw = os.getenv(var, "")
+        if raw.strip():
+            try:
+                return int(raw.strip())
+            except ValueError:
+                logger.warning(
+                    f"Google Sheets: {var}='{raw}' is not a valid integer — "
+                    f"using default {default}."
+                )
+        return default
+
+    def _read_float_env(var: str, default: float) -> float:
+        raw = os.getenv(var, "")
+        if raw.strip():
+            try:
+                return float(raw.strip())
+            except ValueError:
+                logger.warning(
+                    f"Google Sheets: {var}='{raw}' is not a valid float — using default {default}."
+                )
+        return default
+
+    def _read_date_env(var: str, default: str) -> pd.Timestamp:
+        raw = os.getenv(var, "")
+        if raw.strip():
+            try:
+                return pd.Timestamp(raw.strip())
+            except Exception:
+                logger.warning(
+                    f"Google Sheets: {var}='{raw}' is not a valid date — using default {default}."
+                )
+        return pd.Timestamp(default)
+
+    max_rows = _read_int_env("GOOGLE_SHEETS_MAX_ROWS_PER_SITE", _DEFAULT_MAX_ROWS_PER_SITE)
+    max_discharge = _read_float_env("GOOGLE_SHEETS_MAX_DISCHARGE_M3_S", _DEFAULT_MAX_DISCHARGE_M3_S)
+    min_date_ts = _read_date_env("GOOGLE_SHEETS_MIN_DATE", _DEFAULT_MIN_DATE)
+    max_future_days_val = _read_int_env("GOOGLE_SHEETS_MAX_FUTURE_DAYS", _DEFAULT_MAX_FUTURE_DAYS)
+    now_ts = pd.Timestamp.now().normalize()
+    max_date_ts = now_ts + pd.Timedelta(days=max_future_days_val)
+
     if gspread is None:
         logger.error(
             "gspread is not installed. Install it to enable Google Sheets "
@@ -118,10 +178,19 @@ def read_discharge_from_google_sheet(
         return empty
 
     all_rows = []
+    n_skipped = 0
     for code in site_codes:
         try:
             worksheet = spreadsheet.worksheet(code)
             records = worksheet.get_all_values()
+
+            # Row-count cap: header + max_rows. Truncate silently after warning.
+            if len(records) > max_rows + 1:
+                logger.warning(
+                    f"Google Sheets: site {code} has {len(records) - 1} rows, "
+                    f"exceeding cap {max_rows} — truncating to first {max_rows} rows."
+                )
+                records = records[: max_rows + 1]
 
             if len(records) <= 1:
                 logger.info(f"Google Sheets: site {code} — no data rows.")
@@ -145,6 +214,17 @@ def read_discharge_from_google_sheet(
                     logger.warning(
                         f"Google Sheets site {code}: invalid date '{date_str}' — skipping row."
                     )
+                    n_skipped += 1
+                    continue
+
+                # Date range check
+                if date_val < min_date_ts or date_val > max_date_ts:
+                    logger.warning(
+                        f"Google Sheets site {code}: date {date_val.date()} out of "
+                        f"plausible range [{min_date_ts.date()}, {max_date_ts.date()}] "
+                        f"— skipping row."
+                    )
+                    n_skipped += 1
                     continue
 
                 # Parse discharge
@@ -158,6 +238,27 @@ def read_discharge_from_google_sheet(
                             f"Google Sheets site {code}: non-numeric discharge "
                             f"'{discharge_str}' on {date_str} — skipping row."
                         )
+                        n_skipped += 1
+                        continue
+
+                    # Negative discharge: reject (not warn-and-include)
+                    if discharge_val < 0:
+                        logger.warning(
+                            f"Google Sheets site {code}: negative discharge "
+                            f"{discharge_val} on {date_val.date()} — likely typo; "
+                            f"skipping row."
+                        )
+                        n_skipped += 1
+                        continue
+
+                    # Upper-bound discharge check
+                    if discharge_val > max_discharge:
+                        logger.warning(
+                            f"Google Sheets site {code}: discharge {discharge_val} "
+                            f"exceeds cap {max_discharge} m³/s on {date_val.date()} "
+                            f"— likely sensor/entry error; skipping row."
+                        )
+                        n_skipped += 1
                         continue
 
                 all_rows.append(
@@ -174,6 +275,12 @@ def read_discharge_from_google_sheet(
             logger.error(f"Google Sheets: error reading site {code}: {e}")
 
     if not all_rows:
+        n_valid = 0
+        n_sites = 0
+        logger.info(
+            f"Google Sheets: read {n_valid} valid rows across {n_sites} sites "
+            f"(skipped {n_skipped} rows due to validation)"
+        )
         return empty
 
     df = pd.DataFrame(all_rows)
@@ -188,15 +295,12 @@ def read_discharge_from_google_sheet(
                 f"{site_df['date'].max().date()})"
             )
 
-    # Validate discharge values
-    valid_discharge = df.dropna(subset=["discharge"])
-    neg_mask = valid_discharge["discharge"] < 0
-    if neg_mask.any():
-        neg_rows = valid_discharge[neg_mask]
-        for _, row in neg_rows.iterrows():
-            logger.warning(
-                f"Google Sheets site {row['code']}: negative discharge "
-                f"{row['discharge']} on {row['date'].date()} — likely typo."
-            )
+    # Top-level summary for operator confirmation
+    n_valid = len(df.dropna(subset=["discharge"]))
+    n_sites = df["code"].nunique()
+    logger.info(
+        f"Google Sheets: read {n_valid} valid rows across {n_sites} sites "
+        f"(skipped {n_skipped} rows due to validation)"
+    )
 
     return df
