@@ -738,6 +738,8 @@ Add the following to the crontab file:
 0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
 # Yearly snow norm recalculation at 02:00 UTC on August 31
 0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
+# Yearly monthly discharge norm recalculation from iEH HF SDK at 03:00 UTC on January 1
+0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh monthly_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_monthlynorms_$(date +\%Y\%m\%d).log 2>&1
 ```
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 
