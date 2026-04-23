@@ -2965,7 +2965,7 @@ def read_hydrograph_data(
     Parameters:
     -----------
     horizon_type : str
-        Either 'pentad' or 'decade'.
+        Either 'pentad', 'decade', or 'month'.
     site_codes : list[str] | None
         List of station codes to filter (used only for API source).
     start_date : str | None
@@ -2989,8 +2989,10 @@ def read_hydrograph_data(
     ValueError
         If horizon_type is invalid.
     """
-    if horizon_type not in ("pentad", "decade"):
-        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+    if horizon_type not in ("pentad", "decade", "month"):
+        raise ValueError(
+            f"horizon_type must be 'pentad', 'decade', or 'month', got: {horizon_type}"
+        )
 
     # Check if API is enabled (default: true)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
@@ -3394,7 +3396,14 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
                 - decad_in_year: decad in year (1-36)
                 - day_of_year: day of year (1-366)
                 - (same statistics as pentad)
-        horizon_type: Either "pentad" or "decade"
+            For month:
+                - code: station code
+                - date: first-of-month date (YYYY-MM-01)
+                - month: month in month (1-12)
+                - month_in_year: month in year (1-12)
+                - day_of_year: representative mid-month day of year
+                - norm: long-term monthly normal
+        horizon_type: Either "pentad", "decade", or "month"
 
     Returns:
         True if successful, False otherwise
@@ -3426,8 +3435,13 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     elif horizon_type == "decade":
         horizon_value_col = "decad"
         horizon_in_year_col = "decad_in_year"
+    elif horizon_type == "month":
+        horizon_value_col = "month"
+        horizon_in_year_col = "month_in_year"
     else:
-        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'")
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. Must be 'pentad', 'decade', or 'month'"
+        )
 
     # Determine current and previous year columns
     # Look for year columns in the data (they are named by year, e.g., "2025", "2026")
@@ -5342,6 +5356,111 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
             # Log warning but don't raise - hydrograph overwrites entire file
 
     return api_ok
+
+
+def write_month_hydrograph_data(
+    code_list: list[str],
+    iehhf_sdk,
+    current_year: int | None = None,
+) -> bool:
+    """
+    Fetch monthly discharge norms from the iEH HF SDK and write them to the
+    SAPPHIRE hydrographs table with horizon_type='month'.
+
+    This function is the monthly-norm sibling of write_pentad_hydrograph_data /
+    write_decad_hydrograph_data. Unlike those functions it does not accept a
+    runoff DataFrame — it reads norms directly from the SDK and writes 12
+    norm-only rows per site (one per calendar month of current_year).
+
+    Args:
+        code_list: List of site codes to fetch monthly norms for. Manual
+            (Google-Sheets-backed) sites should be filtered out by the caller
+            before passing this list.
+        iehhf_sdk: Initialised iEasyHydroHF SDK object. Must support
+            ``get_norm_for_site(code, "discharge", norm_period="m")`` returning
+            a list of 12 floats.
+        current_year: The year to stamp on the ``date`` column
+            (``YYYY-01-01 .. YYYY-12-01``). Defaults to
+            ``datetime.date.today().year`` when None.
+
+    Returns:
+        True if at least one site was written successfully to the API.
+        False if zero sites produced valid norm data (no API call is made).
+
+    Raises:
+        RuntimeError: If ``_write_hydrograph_to_api`` returns False (API
+            disabled / unavailable / readiness-check failed). The monthly path
+            has no CSV fallback, so a False return would mean zero rows
+            persisted while the caller exits 0 — failing loudly prevents that
+            silent data loss.
+        Any exception raised by ``_write_hydrograph_to_api`` propagates
+            unchanged (fatal write failure).
+    """
+    if current_year is None:
+        current_year = dt.date.today().year
+
+    # Mid-month representative day-of-year values (non-leap reference).
+    # These are climatology markers, not calendar records — consumers should
+    # treat them as month-centroid labels.
+    mid_month_doy = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+
+    if not code_list:
+        logger.error("write_month_hydrograph_data called with empty code_list — nothing to write")
+        return False
+
+    site_dfs = []
+    for code in code_list:
+        try:
+            norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
+        except Exception as exc:
+            logger.warning(
+                f"write_month_hydrograph_data: SDK call failed for site {code}, skipping. "
+                f"Error: {exc}"
+            )
+            continue
+
+        if len(norms) != 12:
+            logger.warning(
+                f"write_month_hydrograph_data: expected 12 norm values for site {code}, "
+                f"got {len(norms)} — skipping this site."
+            )
+            continue
+
+        months = list(range(1, 13))
+        site_df = pd.DataFrame(
+            {
+                "code": str(code),
+                "date": [dt.date(current_year, m, 1) for m in months],
+                "month": months,
+                "month_in_year": months,
+                "day_of_year": mid_month_doy,
+                "norm": [float(v) for v in norms],
+            }
+        )
+        site_dfs.append(site_df)
+
+    if not site_dfs:
+        logger.error(
+            "write_month_hydrograph_data: no sites produced valid monthly norms — "
+            "skipping API write."
+        )
+        return False
+
+    combined_df = pd.concat(site_dfs, ignore_index=True)
+    logger.info(
+        f"write_month_hydrograph_data: writing {len(combined_df)} monthly norm rows "
+        f"for {combined_df['code'].nunique()} site(s) (year={current_year})"
+    )
+
+    api_result = _write_hydrograph_to_api(combined_df, "month")
+    if api_result is False:
+        raise RuntimeError(
+            "Monthly norm API write returned False — no rows persisted; "
+            "failing loudly rather than silently exiting 0. "
+            "Check SAPPHIRE_API_ENABLED, SAPPHIRE_API_AVAILABLE, and API readiness."
+        )
+
+    return True
 
 
 def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk=None):
