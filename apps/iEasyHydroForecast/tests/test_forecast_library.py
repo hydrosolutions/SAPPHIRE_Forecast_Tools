@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 from pandas.testing import assert_frame_equal
 
 from iEasyHydroForecast import forecast_library as fl
@@ -3782,6 +3783,332 @@ class TestLrVisibilityParams(unittest.TestCase):
             f"forecast_horizon_int=18 → target=19 (1st pentad of April): must call "
             f"_read_lr_visibility with horizon_value=1, got {horizon_value_passed}."
         )
+
+
+# =============================================================================
+# Tests for Phase 1: monthly hydrograph norm ingestion
+# =============================================================================
+
+
+class TestWriteHydrographToApiMonthlyHorizon:
+    """Tests for _write_hydrograph_to_api with horizon_type='month'."""
+
+    @pytest.fixture
+    def sample_monthly_hydrograph_data(self):
+        """Create sample monthly hydrograph data (12 rows for one site)."""
+        mid_month_doy = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+        return pd.DataFrame(
+            {
+                "code": ["19999"] * 12,
+                "date": pd.to_datetime([f"2025-{m:02d}-01" for m in range(1, 13)]),
+                "month": list(range(1, 13)),
+                "month_in_year": list(range(1, 13)),
+                "day_of_year": mid_month_doy,
+                "norm": [float(v) for v in range(100, 112)],
+            }
+        )
+
+    @patch("iEasyHydroForecast.forecast_library.SapphirePreprocessingClient")
+    def test_accepts_month_horizon_type(self, mock_client_class, sample_monthly_hydrograph_data):
+        """_write_hydrograph_to_api with horizon_type='month' must succeed and
+        call write_hydrograph with the correct column mapping."""
+        if not fl.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_hydrograph.return_value = 12
+            mock_client_class.return_value = mock_client
+
+            result = fl._write_hydrograph_to_api(sample_monthly_hydrograph_data, "month")
+
+            assert result is True
+            mock_client.write_hydrograph.assert_called_once()
+
+            call_args = mock_client.write_hydrograph.call_args[0][0]
+            assert len(call_args) == 12
+
+            # Check horizon_type and column mapping on first record
+            first = call_args[0]
+            assert first["horizon_type"] == "month"
+            assert first["horizon_value"] == 1  # month=1
+            assert first["horizon_in_year"] == 1  # month_in_year=1
+            assert first["day_of_year"] == 15
+            assert first["norm"] == 100.0
+            assert first["code"] == "19999"
+            assert first["date"] == "2025-01-01"
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("iEasyHydroForecast.forecast_library.SapphirePreprocessingClient")
+    def test_unknown_horizon_type_still_raises(
+        self, mock_client_class, sample_monthly_hydrograph_data
+    ):
+        """Regression: unknown horizon_type must still raise ValueError."""
+        if not fl.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
+            with pytest.raises(ValueError, match="Invalid horizon_type"):
+                fl._write_hydrograph_to_api(sample_monthly_hydrograph_data, "invalid")
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+
+class TestReadHydrographDataMonthHorizon:
+    """Tests for read_hydrograph_data horizon validator with 'month'."""
+
+    @patch("iEasyHydroForecast.forecast_library._read_hydrograph_data_from_api")
+    def test_accepts_month_horizon_type(self, mock_read_from_api):
+        """read_hydrograph_data must not raise ValueError for horizon_type='month'."""
+        if not fl.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_read_from_api.return_value = pd.DataFrame()
+            # Must not raise
+            fl.read_hydrograph_data("month")
+            mock_read_from_api.assert_called_once()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    def test_unknown_horizon_type_still_raises(self):
+        """Regression: unknown horizon_type must still raise ValueError."""
+        with pytest.raises(ValueError, match="horizon_type must be"):
+            fl.read_hydrograph_data("fortnight")
+
+
+class TestWriteMonthHydrographData:
+    """Tests for the new write_month_hydrograph_data function."""
+
+    MID_MONTH_DOY = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+
+    def _make_sdk(self, codes, norm_values=None, raise_for=None):
+        """Build a mock SDK whose get_norm_for_site returns 12 values per code.
+
+        Args:
+            codes: list of site codes that should return data
+            norm_values: optional dict {code: list-of-12} for custom values.
+                Default gives range(100, 112) for each code.
+            raise_for: optional list of codes that should raise on SDK call.
+        """
+        if norm_values is None:
+            norm_values = {c: list(range(100, 112)) for c in codes}
+        if raise_for is None:
+            raise_for = []
+
+        mock_sdk = MagicMock()
+
+        def side_effect(code, param, norm_period):
+            if code in raise_for:
+                raise RuntimeError(f"SDK error for {code}")
+            return norm_values.get(code, [])
+
+        mock_sdk.get_norm_for_site.side_effect = side_effect
+        return mock_sdk
+
+    # ------------------------------------------------------------------
+    # Test 5: happy path — 3 codes, all succeed
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_happy_path_three_codes(self, mock_write_api):
+        """SDK returning 12 values for 3 codes → 36 rows written, returns True."""
+        mock_write_api.return_value = True
+        codes = ["19999", "29999", "39999"]
+        sdk = self._make_sdk(codes)
+
+        result = fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+        assert result is True
+        mock_write_api.assert_called_once()
+        call_args = mock_write_api.call_args
+        df_written = call_args[0][0]
+        horizon_type_arg = call_args[0][1]
+
+        assert horizon_type_arg == "month"
+        assert len(df_written) == 36  # 12 × 3
+        assert set(df_written.columns) >= {
+            "code",
+            "date",
+            "month",
+            "month_in_year",
+            "day_of_year",
+            "norm",
+        }
+        # Verify month values
+        assert list(df_written[df_written["code"] == "19999"]["month"]) == list(range(1, 13))
+        # Verify day_of_year values
+        assert list(df_written[df_written["code"] == "19999"]["day_of_year"]) == self.MID_MONTH_DOY
+        # Verify norm values
+        assert list(df_written[df_written["code"] == "19999"]["norm"]) == list(range(100, 112))
+
+    # ------------------------------------------------------------------
+    # Test 6: explicit current_year uses that year for dates
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_explicit_current_year(self, mock_write_api):
+        """When current_year=2020 is passed, dates must use 2020."""
+        mock_write_api.return_value = True
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        fl.write_month_hydrograph_data(codes, sdk, current_year=2020)
+
+        df_written = mock_write_api.call_args[0][0]
+        dates = list(df_written["date"])
+        assert dates[0] == dt.date(2020, 1, 1)
+        assert dates[11] == dt.date(2020, 12, 1)
+
+    # ------------------------------------------------------------------
+    # Test 7: SDK raises for one code, other codes succeed
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_sdk_raises_for_one_code(self, mock_write_api):
+        """SDK raising for one code → that code skipped, others succeed, returns True."""
+        mock_write_api.return_value = True
+        codes = ["19999", "29999", "39999"]
+        sdk = self._make_sdk(codes, raise_for=["29999"])
+
+        result = fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+        assert result is True
+        df_written = mock_write_api.call_args[0][0]
+        assert len(df_written) == 24  # only 2 codes × 12
+        assert "29999" not in df_written["code"].values
+
+    # ------------------------------------------------------------------
+    # Test 8: SDK returns wrong-length list → site skipped
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_sdk_returns_wrong_length(self, mock_write_api):
+        """SDK returning 11 values → that site skipped with warning, others succeed."""
+        mock_write_api.return_value = True
+        codes = ["19999", "29999"]
+        sdk = self._make_sdk(
+            codes,
+            norm_values={"19999": list(range(11)), "29999": list(range(100, 112))},
+        )
+
+        result = fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+        assert result is True
+        df_written = mock_write_api.call_args[0][0]
+        assert len(df_written) == 12  # only 29999 succeeded
+        assert "19999" not in df_written["code"].values
+
+    # ------------------------------------------------------------------
+    # Test 9: ALL sites fail → returns False, no API call
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_all_sites_fail(self, mock_write_api):
+        """SDK failing for all codes → returns False, API never called."""
+        codes = ["19999", "29999"]
+        sdk = self._make_sdk(codes, raise_for=codes)
+
+        result = fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+        assert result is False
+        mock_write_api.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Test 10: empty code_list → returns False, no API call
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_empty_code_list(self, mock_write_api):
+        """Empty code_list → returns False immediately, API never called."""
+        sdk = MagicMock()
+
+        result = fl.write_month_hydrograph_data([], sdk, current_year=2025)
+
+        assert result is False
+        mock_write_api.assert_not_called()
+        sdk.get_norm_for_site.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Test 11a: API disabled → _write_hydrograph_to_api returns False
+    #           → write_month_hydrograph_data must raise RuntimeError
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_raises_when_api_disabled(self, mock_write_api, monkeypatch):
+        """When SAPPHIRE_API_ENABLED=false causes _write_hydrograph_to_api to
+        return False, write_month_hydrograph_data must raise RuntimeError."""
+        mock_write_api.return_value = False
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        with pytest.raises(RuntimeError):
+            fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+    # ------------------------------------------------------------------
+    # Test 11b: SAPPHIRE_API_AVAILABLE=False → _write_hydrograph_to_api
+    #           returns False → must raise RuntimeError
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_raises_when_api_unavailable(self, mock_write_api, monkeypatch):
+        """When SAPPHIRE_API_AVAILABLE is False (client not installed),
+        _write_hydrograph_to_api returns False → must raise RuntimeError."""
+        mock_write_api.return_value = False
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", False)
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        with pytest.raises(RuntimeError):
+            fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+    # ------------------------------------------------------------------
+    # Test 11c: readiness-check failure → _write_hydrograph_to_api returns
+    #           False → must raise RuntimeError
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_raises_when_readiness_check_fails(self, mock_write_api, monkeypatch):
+        """Simulating readiness-check failure by stubbing _write_hydrograph_to_api
+        to return False → write_month_hydrograph_data must raise RuntimeError."""
+        mock_write_api.return_value = False
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        with pytest.raises(RuntimeError):
+            fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+    # ------------------------------------------------------------------
+    # Test 12: API write raises → exception propagates unchanged
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_api_exception_propagates(self, mock_write_api):
+        """If _write_hydrograph_to_api raises, the exception must propagate out."""
+        mock_write_api.side_effect = ConnectionError("API unreachable")
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        with pytest.raises(ConnectionError, match="API unreachable"):
+            fl.write_month_hydrograph_data(codes, sdk, current_year=2025)
+
+    # ------------------------------------------------------------------
+    # Test: default current_year uses today's year
+    # ------------------------------------------------------------------
+    @patch("iEasyHydroForecast.forecast_library._write_hydrograph_to_api")
+    def test_default_current_year_uses_today(self, mock_write_api):
+        """When current_year is not passed, dates should use datetime.date.today().year."""
+        mock_write_api.return_value = True
+        codes = ["19999"]
+        sdk = self._make_sdk(codes)
+
+        fl.write_month_hydrograph_data(codes, sdk)
+
+        df_written = mock_write_api.call_args[0][0]
+        expected_year = dt.date.today().year
+        dates = list(df_written["date"])
+        assert dates[0] == dt.date(expected_year, 1, 1)
+        assert dates[11] == dt.date(expected_year, 12, 1)
 
 
 if __name__ == "__main__":

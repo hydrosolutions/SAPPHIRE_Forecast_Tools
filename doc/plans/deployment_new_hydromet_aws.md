@@ -648,6 +648,8 @@ Skip this section if the deployment is LAN-only — users can reach the dashboar
   0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
   # Yearly snow norm recalculation (August 31)
   0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
+  # Yearly monthly discharge norm recalculation from iEH HF SDK (January 1)
+  0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh monthly_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_monthlynorms_$(date +\%Y\%m\%d).log 2>&1
   ```
 
   > `[DOC-GAP-11]` ✅ **Resolved** — crontab in `doc/deployment.md` now uses `<data_folder>`/`<env_file>` placeholders and includes a timezone reference table.

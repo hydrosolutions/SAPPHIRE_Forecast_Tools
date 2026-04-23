@@ -2037,11 +2037,47 @@ class YearlySnowNormRecalculation(DockerTaskBase):
         )
 
 
+class YearlyMonthlyNormsRecalculation(DockerTaskBase):
+    """Yearly monthly norm fetch from iEH HF SDK, called from the yearly periodic-maintenance cron."""
+
+    image_name = "sapphire-preprunoff"
+    container_name = "maintenance-monthly-norms"
+    command = ["uv", "run", "sync_monthly_norms.py"]
+
+    docker_logs_file_path = (
+        f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
+        f"/docker_logs/log_maintenance_monthly_norms_"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+
+    def output(self):
+        marker = get_maintenance_marker_filepath("monthly_norms")
+        return luigi.LocalTarget(marker)
+
+    def run(self):
+        volumes = _standard_maintenance_volumes()
+        environment = _common_maintenance_env()
+
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name=self.image_name,
+                container_name=self.container_name,
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt,
+                mem_limit="4g",
+                memswap_limit="6g",
+                command=self.command,
+                network="host",
+            )
+        )
+
+
 class RunPeriodicMaintenanceWorkflow(luigi.Task):
     """Parameterized workflow for periodic maintenance tasks.
 
     Args:
-        task_type: One of 'long_term', 'skill_recalc', 'snow_norms'
+        task_type: One of 'long_term', 'skill_recalc', 'snow_norms', 'monthly_norms'
     """
 
     task_type = luigi.Parameter()
@@ -2051,6 +2087,7 @@ class RunPeriodicMaintenanceWorkflow(luigi.Task):
             "long_term": LongTermPostProcessingMaintenance(),
             "skill_recalc": YearlySkillRecalculation(),
             "snow_norms": YearlySnowNormRecalculation(),
+            "monthly_norms": YearlyMonthlyNormsRecalculation(),
         }
         if self.task_type not in task_map:
             raise ValueError(

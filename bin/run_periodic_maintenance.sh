@@ -5,9 +5,10 @@
 # Usage: bash bin/run_periodic_maintenance.sh <task_type> <env_file_path>
 #
 # Task types:
-#   long_term    - Bimonthly long-term postprocessing (1st of odd months)
-#   skill_recalc - Yearly full skill metrics recalculation (December 31)
-#   snow_norms   - Yearly snow norm recalculation (August 31)
+#   long_term      - Bimonthly long-term postprocessing (1st of odd months)
+#   skill_recalc   - Yearly full skill metrics recalculation (December 31)
+#   snow_norms     - Yearly snow norm recalculation (August 31)
+#   monthly_norms  - Yearly monthly norm recalculation from iEH HF SDK (January 1)
 #
 # Example:
 #   bash bin/run_periodic_maintenance.sh long_term /path/to/config/.env
@@ -23,7 +24,7 @@ TASK_TYPE="${1}"
 if [ -z "$TASK_TYPE" ]; then
     echo "| Error: task_type argument required."
     echo "| Usage: bash bin/run_periodic_maintenance.sh <task_type> <env_file_path>"
-    echo "| Valid task_types: long_term, skill_recalc, snow_norms"
+    echo "| Valid task_types: long_term, skill_recalc, snow_norms, monthly_norms"
     exit 1
 fi
 echo "| Running Periodic Maintenance: ${TASK_TYPE}"
