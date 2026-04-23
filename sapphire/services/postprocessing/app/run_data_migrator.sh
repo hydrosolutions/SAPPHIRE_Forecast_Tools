@@ -25,5 +25,6 @@ run "$SCRIPT --type skillmetric"
 run "$SCRIPT --type lrforecast"
 run "$SCRIPT --type combinedforecast"
 run "$SCRIPT --type forecast"
+run "$SCRIPT --type longforecast"
 
 echo "✅ Done."
