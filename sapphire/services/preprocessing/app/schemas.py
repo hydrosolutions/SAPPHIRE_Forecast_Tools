@@ -117,6 +117,18 @@ class SnowBase(BaseModel):
     value12: Optional[float] = None
     value13: Optional[float] = None
     value14: Optional[float] = None
+    count: Optional[int] = None
+    mean: Optional[float] = None
+    std: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    q05: Optional[float] = None
+    q25: Optional[float] = None
+    q50: Optional[float] = None
+    q75: Optional[float] = None
+    q95: Optional[float] = None
+    previous: Optional[float] = None
+    current: Optional[float] = None
 
 class SnowCreate(SnowBase):
     pass

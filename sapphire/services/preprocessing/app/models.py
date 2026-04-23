@@ -141,6 +141,24 @@ class Snow(Base):
     value13 = Column(Float)
     value14 = Column(Float)
 
+    # Statistical measures
+    count = Column(Integer)
+    mean = Column(Float)
+    std = Column(Float)
+    min = Column(Float)
+    max = Column(Float)
+
+    # Percentiles
+    q05 = Column(Float)
+    q25 = Column(Float)
+    q50 = Column(Float)
+    q75 = Column(Float)
+    q95 = Column(Float)
+
+    # Norm and comparison values
+    previous = Column(Float)
+    current = Column(Float)
+
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
         Index('ix_snow_type_code_date', 'snow_type', 'code', 'date'),
