@@ -56,7 +56,7 @@ services:
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
     container_name: sapphire-pipeline-preprocessing-gateway
   
-  # Service for runoff preprocessing only 
+  # Service for runoff preprocessing only
   # (can be run when operational data is reviewed and added to iEH HF DB)
   preprocessing-runoff:
     extends: pipeline-base
@@ -65,6 +65,10 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+      - GOOGLE_SHEETS_ENABLED=${GOOGLE_SHEETS_ENABLED:-}
+      - GOOGLE_SHEETS_DISCHARGE_ID=${GOOGLE_SHEETS_DISCHARGE_ID:-}
+      - GOOGLE_SHEETS_CREDENTIALS_PATH=${GOOGLE_SHEETS_CREDENTIALS_PATH:-}
+      - GOOGLE_SHEETS_SITE_CODES=${GOOGLE_SHEETS_SITE_CODES:-}
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
     container_name: sapphire-pipeline-preprocessing-runoff
 

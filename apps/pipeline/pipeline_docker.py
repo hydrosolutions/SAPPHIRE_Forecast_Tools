@@ -502,8 +502,16 @@ class PreprocessingRunoff(DockerTaskBase):
         )
 
         # Define environment variables
+        gsheets_enabled = os.environ.get("GOOGLE_SHEETS_ENABLED", "")
+        gsheets_id = os.environ.get("GOOGLE_SHEETS_DISCHARGE_ID", "")
+        gsheets_creds = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH", "")
+        gsheets_codes = os.environ.get("GOOGLE_SHEETS_SITE_CODES", "")
         environment = [
             f"ieasyhydroforecast_env_file_path={env_file_path}",
+            f"GOOGLE_SHEETS_ENABLED={gsheets_enabled}",
+            f"GOOGLE_SHEETS_DISCHARGE_ID={gsheets_id}",
+            f"GOOGLE_SHEETS_CREDENTIALS_PATH={gsheets_creds}",
+            f"GOOGLE_SHEETS_SITE_CODES={gsheets_codes}",
         ]
 
         # Execute with retries using the base class method
@@ -1723,8 +1731,16 @@ class PrepRunoffMaintenance(DockerTaskBase):
         volumes = _standard_maintenance_volumes(
             extra_volume_keys=["ieasyforecast_daily_discharge_path"]
         )
+        gsheets_enabled = os.environ.get("GOOGLE_SHEETS_ENABLED", "")
+        gsheets_id = os.environ.get("GOOGLE_SHEETS_DISCHARGE_ID", "")
+        gsheets_creds = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH", "")
+        gsheets_codes = os.environ.get("GOOGLE_SHEETS_SITE_CODES", "")
         environment = _common_maintenance_env() + [
             "SAPPHIRE_SYNC_MODE=maintenance",
+            f"GOOGLE_SHEETS_ENABLED={gsheets_enabled}",
+            f"GOOGLE_SHEETS_DISCHARGE_ID={gsheets_id}",
+            f"GOOGLE_SHEETS_CREDENTIALS_PATH={gsheets_creds}",
+            f"GOOGLE_SHEETS_SITE_CODES={gsheets_codes}",
         ]
 
         status, details = self.execute_with_retries(
@@ -2459,8 +2475,16 @@ class InitialApiSync(DockerTaskBase):
         volumes = _standard_maintenance_volumes(
             extra_volume_keys=["ieasyforecast_daily_discharge_path"]
         )
+        gsheets_enabled = os.environ.get("GOOGLE_SHEETS_ENABLED", "")
+        gsheets_id = os.environ.get("GOOGLE_SHEETS_DISCHARGE_ID", "")
+        gsheets_creds = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH", "")
+        gsheets_codes = os.environ.get("GOOGLE_SHEETS_SITE_CODES", "")
         environment = _common_maintenance_env() + [
             "SAPPHIRE_SYNC_MODE=initial",
+            f"GOOGLE_SHEETS_ENABLED={gsheets_enabled}",
+            f"GOOGLE_SHEETS_DISCHARGE_ID={gsheets_id}",
+            f"GOOGLE_SHEETS_CREDENTIALS_PATH={gsheets_creds}",
+            f"GOOGLE_SHEETS_SITE_CODES={gsheets_codes}",
         ]
 
         status, details = self.execute_with_retries(
