@@ -289,6 +289,16 @@ class TestPeriodicMaintenanceTasks:
         path = task.output().path
         assert "maintenance_snow_norms_" in path
 
+    def test_monthly_norms_task_attributes(self, mock_env):
+        """YearlyMonthlyNormsRecalculation has correct marker, image, container, command."""
+        from pipeline_docker import YearlyMonthlyNormsRecalculation
+
+        task = YearlyMonthlyNormsRecalculation()
+        assert "monthly_norms" in task.output().path
+        assert task.image_name == "sapphire-preprunoff"
+        assert task.container_name == "maintenance-monthly-norms"
+        assert task.command == ["uv", "run", "sync_monthly_norms.py"]
+
 
 class TestRunPeriodicMaintenanceWorkflow:
     """Test RunPeriodicMaintenanceWorkflow parameterized orchestrator."""
@@ -325,6 +335,17 @@ class TestRunPeriodicMaintenanceWorkflow:
         task = RunPeriodicMaintenanceWorkflow(task_type="snow_norms")
         dep = task.requires()
         assert isinstance(dep, YearlySnowNormRecalculation)
+
+    def test_monthly_norms_routing(self, mock_env):
+        """task_type='monthly_norms' routes to YearlyMonthlyNormsRecalculation."""
+        from pipeline_docker import (
+            RunPeriodicMaintenanceWorkflow,
+            YearlyMonthlyNormsRecalculation,
+        )
+
+        task = RunPeriodicMaintenanceWorkflow(task_type="monthly_norms")
+        dep = task.requires()
+        assert isinstance(dep, YearlyMonthlyNormsRecalculation)
 
     def test_invalid_task_type(self, mock_env):
         """Invalid task_type raises ValueError."""
