@@ -8,9 +8,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy data-service code
 COPY services/postprocessing/app ./app
+COPY services/postprocessing/alembic.ini ./
+COPY services/postprocessing/alembic ./alembic
 
 # Expose port
 EXPOSE 8003
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8003"]
