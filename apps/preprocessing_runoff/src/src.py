@@ -2596,11 +2596,27 @@ def get_runoff_data_for_sites(
                 code_col=code_col,
                 code_list=code_list,
             )
+        elif organization == "uzhm":
+            read_data = read_all_runoff_data_from_uzhm_excel(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list,
+            )
+        elif organization == "demo":
+            read_data = read_all_runoff_data_from_excel(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list,
+            )
         else:
             # Raise an error if the organization is not recognized
             raise ValueError(
                 f"Organization '{organization}' not recognized. "
-                f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+                f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm', 'tjhm', 'uzhm', or 'demo'."
             )
     else:
         logger.info("No changes in the daily_discharge directory, using previous data.")
@@ -2608,6 +2624,9 @@ def get_runoff_data_for_sites(
         output_file_path = os.path.join(
             intermediate_data_path, os.getenv("ieasyforecast_daily_discharge_file")
         )
+        # Get organization from environment variable (needed for all three
+        # dispatch sites: stale-date reprocess, except-fallback reprocess)
+        organization = os.getenv("ieasyhydroforecast_organization")
         try:
             read_data = pd.read_csv(output_file_path)
             read_data["date"] = pd.to_datetime(read_data["date"]).dt.date
@@ -2622,7 +2641,6 @@ def get_runoff_data_for_sites(
             if read_data["date"].max() < dt.date.today() - dt.timedelta(days=51):
                 logger.info("Cached data is older than 50 days, reprocessing input files.")
                 # Reprocess input files
-                organization = os.getenv("ieasyhydroforecast_organization")
                 if organization == "kghm":
                     # Read data from excel files
                     read_data = read_all_runoff_data_from_excel(
@@ -2641,11 +2659,27 @@ def get_runoff_data_for_sites(
                         code_col=code_col,
                         code_list=code_list,
                     )
+                elif organization == "uzhm":
+                    read_data = read_all_runoff_data_from_uzhm_excel(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list,
+                    )
+                elif organization == "demo":
+                    read_data = read_all_runoff_data_from_excel(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list,
+                    )
                 else:
                     # Raise an error if the organization is not recognized
                     raise ValueError(
                         f"Organization '{organization}' not recognized. "
-                        f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+                        f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm', 'tjhm', 'uzhm', or 'demo'."
                     )
             else:
                 logger.info("Cached data is newer than 50 days, using cached data.")
@@ -2673,11 +2707,27 @@ def get_runoff_data_for_sites(
                     code_col=code_col,
                     code_list=code_list,
                 )
+            elif organization == "uzhm":
+                read_data = read_all_runoff_data_from_uzhm_excel(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list,
+                )
+            elif organization == "demo":
+                read_data = read_all_runoff_data_from_excel(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list,
+                )
             else:
                 # Raise an error if the organization is not recognized
                 raise ValueError(
                     f"Organization '{organization}' not recognized. "
-                    f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'."
+                    f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm', 'tjhm', 'uzhm', or 'demo'."
                 ) from e
 
     # Initialize a flag for virtual stations

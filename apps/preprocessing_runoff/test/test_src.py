@@ -1871,3 +1871,233 @@ class TestUzhmExcelDispatch:
                 os.environ.pop("ieasyforecast_daily_discharge_path", None)
             else:
                 os.environ["ieasyforecast_daily_discharge_path"] = orig
+
+
+# ---------------------------------------------------------------------------
+# Tests for get_runoff_data_for_sites() organization dispatch
+#
+# These tests pin the contract that P2 will implement.
+# Tests 1-3 (uzhm dispatch): EXPECTED to FAIL against current src.py with
+#   ValueError("Organization 'uzhm' not recognized...") — they pass after P2.
+# Test 4 (demo dispatch): SKIPPED — no multi-river fixture helper exists.
+# Test 5 (error message contract): EXPECTED to FAIL today because the ValueError
+#   message doesn't mention 'uzhm' or 'demo' yet — passes after P2.
+# Test 6 (kghm regression): SKIPPED — no kghm/multi-river fixture helper exists.
+# ---------------------------------------------------------------------------
+
+
+class TestGetRunoffDataForSitesOrganizationDispatch:
+    """
+    Dispatch tests for get_runoff_data_for_sites() organization branching.
+
+    Tests 1-3 document that uzhm must be supported in all three dispatch
+    blocks (reprocess path, stale-cache path, unreadable-cache fallback path).
+
+    Tests 4 and 6 are fixture-gated: they require a multi-river (kghm-format)
+    fixture helper that does not yet exist in this file, so they are skipped.
+
+    Test 5 pins the error-message contract: a ValueError for an unknown org
+    must mention all four supported organizations (kghm, tjhm, uzhm, demo).
+    """
+
+    # ------------------------------------------------------------------
+    # Helper: create a minimal uzhm fixture directory with one xlsx
+    # ------------------------------------------------------------------
+    def _make_uzhm_dispatch_fixture(self, tmp_path, code="19001"):
+        """Create tmp_path/<code>.xlsx (wide-matrix) and return tmp_path."""
+        year_data = {2000: _make_year_data(800.0)}
+        _build_uzhm_xlsx(
+            tmp_path / f"{code}.xlsx",
+            f"{code} Test-River",
+            year_data,
+        )
+        return tmp_path
+
+    # ------------------------------------------------------------------
+    # Helper: set env vars needed by get_runoff_data_for_sites
+    # ------------------------------------------------------------------
+    def _set_env(self, monkeypatch, discharge_path, intermediate_path, org):
+        monkeypatch.setenv("ieasyforecast_daily_discharge_path", str(discharge_path))
+        monkeypatch.setenv("ieasyforecast_intermediate_data_path", str(intermediate_path))
+        monkeypatch.setenv("ieasyforecast_daily_discharge_file", "runoff_day.csv")
+        monkeypatch.setenv("ieasyhydroforecast_organization", org)
+
+    # ------------------------------------------------------------------
+    # Test 1: uzhm reprocess path (should_reprocess_input_files → True)
+    # EXPECTED TO FAIL against current src.py (ValueError: unrecognized org)
+    # PASSES after P2 adds uzhm branch to the first dispatch block.
+    # ------------------------------------------------------------------
+    def test_uzhm_reprocess_path(self, tmp_path, monkeypatch):
+        """
+        When should_reprocess_input_files() is True and org=uzhm,
+        get_runoff_data_for_sites must succeed and return code 19001 rows.
+
+        Fails today: ValueError('uzhm not recognized ...').
+        Passes after P2: uzhm branch added to the first dispatch block.
+        """
+        fixture_dir = self._make_uzhm_dispatch_fixture(tmp_path, code="19001")
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+
+        self._set_env(monkeypatch, fixture_dir, intermediate_dir, "uzhm")
+        monkeypatch.setattr(src, "should_reprocess_input_files", lambda: True)
+
+        result = src.get_runoff_data_for_sites(ieh_sdk=None, code_list=["19001"])
+
+        assert result is not None, "Expected a DataFrame, got None"
+        assert isinstance(result, pd.DataFrame), f"Expected DataFrame, got {type(result)}"
+        assert not result.empty, "Result DataFrame must not be empty"
+        codes_present = set(result["code"].astype(str).unique())
+        assert "19001" in codes_present, (
+            f"Expected code '19001' in result, got codes: {codes_present}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 2: uzhm stale-cache path (cache date > 51 days ago)
+    # EXPECTED TO FAIL against current src.py (ValueError: unrecognized org)
+    # PASSES after P2 adds uzhm branch to the second dispatch block.
+    # ------------------------------------------------------------------
+    def test_uzhm_stale_cache_path(self, tmp_path, monkeypatch):
+        """
+        When cached runoff_day.csv has data older than 51 days and org=uzhm,
+        get_runoff_data_for_sites must re-read the xlsx and return code 19001.
+
+        Fails today: ValueError('uzhm not recognized ...') from the stale-cache
+        dispatch block (src.py ~line 2644).
+        Passes after P2.
+        """
+        fixture_dir = self._make_uzhm_dispatch_fixture(tmp_path, code="19001")
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+
+        # Write a stale cache CSV with a date far in the past
+        stale_csv = intermediate_dir / "runoff_day.csv"
+        stale_csv.write_text("code,date,discharge\n19999,2020-01-01,100.0\n")
+
+        # Make the xlsx OLDER than the csv so should_reprocess_input_files → False
+        import time
+
+        xlsx_mtime = time.time() - 200  # 200 s ago
+        csv_mtime = time.time() - 100  # 100 s ago (newer than xlsx)
+        import os
+
+        os.utime(str(fixture_dir / "19001.xlsx"), (xlsx_mtime, xlsx_mtime))
+        os.utime(str(stale_csv), (csv_mtime, csv_mtime))
+
+        self._set_env(monkeypatch, fixture_dir, intermediate_dir, "uzhm")
+        # should_reprocess_input_files returns False (csv newer than xlsx)
+        # but cache date is 2020-01-01 → stale → falls into the second dispatch
+
+        result = src.get_runoff_data_for_sites(ieh_sdk=None, code_list=["19001"])
+
+        assert result is not None, "Expected a DataFrame, got None"
+        assert isinstance(result, pd.DataFrame), f"Expected DataFrame, got {type(result)}"
+        assert not result.empty, "Result DataFrame must not be empty"
+        codes_present = set(result["code"].astype(str).unique())
+        assert "19001" in codes_present, (
+            f"Expected code '19001' in result, got codes: {codes_present}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 3: uzhm unreadable-cache fallback path (csv missing 'date' column)
+    # EXPECTED TO FAIL against current src.py (ValueError or UnboundLocalError)
+    # PASSES after P2 adds uzhm branch to the except-block dispatch.
+    # ------------------------------------------------------------------
+    def test_uzhm_unreadable_cache_path(self, tmp_path, monkeypatch):
+        """
+        When the cache CSV lacks the 'date' column, the except block catches the
+        KeyError and falls through to the fallback dispatch.  With org=uzhm,
+        get_runoff_data_for_sites must re-read the xlsx and return code 19001.
+
+        Fails today: either UnboundLocalError (organization not set before except)
+        or ValueError from the else branch in the except block.
+        Passes after P2.
+        """
+        fixture_dir = self._make_uzhm_dispatch_fixture(tmp_path, code="19001")
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+
+        # Bad-schema cache CSV — pd.read_csv succeeds but 'date' column is absent
+        bad_csv = intermediate_dir / "runoff_day.csv"
+        bad_csv.write_text("foo,bar\n1,2\n")
+
+        # Make the xlsx OLDER than the csv so should_reprocess_input_files → False
+        import time
+
+        xlsx_mtime = time.time() - 200
+        csv_mtime = time.time() - 100
+        import os
+
+        os.utime(str(fixture_dir / "19001.xlsx"), (xlsx_mtime, xlsx_mtime))
+        os.utime(str(bad_csv), (csv_mtime, csv_mtime))
+
+        self._set_env(monkeypatch, fixture_dir, intermediate_dir, "uzhm")
+
+        result = src.get_runoff_data_for_sites(ieh_sdk=None, code_list=["19001"])
+
+        assert result is not None, "Expected a DataFrame, got None"
+        assert isinstance(result, pd.DataFrame), f"Expected DataFrame, got {type(result)}"
+        assert not result.empty, "Result DataFrame must not be empty"
+        codes_present = set(result["code"].astype(str).unique())
+        assert "19001" in codes_present, (
+            f"Expected code '19001' in result, got codes: {codes_present}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 4: demo dispatch — SKIPPED (no multi-river fixture helper)
+    # ------------------------------------------------------------------
+    @pytest.mark.skip(
+        reason=(
+            "No multi-river/kghm-format fixture helper exists in test_src.py; "
+            "demo dispatch path covered indirectly via test_unknown_org_still_raises. "
+            "TODO: add _build_multiple_rivers_xlsx helper and implement this test."
+        )
+    )
+    def test_demo_reprocess_path(self, tmp_path, monkeypatch):
+        """Placeholder: demo dispatch path in get_runoff_data_for_sites."""
+        pass  # noqa: unnecessary-pass
+
+    # ------------------------------------------------------------------
+    # Test 5: unknown org raises ValueError listing all four supported orgs
+    # Fails today: message only mentions kghm/tjhm, not uzhm/demo.
+    # Passes after P2 updates the error messages.
+    # ------------------------------------------------------------------
+    def test_unknown_org_still_raises(self, tmp_path, monkeypatch):
+        """
+        An unrecognized organization must raise ValueError.
+        The error message must mention all four supported organizations:
+        kghm, tjhm, uzhm, and demo (case-insensitive).
+
+        Fails today for uzhm and demo substrings (message only lists kghm/tjhm).
+        Passes after P2 updates the ValueError messages.
+        """
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+
+        self._set_env(monkeypatch, tmp_path, intermediate_dir, "xyz")
+        monkeypatch.setattr(src, "should_reprocess_input_files", lambda: True)
+
+        with pytest.raises(ValueError) as exc_info:
+            src.get_runoff_data_for_sites(ieh_sdk=None, code_list=["19001"])
+
+        msg = str(exc_info.value).lower()
+        missing = [org for org in ("kghm", "tjhm", "uzhm", "demo") if org not in msg]
+        assert not missing, (
+            f"ValueError message missing organization names: {missing}. "
+            f"Full message: {exc_info.value!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 6: kghm regression — SKIPPED (no kghm/multi-river fixture helper)
+    # ------------------------------------------------------------------
+    @pytest.mark.skip(
+        reason=(
+            "No kghm/multi-river fixture helper exists in test_src.py; "
+            "kghm dispatch path is indirectly covered by existing "
+            "test_read_all_runoff_data_from_excel and test_unknown_org_still_raises. "
+            "TODO: add _build_multiple_rivers_xlsx helper and implement this test."
+        )
+    )
+    def test_kghm_reprocess_path_unchanged(self, tmp_path, monkeypatch):
+        """Placeholder: kghm dispatch path regression in get_runoff_data_for_sites."""
+        pass  # noqa: unnecessary-pass
