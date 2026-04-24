@@ -5,15 +5,13 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 
 from app import crud, auth
-from app.database import engine, Base, get_db
+from app.database import get_db
 from app.schemas import (
     Token, TokenRefresh, UserRegister, UserLoginResponse,
     PasswordChange, PasswordReset, PasswordResetConfirm
 )
 from app.config import settings
 from app.logger import logger
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.app_name,
