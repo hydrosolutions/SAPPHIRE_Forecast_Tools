@@ -5,15 +5,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 
 from app import crud
-from app.database import engine, Base, get_db
+from app.database import get_db
 from app.schemas import (
     UserCreate, UserUpdate, UserResponse, UserInDB,
     RoleCreate, RoleResponse, RoleBulkCreate
 )
 from app.logger import logger
 from app.config import settings
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.app_name,
