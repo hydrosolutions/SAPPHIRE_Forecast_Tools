@@ -83,16 +83,20 @@ class PlotManager:
     # ------------------------------------------------------------------
     # Forecast-tab card visibility (month horizon hides plots)
     # ------------------------------------------------------------------
-    def set_forecast_cards_visibility(self, visible: bool) -> None:
-        """Show/hide forecast-tab cards that are irrelevant for monthly horizon."""
+    def set_forecast_cards_visibility(self, visible: bool, is_month: bool = False) -> None:
+        """Show/hide forecast-tab cards.
+
+        visible: True when short-horizon cards (linreg, hydrograph, skill_*) should
+                 be shown — pentad/decade only.
+        is_month: True only for the month horizon — drives the m0 summary table card.
+        """
         for attr in ("linreg_card", "hydrograph_card",
                      "skill_metrics_card", "skill_table_card"):
             card = getattr(self, attr, None)
             if card is not None:
                 card.visible = visible
-        # Hide month_0 card when switching away from month
         m0_card = getattr(self, "summary_table_m0_card", None)
-        if m0_card is not None and visible:
+        if m0_card is not None and not is_month:
             m0_card.visible = False
         # Adjust summary table height for month vs pentad/decade
         st_card = getattr(self, "summary_table_card", None)
@@ -220,7 +224,7 @@ class PlotManager:
             self._wm.range_slider,
             self._wm.forecast_tabulator,
         )
-        # Update m1 info text for monthly horizon
+        # Update m1 info text for monthly horizon only
         if self._wm.horizon_selector.value == "month":
             df = self._dm.forecasts_all
             if df is not None and not df.empty:
@@ -323,8 +327,8 @@ class PlotManager:
     # ------------------------------------------------------------------
     def render_active_tab(self, dashboard_tabs, event=None):
         """Render plots only when a tab is first activated for a station."""
-        if self._wm.horizon_selector.value == "month":
-            return  # monthly horizon only shows summary table
+        if self._wm.horizon_selector.value in ("month", "quarter", "season"):
+            return  # long horizons only show summary table
         active = dashboard_tabs.active  # 0 = Predictors, 1 = Forecast
         wm, dm, viz = self._wm, self._dm, self._cfg.viz
 

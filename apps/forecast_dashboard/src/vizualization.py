@@ -113,7 +113,7 @@ elif observed_runoff_palette == "black":
 # Update visibility of sidepane widgets
 def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_card, basin_card, reload_card, event, horizon_selector=None):
     active_tab = tabs.active
-    is_month = horizon_selector is not None and horizon_selector.value == "month"
+    is_long = horizon_selector is not None and horizon_selector.value in ("month", "quarter", "season")
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
         horizon_card.visible = True
@@ -124,7 +124,7 @@ def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_c
     elif active_tab == 1:  # 'Forecast' tab
         horizon_card.visible = True
         station_card.visible = True
-        forecast_card.visible = not is_month
+        forecast_card.visible = not is_long
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
@@ -3010,8 +3010,8 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
         inplace=True)
 
     # Calculate the forecast range
-    if horizon == "month":
-        # For monthly forecasts, use quantile bounds if available
+    if horizon in ("month", "quarter", "season"):
+        # For long-horizon forecasts, use quantile bounds if available
         forecast_table['fc_lower'] = pd.to_numeric(
             forecast_table.get('Q25', np.nan), errors='coerce')
         forecast_table['fc_upper'] = pd.to_numeric(

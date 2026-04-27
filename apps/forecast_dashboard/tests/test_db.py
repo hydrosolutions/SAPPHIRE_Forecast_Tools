@@ -336,3 +336,256 @@ class TestGetDataMonthly:
         data = db.get_data("month", "99001", self._all_stations_df())
 
         assert data["long_forecasts_m0"].empty
+
+
+# ── get_long_forecasts_quarter / get_long_forecasts_season ────────────────
+
+_QUARTER_FORECAST_RECORD = {
+    "id": 2,
+    "horizon_type": "quarter",
+    "horizon_value": 1,
+    "code": "99001",
+    "date": "2026-03-22",
+    "model_type": "GBT",
+    "model_type_description": "Gradient Boosted Trees (GBT)",
+    "valid_from": "2026-04-01",
+    "valid_to": "2026-06-30",
+    "flag": 0,
+    "composition": "",
+    "q": 200.0,
+    "q_obs": None,
+    "q_xgb": None,
+    "q_lgbm": None,
+    "q_catboost": None,
+    "q_loc": None,
+    "q05": 180.0,
+    "q10": 185.0,
+    "q25": 190.0,
+    "q50": 200.0,
+    "q75": 210.0,
+    "q90": 215.0,
+    "q95": 220.0,
+}
+
+_SEASON_FORECAST_RECORD = {
+    **_QUARTER_FORECAST_RECORD,
+    "id": 3,
+    "horizon_type": "season",
+    "horizon_value": 2,
+    "q": 300.0,
+    "q05": 270.0,
+    "q95": 330.0,
+}
+
+
+class TestGetLongForecastsQuarter:
+    def test_renames_and_latest_dedup(self, monkeypatch):
+        """Two rows same (code, model_short) — only latest date survives."""
+        older = {**_QUARTER_FORECAST_RECORD, "date": "2026-03-01"}
+        newer = {**_QUARTER_FORECAST_RECORD, "date": "2026-03-22"}
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([older, newer])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="99001")
+
+        assert "forecasted_discharge" in result.columns
+        assert len(result) == 1
+        assert str(result["date"].iloc[0].date()) == "2026-03-22"
+
+    def test_empty_api_response(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="99001")
+
+        assert result.empty
+        assert "forecasted_discharge" in result.columns
+
+
+class TestGetLongForecastsSeason:
+    def test_renames_and_latest_dedup(self, monkeypatch):
+        """Two rows same (code, model_short) — only latest date survives."""
+        older = {**_SEASON_FORECAST_RECORD, "date": "2026-02-15"}
+        newer = {**_SEASON_FORECAST_RECORD, "date": "2026-03-22"}
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([older, newer])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_season(station="99001")
+
+        assert "forecasted_discharge" in result.columns
+        assert len(result) == 1
+        assert str(result["date"].iloc[0].date()) == "2026-03-22"
+
+    def test_empty_api_response(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_season(station="99001")
+
+        assert result.empty
+        assert "forecasted_discharge" in result.columns
+
+
+# ── _get_data_quarter / _get_data_season ─────────────────────────────────
+
+
+class TestGetDataQuarter:
+    """Integration tests for get_data("quarter", ...) — all HTTP mocked."""
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _all_stations_df(self):
+        return pd.DataFrame({"code": ["99001"], "station_labels": ["Test River A"]})
+
+    def test_returns_required_keys(self, monkeypatch):
+        """get_data('quarter') returns dict with all required keys."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_QUARTER_FORECAST_RECORD])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("quarter", "99001", self._all_stations_df())
+
+        for key in ("hydrograph_day_all", "hydrograph_pentad_all", "rain", "temp",
+                    "snow_data", "ml_forecast", "linreg_predictor",
+                    "forecasts_all", "forecast_stats"):
+            assert key in data, f"Missing key: {key}"
+
+    def test_forecast_stats_is_empty(self, monkeypatch):
+        """forecast_stats is always empty for quarter horizon."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_QUARTER_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("quarter", "99001", self._all_stations_df())
+
+        assert data["forecast_stats"].empty
+
+    def test_no_m0_key(self, monkeypatch):
+        """long_forecasts_m0 key must not be present for quarter horizon."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_QUARTER_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("quarter", "99001", self._all_stations_df())
+
+        assert "long_forecasts_m0" not in data
+
+    def test_forecasts_all_has_discharge(self, monkeypatch):
+        """forecasts_all contains forecasted_discharge when API returns data."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_QUARTER_FORECAST_RECORD])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("quarter", "99001", self._all_stations_df())
+
+        assert "forecasted_discharge" in data["forecasts_all"].columns
+
+
+class TestGetDataSeason:
+    """Integration tests for get_data("season", ...) — all HTTP mocked."""
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _all_stations_df(self):
+        return pd.DataFrame({"code": ["99001"], "station_labels": ["Test River A"]})
+
+    def test_returns_required_keys(self, monkeypatch):
+        """get_data('season') returns dict with all required keys."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_SEASON_FORECAST_RECORD])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("season", "99001", self._all_stations_df())
+
+        for key in ("hydrograph_day_all", "hydrograph_pentad_all", "rain", "temp",
+                    "snow_data", "ml_forecast", "linreg_predictor",
+                    "forecasts_all", "forecast_stats"):
+            assert key in data, f"Missing key: {key}"
+
+    def test_forecast_stats_is_empty(self, monkeypatch):
+        """forecast_stats is always empty for season horizon."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_SEASON_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("season", "99001", self._all_stations_df())
+
+        assert data["forecast_stats"].empty
+
+    def test_no_m0_key(self, monkeypatch):
+        """long_forecasts_m0 key must not be present for season horizon."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_SEASON_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("season", "99001", self._all_stations_df())
+
+        assert "long_forecasts_m0" not in data
+
+    def test_forecasts_all_has_discharge(self, monkeypatch):
+        """forecasts_all contains forecasted_discharge when API returns data."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_SEASON_FORECAST_RECORD])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("season", "99001", self._all_stations_df())
+
+        assert "forecasted_discharge" in data["forecasts_all"].columns

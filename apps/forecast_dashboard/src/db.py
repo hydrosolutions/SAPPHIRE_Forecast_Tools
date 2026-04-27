@@ -570,6 +570,59 @@ def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
     df["month_in_year"] = df["valid_from"].dt.month
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
+    # Keep only the latest-by-date row per (code, model_short)
+    if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
+        df = (
+            df.sort_values("date", ascending=False)
+              .drop_duplicates(subset=["code", "model_short"], keep="first")
+              .reset_index(drop=True)
+        )
+    return _convert_na_to_nan(df.sort_values("Date"))
+
+
+@_timed
+def get_long_forecasts_season(station=None) -> pd.DataFrame:
+    """Fetch long-term seasonal forecasts and reshape to match monthly format."""
+    code = _resolve_station(station) if station else None
+    params = {
+        "horizon_type": "season",
+        "start_date": f"{PREVIOUS_YEAR}-12-20",
+        "end_date": f"{CURRENT_YEAR}-12-31",
+        "limit": 1000,
+    }
+    if code:
+        params["code"] = code
+
+    df = _read_data("postprocessing", "long-forecast", params)
+    if df.empty or "date" not in df.columns:
+        logger.warning("get_long_forecasts_season: no data for station %s", code)
+        return pd.DataFrame(columns=[
+            "code", "date", "Date", "year",
+            "model_short", "model_long",
+            "forecasted_discharge", "flag",
+            "Q5", "Q25", "Q75", "Q95", "E[Q]",
+            "valid_from", "month_in_year",
+        ])
+
+    df.rename(columns={
+        "model_type": "model_short",
+        "model_type_description": "model_long",
+        "q": "forecasted_discharge",
+        "q05": "Q5", "q10": "Q10", "q25": "Q25",
+        "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
+    }, inplace=True)
+    df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["month_in_year"] = df["valid_from"].dt.month
+    df["Date"] = df["date"]
+    df["year"] = df["date"].dt.year
+    # Keep only the latest-by-date row per (code, model_short)
+    if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
+        df = (
+            df.sort_values("date", ascending=False)
+              .drop_duplicates(subset=["code", "model_short"], keep="first")
+              .reset_index(drop=True)
+        )
     return _convert_na_to_nan(df.sort_values("Date"))
 
 
@@ -583,6 +636,10 @@ def get_data(horizon, station, all_stations) -> dict:
 
     if horizon == "month":
         return _get_data_monthly(station, all_stations, add_labels, i18n_models)
+    if horizon == "quarter":
+        return _get_data_quarter(station, all_stations, add_labels, i18n_models)
+    if horizon == "season":
+        return _get_data_season(station, all_stations, add_labels, i18n_models)
 
     hin = _horizon_in_year_col(horizon)
 
@@ -675,3 +732,35 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
             )
         data["long_forecasts_m0"] = m0
     return data
+
+
+def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
+    """Load data for quarterly horizon — only long forecasts + daily hydrograph."""
+    forecasts_all = i18n_models(add_labels(get_long_forecasts_quarter(station)))
+    return {
+        "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
+        "hydrograph_pentad_all": pd.DataFrame(),
+        "rain":                  get_rain(station),
+        "temp":                  get_temp(station),
+        "snow_data":             get_snow_data(station),
+        "ml_forecast":           pd.DataFrame(),
+        "linreg_predictor":      pd.DataFrame(),
+        "forecasts_all":         forecasts_all,
+        "forecast_stats":        pd.DataFrame(),
+    }
+
+
+def _get_data_season(station, all_stations, add_labels, i18n_models) -> dict:
+    """Load data for seasonal horizon — only long forecasts + daily hydrograph."""
+    forecasts_all = i18n_models(add_labels(get_long_forecasts_season(station)))
+    return {
+        "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
+        "hydrograph_pentad_all": pd.DataFrame(),
+        "rain":                  get_rain(station),
+        "temp":                  get_temp(station),
+        "snow_data":             get_snow_data(station),
+        "ml_forecast":           pd.DataFrame(),
+        "linreg_predictor":      pd.DataFrame(),
+        "forecasts_all":         forecasts_all,
+        "forecast_stats":        pd.DataFrame(),
+    }

@@ -196,7 +196,7 @@ class DataManager(param.Parameterized):
 
     def get_available_models(self, station_code: str, selected_date, horizon: str = "") -> dict:
         """Return models available for a given station + date."""
-        if horizon == "month":
+        if horizon in ("month", "quarter", "season"):
             return dict(self._all_models)
         # Update the model_dict with the models we have results for for the selected station
         # Model dict can be empty if no forecasts at all are available for the selected station
@@ -207,8 +207,8 @@ class DataManager(param.Parameterized):
 
     def get_best_models(self, horizon, station_code: str, pentad, decad) -> list:
         """Return the best models for a station/pentad combination."""
-        if horizon == "month":
-            # No pentad/decad-level skill data for monthly; return all models
+        if horizon in ("month", "quarter", "season"):
+            # No pentad/decad-level skill data for long horizons; return all models
             df = self.forecasts_all
             if df is None or df.empty:
                 return []
@@ -250,8 +250,8 @@ class DataManager(param.Parameterized):
 
     def update_sites_for_pentad(self, _, horizon, pentad, decad) -> None:
         """Refresh hydrograph statistics + linear regression predictor on sites."""
-        if horizon == "month":
-            return  # no pentad/decad-level stats for monthly horizon
+        if horizon in ("month", "quarter", "season"):
+            return  # no pentad/decad-level stats for long horizons
         # Initial site attribute computation
         self._sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(
             _=_, sites=self._sites_list,
@@ -320,6 +320,9 @@ class DataManager(param.Parameterized):
 
         if horizon == "month":
             forecast_horizon = dt.datetime.now().month
+        elif horizon in ("quarter", "season"):
+            m = dt.datetime.now().month
+            forecast_horizon = ((m - 1) // 3) + 1  # 1–4 calendar quarter
         else:
             # The forecast is produced on the day before the first day of the forecast
             # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get

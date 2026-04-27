@@ -184,6 +184,7 @@ class WidgetManager:
             """Reload data for the new station and refresh the model checkbox."""
             _ = self._gettext
             is_month = horizon == "month"
+            is_long = horizon in ("month", "quarter", "season")
             dm.load_station(horizon, station_value.split()[0])
             dm.update_sites_for_pentad(_, horizon, selected_pentad, selected_decad)
             dm.invalidate_render_cache()
@@ -194,16 +195,17 @@ class WidgetManager:
                     self.date_picker.value = max_date.date()
 
             self.refresh_model_checkbox()
-            if is_month:
+            if is_long:
                 pm.update_forecast_tabulator()
-                pm.update_forecast_tabulator_m0()
+                if is_month:
+                    pm.update_forecast_tabulator_m0()
             else:
                 self.refresh_warnings()
                 pm.render_active_tab(self._dashboard_tabs)
-            pm.set_forecast_cards_visibility(not is_month)
-            # Only show forecast_card on Forecast tab and non-month horizon
+            pm.set_forecast_cards_visibility(not is_long, is_month=is_month)
+            # Only show forecast_card on Forecast tab and short horizons
             is_forecast_tab = self._dashboard_tabs.active == 1
-            self.forecast_card.visible = is_forecast_tab and not is_month
+            self.forecast_card.visible = is_forecast_tab and not is_long
 
             try:
                 _last_date, self.forecast_horizon, self.forecast_year = (
