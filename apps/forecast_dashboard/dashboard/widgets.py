@@ -82,11 +82,10 @@ def create_decad_selector(last_date):
 def create_horizon_selector():
     """Create forecast horizon selection widget."""
     horizon_types = {
-        _("pentad"):  "pentad",
-        _("decade"):  "decade",
-        _("month"):   "month",
-        _("quarter"): "quarter",
-        _("season"):  "season",
+        _("pentad"): "pentad",
+        _("decade"): "decade",
+        _("month"):  "month",
+        _("season"): "season",
     }
     horizon_selector = pn.widgets.Select(
         name=_("Select forecast horizon:"),
