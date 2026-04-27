@@ -1,5 +1,6 @@
 """Unit tests for forecast_dashboard/src/site.py."""
 
+import numpy as np
 import pandas as pd
 import pytest
 from src.site import SapphireSite
@@ -153,3 +154,97 @@ class TestOrderSitesList:
         # All 3 sites should be returned (list comprehension keeps all
         # whose code is in ordered_codes)
         assert len(ordered) == 3
+
+
+# ── get_forecast_attributes_for_site ─────────────────────────────────────────
+
+
+class TestGetForecastAttributesForSite:
+    """Tests for the column-defaulting hardening in get_forecast_attributes_for_site."""
+
+    def _identity(self, x):
+        return x
+
+    def test_all_columns_present_sets_attributes(self):
+        """Full DataFrame (pentad/decade shape) populates all attributes."""
+        site = SapphireSite(code="99001")
+        df = pd.DataFrame({
+            "Forecasted discharge": [12.5],
+            "Forecast lower bound": [10.0],
+            "Forecast upper bound": [15.0],
+            "δ": [1.1],
+            "s/σ": [0.55],
+            "MAE": [0.9],
+            "Accuracy": [85.0],
+            "Model": ["LR"],
+        })
+        site.get_forecast_attributes_for_site(self._identity, df)
+        assert site.forecast_expected == 12.5
+        assert site.forecast_lower_bound == 10.0
+        assert site.forecast_upper_bound == 15.0
+        assert site.forecast_delta == 1.1
+        assert site.forecast_sdivsigma == 0.55
+        assert site.forecast_mae == 0.9
+        assert site.forecast_accuracy == 85.0
+        assert site.forecast_model == "LR"
+
+    def test_missing_skill_columns_default_to_none(self):
+        """DataFrame without skill-metric columns (quarter/season shape) sets them to None."""
+        site = SapphireSite(code="99001")
+        # Only the three main forecast columns, no δ / s/σ / MAE / Accuracy
+        df = pd.DataFrame({
+            "Forecasted discharge": [8.3],
+            "Forecast lower bound": [6.0],
+            "Forecast upper bound": [11.0],
+            "Model": ["TFT"],
+        })
+        # Must not raise KeyError
+        site.get_forecast_attributes_for_site(self._identity, df)
+        assert site.forecast_expected == 8.3
+        assert site.forecast_lower_bound == 6.0
+        assert site.forecast_upper_bound == 11.0
+        assert site.forecast_delta is None
+        assert site.forecast_sdivsigma is None
+        assert site.forecast_mae is None
+        assert site.forecast_accuracy is None
+        assert site.forecast_model == "TFT"
+
+    def test_nan_skill_columns_are_read_not_defaulted(self):
+        """NaN values in skill columns (quarter/season via vizualization) are read as-is."""
+        site = SapphireSite(code="99001")
+        df = pd.DataFrame({
+            "Forecasted discharge": [5.0],
+            "Forecast lower bound": [3.0],
+            "Forecast upper bound": [7.0],
+            "δ": [np.nan],
+            "s/σ": [np.nan],
+            "MAE": [np.nan],
+            "Accuracy": [np.nan],
+            "Model": ["NE"],
+        })
+        site.get_forecast_attributes_for_site(self._identity, df)
+        # Columns are present so values are read; NaN is preserved (not None)
+        assert pd.isna(site.forecast_delta)
+        assert pd.isna(site.forecast_mae)
+        assert site.forecast_model == "NE"
+
+    def test_perc_norm_computed_when_norm_set(self):
+        """perc_norm is calculated from hydrograph_norm when both are available."""
+        site = SapphireSite(code="99001")
+        site.hydrograph_norm = 100.0
+        df = pd.DataFrame({
+            "Forecasted discharge": [80.0],
+            "Forecast lower bound": [60.0],
+            "Forecast upper bound": [100.0],
+            "Model": ["LR"],
+        })
+        site.get_forecast_attributes_for_site(self._identity, df)
+        assert site.perc_norm == 80.0
+
+    def test_perc_norm_none_when_forecast_missing(self):
+        """perc_norm is None when forecast_expected column is absent."""
+        site = SapphireSite(code="99001")
+        site.hydrograph_norm = 100.0
+        df = pd.DataFrame({"Model": ["LR"]})
+        site.get_forecast_attributes_for_site(self._identity, df)
+        assert site.perc_norm is None

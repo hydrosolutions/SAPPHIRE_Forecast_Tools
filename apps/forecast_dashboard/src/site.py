@@ -203,15 +203,24 @@ class SapphireSite:
         """
         print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
         print(f"df.columns: {df.columns}")
-        self.forecast_expected = df[_('Forecasted discharge')].values[0]
-        self.forecast_lower_bound = df[_('Forecast lower bound')].values[0]
-        self.forecast_upper_bound = df[_('Forecast upper bound')].values[0]
-        self.forecast_delta = df[_('δ')].values[0]
-        self.forecast_sdivsigma = df[_('s/σ')].values[0]
-        self.forecast_mae = df[_('MAE')].values[0]
-        self.forecast_accuracy = df[_('Accuracy')].values[0]
+        self.forecast_expected = (
+            df[_('Forecasted discharge')].values[0]
+            if _('Forecasted discharge') in df.columns else None
+        )
+        self.forecast_lower_bound = (
+            df[_('Forecast lower bound')].values[0]
+            if _('Forecast lower bound') in df.columns else None
+        )
+        self.forecast_upper_bound = (
+            df[_('Forecast upper bound')].values[0]
+            if _('Forecast upper bound') in df.columns else None
+        )
+        self.forecast_delta = df[_('δ')].values[0] if _('δ') in df.columns else None
+        self.forecast_sdivsigma = df[_('s/σ')].values[0] if _('s/σ') in df.columns else None
+        self.forecast_mae = df[_('MAE')].values[0] if _('MAE') in df.columns else None
+        self.forecast_accuracy = df[_('Accuracy')].values[0] if _('Accuracy') in df.columns else None
         #self.forecast_nse = df['NSE']  # Not available yet
-        self.forecast_model = df[_('Model')].values[0]
+        self.forecast_model = df[_('Model')].values[0] if _('Model') in df.columns else ''
         # Calculate percentage of norm
         norm = getattr(self, 'hydrograph_norm', None)
         if norm and self.forecast_expected:
