@@ -553,8 +553,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     sapphire_forecast_horizon = horizon
     if sapphire_forecast_horizon is None:
         raise ValueError("horizon parameter is required")
-    if sapphire_forecast_horizon not in ['pentad', 'decad', 'month']:
-        raise ValueError(f"horizon must be 'pentad', 'decad', or 'month', got '{sapphire_forecast_horizon}'")
+    if sapphire_forecast_horizon not in ['pentad', 'decad', 'month', 'season']:
+        raise ValueError(f"horizon must be 'pentad', 'decad', 'month', or 'season', got '{sapphire_forecast_horizon}'")
     print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
 
 
@@ -600,7 +600,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             get_value_fn=header_df['day_end_decad'].values[0],
             tag_settings=tag_settings)
 
-    if sapphire_forecast_horizon == 'month':
+    if sapphire_forecast_horizon in ('month', 'season'):
         # Tag names must match the last segment of the template tag
         # (ieasyreports splits on '.' and uses only the suffix).
         # Prefixes like HEADER./DATA./ in the template route the tag to
@@ -646,14 +646,17 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             get_value_fn=header_df['prev_year'].values[0],
             tag_settings=tag_settings,
         )
-        # Quarterly section: derive month labels from the selected quarter row.
-        # Pick the first reservoir with quarterly bounds; all share the same
-        # upcoming quarter so any representative is fine.
+        # Derive period labels: quarterly bounds for month, seasonal bounds for season.
+        # All sites share the same period range, so the first matching site wins.
         _month_start_ru = header_df['month_str_nom_ru'].values[0]
         _month_end_ru = header_df['month_str_nom_ru'].values[0]
         for _site in bulletin_sites:
-            vf = getattr(_site, 'quarterly_valid_from', None)
-            vt = getattr(_site, 'quarterly_valid_to', None)
+            if sapphire_forecast_horizon == 'month':
+                vf = getattr(_site, 'quarterly_valid_from', None)
+                vt = getattr(_site, 'quarterly_valid_to', None)
+            else:
+                vf = getattr(_site, 'seasonal_valid_from', None)
+                vt = getattr(_site, 'seasonal_valid_to', None)
             if vf is not None and vt is not None:
                 _month_start_ru = tl.get_month_str_case1(vf)
                 _month_end_ru = tl.get_month_str_case1(vt)
@@ -952,6 +955,104 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 non_reservoirs or None,
                 reservoirs or None,
                 reservoirs if has_quarterly else None,
+            ],
+            output_filename=bulletin_file_name,
+        )
+        return
+
+    elif sapphire_forecast_horizon == 'season':
+        report_settings.report_output_path = os.path.join(
+            report_settings.report_output_path,
+            "bulletins", "season",
+            str(header_df['year'].values[0]))
+        template_file_name = os.getenv("ieasyforecast_template_season_bulletin_file")
+
+        non_reservoirs = [s for s in bulletin_sites if 'вдхр' not in (s.punkt_name_ru or '')]
+        reservoirs = [s for s in bulletin_sites if 'вдхр' in (s.punkt_name_ru or '')]
+
+        non_reservoirs = oder_sites_list_according_to_bulletin_order(non_reservoirs)
+        reservoirs = oder_sites_list_according_to_bulletin_order(reservoirs)
+
+        # Section 0: non-reservoirs with HEADER tag — seasonal attributes
+        sec0_tags = [
+            Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                tag_settings=tag_settings, header=True),
+            Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
+        ]
+
+        # Section 1: reservoirs — same seasonal attributes (reuse same attr names)
+        sec1_tags = [
+            Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_q_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MIN', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_min', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
+        ]
+
+        all_section_tags = sec0_tags + sec1_tags
+        seen_names: "set[str]" = set()
+        union_tags = [
+            fc_month_tag, fc_year_tag, fc_prevyear_tag,
+            fc_month_start_tag, fc_month_end_tag,
+        ]
+        for t in all_section_tags:
+            if t.name not in seen_names:
+                union_tags.append(t)
+                seen_names.add(t.name)
+
+        year = int(header_df['year'].values[0])
+        month_num = int(header_df['month_number'].values[0])
+        month_name = header_df['month_str_nom_ru'].values[0]
+        bulletin_file_name = f"{year}_{month_num:02}_{month_name}_seasonal_forecast_bulletin.xlsx"
+
+        report_generator = MultiSectionReportGenerator(
+            tags=union_tags,
+            template=template_file_name,
+            templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
+            reports_directory_path=report_settings.report_output_path,
+            tag_settings=tag_settings,
+            requires_header=True,
+            tags_per_section=[sec0_tags, sec1_tags],
+        )
+        report_generator.validate()
+        report_generator.generate_report_multi(
+            list_objects_per_section=[
+                non_reservoirs or None,
+                reservoirs or None,
             ],
             output_filename=bulletin_file_name,
         )

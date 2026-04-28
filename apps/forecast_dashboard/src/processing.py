@@ -1523,6 +1523,16 @@ def get_bulletin_header_info(date, sapphire_forecast_horizon):
             'prev_year': [int(year) - 1],
             'days_in_month': [calendar.monthrange(int(year), int(month_num))[1]],
         })
+    elif sapphire_forecast_horizon == 'season':
+        month_num = tl.get_month_num(date)
+        year = tl.get_year(date)
+        df = pd.DataFrame({
+            'month_number': [month_num],
+            'month_str_nom_ru': [tl.get_month_str_case1(date)],
+            'month_str_gen_ru': [tl.get_month_str_case2(date)],
+            'year': [year],
+            'prev_year': [int(year) - 1],
+        })
     else:
         raise ValueError(f"Unsupported horizon: {sapphire_forecast_horizon}")
 

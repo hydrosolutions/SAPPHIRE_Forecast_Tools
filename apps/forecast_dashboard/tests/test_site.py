@@ -248,3 +248,63 @@ class TestGetForecastAttributesForSite:
         df = pd.DataFrame({"Model": ["LR"]})
         site.get_forecast_attributes_for_site(self._identity, df)
         assert site.perc_norm is None
+
+
+# ── get_seasonal_forecast_attributes_for_site ─────────────────────────────
+
+
+class TestGetSeasonalForecastAttributesForSite:
+    def _identity(self, x):
+        return x
+
+    def _make_df(self, q_min=50.0, q_max=200.0, q_exp=100.0,
+                 valid_from="2026-04-01", valid_to="2026-09-30"):
+        return pd.DataFrame({
+            "Forecast lower bound": [q_min],
+            "Forecast upper bound": [q_max],
+            "Forecasted discharge": [q_exp],
+            "Model": ["TFT"],
+            "valid_from": [valid_from],
+            "valid_to": [valid_to],
+        })
+
+    def test_seasonal_attributes_set_from_full_df(self):
+        """Full DataFrame populates all seasonal attributes correctly."""
+        site = SapphireSite(code="99001")
+        site.hydrograph_norm = 100.0
+        df = self._make_df()
+        # April 1 – Sep 30 = 183 days
+        seconds = int((pd.Timestamp("2026-09-30") - pd.Timestamp("2026-04-01") + pd.Timedelta(days=1)).total_seconds())
+        site.get_seasonal_forecast_attributes_for_site(self._identity, df, seconds)
+        assert site.forecast_q_min == 50.0
+        assert site.forecast_q_max == 200.0
+        assert site.forecast_v_min == pytest.approx(50.0 * seconds / 1_000_000, rel=1e-6)
+        assert site.forecast_v_max == pytest.approx(200.0 * seconds / 1_000_000, rel=1e-6)
+        assert site.forecast_norm == 100.0
+        assert site.forecast_vnorm == pytest.approx(100.0 * seconds / 1_000_000, rel=1e-6)
+        assert site.perc_norm == pytest.approx(100.0, rel=1e-6)
+        assert site.perc_prevyear is None
+
+    def test_seasonal_attributes_none_on_empty_df(self):
+        """Empty DataFrame sets all seasonal attrs to None."""
+        site = SapphireSite(code="99001")
+        site.get_seasonal_forecast_attributes_for_site(self._identity, pd.DataFrame(), 0)
+        assert site.forecast_q_min is None
+        assert site.forecast_q_max is None
+        assert site.forecast_v_min is None
+        assert site.forecast_v_max is None
+        assert site.forecast_norm is None
+        assert site.forecast_vnorm is None
+        assert site.perc_norm is None
+        assert site.perc_prevyear is None
+        assert site.seasonal_valid_from is None
+        assert site.seasonal_valid_to is None
+
+    def test_seasonal_valid_from_to_stored(self):
+        """seasonal_valid_from / seasonal_valid_to are stored as Timestamps."""
+        site = SapphireSite(code="99001")
+        df = self._make_df(valid_from="2026-04-01", valid_to="2026-09-30")
+        seconds = int((pd.Timestamp("2026-09-30") - pd.Timestamp("2026-04-01") + pd.Timedelta(days=1)).total_seconds())
+        site.get_seasonal_forecast_attributes_for_site(self._identity, df, seconds)
+        assert site.seasonal_valid_from.month == 4
+        assert site.seasonal_valid_to.month == 9

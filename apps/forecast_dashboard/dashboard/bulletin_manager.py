@@ -136,6 +136,30 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                     site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
                 else:
                     site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+            elif horizon_type == 'season':
+                s_df = db.get_long_forecasts_season(site.code)
+                if (
+                    not s_df.empty
+                    and "code" in s_df.columns
+                    and "date" in s_df.columns
+                ):
+                    filtered_s = s_df[s_df["code"] == site.code]
+                    if not filtered_s.empty:
+                        filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
+                else:
+                    filtered_s = pd.DataFrame()
+                if (
+                    not filtered_s.empty
+                    and "valid_from" in filtered_s.columns
+                    and "valid_to" in filtered_s.columns
+                ):
+                    vf = pd.to_datetime(filtered_s["valid_from"].values[0])
+                    vt = pd.to_datetime(filtered_s["valid_to"].values[0])
+                    seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+                else:
+                    seconds_in_season = 0
+                filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+                site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
             else:
                 site.get_forecast_attributes_for_site(_, site.forecasts)
             bulletin_sites.append(site)
@@ -335,6 +359,38 @@ class BulletinManager:
                 selected_site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
             else:
                 selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+        elif horizon == "season":
+            s_df = db.get_long_forecasts_season(selected_station)
+            model_short = None
+            if not selected_rows.empty and _("Model") in selected_rows.columns:
+                model_short = selected_rows[_("Model")].values[0]
+            if (
+                not s_df.empty
+                and "code" in s_df.columns
+                and "date" in s_df.columns
+                and "model_short" in s_df.columns
+                and model_short is not None
+            ):
+                filtered_s = s_df[
+                    (s_df["code"] == selected_site.code)
+                    & (s_df["model_short"] == model_short)
+                ]
+                if not filtered_s.empty:
+                    filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
+            else:
+                filtered_s = pd.DataFrame()
+            if (
+                not filtered_s.empty
+                and "valid_from" in filtered_s.columns
+                and "valid_to" in filtered_s.columns
+            ):
+                vf = pd.to_datetime(filtered_s["valid_from"].values[0])
+                vt = pd.to_datetime(filtered_s["valid_to"].values[0])
+                seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+            else:
+                seconds_in_season = 0
+            filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+            selected_site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
         else:
             selected_site.get_forecast_attributes_for_site(_, selected_rows)
         # Debugging: Print site details
