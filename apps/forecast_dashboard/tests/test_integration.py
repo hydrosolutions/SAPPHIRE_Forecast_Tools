@@ -10,7 +10,7 @@ import datetime as dt
 
 TEST_PENTAD = False
 TEST_DECAD = False
-TEST_LOCAL = False
+TEST_LOCAL = True
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
@@ -18,30 +18,6 @@ SLEEP = 1
 API_BASE = "http://localhost:8000/api"
 API_TIMEOUT = 30
 horizon = "pentad"  # pentad or decad
-
-today = dt.datetime.now()
-today = today + dt.timedelta(days=1)
-year = today.year
-date_str = today.strftime("%Y-%m-%d")
-print("Today's date:", date_str)
-month_str = today.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
-if horizon == "pentad":
-    horizon_value = tl.get_pentad_for_date(today)
-    print("Pentad in year:", horizon_value)
-    horizon_value_in_month = tl.get_pentad(today)
-    print("Pentad in month:", horizon_value_in_month)
-    # horizon_value_in_month = "2"
-    sheet_name = f"{horizon_value_in_month} пентада"
-else:
-    horizon_value = tl.get_decad_for_date(today)
-    print("Decad in year:", horizon_value)
-    horizon_value_in_month = tl.get_decad_in_month(today)
-    print("Decad in month:", horizon_value_in_month)
-    sheet_name = f"{horizon_value_in_month} декада"
-
-if len(str(horizon_value)) == 1:
-    horizon_value = "0" + str(horizon_value)
-# horizon_value = "14"
 
 def normalize_spaces(s):
     return re.sub(r'\s+', ' ', s).strip()
@@ -51,8 +27,49 @@ def normalize_comma(s):
     return s.replace(",", "")
 
 
-def _fetch_bulletin_from_api() -> list[dict]:
-    """Fetch bulletin records from the backend API for the current horizon/year."""
+def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
+    """Mirror the dashboard's get_bulletin_metadata.
+
+    Returns (last_date, horizon_value, year) where last_date is the latest
+    forecast production date in the postprocessing DB plus one day,
+    horizon_value is the horizon_in_year of that latest record (e.g. pentad
+    1-72), and year is last_date.year.
+
+    Pages through both /forecast/ and /lr-forecast/ for the current and
+    previous year so we are not silently truncated by the API's default limit.
+    """
+    cur_year = dt.datetime.now().year
+    page_size = 1000
+    base_params = {
+        "horizon":    horizon,
+        "start_date": f"{cur_year - 1}-12-20",
+        "end_date":   f"{cur_year + 1}-12-31",
+    }
+    records = []
+    for endpoint in ("forecast", "lr-forecast"):
+        skip = 0
+        while True:
+            resp = requests.get(
+                f"{API_BASE}/postprocessing/{endpoint}/",
+                params={**base_params, "skip": skip, "limit": page_size},
+                timeout=API_TIMEOUT,
+            )
+            resp.raise_for_status()
+            page = resp.json()
+            records.extend(page)
+            if len(page) < page_size:
+                break
+            skip += page_size
+    if not records:
+        raise RuntimeError(f"No forecast records found for horizon {horizon}")
+    latest = max(records, key=lambda r: r["date"])
+    max_date = dt.datetime.strptime(latest["date"], "%Y-%m-%d").date()
+    last_date = max_date + dt.timedelta(days=1)
+    return last_date, int(latest["horizon_in_year"]), last_date.year
+
+
+def _fetch_bulletin_from_api(horizon: str, year: int, horizon_value: int) -> list[dict]:
+    """Fetch bulletin records from the backend API for the given horizon/year."""
     print("horizon, year, horizon_value:", horizon, year, horizon_value)
     resp = requests.get(
         f"{API_BASE}/postprocessing/bulletin/",
@@ -319,9 +336,27 @@ def test_local(page: Page):
     print("#### Write bulletin button clicked")
     time.sleep(SLEEP)
 
+    # Resolve forecast year/horizon_value/sheet_name/month_str from the latest
+    # forecast record in the DB — mirrors the dashboard's get_bulletin_metadata
+    # so the test does not depend on today's wall-clock date.
+    last_date, horizon_value, year = _get_latest_forecast_metadata(horizon)
+    date_str = last_date.strftime("%Y-%m-%d")
+    print("Latest forecast (last_date):", date_str)
+    month_str = last_date.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
+    if horizon == "pentad":
+        horizon_value_in_month = tl.get_pentad(date_str)
+        print("Pentad in year:", horizon_value)
+        print("Pentad in month:", horizon_value_in_month)
+        sheet_name = f"{horizon_value_in_month} пентада"
+    else:
+        horizon_value_in_month = tl.get_decad_in_month(date_str)
+        print("Decad in year:", horizon_value)
+        print("Decad in month:", horizon_value_in_month)
+        sheet_name = f"{horizon_value_in_month} декада"
+
     # Fetch bulletin records from the API
     print("#### Fetching bulletin from API...")
-    api_records = _fetch_bulletin_from_api()
+    api_records = _fetch_bulletin_from_api(horizon, year, horizon_value)
     print(f"#### API returned {len(api_records)} bulletin record(s):")
     for rec in api_records:
         print(rec)
