@@ -1739,9 +1739,25 @@ def plot_daily_hydrograph_data(_, dm, wm, hydrograph_day_all, linreg_predictor, 
     else:
         period = "10 day average"
 
+    # Linreg-predictor data is pentad/decade-specific; under long horizons the
+    # caller passes an empty DataFrame and add_predictor_dates returns it
+    # unchanged, so we skip the predictor/forecast spans and the predictor-
+    # value text label rather than crashing on `.values[0]`.
+    has_predictor = (
+        not linreg_predictor.empty
+        and 'predictor_start_date' in linreg_predictor.columns
+    )
+
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
-    predictor_string = _(f"Current year, {period}: ") + f"{linreg_predictor['predictor'].values[0]}" + " " + _("m3/s")
+    if has_predictor:
+        predictor_string = (
+            _(f"Current year, {period}: ")
+            + f"{linreg_predictor['predictor'].values[0]}"
+            + " " + _("m3/s")
+        )
+    else:
+        predictor_string = _("Current year")
     forecast_string = _("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
 
     # Rename columns to be used in the plot to allow internationalization
@@ -1758,24 +1774,29 @@ def plot_daily_hydrograph_data(_, dm, wm, hydrograph_day_all, linreg_predictor, 
         str(last_year): last_year_col,
         str(current_year): current_year_col
     })
-    linreg_predictor = linreg_predictor.rename({
-        'date': date_col,
-        'day_of_year': _('day_of_year column name'),
-        'predictor': _('Predictor column name')
-    })
+    if has_predictor:
+        linreg_predictor = linreg_predictor.rename({
+            'date': date_col,
+            'day_of_year': _('day_of_year column name'),
+            'predictor': _('Predictor column name')
+        })
 
     # Create a holoviews bokeh plots of the daily hydrograph
-    hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
-        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=True)
+    if has_predictor:
+        hvspan_predictor = hv.VSpan(
+            linreg_predictor['predictor_start_date'].values[0],
+            linreg_predictor['predictor_end_date'].values[0]) \
+            .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=True)
 
-    hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
-        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=False)
+        hvspan_forecast = hv.VSpan(
+            linreg_predictor['forecast_start_date'].values[0],
+            linreg_predictor['forecast_end_date'].values[0]) \
+            .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
+    else:
+        hvspan_predictor = None
+        hvspan_forecast = None
 
     vlines = create_cached_vlines(_, horizon, for_dates=True)
 
@@ -1823,13 +1844,13 @@ def plot_daily_hydrograph_data(_, dm, wm, hydrograph_day_all, linreg_predictor, 
         # _('Current year legend entry'),
         runoff_current_year_color)
 
-    # Overlay the plots
-    daily_hydrograph = full_range_area * \
-                       area_05_95 * \
-                       area_25_75 * \
-                       vlines * \
-                       last_year * hvspan_forecast * hvspan_predictor * \
-                       mean * current_year
+    # Overlay the plots — predictor/forecast spans only when available
+    daily_hydrograph = full_range_area * area_05_95 * area_25_75 * vlines * last_year
+    if hvspan_forecast is not None:
+        daily_hydrograph = daily_hydrograph * hvspan_forecast
+    if hvspan_predictor is not None:
+        daily_hydrograph = daily_hydrograph * hvspan_predictor
+    daily_hydrograph = daily_hydrograph * mean * current_year
 
     daily_hydrograph.opts(
         title=title_text,
@@ -1905,13 +1926,22 @@ def plot_daily_rainfall_data(_, wm, daily_rainfall, station, date_picker,
     current_year = current_year.sort_values('date')
     # print(f"Tail of current_year\n{current_year.tail(10)}")
 
-    # Accumulate rainfall over the predictor period
+    # Accumulate rainfall over the predictor period — predictor data is only
+    # available for short horizons. Under month/quarter/season the caller
+    # passes an empty DataFrame, so skip the spans and the predictor sum text.
     horizon = wm.horizon_selector.value
     linreg_predictor = processing.add_predictor_dates(horizon, linreg_predictor, station, date_picker)
-    predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
-    predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
-    predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
-                                      (current_year['date'] <= predictor_end_date)].copy()
+    has_predictor = (
+        not linreg_predictor.empty
+        and 'predictor_start_date' in linreg_predictor.columns
+    )
+    if has_predictor:
+        predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
+        predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
+        predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
+                                          (current_year['date'] <= predictor_end_date)].copy()
+    else:
+        predictor_rainfall = current_year.iloc[0:0].copy()
 
     norm_rainfall = station_data.drop(columns=['P']).rename(columns={'P_norm': 'P'}).copy()
     '''
@@ -1939,20 +1969,27 @@ def plot_daily_rainfall_data(_, wm, daily_rainfall, station, date_picker,
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily precipitation sums for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_(f'Current year, {current_period}: ')}{predictor_rainfall['P'].sum().round()} mm"
+    if has_predictor:
+        current_year_text = f"{_(f'Current year, {current_period}: ')}{predictor_rainfall['P'].sum().round()} mm"
+    else:
+        current_year_text = _('Current year')
     forecast_text = f"{_(f'Precipitation forecast, {forecast_period}: ')} {forecasts['P'].sum().round()} mm"
 
-    hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
-        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=True)
+    if has_predictor:
+        hvspan_predictor = hv.VSpan(
+            linreg_predictor['predictor_start_date'].values[0],
+            linreg_predictor['predictor_end_date'].values[0]) \
+            .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=True)
 
-    hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
-        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=False)
+        hvspan_forecast = hv.VSpan(
+            linreg_predictor['forecast_start_date'].values[0],
+            linreg_predictor['forecast_end_date'].values[0]) \
+            .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
+    else:
+        hvspan_predictor = None
+        hvspan_forecast = None
 
     vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=station_data['P'].max() * 1.05)
 
@@ -1998,9 +2035,13 @@ def plot_daily_rainfall_data(_, wm, daily_rainfall, station, date_picker,
             interpolation='steps-mid',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
+        figure = vlines * hv_norm_rainfall * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
+        figure = vlines * hv_norm_rainfall * hv_current_year
+    if hvspan_predictor is not None:
+        figure = hvspan_predictor * figure
+    if hvspan_forecast is not None:
+        figure = hvspan_forecast * figure
 
     figure.opts(
         title=title_text,
@@ -2054,13 +2095,22 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
     current_year = current_year.sort_values('date')
     # print(f"Tail of current_year\n{current_year.tail(10)}")
 
-    # Accumulate rainfall over the predictor period
+    # Accumulate rainfall over the predictor period — predictor data is only
+    # available for short horizons. Skip the spans and the predictor mean text
+    # when the caller passes an empty linreg_predictor.
     horizon = wm.horizon_selector.value
     linreg_predictor = processing.add_predictor_dates(horizon, linreg_predictor, station, date_picker)
-    predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
-    predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
-    predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
-                                      (current_year['date'] <= predictor_end_date)].copy()
+    has_predictor = (
+        not linreg_predictor.empty
+        and 'predictor_start_date' in linreg_predictor.columns
+    )
+    if has_predictor:
+        predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
+        predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
+        predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
+                                          (current_year['date'] <= predictor_end_date)].copy()
+    else:
+        predictor_rainfall = current_year.iloc[0:0].copy()
 
     norm_rainfall = station_data.drop(columns=['T']).rename(columns={'T_norm': 'T'}).copy()
     '''
@@ -2087,20 +2137,27 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean()} °C"
+    if has_predictor:
+        current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean()} °C"
+    else:
+        current_year_text = _('Current year')
     forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean()} °C"
 
-    hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
-        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=True)
+    if has_predictor:
+        hvspan_predictor = hv.VSpan(
+            linreg_predictor['predictor_start_date'].values[0],
+            linreg_predictor['predictor_end_date'].values[0]) \
+            .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=True)
 
-    hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
-        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
-              muted_alpha=0.05, show_legend=False)
+        hvspan_forecast = hv.VSpan(
+            linreg_predictor['forecast_start_date'].values[0],
+            linreg_predictor['forecast_end_date'].values[0]) \
+            .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
+    else:
+        hvspan_predictor = None
+        hvspan_forecast = None
 
     vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=station_data['T'].max() * 1.05)
 
@@ -2146,9 +2203,13 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
+        figure = vlines * hv_norm_rainfall * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
+        figure = vlines * hv_norm_rainfall * hv_current_year
+    if hvspan_predictor is not None:
+        figure = hvspan_predictor * figure
+    if hvspan_forecast is not None:
+        figure = hvspan_forecast * figure
 
     figure.opts(
         title=title_text,
@@ -2261,13 +2322,22 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     #     lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
     # norm_snow = norm_snow.sort_values('date')
 
-    # Get predictor period data
+    # Get predictor period data — predictor data is only available for short
+    # horizons. Under month/quarter/season the caller passes an empty
+    # DataFrame, so leave predictor_snow empty (the label below already falls
+    # back to "Current year" when the mean is NaN).
     horizon = wm.horizon_selector.value
     linreg_predictor = processing.add_predictor_dates(horizon, linreg_predictor, station, date_picker)
-    predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
-    predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
-    predictor_snow = current_year[(current_year['date'] >= predictor_start_date) &
-                                  (current_year['date'] <= predictor_end_date)].copy()
+    if (
+        not linreg_predictor.empty
+        and 'predictor_start_date' in linreg_predictor.columns
+    ):
+        predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
+        predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
+        predictor_snow = current_year[(current_year['date'] >= predictor_start_date) &
+                                      (current_year['date'] <= predictor_end_date)].copy()
+    else:
+        predictor_snow = current_year.iloc[0:0].copy()
 
     # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":

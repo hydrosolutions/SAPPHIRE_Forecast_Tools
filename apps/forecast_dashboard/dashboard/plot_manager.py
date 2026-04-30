@@ -326,16 +326,27 @@ class PlotManager:
     # Tab-activation renderer (lazy rendering per station)
     # ------------------------------------------------------------------
     def render_active_tab(self, dashboard_tabs, event=None):
-        """Render plots only when a tab is first activated for a station."""
-        if self._wm.horizon_selector.value in ("month", "quarter", "season"):
-            return  # long horizons only show summary table
+        """Render plots only when a tab is first activated for a station.
+
+        The Predictors tab shows daily-resolution data (hydrograph / rain /
+        temp / snow) that is fetched the same way for every horizon, so it
+        re-renders on station change regardless of horizon. The Forecast
+        tab's short-horizon code path doesn't apply under month/quarter/
+        season — long horizons drive their own summary table updates from
+        widget_manager._on_change instead.
+        """
         active = dashboard_tabs.active  # 0 = Predictors, 1 = Forecast
         wm, dm, viz = self._wm, self._dm, self._cfg.viz
+        is_long = wm.horizon_selector.value in ("month", "quarter", "season")
 
         # with pn.io.hold(pn.state.curdoc):
         if active == 0 and dm.should_render_predictors(wm.station_selector.value):
             self._render_predictors_tab(viz, dm, wm)
-        elif active == 1 and dm.should_render_forecast(wm.station_selector.value):
+        elif (
+            active == 1
+            and not is_long
+            and dm.should_render_forecast(wm.station_selector.value)
+        ):
             self._render_forecast_tab(viz, dm, wm)
 
     def _render_predictors_tab(self, viz, dm, wm):

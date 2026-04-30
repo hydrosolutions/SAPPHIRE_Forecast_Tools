@@ -201,7 +201,12 @@ class WidgetManager:
                     pm.update_forecast_tabulator_m0()
             else:
                 self.refresh_warnings()
-                pm.render_active_tab(self._dashboard_tabs)
+            # Always re-render the active tab so the Predictors-tab panes
+            # (which are horizon-independent — daily hydrograph / rain /
+            # temp / snow) update on station change even under long
+            # horizons. The Forecast-tab branch inside render_active_tab
+            # is itself gated on `not is_long`, so this is safe.
+            pm.render_active_tab(self._dashboard_tabs)
             pm.set_forecast_cards_visibility(not is_long, is_month=is_month)
             # Only show forecast_card on Forecast tab and short horizons
             is_forecast_tab = self._dashboard_tabs.active == 1

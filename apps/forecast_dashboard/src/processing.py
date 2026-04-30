@@ -697,6 +697,14 @@ def add_predictor_dates(horizon, linreg_predictor, station, date):
         pd.Series: The predictor data for the station.
     """
 
+    # Long-horizon callers (_get_data_monthly / _get_data_quarter /
+    # _get_data_season) pass an empty DataFrame because predictor periods
+    # are pentad/decade-specific. Return empty so the predictor plots can
+    # skip the predictor/forecast spans rather than crashing on missing
+    # columns below.
+    if linreg_predictor.empty or 'date' not in linreg_predictor.columns:
+        return pd.DataFrame()
+
     # Get lates forecast date from linre_predictor
     linreg_predictor['date'] = pd.to_datetime(linreg_predictor['date'], format='%Y-%m-%d')
     latest_forecast_date = linreg_predictor['date'].max()
