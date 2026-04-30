@@ -68,6 +68,243 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
     return last_date, int(latest["horizon_in_year"]), last_date.year
 
 
+def _extract_bokeh_data_sources(page) -> list[dict]:
+    """Dump every Bokeh ColumnDataSource the active document holds.
+
+    Returns a list of {id, name, data} dicts where `data` is the column dict
+    Bokeh actually renders (TypedArrays converted to plain lists so we can
+    compare values from Python).
+    """
+    return page.evaluate(
+        """
+() => {
+  const out = [];
+  const docs = (window.Bokeh && window.Bokeh.documents) ? window.Bokeh.documents : [];
+  for (const doc of docs) {
+    let models;
+    try { models = Array.from(doc._all_models.values()); }
+    catch (e) { continue; }
+    for (const m of models) {
+      if (m.type !== 'ColumnDataSource') continue;
+      const data = {};
+      for (const [k, v] of Object.entries(m.data)) {
+        try { data[k] = Array.from(v); }
+        catch (e) { data[k] = v; }
+      }
+      out.push({id: m.id, name: m.name || null, data: data});
+    }
+  }
+  return out;
+}
+"""
+    )
+
+
+def _series_from_db_rows(
+    rows: list[dict], field: str, scale: float = 1.0
+) -> list[float]:
+    """Extract a date-sorted list of non-null numeric values from API rows.
+
+    `scale` mirrors any unit conversion the dashboard applies before plotting
+    (e.g. HS is multiplied by 100 to render in cm — see vizualization.py).
+    """
+    pairs: list[tuple[str, float]] = []
+    for r in rows:
+        v = r.get(field)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        pairs.append((str(r.get("date", ""))[:10], float(v) * scale))
+    pairs.sort(key=lambda x: x[0])
+    return [v for _, v in pairs]
+
+
+def _is_nan(v) -> bool:
+    return isinstance(v, float) and v != v
+
+
+def _values_close(nums: list[float], expected: list[float]) -> bool:
+    """Per-point comparison within max(0.5%, 1e-3) absolute tolerance."""
+    if len(nums) != len(expected):
+        return False
+    return all(
+        abs(a - b) <= max(0.005 * abs(b), 1e-3)
+        for a, b in zip(nums, expected)
+    )
+
+
+def _is_contiguous_subseq(short: list[float], long_: list[float]) -> bool:
+    """True if `short` matches some contiguous slice of `long_` within tol."""
+    n = len(short)
+    if n == 0 or n > len(long_):
+        return False
+    for start in range(len(long_) - n + 1):
+        if _values_close(long_[start:start + n], short):
+            return True
+    return False
+
+
+def _find_matching_canvas_source(
+    sources: list[dict], expected_values: list[float]
+) -> dict | None:
+    """Return the first {id, col, shape} whose non-null numeric values match
+    `expected_values` per-point within 0.5% tolerance.
+
+    Tolerates two transforms the dashboard applies before plotting:
+      - HoloViews `interpolation='steps-mid'`: each input point becomes two
+        consecutive output points → try `nums[::2]`.
+      - Display-window trimming (e.g. snow from Sep 1 → Aug 31): the rendered
+        series is a contiguous slice of the DB series → try subsequence match.
+    """
+    expected_count = len(expected_values)
+    for src in sources:
+        for col, values in src["data"].items():
+            if not isinstance(values, list):
+                continue
+            try:
+                nums = [
+                    float(v) for v in values
+                    if v is not None and not _is_nan(v)
+                ]
+            except (TypeError, ValueError):
+                continue
+            if not nums:
+                continue
+            # 1. Direct equal-length match
+            if len(nums) == expected_count and _values_close(nums, expected_values):
+                return {"id": src["id"], "col": col, "shape": "direct"}
+            # 2. steps-mid doubles each point: [y0, y0, y1, y1, ...]
+            if len(nums) == 2 * expected_count and _values_close(nums[::2], expected_values):
+                return {"id": src["id"], "col": col, "shape": "steps-mid"}
+            # 3. Canvas is a windowed (contiguous) subset of the DB series
+            if len(nums) < expected_count and _is_contiguous_subseq(nums, expected_values):
+                return {"id": src["id"], "col": col, "shape": "subseq"}
+            # 4. steps-mid + windowed: collapse doubling, then subsequence
+            if (
+                len(nums) % 2 == 0
+                and len(nums) // 2 < expected_count
+                and _is_contiguous_subseq(nums[::2], expected_values)
+            ):
+                return {
+                    "id": src["id"], "col": col, "shape": "steps-mid+subseq",
+                }
+    return None
+
+
+def _dump_numeric_columns_near(sources: list[dict], target_len: int, window: int = 5) -> str:
+    """Format a debug list of every numeric column we can extract, with its
+    non-null length and first/last/last-expected values for triage. Columns
+    whose len is timestamp-like (>=1e10) are skipped — those are date axes."""
+    rows = []
+    for src in sources:
+        for col, values in src["data"].items():
+            if not isinstance(values, list):
+                continue
+            try:
+                nums = [
+                    float(v) for v in values
+                    if v is not None and not _is_nan(v)
+                ]
+            except (TypeError, ValueError):
+                continue
+            if not nums:
+                continue
+            # Skip date axes (large integer timestamps in ms since epoch).
+            if abs(nums[0]) > 1e10 and abs(nums[-1]) > 1e10:
+                continue
+            near = "*" if abs(len(nums) - target_len) <= window else " "
+            rows.append(
+                f" {near} src={src['id']:>6} col={col!r:<42} len={len(nums):>4} "
+                f"first={nums[0]:.4g} last={nums[-1]:.4g}"
+            )
+    return "\n".join(rows) if rows else "  (no numeric columns)"
+
+
+def _assert_canvas_matches_db(
+    page,
+    expected_values: list[float],
+    pane_label: str,
+    sources: list[dict] | None = None,
+) -> None:
+    """Assert one ColumnDataSource on the page contains `expected_values`.
+
+    `sources` can be passed in to amortise the page.evaluate cost across
+    multiple pane checks for the same station.
+    """
+    if not expected_values:
+        return  # DB has no values for this pane; nothing to compare
+    if sources is None:
+        sources = _extract_bokeh_data_sources(page)
+    match = _find_matching_canvas_source(sources, expected_values)
+    if match is None:
+        debug = _dump_numeric_columns_near(sources, len(expected_values))
+        raise AssertionError(
+            f"{pane_label}: no Bokeh source matches DB series "
+            f"({len(expected_values)} points; last={expected_values[-1]:.3f}).\n"
+            f"Numeric columns near len={len(expected_values)}:\n{debug}"
+        )
+    print(
+        f"#### {pane_label} canvas matches DB "
+        f"({len(expected_values)} points, src={match['id']}, col={match['col']!r}, "
+        f"shape={match['shape']})"
+    )
+
+
+def _fetch_predictor_data_from_db(station_code: str) -> dict[str, list]:
+    """Fetch the data that should populate each Predictors-tab graph.
+
+    Mirrors the dashboard's per-station fetches in src/db.py:
+      - daily hydrograph: /preprocessing/hydrograph/?horizon=day
+      - precipitation:    /preprocessing/meteo/?meteo_type=P
+      - temperature:      /preprocessing/meteo/?meteo_type=T
+      - snow:             /preprocessing/snow/?snow_type={HS,ROF,SWE}
+
+    Returns a dict mapping logical pane names to the raw API rows so the test
+    can assert "what the graph should display" matches what the DB has.
+    """
+    cur_year = dt.datetime.now().year
+    out: dict[str, list] = {}
+
+    out["hydrograph_day"] = requests.get(
+        f"{API_BASE}/preprocessing/hydrograph/",
+        params={
+            "horizon":    "day",
+            "code":       station_code,
+            "start_date": f"{cur_year}-01-01",
+            "end_date":   f"{cur_year}-12-31",
+            "limit":      1000,
+        },
+        timeout=API_TIMEOUT,
+    ).json()
+
+    for key, mtype in (("precipitation", "P"), ("temperature", "T")):
+        out[key] = requests.get(
+            f"{API_BASE}/preprocessing/meteo/",
+            params={
+                "meteo_type": mtype,
+                "code":       station_code,
+                "start_date": f"{cur_year}-01-01",
+                "end_date":   f"{cur_year}-12-31",
+                "limit":      1000,
+            },
+            timeout=API_TIMEOUT,
+        ).json()
+
+    for stype in ("HS", "ROF", "SWE"):
+        out[f"snow_{stype}"] = requests.get(
+            f"{API_BASE}/preprocessing/snow/",
+            params={
+                "snow_type":  stype,
+                "code":       station_code,
+                "start_date": f"{cur_year - 1}-01-01",
+                "end_date":   f"{cur_year}-12-31",
+                "limit":      10000,
+            },
+            timeout=API_TIMEOUT,
+        ).json()
+
+    return out
+
+
 def _fetch_bulletin_from_api(horizon: str, year: int, horizon_value: int) -> list[dict]:
     """Fetch bulletin records from the backend API for the given horizon/year."""
     print("horizon, year, horizon_value:", horizon, year, horizon_value)
@@ -242,9 +479,135 @@ def test_local(page: Page):
     time.sleep(SLEEP)
 
     ### PREDICTORS TAB ###
-    # Select station 16936
-    page.locator("select#input").nth(1).select_option(value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
-    print("#### Station 16936 selected")
+    print("#### Testing Predictors tab...")
+
+    # Predictors is the default first tab; click for safety so subsequent
+    # locator counts only see the Predictors tab DOM (Tabs use dynamic=True).
+    page.locator("div.bk-tab", has_text="Предикторы").click()
+    time.sleep(SLEEP)
+
+    # Sidebar: only Horizon, Hydropost, and Manual re-run cards are visible.
+    # Card titles are pulled from the Russian gettext catalogue (kyg locale);
+    # untranslated strings like "Basin:" stay in English.
+    expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Гидропост:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
+    expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
+    print("#### Sidebar shows only Horizon, Hydropost, Manual re-run cards.")
+
+    # Main area: only Hydrograph, Precipitation, Temperature, Snow Data cards.
+    # "Snow Data" stays English (no Russian translation in the catalogue).
+    expect(page.get_by_text("Гидрограф", exact=True)).to_be_visible()
+    expect(page.get_by_text("Осадки", exact=True)).to_be_visible()
+    expect(page.get_by_text("Температура воздуха", exact=True)).to_be_visible()
+    # Snow card title is "Snow Data" with plots, "Snow Data (SnowMapper)" without —
+    # accept either with a substring match here; canvas count below proves data.
+    expect(page.get_by_text("Snow Data")).to_be_visible()
+    print("#### Main area shows Hydrograph, Precipitation, Temperature, Snow Data cards.")
+
+    # Switch through the four hydroposts and assert each pane renders data.
+    # Each card produces ≥1 Bokeh <canvas> when data is present; missing data
+    # falls back to a markdown "No ... data" pane (no canvas). Requiring ≥4
+    # canvases proves all four panes (Hydrograph/Precipitation/Temperature/Snow)
+    # received and displayed data for the selected station.
+    # Rotate the horizon selector through pentad → decade → month → season
+    # for the four stations. Predictor data (hydrograph_day_all, rain, temp,
+    # snow_data) is fetched the same way for every horizon (see src/db.py
+    # _get_data_monthly / _get_data_season etc.), so the per-pane DB↔canvas
+    # checks below must hold regardless of which horizon is active.
+    #
+    # Horizon select uses the Russian visible label (`пентада` / `декада` /
+    # `месяц` / `season`) — Panel emits dict-options as `(value, label)` but
+    # Bokeh renders the *label* as the <option>'s `value` attribute, so
+    # Playwright matches via `label=`.
+    predictor_steps = [
+        ("15013 - Джыргалан-с.Советское",                       "pentad",  "пентада"),
+        ("16936 - Нарын  -  Приток в Токтогульское вдхр.**)",   "decade",  "декада"),
+        ("15212 - Ак-Суу - с.Чон-Арык",                         "month",   "месяц"),
+        ("15256 - Талас -  с.Ак-Таш",                           "season",  "season"),
+    ]
+    for station, horizon_value, horizon_label in predictor_steps:
+        code = station.split()[0]
+        page.locator("select#input").nth(1).select_option(value=station, timeout=60000)
+        page.locator("select#input").nth(0).select_option(label=horizon_label, timeout=60000)
+        print(f"#### PREDICTORS station={station}, horizon={horizon_value}")
+        time.sleep(SLEEP * 3)  # let plots re-render after both changes
+
+        # Compare what the graphs should show against what the DB has by
+        # fetching the same backend data the dashboard requests.
+        db = _fetch_predictor_data_from_db(code)
+        snow_total = sum(len(db[f"snow_{s}"]) for s in ("HS", "ROF", "SWE"))
+        print(
+            f"#### Station {code} DB rows — hydrograph_day={len(db['hydrograph_day'])}, "
+            f"precipitation={len(db['precipitation'])}, "
+            f"temperature={len(db['temperature'])}, snow={snow_total}"
+        )
+        assert db["hydrograph_day"], f"Station {code}: no daily hydrograph data in DB"
+        assert db["precipitation"],  f"Station {code}: no precipitation data in DB"
+        assert db["temperature"],    f"Station {code}: no temperature data in DB"
+        assert snow_total > 0,       f"Station {code}: no snow data in DB"
+
+        # Each pane renders ≥1 Bokeh <canvas> when its data is present; missing
+        # data falls back to a markdown "No ... data" pane (no canvas). With
+        # the DB asserted non-empty above, ≥4 canvases proves every pane
+        # rendered the data the DB holds for this station.
+        canvas_count = page.locator("canvas").count()
+        assert canvas_count >= 4, (
+            f"Station {code}: only {canvas_count} predictor canvas(es) rendered "
+            "(expected ≥4 — DB has data for Hydrograph/Precipitation/Temperature/Snow "
+            "so all four panes must render canvases)"
+        )
+        print(f"#### Station {code}: {canvas_count} predictor canvas(es) rendered.")
+
+        # Value-level comparison: each pane's canvas must hold the same
+        # values the DB returns for this station. Pull the page's Bokeh
+        # ColumnDataSources once and reuse across panes.
+        sources = _extract_bokeh_data_sources(page)
+
+        _assert_canvas_matches_db(
+            page,
+            _series_from_db_rows(db["hydrograph_day"], "current"),
+            f"Hydrograph (current year) [{code}]",
+            sources=sources,
+        )
+        _assert_canvas_matches_db(
+            page,
+            _series_from_db_rows(db["precipitation"], "value"),
+            f"Precipitation [{code}]",
+            sources=sources,
+        )
+        _assert_canvas_matches_db(
+            page,
+            _series_from_db_rows(db["temperature"], "value"),
+            f"Temperature [{code}]",
+            sources=sources,
+        )
+        # Snow card may render any subset of HS/RoF/SWE — verify each that
+        # the DB has data for is also drawn into the canvas. The dashboard
+        # multiplies HS by 100 (metres → centimetres) before plotting, and
+        # trims the series to a configured display window (Sep 1 → Aug 31
+        # for the kyg locale), so the matcher's subsequence path handles
+        # the windowing while the scale handles the unit conversion.
+        snow_scales = {"HS": 100.0, "ROF": 1.0, "SWE": 1.0}
+        for stype in ("HS", "ROF", "SWE"):
+            snow_series = _series_from_db_rows(
+                db[f"snow_{stype}"], "value", scale=snow_scales[stype]
+            )
+            if not snow_series:
+                continue
+            _assert_canvas_matches_db(
+                page,
+                snow_series,
+                f"Snow {stype} [{code}]",
+                sources=sources,
+            )
+
+    # Reset horizon to pentad so the existing Forecast/Bulletin flow below —
+    # which inspects pentad-horizon summary tables and pentad bulletins — runs
+    # against the same horizon it was originally written for.
+    page.locator("select#input").nth(0).select_option(label="пентада", timeout=60000)
+    print("#### Horizon reset to pentad for Forecast/Bulletin flow.")
     time.sleep(SLEEP)
 
     ### FORECAST TAB ###
