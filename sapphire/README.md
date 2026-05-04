@@ -84,6 +84,25 @@ docker compose --env-file /path/to/.env up -d \
   api-gateway preprocessing-api postprocessing-api user-api auth-api
 ```
 
+### Running the dashboard natively for local development
+
+When iterating on dashboard code, running `panel serve` on the host gives faster reload than rebuilding the container image. Bring the stack up with `--scale dashboard=0` so the containerized dashboard does not start:
+
+```bash
+docker compose --env-file /path/to/.env up --build --scale dashboard=0
+```
+
+Then start the native dashboard from `apps/forecast_dashboard/`:
+
+```bash
+ieasyhydroforecast_data_root_dir="/path/to/data" \
+ieasyhydroforecast_env_file_path="/path/to/.env_develop_<country>" \
+SAPPHIRE_OPDEV_ENV=True \
+panel serve forecast_dashboard.py --show --port 5055
+```
+
+The native server runs on port 5055; the containerized dashboard uses 5006, so the two ports never collide even if both are running.
+
 ### Check service health
 
 ```bash
