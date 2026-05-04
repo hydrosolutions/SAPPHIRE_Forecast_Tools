@@ -207,54 +207,54 @@ services:
     volumes:
       - ./services/auth:/code
 
-  # dashboard:
-  #   image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
-  #   build:
-  #     context: ../
-  #     dockerfile: ./apps/forecast_dashboard/Dockerfile
-  #   container_name: sapphire-dashboard
-  #   working_dir: /app/apps/forecast_dashboard
-  #   init: true
-  #   environment:
-  #     - PYTHONPATH=/app
-  #     - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
-  #     - ieasyhydroforecast_container_data_ref_dir=${ieasyhydroforecast_container_data_ref_dir}
-  #     - SAPPHIRE_OPDEV_ENV=True
-  #     - IN_DOCKER_CONTAINER=True
-  #     - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
-  #     - ieasyhydroforecast_url_pentad=${ieasyhydroforecast_url_pentad}
-  #     - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url_pentad}
-  #     - sapphire_forecast_horizon=pentad
-  #     - API_GATEWAY_URL=${API_GATEWAY_URL}
-  #   command: >
-  #     bash -c "
-  #     ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-  #     uv run panel serve
-  #     --address=0.0.0.0
-  #     --port=5006
-  #     $${ORIGINS_ARGS}
-  #     forecast_dashboard.py
-  #     --num-threads=4
-  #     "
-  #   restart: always
-  #   ports:
-  #     - "5006:5006"
-  #   volumes:
-  #     - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
-  #     - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
-  #     - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
-  #     - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
-  #     - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
-  #     - /var/run/docker.sock:/var/run/docker.sock
-  #   labels:
-  #     - com.centurylinklabs.watchtower.enable=true
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:5006/forecast_dashboard"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 3
-  #   networks:
-  #     - sapphire-network
+  dashboard:
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
+    build:
+      context: ../
+      dockerfile: ./apps/forecast_dashboard/Dockerfile
+    container_name: sapphire-dashboard
+    working_dir: /app/apps/forecast_dashboard
+    init: true
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_container_data_ref_dir=${ieasyhydroforecast_container_data_ref_dir}
+      - SAPPHIRE_OPDEV_ENV=True
+      - IN_DOCKER_CONTAINER=True
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_url_pentad=${ieasyhydroforecast_url_pentad}
+      - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url_pentad}
+      - sapphire_forecast_horizon=pentad
+      - API_GATEWAY_URL=${API_GATEWAY_URL}
+    command: >
+      bash -c "
+      ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
+      uv run panel serve
+      --address=0.0.0.0
+      --port=5006
+      $${ORIGINS_ARGS}
+      forecast_dashboard.py
+      --num-threads=4
+      "
+    restart: always
+    ports:
+      - "5006:5006"
+    volumes:
+      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+      - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
+      - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
+      - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
+      - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5006/forecast_dashboard"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - sapphire-network
 
 volumes:
   preprocessing-data:
