@@ -27,9 +27,6 @@ turnkey way to take and restore backups without having to improvise.
 - Postgres database `user` (container `sapphire-user-db`)
 - Postgres database `auth` (container `sapphire-auth-db`)
 
-(The commented-out `task-db` in `sapphire/docker-compose.yml` is not
-covered — it is not in use.)
-
 **Not backed up** by this script — you must handle these separately:
 
 - The country-specific data directory (e.g. `<country>_data_forecast_tools/`)

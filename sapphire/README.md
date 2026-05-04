@@ -12,8 +12,7 @@ sapphire/
     ├── preprocessing/      # Runoff, hydrograph, meteo, snow data (port 8002)
     ├── postprocessing/     # Forecasts, skill metrics (port 8003)
     ├── user/               # User management (port 8004)
-    ├── auth/               # Authentication service (port 8005)
-    └── task-service/       # Task queue (currently disabled)
+    └── auth/               # Authentication service (port 8005)
 ```
 
 ## Services
