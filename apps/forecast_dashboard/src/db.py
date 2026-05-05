@@ -318,7 +318,7 @@ def get_linreg_predictor(horizon, station) -> pd.DataFrame:
         "code": code,
         "start_date": "2000-01-01",
         "end_date": f"{CURRENT_YEAR}-12-31",
-        "limit": 1000,
+        "limit": 10000,
     })
 
     if df.empty or "date" not in df.columns:
