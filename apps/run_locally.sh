@@ -1399,6 +1399,7 @@ validate_env() {
         recalculate_skill_metrics)       modules_to_check=(postprocessing_forecasts) ;;
         recalculate_snow_norms)          modules_to_check=(preprocessing_gateway) ;;
         yearly)                          modules_to_check=(preprocessing_gateway postprocessing_forecasts) ;;
+        initialize)                      modules_to_check=(preprocessing_runoff linear_regression postprocessing_forecasts) ;;
         *)                               modules_to_check=("$target") ;;
     esac
 
