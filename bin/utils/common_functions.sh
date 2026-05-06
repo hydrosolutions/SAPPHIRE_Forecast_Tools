@@ -117,7 +117,7 @@ read_configuration(){
         export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
         export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
     elif [ "$env_ending" == "uzhm" ]; then
-        export ieasyhydroforecast_url_pentad=uzb.fc.pentad.$ieasyhydroforecast_url
+        export ieasyhydroforecast_url_pentad=uzb.fc.$ieasyhydroforecast_url
         export ieasyhydroforecast_url_decad=uzb.fc.decade.$ieasyhydroforecast_url
     else
         echo "| Error: Unknown hm in env_file_path: $env_file_path"
