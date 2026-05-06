@@ -90,7 +90,7 @@ for MODEL in "${MODEL_OPTIONS[@]}"; do
     # Add the service configuration to the compose file
     cat >> $COMPOSE_FILE << EOF
   ${SERVICE_NAME}:
-    image: mabesa/sapphire-ml:latest
+    image: mabesa/sapphire-ml:${ieasyhydroforecast_backend_docker_image_tag:-latest}
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
@@ -138,7 +138,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Check if the Docker image exists
-IMAGE_ID="mabesa/sapphire-ml:latest"
+IMAGE_ID="mabesa/sapphire-ml:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
 if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
   docker pull $IMAGE_ID
   #log_message "ERROR: Docker image $IMAGE_ID not found. Please verify the image exists."
