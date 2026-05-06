@@ -21,6 +21,7 @@ class DashboardConfig:
     dashboard_title: str
     display_weather_data: bool
     display_snow_data: bool
+    display_ML_forecasts: bool
     snow_display_start_month: int
     snow_display_start_day: int
 
@@ -39,7 +40,7 @@ def init_dashboard(pn) -> DashboardConfig:
     # horizon, horizon_in_year, dashboard_title = get_horizon()
     horizon, horizon_in_year = get_horizon()
     dashboard_title = _('SAPPHIRE Central Asia - Forecast dashboard')
-    display_weather, display_snow = display_weather_and_snow_data()
+    display_weather, display_snow, display_ml = display_weather_and_snow_data()
 
     snow_start = os.getenv('ieasyhydroforecast_SNOW_DISPLAY_START_MMDD', '01-01')
     try:
@@ -60,6 +61,7 @@ def init_dashboard(pn) -> DashboardConfig:
         dashboard_title=dashboard_title,
         display_weather_data=display_weather,
         display_snow_data=display_snow,
+        display_ML_forecasts=display_ml,
         snow_display_start_month=snow_month,
         snow_display_start_day=snow_day,
     )
@@ -222,7 +224,7 @@ def display_weather_and_snow_data():
     else:
         display_snow_data = False
     
-    return display_weather_data, display_snow_data
+    return display_weather_data, display_snow_data, display_ML_forecasts
 
 
 def get_horizon():

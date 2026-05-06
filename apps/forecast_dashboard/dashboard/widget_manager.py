@@ -56,7 +56,7 @@ class WidgetManager:
         self.station_card = widgets.create_station_card(self.station_selector)
 
         # ── Horizon ─────────────────────────────────────────────────────────
-        self.horizon_selector = widgets.create_horizon_selector()
+        self.horizon_selector = widgets.create_horizon_selector(self._cfg.display_ML_forecasts)
         self.horizon_card = widgets.create_horizon_card(self.horizon_selector, width)
 
         # ── Invisible ───────────────────────────────────────────────────────
