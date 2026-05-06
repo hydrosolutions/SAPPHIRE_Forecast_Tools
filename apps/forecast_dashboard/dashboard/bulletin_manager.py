@@ -531,10 +531,11 @@ class BulletinManager:
             last_date, forecast_horizon, forecast_year = self.dm.get_bulletin_metadata(
                 horizon
             )
-            bulletin_header_info = self._processing.get_bulletin_header_info(last_date, horizon)
+            legacy_horizon = "decad" if horizon == "decade" else horizon
+            bulletin_header_info = self._processing.get_bulletin_header_info(last_date, legacy_horizon)
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
-                self.cfg.env_file_path, horizon=horizon,
+                self.cfg.env_file_path, horizon=legacy_horizon,
             )
             print("DEBUG: Bulletin written to Excel successfully.")
             # Refresh the file downloader panel
