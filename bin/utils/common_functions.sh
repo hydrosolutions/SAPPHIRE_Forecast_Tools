@@ -111,7 +111,7 @@ read_configuration(){
     env_ending=${env_file_path: -4}
     tag=${ieasyhydroforecast_frontend_docker_image_tag}
     if [ "$env_ending" == "kghm" ]; then
-        export ieasyhydroforecast_url_pentad=kyg.fc.pentad.$ieasyhydroforecast_url
+        export ieasyhydroforecast_url_pentad=kyg.fc.$ieasyhydroforecast_url
         export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
     elif [ "$env_ending" == "tjhm" ]; then
         export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
