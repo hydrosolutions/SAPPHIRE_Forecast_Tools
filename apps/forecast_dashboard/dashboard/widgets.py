@@ -79,14 +79,20 @@ def create_decad_selector(last_date):
 
 
 # ============================== Widgets for sidebar content ==============================
-def create_horizon_selector():
-    """Create forecast horizon selection widget."""
+def create_horizon_selector(display_ML_forecasts: bool = True):
+    """Create forecast horizon selection widget.
+
+    When display_ML_forecasts is False, only short-term horizons (pentad,
+    decade) are exposed; month and season are hidden because they require
+    ML-driven long-term forecasts.
+    """
     horizon_types = {
         _("pentad"): "pentad",
         _("decade"): "decade",
-        _("month"):  "month",
-        _("season"): "season",
     }
+    if display_ML_forecasts:
+        horizon_types[_("month")] = "month"
+        horizon_types[_("season")] = "season"
     horizon_selector = pn.widgets.Select(
         name=_("Select forecast horizon:"),
         options=horizon_types,
