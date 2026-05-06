@@ -117,6 +117,7 @@ celerybeat.pid
 # Environments
 .venv
 .env
+.env_kghm
 env/
 venv/
 ENV/
