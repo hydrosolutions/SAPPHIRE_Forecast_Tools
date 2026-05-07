@@ -505,14 +505,23 @@ def create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bul
     return bulletin_table
 
 
-def create_downloader_and_panel(horizon):
-    # Initialize the downloader with a specific directory
-    bulletin_folder = os.path.join(
+def _bulletin_folder_for_horizon(horizon: str) -> str:
+    """Resolve the on-disk bulletin folder for a given horizon value.
+
+    The horizon_selector exposes 'decade' but bulletin files are written
+    to 'bulletins/decad/...' (legacy convention; see bulletins.py).
+    """
+    legacy = "decad" if horizon == "decade" else horizon
+    return os.path.join(
         os.getenv('ieasyreports_report_output_path'),
-        'bulletins', horizon)
+        'bulletins', legacy,
+    )
+
+
+def create_downloader_and_panel(horizon):
+    bulletin_folder = _bulletin_folder_for_horizon(horizon)
     downloader = FileDownloader(bulletin_folder)
     bulletin_download_panel = downloader.panel()
-
     return downloader, bulletin_download_panel
 
 # ============================== Widgets for Language and Auth ==============================

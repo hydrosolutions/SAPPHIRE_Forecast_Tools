@@ -42,6 +42,11 @@ class FileDownloader(param.Parameterized):
         self.file_selector.link(self, callbacks={'value': self._update_selected_files})
         self.download_btn.on_click(self._handle_download)
 
+    def set_directory(self, directory_path):
+        """Switch to a different directory and refresh the file selector."""
+        self.directory_path = pathlib.Path(directory_path)
+        self.refresh_file_list()
+
     def refresh_file_list(self):
         """Refresh the file selector options with the latest files."""
         print("Refreshing file list...")

@@ -177,6 +177,7 @@ class WidgetManager:
         self._wire_site_object_binding(dm)
         # Skill metrics table depends only on horizon, not on station
         self.horizon_selector.param.watch(pm.update_skill_table, "value")
+        self.horizon_selector.param.watch(self._refresh_downloader_for_horizon, "value")
 
     def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
         @pn.depends(self.horizon_selector, self.station_selector, self.pentad_selector, self.decad_selector, watch=True)
@@ -313,6 +314,11 @@ class WidgetManager:
             self._dm._data,
             self.date_picker.value,
         )
+
+    def _refresh_downloader_for_horizon(self, event) -> None:
+        """Repoint the bulletin downloader at the folder for the new horizon."""
+        new_dir = widgets._bulletin_folder_for_horizon(event.new)
+        self.downloader.set_directory(new_dir)
 
     # ------------------------------------------------------------------
     # Convenience: all widgets auth needs to track for inactivity
