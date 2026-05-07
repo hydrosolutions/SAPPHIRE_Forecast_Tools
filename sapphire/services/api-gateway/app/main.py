@@ -2,7 +2,7 @@ import logging
 import time
 from datetime import datetime
 from fastapi import FastAPI, Request, Header, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import httpx
 from typing import Optional
 from app.config import settings
@@ -102,10 +102,12 @@ async def proxy_request(
                 if key.lower() not in excluded_headers:
                     response_headers[key] = value
 
+            if response.status_code == 204:
+                return Response(status_code=204, headers=response_headers)
             return JSONResponse(
                 content=response.json() if response.text else {},
                 status_code=response.status_code,
-                headers=response.headers
+                headers=response_headers,
             )
     except httpx.TimeoutException:
         logger.error(f"Timeout calling {url}")
