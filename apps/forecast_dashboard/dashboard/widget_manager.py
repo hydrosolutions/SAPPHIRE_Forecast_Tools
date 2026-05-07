@@ -60,11 +60,11 @@ class WidgetManager:
         self.horizon_card = widgets.create_horizon_card(self.horizon_selector, width)
 
         # ── Invisible ───────────────────────────────────────────────────────
-        last_date, self.forecast_horizon, self.forecast_year = (
+        self.last_date, self.forecast_horizon, self.forecast_year = (
             dm.get_bulletin_metadata(self.horizon_selector.value)
         )
-        self.pentad_selector = widgets.create_pentad_selector(last_date)
-        self.decad_selector = widgets.create_decad_selector(last_date)
+        self.pentad_selector = widgets.create_pentad_selector(self.last_date)
+        self.decad_selector = widgets.create_decad_selector(self.last_date)
 
         # ── Forecast configuration ──────────────────────────────────────────
         available_models = dm.get_available_models(
@@ -150,6 +150,10 @@ class WidgetManager:
             widgets.create_downloader_and_panel(cfg.horizon)
         )
 
+        # ── Horizon info (shown in dashboard header) ────────────────────────
+        self.horizon_info_pane = widgets.create_horizon_info_pane()
+        self._refresh_horizon_info_pane()
+
         # === NAVBAR WIDGETS ===
         self.language_buttons = widgets.create_language_buttons()
 
@@ -214,11 +218,12 @@ class WidgetManager:
             self.forecast_card.visible = is_forecast_tab and not is_long
 
             try:
-                _last_date, self.forecast_horizon, self.forecast_year = (
+                self.last_date, self.forecast_horizon, self.forecast_year = (
                     dm.get_bulletin_metadata(horizon)
                 )
             except (KeyError, IndexError, TypeError, ValueError):
                 pass  # no data for this horizon yet; bulletin callback handles it
+            self._refresh_horizon_info_pane()
 
             for cb in self._post_load_callbacks:
                 cb()
@@ -319,6 +324,15 @@ class WidgetManager:
         """Repoint the bulletin downloader at the folder for the new horizon."""
         new_dir = widgets._bulletin_folder_for_horizon(event.new)
         self.downloader.set_directory(new_dir)
+
+    def _refresh_horizon_info_pane(self) -> None:
+        """Recompute the header horizon-info text from current metadata."""
+        self.horizon_info_pane.object = widgets.format_horizon_info(
+            self.horizon_selector.value,
+            self.forecast_horizon,
+            self.forecast_year,
+            getattr(self, "last_date", None),
+        )
 
     # ------------------------------------------------------------------
     # Convenience: all widgets auth needs to track for inactivity

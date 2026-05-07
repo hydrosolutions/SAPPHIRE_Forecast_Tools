@@ -495,6 +495,55 @@ def create_forecast_info_pane():
     return pn.pane.Markdown("", sizing_mode="stretch_width")
 
 
+def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
+    """Build the header label describing the active forecast horizon.
+
+    See widget_manager._refresh_horizon_info_pane for the call site.
+    """
+    import datetime as _dt
+    if last_date is None:
+        return ""
+
+    production_date = last_date - _dt.timedelta(days=1)
+    produced_at = production_date.strftime("%b %-d, %Y")
+    month_year = last_date.strftime("%B %Y")
+
+    if horizon == "pentad":
+        from forecast_library import get_pentad_from_pentad_in_year
+        pim = get_pentad_from_pentad_in_year(forecast_horizon)
+        body = f"{_('pentad')}: {pim} {_('of')} {month_year} ({forecast_horizon})"
+    elif horizon == "decade":
+        from forecast_library import get_decad_from_decad_in_year
+        dim = get_decad_from_decad_in_year(forecast_horizon)
+        body = f"{_('decade')}: {dim} {_('of')} {month_year} ({forecast_horizon})"
+    elif horizon == "month":
+        target_month_num = (production_date.month % 12) + 1
+        target_month_year = f"{calendar.month_name[target_month_num]} {production_date.year}"
+        body = f"{_('month')}: {target_month_year}"
+    elif horizon == "season":
+        body = f"{_('season')}: April-September"
+    else:
+        return ""
+
+    return f"{body}, {_('produced at')} {produced_at}"
+
+
+def create_horizon_info_pane():
+    """Header pane for the per-horizon info, vertically centered next to the title."""
+    return pn.pane.HTML(
+        "",
+        margin=0,
+        align=("start", "center"),
+        sizing_mode="stretch_width",
+        styles={
+            "color": "white",
+            "font-size": "0.8rem",
+            "line-height": "1",
+            "padding-left": "12px",
+        },
+    )
+
+
 # Used for Forecast bulletin Plot (Bulletin Tab)
 def create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bulletin_popup):
     bulletin_table = pn.Column(

@@ -114,6 +114,7 @@ dashboard = pn.template.BootstrapTemplate(
     title=cfg.dashboard_title,
     logo=cfg.icon_path,
     header=[pn.Row(
+        wm.horizon_info_pane,
         pn.layout.HSpacer(),
         wm.language_buttons,
         auth.logout_button,
