@@ -3,6 +3,8 @@ import time
 import re
 import requests
 import pandas as pd
+import pytest
+pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Page, expect
 import tag_library as tl
 import datetime as dt
@@ -10,7 +12,7 @@ import datetime as dt
 
 TEST_PENTAD = False
 TEST_DECAD = False
-TEST_LOCAL = True
+TEST_LOCAL = os.getenv("TEST_LOCAL", "").lower() == "true"
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"

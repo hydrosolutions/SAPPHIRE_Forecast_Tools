@@ -5,6 +5,8 @@ import re
 import time
 
 import pandas as pd
+import pytest
+pytest.importorskip("playwright.sync_api")
 import tag_library as tl
 from playwright.sync_api import Page, expect
 
