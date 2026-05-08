@@ -41,6 +41,9 @@ def _format_forecast_info(issue_date, horizon_label: str) -> str:
     )
 
 
+_LONG_TERM_HORIZONS = ("month", "quarter", "season")
+
+
 class PlotManager:
     """Owns every plot pane and knows how to (re-)render them."""
 
@@ -153,6 +156,11 @@ class PlotManager:
 
     def _init_skill_table(self):
         horizon = self._wm.horizon_selector.value
+        if horizon in _LONG_TERM_HORIZONS:
+            self.skill_table = pn.Column()
+            self.skill_download_filename = None
+            self.skill_download_button = None
+            return
         self.skill_table = pn.panel(
             self._cfg.viz.create_skill_table(
                 self._, horizon, self._dm.get_forecast_stats_all(horizon)
@@ -305,6 +313,14 @@ class PlotManager:
         Tabulator instance.
         """
         horizon = self._wm.horizon_selector.value
+        if horizon in _LONG_TERM_HORIZONS:
+            card = getattr(self, "skill_table_card", None)
+            if card is not None:
+                card.visible = False
+            return
+        card = getattr(self, "skill_table_card", None)
+        if card is not None:
+            card.visible = True
         new_table = self._cfg.viz.create_skill_table(
             self._, horizon, self._dm.get_forecast_stats_all(horizon)
         )
