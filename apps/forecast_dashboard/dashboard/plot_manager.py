@@ -242,6 +242,15 @@ class PlotManager:
         if m0 is None or m0.empty:
             self.summary_table_m0_card.visible = False
             return
+        forecasts_all = self._dm.forecasts_all
+        if forecasts_all is None or forecasts_all.empty:
+            self.summary_table_m0_card.visible = False
+            return
+        summary_target_month = (forecasts_all['date'].max().month % 12) + 1
+        m0_target_month = m0['date'].max().month
+        if summary_target_month != m0_target_month:
+            self.summary_table_m0_card.visible = False
+            return
         self.summary_table_m0_card.visible = True
         # Use m0's own max date instead of the shared date_picker
         m0_max_date = m0['date'].max()
