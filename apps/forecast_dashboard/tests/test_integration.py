@@ -324,6 +324,186 @@ def _fetch_bulletin_from_api(horizon: str, year: int, horizon_value: int) -> lis
     return resp.json()
 
 
+def _fetch_summary_table_data_from_db(
+    horizon: str, station_code: str
+) -> dict[str, dict]:
+    """Fetch what the Summary table on the Forecast tab should display.
+
+    Pulls /forecast/, /lr-forecast/, and /skill-metric/ for this station,
+    filters to the latest forecast_date per endpoint, and merges into a
+    dict keyed by model_short -> {forecasted_discharge, sdivsigma, mae,
+    accuracy}. Missing fields are left as None so the UI side can match
+    them against '-' / empty cells via _compare_numeric.
+
+    Skill-metric values are pinned to the same ``horizon_in_year`` as the
+    latest forecast record — not to ``max(horizon_in_year)`` in the skill
+    dataset — because the dashboard merges forecasts with skill on
+    ``(code, horizon_in_year, model_short)`` and skill data can span
+    other pentads.
+    """
+    cur_year = dt.datetime.now().year
+    prev_year = cur_year - 1
+
+    fc_params = {
+        "horizon":    horizon,
+        "code":       station_code,
+        "start_date": f"{prev_year}-12-20",
+        "end_date":   f"{cur_year}-12-31",
+        "limit":      1000,
+    }
+    sm_params = {
+        "horizon":    horizon,
+        "code":       station_code,
+        "start_date": f"{prev_year}-12-31",
+        "end_date":   f"{cur_year}-12-31",
+        "limit":      1000,
+    }
+
+    fc_resp = requests.get(
+        f"{API_BASE}/postprocessing/forecast/",
+        params=fc_params,
+        timeout=API_TIMEOUT,
+    )
+    fc_resp.raise_for_status()
+    fc_rows = fc_resp.json()
+
+    lr_resp = requests.get(
+        f"{API_BASE}/postprocessing/lr-forecast/",
+        params=fc_params,
+        timeout=API_TIMEOUT,
+    )
+    lr_resp.raise_for_status()
+    lr_rows = lr_resp.json()
+
+    sm_resp = requests.get(
+        f"{API_BASE}/postprocessing/skill-metric/",
+        params=sm_params,
+        timeout=API_TIMEOUT,
+    )
+    sm_resp.raise_for_status()
+    sm_rows = sm_resp.json()
+
+    merged: dict[str, dict] = {}
+    target_hin_set: set[int] = set()
+
+    # ML / deep-learning forecasts: keep only rows from the latest forecast date.
+    if fc_rows:
+        max_fc_date = max(r["date"] for r in fc_rows if r.get("date"))
+        latest_fc = [r for r in fc_rows if r.get("date") == max_fc_date]
+        for r in latest_fc:
+            model_short = r.get("model_type")
+            if not model_short:
+                continue
+            if r.get("horizon_in_year") is not None:
+                target_hin_set.add(int(r["horizon_in_year"]))
+            merged.setdefault(model_short, {})
+            merged[model_short].update({
+                "forecasted_discharge": r.get("forecasted_discharge"),
+            })
+
+    # Linear regression forecasts: hard-code model_short = "LR" (mirrors db.py).
+    if lr_rows:
+        max_lr_date = max(r["date"] for r in lr_rows if r.get("date"))
+        latest_lr = [r for r in lr_rows if r.get("date") == max_lr_date]
+        for r in latest_lr:
+            model_short = "LR"
+            if r.get("horizon_in_year") is not None:
+                target_hin_set.add(int(r["horizon_in_year"]))
+            merged.setdefault(model_short, {})
+            merged[model_short].update({
+                "forecasted_discharge": r.get("forecasted_discharge"),
+            })
+
+    # Skill metrics: the Summary table merges forecasts with skill on
+    # (code, horizon_in_year, model_short), so we must pin the skill lookup
+    # to the SAME horizon_in_year as the latest forecast record — not to
+    # max(horizon_in_year) across the skill dataset, which can be a
+    # different pentad (skill data covers many historical pentads).
+    sm_sorted = sorted(sm_rows, key=lambda r: r.get("date") or "")
+    sm_latest: dict[tuple, dict] = {}
+    for r in sm_sorted:
+        if not r.get("model_type"):
+            continue
+        key = (r.get("horizon_in_year"), r.get("model_type"))
+        sm_latest[key] = r
+
+    if target_hin_set:
+        if len(target_hin_set) > 1:
+            print(
+                f"#### _fetch_summary_table_data_from_db: ML/LR latest "
+                f"horizon_in_year disagree {sorted(target_hin_set)} — "
+                f"using max() for skill-metric pinning"
+            )
+        target_hin = max(target_hin_set)
+    elif sm_latest:
+        # No forecast rows; fall back to max in skill data so the helper
+        # still produces something usable for downstream sanity checks.
+        target_hin = max(k[0] for k in sm_latest.keys() if k[0] is not None)
+    else:
+        target_hin = None
+
+    if target_hin is not None:
+        for (hin, model_short), r in sm_latest.items():
+            if hin != target_hin:
+                continue
+            merged.setdefault(model_short, {})
+            merged[model_short].update({
+                "sdivsigma": r.get("sdivsigma"),
+                "mae":       r.get("mae"),
+                "accuracy":  r.get("accuracy"),
+            })
+
+    return merged
+
+
+def _fetch_skill_table_data_from_db(
+    horizon: str, station_code: str
+) -> dict[tuple[str, int], dict]:
+    """Fetch what the Forecast skill metrics table should display.
+
+    Pulls /skill-metric/ for this station, de-dups on (model_short,
+    horizon_in_year) keeping the row with the latest 'date' (same rule
+    db.py:441-442 applies), and returns a dict keyed by
+    (model_short, horizon_in_year) -> {sdivsigma, nse, delta,
+    accuracy, mae}.
+    """
+    cur_year = dt.datetime.now().year
+    prev_year = cur_year - 1
+
+    sm_params = {
+        "horizon":    horizon,
+        "code":       station_code,
+        "start_date": f"{prev_year}-12-31",
+        "end_date":   f"{cur_year}-12-31",
+        "limit":      1000,
+    }
+
+    sm_resp = requests.get(
+        f"{API_BASE}/postprocessing/skill-metric/",
+        params=sm_params,
+        timeout=API_TIMEOUT,
+    )
+    sm_resp.raise_for_status()
+    sm_rows = sm_resp.json()
+
+    # Sort ascending by date so later writes (latest date) overwrite earlier ones.
+    sm_sorted = sorted(sm_rows, key=lambda r: r.get("date") or "")
+    out: dict[tuple[str, int], dict] = {}
+    for r in sm_sorted:
+        model_short = r.get("model_type")
+        hin = r.get("horizon_in_year")
+        if not model_short or hin is None:
+            continue
+        out[(model_short, hin)] = {
+            "sdivsigma": r.get("sdivsigma"),
+            "nse":       r.get("nse"),
+            "delta":     r.get("delta"),
+            "accuracy":  r.get("accuracy"),
+            "mae":       r.get("mae"),
+        }
+    return out
+
+
 def _get_float(value) -> float | str:
     try:
         if isinstance(value, str) and "," in value:
@@ -605,17 +785,429 @@ def test_local(page: Page):
                 sources=sources,
             )
 
-    # Reset horizon to pentad so the existing Forecast/Bulletin flow below —
-    # which inspects pentad-horizon summary tables and pentad bulletins — runs
-    # against the same horizon it was originally written for.
-    page.locator("select#input").nth(0).select_option(label="пентада", timeout=60000)
-    print("#### Horizon reset to pentad for Forecast/Bulletin flow.")
-    time.sleep(SLEEP)
-
     ### FORECAST TAB ###
     page.locator("div.bk-tab", has_text="Прогноз").click()
     print("#### Switch to Forecast tab successful.")
     time.sleep(SLEEP)
+
+    page.locator("select#input").nth(0).select_option(label="пентада", timeout=60000)
+    page.locator("select#input").nth(1).select_option(value="15013 - Джыргалан-с.Советское", timeout=60000)
+    time.sleep(SLEEP * 2)
+    print("#### Forecast tab setup: horizon=pentad, station=15013")
+
+    # Sidebar: only Horizon, Hydropost, Forecast configuration, and Manual
+    # re-run cards are visible on the Forecast tab; Basin card stays hidden.
+    # Card titles are pulled from the Russian gettext catalogue (kyg locale);
+    # untranslated strings like "Basin:" stay in English.
+    expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Гидропост:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Конфигурация прогноза:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
+    expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
+    print("#### Sidebar shows only Horizon, Hydropost, Forecast configuration, Manual re-run cards.")
+
+    # Main area: only Linear regression, Summary table, Hydrograph, Forecast
+    # skill metrics, Table of forecast skill metrics cards. Card titles are
+    # pulled from the runtime kyg gettext catalogue (loaded from the Dropbox
+    # data dir, not the in-repo apps/config/locale/ files).
+    expect(page.get_by_text("Линейная регрессия", exact=True)).to_be_visible()
+    expect(page.get_by_text("Сводная таблица", exact=True)).to_be_visible()
+    expect(page.get_by_text("Гидрограф", exact=True)).to_be_visible()
+    expect(page.get_by_text("Оценки прогноза", exact=True)).to_be_visible()
+    expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).to_be_visible()
+    print("#### Main area shows Linear regression, Summary table, Hydrograph, Forecast skill metrics, Table of forecast skill metrics cards.")
+
+    # Panel's pn.Tabs runs with dynamic=True, so only the active tab's DOM is
+    # mounted. The Predictors-tab card titles must NOT appear on the Forecast
+    # tab. (Гидрограф is omitted — it also titles a Forecast-tab card.)
+    expect(page.get_by_text("Осадки", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Температура воздуха", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Snow Data")).not_to_be_visible()
+    print("#### Predictors-tab cards (Precipitation, Temperature, Snow Data) are hidden on Forecast tab.")
+
+    # The Hydrograph card on the Forecast tab always renders ≥1 Bokeh <canvas>
+    # independent of forecast-model availability. The Linear regression and
+    # Forecast skill metrics cards depend on whether LR / ML models have data
+    # in the DB, so the full 3-canvas case is best-effort; ≥1 is the minimum.
+    canvas_count = page.locator("canvas").count()
+    assert canvas_count >= 1, (
+        f"Forecast tab: {canvas_count} canvas(es) rendered — expected ≥1 "
+        "(at minimum the Hydrograph card; LR scatter and Skill chart depend "
+        "on which models have data in the DB)"
+    )
+    if canvas_count >= 3:
+        print(
+            f"#### Forecast tab: {canvas_count} canvas(es) rendered "
+            "(LR scatter + Hydrograph + Skill chart all present)."
+        )
+    else:
+        print(
+            f"#### Forecast tab: {canvas_count} canvas(es) rendered "
+            "(some plot cards missing — likely because some models are absent "
+            "from the DB; continuing)."
+        )
+
+    # The Сводная таблица must contain at least one short-term model from
+    # the known set (LR, TFT, TiDE, TSMixer, NE) for the active station —
+    # real data may have any subset available at any time. Model names
+    # outside the known set are reported (not failed) so adding a new model
+    # to the lineup does not break this test; a locale/column-field bug
+    # would still surface as the "no known models present" assertion below.
+    model_cells = page.locator(
+        'div.tabulator-row div[tabulator-field="Модель"]'
+    ).all_inner_texts()
+    model_cells_stripped = [m.strip() for m in model_cells]
+    print(f"#### Summary table model rows: {model_cells_stripped}")
+    known_models = {"LR", "TFT", "TiDE", "TSMixer", "NE"}
+    present_models = [m for m in model_cells_stripped if m]
+    assert present_models, "Summary table has no model rows"
+    expected_present = known_models & set(present_models)
+    assert expected_present, (
+        f"Summary table contains no known short-term models; got {present_models}"
+    )
+    unknown_models = set(present_models) - known_models
+    if unknown_models:
+        print(
+            f"#### Summary table contains unfamiliar model name(s) "
+            f"{sorted(unknown_models)} — not failing (model lineup may have "
+            f"grown). Known set is {sorted(known_models)}."
+        )
+    print(
+        f"#### Summary table contains known model(s): {sorted(expected_present)} "
+        f"(of expected set {sorted(known_models)})"
+    )
+
+    # For each model row in the Summary table, compare the four raw-API-backed
+    # numeric cells (forecasted_discharge from /forecast|/lr-forecast/ and
+    # sdivsigma/mae/accuracy from /skill-metric/) for station 15013's latest
+    # pentad. The δ / fc_lower / fc_upper cells are NOT compared: those are
+    # computed live in src/processing.py and src/vizualization.py from
+    # forecasted_discharge ± delta_offset, with branching on the range-slider
+    # state — they're presentation values, not raw API fields, so reproducing
+    # them in the test would re-implement the dashboard logic.
+    summary_api = _fetch_summary_table_data_from_db("pentad", "15013")
+    assert summary_api, "API returned no Summary-table data for station 15013"
+    summary_columns = [
+        ("Прогн. расх. воды",             "forecasted_discharge"),
+        ("s/σ",                           "sdivsigma"),
+        ("Средняя абсолютная ошибка",     "mae"),
+        ("Оправдываемость",               "accuracy"),
+    ]
+    compared_count = 0
+    for row in page.locator('div.tabulator-row').all():
+        model_cell = row.locator('div[tabulator-field="Модель"]')
+        if model_cell.count() == 0:
+            continue
+        # Skip rows from the Forecast skill metrics table (Таблица оценки прогнозов)
+        # — both tabulators share a 'Модель' column. The Summary table is the only
+        # one that has a 'Прогн. расх. воды' (forecasted_discharge) field.
+        if row.locator('div[tabulator-field="Прогн. расх. воды"]').count() == 0:
+            continue
+        model_short = model_cell.inner_text().strip()
+        if not model_short:
+            continue
+        assert model_short in summary_api, (
+            f"Summary table row for model {model_short!r} has no matching API record; "
+            f"API models: {sorted(summary_api.keys())}"
+        )
+        api_row = summary_api[model_short]
+        for col, api_key in summary_columns:
+            ui_str = row.locator(f'div[tabulator-field="{col}"]').inner_text().strip()
+            api_val = api_row.get(api_key)
+            try:
+                _compare_numeric(api_val, ui_str)
+            except AssertionError as e:
+                raise AssertionError(
+                    f"Summary[model={model_short!r}, col={col!r}, "
+                    f"api_key={api_key!r}]: api={api_val!r} vs ui={ui_str!r} — {e}"
+                ) from e
+        compared_count += 1
+    assert compared_count >= 1, "No Summary-table rows were compared against the API"
+    print(f"#### Summary table matches API for {compared_count} model row(s)")
+
+    # For each row in the Forecast skill metrics table (Таблица оценки прогнозов),
+    # look up the matching API record by (model_short, horizon_in_year) where
+    # horizon_in_year = (Месяц - 1) * 6 + Пентада (pentad arithmetic). Compare
+    # the five numeric columns (s/σ, NSE, δ, Оправдываемость, Средняя абсолютная
+    # ошибка). UI rows may include many historical pentads, but every UI row
+    # must match an API record.
+    skill_api = _fetch_skill_table_data_from_db("pentad", "15013")
+    assert skill_api, "API returned no skill-metric data for station 15013"
+    skill_columns = [
+        ("s/σ",                           "sdivsigma"),
+        ("NSE",                           "nse"),
+        ("δ",                             "delta"),
+        ("Оправдываемость",               "accuracy"),
+        ("Средняя абсолютная ошибка",     "mae"),
+    ]
+    skill_compared_count = 0
+    for row in page.locator('div.tabulator-row').all():
+        code_cell = row.locator('div[tabulator-field="Индекс"]')
+        if code_cell.count() == 0:
+            continue
+        code = code_cell.inner_text().strip()
+        if not code:
+            continue
+        model_short = row.locator(
+            'div[tabulator-field="Модель"]'
+        ).inner_text().strip()
+        month_str = row.locator(
+            'div[tabulator-field="Месяц"]'
+        ).inner_text().strip()
+        pentad_str = row.locator(
+            'div[tabulator-field="Пентада"]'
+        ).inner_text().strip()
+        try:
+            month_int = int(month_str)
+            pentad_int = int(pentad_str)
+        except ValueError:
+            continue
+        horizon_in_year = (month_int - 1) * 6 + pentad_int
+        api_row = skill_api.get((model_short, horizon_in_year))
+        present_for_model = sorted(
+            k[1] for k in skill_api.keys() if k[0] == model_short
+        )
+        assert api_row is not None, (
+            f"Skill table row (model={model_short!r}, month={month_int}, "
+            f"pentad={pentad_int}, horizon_in_year={horizon_in_year}) has no "
+            f"matching API record; horizon_in_year present for {model_short!r}: "
+            f"{present_for_model}"
+        )
+        for col, api_key in skill_columns:
+            ui_str = row.locator(
+                f'div[tabulator-field="{col}"]'
+            ).inner_text().strip()
+            _compare_numeric(api_row[api_key], ui_str)
+        skill_compared_count += 1
+    assert skill_compared_count >= 1, (
+        "No Forecast skill metrics rows were compared against the API"
+    )
+    print(
+        f"#### Forecast skill metrics table matches API for "
+        f"{skill_compared_count} row(s)"
+    )
+
+    # The Hydrograph card on the Forecast tab (pn.Card "Гидрограф") renders
+    # the current year's DAILY discharge by default — the card has a
+    # "Show forecasts aggregated to pentadal values" toggle but the default
+    # state is daily (see src/layout.py:251-265). The matching daily series
+    # on the canvas is named "Текущий год"; the DB equivalent is
+    # /preprocessing/hydrograph/?horizon=day with the "current" field
+    # (same source the Predictors-tab daily hydrograph assertion uses).
+    # _assert_canvas_matches_db tolerates steps-mid doubling and
+    # contiguous-subseq windowing.
+    cur_year = dt.datetime.now().year
+    hydro_resp = requests.get(
+        f"{API_BASE}/preprocessing/hydrograph/",
+        params={
+            "horizon":    "day",
+            "code":       "15013",
+            "start_date": f"{cur_year}-01-01",
+            "end_date":   f"{cur_year}-12-31",
+            "limit":      1000,
+        },
+        timeout=API_TIMEOUT,
+    )
+    hydro_resp.raise_for_status()
+    daily_hydro_rows = hydro_resp.json()
+    assert daily_hydro_rows, (
+        "Daily hydrograph API returned no rows for station 15013 — "
+        "cannot compare against the Forecast-tab Hydrograph canvas"
+    )
+    expected_current = _series_from_db_rows(daily_hydro_rows, "current")
+    _assert_canvas_matches_db(
+        page,
+        expected_current,
+        "Forecast tab — Hydrograph daily (current year) [15013]",
+    )
+
+    # The Forecast skill metrics chart ("Оценки прогноза") layers a per-model
+    # step-series of sdivsigma across pentad_in_year (1–72). It filters by a
+    # `model_checkbox` widget (vizualization.py:4495 — only models the user
+    # has checked are plotted), so /skill-metric/ may include models that
+    # are absent from the canvas (e.g. EM at runtime).
+    # Reuse skill_api from Phase 2 (do not re-fetch), group sdivsigma values
+    # by model_short into a pentad-sorted list, and try each model against
+    # the canvas: on match, count it; on no-match, log it as "in API but not
+    # plotted" and continue. Require ≥1 model to match so a fully-broken
+    # chart still fails. Models with fewer than 3 valid points are skipped.
+    skill_series_by_model: dict[str, list[float]] = {}
+    for (model_short, hin), api_row in skill_api.items():
+        s = api_row.get("sdivsigma")
+        if s is None:
+            continue
+        if isinstance(s, float) and s != s:  # NaN guard
+            continue
+        skill_series_by_model.setdefault(model_short, []).append((hin, float(s)))
+    # Sort each model's points by horizon_in_year ascending
+    skill_series_by_model = {
+        m: [v for _, v in sorted(pts, key=lambda x: x[0])]
+        for m, pts in skill_series_by_model.items()
+    }
+
+    skill_sources = _extract_bokeh_data_sources(page)
+
+    skill_models_matched = 0
+    skill_models_not_in_chart: list[str] = []
+    skill_models_too_short: list[str] = []
+    for model_short, series in sorted(skill_series_by_model.items()):
+        if len(series) < 3:
+            skill_models_too_short.append(model_short)
+            print(
+                f"#### Skipping skill-chart match for model {model_short!r} "
+                f"— only {len(series)} point(s)"
+            )
+            continue
+        # Try to find a matching canvas — pre-compute via the same matcher
+        # _assert_canvas_matches_db uses, so we can decide success vs.
+        # "in API but not plotted" without raising.
+        match = _find_matching_canvas_source(skill_sources, series)
+        if match is not None:
+            _assert_canvas_matches_db(
+                page,
+                series,
+                f"Forecast tab — Skill chart sdivsigma [{model_short}] [15013]",
+                sources=skill_sources,
+            )
+            skill_models_matched += 1
+        else:
+            skill_models_not_in_chart.append(model_short)
+            print(
+                f"#### Skill chart: model {model_short!r} has "
+                f"{len(series)} sdivsigma point(s) in API but no matching "
+                f"canvas series — likely filtered out by the chart's "
+                f"model_checkbox widget; continuing."
+            )
+    assert skill_models_matched >= 1, (
+        f"No models' sdivsigma series matched the Skill chart canvas — chart "
+        f"may be broken or showing no models. "
+        f"Tried-but-not-plotted: {sorted(skill_models_not_in_chart)}. "
+        f"Too-short: {sorted(skill_models_too_short)}."
+    )
+    print(
+        f"#### Skill chart matches DB for {skill_models_matched} model "
+        f"series. Not plotted on chart: {sorted(skill_models_not_in_chart)}. "
+        f"Skipped (too few points): {sorted(skill_models_too_short)}."
+    )
+
+    # Phase 3c: Forecast tab — Linear regression scatter (predictor vs discharge_avg)
+    # The LR card plots historical (predictor, discharge_avg) pairs at the
+    # displayed pentad for station 15013. We replicate the dashboard pipeline:
+    # fetch the full lr-forecast history, filter to the latest pentad
+    # (= max horizon_in_year), drop NaN predictor/discharge_avg, then apply
+    # the lr-visibility flag (defaulting missing entries to visible=True).
+    # We sort the surviving rows by date ascending to match the most likely
+    # ColumnDataSource ordering, then assert each axis list shows up in some
+    # Bokeh canvas via _assert_canvas_matches_db.
+    cur_year = dt.datetime.now().year
+    lr_full_resp = requests.get(
+        f"{API_BASE}/postprocessing/lr-forecast/",
+        params={
+            "horizon":    "pentad",
+            "code":       "15013",
+            "start_date": "2000-01-01",
+            "end_date":   f"{cur_year}-12-31",
+            "limit":      10000,
+        },
+        timeout=API_TIMEOUT,
+    )
+    lr_full_resp.raise_for_status()
+    lr_full_rows = lr_full_resp.json()
+    if not lr_full_rows:
+        print(
+            "#### Phase 3c skipped: /lr-forecast/ returned no rows for station "
+            "15013 — LR model data is not available in this DB"
+        )
+    else:
+        # Pick the pentad currently displayed on the LR scatter: it's the
+        # horizon_in_year of the LATEST forecast date in /lr-forecast/, NOT
+        # max(horizon_in_year) across all history (which would pick
+        # December's pentad 72 from some past year still in the dataset).
+        # The /lr-forecast/ history spans 25+ years for this station, so any
+        # pentad 1-72 can be "max" in pure-numeric terms; the scatter is
+        # tied to whatever pentad the most recent forecast was produced for.
+        max_lr_date = max(r["date"] for r in lr_full_rows if r.get("date"))
+        latest_records = [
+            r for r in lr_full_rows
+            if r.get("date") == max_lr_date
+            and r.get("horizon_in_year") is not None
+        ]
+        assert latest_records, (
+            "Could not determine the latest LR pentad from /lr-forecast/ — "
+            f"max date {max_lr_date!r} has no rows with horizon_in_year"
+        )
+        latest_hin = int(latest_records[0]["horizon_in_year"])
+        import math
+        month_for_horizon = math.ceil(latest_hin / 6)
+        pentad_in_month = latest_hin % 6 or 6
+
+        try:
+            vis_resp = requests.get(
+                f"{API_BASE}/postprocessing/lr-visibility/",
+                params={
+                    "horizon_type":  "pentad",
+                    "code":          "15013",
+                    "month":         month_for_horizon,
+                    "horizon_value": pentad_in_month,
+                },
+                timeout=API_TIMEOUT,
+            )
+            vis_resp.raise_for_status()
+            vis_rows = vis_resp.json()
+        except Exception as e:
+            print(f"#### lr-visibility unavailable ({e!r}); assuming all years visible")
+            vis_rows = []
+        visibility_by_year = {int(r["year"]): bool(r["visible"]) for r in vis_rows if r.get("year") is not None}
+
+        def _row_year(r):
+            d = r.get("date", "")
+            return int(str(d)[:4]) if d else None
+
+        scatter_points: list[tuple[str, float, float]] = []  # (date_str, predictor, discharge_avg)
+        for r in lr_full_rows:
+            if r.get("horizon_in_year") != latest_hin:
+                continue
+            p = r.get("predictor")
+            q = r.get("discharge_avg")
+            if p is None or q is None:
+                continue
+            try:
+                pf = float(p); qf = float(q)
+            except (TypeError, ValueError):
+                continue
+            if pf != pf or qf != qf:  # NaN guard
+                continue
+            year = _row_year(r)
+            if year is not None and visibility_by_year.get(year, True) is False:
+                continue
+            date_str = str(r.get("date", ""))[:10]
+            scatter_points.append((date_str, pf, qf))
+
+        scatter_points.sort(key=lambda t: t[0])
+        predictor_values = [p for _, p, _ in scatter_points]
+        discharge_values = [q for _, _, q in scatter_points]
+
+        assert len(scatter_points) >= 3, (
+            f"LR scatter: only {len(scatter_points)} (predictor, discharge_avg) "
+            f"point(s) survived filtering — not enough to validate the canvas"
+        )
+        lr_sources = _extract_bokeh_data_sources(page)
+        _assert_canvas_matches_db(
+            page,
+            predictor_values,
+            f"Forecast tab — LR scatter predictor (x) [15013] pentad={latest_hin}",
+            sources=lr_sources,
+        )
+        _assert_canvas_matches_db(
+            page,
+            discharge_values,
+            f"Forecast tab — LR scatter discharge_avg (y) [15013] pentad={latest_hin}",
+            sources=lr_sources,
+        )
+        print(
+            f"#### LR scatter matches DB for {len(scatter_points)} historical "
+            f"point(s) at pentad={latest_hin}"
+        )
 
     def get_model_values():
         """Find selected models in Summary table"""
