@@ -812,11 +812,24 @@ def test_local(page: Page):
         ### FORECAST TAB ###
         page.locator("div.bk-tab", has_text="Прогноз").click()
         print(f"#### Switch to Forecast tab successful. [{horizon}]")
-        time.sleep(SLEEP)
+        time.sleep(SLEEP * 2)
 
         page.locator("select#input").nth(0).select_option(label=horizon_label, timeout=60000)
         page.locator("select#input").nth(1).select_option(value="15013 - Джыргалан-с.Советское", timeout=60000)
-        time.sleep(SLEEP * 2)
+        time.sleep(SLEEP * 3)
+        # Deterministic wait: the Phase 1 Summary-table loop discriminates
+        # Summary-table rows by the unique 'Прогн. расх. воды' field. If
+        # we run the loop too soon after the horizon/station switch, the
+        # Summary tabulator is still re-rendering and only the skill-table
+        # rows are present in the DOM — every Summary check then iterates
+        # zero rows and trips `assert compared_count >= 1`. Wait for at
+        # least one Summary-table cell to be attached so subsequent
+        # assertions run against a fully-rendered table. Without this the
+        # test only passes with --slowmo ≥ 700; with the wait it works at
+        # --slowmo 300.
+        page.locator(
+            'div.tabulator-row div[tabulator-field="Прогн. расх. воды"]'
+        ).first.wait_for(state="attached", timeout=30000)
         print(f"#### Forecast tab setup: horizon={horizon}, station=15013")
 
         # Sidebar: only Horizon, Hydropost, Forecast configuration, and Manual
