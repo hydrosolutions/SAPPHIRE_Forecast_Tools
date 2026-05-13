@@ -616,6 +616,979 @@ def _compare_numeric(api_val, ui_str: str, tolerance: float = 0.05) -> None:
         )
 
 
+def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
+    """Run the full Forecast-tab assertions + Bulletin Add/Write/Compare/
+    Download flow for one horizon configuration.
+
+    Called once per entry in ``forecast_horizons`` inside ``test_local``.
+    ``h_cfg`` keys depend on horizon (see ``test_local`` for the canonical
+    config list): ``horizon``, ``label``, ``is_long``, ``is_month``, plus
+    ``in_month_field`` / ``periods_per_month`` (short-term only) and
+    ``bulletin_folder`` / ``sheet_horizon_ru`` (used by short-term bulletin
+    Excel comparison and the sheet-name calculation).
+    """
+    horizon           = h_cfg["horizon"]
+    horizon_label     = h_cfg["label"]
+    is_long  = h_cfg["is_long"]
+    is_month = h_cfg["is_month"]
+    if not is_long:
+        in_month_field    = h_cfg["in_month_field"]
+        periods_per_month = h_cfg["periods_per_month"]
+    # bulletin_folder / sheet_horizon_ru are needed by the bulletin
+    # flow for pentad, decade, and month (not season).
+    bulletin_folder  = h_cfg.get("bulletin_folder")
+    sheet_horizon_ru = h_cfg.get("sheet_horizon_ru")
+
+    ### FORECAST TAB ###
+    page.locator("div.bk-tab", has_text="Прогноз").click()
+    print(f"#### Switch to Forecast tab successful. [{horizon}]")
+    time.sleep(SLEEP * 2)
+
+    page.locator("select#input").nth(0).select_option(label=horizon_label, timeout=60000)
+    page.locator("select#input").nth(1).select_option(value="15013 - Джыргалан-с.Советское", timeout=60000)
+    time.sleep(SLEEP * 3)
+    # Deterministic wait: the Phase 1 Summary-table loop discriminates
+    # Summary-table rows by the unique 'Прогн. расх. воды' field. If
+    # we run the loop too soon after the horizon/station switch, the
+    # Summary tabulator is still re-rendering and only the skill-table
+    # rows are present in the DOM — every Summary check then iterates
+    # zero rows and trips `assert compared_count >= 1`. Wait for at
+    # least one Summary-table cell to be attached so subsequent
+    # assertions run against a fully-rendered table. Without this the
+    # test only passes with --slowmo ≥ 700; with the wait it works at
+    # --slowmo 300.
+    page.locator(
+        'div.tabulator-row div[tabulator-field="Прогн. расх. воды"]'
+    ).first.wait_for(state="attached", timeout=30000)
+    print(f"#### Forecast tab setup: horizon={horizon}, station=15013")
+
+    # Sidebar: only Horizon, Hydropost, Forecast configuration, and Manual
+    # re-run cards are visible on the Forecast tab; Basin card stays hidden.
+    # Card titles are pulled from the Russian gettext catalogue (kyg locale);
+    # untranslated strings like "Basin:" stay in English.
+    expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Гидропост:", exact=True)).to_be_visible()
+    if is_long:
+        expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
+    else:
+        expect(page.get_by_text("Конфигурация прогноза:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
+    expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
+    print(f"#### [{horizon}] Sidebar shows only Horizon, Hydropost, Forecast configuration, Manual re-run cards.")
+
+    # Main area: layout differs by horizon.
+    # - short-term (pentad/decade): all 5 cards visible.
+    # - long-term  (month/season):  only Summary table is guaranteed
+    #   visible. The m0 "Current month forecast" card may appear on
+    #   month if its target month matches the Summary table, but it
+    #   is conditional — treat as soft (print state, don't fail).
+    expect(page.get_by_text("Сводная таблица", exact=True)).to_be_visible()
+    if not is_long:
+        expect(page.get_by_text("Линейная регрессия", exact=True)).to_be_visible()
+        expect(page.get_by_text("Гидрограф", exact=True)).to_be_visible()
+        expect(page.get_by_text("Оценки прогноза", exact=True)).to_be_visible()
+        expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).to_be_visible()
+        print(f"#### [{horizon}] Main area shows Linear regression, Summary table, Hydrograph, Forecast skill metrics, Table of forecast skill metrics cards.")
+    else:
+        # Long-term: short-only cards must NOT be visible.
+        expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Гидрограф", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
+        if is_month:
+            # Soft m0 check on month: the "Current month forecast" card
+            # may appear only when its target month matches the Summary
+            # table (commit 7e85205 hides it otherwise), so don't assert,
+            # just report.
+            m0_visible = page.get_by_text(
+                "Current month forecast", exact=True
+            ).is_visible()
+            print(
+                f"#### [{horizon}] Main area: Summary table + m0 "
+                f"'Current month forecast' (visible={m0_visible}, "
+                "soft check)."
+            )
+        else:
+            # Season: m0 card never applies, must stay hidden.
+            expect(
+                page.get_by_text("Current month forecast", exact=True)
+            ).not_to_be_visible()
+            print(f"#### [{horizon}] Main area shows Summary table only.")
+
+    # Panel's pn.Tabs runs with dynamic=True, so only the active tab's DOM is
+    # mounted. The Predictors-tab card titles must NOT appear on the Forecast
+    # tab. (Гидрограф is omitted — it also titles a Forecast-tab card.)
+    expect(page.get_by_text("Осадки", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Температура воздуха", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Snow Data")).not_to_be_visible()
+    print(f"#### [{horizon}] Predictors-tab cards (Precipitation, Temperature, Snow Data) are hidden on Forecast tab.")
+
+    # The Hydrograph card on the Forecast tab always renders ≥1 Bokeh <canvas>
+    # independent of forecast-model availability. The Linear regression and
+    # Forecast skill metrics cards depend on whether LR / ML models have data
+    # in the DB, so the full 3-canvas case is best-effort; ≥1 is the minimum.
+    if not is_long:
+        canvas_count = page.locator("canvas").count()
+        assert canvas_count >= 1, (
+            f"Forecast tab [{horizon}]: {canvas_count} canvas(es) rendered — expected ≥1 "
+            "(at minimum the Hydrograph card; LR scatter and Skill chart depend "
+            "on which models have data in the DB)"
+        )
+        if canvas_count >= 3:
+            print(
+                f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) rendered "
+                "(LR scatter + Hydrograph + Skill chart all present)."
+            )
+        else:
+            print(
+                f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) rendered "
+                "(some plot cards missing — likely because some models are absent "
+                "from the DB; continuing)."
+            )
+    else:
+        canvas_count = page.locator("canvas").count()
+        print(
+            f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) "
+            "rendered (long-term horizon — no plot cards on this tab)."
+        )
+
+    # The Сводная таблица must contain at least one short-term model from
+    # the known set (LR, TFT, TiDE, TSMixer, NE) for the active station —
+    # real data may have any subset available at any time. Model names
+    # outside the known set are reported (not failed) so adding a new model
+    # to the lineup does not break this test; a locale/column-field bug
+    # would still surface as the "no known models present" assertion below.
+    model_cells = page.locator(
+        'div.tabulator-row div[tabulator-field="Модель"]'
+    ).all_inner_texts()
+    model_cells_stripped = [m.strip() for m in model_cells]
+    print(f"#### [{horizon}] Summary table model rows: {model_cells_stripped}")
+    present_models = [m for m in model_cells_stripped if m]
+    assert present_models, f"Summary table has no model rows [{horizon}]"
+    if not is_long:
+        # Short-term: keep the subset check against the well-known
+        # short-term model set. This catches locale/column-field bugs.
+        known_models = {"LR", "TFT", "TiDE", "TSMixer", "NE"}
+        expected_present = known_models & set(present_models)
+        assert expected_present, (
+            f"Summary table [{horizon}] contains no known short-term models; got {present_models}"
+        )
+        unknown_models = set(present_models) - known_models
+        if unknown_models:
+            print(
+                f"#### [{horizon}] Summary table contains unfamiliar model name(s) "
+                f"{sorted(unknown_models)} — not failing (model lineup may have "
+                f"grown). Known set is {sorted(known_models)}."
+            )
+        print(
+            f"#### [{horizon}] Summary table contains known model(s): {sorted(expected_present)} "
+            f"(of expected set {sorted(known_models)})"
+        )
+    else:
+        # Long-term: the model lineup (GBT, LR_SM variants, SM_GBT,
+        # MC_ALD, ...) is distinct from short-term and still evolving.
+        # Only assert there is at least one row; report names.
+        print(
+            f"#### [{horizon}] Summary table model rows present: "
+            f"{sorted(set(present_models))}"
+        )
+
+    # For each model row in the Summary table, compare the four raw-API-backed
+    # numeric cells (forecasted_discharge from /forecast|/lr-forecast/ and
+    # sdivsigma/mae/accuracy from /skill-metric/) for station 15013's latest
+    # period. The δ / fc_lower / fc_upper cells are NOT compared: those are
+    # computed live in src/processing.py and src/vizualization.py from
+    # forecasted_discharge ± delta_offset, with branching on the range-slider
+    # state — they're presentation values, not raw API fields, so reproducing
+    # them in the test would re-implement the dashboard logic.
+    summary_api = _fetch_summary_table_data_from_db(horizon, "15013")
+    assert summary_api, f"API returned no Summary-table data for station 15013 [{horizon}]"
+    if is_long:
+        # Long-term Summary table renders only forecasted_discharge
+        # from /long-forecast/; sdivsigma/mae/accuracy aren't in the
+        # long-forecast response and may not appear in the table.
+        summary_columns = [
+            ("Прогн. расх. воды", "forecasted_discharge"),
+        ]
+    else:
+        summary_columns = [
+            ("Прогн. расх. воды",             "forecasted_discharge"),
+            ("s/σ",                           "sdivsigma"),
+            ("Средняя абсолютная ошибка",     "mae"),
+            ("Оправдываемость",               "accuracy"),
+        ]
+    compared_count = 0
+    for row in page.locator('div.tabulator-row').all():
+        model_cell = row.locator('div[tabulator-field="Модель"]')
+        if model_cell.count() == 0:
+            continue
+        # Skip rows from the Forecast skill metrics table (Таблица оценки прогнозов)
+        # — both tabulators share a 'Модель' column. The Summary table is the only
+        # one that has a 'Прогн. расх. воды' (forecasted_discharge) field.
+        if row.locator('div[tabulator-field="Прогн. расх. воды"]').count() == 0:
+            continue
+        model_short = model_cell.inner_text().strip()
+        if not model_short:
+            continue
+        assert model_short in summary_api, (
+            f"Summary table [{horizon}] row for model {model_short!r} has no matching API record; "
+            f"API models: {sorted(summary_api.keys())}"
+        )
+        api_row = summary_api[model_short]
+        for col, api_key in summary_columns:
+            ui_str = row.locator(f'div[tabulator-field="{col}"]').inner_text().strip()
+            api_val = api_row.get(api_key)
+            try:
+                _compare_numeric(api_val, ui_str)
+            except AssertionError as e:
+                raise AssertionError(
+                    f"Summary[horizon={horizon!r}, model={model_short!r}, col={col!r}, "
+                    f"api_key={api_key!r}]: api={api_val!r} vs ui={ui_str!r} — {e}"
+                ) from e
+        compared_count += 1
+    assert compared_count >= 1, f"No Summary-table rows were compared against the API [{horizon}]"
+    print(f"#### [{horizon}] Summary table matches API for {compared_count} model row(s)")
+
+    # For each row in the Forecast skill metrics table (Таблица оценки прогнозов),
+    # look up the matching API record by (model_short, horizon_in_year) where
+    # horizon_in_year = (Месяц - 1) * periods_per_month + in_month (pentad/decade arithmetic).
+    # Compare the five numeric columns (s/σ, NSE, δ, Оправдываемость, Средняя абсолютная
+    # ошибка). UI rows may include many historical periods, but every UI row
+    # must match an API record.
+    if not is_long:
+        skill_api = _fetch_skill_table_data_from_db(horizon, "15013")
+        assert skill_api, f"API returned no skill-metric data for station 15013 [{horizon}]"
+        skill_columns = [
+            ("s/σ",                           "sdivsigma"),
+            ("NSE",                           "nse"),
+            ("δ",                             "delta"),
+            ("Оправдываемость",               "accuracy"),
+            ("Средняя абсолютная ошибка",     "mae"),
+        ]
+        skill_compared_count = 0
+        for row in page.locator('div.tabulator-row').all():
+            code_cell = row.locator('div[tabulator-field="Индекс"]')
+            if code_cell.count() == 0:
+                continue
+            code = code_cell.inner_text().strip()
+            if not code:
+                continue
+            model_short = row.locator(
+                'div[tabulator-field="Модель"]'
+            ).inner_text().strip()
+            month_str = row.locator(
+                'div[tabulator-field="Месяц"]'
+            ).inner_text().strip()
+            in_month_str = row.locator(
+                f'div[tabulator-field="{in_month_field}"]'
+            ).inner_text().strip()
+            try:
+                month_int = int(month_str)
+                in_month_int = int(in_month_str)
+            except ValueError:
+                continue
+            horizon_in_year = (month_int - 1) * periods_per_month + in_month_int
+            api_row = skill_api.get((model_short, horizon_in_year))
+            present_for_model = sorted(
+                k[1] for k in skill_api.keys() if k[0] == model_short
+            )
+            assert api_row is not None, (
+                f"Skill table [{horizon}] row (model={model_short!r}, month={month_int}, "
+                f"in_month={in_month_int}, horizon_in_year={horizon_in_year}) has no "
+                f"matching API record; horizon_in_year present for {model_short!r}: "
+                f"{present_for_model}"
+            )
+            for col, api_key in skill_columns:
+                ui_str = row.locator(
+                    f'div[tabulator-field="{col}"]'
+                ).inner_text().strip()
+                _compare_numeric(api_row[api_key], ui_str)
+            skill_compared_count += 1
+        assert skill_compared_count >= 1, (
+            f"No Forecast skill metrics rows were compared against the API [{horizon}]"
+        )
+        print(
+            f"#### [{horizon}] Forecast skill metrics table matches API for "
+            f"{skill_compared_count} row(s)"
+        )
+    else:
+        print(f"#### [{horizon}] Phase 2 (skill table) skipped — table is hidden for long-term horizons")
+
+    # The Hydrograph card on the Forecast tab (pn.Card "Гидрограф") renders
+    # the current year's DAILY discharge by default — the card has a
+    # "Show forecasts aggregated to pentadal values" toggle but the default
+    # state is daily (see src/layout.py:251-265). The matching daily series
+    # on the canvas is named "Текущий год"; the DB equivalent is
+    # /preprocessing/hydrograph/?horizon=day with the "current" field
+    # (same source the Predictors-tab daily hydrograph assertion uses).
+    # _assert_canvas_matches_db tolerates steps-mid doubling and
+    # contiguous-subseq windowing.
+    if not is_long:
+        cur_year = dt.datetime.now().year
+        hydro_resp = requests.get(
+            f"{API_BASE}/preprocessing/hydrograph/",
+            params={
+                "horizon":    "day",
+                "code":       "15013",
+                "start_date": f"{cur_year}-01-01",
+                "end_date":   f"{cur_year}-12-31",
+                "limit":      1000,
+            },
+            timeout=API_TIMEOUT,
+        )
+        hydro_resp.raise_for_status()
+        daily_hydro_rows = hydro_resp.json()
+        assert daily_hydro_rows, (
+            f"Daily hydrograph API returned no rows for station 15013 [{horizon}] — "
+            "cannot compare against the Forecast-tab Hydrograph canvas"
+        )
+        expected_current = _series_from_db_rows(daily_hydro_rows, "current")
+        _assert_canvas_matches_db(
+            page,
+            expected_current,
+            f"Forecast tab [{horizon}] — Hydrograph daily (current year) [15013]",
+        )
+        print(f"#### [{horizon}] Hydrograph matches DB for daily (current year) [15013]")
+    else:
+        print(f"#### [{horizon}] Phase 3a (Hydrograph canvas) skipped — card is hidden for long-term horizons")
+
+    # The Forecast skill metrics chart ("Оценки прогноза") layers a per-model
+    # step-series of sdivsigma across horizon_in_year. It filters by a
+    # `model_checkbox` widget (vizualization.py:4495 — only models the user
+    # has checked are plotted), so /skill-metric/ may include models that
+    # are absent from the canvas (e.g. EM at runtime).
+    # Reuse skill_api from Phase 2 (do not re-fetch), group sdivsigma values
+    # by model_short into a horizon-sorted list, and try each model against
+    # the canvas: on match, count it; on no-match, log it as "in API but not
+    # plotted" and continue. Require ≥1 model to match so a fully-broken
+    # chart still fails. Models with fewer than 3 valid points are skipped.
+    if not is_long:
+        skill_series_by_model: dict[str, list[float]] = {}
+        for (model_short, hin), api_row in skill_api.items():
+            s = api_row.get("sdivsigma")
+            if s is None:
+                continue
+            if isinstance(s, float) and s != s:  # NaN guard
+                continue
+            skill_series_by_model.setdefault(model_short, []).append((hin, float(s)))
+        # Sort each model's points by horizon_in_year ascending
+        skill_series_by_model = {
+            m: [v for _, v in sorted(pts, key=lambda x: x[0])]
+            for m, pts in skill_series_by_model.items()
+        }
+
+        skill_sources = _extract_bokeh_data_sources(page)
+
+        skill_models_matched = 0
+        skill_models_not_in_chart: list[str] = []
+        skill_models_too_short: list[str] = []
+        for model_short, series in sorted(skill_series_by_model.items()):
+            if len(series) < 3:
+                skill_models_too_short.append(model_short)
+                print(
+                    f"#### [{horizon}] Skipping skill-chart match for model {model_short!r} "
+                    f"— only {len(series)} point(s)"
+                )
+                continue
+            # Try to find a matching canvas — pre-compute via the same matcher
+            # _assert_canvas_matches_db uses, so we can decide success vs.
+            # "in API but not plotted" without raising.
+            match = _find_matching_canvas_source(skill_sources, series)
+            if match is not None:
+                _assert_canvas_matches_db(
+                    page,
+                    series,
+                    f"Forecast tab [{horizon}] — Skill chart sdivsigma [{model_short}] [15013]",
+                    sources=skill_sources,
+                )
+                skill_models_matched += 1
+            else:
+                skill_models_not_in_chart.append(model_short)
+                print(
+                    f"#### [{horizon}] Skill chart: model {model_short!r} has "
+                    f"{len(series)} sdivsigma point(s) in API but no matching "
+                    f"canvas series — likely filtered out by the chart's "
+                    f"model_checkbox widget; continuing."
+                )
+        assert skill_models_matched >= 1, (
+            f"No models' sdivsigma series matched the Skill chart canvas [{horizon}] — chart "
+            f"may be broken or showing no models. "
+            f"Tried-but-not-plotted: {sorted(skill_models_not_in_chart)}. "
+            f"Too-short: {sorted(skill_models_too_short)}."
+        )
+        print(
+            f"#### [{horizon}] Skill chart matches DB for {skill_models_matched} model "
+            f"series. Not plotted on chart: {sorted(skill_models_not_in_chart)}. "
+            f"Skipped (too few points): {sorted(skill_models_too_short)}."
+        )
+    else:
+        print(f"#### [{horizon}] Phase 3b (Skill chart canvas) skipped — chart is hidden for long-term horizons")
+
+    # Phase 3c: Forecast tab — Linear regression scatter (predictor vs discharge_avg)
+    # The LR card plots historical (predictor, discharge_avg) pairs at the
+    # displayed period for station 15013. We replicate the dashboard pipeline:
+    # fetch the full lr-forecast history, filter to the latest period
+    # (= max horizon_in_year), drop NaN predictor/discharge_avg, then apply
+    # the lr-visibility flag (defaulting missing entries to visible=True).
+    # We sort the surviving rows by date ascending to match the most likely
+    # ColumnDataSource ordering, then assert each axis list shows up in some
+    # Bokeh canvas via _assert_canvas_matches_db.
+    if not is_long:
+        cur_year = dt.datetime.now().year
+        lr_full_resp = requests.get(
+            f"{API_BASE}/postprocessing/lr-forecast/",
+            params={
+                "horizon":    horizon,
+                "code":       "15013",
+                "start_date": "2000-01-01",
+                "end_date":   f"{cur_year}-12-31",
+                "limit":      10000,
+            },
+            timeout=API_TIMEOUT,
+        )
+        lr_full_resp.raise_for_status()
+        lr_full_rows = lr_full_resp.json()
+        if not lr_full_rows:
+            print(
+                f"#### [{horizon}] Phase 3c skipped: /lr-forecast/ returned no rows for station "
+                "15013 — LR model data is not available in this DB"
+            )
+        else:
+            # Pick the period currently displayed on the LR scatter: it's the
+            # horizon_in_year of the LATEST forecast date in /lr-forecast/, NOT
+            # max(horizon_in_year) across all history (which would pick
+            # December's last period from some past year still in the dataset).
+            # The /lr-forecast/ history spans 25+ years for this station, so any
+            # period can be "max" in pure-numeric terms; the scatter is
+            # tied to whatever period the most recent forecast was produced for.
+            max_lr_date = max(r["date"] for r in lr_full_rows if r.get("date"))
+            latest_records = [
+                r for r in lr_full_rows
+                if r.get("date") == max_lr_date
+                and r.get("horizon_in_year") is not None
+            ]
+            assert latest_records, (
+                f"Could not determine the latest LR period from /lr-forecast/ [{horizon}] — "
+                f"max date {max_lr_date!r} has no rows with horizon_in_year"
+            )
+            latest_hin = int(latest_records[0]["horizon_in_year"])
+            import math
+            month_for_horizon = math.ceil(latest_hin / periods_per_month)
+            in_month_value = latest_hin % periods_per_month or periods_per_month
+
+            try:
+                vis_resp = requests.get(
+                    f"{API_BASE}/postprocessing/lr-visibility/",
+                    params={
+                        "horizon_type":  horizon,
+                        "code":          "15013",
+                        "month":         month_for_horizon,
+                        "horizon_value": in_month_value,
+                    },
+                    timeout=API_TIMEOUT,
+                )
+                vis_resp.raise_for_status()
+                vis_rows = vis_resp.json()
+            except Exception as e:
+                print(f"#### [{horizon}] lr-visibility unavailable ({e!r}); assuming all years visible")
+                vis_rows = []
+            visibility_by_year = {int(r["year"]): bool(r["visible"]) for r in vis_rows if r.get("year") is not None}
+
+            def _row_year(r):
+                d = r.get("date", "")
+                return int(str(d)[:4]) if d else None
+
+            scatter_points: list[tuple[str, float, float]] = []  # (date_str, predictor, discharge_avg)
+            for r in lr_full_rows:
+                if r.get("horizon_in_year") != latest_hin:
+                    continue
+                p = r.get("predictor")
+                q = r.get("discharge_avg")
+                if p is None or q is None:
+                    continue
+                try:
+                    pf = float(p); qf = float(q)
+                except (TypeError, ValueError):
+                    continue
+                if pf != pf or qf != qf:  # NaN guard
+                    continue
+                year = _row_year(r)
+                if year is not None and visibility_by_year.get(year, True) is False:
+                    continue
+                date_str = str(r.get("date", ""))[:10]
+                scatter_points.append((date_str, pf, qf))
+
+            scatter_points.sort(key=lambda t: t[0])
+            predictor_values = [p for _, p, _ in scatter_points]
+            discharge_values = [q for _, _, q in scatter_points]
+
+            assert len(scatter_points) >= 3, (
+                f"LR scatter [{horizon}]: only {len(scatter_points)} (predictor, discharge_avg) "
+                f"point(s) survived filtering — not enough to validate the canvas"
+            )
+            lr_sources = _extract_bokeh_data_sources(page)
+            _assert_canvas_matches_db(
+                page,
+                predictor_values,
+                f"Forecast tab [{horizon}] — LR scatter predictor (x) [15013] {horizon}_in_year={latest_hin}",
+                sources=lr_sources,
+            )
+            _assert_canvas_matches_db(
+                page,
+                discharge_values,
+                f"Forecast tab [{horizon}] — LR scatter discharge_avg (y) [15013] {horizon}_in_year={latest_hin}",
+                sources=lr_sources,
+            )
+            print(
+                f"#### [{horizon}] LR scatter matches DB for {len(scatter_points)} historical "
+                f"point(s) at {horizon}_in_year={latest_hin}"
+            )
+    else:
+        print(f"#### [{horizon}] Phase 3c (LR scatter) skipped — card is hidden for long-term horizons")
+
+    run_bulletin_flow = (not is_long) or is_month or horizon == "season"
+    if run_bulletin_flow:
+        def get_model_values():
+            """Find selected models in Summary table"""
+            selected_div = page.locator("div.tabulator-selected")
+            model_values = []
+            for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
+                model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
+                model_values.append(model_div.inner_text())
+            return model_values
+
+        summary_table_values = []
+
+        def select_station_and_add_to_bulletin(station):
+            page.locator("select#input").nth(1).select_option(value=station, timeout=60000)
+            print(f"#### SELECTED station: {station}")
+            # Long enough sleep for the Summary table to actually refresh
+            # for the new station before get_model_values reads its
+            # selected row — otherwise stale (previous-station) values
+            # get paired with the new station code in summary_table_values.
+            time.sleep(SLEEP * 2)
+
+            model_values = get_model_values()
+            model_values.insert(0, station.split()[0])
+            summary_table_values.append(model_values)
+            page.get_by_role(
+                "button", name="Добавить в бюллетень"
+            ).first.click()
+            print(f"#### ADDED TO BULLETIN: {station}")
+            time.sleep(SLEEP)
+
+        stations = [
+            "15013 - Джыргалан-с.Советское",
+            # "15016 - Тургень-Ак-Суу - пос.лесозавода",
+            "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
+            #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
+            "15212 - Ак-Суу - с.Чон-Арык",
+            "15256 - Талас -  с.Ак-Таш",
+        ]
+        for station in stations:
+            select_station_and_add_to_bulletin(station)
+
+        print(f"#### [{horizon}] Summary table values added to bulletins:")
+        for value in summary_table_values:
+            print(value)
+        time.sleep(SLEEP)
+
+        ### BULLETIN TAB ###
+        page.locator("div.bk-tab", has_text="Бюллетень").click()
+        print(f"#### Switch to Bulletin tab successful. [{horizon}]")
+        time.sleep(SLEEP)
+
+        # Sidebar on Bulletin tab: only Horizon, Basin, and Manual
+        # re-run cards visible (see update_sidepane_card_visibility at
+        # src/vizualization.py:130-135). Hydropost and Forecast
+        # configuration are hidden.
+        expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
+        expect(page.get_by_text("Basin:", exact=True)).to_be_visible()
+        expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
+        expect(page.get_by_text("Гидропост:", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
+        print(f"#### [{horizon}] Bulletin sidebar shows only Horizon, Basin, Manual re-run cards.")
+
+        # Main area on Bulletin tab: only Forecast bulletin
+        # ("Прогнозный бюллетень") and Download bulletin
+        # ("Скачать бюллетень") cards. Forecast-tab cards must not
+        # be visible (dynamic=True swap).
+        expect(page.get_by_text("Прогнозный бюллетень", exact=True)).to_be_visible()
+        expect(page.get_by_text("Скачать бюллетень", exact=True)).to_be_visible()
+        expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Сводная таблица", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
+        expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
+        print(f"#### [{horizon}] Bulletin main area shows Forecast bulletin + Download bulletin cards only.")
+
+        # Extract forecast bulletin table values
+        forecast_bulletin_values = []
+        selectable_divs = page.locator("div.tabulator-selectable")
+        for i in range(selectable_divs.count()):
+            div = selectable_divs.nth(i)
+            values = div.inner_text().split("\n")
+            forecast_bulletin_values.append(values)
+
+        print(f"#### [{horizon}] Forecast bulletin values:")
+        for value in forecast_bulletin_values:
+            print(value)
+        time.sleep(SLEEP)
+
+        # Comparing summary table with forecast bulletin
+        print(f"Comparing summary table with forecast bulletin... [{horizon}]")
+        count = 0
+        for s_value in summary_table_values:
+            for f_value in forecast_bulletin_values:
+                if s_value[0] in f_value[0] and s_value[1] == f_value[1]:
+                    count += 1
+                    assert s_value[2] == f_value[3]  # Forecasted discharge
+                    assert s_value[3] == f_value[4]  # Forecast lower bound
+                    assert s_value[4] == f_value[5]  # Forecast upper bound
+                    assert s_value[5] == f_value[6]  # δ
+                    assert s_value[6] == f_value[7]  # s/σ
+                    assert s_value[8] == f_value[8]  # Accuracy
+        assert count == len(summary_table_values) == len(forecast_bulletin_values)
+        print(f"#### [{horizon}] Summary table values are EQUAL to Forecast bulletin values")
+        time.sleep(SLEEP)
+
+        # Checking the top checkbox to select all bulletins
+        page.locator('input[type="checkbox"][aria-label="Select Row"]').first.check()
+        print(f"#### [{horizon}] All bulletins selected")
+        time.sleep(SLEEP)
+
+        # Clicking Write bulletin button
+        page.get_by_role("button", name="Записать бюллетень").click()
+        print(f"#### [{horizon}] Write bulletin button clicked")
+        time.sleep(SLEEP)
+
+        # Resolve forecast year/horizon_value/sheet_name/month_str from the latest
+        # forecast record in the DB — mirrors the dashboard's get_bulletin_metadata
+        # so the test does not depend on today's wall-clock date.
+        last_date, horizon_value, year = _get_latest_forecast_metadata(horizon)
+        date_str = last_date.strftime("%Y-%m-%d")
+        print("Latest forecast (last_date):", date_str)
+        month_str = last_date.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
+        if horizon == "pentad":
+            horizon_value_in_month = tl.get_pentad(date_str)
+            print("Pentad in year:", horizon_value)
+            print("Pentad in month:", horizon_value_in_month)
+        elif horizon == "decade":
+            horizon_value_in_month = tl.get_decad_in_month(date_str)
+            print("Decad in year:", horizon_value)
+            print("Decad in month:", horizon_value_in_month)
+        elif horizon == "month":
+            # For month bulletins the worksheet is keyed by the TARGET
+            # month number (1-12), which _get_latest_forecast_metadata
+            # already returns as horizon_value.
+            horizon_value_in_month = horizon_value
+            print("Target month (1-12):", horizon_value)
+        elif horizon == "season":
+            horizon_value_in_month = horizon_value  # = 1 for season
+            print("Season horizon_value (always 1):", horizon_value)
+        else:
+            raise AssertionError(f"Unsupported horizon for bulletin flow: {horizon!r}")
+        if horizon in ("month", "season"):
+            # monthly_forecast_bulletin.xlsx and seasonal_forecast_bulletin.xlsx
+            # both use a single sheet named 'bulletin'.
+            sheet_name = "bulletin"
+        else:
+            sheet_name = f"{horizon_value_in_month} {sheet_horizon_ru}"
+
+        # Fetch bulletin records from the API
+        print(f"#### [{horizon}] Fetching bulletin from API...")
+        api_records = _fetch_bulletin_from_api(horizon, year, horizon_value)
+        print(f"#### [{horizon}] API returned {len(api_records)} bulletin record(s):")
+        for rec in api_records:
+            print(rec)
+        time.sleep(SLEEP)
+
+        if horizon == "season" and not api_records:
+            print(
+                f"#### [{horizon}] /bulletin/ API returned no records — "
+                "skipping API↔Bulletin and Excel↔API comparisons for season."
+            )
+        else:
+            assert api_records, "API returned no bulletin records — was the bulletin written correctly?"
+
+            # Compare API records with UI bulletin table
+            print(f"Comparing API bulletin records with UI forecast bulletin table... [{horizon}]")
+            count = 0
+            for rec in api_records:
+                api_station  = normalize_spaces(rec.get("station_label", ""))
+                api_basin    = normalize_spaces(rec.get("basin_name", ""))
+                api_model    = rec.get("model_type", "")
+                for f_value in forecast_bulletin_values:
+                    ui_station = normalize_spaces(f_value[0])
+                    ui_basin   = normalize_spaces(f_value[2])
+                    if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
+                        count += 1
+                        _compare_numeric(rec.get("forecasted_discharge"), f_value[3])  # forecasted discharge
+                        _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
+                        _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
+                        if rec.get("delta") is not None:
+                            assert str(rec["delta"]).replace(",", ".") == f_value[6].replace(",", ".")  # δ
+                        _compare_numeric(rec.get("sdivsigma"),           f_value[7])  # s/σ
+                        _compare_numeric(rec.get("accuracy"),            f_value[8])  # accuracy
+            assert count == len(forecast_bulletin_values) == len(api_records), (
+                f"Match count {count} does not equal bulletin rows {len(forecast_bulletin_values)} "
+                f"or API records {len(api_records)}"
+            )
+            print(f"#### [{horizon}] API bulletin records are EQUAL to UI Forecast bulletin values")
+            time.sleep(SLEEP)
+
+            # Excel comparison: pentad and decade produce per-basin +
+            # all_basins .xlsx files in the short-term-forecast layout, so
+            # we compare against both. Month writes a single
+            # monthly_forecast_bulletin.xlsx with a different internal
+            # layout (see src/bulletins.py:941) — skip the strict Excel
+            # comparison for month; the API↔Bulletin comparison above
+            # already exercises the data flow.
+            if horizon in ("pentad", "decade"):
+                sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                excel_file_paths = []
+                basins = set()
+                for f_value in forecast_bulletin_values:
+                    basin = f_value[2]
+                    if basin not in basins:
+                        basins.add(basin)
+                        path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
+                        excel_file_paths.append(path)
+                excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
+
+                print(f"#### [{horizon}] Excel file paths:")
+                for path in excel_file_paths:
+                    print(path)
+                time.sleep(SLEEP)
+
+                # Compare Excel values with API records
+                print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+
+                count = 0
+                for excel_file_path in excel_file_paths:
+                    df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
+                    print(f"Comparing Excel with API: {excel_file_path}")
+                    for row_index in range(len(df)):
+                        if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
+                            continue
+                        excel_river  = df.iloc[row_index, 0]
+                        excel_punkt  = df.iloc[row_index, 1]
+                        excel_model  = df.iloc[row_index, 2]
+                        excel_delta  = df.iloc[row_index, 5]
+                        for rec in api_records:
+                            api_station = normalize_spaces(rec.get("station_label", ""))
+                            # match when both Excel river and punkt appear in the API station label
+                            if excel_river in api_station and excel_punkt in api_station:
+                                count += 1
+                                assert excel_model == rec.get("model_type"), (
+                                    f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
+                                )
+                                api_delta = rec.get("delta")
+                                if not (pd.isna(excel_delta) and api_delta is None):
+                                    assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
+                                        f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
+                                    )
+                    print(f"#### [{horizon}] Excel values are EQUAL to API bulletin records")
+                assert count == len(api_records) * 2, (
+                    f"Expected {len(api_records) * 2} Excel/API matches (2 files), got {count}"
+                )
+            elif horizon == "month":
+                # Month writes a single monthly_forecast_bulletin.xlsx with
+                # one 'bulletin' sheet containing multiple sections (rivers,
+                # reservoirs monthly, reservoirs quarterly). Each data row
+                # has col 0 = river, col 1 = punkt, col 2 = fc_lower,
+                # col 4 = fc_upper (cols 5/7 are volume in million m³, not
+                # delta). Section header rows and basin label rows have NaN
+                # in col 1 and are skipped. Match Excel rows against API
+                # records via the (river ∈ station_label, punkt ∈ station_label)
+                # heuristic the short-term path uses.
+                sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                monthly_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_monthly_forecast_bulletin.xlsx"
+                print(f"#### [{horizon}] Excel file path: {monthly_path}")
+                df = pd.read_excel(monthly_path, sheet_name="bulletin", header=None)
+                print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+                # The monthly bulletin file also contains a КВАРТАЛЬНЫЙ
+                # (quarterly) section after the monthly sections — its rows
+                # carry different forecast values (different horizon) that
+                # would mismatch our monthly API records. Stop iterating
+                # once we see the quarterly section header.
+                count = 0
+                for row_index in range(len(df)):
+                    col0 = df.iloc[row_index, 0]
+                    col0_str = "" if pd.isna(col0) else str(col0)
+                    if "КВАРТАЛЬНЫЙ" in col0_str.upper():
+                        break
+                    col1 = df.iloc[row_index, 1]
+                    if pd.isna(col0) or pd.isna(col1):
+                        continue
+                    excel_river = col0_str.strip()
+                    excel_punkt = str(col1).strip()
+                    if not excel_river or not excel_punkt:
+                        continue
+                    # Skip section header rows ("РЕКА"/"ПУНКТ") and the
+                    # integer column-numbering row ("1"/"2").
+                    if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
+                        continue
+                    excel_fc_lower = df.iloc[row_index, 2]
+                    excel_fc_upper = df.iloc[row_index, 4]
+                    for rec in api_records:
+                        api_station = normalize_spaces(rec.get("station_label", ""))
+                        if excel_river in api_station and excel_punkt in api_station:
+                            count += 1
+                            _compare_numeric(rec.get("fc_lower"), str(excel_fc_lower))
+                            _compare_numeric(rec.get("fc_upper"), str(excel_fc_upper))
+                print(f"#### [{horizon}] Monthly bulletin Excel matched {count} row(s) against API")
+                assert count >= 1, (
+                    f"No monthly bulletin rows matched API for [{horizon}] — "
+                    f"checked {len(df)} Excel rows against {len(api_records)} API records"
+                )
+            elif horizon == "season":
+                sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                season_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_seasonal_forecast_bulletin.xlsx"
+                print(f"#### [{horizon}] Excel file path: {season_path}")
+                df = pd.read_excel(season_path, sheet_name=sheet_name, header=None)
+                print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+                # Seasonal file has a single ВЕГЕТАЦИОННЫЙ section; no
+                # quarterly/monthly subsections to skip. Data values may
+                # be NaN if forecasts haven't been issued yet — tolerate
+                # those and only compare where both API and Excel have
+                # numeric values.
+                count = 0
+                compared = 0
+                for row_index in range(len(df)):
+                    col0 = df.iloc[row_index, 0]
+                    col1 = df.iloc[row_index, 1]
+                    if pd.isna(col0) or pd.isna(col1):
+                        continue
+                    excel_river = str(col0).strip()
+                    excel_punkt = str(col1).strip()
+                    if not excel_river or not excel_punkt:
+                        continue
+                    if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
+                        continue
+                    excel_fc_lower = df.iloc[row_index, 2]
+                    excel_fc_upper = df.iloc[row_index, 4]
+                    for rec in api_records:
+                        api_station = normalize_spaces(rec.get("station_label", ""))
+                        if excel_river in api_station and excel_punkt in api_station:
+                            count += 1
+                            api_lower = rec.get("fc_lower")
+                            api_upper = rec.get("fc_upper")
+                            if api_lower is not None and not pd.isna(excel_fc_lower):
+                                _compare_numeric(api_lower, str(excel_fc_lower))
+                                compared += 1
+                            if api_upper is not None and not pd.isna(excel_fc_upper):
+                                _compare_numeric(api_upper, str(excel_fc_upper))
+                                compared += 1
+                print(
+                    f"#### [{horizon}] Seasonal bulletin Excel matched {count} row(s) "
+                    f"against API; {compared} numeric cell comparison(s) performed. "
+                    "Strict count assertion skipped — season data is often sparse."
+                )
+            else:
+                print(
+                    f"#### [{horizon}] Excel comparison skipped — only "
+                    "pentad/decade and month are wired up."
+                )
+
+        # Clicking Remove Selected button
+        page.get_by_role("button", name="Удалить выбранное").click()
+        selectable_divs = page.locator("div.tabulator-selectable")
+        assert selectable_divs.count() == 0
+        print(f"#### [{horizon}] Remove Selected button clicked")
+        time.sleep(SLEEP)
+
+        # Clicking Download button. Cap the multi-select at 5 files: with many
+        # historical bulletins available the picker can list dozens of entries,
+        # and we only need a handful to exercise the "Prepare download" flow.
+        # Use Playwright's native select_option(index=...) so the Bokeh
+        # multi-select fires its `change` event and the "Подготовить"
+        # button becomes enabled. The per-option Meta-click approach works
+        # on the first (pentad) iteration but fails after the Bulletin tab
+        # is re-mounted on horizon switch (Panel pn.Tabs dynamic=True).
+        # The Download card (src/layout.py:437-444) is defined with
+        # collapsed=True but h3 is a toggle, and the Card's expanded
+        # state can persist across iterations under pn.Tabs(dynamic=True).
+        # First click toggles; probe option visibility and click again
+        # if we accidentally collapsed an already-open card.
+        page.locator("h3", has_text="Скачать бюллетень").click()
+        time.sleep(SLEEP)
+        options_locator = page.locator(
+            'select#input.bk-input[multiple="true"][size="10"] option'
+        )
+        if options_locator.count() == 0:
+            page.locator("h3", has_text="Скачать бюллетень").click()
+            time.sleep(SLEEP)
+        download_select = page.locator(
+            'select#input.bk-input[multiple="true"][size="10"]'
+        )
+        option_count = options_locator.count()
+        max_selected = 5
+        indices_to_select = list(range(min(option_count, max_selected)))
+        if indices_to_select:
+            # Bring focus into the multi-select before selecting:
+            # after a horizon switch the widget loses focus and the
+            # Bokeh JS layer treats subsequent programmatic
+            # select_option as if no item is selected — Prepare-download
+            # button stays disabled. Clicking the widget first restores
+            # focus and lets the change event flow through.
+            download_select.click()
+            download_select.select_option(index=indices_to_select)
+        print(
+            f"#### [{horizon}] Selected {len(indices_to_select)} download "
+            f"file(s) (cap={max_selected}, total available={option_count})"
+        )
+        time.sleep(SLEEP)
+
+        # Bounded wait for "Prepare download" to become enabled. On the
+        # decade iteration, the dashboard's file_downloader sometimes
+        # leaves the button disabled even after we drive selection via
+        # select_option — the panel widget's value-change callback isn't
+        # re-linked cleanly when the Bulletin tab is re-mounted on
+        # horizon switch (see src/file_downloader.py:42-86,
+        # _update_selected_files). Don't burn the full 60s timeout
+        # waiting; if it doesn't enable within 5s, log and skip the
+        # Prepare/Download click so the rest of the test continues.
+        prepare_btn = page.get_by_role(
+            "button", name="Подготовить загрузку выбранных файлов"
+        )
+        try:
+            expect(prepare_btn).to_be_enabled(timeout=1500)
+            prepare_btn.click()
+            if len(indices_to_select) > 1:
+                # Multi-file case: FileDownloader bundles selections
+                # into a zip and the user must click the resulting
+                # "Download selected_files.zip" button.
+                page.get_by_role(
+                    "button", name="Download selected_files.zip"
+                ).click()
+                print(f"#### [{horizon}] Prepare + Download zip clicked")
+            else:
+                # Single-file case: file_downloader.py builds a
+                # FileDownload widget with auto=True and the file's
+                # own filename — download fires automatically, no
+                # second click required.
+                print(
+                    f"#### [{horizon}] Prepare clicked "
+                    "(single-file auto-download)"
+                )
+        except Exception as e:
+            print(
+                f"#### [{horizon}] Skipping Prepare/Download — button "
+                f"did not enable within 1.5s ({type(e).__name__}: {e}). "
+                "This is a known dashboard lifecycle issue after the "
+                "Bulletin tab is re-mounted on horizon switch; the "
+                "Write-bulletin and Excel/API comparisons above still "
+                "ran, so the rest of the bulletin flow is validated."
+            )
+        time.sleep(SLEEP)
+    else:
+        print(
+            f"#### [{horizon}] Bulletin flow skipped — season's bulletin "
+            "format (seasonal_forecast_bulletin.xlsx, no per-basin split) "
+            "is materially different; needs its own iteration."
+        )
+
+
 def test_pentad(page: Page):
     if not TEST_PENTAD:
         print("#### Skipping PENTAD test...")
@@ -915,966 +1888,7 @@ def test_local(page: Page):
     ]
 
     for h_cfg in forecast_horizons:
-        horizon           = h_cfg["horizon"]
-        horizon_label     = h_cfg["label"]
-        is_long  = h_cfg["is_long"]
-        is_month = h_cfg["is_month"]
-        if not is_long:
-            in_month_field    = h_cfg["in_month_field"]
-            periods_per_month = h_cfg["periods_per_month"]
-        # bulletin_folder / sheet_horizon_ru are needed by the bulletin
-        # flow for pentad, decade, and month (not season).
-        bulletin_folder  = h_cfg.get("bulletin_folder")
-        sheet_horizon_ru = h_cfg.get("sheet_horizon_ru")
-
-        ### FORECAST TAB ###
-        page.locator("div.bk-tab", has_text="Прогноз").click()
-        print(f"#### Switch to Forecast tab successful. [{horizon}]")
-        time.sleep(SLEEP * 2)
-
-        page.locator("select#input").nth(0).select_option(label=horizon_label, timeout=60000)
-        page.locator("select#input").nth(1).select_option(value="15013 - Джыргалан-с.Советское", timeout=60000)
-        time.sleep(SLEEP * 3)
-        # Deterministic wait: the Phase 1 Summary-table loop discriminates
-        # Summary-table rows by the unique 'Прогн. расх. воды' field. If
-        # we run the loop too soon after the horizon/station switch, the
-        # Summary tabulator is still re-rendering and only the skill-table
-        # rows are present in the DOM — every Summary check then iterates
-        # zero rows and trips `assert compared_count >= 1`. Wait for at
-        # least one Summary-table cell to be attached so subsequent
-        # assertions run against a fully-rendered table. Without this the
-        # test only passes with --slowmo ≥ 700; with the wait it works at
-        # --slowmo 300.
-        page.locator(
-            'div.tabulator-row div[tabulator-field="Прогн. расх. воды"]'
-        ).first.wait_for(state="attached", timeout=30000)
-        print(f"#### Forecast tab setup: horizon={horizon}, station=15013")
-
-        # Sidebar: only Horizon, Hydropost, Forecast configuration, and Manual
-        # re-run cards are visible on the Forecast tab; Basin card stays hidden.
-        # Card titles are pulled from the Russian gettext catalogue (kyg locale);
-        # untranslated strings like "Basin:" stay in English.
-        expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
-        expect(page.get_by_text("Гидропост:", exact=True)).to_be_visible()
-        if is_long:
-            expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
-        else:
-            expect(page.get_by_text("Конфигурация прогноза:", exact=True)).to_be_visible()
-        expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
-        expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
-        print(f"#### [{horizon}] Sidebar shows only Horizon, Hydropost, Forecast configuration, Manual re-run cards.")
-
-        # Main area: layout differs by horizon.
-        # - short-term (pentad/decade): all 5 cards visible.
-        # - long-term  (month/season):  only Summary table is guaranteed
-        #   visible. The m0 "Current month forecast" card may appear on
-        #   month if its target month matches the Summary table, but it
-        #   is conditional — treat as soft (print state, don't fail).
-        expect(page.get_by_text("Сводная таблица", exact=True)).to_be_visible()
-        if not is_long:
-            expect(page.get_by_text("Линейная регрессия", exact=True)).to_be_visible()
-            expect(page.get_by_text("Гидрограф", exact=True)).to_be_visible()
-            expect(page.get_by_text("Оценки прогноза", exact=True)).to_be_visible()
-            expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).to_be_visible()
-            print(f"#### [{horizon}] Main area shows Linear regression, Summary table, Hydrograph, Forecast skill metrics, Table of forecast skill metrics cards.")
-        else:
-            # Long-term: short-only cards must NOT be visible.
-            expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Гидрограф", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
-            if is_month:
-                # Soft m0 check on month: the "Current month forecast" card
-                # may appear only when its target month matches the Summary
-                # table (commit 7e85205 hides it otherwise), so don't assert,
-                # just report.
-                m0_visible = page.get_by_text(
-                    "Current month forecast", exact=True
-                ).is_visible()
-                print(
-                    f"#### [{horizon}] Main area: Summary table + m0 "
-                    f"'Current month forecast' (visible={m0_visible}, "
-                    "soft check)."
-                )
-            else:
-                # Season: m0 card never applies, must stay hidden.
-                expect(
-                    page.get_by_text("Current month forecast", exact=True)
-                ).not_to_be_visible()
-                print(f"#### [{horizon}] Main area shows Summary table only.")
-
-        # Panel's pn.Tabs runs with dynamic=True, so only the active tab's DOM is
-        # mounted. The Predictors-tab card titles must NOT appear on the Forecast
-        # tab. (Гидрограф is omitted — it also titles a Forecast-tab card.)
-        expect(page.get_by_text("Осадки", exact=True)).not_to_be_visible()
-        expect(page.get_by_text("Температура воздуха", exact=True)).not_to_be_visible()
-        expect(page.get_by_text("Snow Data")).not_to_be_visible()
-        print(f"#### [{horizon}] Predictors-tab cards (Precipitation, Temperature, Snow Data) are hidden on Forecast tab.")
-
-        # The Hydrograph card on the Forecast tab always renders ≥1 Bokeh <canvas>
-        # independent of forecast-model availability. The Linear regression and
-        # Forecast skill metrics cards depend on whether LR / ML models have data
-        # in the DB, so the full 3-canvas case is best-effort; ≥1 is the minimum.
-        if not is_long:
-            canvas_count = page.locator("canvas").count()
-            assert canvas_count >= 1, (
-                f"Forecast tab [{horizon}]: {canvas_count} canvas(es) rendered — expected ≥1 "
-                "(at minimum the Hydrograph card; LR scatter and Skill chart depend "
-                "on which models have data in the DB)"
-            )
-            if canvas_count >= 3:
-                print(
-                    f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) rendered "
-                    "(LR scatter + Hydrograph + Skill chart all present)."
-                )
-            else:
-                print(
-                    f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) rendered "
-                    "(some plot cards missing — likely because some models are absent "
-                    "from the DB; continuing)."
-                )
-        else:
-            canvas_count = page.locator("canvas").count()
-            print(
-                f"#### [{horizon}] Forecast tab: {canvas_count} canvas(es) "
-                "rendered (long-term horizon — no plot cards on this tab)."
-            )
-
-        # The Сводная таблица must contain at least one short-term model from
-        # the known set (LR, TFT, TiDE, TSMixer, NE) for the active station —
-        # real data may have any subset available at any time. Model names
-        # outside the known set are reported (not failed) so adding a new model
-        # to the lineup does not break this test; a locale/column-field bug
-        # would still surface as the "no known models present" assertion below.
-        model_cells = page.locator(
-            'div.tabulator-row div[tabulator-field="Модель"]'
-        ).all_inner_texts()
-        model_cells_stripped = [m.strip() for m in model_cells]
-        print(f"#### [{horizon}] Summary table model rows: {model_cells_stripped}")
-        present_models = [m for m in model_cells_stripped if m]
-        assert present_models, f"Summary table has no model rows [{horizon}]"
-        if not is_long:
-            # Short-term: keep the subset check against the well-known
-            # short-term model set. This catches locale/column-field bugs.
-            known_models = {"LR", "TFT", "TiDE", "TSMixer", "NE"}
-            expected_present = known_models & set(present_models)
-            assert expected_present, (
-                f"Summary table [{horizon}] contains no known short-term models; got {present_models}"
-            )
-            unknown_models = set(present_models) - known_models
-            if unknown_models:
-                print(
-                    f"#### [{horizon}] Summary table contains unfamiliar model name(s) "
-                    f"{sorted(unknown_models)} — not failing (model lineup may have "
-                    f"grown). Known set is {sorted(known_models)}."
-                )
-            print(
-                f"#### [{horizon}] Summary table contains known model(s): {sorted(expected_present)} "
-                f"(of expected set {sorted(known_models)})"
-            )
-        else:
-            # Long-term: the model lineup (GBT, LR_SM variants, SM_GBT,
-            # MC_ALD, ...) is distinct from short-term and still evolving.
-            # Only assert there is at least one row; report names.
-            print(
-                f"#### [{horizon}] Summary table model rows present: "
-                f"{sorted(set(present_models))}"
-            )
-
-        # For each model row in the Summary table, compare the four raw-API-backed
-        # numeric cells (forecasted_discharge from /forecast|/lr-forecast/ and
-        # sdivsigma/mae/accuracy from /skill-metric/) for station 15013's latest
-        # period. The δ / fc_lower / fc_upper cells are NOT compared: those are
-        # computed live in src/processing.py and src/vizualization.py from
-        # forecasted_discharge ± delta_offset, with branching on the range-slider
-        # state — they're presentation values, not raw API fields, so reproducing
-        # them in the test would re-implement the dashboard logic.
-        summary_api = _fetch_summary_table_data_from_db(horizon, "15013")
-        assert summary_api, f"API returned no Summary-table data for station 15013 [{horizon}]"
-        if is_long:
-            # Long-term Summary table renders only forecasted_discharge
-            # from /long-forecast/; sdivsigma/mae/accuracy aren't in the
-            # long-forecast response and may not appear in the table.
-            summary_columns = [
-                ("Прогн. расх. воды", "forecasted_discharge"),
-            ]
-        else:
-            summary_columns = [
-                ("Прогн. расх. воды",             "forecasted_discharge"),
-                ("s/σ",                           "sdivsigma"),
-                ("Средняя абсолютная ошибка",     "mae"),
-                ("Оправдываемость",               "accuracy"),
-            ]
-        compared_count = 0
-        for row in page.locator('div.tabulator-row').all():
-            model_cell = row.locator('div[tabulator-field="Модель"]')
-            if model_cell.count() == 0:
-                continue
-            # Skip rows from the Forecast skill metrics table (Таблица оценки прогнозов)
-            # — both tabulators share a 'Модель' column. The Summary table is the only
-            # one that has a 'Прогн. расх. воды' (forecasted_discharge) field.
-            if row.locator('div[tabulator-field="Прогн. расх. воды"]').count() == 0:
-                continue
-            model_short = model_cell.inner_text().strip()
-            if not model_short:
-                continue
-            assert model_short in summary_api, (
-                f"Summary table [{horizon}] row for model {model_short!r} has no matching API record; "
-                f"API models: {sorted(summary_api.keys())}"
-            )
-            api_row = summary_api[model_short]
-            for col, api_key in summary_columns:
-                ui_str = row.locator(f'div[tabulator-field="{col}"]').inner_text().strip()
-                api_val = api_row.get(api_key)
-                try:
-                    _compare_numeric(api_val, ui_str)
-                except AssertionError as e:
-                    raise AssertionError(
-                        f"Summary[horizon={horizon!r}, model={model_short!r}, col={col!r}, "
-                        f"api_key={api_key!r}]: api={api_val!r} vs ui={ui_str!r} — {e}"
-                    ) from e
-            compared_count += 1
-        assert compared_count >= 1, f"No Summary-table rows were compared against the API [{horizon}]"
-        print(f"#### [{horizon}] Summary table matches API for {compared_count} model row(s)")
-
-        # For each row in the Forecast skill metrics table (Таблица оценки прогнозов),
-        # look up the matching API record by (model_short, horizon_in_year) where
-        # horizon_in_year = (Месяц - 1) * periods_per_month + in_month (pentad/decade arithmetic).
-        # Compare the five numeric columns (s/σ, NSE, δ, Оправдываемость, Средняя абсолютная
-        # ошибка). UI rows may include many historical periods, but every UI row
-        # must match an API record.
-        if not is_long:
-            skill_api = _fetch_skill_table_data_from_db(horizon, "15013")
-            assert skill_api, f"API returned no skill-metric data for station 15013 [{horizon}]"
-            skill_columns = [
-                ("s/σ",                           "sdivsigma"),
-                ("NSE",                           "nse"),
-                ("δ",                             "delta"),
-                ("Оправдываемость",               "accuracy"),
-                ("Средняя абсолютная ошибка",     "mae"),
-            ]
-            skill_compared_count = 0
-            for row in page.locator('div.tabulator-row').all():
-                code_cell = row.locator('div[tabulator-field="Индекс"]')
-                if code_cell.count() == 0:
-                    continue
-                code = code_cell.inner_text().strip()
-                if not code:
-                    continue
-                model_short = row.locator(
-                    'div[tabulator-field="Модель"]'
-                ).inner_text().strip()
-                month_str = row.locator(
-                    'div[tabulator-field="Месяц"]'
-                ).inner_text().strip()
-                in_month_str = row.locator(
-                    f'div[tabulator-field="{in_month_field}"]'
-                ).inner_text().strip()
-                try:
-                    month_int = int(month_str)
-                    in_month_int = int(in_month_str)
-                except ValueError:
-                    continue
-                horizon_in_year = (month_int - 1) * periods_per_month + in_month_int
-                api_row = skill_api.get((model_short, horizon_in_year))
-                present_for_model = sorted(
-                    k[1] for k in skill_api.keys() if k[0] == model_short
-                )
-                assert api_row is not None, (
-                    f"Skill table [{horizon}] row (model={model_short!r}, month={month_int}, "
-                    f"in_month={in_month_int}, horizon_in_year={horizon_in_year}) has no "
-                    f"matching API record; horizon_in_year present for {model_short!r}: "
-                    f"{present_for_model}"
-                )
-                for col, api_key in skill_columns:
-                    ui_str = row.locator(
-                        f'div[tabulator-field="{col}"]'
-                    ).inner_text().strip()
-                    _compare_numeric(api_row[api_key], ui_str)
-                skill_compared_count += 1
-            assert skill_compared_count >= 1, (
-                f"No Forecast skill metrics rows were compared against the API [{horizon}]"
-            )
-            print(
-                f"#### [{horizon}] Forecast skill metrics table matches API for "
-                f"{skill_compared_count} row(s)"
-            )
-        else:
-            print(f"#### [{horizon}] Phase 2 (skill table) skipped — table is hidden for long-term horizons")
-
-        # The Hydrograph card on the Forecast tab (pn.Card "Гидрограф") renders
-        # the current year's DAILY discharge by default — the card has a
-        # "Show forecasts aggregated to pentadal values" toggle but the default
-        # state is daily (see src/layout.py:251-265). The matching daily series
-        # on the canvas is named "Текущий год"; the DB equivalent is
-        # /preprocessing/hydrograph/?horizon=day with the "current" field
-        # (same source the Predictors-tab daily hydrograph assertion uses).
-        # _assert_canvas_matches_db tolerates steps-mid doubling and
-        # contiguous-subseq windowing.
-        if not is_long:
-            cur_year = dt.datetime.now().year
-            hydro_resp = requests.get(
-                f"{API_BASE}/preprocessing/hydrograph/",
-                params={
-                    "horizon":    "day",
-                    "code":       "15013",
-                    "start_date": f"{cur_year}-01-01",
-                    "end_date":   f"{cur_year}-12-31",
-                    "limit":      1000,
-                },
-                timeout=API_TIMEOUT,
-            )
-            hydro_resp.raise_for_status()
-            daily_hydro_rows = hydro_resp.json()
-            assert daily_hydro_rows, (
-                f"Daily hydrograph API returned no rows for station 15013 [{horizon}] — "
-                "cannot compare against the Forecast-tab Hydrograph canvas"
-            )
-            expected_current = _series_from_db_rows(daily_hydro_rows, "current")
-            _assert_canvas_matches_db(
-                page,
-                expected_current,
-                f"Forecast tab [{horizon}] — Hydrograph daily (current year) [15013]",
-            )
-            print(f"#### [{horizon}] Hydrograph matches DB for daily (current year) [15013]")
-        else:
-            print(f"#### [{horizon}] Phase 3a (Hydrograph canvas) skipped — card is hidden for long-term horizons")
-
-        # The Forecast skill metrics chart ("Оценки прогноза") layers a per-model
-        # step-series of sdivsigma across horizon_in_year. It filters by a
-        # `model_checkbox` widget (vizualization.py:4495 — only models the user
-        # has checked are plotted), so /skill-metric/ may include models that
-        # are absent from the canvas (e.g. EM at runtime).
-        # Reuse skill_api from Phase 2 (do not re-fetch), group sdivsigma values
-        # by model_short into a horizon-sorted list, and try each model against
-        # the canvas: on match, count it; on no-match, log it as "in API but not
-        # plotted" and continue. Require ≥1 model to match so a fully-broken
-        # chart still fails. Models with fewer than 3 valid points are skipped.
-        if not is_long:
-            skill_series_by_model: dict[str, list[float]] = {}
-            for (model_short, hin), api_row in skill_api.items():
-                s = api_row.get("sdivsigma")
-                if s is None:
-                    continue
-                if isinstance(s, float) and s != s:  # NaN guard
-                    continue
-                skill_series_by_model.setdefault(model_short, []).append((hin, float(s)))
-            # Sort each model's points by horizon_in_year ascending
-            skill_series_by_model = {
-                m: [v for _, v in sorted(pts, key=lambda x: x[0])]
-                for m, pts in skill_series_by_model.items()
-            }
-
-            skill_sources = _extract_bokeh_data_sources(page)
-
-            skill_models_matched = 0
-            skill_models_not_in_chart: list[str] = []
-            skill_models_too_short: list[str] = []
-            for model_short, series in sorted(skill_series_by_model.items()):
-                if len(series) < 3:
-                    skill_models_too_short.append(model_short)
-                    print(
-                        f"#### [{horizon}] Skipping skill-chart match for model {model_short!r} "
-                        f"— only {len(series)} point(s)"
-                    )
-                    continue
-                # Try to find a matching canvas — pre-compute via the same matcher
-                # _assert_canvas_matches_db uses, so we can decide success vs.
-                # "in API but not plotted" without raising.
-                match = _find_matching_canvas_source(skill_sources, series)
-                if match is not None:
-                    _assert_canvas_matches_db(
-                        page,
-                        series,
-                        f"Forecast tab [{horizon}] — Skill chart sdivsigma [{model_short}] [15013]",
-                        sources=skill_sources,
-                    )
-                    skill_models_matched += 1
-                else:
-                    skill_models_not_in_chart.append(model_short)
-                    print(
-                        f"#### [{horizon}] Skill chart: model {model_short!r} has "
-                        f"{len(series)} sdivsigma point(s) in API but no matching "
-                        f"canvas series — likely filtered out by the chart's "
-                        f"model_checkbox widget; continuing."
-                    )
-            assert skill_models_matched >= 1, (
-                f"No models' sdivsigma series matched the Skill chart canvas [{horizon}] — chart "
-                f"may be broken or showing no models. "
-                f"Tried-but-not-plotted: {sorted(skill_models_not_in_chart)}. "
-                f"Too-short: {sorted(skill_models_too_short)}."
-            )
-            print(
-                f"#### [{horizon}] Skill chart matches DB for {skill_models_matched} model "
-                f"series. Not plotted on chart: {sorted(skill_models_not_in_chart)}. "
-                f"Skipped (too few points): {sorted(skill_models_too_short)}."
-            )
-        else:
-            print(f"#### [{horizon}] Phase 3b (Skill chart canvas) skipped — chart is hidden for long-term horizons")
-
-        # Phase 3c: Forecast tab — Linear regression scatter (predictor vs discharge_avg)
-        # The LR card plots historical (predictor, discharge_avg) pairs at the
-        # displayed period for station 15013. We replicate the dashboard pipeline:
-        # fetch the full lr-forecast history, filter to the latest period
-        # (= max horizon_in_year), drop NaN predictor/discharge_avg, then apply
-        # the lr-visibility flag (defaulting missing entries to visible=True).
-        # We sort the surviving rows by date ascending to match the most likely
-        # ColumnDataSource ordering, then assert each axis list shows up in some
-        # Bokeh canvas via _assert_canvas_matches_db.
-        if not is_long:
-            cur_year = dt.datetime.now().year
-            lr_full_resp = requests.get(
-                f"{API_BASE}/postprocessing/lr-forecast/",
-                params={
-                    "horizon":    horizon,
-                    "code":       "15013",
-                    "start_date": "2000-01-01",
-                    "end_date":   f"{cur_year}-12-31",
-                    "limit":      10000,
-                },
-                timeout=API_TIMEOUT,
-            )
-            lr_full_resp.raise_for_status()
-            lr_full_rows = lr_full_resp.json()
-            if not lr_full_rows:
-                print(
-                    f"#### [{horizon}] Phase 3c skipped: /lr-forecast/ returned no rows for station "
-                    "15013 — LR model data is not available in this DB"
-                )
-            else:
-                # Pick the period currently displayed on the LR scatter: it's the
-                # horizon_in_year of the LATEST forecast date in /lr-forecast/, NOT
-                # max(horizon_in_year) across all history (which would pick
-                # December's last period from some past year still in the dataset).
-                # The /lr-forecast/ history spans 25+ years for this station, so any
-                # period can be "max" in pure-numeric terms; the scatter is
-                # tied to whatever period the most recent forecast was produced for.
-                max_lr_date = max(r["date"] for r in lr_full_rows if r.get("date"))
-                latest_records = [
-                    r for r in lr_full_rows
-                    if r.get("date") == max_lr_date
-                    and r.get("horizon_in_year") is not None
-                ]
-                assert latest_records, (
-                    f"Could not determine the latest LR period from /lr-forecast/ [{horizon}] — "
-                    f"max date {max_lr_date!r} has no rows with horizon_in_year"
-                )
-                latest_hin = int(latest_records[0]["horizon_in_year"])
-                import math
-                month_for_horizon = math.ceil(latest_hin / periods_per_month)
-                in_month_value = latest_hin % periods_per_month or periods_per_month
-
-                try:
-                    vis_resp = requests.get(
-                        f"{API_BASE}/postprocessing/lr-visibility/",
-                        params={
-                            "horizon_type":  horizon,
-                            "code":          "15013",
-                            "month":         month_for_horizon,
-                            "horizon_value": in_month_value,
-                        },
-                        timeout=API_TIMEOUT,
-                    )
-                    vis_resp.raise_for_status()
-                    vis_rows = vis_resp.json()
-                except Exception as e:
-                    print(f"#### [{horizon}] lr-visibility unavailable ({e!r}); assuming all years visible")
-                    vis_rows = []
-                visibility_by_year = {int(r["year"]): bool(r["visible"]) for r in vis_rows if r.get("year") is not None}
-
-                def _row_year(r):
-                    d = r.get("date", "")
-                    return int(str(d)[:4]) if d else None
-
-                scatter_points: list[tuple[str, float, float]] = []  # (date_str, predictor, discharge_avg)
-                for r in lr_full_rows:
-                    if r.get("horizon_in_year") != latest_hin:
-                        continue
-                    p = r.get("predictor")
-                    q = r.get("discharge_avg")
-                    if p is None or q is None:
-                        continue
-                    try:
-                        pf = float(p); qf = float(q)
-                    except (TypeError, ValueError):
-                        continue
-                    if pf != pf or qf != qf:  # NaN guard
-                        continue
-                    year = _row_year(r)
-                    if year is not None and visibility_by_year.get(year, True) is False:
-                        continue
-                    date_str = str(r.get("date", ""))[:10]
-                    scatter_points.append((date_str, pf, qf))
-
-                scatter_points.sort(key=lambda t: t[0])
-                predictor_values = [p for _, p, _ in scatter_points]
-                discharge_values = [q for _, _, q in scatter_points]
-
-                assert len(scatter_points) >= 3, (
-                    f"LR scatter [{horizon}]: only {len(scatter_points)} (predictor, discharge_avg) "
-                    f"point(s) survived filtering — not enough to validate the canvas"
-                )
-                lr_sources = _extract_bokeh_data_sources(page)
-                _assert_canvas_matches_db(
-                    page,
-                    predictor_values,
-                    f"Forecast tab [{horizon}] — LR scatter predictor (x) [15013] {horizon}_in_year={latest_hin}",
-                    sources=lr_sources,
-                )
-                _assert_canvas_matches_db(
-                    page,
-                    discharge_values,
-                    f"Forecast tab [{horizon}] — LR scatter discharge_avg (y) [15013] {horizon}_in_year={latest_hin}",
-                    sources=lr_sources,
-                )
-                print(
-                    f"#### [{horizon}] LR scatter matches DB for {len(scatter_points)} historical "
-                    f"point(s) at {horizon}_in_year={latest_hin}"
-                )
-        else:
-            print(f"#### [{horizon}] Phase 3c (LR scatter) skipped — card is hidden for long-term horizons")
-
-        run_bulletin_flow = (not is_long) or is_month or horizon == "season"
-        if run_bulletin_flow:
-            def get_model_values():
-                """Find selected models in Summary table"""
-                selected_div = page.locator("div.tabulator-selected")
-                model_values = []
-                for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
-                    model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
-                    model_values.append(model_div.inner_text())
-                return model_values
-
-            summary_table_values = []
-
-            def select_station_and_add_to_bulletin(station):
-                page.locator("select#input").nth(1).select_option(value=station, timeout=60000)
-                print(f"#### SELECTED station: {station}")
-                # Long enough sleep for the Summary table to actually refresh
-                # for the new station before get_model_values reads its
-                # selected row — otherwise stale (previous-station) values
-                # get paired with the new station code in summary_table_values.
-                time.sleep(SLEEP * 2)
-
-                model_values = get_model_values()
-                model_values.insert(0, station.split()[0])
-                summary_table_values.append(model_values)
-                page.get_by_role(
-                    "button", name="Добавить в бюллетень"
-                ).first.click()
-                print(f"#### ADDED TO BULLETIN: {station}")
-                time.sleep(SLEEP)
-
-            stations = [
-                "15013 - Джыргалан-с.Советское",
-                # "15016 - Тургень-Ак-Суу - пос.лесозавода",
-                "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
-                #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
-                "15212 - Ак-Суу - с.Чон-Арык",
-                "15256 - Талас -  с.Ак-Таш",
-            ]
-            for station in stations:
-                select_station_and_add_to_bulletin(station)
-
-            print(f"#### [{horizon}] Summary table values added to bulletins:")
-            for value in summary_table_values:
-                print(value)
-            time.sleep(SLEEP)
-
-            ### BULLETIN TAB ###
-            page.locator("div.bk-tab", has_text="Бюллетень").click()
-            print(f"#### Switch to Bulletin tab successful. [{horizon}]")
-            time.sleep(SLEEP)
-
-            # Sidebar on Bulletin tab: only Horizon, Basin, and Manual
-            # re-run cards visible (see update_sidepane_card_visibility at
-            # src/vizualization.py:130-135). Hydropost and Forecast
-            # configuration are hidden.
-            expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
-            expect(page.get_by_text("Basin:", exact=True)).to_be_visible()
-            expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
-            expect(page.get_by_text("Гидропост:", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
-            print(f"#### [{horizon}] Bulletin sidebar shows only Horizon, Basin, Manual re-run cards.")
-
-            # Main area on Bulletin tab: only Forecast bulletin
-            # ("Прогнозный бюллетень") and Download bulletin
-            # ("Скачать бюллетень") cards. Forecast-tab cards must not
-            # be visible (dynamic=True swap).
-            expect(page.get_by_text("Прогнозный бюллетень", exact=True)).to_be_visible()
-            expect(page.get_by_text("Скачать бюллетень", exact=True)).to_be_visible()
-            expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Сводная таблица", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
-            expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
-            print(f"#### [{horizon}] Bulletin main area shows Forecast bulletin + Download bulletin cards only.")
-
-            # Extract forecast bulletin table values
-            forecast_bulletin_values = []
-            selectable_divs = page.locator("div.tabulator-selectable")
-            for i in range(selectable_divs.count()):
-                div = selectable_divs.nth(i)
-                values = div.inner_text().split("\n")
-                forecast_bulletin_values.append(values)
-
-            print(f"#### [{horizon}] Forecast bulletin values:")
-            for value in forecast_bulletin_values:
-                print(value)
-            time.sleep(SLEEP)
-
-            # Comparing summary table with forecast bulletin
-            print(f"Comparing summary table with forecast bulletin... [{horizon}]")
-            count = 0
-            for s_value in summary_table_values:
-                for f_value in forecast_bulletin_values:
-                    if s_value[0] in f_value[0] and s_value[1] == f_value[1]:
-                        count += 1
-                        assert s_value[2] == f_value[3]  # Forecasted discharge
-                        assert s_value[3] == f_value[4]  # Forecast lower bound
-                        assert s_value[4] == f_value[5]  # Forecast upper bound
-                        assert s_value[5] == f_value[6]  # δ
-                        assert s_value[6] == f_value[7]  # s/σ
-                        assert s_value[8] == f_value[8]  # Accuracy
-            assert count == len(summary_table_values) == len(forecast_bulletin_values)
-            print(f"#### [{horizon}] Summary table values are EQUAL to Forecast bulletin values")
-            time.sleep(SLEEP)
-
-            # Checking the top checkbox to select all bulletins
-            page.locator('input[type="checkbox"][aria-label="Select Row"]').first.check()
-            print(f"#### [{horizon}] All bulletins selected")
-            time.sleep(SLEEP)
-
-            # Clicking Write bulletin button
-            page.get_by_role("button", name="Записать бюллетень").click()
-            print(f"#### [{horizon}] Write bulletin button clicked")
-            time.sleep(SLEEP)
-
-            # Resolve forecast year/horizon_value/sheet_name/month_str from the latest
-            # forecast record in the DB — mirrors the dashboard's get_bulletin_metadata
-            # so the test does not depend on today's wall-clock date.
-            last_date, horizon_value, year = _get_latest_forecast_metadata(horizon)
-            date_str = last_date.strftime("%Y-%m-%d")
-            print("Latest forecast (last_date):", date_str)
-            month_str = last_date.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
-            if horizon == "pentad":
-                horizon_value_in_month = tl.get_pentad(date_str)
-                print("Pentad in year:", horizon_value)
-                print("Pentad in month:", horizon_value_in_month)
-            elif horizon == "decade":
-                horizon_value_in_month = tl.get_decad_in_month(date_str)
-                print("Decad in year:", horizon_value)
-                print("Decad in month:", horizon_value_in_month)
-            elif horizon == "month":
-                # For month bulletins the worksheet is keyed by the TARGET
-                # month number (1-12), which _get_latest_forecast_metadata
-                # already returns as horizon_value.
-                horizon_value_in_month = horizon_value
-                print("Target month (1-12):", horizon_value)
-            elif horizon == "season":
-                horizon_value_in_month = horizon_value  # = 1 for season
-                print("Season horizon_value (always 1):", horizon_value)
-            else:
-                raise AssertionError(f"Unsupported horizon for bulletin flow: {horizon!r}")
-            if horizon in ("month", "season"):
-                # monthly_forecast_bulletin.xlsx and seasonal_forecast_bulletin.xlsx
-                # both use a single sheet named 'bulletin'.
-                sheet_name = "bulletin"
-            else:
-                sheet_name = f"{horizon_value_in_month} {sheet_horizon_ru}"
-
-            # Fetch bulletin records from the API
-            print(f"#### [{horizon}] Fetching bulletin from API...")
-            api_records = _fetch_bulletin_from_api(horizon, year, horizon_value)
-            print(f"#### [{horizon}] API returned {len(api_records)} bulletin record(s):")
-            for rec in api_records:
-                print(rec)
-            time.sleep(SLEEP)
-
-            if horizon == "season" and not api_records:
-                print(
-                    f"#### [{horizon}] /bulletin/ API returned no records — "
-                    "skipping API↔Bulletin and Excel↔API comparisons for season."
-                )
-            else:
-                assert api_records, "API returned no bulletin records — was the bulletin written correctly?"
-
-                # Compare API records with UI bulletin table
-                print(f"Comparing API bulletin records with UI forecast bulletin table... [{horizon}]")
-                count = 0
-                for rec in api_records:
-                    api_station  = normalize_spaces(rec.get("station_label", ""))
-                    api_basin    = normalize_spaces(rec.get("basin_name", ""))
-                    api_model    = rec.get("model_type", "")
-                    for f_value in forecast_bulletin_values:
-                        ui_station = normalize_spaces(f_value[0])
-                        ui_basin   = normalize_spaces(f_value[2])
-                        if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
-                            count += 1
-                            _compare_numeric(rec.get("forecasted_discharge"), f_value[3])  # forecasted discharge
-                            _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
-                            _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
-                            if rec.get("delta") is not None:
-                                assert str(rec["delta"]).replace(",", ".") == f_value[6].replace(",", ".")  # δ
-                            _compare_numeric(rec.get("sdivsigma"),           f_value[7])  # s/σ
-                            _compare_numeric(rec.get("accuracy"),            f_value[8])  # accuracy
-                assert count == len(forecast_bulletin_values) == len(api_records), (
-                    f"Match count {count} does not equal bulletin rows {len(forecast_bulletin_values)} "
-                    f"or API records {len(api_records)}"
-                )
-                print(f"#### [{horizon}] API bulletin records are EQUAL to UI Forecast bulletin values")
-                time.sleep(SLEEP)
-
-                # Excel comparison: pentad and decade produce per-basin +
-                # all_basins .xlsx files in the short-term-forecast layout, so
-                # we compare against both. Month writes a single
-                # monthly_forecast_bulletin.xlsx with a different internal
-                # layout (see src/bulletins.py:941) — skip the strict Excel
-                # comparison for month; the API↔Bulletin comparison above
-                # already exercises the data flow.
-                if horizon in ("pentad", "decade"):
-                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
-                    excel_file_paths = []
-                    basins = set()
-                    for f_value in forecast_bulletin_values:
-                        basin = f_value[2]
-                        if basin not in basins:
-                            basins.add(basin)
-                            path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
-                            excel_file_paths.append(path)
-                    excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
-
-                    print(f"#### [{horizon}] Excel file paths:")
-                    for path in excel_file_paths:
-                        print(path)
-                    time.sleep(SLEEP)
-
-                    # Compare Excel values with API records
-                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
-
-                    count = 0
-                    for excel_file_path in excel_file_paths:
-                        df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
-                        print(f"Comparing Excel with API: {excel_file_path}")
-                        for row_index in range(len(df)):
-                            if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
-                                continue
-                            excel_river  = df.iloc[row_index, 0]
-                            excel_punkt  = df.iloc[row_index, 1]
-                            excel_model  = df.iloc[row_index, 2]
-                            excel_delta  = df.iloc[row_index, 5]
-                            for rec in api_records:
-                                api_station = normalize_spaces(rec.get("station_label", ""))
-                                # match when both Excel river and punkt appear in the API station label
-                                if excel_river in api_station and excel_punkt in api_station:
-                                    count += 1
-                                    assert excel_model == rec.get("model_type"), (
-                                        f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
-                                    )
-                                    api_delta = rec.get("delta")
-                                    if not (pd.isna(excel_delta) and api_delta is None):
-                                        assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
-                                            f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
-                                        )
-                        print(f"#### [{horizon}] Excel values are EQUAL to API bulletin records")
-                    assert count == len(api_records) * 2, (
-                        f"Expected {len(api_records) * 2} Excel/API matches (2 files), got {count}"
-                    )
-                elif horizon == "month":
-                    # Month writes a single monthly_forecast_bulletin.xlsx with
-                    # one 'bulletin' sheet containing multiple sections (rivers,
-                    # reservoirs monthly, reservoirs quarterly). Each data row
-                    # has col 0 = river, col 1 = punkt, col 2 = fc_lower,
-                    # col 4 = fc_upper (cols 5/7 are volume in million m³, not
-                    # delta). Section header rows and basin label rows have NaN
-                    # in col 1 and are skipped. Match Excel rows against API
-                    # records via the (river ∈ station_label, punkt ∈ station_label)
-                    # heuristic the short-term path uses.
-                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
-                    monthly_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_monthly_forecast_bulletin.xlsx"
-                    print(f"#### [{horizon}] Excel file path: {monthly_path}")
-                    df = pd.read_excel(monthly_path, sheet_name="bulletin", header=None)
-                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
-                    # The monthly bulletin file also contains a КВАРТАЛЬНЫЙ
-                    # (quarterly) section after the monthly sections — its rows
-                    # carry different forecast values (different horizon) that
-                    # would mismatch our monthly API records. Stop iterating
-                    # once we see the quarterly section header.
-                    count = 0
-                    for row_index in range(len(df)):
-                        col0 = df.iloc[row_index, 0]
-                        col0_str = "" if pd.isna(col0) else str(col0)
-                        if "КВАРТАЛЬНЫЙ" in col0_str.upper():
-                            break
-                        col1 = df.iloc[row_index, 1]
-                        if pd.isna(col0) or pd.isna(col1):
-                            continue
-                        excel_river = col0_str.strip()
-                        excel_punkt = str(col1).strip()
-                        if not excel_river or not excel_punkt:
-                            continue
-                        # Skip section header rows ("РЕКА"/"ПУНКТ") and the
-                        # integer column-numbering row ("1"/"2").
-                        if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
-                            continue
-                        excel_fc_lower = df.iloc[row_index, 2]
-                        excel_fc_upper = df.iloc[row_index, 4]
-                        for rec in api_records:
-                            api_station = normalize_spaces(rec.get("station_label", ""))
-                            if excel_river in api_station and excel_punkt in api_station:
-                                count += 1
-                                _compare_numeric(rec.get("fc_lower"), str(excel_fc_lower))
-                                _compare_numeric(rec.get("fc_upper"), str(excel_fc_upper))
-                    print(f"#### [{horizon}] Monthly bulletin Excel matched {count} row(s) against API")
-                    assert count >= 1, (
-                        f"No monthly bulletin rows matched API for [{horizon}] — "
-                        f"checked {len(df)} Excel rows against {len(api_records)} API records"
-                    )
-                elif horizon == "season":
-                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
-                    season_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_seasonal_forecast_bulletin.xlsx"
-                    print(f"#### [{horizon}] Excel file path: {season_path}")
-                    df = pd.read_excel(season_path, sheet_name=sheet_name, header=None)
-                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
-                    # Seasonal file has a single ВЕГЕТАЦИОННЫЙ section; no
-                    # quarterly/monthly subsections to skip. Data values may
-                    # be NaN if forecasts haven't been issued yet — tolerate
-                    # those and only compare where both API and Excel have
-                    # numeric values.
-                    count = 0
-                    compared = 0
-                    for row_index in range(len(df)):
-                        col0 = df.iloc[row_index, 0]
-                        col1 = df.iloc[row_index, 1]
-                        if pd.isna(col0) or pd.isna(col1):
-                            continue
-                        excel_river = str(col0).strip()
-                        excel_punkt = str(col1).strip()
-                        if not excel_river or not excel_punkt:
-                            continue
-                        if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
-                            continue
-                        excel_fc_lower = df.iloc[row_index, 2]
-                        excel_fc_upper = df.iloc[row_index, 4]
-                        for rec in api_records:
-                            api_station = normalize_spaces(rec.get("station_label", ""))
-                            if excel_river in api_station and excel_punkt in api_station:
-                                count += 1
-                                api_lower = rec.get("fc_lower")
-                                api_upper = rec.get("fc_upper")
-                                if api_lower is not None and not pd.isna(excel_fc_lower):
-                                    _compare_numeric(api_lower, str(excel_fc_lower))
-                                    compared += 1
-                                if api_upper is not None and not pd.isna(excel_fc_upper):
-                                    _compare_numeric(api_upper, str(excel_fc_upper))
-                                    compared += 1
-                    print(
-                        f"#### [{horizon}] Seasonal bulletin Excel matched {count} row(s) "
-                        f"against API; {compared} numeric cell comparison(s) performed. "
-                        "Strict count assertion skipped — season data is often sparse."
-                    )
-                else:
-                    print(
-                        f"#### [{horizon}] Excel comparison skipped — only "
-                        "pentad/decade and month are wired up."
-                    )
-
-            # Clicking Remove Selected button
-            page.get_by_role("button", name="Удалить выбранное").click()
-            selectable_divs = page.locator("div.tabulator-selectable")
-            assert selectable_divs.count() == 0
-            print(f"#### [{horizon}] Remove Selected button clicked")
-            time.sleep(SLEEP)
-
-            # Clicking Download button. Cap the multi-select at 5 files: with many
-            # historical bulletins available the picker can list dozens of entries,
-            # and we only need a handful to exercise the "Prepare download" flow.
-            # Use Playwright's native select_option(index=...) so the Bokeh
-            # multi-select fires its `change` event and the "Подготовить"
-            # button becomes enabled. The per-option Meta-click approach works
-            # on the first (pentad) iteration but fails after the Bulletin tab
-            # is re-mounted on horizon switch (Panel pn.Tabs dynamic=True).
-            # The Download card (src/layout.py:437-444) is defined with
-            # collapsed=True but h3 is a toggle, and the Card's expanded
-            # state can persist across iterations under pn.Tabs(dynamic=True).
-            # First click toggles; probe option visibility and click again
-            # if we accidentally collapsed an already-open card.
-            page.locator("h3", has_text="Скачать бюллетень").click()
-            time.sleep(SLEEP)
-            options_locator = page.locator(
-                'select#input.bk-input[multiple="true"][size="10"] option'
-            )
-            if options_locator.count() == 0:
-                page.locator("h3", has_text="Скачать бюллетень").click()
-                time.sleep(SLEEP)
-            download_select = page.locator(
-                'select#input.bk-input[multiple="true"][size="10"]'
-            )
-            option_count = options_locator.count()
-            max_selected = 5
-            indices_to_select = list(range(min(option_count, max_selected)))
-            if indices_to_select:
-                # Bring focus into the multi-select before selecting:
-                # after a horizon switch the widget loses focus and the
-                # Bokeh JS layer treats subsequent programmatic
-                # select_option as if no item is selected — Prepare-download
-                # button stays disabled. Clicking the widget first restores
-                # focus and lets the change event flow through.
-                download_select.click()
-                download_select.select_option(index=indices_to_select)
-            print(
-                f"#### [{horizon}] Selected {len(indices_to_select)} download "
-                f"file(s) (cap={max_selected}, total available={option_count})"
-            )
-            time.sleep(SLEEP)
-
-            # Bounded wait for "Prepare download" to become enabled. On the
-            # decade iteration, the dashboard's file_downloader sometimes
-            # leaves the button disabled even after we drive selection via
-            # select_option — the panel widget's value-change callback isn't
-            # re-linked cleanly when the Bulletin tab is re-mounted on
-            # horizon switch (see src/file_downloader.py:42-86,
-            # _update_selected_files). Don't burn the full 60s timeout
-            # waiting; if it doesn't enable within 5s, log and skip the
-            # Prepare/Download click so the rest of the test continues.
-            prepare_btn = page.get_by_role(
-                "button", name="Подготовить загрузку выбранных файлов"
-            )
-            try:
-                expect(prepare_btn).to_be_enabled(timeout=1500)
-                prepare_btn.click()
-                if len(indices_to_select) > 1:
-                    # Multi-file case: FileDownloader bundles selections
-                    # into a zip and the user must click the resulting
-                    # "Download selected_files.zip" button.
-                    page.get_by_role(
-                        "button", name="Download selected_files.zip"
-                    ).click()
-                    print(f"#### [{horizon}] Prepare + Download zip clicked")
-                else:
-                    # Single-file case: file_downloader.py builds a
-                    # FileDownload widget with auto=True and the file's
-                    # own filename — download fires automatically, no
-                    # second click required.
-                    print(
-                        f"#### [{horizon}] Prepare clicked "
-                        "(single-file auto-download)"
-                    )
-            except Exception as e:
-                print(
-                    f"#### [{horizon}] Skipping Prepare/Download — button "
-                    f"did not enable within 1.5s ({type(e).__name__}: {e}). "
-                    "This is a known dashboard lifecycle issue after the "
-                    "Bulletin tab is re-mounted on horizon switch; the "
-                    "Write-bulletin and Excel/API comparisons above still "
-                    "ran, so the rest of the bulletin flow is validated."
-                )
-            time.sleep(SLEEP)
-        else:
-            print(
-                f"#### [{horizon}] Bulletin flow skipped — season's bulletin "
-                "format (seasonal_forecast_bulletin.xlsx, no per-basin split) "
-                "is materially different; needs its own iteration."
-            )
+        _run_forecast_and_bulletin_for_horizon(page, h_cfg)
 
     ### INFO TAB ###
     page.locator("div.bk-tab", has_text="Информация об ответственности").click()
