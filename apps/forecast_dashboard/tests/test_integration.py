@@ -1486,6 +1486,29 @@ def test_local(page: Page):
             print(f"#### Switch to Bulletin tab successful. [{horizon}]")
             time.sleep(SLEEP)
 
+            # Sidebar on Bulletin tab: only Horizon, Basin, and Manual
+            # re-run cards visible (see update_sidepane_card_visibility at
+            # src/vizualization.py:130-135). Hydropost and Forecast
+            # configuration are hidden.
+            expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
+            expect(page.get_by_text("Basin:", exact=True)).to_be_visible()
+            expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
+            expect(page.get_by_text("Гидропост:", exact=True)).not_to_be_visible()
+            expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
+            print(f"#### [{horizon}] Bulletin sidebar shows only Horizon, Basin, Manual re-run cards.")
+
+            # Main area on Bulletin tab: only Forecast bulletin
+            # ("Прогнозный бюллетень") and Download bulletin
+            # ("Скачать бюллетень") cards. Forecast-tab cards must not
+            # be visible (dynamic=True swap).
+            expect(page.get_by_text("Прогнозный бюллетень", exact=True)).to_be_visible()
+            expect(page.get_by_text("Скачать бюллетень", exact=True)).to_be_visible()
+            expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
+            expect(page.get_by_text("Сводная таблица", exact=True)).not_to_be_visible()
+            expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
+            expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
+            print(f"#### [{horizon}] Bulletin main area shows Forecast bulletin + Download bulletin cards only.")
+
             # Extract forecast bulletin table values
             forecast_bulletin_values = []
             selectable_divs = page.locator("div.tabulator-selectable")
@@ -1857,3 +1880,24 @@ def test_local(page: Page):
     page.locator("div.bk-tab", has_text="Информация об ответственности").click()
     print("#### Switch to Info tab successful.")
     time.sleep(SLEEP)
+
+    # Sidebar on Disclaimer tab: all cards hidden (see
+    # update_sidepane_card_visibility "else" branch at
+    # src/vizualization.py:136-141).
+    expect(page.get_by_text("Горизонт:", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Гидропост:", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).not_to_be_visible()
+    print("#### Disclaimer sidebar is empty (all cards hidden).")
+
+    # Main area on Disclaimer tab: no named Forecast/Bulletin cards
+    # should be visible — only the disclaimer content.
+    expect(page.get_by_text("Прогнозный бюллетень", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Скачать бюллетень", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Линейная регрессия", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Сводная таблица", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Гидрограф", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Оценки прогноза", exact=True)).not_to_be_visible()
+    expect(page.get_by_text("Таблица оценки прогнозов", exact=True)).not_to_be_visible()
+    print("#### Disclaimer main area has no Forecast/Bulletin cards visible.")
