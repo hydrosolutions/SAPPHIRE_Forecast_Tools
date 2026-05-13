@@ -41,6 +41,51 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
     previous year so we are not silently truncated by the API's default limit.
     """
     cur_year = dt.datetime.now().year
+
+    if horizon == "month":
+        resp = requests.get(
+            f"{API_BASE}/postprocessing/long-forecast/",
+            params={
+                "horizon_type":  "month",
+                "horizon_value": 1,
+                "start_date":    f"{cur_year - 1}-12-20",
+                "end_date":      f"{cur_year + 1}-12-31",
+                "limit":         1000,
+            },
+            timeout=API_TIMEOUT,
+        )
+        resp.raise_for_status()
+        records = resp.json()
+        if not records:
+            raise RuntimeError("No long-forecast (month) records found")
+        latest = max(records, key=lambda r: r["date"])
+        max_date = dt.datetime.strptime(latest["date"][:10], "%Y-%m-%d").date()
+        last_date = max_date + dt.timedelta(days=1)
+        target_month = pd.to_datetime(latest["valid_from"]).month
+        return last_date, int(target_month), last_date.year
+
+    if horizon == "season":
+        resp = requests.get(
+            f"{API_BASE}/postprocessing/long-forecast/",
+            params={
+                "horizon_type":  "season",
+                "code":          "15013",  # any station; we only need the latest date
+                "start_date":    f"{cur_year - 1}-12-20",
+                "end_date":      f"{cur_year + 1}-12-31",
+                "limit":         1000,
+            },
+            timeout=API_TIMEOUT,
+        )
+        resp.raise_for_status()
+        records = resp.json()
+        if not records:
+            raise RuntimeError("No long-forecast (season) records found")
+        latest = max(records, key=lambda r: r["date"])
+        max_date = dt.datetime.strptime(latest["date"][:10], "%Y-%m-%d").date()
+        last_date = max_date + dt.timedelta(days=1)
+        # Season has a single "value" per year; the bulletin endpoint expects horizon_value=1.
+        return last_date, 1, last_date.year
+
     page_size = 1000
     base_params = {
         "horizon":    horizon,
@@ -543,8 +588,16 @@ def _fetch_skill_table_data_from_db(
 
 def _get_float(value) -> float | str:
     try:
-        if isinstance(value, str) and "," in value:
-            value = value.replace(",", ".")
+        if isinstance(value, str):
+            s = value.strip()
+            if "," in s and "." in s:
+                # English-style with thousands separator, e.g. "1,089.03":
+                # comma is thousands sep, period is decimal. Strip commas.
+                s = s.replace(",", "")
+            elif "," in s:
+                # European-style decimal, e.g. "12,34": comma is decimal.
+                s = s.replace(",", ".")
+            value = s
         return float(value)
     except (ValueError, TypeError):
         return "nan"
@@ -831,6 +884,7 @@ def test_local(page: Page):
             "in_month_field":    "Пентада",
             "periods_per_month": 6,
             "bulletin_folder":   "pentad",
+            "sheet_horizon_ru":  "пентада",
         },
         {
             "horizon":           "decade",
@@ -840,18 +894,23 @@ def test_local(page: Page):
             "in_month_field":    "Decad",
             "periods_per_month": 3,
             "bulletin_folder":   "decad",
+            "sheet_horizon_ru":  "декада",
         },
         {
             "horizon":           "month",
             "label":             "месяц",
             "is_long":           True,
             "is_month":          True,
+            "bulletin_folder":   "month",
+            "sheet_horizon_ru":  "месяц",
         },
         {
             "horizon":           "season",
             "label":             "season",
             "is_long":           True,
             "is_month":          False,
+            "bulletin_folder":   "season",
+            "sheet_horizon_ru":  None,  # season's xlsx uses a single 'bulletin' sheet, not a horizon-named one
         },
     ]
 
@@ -863,7 +922,10 @@ def test_local(page: Page):
         if not is_long:
             in_month_field    = h_cfg["in_month_field"]
             periods_per_month = h_cfg["periods_per_month"]
-            bulletin_folder   = h_cfg["bulletin_folder"]
+        # bulletin_folder / sheet_horizon_ru are needed by the bulletin
+        # flow for pentad, decade, and month (not season).
+        bulletin_folder  = h_cfg.get("bulletin_folder")
+        sheet_horizon_ru = h_cfg.get("sheet_horizon_ru")
 
         ### FORECAST TAB ###
         page.locator("div.bk-tab", has_text="Прогноз").click()
@@ -1372,7 +1434,8 @@ def test_local(page: Page):
         else:
             print(f"#### [{horizon}] Phase 3c (LR scatter) skipped — card is hidden for long-term horizons")
 
-        if not is_long:
+        run_bulletin_flow = (not is_long) or is_month or horizon == "season"
+        if run_bulletin_flow:
             def get_model_values():
                 """Find selected models in Summary table"""
                 selected_div = page.locator("div.tabulator-selected")
@@ -1396,7 +1459,9 @@ def test_local(page: Page):
                 model_values = get_model_values()
                 model_values.insert(0, station.split()[0])
                 summary_table_values.append(model_values)
-                page.get_by_role("button", name="Добавить в бюллетень").click()
+                page.get_by_role(
+                    "button", name="Добавить в бюллетень"
+                ).first.click()
                 print(f"#### ADDED TO BULLETIN: {station}")
                 time.sleep(SLEEP)
 
@@ -1472,12 +1537,27 @@ def test_local(page: Page):
                 horizon_value_in_month = tl.get_pentad(date_str)
                 print("Pentad in year:", horizon_value)
                 print("Pentad in month:", horizon_value_in_month)
-                sheet_name = f"{horizon_value_in_month} пентада"
-            else:
+            elif horizon == "decade":
                 horizon_value_in_month = tl.get_decad_in_month(date_str)
                 print("Decad in year:", horizon_value)
                 print("Decad in month:", horizon_value_in_month)
-                sheet_name = f"{horizon_value_in_month} декада"
+            elif horizon == "month":
+                # For month bulletins the worksheet is keyed by the TARGET
+                # month number (1-12), which _get_latest_forecast_metadata
+                # already returns as horizon_value.
+                horizon_value_in_month = horizon_value
+                print("Target month (1-12):", horizon_value)
+            elif horizon == "season":
+                horizon_value_in_month = horizon_value  # = 1 for season
+                print("Season horizon_value (always 1):", horizon_value)
+            else:
+                raise AssertionError(f"Unsupported horizon for bulletin flow: {horizon!r}")
+            if horizon in ("month", "season"):
+                # monthly_forecast_bulletin.xlsx and seasonal_forecast_bulletin.xlsx
+                # both use a single sheet named 'bulletin'.
+                sheet_name = "bulletin"
+            else:
+                sheet_name = f"{horizon_value_in_month} {sheet_horizon_ru}"
 
             # Fetch bulletin records from the API
             print(f"#### [{horizon}] Fetching bulletin from API...")
@@ -1487,82 +1567,193 @@ def test_local(page: Page):
                 print(rec)
             time.sleep(SLEEP)
 
-            assert api_records, "API returned no bulletin records — was the bulletin written correctly?"
+            if horizon == "season" and not api_records:
+                print(
+                    f"#### [{horizon}] /bulletin/ API returned no records — "
+                    "skipping API↔Bulletin and Excel↔API comparisons for season."
+                )
+            else:
+                assert api_records, "API returned no bulletin records — was the bulletin written correctly?"
 
-            # Compare API records with UI bulletin table
-            print(f"Comparing API bulletin records with UI forecast bulletin table... [{horizon}]")
-            count = 0
-            for rec in api_records:
-                api_station  = normalize_spaces(rec.get("station_label", ""))
-                api_basin    = normalize_spaces(rec.get("basin_name", ""))
-                api_model    = rec.get("model_type", "")
-                for f_value in forecast_bulletin_values:
-                    ui_station = normalize_spaces(f_value[0])
-                    ui_basin   = normalize_spaces(f_value[2])
-                    if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
-                        count += 1
-                        _compare_numeric(rec.get("forecasted_discharge"), f_value[3])  # forecasted discharge
-                        _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
-                        _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
-                        if rec.get("delta") is not None:
-                            assert str(rec["delta"]).replace(",", ".") == f_value[6].replace(",", ".")  # δ
-                        _compare_numeric(rec.get("sdivsigma"),           f_value[7])  # s/σ
-                        _compare_numeric(rec.get("accuracy"),            f_value[8])  # accuracy
-            assert count == len(forecast_bulletin_values) == len(api_records), (
-                f"Match count {count} does not equal bulletin rows {len(forecast_bulletin_values)} "
-                f"or API records {len(api_records)}"
-            )
-            print(f"#### [{horizon}] API bulletin records are EQUAL to UI Forecast bulletin values")
-            time.sleep(SLEEP)
-
-            # Construct all excel paths
-            sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
-            excel_file_paths = []
-            basins = set()
-            for f_value in forecast_bulletin_values:
-                basin = f_value[2]
-                if basin not in basins:
-                    basins.add(basin)
-                    path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
-                    excel_file_paths.append(path)
-            excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
-
-            print(f"#### [{horizon}] Excel file paths:")
-            for path in excel_file_paths:
-                print(path)
-            time.sleep(SLEEP)
-
-            # Compare Excel values with API records
-            print(f"Comparing Excel values with API bulletin records... [{horizon}]")
-
-            count = 0
-            for excel_file_path in excel_file_paths:
-                df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
-                print(f"Comparing Excel with API: {excel_file_path}")
-                for row_index in range(len(df)):
-                    if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
-                        continue
-                    excel_river  = df.iloc[row_index, 0]
-                    excel_punkt  = df.iloc[row_index, 1]
-                    excel_model  = df.iloc[row_index, 2]
-                    excel_delta  = df.iloc[row_index, 5]
-                    for rec in api_records:
-                        api_station = normalize_spaces(rec.get("station_label", ""))
-                        # match when both Excel river and punkt appear in the API station label
-                        if excel_river in api_station and excel_punkt in api_station:
+                # Compare API records with UI bulletin table
+                print(f"Comparing API bulletin records with UI forecast bulletin table... [{horizon}]")
+                count = 0
+                for rec in api_records:
+                    api_station  = normalize_spaces(rec.get("station_label", ""))
+                    api_basin    = normalize_spaces(rec.get("basin_name", ""))
+                    api_model    = rec.get("model_type", "")
+                    for f_value in forecast_bulletin_values:
+                        ui_station = normalize_spaces(f_value[0])
+                        ui_basin   = normalize_spaces(f_value[2])
+                        if api_station == ui_station and api_basin == ui_basin and api_model == f_value[1]:
                             count += 1
-                            assert excel_model == rec.get("model_type"), (
-                                f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
-                            )
-                            api_delta = rec.get("delta")
-                            if not (pd.isna(excel_delta) and api_delta is None):
-                                assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
-                                    f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
-                                )
-                print(f"#### [{horizon}] Excel values are EQUAL to API bulletin records")
-            assert count == len(api_records) * 2, (
-                f"Expected {len(api_records) * 2} Excel/API matches (2 files), got {count}"
-            )
+                            _compare_numeric(rec.get("forecasted_discharge"), f_value[3])  # forecasted discharge
+                            _compare_numeric(rec.get("fc_lower"),            f_value[4])  # lower bound
+                            _compare_numeric(rec.get("fc_upper"),            normalize_comma(f_value[5]))  # upper bound
+                            if rec.get("delta") is not None:
+                                assert str(rec["delta"]).replace(",", ".") == f_value[6].replace(",", ".")  # δ
+                            _compare_numeric(rec.get("sdivsigma"),           f_value[7])  # s/σ
+                            _compare_numeric(rec.get("accuracy"),            f_value[8])  # accuracy
+                assert count == len(forecast_bulletin_values) == len(api_records), (
+                    f"Match count {count} does not equal bulletin rows {len(forecast_bulletin_values)} "
+                    f"or API records {len(api_records)}"
+                )
+                print(f"#### [{horizon}] API bulletin records are EQUAL to UI Forecast bulletin values")
+                time.sleep(SLEEP)
+
+                # Excel comparison: pentad and decade produce per-basin +
+                # all_basins .xlsx files in the short-term-forecast layout, so
+                # we compare against both. Month writes a single
+                # monthly_forecast_bulletin.xlsx with a different internal
+                # layout (see src/bulletins.py:941) — skip the strict Excel
+                # comparison for month; the API↔Bulletin comparison above
+                # already exercises the data flow.
+                if horizon in ("pentad", "decade"):
+                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                    excel_file_paths = []
+                    basins = set()
+                    for f_value in forecast_bulletin_values:
+                        basin = f_value[2]
+                        if basin not in basins:
+                            basins.add(basin)
+                            path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
+                            excel_file_paths.append(path)
+                    excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
+
+                    print(f"#### [{horizon}] Excel file paths:")
+                    for path in excel_file_paths:
+                        print(path)
+                    time.sleep(SLEEP)
+
+                    # Compare Excel values with API records
+                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+
+                    count = 0
+                    for excel_file_path in excel_file_paths:
+                        df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
+                        print(f"Comparing Excel with API: {excel_file_path}")
+                        for row_index in range(len(df)):
+                            if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
+                                continue
+                            excel_river  = df.iloc[row_index, 0]
+                            excel_punkt  = df.iloc[row_index, 1]
+                            excel_model  = df.iloc[row_index, 2]
+                            excel_delta  = df.iloc[row_index, 5]
+                            for rec in api_records:
+                                api_station = normalize_spaces(rec.get("station_label", ""))
+                                # match when both Excel river and punkt appear in the API station label
+                                if excel_river in api_station and excel_punkt in api_station:
+                                    count += 1
+                                    assert excel_model == rec.get("model_type"), (
+                                        f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
+                                    )
+                                    api_delta = rec.get("delta")
+                                    if not (pd.isna(excel_delta) and api_delta is None):
+                                        assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
+                                            f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
+                                        )
+                        print(f"#### [{horizon}] Excel values are EQUAL to API bulletin records")
+                    assert count == len(api_records) * 2, (
+                        f"Expected {len(api_records) * 2} Excel/API matches (2 files), got {count}"
+                    )
+                elif horizon == "month":
+                    # Month writes a single monthly_forecast_bulletin.xlsx with
+                    # one 'bulletin' sheet containing multiple sections (rivers,
+                    # reservoirs monthly, reservoirs quarterly). Each data row
+                    # has col 0 = river, col 1 = punkt, col 2 = fc_lower,
+                    # col 4 = fc_upper (cols 5/7 are volume in million m³, not
+                    # delta). Section header rows and basin label rows have NaN
+                    # in col 1 and are skipped. Match Excel rows against API
+                    # records via the (river ∈ station_label, punkt ∈ station_label)
+                    # heuristic the short-term path uses.
+                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                    monthly_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_monthly_forecast_bulletin.xlsx"
+                    print(f"#### [{horizon}] Excel file path: {monthly_path}")
+                    df = pd.read_excel(monthly_path, sheet_name="bulletin", header=None)
+                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+                    # The monthly bulletin file also contains a КВАРТАЛЬНЫЙ
+                    # (quarterly) section after the monthly sections — its rows
+                    # carry different forecast values (different horizon) that
+                    # would mismatch our monthly API records. Stop iterating
+                    # once we see the quarterly section header.
+                    count = 0
+                    for row_index in range(len(df)):
+                        col0 = df.iloc[row_index, 0]
+                        col0_str = "" if pd.isna(col0) else str(col0)
+                        if "КВАРТАЛЬНЫЙ" in col0_str.upper():
+                            break
+                        col1 = df.iloc[row_index, 1]
+                        if pd.isna(col0) or pd.isna(col1):
+                            continue
+                        excel_river = col0_str.strip()
+                        excel_punkt = str(col1).strip()
+                        if not excel_river or not excel_punkt:
+                            continue
+                        # Skip section header rows ("РЕКА"/"ПУНКТ") and the
+                        # integer column-numbering row ("1"/"2").
+                        if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
+                            continue
+                        excel_fc_lower = df.iloc[row_index, 2]
+                        excel_fc_upper = df.iloc[row_index, 4]
+                        for rec in api_records:
+                            api_station = normalize_spaces(rec.get("station_label", ""))
+                            if excel_river in api_station and excel_punkt in api_station:
+                                count += 1
+                                _compare_numeric(rec.get("fc_lower"), str(excel_fc_lower))
+                                _compare_numeric(rec.get("fc_upper"), str(excel_fc_upper))
+                    print(f"#### [{horizon}] Monthly bulletin Excel matched {count} row(s) against API")
+                    assert count >= 1, (
+                        f"No monthly bulletin rows matched API for [{horizon}] — "
+                        f"checked {len(df)} Excel rows against {len(api_records)} API records"
+                    )
+                elif horizon == "season":
+                    sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
+                    season_path = f"{sensitive_data_forecast_tools}reports/bulletins/{bulletin_folder}/{year}/{year}_{month_str}_seasonal_forecast_bulletin.xlsx"
+                    print(f"#### [{horizon}] Excel file path: {season_path}")
+                    df = pd.read_excel(season_path, sheet_name=sheet_name, header=None)
+                    print(f"Comparing Excel values with API bulletin records... [{horizon}]")
+                    # Seasonal file has a single ВЕГЕТАЦИОННЫЙ section; no
+                    # quarterly/monthly subsections to skip. Data values may
+                    # be NaN if forecasts haven't been issued yet — tolerate
+                    # those and only compare where both API and Excel have
+                    # numeric values.
+                    count = 0
+                    compared = 0
+                    for row_index in range(len(df)):
+                        col0 = df.iloc[row_index, 0]
+                        col1 = df.iloc[row_index, 1]
+                        if pd.isna(col0) or pd.isna(col1):
+                            continue
+                        excel_river = str(col0).strip()
+                        excel_punkt = str(col1).strip()
+                        if not excel_river or not excel_punkt:
+                            continue
+                        if excel_river in ("РЕКА", "1") or excel_punkt in ("ПУНКТ", "2"):
+                            continue
+                        excel_fc_lower = df.iloc[row_index, 2]
+                        excel_fc_upper = df.iloc[row_index, 4]
+                        for rec in api_records:
+                            api_station = normalize_spaces(rec.get("station_label", ""))
+                            if excel_river in api_station and excel_punkt in api_station:
+                                count += 1
+                                api_lower = rec.get("fc_lower")
+                                api_upper = rec.get("fc_upper")
+                                if api_lower is not None and not pd.isna(excel_fc_lower):
+                                    _compare_numeric(api_lower, str(excel_fc_lower))
+                                    compared += 1
+                                if api_upper is not None and not pd.isna(excel_fc_upper):
+                                    _compare_numeric(api_upper, str(excel_fc_upper))
+                                    compared += 1
+                    print(
+                        f"#### [{horizon}] Seasonal bulletin Excel matched {count} row(s) "
+                        f"against API; {compared} numeric cell comparison(s) performed. "
+                        "Strict count assertion skipped — season data is often sparse."
+                    )
+                else:
+                    print(
+                        f"#### [{horizon}] Excel comparison skipped — only "
+                        "pentad/decade and month are wired up."
+                    )
 
             # Clicking Remove Selected button
             page.get_by_role("button", name="Удалить выбранное").click()
@@ -1628,9 +1819,9 @@ def test_local(page: Page):
             time.sleep(SLEEP)
         else:
             print(
-                f"#### [{horizon}] Bulletin flow skipped — long-term bulletin "
-                "writing/comparison is a separate iteration; the Forecast-tab "
-                "assertions above still ran."
+                f"#### [{horizon}] Bulletin flow skipped — season's bulletin "
+                "format (seasonal_forecast_bulletin.xlsx, no per-basin split) "
+                "is materially different; needs its own iteration."
             )
 
     ### INFO TAB ###
