@@ -1770,17 +1770,33 @@ def test_local(page: Page):
             # button becomes enabled. The per-option Meta-click approach works
             # on the first (pentad) iteration but fails after the Bulletin tab
             # is re-mounted on horizon switch (Panel pn.Tabs dynamic=True).
+            # The Download card (src/layout.py:437-444) is defined with
+            # collapsed=True but h3 is a toggle, and the Card's expanded
+            # state can persist across iterations under pn.Tabs(dynamic=True).
+            # First click toggles; probe option visibility and click again
+            # if we accidentally collapsed an already-open card.
             page.locator("h3", has_text="Скачать бюллетень").click()
             time.sleep(SLEEP)
+            options_locator = page.locator(
+                'select#input.bk-input[multiple="true"][size="10"] option'
+            )
+            if options_locator.count() == 0:
+                page.locator("h3", has_text="Скачать бюллетень").click()
+                time.sleep(SLEEP)
             download_select = page.locator(
                 'select#input.bk-input[multiple="true"][size="10"]'
             )
-            option_count = page.locator(
-                'select#input.bk-input[multiple="true"][size="10"] option'
-            ).count()
+            option_count = options_locator.count()
             max_selected = 5
             indices_to_select = list(range(min(option_count, max_selected)))
             if indices_to_select:
+                # Bring focus into the multi-select before selecting:
+                # after a horizon switch the widget loses focus and the
+                # Bokeh JS layer treats subsequent programmatic
+                # select_option as if no item is selected — Prepare-download
+                # button stays disabled. Clicking the widget first restores
+                # focus and lets the change event flow through.
+                download_select.click()
                 download_select.select_option(index=indices_to_select)
             print(
                 f"#### [{horizon}] Selected {len(indices_to_select)} download "
@@ -1803,10 +1819,23 @@ def test_local(page: Page):
             try:
                 expect(prepare_btn).to_be_enabled(timeout=1500)
                 prepare_btn.click()
-                page.get_by_role(
-                    "button", name="Download selected_files.zip"
-                ).click()
-                print(f"#### [{horizon}] Prepare + Download zip clicked")
+                if len(indices_to_select) > 1:
+                    # Multi-file case: FileDownloader bundles selections
+                    # into a zip and the user must click the resulting
+                    # "Download selected_files.zip" button.
+                    page.get_by_role(
+                        "button", name="Download selected_files.zip"
+                    ).click()
+                    print(f"#### [{horizon}] Prepare + Download zip clicked")
+                else:
+                    # Single-file case: file_downloader.py builds a
+                    # FileDownload widget with auto=True and the file's
+                    # own filename — download fires automatically, no
+                    # second click required.
+                    print(
+                        f"#### [{horizon}] Prepare clicked "
+                        "(single-file auto-download)"
+                    )
             except Exception as e:
                 print(
                     f"#### [{horizon}] Skipping Prepare/Download — button "
