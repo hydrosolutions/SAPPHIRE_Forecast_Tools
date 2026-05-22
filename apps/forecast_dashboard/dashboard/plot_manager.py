@@ -7,7 +7,7 @@ and rendering-related callback wiring.
 
 import panel as pn
 import holoviews as hv
-from calendar import month_name
+from calendar import month_abbr, month_name
 
 from dashboard.logger import setup_logger
 
@@ -38,6 +38,46 @@ def _format_forecast_info(issue_date, horizon_label: str) -> str:
     return (
         f"Monthly runoff forecast for {target}  \n"
         f"Forecast issue date: {day} of {issue_month} {issue_date.year} ({horizon_label})"
+    )
+
+
+def _format_quarterly_forecast_info(_, site, issue_date) -> str:
+    """Build the info text for the quarterly forecast card.
+
+    Args:
+        _: Gettext translation callable.
+        site: SapphireSite object with quarterly_valid_from / quarterly_valid_to.
+        issue_date: The forecast issue date (datetime-like).
+
+    Returns:
+        Translated info string describing the quarterly period and issue date.
+    """
+    vf = getattr(site, "quarterly_valid_from", None)
+    vt = getattr(site, "quarterly_valid_to", None)
+    if vf is not None and vt is not None:
+        period = f"{vf.strftime('%b %Y')} – {vt.strftime('%b %Y')}"
+    else:
+        if issue_date is not None:
+            start_month = (issue_date.month % 12) + 1
+            start_year = issue_date.year + (1 if issue_date.month == 12 else 0)
+            end_offset = (start_month - 1 + 2)
+            end_month = (end_offset % 12) + 1
+            end_year = start_year + (end_offset // 12)
+            period = (
+                f"{month_abbr[start_month]} {start_year}"
+                f" – {month_abbr[end_month]} {end_year}"
+            )
+        else:
+            period = _("unknown period")
+    if issue_date is not None:
+        issue_month = month_name[issue_date.month]
+        day = _ordinal(issue_date.day)
+        date_str = f"{day} of {issue_month} {issue_date.year}"
+    else:
+        date_str = _("unknown date")
+    return (
+        _("Quarterly runoff forecast for") + f" {period}.  \n"
+        + _("Forecast issue date:") + f" {date_str}."
     )
 
 
@@ -278,6 +318,74 @@ class PlotManager:
         # Update m0 info text
         self._wm.forecast_info_m0.object = _format_forecast_info(
             m0_max_date, "month_0")
+
+    def update_quarterly_summary_tabulator(self):
+        """Update the quarterly summary table card.
+
+        Visible only when:
+        1. horizon == "month"
+        2. Selected station is a reservoir (contains 'вдхр' in punkt_name_ru)
+        3. quarterly DataFrame has at least one row for the selected station
+        """
+        card = getattr(self, "summary_table_q_card", None)
+        if card is None:
+            return
+
+        # Condition 1: must be month horizon
+        if self._wm.horizon_selector.value != "month":
+            card.visible = False
+            return
+
+        # Condition 2: must be a reservoir station
+        station_value = self._wm.station_selector.value
+        site = None
+        for s in self._dm.sites_list:
+            if hasattr(s, "code") and station_value.startswith(s.code):
+                site = s
+                break
+        punkt_name_ru = getattr(site, "punkt_name_ru", None) if site else None
+        if "вдхр" not in (punkt_name_ru or ""):
+            card.visible = False
+            return
+
+        # Condition 3: quarterly DataFrame must have at least one row for station
+        quarterly_df = self._dm.long_forecasts_quarter
+        if quarterly_df is None or quarterly_df.empty:
+            card.visible = False
+            return
+
+        station_label = station_value
+        if "station_labels" in quarterly_df.columns:
+            filtered = quarterly_df[quarterly_df["station_labels"] == station_label]
+        else:
+            card.visible = False
+            return
+        if filtered.empty:
+            card.visible = False
+            return
+
+        # All conditions met: populate the table and show the card
+        m0_max_date = filtered["date"].max() if "date" in filtered.columns else None
+        if m0_max_date is not None and hasattr(m0_max_date, "date"):
+            m0_max_date = m0_max_date.date()
+
+        self._cfg.viz.create_forecast_summary_tabulator(
+            self._,
+            self._wm,
+            filtered,
+            self._wm.station_selector,
+            m0_max_date if m0_max_date is not None else self._wm.date_picker.value,
+            self._wm.model_checkbox,
+            self._wm.range_selector,
+            self._wm.range_slider,
+            self._wm.forecast_tabulator_q,
+        )
+
+        # Update info text
+        self._wm.forecast_info_q.object = _format_quarterly_forecast_info(
+            self._, site, m0_max_date
+        )
+        card.visible = True
 
     # ------------------------------------------------------------------
     # Forecast-tab plots (2nd, 3rd, 4th panels)

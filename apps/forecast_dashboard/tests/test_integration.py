@@ -1150,7 +1150,13 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
     if run_bulletin_flow:
         def get_model_values():
             """Find selected models in Summary table"""
-            selected_div = page.locator("div.tabulator-selected")
+            # NOTE: scoped to the FIRST tabulator-selected row on the page. The
+            # main Summary card renders before the m0 and quarterly cards in the
+            # Forecast-tab column, so this consistently picks its selected row.
+            # Without .first, when the Quarterly forecast card is visible (reservoir
+            # + month) the page has two tabulator-selected rows and inner-field
+            # lookups hit two cells, triggering Playwright strict-mode violation.
+            selected_div = page.locator("div.tabulator-selected").first
             model_values = []
             for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
                 model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
@@ -1171,6 +1177,83 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
             model_values = get_model_values()
             model_values.insert(0, station.split()[0])
             summary_table_values.append(model_values)
+
+            if is_month and "вдхр" in station:
+                # --- Quarterly forecast card assertions (reservoir + month) ---
+                expect(
+                    page.get_by_text("Quarterly forecast", exact=True)
+                ).to_be_visible()
+                print(
+                    f"#### [{horizon}] Quarterly forecast card visible for "
+                    f"reservoir station {station.split()[0]}"
+                )
+
+                quarterly_card = page.locator(
+                    "div.card", has=page.locator("text=Quarterly forecast")
+                ).first
+
+                quarterly_headers = (
+                    quarterly_card.locator(
+                        "div.tabulator-col-title"
+                    ).all_inner_texts()
+                )
+                expected_headers = {
+                    "Модель",
+                    "Прогн. расх. воды",
+                    "Прогн. нижн. гран.",
+                    "Прогн. верхн. гран.",
+                    "δ",
+                    "s/σ",
+                    "Средняя абсолютная ошибка",
+                    "Оправдываемость",
+                }
+                actual_headers = {
+                    h.strip() for h in quarterly_headers if h.strip()
+                }
+                missing = expected_headers - actual_headers
+                assert not missing, (
+                    f"Quarterly card [{horizon}] is missing column header(s): "
+                    f"{sorted(missing)}. Present: {sorted(actual_headers)}"
+                )
+                print(
+                    f"#### [{horizon}] Quarterly card has all 8 expected columns"
+                )
+
+                quarterly_model_rows = quarterly_card.locator(
+                    "div.tabulator-row"
+                ).all()
+                non_empty_fc_rows = [
+                    r
+                    for r in quarterly_model_rows
+                    if r.locator(
+                        'div[tabulator-field="Прогн. расх. воды"]'
+                    ).count()
+                    > 0
+                    and r.locator(
+                        'div[tabulator-field="Прогн. расх. воды"]'
+                    ).inner_text().strip()
+                ]
+                assert non_empty_fc_rows, (
+                    f"Quarterly card [{horizon}] for {station.split()[0]} "
+                    f"has no rows with forecasted_discharge filled"
+                )
+                print(
+                    f"#### [{horizon}] Quarterly card has "
+                    f"{len(non_empty_fc_rows)} model row(s) with "
+                    f"forecasted_discharge"
+                )
+
+            elif is_month and "вдхр" not in station:
+                # Quarterly forecast card must NOT be visible for non-reservoir
+                # stations even on month horizon.
+                expect(
+                    page.get_by_text("Quarterly forecast", exact=True)
+                ).not_to_be_visible()
+                print(
+                    f"#### [{horizon}] Quarterly forecast card correctly hidden "
+                    f"for non-reservoir station {station.split()[0]}"
+                )
+
             page.get_by_role(
                 "button", name="Добавить в бюллетень"
             ).first.click()

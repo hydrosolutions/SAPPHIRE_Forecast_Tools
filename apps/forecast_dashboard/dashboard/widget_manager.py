@@ -129,6 +129,13 @@ class WidgetManager:
         self.forecast_info_m1 = widgets.create_forecast_info_pane()
         self.forecast_info_m0 = widgets.create_forecast_info_pane()
 
+        # ── Summary table (quarterly) ──────────────────────────────────────
+        self.forecast_tabulator_q = widgets.create_forecast_tabulator()
+        self.forecast_summary_table_q = widgets.create_forecast_summary_table(
+            self.forecast_tabulator_q
+        )
+        self.forecast_info_q = widgets.create_forecast_info_pane()
+
         # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
 
@@ -204,6 +211,7 @@ class WidgetManager:
                 pm.update_forecast_tabulator()
                 if is_month:
                     pm.update_forecast_tabulator_m0()
+                    pm.update_quarterly_summary_tabulator()
             else:
                 self.refresh_warnings()
             # Always re-render the active tab so the Predictors-tab panes

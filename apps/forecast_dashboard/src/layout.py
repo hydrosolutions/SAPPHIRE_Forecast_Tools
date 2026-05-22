@@ -381,6 +381,14 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
         min_height=240,
         visible=False,
     )
+    pm.summary_table_q_card = pn.Card(
+        pn.Row(wm.forecast_info_q),
+        wm.forecast_summary_table_q,
+        title=_("Quarterly forecast"),
+        sizing_mode="stretch_both",
+        min_height=240,
+        visible=False,
+    )
     tabs = pn.Tabs(
         (
             _("Predictors"),
@@ -418,6 +426,7 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
                 pm.linreg_card,
                 pm.summary_table_card,
                 pm.summary_table_m0_card,
+                pm.summary_table_q_card,
                 pm.hydrograph_card,
                 pm.skill_metrics_card,
                 pm.skill_table_card,

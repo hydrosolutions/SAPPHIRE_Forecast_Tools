@@ -157,6 +157,10 @@ class DataManager(param.Parameterized):
     def long_forecasts_m0(self):
         return self._data.get("long_forecasts_m0", pd.DataFrame())
 
+    @property
+    def long_forecasts_quarter(self):
+        return self._data.get("long_forecasts_quarter", pd.DataFrame())
+
     def get(self, key, default=None):
         """Generic access for less-common keys."""
         return self._data.get(key, default)
