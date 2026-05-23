@@ -99,6 +99,8 @@ class DataManager(param.Parameterized):
             horizon_in_year = "pentad_in_year"
         elif horizon == "decade":
             horizon_in_year = "decad_in_year"
+        elif horizon == "month":
+            horizon_in_year = "month_in_year"
         return horizon_in_year
 
     # @property
@@ -322,15 +324,23 @@ class DataManager(param.Parameterized):
             raise ValueError("No valid forecast dates available")
         last_date = max_date + dt.timedelta(days=1)
 
-        if horizon == "month":
-            forecast_horizon = dt.datetime.now().month
-        elif horizon in ("quarter", "season"):
-            m = dt.datetime.now().month
-            forecast_horizon = ((m - 1) // 3) + 1  # 1–4 calendar quarter
+        if horizon == "season":
+            # One season bulletin per year — there is no period-in-year to
+            # disambiguate.
+            forecast_horizon = 1
+        elif horizon == "quarter":
+            # The quarterly forecasts_all carries month_in_year (start month of
+            # the target quarter: 1, 4, 7, or 10). Convert to quarter-in-year
+            # (1-4) so the stored value matches the forecasted quarter, not the
+            # calendar quarter at save time.
+            start_month = int(self.forecasts_all["month_in_year"].tail(1).values[0])
+            forecast_horizon = ((start_month - 1) // 3) + 1
         else:
-            # The forecast is produced on the day before the first day of the forecast
-            # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
-            # the pentad of the forecast period.
+            # The forecast is produced on the day before the first day of the
+            # forecast period; read the period-in-year identifier directly from
+            # the latest row of forecasts_all so the value matches the target
+            # period (pentad_in_year, decad_in_year, or month_in_year) — not the
+            # calendar month at save time.
             forecast_horizon = int(
                 self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
             )
