@@ -2656,76 +2656,8 @@ class TestReadLrForecastsPpApi:
 class TestReadMlForecastsPpApi:
     """Tests for _read_ml_forecasts_pp_api()."""
 
-    def test_tries_day_horizon_first(self):
-        """Tries horizon='day' first, returns if data found."""
-        mock_client = MagicMock()
-        mock_client.readiness_check.return_value = True
-        mock_client.read_short_term_forecasts.return_value = pd.DataFrame(
-            {
-                "code": ["10001"],
-                "date": ["2024-01-05"],
-                "forecasted_discharge": [50.0],
-            }
-        )
-
-        with (
-            patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True),
-            patch.dict(
-                os.environ,
-                {
-                    "SAPPHIRE_API_ENABLED": "true",
-                },
-            ),
-            patch(
-                "src.data_reader.SapphirePostprocessingClient",
-                create=True,
-                return_value=mock_client,
-            ),
-        ):
-            result = _read_ml_forecasts_pp_api("TFT", "pentad")
-            assert result is not None
-            # Should have called with horizon="day"
-            call_args = mock_client.read_short_term_forecasts.call_args_list
-            assert call_args[0][1]["horizon"] == "day"
-
-    def test_falls_back_to_horizon_type(self):
-        """Falls back to horizon_type when 'day' returns nothing."""
-        mock_client = MagicMock()
-        mock_client.readiness_check.return_value = True
-
-        day_empty = pd.DataFrame()
-        pentad_data = pd.DataFrame(
-            {
-                "code": ["10001"],
-                "date": ["2024-01-05"],
-                "forecasted_discharge": [50.0],
-            }
-        )
-        mock_client.read_short_term_forecasts.side_effect = [
-            day_empty,  # day horizon: empty
-            pentad_data,  # pentad horizon: has data
-        ]
-
-        with (
-            patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True),
-            patch.dict(
-                os.environ,
-                {
-                    "SAPPHIRE_API_ENABLED": "true",
-                },
-            ),
-            patch(
-                "src.data_reader.SapphirePostprocessingClient",
-                create=True,
-                return_value=mock_client,
-            ),
-        ):
-            result = _read_ml_forecasts_pp_api("TFT", "pentad")
-            assert result is not None
-            assert len(result) == 1
-
-    def test_returns_none_when_both_horizons_empty(self):
-        """Returns None when both day and horizon_type return nothing."""
+    def test_returns_none_when_archives_empty(self):
+        """Returns None when both day and period archives return nothing."""
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
         mock_client.read_short_term_forecasts.return_value = pd.DataFrame()
@@ -2746,6 +2678,11 @@ class TestReadMlForecastsPpApi:
         ):
             result = _read_ml_forecasts_pp_api("TFT", "pentad")
             assert result is None
+            horizons = [
+                call.kwargs["horizon"]
+                for call in mock_client.read_short_term_forecasts.call_args_list
+            ]
+            assert set(horizons) == {"day", "pentad"}
 
     def test_returns_none_when_api_unavailable(self):
         """Returns None when API is unavailable."""
