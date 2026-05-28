@@ -5,12 +5,15 @@ import sys
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import setup_library as sl
+from src import data_reader, skill_metrics
 from src.data_reader import _normalize_ml_forecasts, _read_ml_forecasts_pp_api
 
 STATION_CODE = "19999"
@@ -20,7 +23,7 @@ STATION_CODE = "19999"
 class FakePostprocessingClient:
     """In-memory postprocessing client keyed by (horizon, skip)."""
 
-    pages: dict[tuple[str, int], pd.DataFrame]
+    pages: dict[tuple, pd.DataFrame]
     calls: list[dict] = field(default_factory=list)
 
     def readiness_check(self):
@@ -29,8 +32,34 @@ class FakePostprocessingClient:
     def read_short_term_forecasts(self, **kwargs):
         self.calls.append(dict(kwargs))
         horizon = kwargs["horizon"]
+        model = kwargs.get("model")
         skip = kwargs["skip"]
-        page = self.pages.get((horizon, skip), pd.DataFrame())
+        page = self.pages.get(
+            (horizon, model, skip), self.pages.get((horizon, skip), pd.DataFrame())
+        )
+        return page.copy()
+
+    def read_lr_forecasts(self, **kwargs):
+        return pd.DataFrame()
+
+
+@dataclass
+class FakePreprocessingClient:
+    """In-memory preprocessing client for observed runoff rows."""
+
+    runoff: pd.DataFrame
+
+    def readiness_check(self):
+        return True
+
+    def read_runoff(self, **kwargs):
+        skip = kwargs["skip"]
+        if skip > 0:
+            return pd.DataFrame()
+        page = self.runoff
+        code = kwargs.get("code")
+        if code is not None:
+            page = page[page["code"].astype(str) == str(code)]
         return page.copy()
 
 
@@ -59,6 +88,39 @@ def _day_fan(date, values):
             "horizon_type": ["day"] * len(values),
         }
     )
+
+
+def _period_rows(dates, values, horizon_type, model):
+    rows = []
+    for date, value in zip(dates, values, strict=True):
+        rows.append(
+            {
+                "code": STATION_CODE,
+                "date": date.strftime("%Y-%m-%d"),
+                "target": (date + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                "forecasted_discharge": value,
+                "horizon_type": horizon_type,
+                "model_type": model,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _day_rows(dates, values, model, fan_length):
+    rows = []
+    for date, value in zip(dates, values, strict=True):
+        for offset in range(fan_length):
+            rows.append(
+                {
+                    "code": STATION_CODE,
+                    "date": date.strftime("%Y-%m-%d"),
+                    "target": (date + pd.Timedelta(days=offset + 1)).strftime("%Y-%m-%d"),
+                    "forecasted_discharge": value,
+                    "horizon_type": "day",
+                    "model_type": model,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _read_with_fake_client(
@@ -309,3 +371,166 @@ class TestMlHorizonArchiveSplit:
         assert ("day", 1000) in calls
         assert ("pentad", 0) in calls
         assert ("pentad", 1000) in calls
+
+
+class TestMlHorizonArchiveSplitIntegration:
+    """PP-036 full reader + skill metric integration coverage."""
+
+    @pytest.mark.parametrize(
+        ("horizon_type", "api_horizon", "issue_day", "fan_length", "config_fixture"),
+        [
+            ("pentad", "pentad", 5, 5, "pentad_config"),
+            ("decad", "decade", 10, 10, "decad_config"),
+        ],
+    )
+    def test_recalc_inputs_use_period_history_and_ne_partial_averages(
+        self,
+        request,
+        horizon_type,
+        api_horizon,
+        issue_day,
+        fan_length,
+        config_fixture,
+    ):
+        config = request.getfixturevalue(config_fixture)
+        period_dates = pd.to_datetime([f"{year}-01-{issue_day:02d}" for year in range(2010, 2024)])
+        day_dates = pd.to_datetime(["2024-01-05" if horizon_type == "pentad" else "2024-01-10"])
+        all_dates = period_dates.append(day_dates)
+
+        observed_values = {date: 100.0 + idx for idx, date in enumerate(all_dates)}
+        observed = pd.DataFrame(
+            {
+                "code": [STATION_CODE] * len(all_dates),
+                "date": [date.strftime("%Y-%m-%d") for date in all_dates],
+                "discharge": [observed_values[date] for date in all_dates],
+                "delta": [20.0] * len(all_dates),
+                "horizon_type": [api_horizon] * len(all_dates),
+            }
+        )
+
+        tft_period_values = [observed_values[date] + 1.0 for date in period_dates]
+        tide_period_dates = period_dates[1:]
+        tide_period_values = [observed_values[date] + 3.0 for date in tide_period_dates]
+        day_date = day_dates[0]
+        day_values = {
+            "TFT": observed_values[day_date] + 1.0,
+            "TiDE": observed_values[day_date] + 3.0,
+            "TSMixer": observed_values[day_date] + 5.0,
+        }
+
+        postprocessing_client = FakePostprocessingClient(
+            pages={
+                ("day", "TFT", 0): _day_rows(day_dates, [day_values["TFT"]], "TFT", fan_length),
+                (api_horizon, "TFT", 0): _period_rows(
+                    period_dates,
+                    tft_period_values,
+                    api_horizon,
+                    "TFT",
+                ),
+                ("day", "TiDE", 0): _day_rows(
+                    day_dates,
+                    [day_values["TiDE"]],
+                    "TiDE",
+                    fan_length,
+                ),
+                (api_horizon, "TiDE", 0): _period_rows(
+                    tide_period_dates,
+                    tide_period_values,
+                    api_horizon,
+                    "TiDE",
+                ),
+                ("day", "TSMixer", 0): _day_rows(
+                    day_dates,
+                    [day_values["TSMixer"]],
+                    "TSMixer",
+                    fan_length,
+                ),
+                (api_horizon, "TSMixer", 0): pd.DataFrame(),
+            }
+        )
+        preprocessing_client = FakePreprocessingClient(observed)
+
+        with (
+            patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_SKILL_METRICS_START_YEAR": "2010",
+                    "SAPPHIRE_SKILL_METRICS_YEAR": "2026",
+                    "ieasyhydroforecast_run_ML_models": "true",
+                    "ieasyhydroforecast_available_ML_models": "TFT,TIDE,TSMIXER",
+                },
+            ),
+            patch(
+                "src.data_reader.SapphirePostprocessingClient",
+                create=True,
+                return_value=postprocessing_client,
+            ),
+            patch(
+                "src.data_reader.SapphirePreprocessingClient",
+                create=True,
+                return_value=preprocessing_client,
+            ),
+        ):
+            observed_df, modelled_df = data_reader.read_observed_and_modelled_data(
+                horizon_type,
+                codes=[STATION_CODE],
+                start_year=2010,
+                end_year=2024,
+            )
+
+            if horizon_type == "pentad":
+                modelled_with_ne = sl.calculate_neural_ensemble_forecast(modelled_df)
+            else:
+                modelled_with_ne = sl.calculate_neural_ensemble_forecast_decade(modelled_df)
+
+            skill_stats, _, _ = skill_metrics.calculate_skill_metrics(
+                config,
+                observed_df,
+                modelled_with_ne,
+                exclude_models=["EM"],
+            )
+
+        tft_skill = skill_stats[
+            (skill_stats["code"] == STATION_CODE) & (skill_stats["model_short"] == "TFT")
+        ]
+        assert not tft_skill.empty
+        assert tft_skill["n_pairs"].max() >= 15
+
+        ne_rows = modelled_with_ne[modelled_with_ne["model_short"] == "NE"].copy()
+        assert not ne_rows.empty
+
+        value_lookup = {
+            (row.date, row.model_short): row.forecasted_discharge
+            for row in modelled_df.itertuples()
+        }
+
+        first_period_date = period_dates[0]
+        first_ne = ne_rows[ne_rows["date"] == first_period_date]
+        assert len(first_ne) == 1
+        assert first_ne["forecasted_discharge"].iloc[0] == pytest.approx(
+            value_lookup[(first_period_date, "TFT")]
+        )
+
+        two_model_date = period_dates[1]
+        two_model_ne = ne_rows[ne_rows["date"] == two_model_date]
+        expected_two_model = np.mean(
+            [
+                value_lookup[(two_model_date, "TFT")],
+                value_lookup[(two_model_date, "TiDE")],
+            ]
+        )
+        assert len(two_model_ne) == 1
+        assert two_model_ne["forecasted_discharge"].iloc[0] == pytest.approx(expected_two_model)
+
+        day_ne = ne_rows[ne_rows["date"] == day_date]
+        expected_day = np.mean(
+            [
+                value_lookup[(day_date, "TFT")],
+                value_lookup[(day_date, "TiDE")],
+                value_lookup[(day_date, "TSMixer")],
+            ]
+        )
+        assert len(day_ne) == 1
+        assert day_ne["forecasted_discharge"].iloc[0] == pytest.approx(expected_day)
