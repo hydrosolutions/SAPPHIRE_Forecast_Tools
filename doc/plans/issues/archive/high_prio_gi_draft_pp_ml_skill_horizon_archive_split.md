@@ -4,9 +4,29 @@
 |---|---|
 | Module | `postprocessing_forecasts` |
 | Priority | High |
-| Status | Draft |
-| Branch | `fix_postprocessing_skill_metrics` |
+| Status | **Completed (2026-05-28)** |
+| Branch | `fix_postprocessing_skill_metrics` (pushed) |
 | Labels | `bug`, `skill-metrics`, `api-integration`, `tajik-deployment` |
+
+## Completion Summary
+
+Implemented on branch `fix_postprocessing_skill_metrics` and pushed. Three commits:
+
+| Commit | Phase | Content |
+|---|---|---|
+| `a32a11f` | P1 | Archive-union regression tests (replaces DAY-first assertions in `test_data_reader.py`; adds `test_ml_horizon_archive_split.py`; adds direct `_normalize_ml_forecasts` mixed-frame test) |
+| `c228122` | P2 | Cutover merge implementation in `apps/postprocessing_forecasts/src/data_reader.py` (+147/-63 lines; signature preserved) |
+| `755addf` | P3 | Integration test exercising the recalc path end-to-end, plus NEURAL_ENSEMBLE mixed-coverage numeric-mean assertions |
+
+**Final test run:** 1330 passed, 0 failed, 0 unexpected skips, 2 warnings.
+
+**Red-phase verification:** confirmed 2026-05-28 that the new tests genuinely guard the fix — reverting P2 alone produces 10 failures (8 P1 + 2 P3), all PP-036-related, no Type-II errors, no scope bleed. See "Red-Phase Verification Log" at the bottom of this document for procedure and counts.
+
+**Deferred to deployment time (P4):** operator runs the archive probe, staging recalc, and API/SQL `n_pairs >= 15` assertions from the P4 section against a real postgres-backed deployment before treating PP-036 as deployed on Tajik. Not a release blocker for this branch; tracked as part of the Tajik pre-deploy validation.
+
+**Decisions worth preserving:**
+- The LR byte-identical baseline assertion was dropped in favour of relying on the P2 file allow-list and orchestrator deliberation. The "LR path regression" Risks bullet documents the rationale.
+- The `first_day_date` cutover is computed per `(code, model_type)` after `_clean_code_column()` to keep `_normalize_ml_forecasts()` archive-agnostic.
 
 ## Problem Statement
 
