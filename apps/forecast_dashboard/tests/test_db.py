@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 import requests
 from src import db
+from src import vizualization
 
 # ── _convert_na_to_nan ─────────────────────────────────────────────────────
 
@@ -948,3 +949,118 @@ class TestGetDataSeason:
         data = db.get_data("season", "99001", self._all_stations_df())
 
         assert "forecasted_discharge" in data["forecasts_all"].columns
+
+
+class TestSeasonSummaryRendering:
+    """Deterministic data-layer plus summary-table checks for season metrics."""
+
+    def _patch_processing(self, monkeypatch):
+        def add_labels(df, stations):
+            if df.empty:
+                return df
+            return df.assign(station_labels="Test River B")
+
+        monkeypatch.setattr("src.db.processing.add_labels_to_hydrograph", add_labels)
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _model_selection(self):
+        selection = MagicMock()
+        selection.options = {
+            "LR Base": "LR_Base",
+            "LR SM": "LR_SM",
+        }
+        return selection
+
+    def _summary_table(self, forecasts_all):
+        return vizualization.create_forecast_summary_table(
+            lambda value: value,
+            "season",
+            forecasts_all,
+            "Test River B",
+            "2026-03-22",
+            self._model_selection(),
+            "delta",
+            0,
+        )
+
+    def test_season_summary_table_renders_skill_metrics(self, monkeypatch):
+        forecasts = [
+            _SEASON_FORECAST_RECORD_19999,
+            {
+                **_SEASON_FORECAST_RECORD_19999,
+                "id": 31,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 310.0,
+            },
+        ]
+        skills = [
+            _skill_metric_record_19999("season", 1, "LR_Base", 1.0),
+            _skill_metric_record_19999("season", 1, "LR_SM", 3.0),
+        ]
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response(forecasts)
+            if "/skill-metric/" in url:
+                return _make_mock_response(skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "season",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+        table = self._summary_table(data["forecasts_all"])
+
+        assert set(table["Model"]) == {"LR_Base", "LR_SM"}
+        base = table[table["Model"] == "LR_Base"].iloc[0]
+        sm = table[table["Model"] == "LR_SM"].iloc[0]
+        assert base["Accuracy"] == 91.0
+        assert base["δ"] == 1.0
+        assert base["s/σ"] == 1.5
+        assert base["MAE"] == 2.0
+        assert sm["Accuracy"] == 93.0
+        assert sm["δ"] == 3.0
+        assert sm["s/σ"] == 3.5
+        assert sm["MAE"] == 4.0
+
+    def test_season_summary_table_without_skill_metrics_does_not_crash(
+        self, monkeypatch
+    ):
+        forecasts = [
+            _SEASON_FORECAST_RECORD_19999,
+            {
+                **_SEASON_FORECAST_RECORD_19999,
+                "id": 31,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 310.0,
+            },
+        ]
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response(forecasts)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "season",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+        table = self._summary_table(data["forecasts_all"])
+
+        assert set(table["Model"]) == {"LR_Base", "LR_SM"}
+        for column in ("Accuracy", "δ", "s/σ", "MAE"):
+            assert column in table.columns
+            assert table[column].isna().all()
