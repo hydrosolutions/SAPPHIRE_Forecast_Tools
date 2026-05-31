@@ -708,6 +708,24 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
             suffixes=("", "_stats"),
         )
 
+    long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station, horizon_value=1)))
+    quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
+    quarter_hin = _horizon_in_year_col("quarter")
+    quarter_merge_keys = ["code", quarter_hin, "model_short"]
+    can_merge_quarter = (
+        not long_forecasts_quarter.empty
+        and not quarter_forecast_stats.empty
+        and all(k in long_forecasts_quarter.columns for k in quarter_merge_keys)
+        and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
+    )
+    if can_merge_quarter:
+        long_forecasts_quarter = long_forecasts_quarter.merge(
+            quarter_forecast_stats,
+            on=quarter_merge_keys,
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -719,7 +737,7 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
         "forecasts_all":        forecasts_all,
         "forecast_stats":       forecast_stats,
         "long_forecasts_m0":    pd.DataFrame(),
-        "long_forecasts_quarter": i18n_models(add_labels(get_long_forecasts_quarter(station, horizon_value=1))),
+        "long_forecasts_quarter": long_forecasts_quarter,
     }
     if "month_0" in supported_modes:
         m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=0)))
