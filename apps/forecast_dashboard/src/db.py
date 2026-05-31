@@ -34,6 +34,10 @@ def _horizon_in_year_col(horizon: str) -> str:
         return "decad_in_year"
     if horizon == "month":
         return "month_in_year"
+    if horizon == "quarter":
+        return "quarter_in_year"
+    if horizon == "season":
+        return "season_in_year"
     return "pentad_in_year"
 
 
@@ -427,7 +431,7 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
     })
-    if df.empty or "model_type" not in df.columns:
+    if df.empty or "model_type" not in df.columns or "horizon_in_year" not in df.columns:
         logger.warning("get_forecast_stats: no skill-metric data for station %s", code)
         return pd.DataFrame(columns=[
             "code", _horizon_in_year_col(horizon),
@@ -473,7 +477,7 @@ def get_forecast_stats_all(horizon) -> pd.DataFrame:
         ])
 
     df = pd.concat(frames, ignore_index=True)
-    if "model_type" not in df.columns:
+    if "model_type" not in df.columns or "horizon_in_year" not in df.columns:
         return pd.DataFrame(columns=[
             "code", _horizon_in_year_col(horizon),
             "model_short", "model_long",
@@ -555,7 +559,7 @@ def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
             "model_short", "model_long",
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
-            "valid_from", "month_in_year",
+            "valid_from", "month_in_year", "quarter_in_year",
         ])
 
     df.rename(columns={
@@ -568,6 +572,7 @@ def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
     df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
+    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
     # Keep only the latest-by-date row per (code, model_short)
@@ -601,7 +606,7 @@ def get_long_forecasts_season(station=None) -> pd.DataFrame:
             "model_short", "model_long",
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
-            "valid_from", "month_in_year",
+            "valid_from", "month_in_year", "season_in_year",
         ])
 
     df.rename(columns={
@@ -614,6 +619,7 @@ def get_long_forecasts_season(station=None) -> pd.DataFrame:
     df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
+    df["season_in_year"] = 1
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
     # Keep only the latest-by-date row per (code, model_short)
@@ -737,6 +743,24 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
 def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
     """Load data for quarterly horizon — only long forecasts + daily hydrograph."""
     forecasts_all = i18n_models(add_labels(get_long_forecasts_quarter(station)))
+    forecast_stats = i18n_models(get_forecast_stats("quarter", station))
+
+    hin = _horizon_in_year_col("quarter")
+    merge_keys = ["code", hin, "model_short"]
+    can_merge = (
+        not forecasts_all.empty
+        and not forecast_stats.empty
+        and all(k in forecasts_all.columns for k in merge_keys)
+        and all(k in forecast_stats.columns for k in merge_keys)
+    )
+    if can_merge:
+        forecasts_all = forecasts_all.merge(
+            forecast_stats,
+            on=merge_keys,
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
     return {
         "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -746,13 +770,31 @@ def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
         "ml_forecast":           pd.DataFrame(),
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,
-        "forecast_stats":        pd.DataFrame(),
+        "forecast_stats":        forecast_stats,
     }
 
 
 def _get_data_season(station, all_stations, add_labels, i18n_models) -> dict:
     """Load data for seasonal horizon — only long forecasts + daily hydrograph."""
     forecasts_all = i18n_models(add_labels(get_long_forecasts_season(station)))
+    forecast_stats = i18n_models(get_forecast_stats("season", station))
+
+    hin = _horizon_in_year_col("season")
+    merge_keys = ["code", hin, "model_short"]
+    can_merge = (
+        not forecasts_all.empty
+        and not forecast_stats.empty
+        and all(k in forecasts_all.columns for k in merge_keys)
+        and all(k in forecast_stats.columns for k in merge_keys)
+    )
+    if can_merge:
+        forecasts_all = forecasts_all.merge(
+            forecast_stats,
+            on=merge_keys,
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
     return {
         "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -762,5 +804,5 @@ def _get_data_season(station, all_stations, add_labels, i18n_models) -> dict:
         "ml_forecast":           pd.DataFrame(),
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,
-        "forecast_stats":        pd.DataFrame(),
+        "forecast_stats":        forecast_stats,
     }
