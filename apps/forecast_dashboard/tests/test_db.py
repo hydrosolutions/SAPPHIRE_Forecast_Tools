@@ -419,6 +419,173 @@ class TestGetDataMonthly:
             {"code": ["99001"], "station_labels": ["Test River A"]}
         )
 
+    def _all_stations_19999_df(self):
+        return pd.DataFrame(
+            {"code": ["19999"], "station_labels": ["Test Reservoir B"]}
+        )
+
+    def _monthly_forecast_19999(self):
+        return {
+            **_LONG_FORECAST_RECORD,
+            "id": 40,
+            "code": "19999",
+            "model_type": "LR_Base",
+            "model_type_description": "Linear regression base",
+            "q": 150.0,
+        }
+
+    def test_merges_quarter_skill_metrics_into_monthly_quarter_frame(self, monkeypatch):
+        """Month tab data enriches long_forecasts_quarter without changing forecasts_all."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 3.0)
+        quarter_skill = _skill_metric_record_19999("quarter", 2, "LR_Base", 4.0)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([quarter_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        fa = data["forecasts_all"]
+        month_row = fa[(fa["code"] == "19999") & (fa["model_short"] == "LR_Base")]
+        assert len(month_row) == 1
+        assert month_row["month_in_year"].iloc[0] == 4
+        assert month_row["delta"].iloc[0] == 3.0
+        assert month_row["sdivsigma"].iloc[0] == 3.5
+        assert month_row["mae"].iloc[0] == 4.0
+        assert month_row["accuracy"].iloc[0] == 93.0
+
+        quarter = data["long_forecasts_quarter"]
+        quarter_row = quarter[
+            (quarter["code"] == "19999") & (quarter["model_short"] == "LR_Base")
+        ]
+        assert len(quarter_row) == 1
+        assert quarter_row["quarter_in_year"].iloc[0] == 2
+        assert quarter_row["delta"].iloc[0] == 4.0
+        assert quarter_row["sdivsigma"].iloc[0] == 4.5
+        assert quarter_row["mae"].iloc[0] == 5.0
+        assert quarter_row["accuracy"].iloc[0] == 94.0
+
+    def test_monthly_quarter_frame_preserves_unmatched_rows_with_nan_metrics(
+        self, monkeypatch
+    ):
+        """Unmatched quarter forecast models stay present with NaN skill metrics."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        quarter_forecasts = [
+            _QUARTER_FORECAST_RECORD_19999,
+            {
+                **_QUARTER_FORECAST_RECORD_19999,
+                "id": 41,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 220.0,
+            },
+        ]
+        quarter_skill = _skill_metric_record_19999("quarter", 2, "LR_Base", 2.0)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response(quarter_forecasts)
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([quarter_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        assert set(quarter["model_short"]) == {"LR_Base", "LR_SM"}
+        base = quarter[quarter["model_short"] == "LR_Base"].iloc[0]
+        sm = quarter[quarter["model_short"] == "LR_SM"].iloc[0]
+        assert base["delta"] == 2.0
+        assert base["sdivsigma"] == 2.5
+        assert pd.isna(sm["delta"])
+        assert pd.isna(sm["sdivsigma"])
+        assert pd.isna(sm["mae"])
+        assert pd.isna(sm["accuracy"])
+
+    def test_monthly_quarter_frame_no_matching_skill_rows_preserves_forecasts(
+        self, monkeypatch
+    ):
+        """Quarter forecasts are not dropped when quarter skill rows do not match."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        unmatched_quarter_skill = _skill_metric_record_19999(
+            "quarter", 3, "LR_Base", 2.0
+        )
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([unmatched_quarter_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        assert len(quarter) == 1
+        assert quarter["forecasted_discharge"].iloc[0] == 200.0
+        assert quarter["quarter_in_year"].iloc[0] == 2
+        assert pd.isna(quarter["delta"].iloc[0])
+        assert pd.isna(quarter["sdivsigma"].iloc[0])
+        assert pd.isna(quarter["mae"].iloc[0])
+        assert pd.isna(quarter["accuracy"].iloc[0])
+
+    def test_empty_monthly_quarter_frame_does_not_synthesize_rows(self, monkeypatch):
+        """Empty quarter long forecasts do not crash or create merged rows."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        quarter_skill = _skill_metric_record_19999("quarter", 2, "LR_Base", 2.0)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([quarter_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        assert data["long_forecasts_quarter"].empty
+        assert "forecasted_discharge" in data["long_forecasts_quarter"].columns
+        assert "quarter_in_year" in data["long_forecasts_quarter"].columns
+
     def test_merges_skill_metrics_into_forecasts(self, monkeypatch):
         """Skill metric columns (delta, sdivsigma, mae, accuracy) appear in forecasts_all."""
         self._make_dispatch_mock(monkeypatch)
