@@ -57,6 +57,12 @@ class TestHorizonInYearCol:
     def test_month(self):
         assert db._horizon_in_year_col("month") == "month_in_year"
 
+    def test_quarter(self):
+        assert db._horizon_in_year_col("quarter") == "quarter_in_year"
+
+    def test_season(self):
+        assert db._horizon_in_year_col("season") == "season_in_year"
+
 
 # ── _resolve_station ──────────────────────────────────────────────────────
 
@@ -127,6 +133,68 @@ _SKILL_METRIC_RECORD = {
     "fhv": None,
     "flv": None,
 }
+
+_QUARTER_FORECAST_RECORD_19999 = {
+    "id": 20,
+    "horizon_type": "quarter",
+    "horizon_value": 1,
+    "code": "19999",
+    "date": "2026-03-22",
+    "model_type": "LR_Base",
+    "model_type_description": "Linear regression base",
+    "valid_from": "2026-04-01",
+    "valid_to": "2026-06-30",
+    "flag": 0,
+    "composition": "",
+    "q": 200.0,
+    "q_obs": None,
+    "q_xgb": None,
+    "q_lgbm": None,
+    "q_catboost": None,
+    "q_loc": None,
+    "q05": 180.0,
+    "q10": 185.0,
+    "q25": 190.0,
+    "q50": 200.0,
+    "q75": 210.0,
+    "q90": 215.0,
+    "q95": 220.0,
+}
+
+_SEASON_FORECAST_RECORD_19999 = {
+    **_QUARTER_FORECAST_RECORD_19999,
+    "id": 30,
+    "horizon_type": "season",
+    "horizon_value": 1,
+    "valid_to": "2026-09-30",
+    "q": 300.0,
+    "q05": 270.0,
+    "q95": 330.0,
+}
+
+
+def _skill_metric_record_19999(horizon, horizon_in_year, model_type, delta):
+    return {
+        "id": 100 + int(delta * 10),
+        "horizon_type": horizon,
+        "horizon_in_year": horizon_in_year,
+        "code": "19999",
+        "model_type": model_type,
+        "model_type_description": model_type,
+        "date": "2026-03-15",
+        "sdivsigma": 0.5 + delta,
+        "nse": 0.8,
+        "delta": delta,
+        "accuracy": 90.0 + delta,
+        "mae": 1.0 + delta,
+        "n_pairs": 12,
+        "crps": None,
+        "pbias": None,
+        "kgelf": None,
+        "nse_log": None,
+        "fhv": None,
+        "flv": None,
+    }
 
 
 def _make_mock_response(json_data, status_code=200):
@@ -208,6 +276,112 @@ class TestGetForecastStats:
 
         assert len(result) == 1
         assert result["delta"].iloc[0] == 2.0
+
+    @pytest.mark.parametrize(
+        ("horizon", "period_col", "period_value"),
+        [
+            ("quarter", "quarter_in_year", 2),
+            ("season", "season_in_year", 1),
+        ],
+    )
+    def test_long_horizons_rename_horizon_in_year(
+        self, horizon, period_col, period_value, monkeypatch
+    ):
+        """Quarter and season stats use horizon-specific period keys."""
+        records = [
+            _skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats(horizon, "19999")
+
+        assert period_col in result.columns
+        assert result[period_col].iloc[0] == period_value
+        assert "pentad_in_year" not in result.columns
+        assert "delta" in result.columns
+        assert "sdivsigma" in result.columns
+        assert "mae" in result.columns
+        assert "accuracy" in result.columns
+
+    @pytest.mark.parametrize(
+        ("horizon", "period_col"),
+        [
+            ("quarter", "quarter_in_year"),
+            ("season", "season_in_year"),
+        ],
+    )
+    def test_long_horizons_empty_stats_keep_period_key(
+        self, horizon, period_col, monkeypatch
+    ):
+        """Empty skill-metric responses still declare the right merge key."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats(horizon, "19999")
+
+        assert result.empty
+        assert period_col in result.columns
+        assert "pentad_in_year" not in result.columns
+
+
+class TestGetForecastStatsAll:
+    @pytest.mark.parametrize(
+        ("horizon", "period_col", "period_value"),
+        [
+            ("quarter", "quarter_in_year", 2),
+            ("season", "season_in_year", 1),
+        ],
+    )
+    def test_long_horizons_page_and_rename(
+        self, horizon, period_col, period_value, monkeypatch
+    ):
+        """All-station stats use the same horizon-specific period keys."""
+        records = [
+            _skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)
+        ]
+
+        def mock_get(url, **kwargs):
+            limit = kwargs["params"]["limit"]
+            assert limit == 1000
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats_all(horizon)
+
+        assert period_col in result.columns
+        assert result[period_col].iloc[0] == period_value
+        assert "pentad_in_year" not in result.columns
+
+    @pytest.mark.parametrize(
+        ("horizon", "period_col"),
+        [
+            ("quarter", "quarter_in_year"),
+            ("season", "season_in_year"),
+        ],
+    )
+    def test_long_horizons_empty_all_stats_keep_period_key(
+        self, horizon, period_col, monkeypatch
+    ):
+        """Empty all-station stats declare the right period key."""
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats_all(horizon)
+
+        assert result.empty
+        assert period_col in result.columns
+        assert "pentad_in_year" not in result.columns
 
 
 # ── _get_data_monthly / get_data ──────────────────────────────────────────
@@ -406,6 +580,28 @@ class TestGetLongForecastsQuarter:
         assert result.empty
         assert "forecasted_discharge" in result.columns
 
+    def test_quarter_in_year_computed_from_valid_from(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999")
+
+        assert "quarter_in_year" in result.columns
+        assert result["quarter_in_year"].iloc[0] == 2
+
+    def test_empty_api_response_declares_quarter_key(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999")
+
+        assert result.empty
+        assert "quarter_in_year" in result.columns
+
 
 class TestGetLongForecastsSeason:
     def test_renames_and_latest_dedup(self, monkeypatch):
@@ -434,6 +630,28 @@ class TestGetLongForecastsSeason:
 
         assert result.empty
         assert "forecasted_discharge" in result.columns
+
+    def test_season_in_year_is_single_bucket(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_SEASON_FORECAST_RECORD_19999])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_season(station="19999")
+
+        assert "season_in_year" in result.columns
+        assert result["season_in_year"].iloc[0] == 1
+
+    def test_empty_api_response_declares_season_key(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_season(station="19999")
+
+        assert result.empty
+        assert "season_in_year" in result.columns
 
 
 # ── _get_data_quarter / _get_data_season ─────────────────────────────────
@@ -473,18 +691,103 @@ class TestGetDataQuarter:
                     "forecasts_all", "forecast_stats"):
             assert key in data, f"Missing key: {key}"
 
-    def test_forecast_stats_is_empty(self, monkeypatch):
-        """forecast_stats is always empty for quarter horizon."""
+    def test_forecast_stats_populated_and_merged(self, monkeypatch):
+        """Quarter skill metrics populate forecast_stats and merge into forecasts_all."""
+        forecast = _QUARTER_FORECAST_RECORD_19999
+        skill = _skill_metric_record_19999("quarter", 2, "LR_Base", 1.0)
 
         def mock_get(url, **kwargs):
-            return _make_mock_response([_QUARTER_FORECAST_RECORD])
+            if "/long-forecast/" in url:
+                return _make_mock_response([forecast])
+            if "/skill-metric/" in url:
+                return _make_mock_response([skill])
+            return _make_mock_response([])
 
         monkeypatch.setattr(requests, "get", mock_get)
         self._patch_processing(monkeypatch)
 
-        data = db.get_data("quarter", "99001", self._all_stations_df())
+        data = db.get_data(
+            "quarter",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        assert not data["forecast_stats"].empty
+        fa = data["forecasts_all"]
+        assert "delta" in fa.columns
+        assert "sdivsigma" in fa.columns
+        assert "mae" in fa.columns
+        assert "accuracy" in fa.columns
+        row = fa[(fa["code"] == "19999") & (fa["model_short"] == "LR_Base")]
+        assert len(row) == 1
+        assert row["quarter_in_year"].iloc[0] == 2
+        assert row["delta"].iloc[0] == 1.0
+        assert row["sdivsigma"].iloc[0] == 1.5
+        assert row["mae"].iloc[0] == 2.0
+        assert row["accuracy"].iloc[0] == 91.0
+
+    def test_partial_skill_metrics_preserve_unmatched_forecast_row(self, monkeypatch):
+        """LR_SM stays present with NaN metrics when only LR_Base has skill data."""
+        forecasts = [
+            _QUARTER_FORECAST_RECORD_19999,
+            {
+                **_QUARTER_FORECAST_RECORD_19999,
+                "id": 21,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 210.0,
+            },
+        ]
+        skills = [_skill_metric_record_19999("quarter", 2, "LR_Base", 2.0)]
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response(forecasts)
+            if "/skill-metric/" in url:
+                return _make_mock_response(skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "quarter",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        fa = data["forecasts_all"]
+        assert set(fa["model_short"]) == {"LR_Base", "LR_SM"}
+        base = fa[fa["model_short"] == "LR_Base"].iloc[0]
+        sm = fa[fa["model_short"] == "LR_SM"].iloc[0]
+        assert base["delta"] == 2.0
+        assert base["sdivsigma"] == 2.5
+        assert pd.isna(sm["delta"])
+        assert pd.isna(sm["sdivsigma"])
+        assert pd.isna(sm["mae"])
+        assert pd.isna(sm["accuracy"])
+
+    def test_no_skill_metrics_still_returns_forecasts(self, monkeypatch):
+        """Empty quarter skill metrics do not block forecast rows."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "quarter",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
 
         assert data["forecast_stats"].empty
+        assert not data["forecasts_all"].empty
+        assert "forecasted_discharge" in data["forecasts_all"].columns
+        assert "delta" not in data["forecasts_all"].columns
 
     def test_no_m0_key(self, monkeypatch):
         """long_forecasts_m0 key must not be present for quarter horizon."""
@@ -549,18 +852,74 @@ class TestGetDataSeason:
                     "forecasts_all", "forecast_stats"):
             assert key in data, f"Missing key: {key}"
 
-    def test_forecast_stats_is_empty(self, monkeypatch):
-        """forecast_stats is always empty for season horizon."""
+    def test_forecast_stats_populated_and_merged(self, monkeypatch):
+        """Season skill metrics populate forecast_stats and merge into forecasts_all."""
+        forecasts = [
+            _SEASON_FORECAST_RECORD_19999,
+            {
+                **_SEASON_FORECAST_RECORD_19999,
+                "id": 31,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 310.0,
+            },
+        ]
+        skills = [
+            _skill_metric_record_19999("season", 1, "LR_Base", 1.0),
+            _skill_metric_record_19999("season", 1, "LR_SM", 3.0),
+        ]
 
         def mock_get(url, **kwargs):
-            return _make_mock_response([_SEASON_FORECAST_RECORD])
+            if "/long-forecast/" in url:
+                return _make_mock_response(forecasts)
+            if "/skill-metric/" in url:
+                return _make_mock_response(skills)
+            return _make_mock_response([])
 
         monkeypatch.setattr(requests, "get", mock_get)
         self._patch_processing(monkeypatch)
 
-        data = db.get_data("season", "99001", self._all_stations_df())
+        data = db.get_data(
+            "season",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        assert not data["forecast_stats"].empty
+        fa = data["forecasts_all"]
+        assert "delta" in fa.columns
+        assert "sdivsigma" in fa.columns
+        assert "mae" in fa.columns
+        assert "accuracy" in fa.columns
+        assert set(fa["model_short"]) == {"LR_Base", "LR_SM"}
+        base = fa[fa["model_short"] == "LR_Base"].iloc[0]
+        sm = fa[fa["model_short"] == "LR_SM"].iloc[0]
+        assert base["season_in_year"] == 1
+        assert base["delta"] == 1.0
+        assert sm["delta"] == 3.0
+        assert sm["sdivsigma"] == 3.5
+
+    def test_no_skill_metrics_still_returns_forecasts(self, monkeypatch):
+        """Empty season skill metrics do not block forecast rows."""
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([_SEASON_FORECAST_RECORD_19999])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "season",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
 
         assert data["forecast_stats"].empty
+        assert not data["forecasts_all"].empty
+        assert "forecasted_discharge" in data["forecasts_all"].columns
+        assert "delta" not in data["forecasts_all"].columns
 
     def test_no_m0_key(self, monkeypatch):
         """long_forecasts_m0 key must not be present for season horizon."""
