@@ -261,12 +261,12 @@ def _recalculate_norms_impl(
                     prior_row = prior_existing.get(prior_date_str)
                     if prior_row is not None:
                         pv = prior_row.get("value") if hasattr(prior_row, "get") else None
-                        previous_val = float(pv) if pv is not None and pd.notna(pv) else math.nan
+                        previous_val = float(pv) if pv is not None and pd.notna(pv) else None
                     else:
-                        previous_val = math.nan
+                        previous_val = None
                 except ValueError:
                     # e.g. 2024-02-29 → 2023-02-29 does not exist
-                    previous_val = math.nan
+                    previous_val = None
 
                 # Get climatology stats for this DOY
                 stats = stat_lookup.get(doy, {})
@@ -275,22 +275,22 @@ def _recalculate_norms_impl(
                     "snow_type": snow_type.upper(),
                     "code": str(code),
                     "date": date_str,
-                    "value": value,
-                    "norm": norm_val,
-                    "count": stats.get("count"),
-                    "mean": stats.get("mean"),
-                    "std": stats.get("std"),
-                    "min": stats.get("min"),
-                    "max": stats.get("max"),
-                    "q05": stats.get("q05"),
-                    "q25": stats.get("q25"),
-                    "q50": stats.get("q50"),
-                    "q75": stats.get("q75"),
-                    "q95": stats.get("q95"),
-                    "previous": previous_val,
-                    "current": current_val,
+                    "value": _json_safe(value),
+                    "norm": _json_safe(norm_val),
+                    "count": _json_safe(stats.get("count")),
+                    "mean": _json_safe(stats.get("mean")),
+                    "std": _json_safe(stats.get("std")),
+                    "min": _json_safe(stats.get("min")),
+                    "max": _json_safe(stats.get("max")),
+                    "q05": _json_safe(stats.get("q05")),
+                    "q25": _json_safe(stats.get("q25")),
+                    "q50": _json_safe(stats.get("q50")),
+                    "q75": _json_safe(stats.get("q75")),
+                    "q95": _json_safe(stats.get("q95")),
+                    "previous": _json_safe(previous_val),
+                    "current": _json_safe(current_val),
                 }
-                record.update(band_values)
+                record.update({key: _json_safe(value) for key, value in band_values.items()})
                 records.append(record)
 
             # Write to API — isolate per-station write failures
@@ -316,6 +316,18 @@ def _recalculate_norms_impl(
                     )
 
     return any_written
+
+
+def _json_safe(value):
+    """Return value if finite numeric; return None for NaN/inf/None."""
+    if value is None:
+        return None
+    try:
+        if not math.isfinite(float(value)):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return value
 
 
 def _parse_snow_vars(value: str | None) -> list[str]:

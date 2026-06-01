@@ -8,6 +8,7 @@ The script:
 3. Writes full-year norms to the API, preserving existing values
 """
 
+import math
 import os
 import sys
 from unittest.mock import MagicMock, Mock, patch
@@ -38,6 +39,18 @@ class TestRecalculateSnowNorms:
         assert rsn._parse_snow_vars("") == []
         assert rsn._parse_snow_vars(None) == []
         assert rsn._parse_snow_vars("  SWE  ,  HS  ") == ["SWE", "HS"]
+
+    def test_json_safe_helper_handles_nan_inf_none(self):
+        """_json_safe returns None for non-finite/non-numeric values."""
+        assert rsn._json_safe(None) is None
+        assert rsn._json_safe(math.nan) is None
+        assert rsn._json_safe(float("nan")) is None
+        assert rsn._json_safe(float("inf")) is None
+        assert rsn._json_safe(float("-inf")) is None
+        assert rsn._json_safe(0.0) == 0.0
+        assert rsn._json_safe(1.5) == 1.5
+        assert rsn._json_safe(42) == 42
+        assert rsn._json_safe("HS") is None
 
     @staticmethod
     def _make_norms_df(variables, code="19999", n_days=365):
@@ -362,6 +375,85 @@ class TestRecalculateSnowStats:
     @patch("dg_utils.calculate_snow_norms_from_api")
     @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
     @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_record_builder_no_nan_in_payload(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
+    ):
+        """Written records contain no non-finite floats."""
+        target_dates = pd.date_range("2024-01-01", periods=366, freq="D")
+        target_values = [float(10 + i) for i in range(366)]
+        target_values[0] = np.nan
+        target_values[1] = float("inf")
+        target_df = pd.DataFrame(
+            {
+                "id": range(1, 367),
+                "snow_type": ["SWE"] * 366,
+                "code": ["19999"] * 366,
+                "date": target_dates,
+                "value": target_values,
+                "norm": [50.0] * 366,
+                "value1": [float("-inf")] + [None] * 365,
+            }
+        )
+
+        prior_dates = pd.date_range("2023-01-01", periods=365, freq="D")
+        prior_df = pd.DataFrame(
+            {
+                "id": range(1, 366),
+                "snow_type": ["SWE"] * 365,
+                "code": ["19999"] * 365,
+                "date": prior_dates,
+                "value": [float(5 + i) for i in range(365)],
+                "norm": [50.0] * 365,
+            }
+        )
+
+        norms_df = self._make_norms_df(["SWE"], n_days=366)
+        stats_df = self._make_stats_df(["SWE"], n_days=366)
+        stats_df.loc[0, ["mean", "std", "min", "max", "q05", "q25", "q50", "q75", "q95"]] = np.nan
+
+        mock_calc_norms.return_value = norms_df
+        mock_calc_stats.return_value = stats_df
+
+        def read_snow_side_effect(**kwargs):
+            start = kwargs.get("start_date", "")
+            if start.startswith("2024"):
+                return target_df
+            if start.startswith("2023"):
+                return prior_df
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        result = rsn.recalculate_norms(
+            snow_path=str(tmp_path / "snow"),
+            variables=["SWE"],
+            hru_codes=["HRU01"],
+            year=2024,
+            env_overrides=self.ENV,
+        )
+
+        assert result is True
+        assert len(captured) > 0
+        for record in captured:
+            for key, value in record.items():
+                if isinstance(value, float):
+                    assert math.isfinite(value), f"Record {record} key {key} is non-finite: {value}"
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
     def test_record_builder_includes_snow_stat_columns(
         self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
     ):
@@ -441,7 +533,7 @@ class TestRecalculateSnowStats:
     def test_record_builder_previous_uses_calendar_date_alignment(
         self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
     ):
-        """previous is calendar-date aligned; 2024-02-29 has NaN previous (no 2023-02-29)."""
+        """previous is calendar-date aligned; 2024-02-29 has None previous (no 2023-02-29)."""
         # 2024 is a leap year (366 days); 2023 is not (365 days)
         target_dates = pd.date_range("2024-01-01", periods=366, freq="D")
         target_df = pd.DataFrame(
@@ -516,10 +608,7 @@ class TestRecalculateSnowStats:
         # 2024-02-29 → prior date 2023-02-29 is INVALID (2023 is not a leap year)
         feb29_records = [r for r in captured if r["date"] == "2024-02-29"]
         assert len(feb29_records) == 1
-        assert feb29_records[0]["previous"] is None or (
-            isinstance(feb29_records[0]["previous"], float)
-            and feb29_records[0]["previous"] != feb29_records[0]["previous"]  # NaN check
-        ), f"Expected NaN/None for previous, got {feb29_records[0]['previous']}"
+        assert feb29_records[0]["previous"] is None
 
     # -----------------------------------------------------------------------
     # Test 3: current equals target-year value
