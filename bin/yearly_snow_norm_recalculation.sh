@@ -2,8 +2,8 @@
 # Yearly Snow Norm Recalculation Script
 #
 # This script runs a full recalculation of climatological daily snow norms
-# (SWE, HS, RoF) from historical reanalysis CSVs, then writes the norms
-# to the SAPPHIRE preprocessing API.
+# and dashboard-facing statistics (SWE, HS, RoF) from historical reanalysis
+# CSVs, then writes them to the SAPPHIRE preprocessing API.
 #
 # Designed to run once a year (e.g., end of August) after the snow
 # reanalysis files have been updated for the previous season.
@@ -16,11 +16,11 @@
 #
 # The script will:
 # 1. Read configuration from the .env file
-# 2. Compute climatological daily norms from historical snow CSVs
-# 3. Write full-year norm records to the preprocessing API
+# 2. Compute climatological daily norms and statistics from historical snow CSVs
+# 3. Write full-year norm and statistic records to the preprocessing API
 # 4. Log all output to a timestamped log file
 #
-# Crontab example (run Aug 25 at 02:00):
+# Crontab example (run snow norm/stat recalculation Aug 25 at 02:00):
 #   0 2 25 8 * /path/to/bin/yearly_snow_norm_recalculation.sh /path/to/config/.env
 #
 # Author: Beatrice Marti
@@ -83,7 +83,7 @@ establish_ssh_tunnel
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
 
-# Memory settings — snow norm recalculation is lightweight
+# Memory settings — snow norm/stat recalculation is lightweight
 MEMORY_LIMIT="4g"
 MEMORY_SWAP="6g"
 
@@ -112,7 +112,7 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     docker rm -f $CONTAINER_NAME
 fi
 
-# Run the snow norm recalculation container
+# Run the snow norm/stat recalculation container
 docker run \
     --name $CONTAINER_NAME \
     --network host \
