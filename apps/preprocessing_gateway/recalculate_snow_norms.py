@@ -23,8 +23,10 @@ Usage (from code / tests)::
 """
 
 import logging
+import math
 import os
 import sys
+from datetime import date as _date
 
 import pandas as pd
 
@@ -101,7 +103,7 @@ def _recalculate_norms_impl(
         logger.warning("API at %s not ready, skipping norm recalculation", api_url)
         return False
 
-    # 2. Compute norms from API data
+    # 2. Compute norms and stats from API data
     logger.info(
         "Calculating snow norms from API for variables %s",
         variables,
@@ -119,6 +121,21 @@ def _recalculate_norms_impl(
         norms_df["code"].nunique(),
     )
 
+    logger.info(
+        "Calculating snow climatology stats from API for variables %s",
+        variables,
+    )
+    stats_df = dg_utils.calculate_snow_stats_from_api(client, variables, n_years_min=5)
+    if not stats_df.empty:
+        logger.info(
+            "Computed %d stat entries across %d variables and %d codes",
+            len(stats_df),
+            stats_df["snow_type"].nunique(),
+            stats_df["code"].nunique(),
+        )
+    else:
+        logger.warning("No snow stats computed — proceeding with NaN stat fields")
+
     # 3. Build date range for the target year
     is_leap = dg_utils.is_leap_year(year)
     n_days = 366 if is_leap else 365
@@ -129,13 +146,35 @@ def _recalculate_norms_impl(
 
     for snow_type in norms_df["snow_type"].unique():
         type_norms = norms_df[norms_df["snow_type"] == snow_type]
+        type_stats = (
+            stats_df[stats_df["snow_type"] == snow_type] if not stats_df.empty else pd.DataFrame()
+        )
 
         for code in type_norms["code"].unique():
             code_norms = type_norms[type_norms["code"] == code]
             # Build a dayofyear → norm lookup
             norm_lookup = dict(zip(code_norms["dayofyear"], code_norms["norm"], strict=False))
 
-            # Read existing records from API to preserve values
+            # Build dayofyear → stats lookup for this code
+            stat_lookup: dict[int, dict] = {}
+            if not type_stats.empty:
+                code_stats = type_stats[type_stats["code"] == code]
+                for _, srow in code_stats.iterrows():
+                    doy = int(srow["dayofyear"])
+                    stat_lookup[doy] = {
+                        "count": int(srow["count"]) if pd.notna(srow["count"]) else None,
+                        "mean": float(srow["mean"]) if pd.notna(srow["mean"]) else None,
+                        "std": float(srow["std"]) if pd.notna(srow["std"]) else None,
+                        "min": float(srow["min"]) if pd.notna(srow["min"]) else None,
+                        "max": float(srow["max"]) if pd.notna(srow["max"]) else None,
+                        "q05": float(srow["q05"]) if pd.notna(srow["q05"]) else None,
+                        "q25": float(srow["q25"]) if pd.notna(srow["q25"]) else None,
+                        "q50": float(srow["q50"]) if pd.notna(srow["q50"]) else None,
+                        "q75": float(srow["q75"]) if pd.notna(srow["q75"]) else None,
+                        "q95": float(srow["q95"]) if pd.notna(srow["q95"]) else None,
+                    }
+
+            # Read existing target-year records from API to preserve values
             start_str = f"{year}-01-01"
             end_str = f"{year}-12-31"
             existing = {}
@@ -156,6 +195,33 @@ def _recalculate_norms_impl(
                     "Could not read existing snow records for %s/%s: %s",
                     snow_type,
                     code,
+                    e,
+                )
+
+            # Read prior-year records for calendar-date `previous` lookup
+            prior_year = year - 1
+            prior_start_str = f"{prior_year}-01-01"
+            prior_end_str = f"{prior_year}-12-31"
+            prior_existing: dict[str, object] = {}
+            try:
+                prior_df = client.read_snow(
+                    snow_type=snow_type.upper(),
+                    code=str(code),
+                    start_date=prior_start_str,
+                    end_date=prior_end_str,
+                    limit=100000,
+                )
+                if not prior_df.empty:
+                    for _, row in prior_df.iterrows():
+                        d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
+                        prior_existing[d] = row
+            except Exception as e:
+                logger.warning(
+                    "Could not read prior-year snow records for %s/%s (year %d): %s. "
+                    "All 'previous' values will be NaN.",
+                    snow_type,
+                    code,
+                    prior_year,
                     e,
                 )
 
@@ -184,22 +250,55 @@ def _recalculate_norms_impl(
                         if pd.notna(bv) if bv is not None else False:
                             band_values[f"value{i}"] = float(bv)
 
+                # Compute `current` from the target-year row's own value
+                current_val = value  # same as the preserved value field
+
+                # Compute `previous` via calendar-date alignment to year-1
+                target_date = _date(year, dt.month, dt.day)
+                try:
+                    prior_date = _date(prior_year, target_date.month, target_date.day)
+                    prior_date_str = prior_date.strftime("%Y-%m-%d")
+                    prior_row = prior_existing.get(prior_date_str)
+                    if prior_row is not None:
+                        pv = prior_row.get("value") if hasattr(prior_row, "get") else None
+                        previous_val = float(pv) if pv is not None and pd.notna(pv) else math.nan
+                    else:
+                        previous_val = math.nan
+                except ValueError:
+                    # e.g. 2024-02-29 → 2023-02-29 does not exist
+                    previous_val = math.nan
+
+                # Get climatology stats for this DOY
+                stats = stat_lookup.get(doy, {})
+
                 record = {
                     "snow_type": snow_type.upper(),
                     "code": str(code),
                     "date": date_str,
                     "value": value,
                     "norm": norm_val,
+                    "count": stats.get("count"),
+                    "mean": stats.get("mean"),
+                    "std": stats.get("std"),
+                    "min": stats.get("min"),
+                    "max": stats.get("max"),
+                    "q05": stats.get("q05"),
+                    "q25": stats.get("q25"),
+                    "q50": stats.get("q50"),
+                    "q75": stats.get("q75"),
+                    "q95": stats.get("q95"),
+                    "previous": previous_val,
+                    "current": current_val,
                 }
                 record.update(band_values)
                 records.append(record)
 
-            # Write to API
+            # Write to API — isolate per-station write failures
             if records:
                 try:
                     count = client.write_snow(records)
                     logger.info(
-                        "Wrote %d norm records for %s/%s (year %d)",
+                        "Wrote %d stat+norm records for %s/%s (year %d)",
                         count,
                         snow_type,
                         code,
@@ -207,10 +306,12 @@ def _recalculate_norms_impl(
                     )
                     any_written = True
                 except Exception as e:
-                    logger.error(
-                        "Failed to write norms for %s/%s: %s",
+                    logger.warning(
+                        "Failed to write stat+norm records for %s/%s (year %d): %s — "
+                        "skipping this station, continuing with others.",
                         snow_type,
                         code,
+                        year,
                         e,
                     )
 
