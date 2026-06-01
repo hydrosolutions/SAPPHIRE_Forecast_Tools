@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
@@ -274,6 +275,68 @@ class TestRecalculateSnowNorms:
         assert result is True
         # write_snow should be called at least twice (once per variable)
         assert mock_client.write_snow.call_count >= 2
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    @patch("setup_library.load_environment")
+    def test_year_override_via_env_var(
+        self,
+        mock_load_environment,
+        mock_client_class,
+        mock_calc_norms,
+        mock_calc_stats,
+        monkeypatch,
+    ):
+        """main() honors ieasyhydroforecast_SNOW_RECALC_YEAR without live API calls."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = pd.DataFrame(
+            columns=[
+                "snow_type",
+                "code",
+                "dayofyear",
+                "count",
+                "mean",
+                "std",
+                "min",
+                "max",
+                "q05",
+                "q25",
+                "q50",
+                "q75",
+                "q95",
+            ]
+        )
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.return_value = pd.DataFrame()
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_RECALC_YEAR", "2019")
+        monkeypatch.setenv("ieasyhydroforecast_HRU_SNOW_DATA", "HRU01")
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_VARS", "SWE")
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+        rsn.main()
+
+        assert captured
+        assert all(record["date"].startswith("2019-") for record in captured)
+
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_RECALC_YEAR", "not-a-year")
+        with pytest.raises(SystemExit) as excinfo:
+            rsn.main()
+
+        assert "ieasyhydroforecast_SNOW_RECALC_YEAR must be an integer" in str(excinfo.value)
 
 
 class TestRecalculateSnowStats:

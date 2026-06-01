@@ -366,10 +366,19 @@ def main():
         logger.error("No HRU codes configured for snow data")
         sys.exit(1)
 
-    # Use current year by default
+    # Use current year by default, unless explicitly overridden for backfills
     from datetime import date as date_type
 
-    year = date_type.today().year
+    year_env = os.getenv("ieasyhydroforecast_SNOW_RECALC_YEAR")
+    if year_env:
+        try:
+            year = int(year_env)
+        except ValueError as e:
+            raise SystemExit(
+                f"ieasyhydroforecast_SNOW_RECALC_YEAR must be an integer, got {year_env!r}"
+            ) from e
+    else:
+        year = date_type.today().year
 
     logger.info("Starting yearly snow norm recalculation for year %d", year)
     logger.info("Snow path: %s", snow_path)
