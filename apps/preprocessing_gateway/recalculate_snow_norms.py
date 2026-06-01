@@ -318,6 +318,21 @@ def _recalculate_norms_impl(
     return any_written
 
 
+def _parse_snow_vars(value: str | None) -> list[str]:
+    """Parse and normalize the SNOW_VARS env var."""
+    if not value:
+        return []
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for token in value.split(","):
+        norm = token.strip().upper()
+        if norm and norm not in seen:
+            seen.add(norm)
+            result.append(norm)
+    return result
+
+
 def main():
     """Entry point for standalone execution."""
     import setup_library as sl
@@ -330,7 +345,7 @@ def main():
     snow_path = os.path.join(intermediate_path, snow_output)
 
     variables_str = os.getenv("ieasyhydroforecast_SNOW_VARS", "SWE,HS")
-    variables = [v.strip() for v in variables_str.split(",") if v.strip()]
+    variables = _parse_snow_vars(variables_str)
 
     hru_str = os.getenv("ieasyhydroforecast_HRU_SNOW_DATA", "")
     hru_codes = [h.strip() for h in hru_str.split(",") if h.strip()]

@@ -30,6 +30,15 @@ import recalculate_snow_norms as rsn
 class TestRecalculateSnowNorms:
     """End-to-end tests for recalculate_snow_norms.py."""
 
+    def test_parse_snow_vars_normalizes_case_and_dedupes(self):
+        """SNOW_VARS parsing canonicalizes case, trims, and de-dupes."""
+        assert rsn._parse_snow_vars("SWE,HS,RoF") == ["SWE", "HS", "ROF"]
+        assert rsn._parse_snow_vars("swe,hs,rof") == ["SWE", "HS", "ROF"]
+        assert rsn._parse_snow_vars("SWE,SWE,HS") == ["SWE", "HS"]
+        assert rsn._parse_snow_vars("") == []
+        assert rsn._parse_snow_vars(None) == []
+        assert rsn._parse_snow_vars("  SWE  ,  HS  ") == ["SWE", "HS"]
+
     @staticmethod
     def _make_norms_df(variables, code="19999", n_days=365):
         """Build a norms DataFrame matching calculate_snow_norms_from_api output.
