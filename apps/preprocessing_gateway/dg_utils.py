@@ -476,6 +476,187 @@ def calculate_snow_norms_from_api(
     return pd.DataFrame(columns=["snow_type", "code", "dayofyear", "norm"])
 
 
+def calculate_snow_stats_from_api(
+    client,
+    variables: list[str],
+    n_years_min: int = 5,
+) -> pd.DataFrame:
+    """Calculate climatological daily snow statistics from API data.
+
+    Reads all historical snow data from the preprocessing API for each
+    variable (no code filter — discovers station codes from the response).
+    Groups by ``(snow_type, code, dayofyear)`` and computes count, mean,
+    standard deviation, min, max, and percentile statistics from the
+    ``value`` column across all years.
+
+    Args:
+        client: SapphirePreprocessingClient instance.
+        variables: Snow variable names (e.g., ``["SWE", "HS", "RoF"]``).
+        n_years_min: Minimum number of distinct years required to
+            populate statistics. Rows below this threshold keep their
+            count and have NaN statistic columns.
+
+    Returns:
+        DataFrame with columns ``[snow_type, code, dayofyear, count,
+        mean, std, min, max, q05, q25, q50, q75, q95]``. Returns an
+        empty DataFrame with those columns and stable dtypes if no data
+        is found.
+    """
+    columns = [
+        "snow_type",
+        "code",
+        "dayofyear",
+        "count",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "q05",
+        "q25",
+        "q50",
+        "q75",
+        "q95",
+    ]
+    dtypes = {
+        "snow_type": object,
+        "code": object,
+        "dayofyear": "int64",
+        "count": "int64",
+        "mean": "float64",
+        "std": "float64",
+        "min": "float64",
+        "max": "float64",
+        "q05": "float64",
+        "q25": "float64",
+        "q50": "float64",
+        "q75": "float64",
+        "q95": "float64",
+    }
+
+    def _empty_stats_frame() -> pd.DataFrame:
+        return pd.DataFrame({col: pd.Series(dtype=dtypes[col]) for col in columns})
+
+    result_frames = []
+    batch_size = 10000
+
+    for variable in variables:
+        # Paginate through all historical data for this variable
+        pages = []
+        skip = 0
+        try:
+            while True:
+                page = client.read_snow(
+                    snow_type=variable.upper(),
+                    skip=skip,
+                    limit=batch_size,
+                )
+                if page.empty:
+                    break
+                pages.append(page)
+                if len(page) < batch_size:
+                    break
+                skip += batch_size
+        except Exception as e:
+            logger.warning(
+                "Could not read snow data for %s: %s",
+                variable,
+                e,
+            )
+            continue
+
+        if not pages:
+            logger.info("No API data for %s, skipping", variable)
+            continue
+
+        df = pd.concat(pages, ignore_index=True)
+        df = df.drop_duplicates(subset=["snow_type", "code", "date"])
+        logger.info(
+            "Fetched %d unique rows for %s in %d pages",
+            len(df),
+            variable,
+            len(pages),
+        )
+
+        if "value" not in df.columns:
+            logger.warning(
+                "No 'value' column for %s, skipping",
+                variable,
+            )
+            continue
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date", "value"])
+
+        if df.empty:
+            continue
+
+        df["dayofyear"] = df["date"].dt.dayofyear
+
+        records = []
+        for (snow_type, code, dayofyear), group_df in df.groupby(
+            ["snow_type", "code", "dayofyear"],
+            sort=False,
+        ):
+            count = int(group_df["date"].dt.year.nunique())
+            record = {
+                "snow_type": str(snow_type),
+                "code": str(code),
+                "dayofyear": int(dayofyear),
+                "count": count,
+                "mean": np.nan,
+                "std": np.nan,
+                "min": np.nan,
+                "max": np.nan,
+                "q05": np.nan,
+                "q25": np.nan,
+                "q50": np.nan,
+                "q75": np.nan,
+                "q95": np.nan,
+            }
+
+            if count >= n_years_min:
+                values = group_df["value"].astype(float)
+                quantiles = values.quantile([0.05, 0.25, 0.50, 0.75, 0.95])
+                record.update(
+                    {
+                        "mean": float(values.mean()),
+                        "std": float(values.std()),
+                        "min": float(values.min()),
+                        "max": float(values.max()),
+                        "q05": float(quantiles.loc[0.05]),
+                        "q25": float(quantiles.loc[0.25]),
+                        "q50": float(quantiles.loc[0.50]),
+                        "q75": float(quantiles.loc[0.75]),
+                        "q95": float(quantiles.loc[0.95]),
+                    }
+                )
+
+            records.append(record)
+
+        stats = pd.DataFrame.from_records(records, columns=columns)
+        if stats.empty:
+            continue
+        stats = stats.astype(dtypes)
+
+        n_rows = len(stats)
+        n_full = int((stats["count"] >= n_years_min).sum())
+        n_below_threshold = n_rows - n_full
+        logger.info(
+            "Computed stats for %s: %d DOY rows, %d with populated stats, %d with NaN stats",
+            variable,
+            n_rows,
+            n_full,
+            n_below_threshold,
+        )
+
+        result_frames.append(stats[columns])
+
+    if result_frames:
+        return pd.concat(result_frames, ignore_index=True)
+
+    return _empty_stats_frame()
+
+
 # --------------------------------------------------------------------
 # Shared snow API write
 # --------------------------------------------------------------------
