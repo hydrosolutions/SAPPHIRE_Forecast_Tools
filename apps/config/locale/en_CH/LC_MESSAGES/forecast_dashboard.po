@@ -245,3 +245,87 @@ msgstr "Notifications"
 #: pentad_dashboard.py:1049
 msgid "SAPPHIRE Central Asia - Pentadal forecast dashboard"
 msgstr "SAPPHIRE Central Asia - Pentadal forecast dashboard"
+
+#: vizualization.py:2262
+msgid "No SWE data available"
+msgstr "No SWE data available"
+
+#: vizualization.py:2262
+msgid "No HS data available"
+msgstr "No snow height data available"
+
+#: vizualization.py:2262
+msgid "No RoF data available"
+msgstr "No runoff data available"
+
+#: vizualization.py:2267
+msgid "Snow Water Equivalent"
+msgstr "Snow Water Equivalent"
+
+#: vizualization.py:2267
+msgid "SWE (mm)"
+msgstr "SWE (mm)"
+
+#: vizualization.py:2268
+msgid "Snow Height"
+msgstr "Snow Height"
+
+#: vizualization.py:2268
+msgid "Snow Height (cm)"
+msgstr "Snow Height (cm)"
+
+#: vizualization.py:2269
+msgid "Snowmelt Runoff & P Runoff"
+msgstr "Snowmelt Runoff & P Runoff"
+
+#: vizualization.py:2269
+msgid "Snowmelt & P Runoff (mm)"
+msgstr "Snowmelt & P Runoff (mm)"
+
+#: vizualization.py:2288
+msgid "No data available for this station"
+msgstr "No data available for this station"
+
+#: vizualization.py:2327
+msgid "3 day mean"
+msgstr "3 day mean"
+
+#: vizualization.py:2328
+msgid "5 day mean"
+msgstr "5 day mean"
+
+#: vizualization.py:2330 vizualization.py:2331
+msgid "10 day mean"
+msgstr "10 day mean"
+
+#: vizualization.py:2334
+msgid "for basin of"
+msgstr "for basin of"
+
+#: vizualization.py:2334
+msgid "on"
+msgstr "on"
+
+#: vizualization.py:2343
+msgid "Mean legend entry"
+msgstr "Mean"
+
+#: vizualization.py:2343
+msgid "Norm"
+msgstr "Norm"
+
+#: vizualization.py:2369
+msgid "Full range legend entry"
+msgstr "Min-Max"
+
+#: vizualization.py:2372
+msgid "90-percentile range legend entry"
+msgstr "5-95 percentile"
+
+#: vizualization.py:2375
+msgid "50-percentile range legend entry"
+msgstr "25-75 percentile"
+
+#: vizualization.py:2380
+msgid "Last year legend entry"
+msgstr "Last year"
