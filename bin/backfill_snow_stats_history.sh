@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ieasyhydroforecast_env_file_path=/path/to/config/.env \
-#     bash bin/backfill_snow_stats_history.sh [--start-year YYYY]
+#     bash bin/backfill_snow_stats_history.sh [--start-year YYYY] [--local]
 #
 # Example:
 #   ieasyhydroforecast_env_file_path=/path/to/config/.env \
@@ -27,10 +27,22 @@ set -euo pipefail
 source "$(dirname "$0")/utils/common_functions.sh"
 
 usage() {
-    echo "Usage: ieasyhydroforecast_env_file_path=/path/to/config/.env bash $0 [--start-year YYYY]"
+    cat <<EOF
+Usage: ieasyhydroforecast_env_file_path=/path/to/config/.env bash $0 [--start-year YYYY] [--local]
+
+Options:
+  --start-year YYYY  Start year for the backfill loop (default: 2010).
+  --local            Bypass Docker. Run recalc directly via \`uv run\`.
+                     Use this on developer machines where the
+                     mabesa/sapphire-pipeline image is not built
+                     locally (e.g. arm64 Mac). Production servers
+                     should omit this flag and use Docker.
+  -h, --help         Show this message.
+EOF
 }
 
 START_YEAR=2010
+LOCAL_MODE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,6 +54,10 @@ while [[ $# -gt 0 ]]; do
             fi
             START_YEAR="$2"
             shift 2
+            ;;
+        --local)
+            LOCAL_MODE=1
+            shift
             ;;
         -h|--help)
             usage
@@ -105,23 +121,50 @@ log_message "Start year: $START_YEAR"
 log_message "End year: $((END_YEAR - 1))"
 log_message "Log directory: $LOG_DIR"
 log_message "Progress file: $PROGRESS"
+if [[ "$LOCAL_MODE" == "1" ]]; then
+    log_message "Execution mode: local uv run"
+else
+    log_message "Execution mode: Docker"
+fi
 
 if (( START_YEAR >= END_YEAR )); then
     log_message "all years processed"
     exit 0
 fi
 
-# Verify Docker is running
-if ! docker info > /dev/null 2>&1; then
-    log_message "ERROR: Docker is not running. Please start Docker and try again."
-    exit 1
-fi
+if [[ "$LOCAL_MODE" != "1" ]]; then
+    # Verify Docker is running
+    if ! docker info > /dev/null 2>&1; then
+        log_message "ERROR: Docker is not running. Please start Docker and try again."
+        exit 1
+    fi
 
-# Check if the Docker image exists, pull if not
-IMAGE_ID="mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
-if ! docker image inspect "$IMAGE_ID" > /dev/null 2>&1; then
-    log_message "Image $IMAGE_ID not found locally, pulling..."
-    docker pull "$IMAGE_ID"
+    # Check if the Docker image exists, pull if not
+    IMAGE_ID="mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
+    if ! docker image inspect "$IMAGE_ID" > /dev/null 2>&1; then
+        log_message "Image $IMAGE_ID not found locally, pulling..."
+        if ! docker pull "$IMAGE_ID"; then
+            log_message "ERROR: Failed to pull Docker image $IMAGE_ID"
+            log_message "ERROR: Docker image not available for this platform. On arm64 Mac, use --local to bypass Docker."
+            exit 1
+        fi
+    fi
+
+    # Memory settings - snow stat recalculation is lightweight
+    MEMORY_LIMIT="4g"
+    MEMORY_SWAP="6g"
+
+    # macOS Docker compatibility
+    DOCKER_HOST_OVERRIDE=()
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if [[ "${IEASYHYDROHF_HOST:-}" == *"localhost"* ]]; then
+            DOCKER_IEASYHYDROHF_HOST="${IEASYHYDROHF_HOST//localhost/host.docker.internal}"
+            log_message "macOS detected: overriding IEASYHYDROHF_HOST for Docker container"
+            log_message "  Original: $IEASYHYDROHF_HOST"
+            log_message "  Docker:   $DOCKER_IEASYHYDROHF_HOST"
+            DOCKER_HOST_OVERRIDE=(-e "IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}")
+        fi
+    fi
 fi
 
 # Establish SSH tunnel (if required for database access)
@@ -129,22 +172,6 @@ establish_ssh_tunnel
 
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
-
-# Memory settings - snow stat recalculation is lightweight
-MEMORY_LIMIT="4g"
-MEMORY_SWAP="6g"
-
-# macOS Docker compatibility
-DOCKER_HOST_OVERRIDE=()
-if [[ "$(uname)" == "Darwin" ]]; then
-    if [[ "${IEASYHYDROHF_HOST:-}" == *"localhost"* ]]; then
-        DOCKER_IEASYHYDROHF_HOST="${IEASYHYDROHF_HOST//localhost/host.docker.internal}"
-        log_message "macOS detected: overriding IEASYHYDROHF_HOST for Docker container"
-        log_message "  Original: $IEASYHYDROHF_HOST"
-        log_message "  Docker:   $DOCKER_IEASYHYDROHF_HOST"
-        DOCKER_HOST_OVERRIDE=(-e "IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}")
-    fi
-fi
 
 for ((year = START_YEAR; year < END_YEAR; year++)); do
     if grep -qx "$year" "$PROGRESS"; then
@@ -157,6 +184,21 @@ for ((year = START_YEAR; year < END_YEAR; year++)); do
 
     log_message "running recalc for year $year"
     log_message "year $year log: $YEAR_LOG"
+
+    if [[ "$LOCAL_MODE" == "1" ]]; then
+        if ieasyhydroforecast_env_file_path="$LOCAL_ENV_FILE" \
+            ieasyhydroforecast_SNOW_RECALC_YEAR="$year" \
+            uv run --directory "$(dirname "$0")/../apps/preprocessing_gateway" \
+            python recalculate_snow_norms.py \
+            > "$YEAR_LOG" 2>&1; then
+            echo "$year" >> "$PROGRESS"
+            log_message "year $year completed"
+        else
+            log_message "year $year FAILED - see $YEAR_LOG"
+            exit 1
+        fi
+        continue
+    fi
 
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         log_message "Removing existing container: $CONTAINER_NAME"
@@ -183,6 +225,7 @@ for ((year = START_YEAR; year < END_YEAR; year++)); do
         log_message "year $year completed"
     else
         log_message "year $year FAILED - see $YEAR_LOG"
+        log_message "ERROR: Docker image not available for this platform. On arm64 Mac, use --local to bypass Docker."
         docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
         exit 1
     fi
