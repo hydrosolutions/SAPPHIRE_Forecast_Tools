@@ -76,6 +76,132 @@ class TestResolveStation:
         assert db._resolve_station(widget) == "99001"
 
 
+# ── _get_snow_single / get_snow_data ─────────────────────────────────────
+
+_SNOW_CONTRACT_COLUMNS = [
+    "code", "date", "HS", "norm", "mean", "min", "max",
+    "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
+]
+
+
+def _snow_record(snow_type="HS", value=1.0):
+    record = {
+        "id": 1,
+        "snow_type": snow_type,
+        "code": "19999",
+        "date": "2026-02-03",
+        "value": value,
+        "norm": 2.0,
+        "mean": 3.0,
+        "min": 4.0,
+        "max": 5.0,
+        "q05": 6.0,
+        "q25": 7.0,
+        "q50": 8.0,
+        "q75": 9.0,
+        "q95": 10.0,
+        "previous": 11.0,
+        "current": 12.0,
+    }
+    record.update({f"value{i}": float(i) for i in range(1, 15)})
+    return record
+
+
+class TestSnowData:
+    def test_get_snow_single_preserves_statistical_fields(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_snow_record()])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db._get_snow_single("19999", "HS", "HS")
+
+        assert list(result.columns) == _SNOW_CONTRACT_COLUMNS
+
+    def test_get_snow_single_drops_only_service_and_elevation_band_fields(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_snow_record()])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db._get_snow_single("19999", "HS", "HS")
+
+        dropped_columns = {"snow_type", "id", *{f"value{i}" for i in range(1, 15)}}
+        assert dropped_columns.isdisjoint(result.columns)
+
+    def test_get_snow_single_renames_percentiles_to_hydrograph_names(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_snow_record()])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db._get_snow_single("19999", "HS", "HS")
+
+        assert {"5%", "25%", "50%", "75%", "95%"}.issubset(result.columns)
+        assert {"q05", "q25", "q50", "q75", "q95"}.isdisjoint(result.columns)
+
+    def test_get_snow_data_hs_converts_all_stat_columns_to_cm(self, monkeypatch):
+        records_by_type = {
+            "HS": [_snow_record(snow_type="HS", value=1.0)],
+            "ROF": [_snow_record(snow_type="ROF", value=10.0)],
+            "SWE": [_snow_record(snow_type="SWE", value=20.0)],
+        }
+
+        def mock_get(url, **kwargs):
+            snow_type = kwargs["params"]["snow_type"]
+            return _make_mock_response(records_by_type[snow_type])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_snow_data("19999")
+
+        stat_columns = [
+            "HS", "norm", "mean", "min", "max",
+            "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
+        ]
+        original = _snow_record()
+        original_by_column = {
+            "HS": original["value"],
+            "norm": original["norm"],
+            "mean": original["mean"],
+            "min": original["min"],
+            "max": original["max"],
+            "5%": original["q05"],
+            "25%": original["q25"],
+            "50%": original["q50"],
+            "75%": original["q75"],
+            "95%": original["q95"],
+            "last_year": original["previous"],
+            "current_year": original["current"],
+        }
+        for column in stat_columns:
+            assert result["HS"][column].iloc[0] == original_by_column[column] * 100
+
+        assert result["RoF"]["RoF"].iloc[0] == 10.0
+        assert result["RoF"]["norm"].iloc[0] == 2.0
+        assert result["RoF"]["mean"].iloc[0] == 3.0
+        assert result["RoF"]["5%"].iloc[0] == 6.0
+        assert result["SWE"]["SWE"].iloc[0] == 20.0
+        assert result["SWE"]["norm"].iloc[0] == 2.0
+        assert result["SWE"]["mean"].iloc[0] == 3.0
+        assert result["SWE"]["5%"].iloc[0] == 6.0
+
+    def test_get_snow_single_empty_response_has_expected_contract(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db._get_snow_single("19999", "HS", "HS")
+
+        assert len(result) == 0
+        assert list(result.columns) == _SNOW_CONTRACT_COLUMNS
+        assert result["code"].dtype == object
+        assert pd.api.types.is_datetime64_any_dtype(result["date"])
+        for column in _SNOW_CONTRACT_COLUMNS[2:]:
+            assert result[column].dtype == "float64"
+
+
 # ── get_long_forecasts ────────────────────────────────────────────────────
 
 # Shared fixture data used across multiple tests.

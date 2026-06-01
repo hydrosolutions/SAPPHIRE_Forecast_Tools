@@ -20,6 +20,20 @@ CURRENT_YEAR = datetime.now().year
 PREVIOUS_YEAR = CURRENT_YEAR - 1
 
 SNOW_VALUE_COLS = [f"value{i}" for i in range(1, 15)]
+SNOW_STAT_COLS = [
+    "norm", "mean", "min", "max",
+    "5%", "25%", "50%", "75%", "95%",
+    "last_year", "current_year",
+]
+SNOW_RENAME_MAP = {
+    "previous": "last_year",
+    "current": "current_year",
+    "q05": "5%",
+    "q25": "25%",
+    "q50": "50%",
+    "q75": "75%",
+    "q95": "95%",
+}
 
 # Neural Ensemble config
 NE_BASE_MODELS = ["TFT", "TiDE", "TSMixer"]
@@ -239,6 +253,7 @@ def get_temp(station) -> pd.DataFrame:
 
 
 def _get_snow_single(station_code: str, snow_type: str, col_name: str) -> pd.DataFrame:
+    contract_columns = ["code", "date", col_name, *SNOW_STAT_COLS]
     df = _read_data("preprocessing", "snow", {
         "snow_type": snow_type,
         "code": station_code,
@@ -246,19 +261,37 @@ def _get_snow_single(station_code: str, snow_type: str, col_name: str) -> pd.Dat
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 10000,
     })
-    df.rename(columns={"value": col_name}, inplace=True)
+    if df.empty:
+        return pd.DataFrame({
+            "code": pd.Series(dtype=object),
+            "date": pd.Series(dtype="datetime64[ns]"),
+            **{
+                column: pd.Series(dtype="float64")
+                for column in contract_columns
+                if column not in {"code", "date"}
+            },
+        })
+
+    df.rename(columns={"value": col_name, **SNOW_RENAME_MAP}, inplace=True)
     df.drop(columns=["snow_type", *SNOW_VALUE_COLS, "id"], inplace=True, errors="ignore")
+    for column in contract_columns:
+        if column not in df.columns:
+            df[column] = np.nan
+    df = df.reindex(columns=contract_columns)
     return _convert_na_to_nan(df)
 
 
 @_timed
 def get_snow_data(station) -> dict[str, pd.DataFrame]:
     code = _resolve_station(station)
-    return {
+    snow_data = {
         "HS":  _get_snow_single(code, "HS",  "HS"),
         "RoF": _get_snow_single(code, "ROF", "RoF"),
         "SWE": _get_snow_single(code, "SWE", "SWE"),
     }
+    hs_stat_columns = ["HS", *SNOW_STAT_COLS]
+    snow_data["HS"][hs_stat_columns] = snow_data["HS"][hs_stat_columns] * 100
+    return snow_data
 
 
 @_timed
