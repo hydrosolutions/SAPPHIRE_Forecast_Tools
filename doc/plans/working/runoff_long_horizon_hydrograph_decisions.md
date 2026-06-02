@@ -3,9 +3,10 @@
 Source: `doc/plans/issues/high_prio_gi_draft_runoff_long_horizon_hydrograph.md`
 §Decisions Committed (rounds 1-2 reviewed; approved 2026-06-02).
 
-These nine decisions are committed. Phase 0b, Phase 1, Phase 2,
+These ten decisions are committed. Phase 0b, Phase 1, Phase 2,
 Phase 3, Phase 4, and Phase 5 agents implement to them; do not
-re-litigate.
+re-litigate. D-Q6 was added on 2026-06-02 after P0b round 2;
+all other decisions are unchanged from the round-2 review.
 
 ## Decisions (User)
 
@@ -87,7 +88,9 @@ populate whichever of `previous` or `current` can be computed,
 and leave the missing field as `None`. This avoids silently
 dropping stations and matches the API writer pattern of
 serializing missing numeric fields as `None`
-(`apps/iEasyHydroForecast/forecast_library.py:3517-3526`).
+(`apps/iEasyHydroForecast/forecast_library.py:3517-3526`). D-Q6
+defines what "can be computed" means: the per-month threshold
+rule applied per `(station, year, month)` cell.
 
 ### Q-5 — Operator wrapper
 
@@ -102,3 +105,24 @@ naming, and command text
 (`bin/yearly_snow_norm_recalculation.sh:47-54`,
 `bin/yearly_snow_norm_recalculation.sh:102-130`). Snow and runoff
 use different source data, timing, logs, and failure modes.
+
+### Q-6 — Per-month mean threshold
+
+DEFAULT ≥80% of calendar days populated with non-null finite
+discharge per `(station, year, month)` cell.
+
+RATIONALE: a station-month's mean is only meaningful when enough
+days are present. 80% balances data freshness (allowing a small
+ingest lag for the most recent week) with statistical reliability.
+The threshold is applied per `(station, year, month)`, not per
+`(station, year)`, because real station behaviour — chronic gaps
+in some months only, late onboarding, seasonal reporting — makes
+per-year gates too coarse for downstream dashboard display.
+Below threshold, write `None` for that month's `previous` or
+`current`. Calendar days come from
+`calendar.monthrange(year, month)[1]` so 28/29/30/31 are handled
+correctly. The threshold is fixed in code (no operator env var);
+change it only with a follow-up plan. Decision made 2026-06-02
+after P0b round 2 showed 11 of 122 `(station, year)` pairs below
+80% under the year-level gate, with the genuine sparseness
+clustered in specific months rather than uniformly across years.

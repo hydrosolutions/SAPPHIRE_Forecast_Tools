@@ -24,13 +24,25 @@ artifact.
 
 **Goal**: Produce
 `doc/plans/working/runoff_long_horizon_hydrograph_coverage_probe.md`
-containing two gates:
+that confirms three sanity gates and records an informational
+coverage table:
 
-1. **Daily runoff coverage** for the target year `Y` and prior year
-   `Y-1` across the configured station set, against the plan-pinned
-   **≥80%** threshold.
-2. **Grep audit** of all app-side writers that produce hydrograph
-   rows with `horizon_type` in `{month, season}`.
+1. **Endpoint reachability** — `GET /runoff/?horizon=day&...`
+   returns 200 for at least one station in the planned set.
+2. **Audit clean** — grep over `apps/` surfaces no third-party
+   month/season hydrograph writer besides
+   `sync_monthly_norms.py` (retired in Phase 4).
+3. **Non-empty substrate** — for at least one
+   `(station, year)` pair in the planned set, the probe returns
+   ≥1 non-null daily runoff record.
+
+The probe ALSO records a per-`(station, year)` coverage table
+(rows returned, non-null count, denominator kind) for `{Y, Y-1}`,
+**but this table is informational, not a dispatch gate**. The
+data-quality gate moved into Phase 1 as a per-month rule (D-Q6)
+on 2026-06-02 after the year-level gate proved too coarse: real
+sparseness clusters in specific months, not uniformly across
+years.
 
 The artifact must end with exactly one `DISPATCH:` line. Phase 1
 must NOT dispatch unless that line reads `DISPATCH: PROCEED`.
@@ -104,7 +116,7 @@ station set, but NEVER the raw codes — alias them as `<station-1>`,
 `<station-2>`, …, or use the `19999` sentinel. This matches
 [[feedback-no-real-station-codes]] and the plan's MINOR-2 fix.
 
-### Step 3 — Coverage probe
+### Step 3 — Coverage probe (informational table)
 
 For each station in the planned set and each year in `{Y, Y-1}`
 where `Y = 2026`:
@@ -115,16 +127,19 @@ Query the preprocessing API endpoint:
 GET http://localhost:8000/api/preprocessing/runoff/?horizon=day&code={station}&start_date={year}-01-01&end_date={year}-12-31&limit=10000
 ```
 
-Compute the denominator **per the plan's threshold definition** — full
-year for complete years, days-elapsed for the in-progress year:
+Compute the denominator — full year for complete years,
+days-elapsed for the in-progress year (this is purely for
+labelling the table rows; no pass/fail is computed):
 
 ```python
 import calendar, datetime
 today = datetime.date.today()
 if year < today.year:
     denominator = 366 if calendar.isleap(year) else 365  # complete year
+    denominator_kind = "full"
 elif year == today.year:
     denominator = today.timetuple().tm_yday  # in-progress year
+    denominator_kind = "elapsed"
 else:
     raise AssertionError("future year — should not be in {Y, Y-1}")
 ```
@@ -136,17 +151,21 @@ Then:
   endpoint surfaces the value as `discharge`, not `value`; honor
   whatever the live API returns and document the field name in
   the evidence artifact.)
-- `coverage_pct` = `non_null_value_count / denominator * 100`.
-- `passes_threshold` = `coverage_pct >= 80`.
+- `coverage_pct` = `non_null_value_count / denominator * 100`
+  (rounded to one decimal, informational only).
 
-This denominator rule is plan-pinned. The probe initially BLOCKED
-under the old fixed-365 denominator in commit `6d5c81a` because
-2026 (today day 153) was rated at ~42% by definition; the
-elapsed-days rule corrects that.
+**No per-pair pass/fail.** The earlier ≥80% year-level gate was
+retired on 2026-06-02 (see plan §Phase 0b "Phase 0b is a sanity
+gate, not a per-month coverage gate"). The table is recorded for
+operator awareness — operators use it to spot chronic-gap
+stations (e.g. complete year at <50%) and late-onboarded
+stations (rows-returned much lower than expected). The actual
+data-quality gate is D-Q6's per-month threshold, enforced in
+Phase 1.
 
-Record per (station, year) in a small Python script that builds
-a table. **Use Python urllib or `requests` (already available);
-do NOT use curl.**
+Record per `(station, year)` in a small Python script that
+builds a table. **Use Python urllib or `requests` (already
+available); do NOT use curl.**
 
 Implementation sketch (adapt as needed):
 
@@ -158,6 +177,7 @@ Y = today.year  # 2026 on 2026-06-02
 stations = [...]  # from Step 2; aliases in the artifact
 VALUE_FIELD = "discharge"  # confirm against the live API per Step 3 note
 results = []
+substrate_non_empty = False
 for station_alias, station_code in zip(aliases, stations):
     for year in [Y, Y - 1]:
         url = (
@@ -167,18 +187,23 @@ for station_alias, station_code in zip(aliases, stations):
         rows = json.loads(urllib.request.urlopen(url, timeout=30).read())
         if year < today.year:
             denom = 366 if calendar.isleap(year) else 365
+            kind = "full"
         else:  # in-progress year
             denom = today.timetuple().tm_yday
+            kind = "elapsed"
         non_null = sum(
             1 for r in rows
             if r.get(VALUE_FIELD) is not None
             and r[VALUE_FIELD] == r[VALUE_FIELD]  # NaN-safe
         )
         pct = round(non_null / denom * 100, 1)
-        passes = pct >= 80.0
+        if non_null >= 1:
+            substrate_non_empty = True
         results.append(
-            (station_alias, year, len(rows), non_null, denom, pct, passes)
+            (station_alias, year, len(rows), non_null, denom, kind, pct)
         )
+# Substrate gate: ≥1 (station, year) pair with non_null >= 1.
+assert substrate_non_empty, "substrate empty — no non-null records anywhere"
 ```
 
 **Do not include real station codes in the evidence file.** The
@@ -212,14 +237,18 @@ For each match, manually triage in the evidence file:
 
 Compute the final `DISPATCH:` line:
 
-- `DISPATCH: PROCEED` requires **all** of:
-  - Coverage gate: every `(station, year)` pair in `{Y, Y-1}`
-    passes the ≥80% threshold.
-  - Audit gate: no untriaged matches and no third-party writers
-    beyond `sync_monthly_norms.py`.
-- `DISPATCH: BLOCKED — <one-line reason>` otherwise. If both gates
-  fail, prefer the coverage-failure reason and enumerate failing
-  pairs in the evidence file (in alias form, not real codes).
+- `DISPATCH: PROCEED` requires **all three** sanity gates:
+  - **Endpoint reachable**: Step 1 returned HTTP 200, and Step 3
+    successfully fetched daily runoff for at least one station.
+  - **Audit clean**: no untriaged matches and no third-party
+    writers beyond `sync_monthly_norms.py`.
+  - **Non-empty substrate**: at least one `(station, year)` pair
+    has `non_null ≥ 1`. (The substrate gate exists so that a
+    completely empty archive does not silently pass.)
+- `DISPATCH: BLOCKED — <one-line reason>` otherwise. Name the
+  failing gate (endpoint / audit / substrate). The
+  per-`(station, year)` coverage table is informational and does
+  NOT cause BLOCKED on its own.
 
 ### Step 6 — Write the evidence file
 
@@ -246,17 +275,30 @@ Python urllib GET on http://localhost:8000/health → HTTP 200.
 - Count: <N>
 - Aliasing: stations are aliased as `<station-1>` ... `<station-N>` in this artifact; real codes never appear.
 
-## 3. Coverage results (≥80% threshold per plan)
+## 3. Coverage table (informational — not a dispatch gate)
 
-Threshold: non-null daily runoff covers ≥80% of expected days per (station, year). Denominator: full year (365/366) for complete years; days-elapsed-so-far (`today.timetuple().tm_yday`) for the in-progress year. On 2026-06-02 the in-progress denominator is 153.
+The per-`(station, year)` table below records row counts and
+non-null counts for operator awareness only. The earlier ≥80%
+year-level gate was retired on 2026-06-02 because real
+sparseness clusters in specific months; the data-quality gate
+moved into Phase 1 as a per-month threshold (D-Q6). Denominator
+kind is `full` for complete years (365/366) and `elapsed` for
+the in-progress year (`today.timetuple().tm_yday`, 153 on
+2026-06-02).
 
-| Station | Year | Rows | Non-null | Denominator (kind) | % | Pass? |
-|---|---|---|---|---|---|---|
-| `<station-1>` | 2026 | … | … | 153 (elapsed) | …% | ✓/✗ |
-| `<station-1>` | 2025 | … | … | 365 (full) | …% | ✓/✗ |
-| ... | ... | ... | ... | ... | ... | ... |
+| Station | Year | Rows | Non-null | Denominator (kind) | % (info) |
+|---|---|---|---|---|---|
+| `<station-1>` | 2026 | … | … | 153 (elapsed) | …% |
+| `<station-1>` | 2025 | … | … | 365 (full) | …% |
+| ... | ... | ... | ... | ... | ... |
 
-**Coverage gate**: PASS / FAIL. If FAIL, failing (station, year) pairs enumerated above.
+**Substrate gate**: PASS / FAIL. PASS when at least one
+`(station, year)` pair has non-null ≥ 1.
+
+**Operator observations** (optional, one-line max each):
+chronic-gap stations (complete year at <50%), late-onboarded
+stations (rows-returned much lower than expected), or anything
+else Phase 1 should know.
 
 ## 4. Audit results (grep over apps/)
 
@@ -309,9 +351,10 @@ no real codes.)
 3. **Do NOT echo the env file's contents into the artifact.**
    Record the variable name(s) you read from and the station
    count; nothing else from the env file.
-4. **Do NOT relax the ≥80% threshold** if the coverage check
-   fails. Write `DISPATCH: BLOCKED` and stop. The threshold is
-   plan-pinned.
+4. **Do NOT introduce a per-(station, year) pass/fail.** The
+   coverage table is informational only. Do not add a `Pass?`
+   column. Do not BLOCK on per-pair coverage. The only dispatch
+   gates are endpoint, audit, and non-empty substrate.
 5. **Do NOT narrow the grep pattern silently.** Every match must
    be triaged in the artifact; any narrowing or false-positive
    dismissal needs an inline justification.
@@ -331,10 +374,11 @@ lines):
    result? audit result? final dispatch decision?
 2. **Files created** — single path:
    `doc/plans/working/runoff_long_horizon_hydrograph_coverage_probe.md`.
-3. **Coverage gate** — pass count / fail count out of total
-   (station, year) pairs.
-4. **Audit gate** — number of matches found, count of expected
-   vs untriaged vs third-party.
+3. **Sanity gates** — endpoint reachable (yes/no), audit clean
+   (yes/no with match count), non-empty substrate (yes/no with
+   pair count that has non_null ≥ 1).
+4. **Coverage table summary** — total `(station, year)` pairs
+   recorded; informational only, no pass/fail count.
 5. **DISPATCH decision** — quote the exact line verbatim.
 6. **Scope check** — confirm only the evidence file was
    modified; no production code, no plan edits, no env file
@@ -357,8 +401,13 @@ lines):
   the artifact's last line.
 
 If you write `DISPATCH: BLOCKED`, the orchestrator will read the
-reason, possibly run remediation (e.g. operator backfills daily
-runoff), and re-dispatch P0b. **Do not patch the gap in this
-phase.** P0b is a verification gate, not a fix.
+reason, possibly run remediation (e.g. start the SSH tunnel,
+restart docker compose, rebuild stations env), and re-dispatch
+P0b. **Do not patch the gap in this phase.** P0b is a
+verification gate, not a fix. The expected BLOCKED reasons under
+the sanity-gate-only criteria are: API unreachable, audit dirty
+(third-party writer), or substrate empty (no records anywhere).
+Per-(station, year) sparseness will NOT trigger BLOCKED — the
+data-quality gate moved to Phase 1.
 
 --- END PROMPT ---

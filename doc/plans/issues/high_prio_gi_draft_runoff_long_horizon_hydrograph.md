@@ -97,7 +97,9 @@ service/API schema changes, and dashboard read-side wiring remain out of scope.
    `current` can be computed, and leave the missing field as `None`. This avoids
    silently dropping stations and matches the API writer pattern of serializing
    missing numeric fields as `None`
-   (`apps/iEasyHydroForecast/forecast_library.py:3517-3526`).
+   (`apps/iEasyHydroForecast/forecast_library.py:3517-3526`). D-Q6 defines what
+   "can be computed" means: the per-month threshold rule applied per
+   `(station, year, month)` cell.
 
 5. **Q-5 operator wrapper: DEFAULT new sibling wrapper.** Rationale:
    `bin/yearly_runoff_hydrograph_aggregation.sh` should mirror the deployment
@@ -106,6 +108,21 @@ service/API schema changes, and dashboard read-side wiring remain out of scope.
    currently owns snow-specific log naming, container naming, and command text
    (`bin/yearly_snow_norm_recalculation.sh:47-54`,
    `bin/yearly_snow_norm_recalculation.sh:102-130`).
+
+6. **Q-6 per-month mean threshold: DEFAULT ≥80% of calendar days populated
+   per `(station, year, month)` cell.** Rationale: a station-month's mean
+   is only meaningful when enough days are present. 80% balances data
+   freshness (allowing a small ingest lag for the most recent week) with
+   statistical reliability. The threshold is applied per
+   `(station, year, month)`, not per `(station, year)`, because real station
+   behaviour (chronic gaps in some months only, late onboarding, seasonal
+   reporting) makes per-year gates too coarse for downstream display.
+   Below threshold, write `None` for that month's `previous` or `current`.
+   Calendar days are taken from `calendar.monthrange(year, month)[1]` so
+   28/29/30/31 are handled correctly. Decision made 2026-06-02 after P0b
+   round 2 showed 11 of 122 `(station, year)` pairs below 80% under the
+   year-level gate, with the genuine sparseness clustered in specific
+   months rather than uniformly across years.
 
 ## Phase 0a -- Decisions Artifact
 
@@ -156,24 +173,40 @@ once per station per year for each station in the planned set, for both `Y`
 and `Y-1`. The probe records the returned row count and the count of records
 with non-null `value` per station-year.
 
-**Coverage threshold.** Non-null daily runoff must cover **≥80% of expected
-days** for each `(station, year)` pair in `{Y, Y-1}`. The denominator depends
-on whether the year is complete:
+**Phase 0b is a sanity gate, not a per-month coverage gate.** Data-quality
+decisions — whether a given station-month's mean is trustworthy — live in
+Phase 1 via the per-month threshold rule (see §Phase 1 and D-Q6). Phase 0b
+confirms the substrate is healthy enough for Phase 1 to run: the API
+responds, station codes resolve, the audit surfaces no unknown writers,
+and at least some daily-runoff data exists for the planned set.
 
-- **Complete year** (`year < today.year`): denominator = 365 (or 366 for a
-  leap year). 2024 was leap; 2025 / 2026 are not.
-- **In-progress year** (`year == today.year`): denominator = days elapsed
-  so far in the year (i.e. `today.timetuple().tm_yday`, which gives 153 on
-  2026-06-02). This avoids penalising a year for days that haven't happened
-  yet — the probe initially BLOCKED in round 1 of P0b because of the
-  fixed-365 denominator on the in-progress year (see commit `6d5c81a`
-  evidence). Future years (`year > today.year`) are not part of the
-  `{Y, Y-1}` set so this case does not arise.
+**Coverage table (informational).** The probe still records per
+`(station, year)` row count and non-null count for `{Y, Y-1}` because that
+information is operationally useful: it flags chronic-gap stations
+(complete years with <50% non-null records) and late-onboarded stations
+(rows-returned much lower than expected). The denominator is reported
+per-pair: full year (365/366 for leap) for complete years, days elapsed
+(`today.timetuple().tm_yday`) for the in-progress year. This is
+documentation for operator awareness, not a dispatch gate. The earlier
+year-level ≥80% gate was tried in P0b rounds 1-2 (commits `6d5c81a`,
+`672d207`); round 2 surfaced 11 of 122 pairs below threshold but the
+sparseness clustered in specific months rather than uniformly across
+years, motivating the move to a per-month rule in Phase 1.
 
-Any `(station, year)` below the threshold (under whichever denominator
-applies) causes `DISPATCH: BLOCKED` with the failing pairs enumerated in
-the evidence file. This threshold is plan-pinned rather than agent-picked
-so the dispatch gate is operationally enforceable.
+**Dispatch criterion (the actual gate).** `DISPATCH: PROCEED` when **all
+three** of:
+
+- **API endpoint reachable**: `GET /runoff/?horizon=day&...` returns 200
+  for at least one station in the planned set.
+- **Audit clean**: the grep audit surfaces no third-party month/season
+  hydrograph writer besides `sync_monthly_norms.py` (retired in Phase 4)
+  and the new writer planned here.
+- **Non-empty substrate**: for at least one `(station, year)` pair in the
+  planned set, the probe returns ≥1 non-null daily runoff record.
+
+Otherwise `DISPATCH: BLOCKED — <reason>` with the failing condition named.
+Per-(station, year) sparseness is reported but does not block; Phase 1's
+per-month rule handles it.
 
 **Files:**
 - `doc/plans/working/runoff_long_horizon_hydrograph_coverage_probe.md`
@@ -204,13 +237,15 @@ so the dispatch gate is operationally enforceable.
 - Probe runs read-only against the live API
   (`GET /runoff/?horizon=day&code=<station>&start_date=YYYY-01-01&end_date=YYYY-12-31`)
   with the tunnel up.
-- Evidence file records non-null daily count and percentage per
-  `(station, year)` for `{Y, Y-1}`, with the denominator chosen per the
-  threshold definition above (full year for complete years; days-elapsed
-  for the in-progress year). Each pair is checked against the plan-pinned
-  **≥80%** threshold and failing pairs are enumerated.
+- Evidence file records per `(station, year)` row count and non-null
+  count for `{Y, Y-1}` with the denominator labelled as `full` (complete
+  year) or `elapsed` (in-progress year). The table is informational; no
+  per-pair pass/fail verdict is rendered.
 - Grep audit ran the plan-pinned command (`rg -nP '"(month|season)"...'`
   above) over `apps/` and triaged every match in the evidence file.
+- Final dispatch line is `DISPATCH: PROCEED` iff the three dispatch
+  criteria above are met (endpoint reachable, audit clean, non-empty
+  substrate); otherwise `DISPATCH: BLOCKED — <reason>`.
 - Phase 1 must not dispatch unless the final dispatch line is
   `DISPATCH: PROCEED`.
 
@@ -248,11 +283,19 @@ runoff aggregation over target year `Y` and `Y-1`.
 - Each record has `norm` from `get_norm_for_site(code, "discharge",
   norm_period="m")`.
 - Each record has `previous` as the mean daily discharge for the same month in
-  `Y-1` when available.
+  `Y-1` when **at least 80% of the calendar days in that month** have non-null
+  finite discharge in the daily archive (per D-Q6). Otherwise `previous = None`
+  for that record.
 - Each record has `current` as the mean daily discharge for the same month in
-  `Y` when available.
+  `Y` when **at least 80% of the calendar days in that month** have non-null
+  finite discharge AND the month is complete (per D2). Otherwise `current = None`.
 - Missing one year leaves only that field as `None`; the row is not skipped if
   norm exists.
+- The per-month threshold is checked per `(station, year, month)`, not
+  per-(station, year). A station with chronic gaps in some months but solid
+  coverage in others writes meaningful means for the well-covered months and
+  `None` for the sparse ones. This is the data-quality gate (the Phase 0b
+  coverage table is informational only).
 
 **Implementation notes:**
 - Do not edit `apps/iEasyHydroForecast/forecast_library.py` in this phase. The
@@ -274,6 +317,13 @@ runoff aggregation over target year `Y` and `Y-1`.
 - Monthly dates remain `YYYY-MM-01`, `horizon_value=month`,
   `horizon_in_year=month`, and mid-month `day_of_year` matching the existing
   monthly norm helper (`apps/iEasyHydroForecast/forecast_library.py:5402-5438`).
+- Per D-Q6 the per-month threshold rule: for each `(station, year, month)`
+  cell, let `days_in_month = calendar.monthrange(year, month)[1]` and
+  `non_null_finite_days` be the count of daily-runoff records in that cell
+  whose value is non-null and finite (NaN/±inf excluded). Compute the mean
+  only when `non_null_finite_days / days_in_month >= 0.80`; otherwise write
+  `None` for that cell's `previous` (or `current`). The threshold is fixed
+  in code (no operator env var); change it only with a follow-up plan.
 
 **Acceptance criteria:**
 - Mocked-API unit test covers a normal station with complete target and
@@ -283,6 +333,14 @@ runoff aggregation over target year `Y` and `Y-1`.
   written and the missing field is `None`.
 - `test_current_is_none_for_in_progress_month` covers the D2 rule that the
   current month itself gets `current=None` regardless of days-so-far.
+- `test_monthly_mean_below_threshold_writes_none`: mocked daily series with
+  fewer than 80% of calendar-days populated for a `(station, year, month)`
+  cell produces `previous=None` (or `current=None`) for that record per D-Q6,
+  even when the norm and the other year's mean are both available.
+- `test_monthly_mean_at_threshold_writes_value`: mocked daily series with
+  exactly 80% non-null days (e.g. 25/31 in a 31-day month, 24/30 in a 30-day
+  month, 23/28 in February of a non-leap year) writes the arithmetic mean
+  of the non-null finite values to that record.
 - `test_writes_none_when_daily_series_contains_nan` uses mocked daily runoff
   with `NaN` and asserts the written `previous` or `current` field is `None`,
   not `NaN`, with no exception and no 422. Repeat the same assertion for
@@ -521,8 +579,8 @@ script; P5 edits only the dashboard handoff doc.
 | Phase | Tests | Headline assertions |
 |---|---|---|
 | P0a | Documentation review | Decisions artifact contains D1-D4 and Q-1 through Q-5; no code changes |
-| P0b | Read-only live API probe plus grep audit | Evidence file records daily runoff coverage threshold/results and all month/season hydrograph writers; final dispatch line is `DISPATCH: PROCEED` or `DISPATCH: BLOCKED - <reason>` |
-| P1 | Mocked unit tests in `test_sync_long_horizon_hydrograph.py` | Monthly records include norm, previous, current; missing one year leaves only that field `None`; current month gets `current=None`; non-finite values write as `None`; identical upstream rerun is deterministic |
+| P0b | Read-only live API probe plus grep audit | Evidence file records informational per-(station, year) row counts; grep audit triages all month/season writers; dispatch criteria are endpoint reachable + audit clean + non-empty substrate; final dispatch line is `DISPATCH: PROCEED` or `DISPATCH: BLOCKED - <reason>` |
+| P1 | Mocked unit tests in `test_sync_long_horizon_hydrograph.py` | Monthly records include norm, previous, current; missing one year leaves only that field `None`; below-threshold cells (<80% calendar days populated per D-Q6) get `None`; at-threshold cells write the mean; current month gets `current=None`; non-finite values write as `None`; identical upstream rerun is deterministic |
 | P2 | Mocked unit tests in `test_sync_long_horizon_hydrograph.py` | Apr-Sep seasonal triad equals arithmetic mean of six monthly fields; missing or non-finite monthly field yields seasonal `None`; horizon is `season` |
 | P3 | Local live-stack probe plus evidence artifact | `/hydrograph/` returns month and season records with non-null previous/current for locally populated stations |
 | P4 | `bash -n`, `shellcheck -x`, full test suite | New wrapper is syntactically clean, shellcheck clean, and documented |
@@ -534,7 +592,8 @@ script; P5 edits only the dashboard handoff doc.
 |---|---|---|
 | P0a | Decisions artifact drifts from this plan | Replace artifact with the Q-1 through Q-5 defaults above |
 | P0b | Coverage probe blocks dispatch or discovers another live writer | Do not dispatch Phase 1; document blocker and escalate with the probe evidence |
-| P1 | Daily runoff coverage is incomplete, producing many `None` values | Revert Phase 1 files; run daily runoff backfill/maintenance; rerun Phase 1 after coverage evidence |
+| P1 | Per-month threshold (D-Q6) misapplied — wrong calendar-days divisor, off-by-one, or NaN-leak — causing trusted months to be dropped or untrusted months to be written | Revert Phase 1 files; tighten threshold tests with explicit 28-/29-/30-/31-day fixtures; rerun Phase 1 |
+| P1 | Chronic-gap or late-onboarded stations write many `None` `previous`/`current` rows | Expected behaviour, not a failure. Operators may backfill daily runoff to lift specific station-months above 80% and rerun the writer; the threshold is intentionally strict to avoid misleading display means |
 | P1 | New writer accidentally duplicates old norm-only path behavior | Remove only the new long-horizon script and tests; old path retirement remains isolated to Phase 4 |
 | P2 | Seasonal partial-data handling is misinterpreted | Revert Phase 2 additions; clarify whether season fields require six complete months or may use skip-null means |
 | P3 | Local stack/tunnel issues block verification | Keep code changes, document environment failure, and dispatch a scoped infra verification follow-up |
