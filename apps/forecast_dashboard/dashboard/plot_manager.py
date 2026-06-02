@@ -141,6 +141,9 @@ class PlotManager:
         m0_card = getattr(self, "summary_table_m0_card", None)
         if m0_card is not None and not is_month:
             m0_card.visible = False
+        q_card = getattr(self, "summary_table_q_card", None)
+        if q_card is not None and not is_month:
+            q_card.visible = False
         # Adjust summary table height for month vs pentad/decade
         st_card = getattr(self, "summary_table_card", None)
         if st_card is not None:
