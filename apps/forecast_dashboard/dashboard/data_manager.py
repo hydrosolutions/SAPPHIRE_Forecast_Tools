@@ -47,7 +47,13 @@ class DataManager(param.Parameterized):
     # current_station = param.String(default='', doc="Currently selected station code")
     # data_version = param.Integer(default=0, doc="Incremented on every data reload to notify dependents")
 
-    def __init__(self, all_stations, **kwargs):
+    def __init__(
+        self,
+        all_stations,
+        snow_display_start_month: int = 1,
+        snow_display_start_day: int = 1,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
 
         # Immutable configuration
@@ -59,6 +65,8 @@ class DataManager(param.Parameterized):
 
         # Station metadata (may be replaced by async iehhf load)
         self._all_stations = all_stations
+        self._snow_display_start_month = snow_display_start_month
+        self._snow_display_start_day = snow_display_start_day
         self._sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
         # Core data dict from db.get_data()
@@ -177,7 +185,13 @@ class DataManager(param.Parameterized):
         This is the *only* place `db.get_data` should be called.
         """
         logger.info(f"Loading data for station {station_code}")
-        self._data = db.get_data(horizon, station_code, self._all_stations)
+        self._data = db.get_data(
+            horizon,
+            station_code,
+            self._all_stations,
+            self._snow_display_start_month,
+            self._snow_display_start_day,
+        )
         # self.current_station = station_code
         self._rebuild_all_models()
         # self.data_version += 1  # notify watchers

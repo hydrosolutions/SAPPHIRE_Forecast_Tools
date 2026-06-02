@@ -66,7 +66,11 @@ if not station_dict:
     )
 horizon = "pentad"
 
-dm = DataManager(all_stations=all_stations)
+dm = DataManager(
+    all_stations=all_stations,
+    snow_display_start_month=cfg.snow_display_start_month,
+    snow_display_start_day=cfg.snow_display_start_day,
+)
 station_code = station_dict[next(iter(station_dict))][0].split()[0]
 dm.load_station(horizon, station_code)
 

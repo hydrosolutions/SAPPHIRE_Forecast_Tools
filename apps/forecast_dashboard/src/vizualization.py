@@ -34,6 +34,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
+from .snow_window import snow_display_window
 import subprocess
 
 # Import local library
@@ -2232,21 +2233,6 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
     return figure
 
 
-def _snow_display_window(start_month, start_day, ref_date):
-    """Return (begin, end) Timestamps for the snow display window."""
-    from datetime import date, timedelta
-    if start_month == 1 and start_day == 1:
-        return (pd.Timestamp(ref_date.year, 1, 1),
-                pd.Timestamp(ref_date.year, 12, 31))
-    year_start = date(ref_date.year, start_month, start_day)
-    if ref_date >= year_start:
-        begin = year_start
-    else:
-        begin = date(ref_date.year - 1, start_month, start_day)
-    end = date(begin.year + 1, start_month, start_day) - timedelta(days=1)
-    return pd.Timestamp(begin), pd.Timestamp(end)
-
-
 def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
                          linreg_predictor, snow_display_start_month=1,
                          snow_display_start_day=1):
@@ -2293,7 +2279,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     station_data['doy'] = station_data['date'].dt.dayofyear
 
     # Get data for the configured display window
-    display_begin, display_end = _snow_display_window(
+    display_begin, display_end = snow_display_window(
         snow_display_start_month, snow_display_start_day,
         date_picker.date() if hasattr(date_picker, 'date') else date_picker)
     current_year = station_data[

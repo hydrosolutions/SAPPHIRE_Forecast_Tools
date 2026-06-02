@@ -3,6 +3,7 @@
 Tests pure helpers directly, and API-calling functions with mocked HTTP.
 """
 
+from datetime import date
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -108,6 +109,41 @@ def _snow_record(snow_type="HS", value=1.0):
 
 
 class TestSnowData:
+    def test_get_snow_single_uses_calendar_year_fetch_window_by_default(self, monkeypatch):
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db._get_snow_single("19999", "HS", "HS", ref_date=date(2026, 6, 15))
+
+        assert seen_params[0]["start_date"] == "2026-01-01"
+        assert seen_params[0]["end_date"] == "2026-12-31"
+
+    def test_get_snow_single_uses_hydrological_fetch_window(self, monkeypatch):
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db._get_snow_single(
+            "19999",
+            "HS",
+            "HS",
+            display_start_month=9,
+            display_start_day=1,
+            ref_date=date(2026, 3, 15),
+        )
+
+        assert seen_params[0]["start_date"] == "2025-09-01"
+        assert seen_params[0]["end_date"] == "2026-08-31"
+
     def test_get_snow_single_preserves_statistical_fields(self, monkeypatch):
         def mock_get(url, **kwargs):
             return _make_mock_response([_snow_record()])
