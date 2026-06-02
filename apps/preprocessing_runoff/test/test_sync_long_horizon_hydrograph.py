@@ -227,3 +227,140 @@ def test_calendar_days_used_for_february_non_leap():
         daily_previous_year=_daily_rows(2025, {2: [2.0] * 22}),
     )
     assert _record_for_month(records_below_threshold, 2)["previous"] is None
+
+
+def _monthly_records_for_season(target_year=2025, norm=1.0, previous=2.0, current=3.0):
+    records = []
+    for month in range(1, 13):
+        records.append(
+            {
+                "horizon_type": "month",
+                "code": TEST_CODE,
+                "date": f"{target_year}-{month:02d}-01",
+                "day_of_year": sync_lhh.MID_MONTH_DOY[month - 1],
+                "horizon_value": month,
+                "horizon_in_year": month,
+                "norm": norm + month,
+                "previous": previous + month,
+                "current": current + month,
+            }
+        )
+    return records
+
+
+def test_season_writes_full_triad_from_complete_monthly():
+    monthly_records = _monthly_records_for_season(target_year=2025)
+
+    season = sync_lhh.build_seasonal_record(monthly_records, TEST_CODE, target_year=2025)
+    leap_season = sync_lhh.build_seasonal_record(
+        _monthly_records_for_season(target_year=2024),
+        TEST_CODE,
+        target_year=2024,
+    )
+
+    assert season["horizon_type"] == "season"
+    assert season["code"] == TEST_CODE
+    assert season["date"] == "2025-04-01"
+    assert season["horizon_value"] == 1
+    assert season["horizon_in_year"] == 1
+    assert season["day_of_year"] == 91
+    assert leap_season["day_of_year"] == 92
+    assert season["norm"] == sum(1.0 + month for month in range(4, 10)) / 6
+    assert season["previous"] == sum(2.0 + month for month in range(4, 10)) / 6
+    assert season["current"] == sum(3.0 + month for month in range(4, 10)) / 6
+
+
+@pytest.mark.parametrize("missing_field", ["norm", "previous", "current"])
+def test_season_field_is_none_when_any_monthly_value_missing(missing_field):
+    monthly_records = _monthly_records_for_season(target_year=2025)
+    _record_for_month(monthly_records, 6)[missing_field] = None
+
+    season = sync_lhh.build_seasonal_record(monthly_records, TEST_CODE, target_year=2025)
+
+    assert season[missing_field] is None
+    for populated_field in {"norm", "previous", "current"} - {missing_field}:
+        assert season[populated_field] is not None
+
+
+def test_season_writes_none_when_monthly_contains_nan():
+    monthly_records = _monthly_records_for_season(target_year=2025)
+    _record_for_month(monthly_records, 5)["previous"] = float("nan")
+
+    season = sync_lhh.build_seasonal_record(monthly_records, TEST_CODE, target_year=2025)
+
+    assert season["previous"] is None
+    assert season["previous"] != "NaN"
+    assert season["norm"] is not None
+    assert season["current"] is not None
+
+
+def test_season_horizon_identity_is_stable():
+    target_year = 2025
+    season = sync_lhh.build_seasonal_record(
+        _monthly_records_for_season(target_year=target_year),
+        TEST_CODE,
+        target_year=target_year,
+    )
+
+    assert (season["horizon_type"], season["code"], season["date"]) == (
+        "season",
+        TEST_CODE,
+        f"{target_year}-04-01",
+    )
+
+
+def test_season_idempotent_with_identical_monthly():
+    client = MagicMock()
+    monthly_records = _monthly_records_for_season(target_year=2025)
+
+    first = sync_lhh.write_station_seasonal_hydrograph(
+        TEST_CODE,
+        monthly_records,
+        client,
+        target_year=2025,
+        today=dt.date(2026, 6, 15),
+    )
+    second = sync_lhh.write_station_seasonal_hydrograph(
+        TEST_CODE,
+        monthly_records,
+        client,
+        target_year=2025,
+        today=dt.date(2026, 6, 15),
+    )
+
+    # Service-side _has_changes=False is covered by the API service; this unit
+    # invariant keeps the posted seasonal payload stable for identical inputs.
+    assert second == first
+    assert client.write_hydrograph.call_count == 2
+    assert client.write_hydrograph.call_args_list[0].args[0] == [first]
+    assert client.write_hydrograph.call_args_list[1].args[0] == [second]
+
+
+def test_season_current_is_none_for_in_progress_target_year():
+    in_progress_monthly = _monthly_records_for_season(target_year=2026)
+    for month in range(6, 10):
+        _record_for_month(in_progress_monthly, month)["current"] = None
+
+    in_progress_season = sync_lhh.build_seasonal_record(
+        in_progress_monthly,
+        TEST_CODE,
+        target_year=2026,
+    )
+    completed_season = sync_lhh.build_seasonal_record(
+        _monthly_records_for_season(target_year=2025),
+        TEST_CODE,
+        target_year=2025,
+    )
+
+    assert in_progress_season["current"] is None
+    assert completed_season["current"] is not None
+
+
+def test_season_april_first_day_of_year_in_leap_year():
+    season = sync_lhh.build_seasonal_record(
+        _monthly_records_for_season(target_year=2024),
+        TEST_CODE,
+        target_year=2024,
+    )
+
+    assert season["day_of_year"] == 92

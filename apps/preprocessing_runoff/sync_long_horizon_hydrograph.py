@@ -187,6 +187,65 @@ def write_station_monthly_hydrograph(
     return records
 
 
+def _seasonal_field_mean(monthly_records: list[dict[str, Any]], field: str) -> float | None:
+    monthly_by_value = {record.get("horizon_value"): record for record in monthly_records}
+    monthly_values = []
+    for month in range(4, 10):
+        record = monthly_by_value.get(month, {})
+        value = record.get(field)
+        if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
+            monthly_values.append(None)
+        else:
+            monthly_values.append(float(value))
+
+    if any(value is None for value in monthly_values):
+        return None
+    return sum(monthly_values) / 6
+
+
+def build_seasonal_record(
+    monthly_records: list[dict[str, Any]],
+    code: str,
+    target_year: int,
+) -> dict[str, Any]:
+    """Build the April-September seasonal hydrograph record for one station."""
+    season_start = dt.date(target_year, 4, 1)
+    return {
+        "horizon_type": "season",
+        "code": str(code),
+        "date": season_start.isoformat(),
+        "day_of_year": season_start.timetuple().tm_yday,
+        "horizon_value": 1,
+        "horizon_in_year": 1,
+        "norm": _json_safe(_seasonal_field_mean(monthly_records, "norm")),
+        "previous": _json_safe(_seasonal_field_mean(monthly_records, "previous")),
+        "current": _json_safe(_seasonal_field_mean(monthly_records, "current")),
+    }
+
+
+def write_station_seasonal_hydrograph(
+    code: str,
+    monthly_records: list[dict[str, Any]],
+    client: Any,
+    target_year: int,
+    today: dt.date,
+) -> dict[str, Any]:
+    """Build and write one seasonal hydrograph record for one station."""
+    logger.info(
+        "Building long-horizon seasonal hydrograph for station %s using today=%s",
+        code,
+        today.isoformat(),
+    )
+    record = build_seasonal_record(
+        monthly_records=monthly_records,
+        code=code,
+        target_year=target_year,
+    )
+    client.write_hydrograph([record])
+    logger.info("Wrote seasonal hydrograph record for station %s", code)
+    return record
+
+
 def write_long_horizon_hydrograph(
     codes: Iterable[str],
     iehhf_sdk: Any,
@@ -197,10 +256,18 @@ def write_long_horizon_hydrograph(
     """Build and write monthly hydrograph records for all supplied stations."""
     all_records = []
     for code in codes:
-        all_records.extend(
-            write_station_monthly_hydrograph(
+        monthly_records = write_station_monthly_hydrograph(
+            code=str(code),
+            iehhf_sdk=iehhf_sdk,
+            client=client,
+            target_year=target_year,
+            today=today,
+        )
+        all_records.extend(monthly_records)
+        all_records.append(
+            write_station_seasonal_hydrograph(
                 code=str(code),
-                iehhf_sdk=iehhf_sdk,
+                monthly_records=monthly_records,
                 client=client,
                 target_year=target_year,
                 today=today,
