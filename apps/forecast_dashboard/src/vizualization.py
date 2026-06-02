@@ -2382,8 +2382,6 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     else:
         y_min, y_max = 0, 1
 
-    vlines = create_cached_vlines(_, horizon, for_dates=True, y_text=1)
-
     # Structural sibling of the daily hydrograph statistical overlay block above.
     full_range_area = plot_runoff_range_area(
         current_year, 'date', 'min', 'max',
@@ -2403,7 +2401,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
         current_year, 'date', current_year_col,
         current_year_text, runoff_current_year_color)
 
-    figure = full_range_area * area_05_95 * area_25_75 * vlines * mean_line * last_year_line * current_year_line
+    figure = full_range_area * area_05_95 * area_25_75 * mean_line * last_year_line * current_year_line
 
     # Forecast curve (if forecasts exist)
     if not forecasts.empty:
