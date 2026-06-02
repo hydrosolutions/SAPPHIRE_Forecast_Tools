@@ -364,3 +364,70 @@ def test_season_april_first_day_of_year_in_leap_year():
     )
 
     assert season["day_of_year"] == 92
+
+
+@pytest.mark.parametrize(("norms", "actual_count"), [([], 0), ([1.0] * 7, 7)])
+def test_skips_station_when_norms_missing(norms, actual_count, caplog):
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = norms
+    client = MagicMock()
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_station_monthly_hydrograph(
+            TEST_CODE,
+            sdk,
+            client,
+            target_year=2026,
+            today=dt.date(2026, 6, 15),
+        )
+
+    assert records == []
+    client.write_hydrograph.assert_not_called()
+    assert "12" in caplog.text
+    assert str(actual_count) in caplog.text
+
+
+def test_skips_station_when_sdk_raises(caplog):
+    sdk = MagicMock()
+    sdk.get_norm_for_site.side_effect = ConnectionError("tunnel down")
+    client = MagicMock()
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_station_monthly_hydrograph(
+            TEST_CODE,
+            sdk,
+            client,
+            target_year=2026,
+            today=dt.date(2026, 6, 15),
+        )
+
+    assert records == []
+    client.write_hydrograph.assert_not_called()
+    assert "ConnectionError" in caplog.text
+    assert "tunnel down" in caplog.text
+
+
+def test_orchestrator_continues_after_skipped_station():
+    skipped_code = "A"
+    valid_code = "B"
+    sdk = MagicMock()
+    sdk.get_norm_for_site.side_effect = [ConnectionError("tunnel down"), _norms()]
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+    ]
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[skipped_code, valid_code],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert len(records) == 13
+    assert {record["code"] for record in records} == {valid_code}
+    assert client.write_hydrograph.call_count == 2
+    assert len(client.write_hydrograph.call_args_list[0].args[0]) == 12
+    assert len(client.write_hydrograph.call_args_list[1].args[0]) == 1

@@ -127,8 +127,6 @@ def build_monthly_records(
 ) -> list[dict[str, Any]]:
     """Build 12 monthly hydrograph records for one station."""
     norm_values = list(norms)
-    if len(norm_values) != 12:
-        raise ValueError(f"Expected 12 monthly norms for station {code}; got {len(norm_values)}")
 
     records = []
     previous_year = target_year - 1
@@ -171,7 +169,27 @@ def write_station_monthly_hydrograph(
 ) -> list[dict[str, Any]]:
     """Build and write monthly hydrograph records for one station."""
     logger.info("Building long-horizon monthly hydrograph for station %s", code)
-    norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
+    try:
+        norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
+    except Exception as exc:
+        logger.warning(
+            "write_station_monthly_hydrograph: SDK call failed for site %s, skipping. "
+            "Error: %s: %s",
+            code,
+            type(exc).__name__,
+            exc,
+        )
+        return []
+
+    if len(norms) != 12:
+        logger.warning(
+            "write_station_monthly_hydrograph: expected 12 norm values for site %s, "
+            "got %d - skipping this site.",
+            code,
+            len(norms),
+        )
+        return []
+
     daily_current_year = _read_daily_runoff(client, code, target_year)
     daily_previous_year = _read_daily_runoff(client, code, target_year - 1)
     records = build_monthly_records(
@@ -263,6 +281,9 @@ def write_long_horizon_hydrograph(
             target_year=target_year,
             today=today,
         )
+        if not monthly_records:
+            logger.info("Skipping seasonal hydrograph for station %s without monthly records", code)
+            continue
         all_records.extend(monthly_records)
         all_records.append(
             write_station_seasonal_hydrograph(
@@ -353,6 +374,9 @@ def main() -> None:
             target_year=target_year,
             today=today,
         )
+        if not records:
+            logger.error("No monthly hydrograph records produced - nothing to write.")
+            sys.exit(2)
         logger.info("Long-horizon monthly hydrograph ingestion wrote %d records.", len(records))
         sys.exit(0)
 
