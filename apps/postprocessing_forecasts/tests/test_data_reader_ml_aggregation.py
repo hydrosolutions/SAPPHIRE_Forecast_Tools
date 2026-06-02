@@ -50,6 +50,70 @@ class TestPentadTargetFiltering:
         # q95 mean: (15+30+45+60+75)/5 = 45.0
         assert result["q95"].iloc[0] == pytest.approx(45.0)
 
+    def test_mixed_day_and_period_rows_keep_expected_boundary_coverage(self):
+        """PP-036: period rows with date+1 sentinel pass through with day fans."""
+        day_targets = pd.DataFrame(
+            {
+                "code": ["19999"] * 5,
+                "date": ["2024-01-10"] * 5,
+                "target": [
+                    "2024-01-11",
+                    "2024-01-12",
+                    "2024-01-13",
+                    "2024-01-14",
+                    "2024-01-15",
+                ],
+                "forecasted_discharge": [10.0, 20.0, 30.0, 40.0, 50.0],
+                "horizon_type": ["day"] * 5,
+            }
+        )
+        period_row = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": ["2024-01-05"],
+                "target": ["2024-01-06"],
+                "forecasted_discharge": [101.0],
+                "horizon_type": ["pentad"],
+            }
+        )
+        non_boundary_row = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": ["2024-01-07"],
+                "target": ["2024-01-08"],
+                "forecasted_discharge": [777.0],
+                "horizon_type": ["day"],
+            }
+        )
+        out_of_period_row = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": ["2024-01-10"],
+                "target": ["2024-01-16"],
+                "forecasted_discharge": [888.0],
+                "horizon_type": ["day"],
+            }
+        )
+        raw = pd.concat(
+            [period_row, day_targets, non_boundary_row, out_of_period_row],
+            ignore_index=True,
+        )
+
+        result = _normalize_ml_forecasts(raw, "TFT", "pentad")
+
+        assert set(result["code"]) == {"19999"}
+        assert set(result["date"].dt.strftime("%Y-%m-%d")) == {
+            "2024-01-05",
+            "2024-01-10",
+        }
+        assert set(result["model_short"]) == {"TFT"}
+
+        by_date = {
+            row.date.strftime("%Y-%m-%d"): row.forecasted_discharge for row in result.itertuples()
+        }
+        assert by_date["2024-01-05"] == pytest.approx(101.0)
+        assert by_date["2024-01-10"] == pytest.approx(30.0)
+
     def test_pentad6_february_3_day_period(self):
         """Worst case: pentad 6 of Feb (3 days: 26-28), 3 of 6 targets outside."""
         # Boundary date Feb 25 → pentad 6 covers Feb 26-28 (non-leap)

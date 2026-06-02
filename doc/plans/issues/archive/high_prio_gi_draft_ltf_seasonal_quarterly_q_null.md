@@ -1,10 +1,29 @@
 # LT seasonal/quarterly hindcasts: `q` field null for LR models, blocking skill computation
 
-**Status**: Draft (PP-028b prevents the KeyError crash but does NOT produce skill metrics for affected models — q and q50 are both None at row level, so the downstream fallback yields NaN which gets dropped)
+**Status**: **Resolved (2026-05-29)** — no code change required; archived as superseded by current data state.
 **Module**: long_term_forecasting
-**Priority**: High (seasonal/quarterly skill metrics still zero for all LR models)
+**Priority**: High (historical)
 **Labels**: `bug`, `long-term-forecasting`, `skill-metrics`
 **Assigned**: @sandrohuni
+
+## Resolution note (2026-05-29)
+
+A live audit of the running kghm postprocessing stack confirmed this issue no longer reproduces as written:
+
+- **`q` is populated** for LR_Base, LR_SM, LR_SM_DT, and LR_SM_ROF on monthly, quarterly, and seasonal hindcast rows. `q`-null fraction is under 3% across these models (likely incidental missing-input rows, not the systemic absence the original problem statement described).
+- **`q50` is still null** for nearly all non-MC long forecasts, but `apps/postprocessing_forecasts/src/skill_metrics.py:1090` resolves point forecasts as `q` first with `q50` as fallback. With `q` populated, skill calculation proceeds normally.
+- For most models, `q50` is semantically equal to `q` (same point estimate), so the null `q50` carries no information loss and breaks no downstream consumer that uses `q`.
+- Skill metrics for LR_Base and LR_SM are present in the DB for all three long-term horizons. Tajik deployment scope only requires seasonal forecasts for these two models, so the current emit set is sufficient.
+
+What remains unresolved but is no longer high priority:
+- **q50 backfill** — if any downstream consumer ever requires `q50` directly (rather than via the `q` → `q50` fallback), q50 should be backfilled to equal q for models where they are definitionally the same. Low priority; only actionable if a concrete consumer is identified.
+- **Seasonal model coverage gap** — GBT, SM_GBT, MC_ALD, LR_SM_DT, LR_SM_ROF have no seasonal long_forecasts upstream. Out of scope for Tajik (only LR_Base + LR_SM needed). Track separately if other deployments need broader seasonal model coverage.
+
+The remaining real concern surfaced by the audit is **dashboard quarter/season skill visibility** (`apps/forecast_dashboard/src/db.py:737–765` returns empty `forecast_stats` for quarter and season). That is tracked under a separate plan.
+
+---
+
+## Original plan (historical, retained for context)
 
 ---
 

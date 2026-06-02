@@ -1581,8 +1581,9 @@ def _read_ml_forecasts_pp_api(
 ) -> pd.DataFrame | None:
     """Read ML forecasts from postprocessing API.
 
-    Tries horizon='day' first (current pipeline writes daily targets),
-    then falls back to horizon=horizon_type (transition period).
+    Reads both horizon='day' (current pipeline writes daily targets) and
+    horizon=horizon_type (migrated period archive), then keeps period rows
+    only before each station/model's first DAY issue date.
 
     Args:
         model: Model short name (e.g. 'TFT', 'TiDE').
@@ -1594,6 +1595,152 @@ def _read_ml_forecasts_pp_api(
     Returns:
         Raw DataFrame from API, or None if unavailable.
     """
+
+    def _fetch_archive(try_horizon: str) -> pd.DataFrame | None:
+        all_records = []
+        batch_size = 1000
+
+        if codes is not None:
+            for code in codes:
+                skip = 0
+                kwargs = {
+                    "horizon": try_horizon,
+                    "model": model,
+                    "code": code,
+                }
+                if start_date:
+                    kwargs["start_date"] = start_date
+                if end_date:
+                    kwargs["end_date"] = end_date
+                while True:
+                    df_batch = client.read_short_term_forecasts(
+                        **kwargs, skip=skip, limit=batch_size
+                    )
+                    if df_batch is None or df_batch.empty:
+                        break
+                    all_records.append(df_batch)
+                    if len(df_batch) < batch_size:
+                        break
+                    skip += batch_size
+        else:
+            skip = 0
+            kwargs = {
+                "horizon": try_horizon,
+                "model": model,
+            }
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            while True:
+                df_batch = client.read_short_term_forecasts(**kwargs, skip=skip, limit=batch_size)
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
+
+        if not all_records:
+            return None
+
+        return pd.concat(all_records, ignore_index=True)
+
+    def _working_archive(df: pd.DataFrame) -> pd.DataFrame:
+        work = _clean_code_column(df.copy())
+        if "date" in work.columns:
+            work["date"] = pd.to_datetime(work["date"])
+        if "model_type" in work.columns:
+            work["_pp036_model_type_key"] = work["model_type"].astype(str)
+        else:
+            work["_pp036_model_type_key"] = model
+        return work
+
+    def _merge_archives_by_day_cutover(
+        day_df: pd.DataFrame | None,
+        period_df: pd.DataFrame | None,
+    ) -> pd.DataFrame | None:
+        day_rows = 0 if day_df is None else len(day_df)
+        period_rows = 0 if period_df is None else len(period_df)
+
+        if (day_df is None or day_df.empty) and (period_df is None or period_df.empty):
+            logger.debug(
+                "Read ML forecasts for %s (%s): day_rows=0, period_rows=0, "
+                "retained_period_rows=0, final_rows=0",
+                model,
+                horizon_type,
+            )
+            return None
+
+        if day_df is None or day_df.empty:
+            logger.debug(
+                "Read ML forecasts for %s (%s): day_rows=0, period_rows=%d, "
+                "retained_period_rows=%d, final_rows=%d",
+                model,
+                horizon_type,
+                period_rows,
+                period_rows,
+                period_rows,
+            )
+            return period_df
+
+        if period_df is None or period_df.empty:
+            logger.debug(
+                "Read ML forecasts for %s (%s): day_rows=%d, period_rows=0, "
+                "retained_period_rows=0, final_rows=%d",
+                model,
+                horizon_type,
+                day_rows,
+                day_rows,
+            )
+            return day_df
+
+        day_work = _working_archive(day_df)
+        period_work = _working_archive(period_df)
+        pair_cols = ["code", "_pp036_model_type_key"]
+
+        first_day = day_work.groupby(pair_cols)["date"].min()
+        first_period = period_work.groupby(pair_cols)["date"].min()
+
+        for pair, first_day_date in first_day.items():
+            if pair not in first_period:
+                continue
+            first_period_date = first_period[pair]
+            if first_day_date < first_period_date:
+                logger.warning(
+                    "DAY ML archive for %s code=%s model_type=%s starts at %s "
+                    "before period archive starts at %s",
+                    model,
+                    pair[0],
+                    pair[1],
+                    first_day_date.date(),
+                    first_period_date.date(),
+                )
+
+        period_with_cutover = period_work.merge(
+            first_day.rename("_pp036_first_day_date"),
+            left_on=pair_cols,
+            right_index=True,
+            how="left",
+        )
+        retain_period = period_with_cutover["_pp036_first_day_date"].isna() | (
+            period_with_cutover["date"] < period_with_cutover["_pp036_first_day_date"]
+        )
+        retained_period = period_df.loc[retain_period.to_numpy()].copy()
+        final = pd.concat([retained_period, day_df], ignore_index=True)
+
+        logger.debug(
+            "Read ML forecasts for %s (%s): day_rows=%d, period_rows=%d, "
+            "retained_period_rows=%d, final_rows=%d",
+            model,
+            horizon_type,
+            day_rows,
+            period_rows,
+            len(retained_period),
+            len(final),
+        )
+        return final
+
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping API read")
         return None
@@ -1616,72 +1763,9 @@ def _read_ml_forecasts_pp_api(
         start_date = f"{start_year}-01-01" if start_year is not None else None
         end_date = f"{end_year}-12-31" if end_year is not None else None
 
-        # Try "day" horizon first (current pipeline stores daily
-        # targets)
-        for try_horizon in ["day", api_horizon]:
-            all_records = []
-            batch_size = 1000
-
-            if codes is not None:
-                for code in codes:
-                    skip = 0
-                    kwargs = {
-                        "horizon": try_horizon,
-                        "model": model,
-                        "code": code,
-                    }
-                    if start_date:
-                        kwargs["start_date"] = start_date
-                    if end_date:
-                        kwargs["end_date"] = end_date
-                    while True:
-                        df_batch = client.read_short_term_forecasts(
-                            **kwargs, skip=skip, limit=batch_size
-                        )
-                        if df_batch is None or df_batch.empty:
-                            break
-                        all_records.append(df_batch)
-                        if len(df_batch) < batch_size:
-                            break
-                        skip += batch_size
-            else:
-                skip = 0
-                kwargs = {
-                    "horizon": try_horizon,
-                    "model": model,
-                }
-                if start_date:
-                    kwargs["start_date"] = start_date
-                if end_date:
-                    kwargs["end_date"] = end_date
-                while True:
-                    df_batch = client.read_short_term_forecasts(
-                        **kwargs, skip=skip, limit=batch_size
-                    )
-                    if df_batch is None or df_batch.empty:
-                        break
-                    all_records.append(df_batch)
-                    if len(df_batch) < batch_size:
-                        break
-                    skip += batch_size
-
-            if all_records:
-                logger.debug(
-                    "Read ML forecasts for %s with horizon=%s",
-                    model,
-                    try_horizon,
-                )
-                return pd.concat(all_records, ignore_index=True)
-
-            # No data for this horizon; try next
-            if try_horizon == "day":
-                logger.debug(
-                    "No 'day' ML data for %s, trying '%s'",
-                    model,
-                    api_horizon,
-                )
-
-        return None
+        day_records = _fetch_archive("day")
+        period_records = _fetch_archive(api_horizon)
+        return _merge_archives_by_day_cutover(day_records, period_records)
 
     except Exception as e:
         logger.error(
