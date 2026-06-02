@@ -329,3 +329,11 @@ msgstr "25-75 percentile"
 #: vizualization.py:2380
 msgid "Last year legend entry"
 msgstr "Last year"
+
+#: vizualization.py:2358
+msgid "Current season {season}"
+msgstr "Current season {season}"
+
+#: vizualization.py:2359
+msgid "Previous season {season}"
+msgstr "Previous season {season}"

@@ -327,3 +327,11 @@ msgstr "25-75 процентиль"
 #: vizualization.py:2380
 msgid "Last year legend entry"
 msgstr "Прошлый год"
+
+#: vizualization.py:2358
+msgid "Current season {season}"
+msgstr "Текущий сезон {season}"
+
+#: vizualization.py:2359
+msgid "Previous season {season}"
+msgstr "Предыдущий сезон {season}"
