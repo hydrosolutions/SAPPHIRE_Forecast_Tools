@@ -34,7 +34,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
-from .snow_window import snow_display_window
+from .snow_window import is_hydrological_year_display, snow_display_window
 import subprocess
 
 # Import local library
@@ -2233,6 +2233,27 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
     return figure
 
 
+def _snow_season_label(reference, start_month, start_day):
+    """Return the YYYY/YY+1 label for the hydrological year containing reference."""
+    if (reference.month, reference.day) >= (start_month, start_day):
+        start_year = reference.year
+    else:
+        start_year = reference.year - 1
+    end_year_two_digit = (start_year + 1) % 100
+    return f"{start_year}/{end_year_two_digit:02d}"
+
+
+def _snow_current_season_reference(current_year, date_picker, display_begin):
+    """Return the reference date for the current snow season label."""
+    if "current_year" in current_year.columns:
+        non_null_current = current_year[current_year["current_year"].notna()]
+        if not non_null_current.empty:
+            return non_null_current["date"].max().date()
+    if pd.notna(date_picker):
+        return date_picker.date()
+    return display_begin.date()
+
+
 def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
                          linreg_predictor, snow_display_start_month=1,
                          snow_display_start_day=1):
@@ -2320,7 +2341,6 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
     mean_value = predictor_snow[variable].mean()
     decimals = config['decimals']
-    current_year_text = f"{_('Current year')}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else _('Current year')
 
     # Forecast label
     forecast_text = _('Forecast')
@@ -2328,6 +2348,21 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     mean_line_col = 'mean' if 'mean' in current_year.columns and not current_year['mean'].isnull().all() else 'norm'
     mean_line_label = _('Mean legend entry') if mean_line_col == 'mean' else _('Norm')
     current_year_col = 'current_year' if 'current_year' in current_year.columns else variable
+    if is_hydrological_year_display(snow_display_start_month, snow_display_start_day):
+        current_ref = _snow_current_season_reference(
+            current_year, date_picker, display_begin)
+        current_season = _snow_season_label(
+            current_ref, snow_display_start_month, snow_display_start_day)
+        previous_season = _snow_season_label(
+            current_ref - dt.timedelta(days=1),
+            snow_display_start_month,
+            snow_display_start_day)
+        current_year_label = _("Current season {season}").format(season=current_season)
+        last_year_label = _("Previous season {season}").format(season=previous_season)
+    else:
+        current_year_label = _("Current year")
+        last_year_label = _("Last year legend entry")
+    current_year_text = f"{current_year_label}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else current_year_label
 
     # Calculate y-axis limits safely
     y_axis_cols = [
@@ -2363,7 +2398,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
         current_year, 'date', mean_line_col, mean_line_label, runoff_mean_color)
     last_year_line = plot_runoff_line(
         current_year, 'date', 'last_year',
-        _('Last year legend entry'), runoff_last_year_color)
+        last_year_label, runoff_last_year_color)
     current_year_line = plot_runoff_line(
         current_year, 'date', current_year_col,
         current_year_text, runoff_current_year_color)

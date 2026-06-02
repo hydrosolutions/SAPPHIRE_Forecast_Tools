@@ -146,3 +146,101 @@ def test_snow_plot_y_axis_includes_all_visible_layers():
     }))
 
     assert plot.opts.get("plot").kwargs["ylim"] == pytest.approx((1.8, 66.0))
+
+
+def _plot_for_display_window(
+    frame,
+    variable="HS",
+    date_picker="2025-12-15",
+    display_start_month=9,
+    display_start_day=1,
+):
+    return vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {variable: frame},
+        variable,
+        "19999 - Test Basin",
+        pd.Timestamp(date_picker),
+        pd.DataFrame(),
+        snow_display_start_month=display_start_month,
+        snow_display_start_day=display_start_day,
+    )
+
+
+def _single_snow_frame(ref_date):
+    return pd.DataFrame({
+        "code": ["19999"],
+        "date": [pd.Timestamp(ref_date)],
+        "HS": [15.0],
+        "norm": [12.0],
+        "mean": [13.0],
+        "min": [5.0],
+        "max": [30.0],
+        "5%": [7.0],
+        "25%": [10.0],
+        "50%": [14.0],
+        "75%": [20.0],
+        "95%": [26.0],
+        "last_year": [11.0],
+        "current_year": [15.0],
+    })
+
+
+def test_snow_plot_labels_use_calendar_year_wording_when_start_is_jan_1():
+    plot = _plot_for_display_window(
+        _snow_frame(),
+        date_picker="2026-01-04",
+        display_start_month=1,
+        display_start_day=1,
+    )
+
+    labels = _labels(plot, hv.Curve)
+    assert "Last year legend entry" in labels
+    assert "Current year, 3 day mean: 16.0 cm" in labels
+
+
+def test_snow_plot_labels_use_season_wording_when_start_is_sept_1():
+    plot = _plot_for_display_window(
+        _snow_frame(overrides={
+            "date": pd.date_range("2025-12-11", periods=5, freq="D"),
+        }),
+        date_picker="2025-12-15",
+        display_start_month=9,
+        display_start_day=1,
+    )
+
+    labels = _labels(plot, hv.Curve)
+    assert any("Current season 2025/26" in label for label in labels)
+    assert any("Previous season 2025/26" in label for label in labels)
+
+    no_current_value_plot = _plot_for_display_window(
+        _snow_frame(overrides={
+            "date": pd.date_range("2025-12-11", periods=5, freq="D"),
+        }).drop(columns=["current_year"]),
+        date_picker="2025-12-15",
+        display_start_month=9,
+        display_start_day=1,
+    )
+    no_current_value_labels = _labels(no_current_value_plot, hv.Curve)
+    assert any("Current season 2025/26" in label for label in no_current_value_labels)
+    assert any("Previous season 2025/26" in label for label in no_current_value_labels)
+
+
+def test_snow_plot_season_year_label_transitions_at_start_day():
+    cases = [
+        ("2025-08-31", "Current season 2024/25", "Previous season 2024/25"),
+        ("2025-09-01", "Current season 2025/26", "Previous season 2024/25"),
+    ]
+
+    for ref_date, current_label, previous_label in cases:
+        plot = _plot_for_display_window(
+            _single_snow_frame(ref_date),
+            date_picker=ref_date,
+            display_start_month=9,
+            display_start_day=1,
+        )
+
+        labels = _labels(plot, hv.Curve)
+        assert any(current_label in label for label in labels)
+        assert any(previous_label in label for label in labels)
