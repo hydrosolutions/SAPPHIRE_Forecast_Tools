@@ -156,12 +156,24 @@ once per station per year for each station in the planned set, for both `Y`
 and `Y-1`. The probe records the returned row count and the count of records
 with non-null `value` per station-year.
 
-**Coverage threshold.** Non-null daily runoff must cover **≥80% of calendar
-days** for each `(station, year)` pair in `{Y, Y-1}` (leap-year denominators
-are 366; non-leap are 365). Any `(station, year)` below that threshold causes
-`DISPATCH: BLOCKED` with the failing pairs enumerated in the evidence file.
-This threshold is plan-pinned rather than agent-picked so the dispatch gate
-is operationally enforceable.
+**Coverage threshold.** Non-null daily runoff must cover **≥80% of expected
+days** for each `(station, year)` pair in `{Y, Y-1}`. The denominator depends
+on whether the year is complete:
+
+- **Complete year** (`year < today.year`): denominator = 365 (or 366 for a
+  leap year). 2024 was leap; 2025 / 2026 are not.
+- **In-progress year** (`year == today.year`): denominator = days elapsed
+  so far in the year (i.e. `today.timetuple().tm_yday`, which gives 153 on
+  2026-06-02). This avoids penalising a year for days that haven't happened
+  yet — the probe initially BLOCKED in round 1 of P0b because of the
+  fixed-365 denominator on the in-progress year (see commit `6d5c81a`
+  evidence). Future years (`year > today.year`) are not part of the
+  `{Y, Y-1}` set so this case does not arise.
+
+Any `(station, year)` below the threshold (under whichever denominator
+applies) causes `DISPATCH: BLOCKED` with the failing pairs enumerated in
+the evidence file. This threshold is plan-pinned rather than agent-picked
+so the dispatch gate is operationally enforceable.
 
 **Files:**
 - `doc/plans/working/runoff_long_horizon_hydrograph_coverage_probe.md`
@@ -193,8 +205,10 @@ is operationally enforceable.
   (`GET /runoff/?horizon=day&code=<station>&start_date=YYYY-01-01&end_date=YYYY-12-31`)
   with the tunnel up.
 - Evidence file records non-null daily count and percentage per
-  `(station, year)` for `{Y, Y-1}` and checks each pair against the
-  plan-pinned **≥80%** threshold. Each failing pair is enumerated.
+  `(station, year)` for `{Y, Y-1}`, with the denominator chosen per the
+  threshold definition above (full year for complete years; days-elapsed
+  for the in-progress year). Each pair is checked against the plan-pinned
+  **≥80%** threshold and failing pairs are enumerated.
 - Grep audit ran the plan-pinned command (`rg -nP '"(month|season)"...'`
   above) over `apps/` and triaged every match in the evidence file.
 - Phase 1 must not dispatch unless the final dispatch line is
