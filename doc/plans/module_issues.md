@@ -98,6 +98,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**INFRA-016**~~ | ~~Switch default branch from `main` to `maxat_sapphire_2` (v2 cut)~~ | ~~infra~~ | | Complete | [`archive/high_prio_gi_draft_infra_default_branch_switch.md`](issues/archive/high_prio_gi_draft_infra_default_branch_switch.md) | — |
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
 | **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
+| **INFRA-018** | Playwright integration tests fail at browser launch under macOS sandbox (verification noise + potential CI coverage gap) | infra | **Low** | Draft | [`low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md`](issues/low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md) | — |
 | ~~**P-006**~~ | ~~Move long-term schedule query into Luigi pipeline~~ | ~~pipeline~~ | | Complete | [`review_gi_draft_pipeline_lt_schedule_into_luigi.md`](issues/review_gi_draft_pipeline_lt_schedule_into_luigi.md) | — |
 
 ---
@@ -140,7 +141,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**LTF-001**~~ | ~~`--today` flag in `run_forecast.py` runs zero models~~ | | Complete | [`archive/review_gi_draft_lt_today_flag_runs_no_models.md`](issues/archive/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | ~~**LTF-002**~~ | ~~SQL org-scoping for long-term forecasting queries~~ | | Complete | [`archive/review_gi_draft_ltf_sql_org_scoping.md`](issues/archive/review_gi_draft_ltf_sql_org_scoping.md) | — |
 | ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
-| **LTF-004** | Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation (root cause: upstream `calibrate_model_and_hindcast` skips NaN rows) | **High** | Draft | [`high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Fix A: @sandrohuni (upstream library); Fix B: @mabesa (fallback guard) |
+| ~~**LTF-004**~~ | ~~Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation~~ | | Complete | [`archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Resolved 2026-05-29: `q` is now populated; `q50` null is harmless via `q`-first fallback at `skill_metrics.py:1090` |
 | **LTF-005** | Add climatological quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Review | [`review_gi_draft_lt_gbt_quantile_bounds.md`](issues/review_gi_draft_lt_gbt_quantile_bounds.md) | — |
 
 ### Postprocessing Forecasts (`pp`)
@@ -181,6 +182,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-034**~~ | ~~`read_daily_forecasts()` passes wrong keyword `horizon_type` to API client — daily skill metrics never computed~~ | | Complete | [`archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md`](issues/archive/high_prio_gi_draft_pp_daily_forecast_read_horizon_type.md) | — |
 | **PP-035** | Deduplicate skill metrics before API write to fix monthly/quarterly/seasonal bulk upsert | **Medium** | Review | [`review_gi_draft_pp_skill_metric_dedup.md`](issues/review_gi_draft_pp_skill_metric_dedup.md) | — |
 | **PP-028b** | Skill metrics crash/silent failure — missing `q50` column across all horizons | **High** | Review | [`review_gi_draft_pp_monthly_skill_q50_regression.md`](issues/review_gi_draft_pp_monthly_skill_q50_regression.md) | — |
+| ~~**PP-036**~~ | ~~ML pentad/decadal skill metrics starved by `horizon='day'` short-circuit in API reader~~ | | Complete | [`archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md`](issues/archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -199,6 +201,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-011** | Horizon selector widget passes translated strings as API enum values | **High** | Draft | [`high_prio_gi_draft_fd_horizon_selector_i18n.md`](issues/high_prio_gi_draft_fd_horizon_selector_i18n.md) | — |
 | ~~**FD-013**~~ | ~~Monthly skill metrics not loaded from API — all columns show "-"~~ | ~~**Mid**~~ | Complete | [`archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md`](issues/archive/mid_prio_gi_draft_fd_monthly_skill_metrics.md) | — |
 | **FD-014** | Snow visualization — configurable year start, units & labels | **Medium** | In Progress | [`mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md`](issues/mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md) | Phase 2 blocked on colleague (services) |
+| ~~**FD-015**~~ | ~~Quarter/season skill metrics not rendered in summary table (data layer returns empty `forecast_stats`); reservoir quarterly card on month tab also affected~~ | | Complete | [`archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md`](issues/archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md) | Red-phase verified 2026-05-31 across P1-P4; tajik-deployment visible-impact target |
 
 ### iEasyHydro HF Migration
 
