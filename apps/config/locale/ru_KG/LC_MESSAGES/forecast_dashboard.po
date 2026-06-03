@@ -243,3 +243,95 @@ msgstr "Уведомления"
 #: pentad_dashboard.py:1049
 msgid "SAPPHIRE Central Asia - Pentadal forecast dashboard"
 msgstr "SAPPHIRE Central Asia - Панель управления пентадными прогнозами"
+
+#: vizualization.py:2262
+msgid "No SWE data available"
+msgstr "Нет данных по запасу воды в снеге"
+
+#: vizualization.py:2262
+msgid "No HS data available"
+msgstr "Нет данных по высоте снега"
+
+#: vizualization.py:2262
+msgid "No RoF data available"
+msgstr "Нет данных по стоку снеготаяния"
+
+#: vizualization.py:2267
+msgid "Snow Water Equivalent"
+msgstr "Запас воды в снеге"
+
+#: vizualization.py:2267
+msgid "SWE (mm)"
+msgstr "Запас воды в снеге (мм)"
+
+#: vizualization.py:2268
+msgid "Snow Height"
+msgstr "Высота снега"
+
+#: vizualization.py:2268
+msgid "Snow Height (cm)"
+msgstr "Высота снега (см)"
+
+#: vizualization.py:2269
+msgid "Snowmelt Runoff & P Runoff"
+msgstr "Сток снеготаяния и осадков"
+
+#: vizualization.py:2269
+msgid "Snowmelt & P Runoff (mm)"
+msgstr "Сток снеготаяния и осадков (мм)"
+
+#: vizualization.py:2288
+msgid "No data available for this station"
+msgstr "Нет данных для этой станции"
+
+#: vizualization.py:2327
+msgid "3 day mean"
+msgstr "Среднее за 3 дня"
+
+#: vizualization.py:2328
+msgid "5 day mean"
+msgstr "Среднее за 5 дней"
+
+#: vizualization.py:2330 vizualization.py:2331
+msgid "10 day mean"
+msgstr "Среднее за 10 дней"
+
+#: vizualization.py:2334
+msgid "for basin of"
+msgstr "для бассейна"
+
+#: vizualization.py:2334
+msgid "on"
+msgstr "на"
+
+#: vizualization.py:2343
+msgid "Mean legend entry"
+msgstr "Среднее"
+
+#: vizualization.py:2343
+msgid "Norm"
+msgstr "Норма"
+
+#: vizualization.py:2369
+msgid "Full range legend entry"
+msgstr "Мин-Макс"
+
+#: vizualization.py:2372
+msgid "90-percentile range legend entry"
+msgstr "5-95 процентиль"
+
+#: vizualization.py:2375
+msgid "50-percentile range legend entry"
+msgstr "25-75 процентиль"
+
+#: vizualization.py:2380
+msgid "Last year legend entry"
+msgstr "Прошлый год"
+
+#: vizualization.py:2358
+msgid "Current season {season}"
+msgstr "Текущий сезон {season}"
+
+#: vizualization.py:2359
+msgid "Previous season {season}"
+msgstr "Предыдущий сезон {season}"

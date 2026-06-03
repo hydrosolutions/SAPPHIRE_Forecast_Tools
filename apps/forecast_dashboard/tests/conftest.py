@@ -166,3 +166,35 @@ def skill_metric_response_json():
     path = FIXTURES_DIR / "skill_metric_response.json"
     with open(path) as f:
         return json.load(f)
+
+
+@pytest.fixture
+def snow_stats_available():
+    """Operator assertion that the preprocessing API has populated
+    snow stat columns.
+
+    Set ``SAPPHIRE_SNOW_STATS_AVAILABLE=true`` when the snow-stat
+    write-side population path
+    (apps/preprocessing_gateway/recalculate_snow_norms.py with stat
+    extension) has run against the database in use. This is an
+    **operator-level assertion** about the environment — not a
+    developer override. CI and staging set it per environment once
+    the population path is live; local developers set it when
+    running against a stack where they have run the recalc or
+    backfill at least once.
+
+    If the variable is unset, integration assertions that depend
+    on populated snow stat columns fail with a configuration
+    message rather than silently skipping (per the project's
+    Zero-Skips Policy).
+    """
+    val = os.environ.get("SAPPHIRE_SNOW_STATS_AVAILABLE")
+    if val != "true":
+        pytest.fail(
+            "SAPPHIRE_SNOW_STATS_AVAILABLE must be set to 'true' "
+            "to run snow stat integration assertions. This is an "
+            "operator assertion that the preprocessing API has "
+            "populated snow stat columns for the environment under "
+            "test. See conftest.py docstring."
+        )
+    return True

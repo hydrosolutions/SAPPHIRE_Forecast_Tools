@@ -1,3 +1,11 @@
+# DEPRECATED (2026-06-02). Use sync_long_horizon_hydrograph.py
+# instead. This script wrote norm-only monthly hydrograph rows
+# (`previous` and `current` were always None). The replacement
+# writes the full triad (norm + previous + current) for monthly
+# rows and additionally writes seasonal April-September rows.
+# Operator wrapper: bin/yearly_runoff_hydrograph_aggregation.sh.
+# This script may be deleted in a follow-up cleanup phase.
+
 """Yearly monthly discharge norm ingestion from iEH HF SDK.
 
 Fetches monthly discharge norms for every forecast-enabled site from the

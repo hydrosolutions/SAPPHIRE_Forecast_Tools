@@ -301,3 +301,139 @@ class TestCalculateSnowNormsFromApi:
         assert len(result) > 0
         assert result["snow_type"].iloc[0] == "SWE"
         assert (result["code"] == "19999").all()
+
+
+class TestCalculateSnowStatsFromApi:
+    """Unit tests for dg_utils.calculate_snow_stats_from_api()."""
+
+    expected_columns = [
+        "snow_type",
+        "code",
+        "dayofyear",
+        "count",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "q05",
+        "q25",
+        "q50",
+        "q75",
+        "q95",
+    ]
+    stat_columns = ["mean", "std", "min", "max", "q05", "q25", "q50", "q75", "q95"]
+
+    def test_snow_stats_populates_columns_from_multiyear_history(self):
+        """Stats are populated when enough years contribute to a DOY."""
+        # --- Arrange ---
+        rows = []
+        for year in range(2018, 2024):
+            for day, value in [(1, float(year - 2000)), (2, float(year - 1990))]:
+                rows.append(
+                    {
+                        "snow_type": "HS",
+                        "code": "19999",
+                        "date": pd.Timestamp(f"{year}-01-01") + pd.Timedelta(days=day - 1),
+                        "value": value,
+                        "norm": np.nan,
+                    }
+                )
+        page = pd.DataFrame(rows)
+
+        client = Mock()
+        client.read_snow.return_value = page
+
+        # --- Act ---
+        result = dg_utils.calculate_snow_stats_from_api(client, ["HS"], n_years_min=5)
+
+        # --- Assert ---
+        assert list(result.columns) == self.expected_columns
+
+        doy1 = result[(result["code"] == "19999") & (result["dayofyear"] == 1)]
+        assert len(doy1) == 1
+        assert doy1.iloc[0]["count"] == 6
+        for column in self.stat_columns:
+            assert pd.notna(doy1.iloc[0][column])
+            assert np.issubdtype(type(doy1.iloc[0][column]), np.number)
+
+    def test_snow_stats_threshold_keeps_rows_with_nan_stats(self):
+        """Below-threshold DOYs stay present with count but NaN stats."""
+        # --- Arrange ---
+        rows = []
+        for year in range(2021, 2024):
+            for day in [1, 2]:
+                rows.append(
+                    {
+                        "snow_type": "HS",
+                        "code": "19999",
+                        "date": pd.Timestamp(f"{year}-01-01") + pd.Timedelta(days=day - 1),
+                        "value": float(year + day),
+                        "norm": np.nan,
+                    }
+                )
+        page = pd.DataFrame(rows)
+
+        client = Mock()
+        client.read_snow.return_value = page
+
+        # --- Act ---
+        result = dg_utils.calculate_snow_stats_from_api(client, ["HS"])
+
+        # --- Assert ---
+        assert not result.empty
+        assert set(result["dayofyear"]) == {1, 2}
+        assert (result["count"] == 3).all()
+        assert result[self.stat_columns].isna().all().all()
+
+    def test_snow_stats_uses_existing_dayofyear_leap_alignment(self):
+        """Leap-year day 366 remains distinct from non-leap day 365."""
+        # --- Arrange ---
+        page = pd.DataFrame(
+            [
+                {
+                    "snow_type": "HS",
+                    "code": "19999",
+                    "date": pd.Timestamp("2024-12-31"),
+                    "value": 10.0,
+                    "norm": np.nan,
+                },
+                {
+                    "snow_type": "HS",
+                    "code": "19999",
+                    "date": pd.Timestamp("2023-12-31"),
+                    "value": 20.0,
+                    "norm": np.nan,
+                },
+            ]
+        )
+
+        client = Mock()
+        client.read_snow.return_value = page
+
+        # --- Act ---
+        result = dg_utils.calculate_snow_stats_from_api(client, ["HS"])
+
+        # --- Assert ---
+        assert 366 in set(result["dayofyear"])
+        assert 365 in set(result["dayofyear"])
+        assert len(result[result["dayofyear"] == 366]) == 1
+        assert len(result[result["dayofyear"] == 365]) == 1
+
+    def test_snow_stats_empty_api_response_returns_typed_frame(self):
+        """An empty API response returns a shaped frame with stable dtypes."""
+        # --- Arrange ---
+        client = Mock()
+        client.read_snow.return_value = pd.DataFrame()
+
+        # --- Act ---
+        result = dg_utils.calculate_snow_stats_from_api(client, ["HS"])
+
+        # --- Assert ---
+        assert len(result) == 0
+        assert list(result.columns) == self.expected_columns
+        assert result["snow_type"].dtype == object
+        assert result["code"].dtype == object
+        assert pd.api.types.is_integer_dtype(result["dayofyear"])
+        assert pd.api.types.is_integer_dtype(result["count"])
+        for column in self.stat_columns:
+            assert pd.api.types.is_float_dtype(result[column])

@@ -1,42 +1,14 @@
-"""Unit tests for _snow_display_window (snow visualization display window).
+"""Unit tests for snow_display_window (snow visualization display window).
 
 Tests the calendar-year and hydrological-year window computation logic used
 by the snow visualization panel.
-
-NOTE: vizualization.py is a large Panel dashboard file that imports Panel,
-Bokeh, Docker SDK, and many other dependencies not available in the test
-environment. We therefore cannot import it directly. Instead, we replicate
-the algorithm verbatim here and test that local copy. Any drift between
-the source and this copy will be caught during code review.
-
-Source: apps/forecast_dashboard/src/vizualization.py, lines 2174-2186.
 """
 
 from datetime import date
 
 import pandas as pd
 import pytest
-
-
-# ---------------------------------------------------------------------------
-# Local replica of the production algorithm
-# (kept verbatim to match vizualization.py — do not simplify)
-# ---------------------------------------------------------------------------
-
-
-def _snow_display_window(start_month, start_day, ref_date):
-    """Return (begin, end) Timestamps for the snow display window."""
-    from datetime import date, timedelta
-    if start_month == 1 and start_day == 1:
-        return (pd.Timestamp(ref_date.year, 1, 1),
-                pd.Timestamp(ref_date.year, 12, 31))
-    year_start = date(ref_date.year, start_month, start_day)
-    if ref_date >= year_start:
-        begin = year_start
-    else:
-        begin = date(ref_date.year - 1, start_month, start_day)
-    end = date(begin.year + 1, start_month, start_day) - timedelta(days=1)
-    return pd.Timestamp(begin), pd.Timestamp(end)
+from src.snow_window import snow_display_window as _snow_display_window
 
 
 # ===========================================================================

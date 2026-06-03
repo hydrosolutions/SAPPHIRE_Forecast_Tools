@@ -18,7 +18,9 @@ This module is the first step in the operational forecast pipeline. It runs dail
 | `Quantile_Mapping_OP.py` | Downloads and bias-corrects operational ECMWF IFS forecasts (control member + ensemble) |
 | `extend_era5_reanalysis.py` | Extends historical ERA5-Land reanalysis with recent operational data |
 | `snow_data_operational.py` | Processes operational snow data (SWE, snow depth, snow melt and direct precipitation runoff) |
+| `recalculate_snow_norms.py` | Recalculates yearly snow norms and dashboard-facing snow statistics from historical reanalysis CSVs |
 | `backfill_new_stations.py` | Detects new/stale stations and backfills their history to the API |
+| `bin/backfill_snow_stats_history.sh` | One-time wrapper that backfills historical snow statistics year by year |
 | `dg_utils.py` | Utility functions for data gateway interactions and quantile mapping |
 
 ### Supporting Scripts (not run operationally)
@@ -93,6 +95,25 @@ SAPPHIRE_SYNC_MODE=initial uv run backfill_new_stations.py
 # Docker (overrides the default CMD)
 docker run mabesa/sapphire-prepgateway:latest uv run backfill_new_stations.py
 ```
+
+### Yearly snow norms and statistics
+
+Run the yearly snow recalculation after the snow reanalysis files have been updated for the previous season, normally at the end of August. The yearly wrapper now writes both the climatological norm fields and the dashboard-facing snow statistic fields in one run; no separate statistics invocation is needed.
+
+```bash
+bash bin/yearly_snow_norm_recalculation.sh /path/to/config/.env
+```
+
+The command requires a valid env file path and the SAPPHIRE API stack to be running. Logs are written to `${ieasyhydroforecast_data_root_dir}/logs/snow_norm_recalc/`; `LOG_DIR` and the `prepgw-snow-norm-recalc` container name are historical names and now cover both norm and statistic recalculation. Expect about 15-20 minutes per year (P3 measured 954 seconds for 2026 with `SWE`, `HS`, and `RoF`).
+
+Run the historical snow-stat backfill once after this work is deployed to populate historical years that predate the unified yearly recalculation. It uses the same env file and running API stack, skips the current year, can resume from `${ieasyhydroforecast_data_root_dir}/logs/snow_stat_backfill/backfill_progress.txt`, and writes logs under `${ieasyhydroforecast_data_root_dir}/logs/snow_stat_backfill/`.
+
+```bash
+ieasyhydroforecast_env_file_path=/path/to/config/.env \
+  bash bin/backfill_snow_stats_history.sh --start-year 2010
+```
+
+The snow tab depends on these statistic columns for the percentile, last-year, and current-year bands. Dashboard work on `develop_dashboard_snow_display` is paused until the merged preprocessing output is available.
 
 ### Sync mode summary
 

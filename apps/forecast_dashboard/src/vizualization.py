@@ -34,6 +34,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
+from .snow_window import is_hydrological_year_display, snow_display_window
 import subprocess
 
 # Import local library
@@ -2232,19 +2233,25 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
     return figure
 
 
-def _snow_display_window(start_month, start_day, ref_date):
-    """Return (begin, end) Timestamps for the snow display window."""
-    from datetime import date, timedelta
-    if start_month == 1 and start_day == 1:
-        return (pd.Timestamp(ref_date.year, 1, 1),
-                pd.Timestamp(ref_date.year, 12, 31))
-    year_start = date(ref_date.year, start_month, start_day)
-    if ref_date >= year_start:
-        begin = year_start
+def _snow_season_label(reference, start_month, start_day):
+    """Return the YYYY/YY+1 label for the hydrological year containing reference."""
+    if (reference.month, reference.day) >= (start_month, start_day):
+        start_year = reference.year
     else:
-        begin = date(ref_date.year - 1, start_month, start_day)
-    end = date(begin.year + 1, start_month, start_day) - timedelta(days=1)
-    return pd.Timestamp(begin), pd.Timestamp(end)
+        start_year = reference.year - 1
+    end_year_two_digit = (start_year + 1) % 100
+    return f"{start_year}/{end_year_two_digit:02d}"
+
+
+def _snow_current_season_reference(current_year, date_picker, display_begin):
+    """Return the reference date for the current snow season label."""
+    if "current_year" in current_year.columns:
+        non_null_current = current_year[current_year["current_year"].notna()]
+        if not non_null_current.empty:
+            return non_null_current["date"].max().date()
+    if pd.notna(date_picker):
+        return date_picker.date()
+    return display_begin.date()
 
 
 def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
@@ -2292,13 +2299,8 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     station_data['year'] = station_data['date'].dt.year
     station_data['doy'] = station_data['date'].dt.dayofyear
 
-    # Convert HS from meters to centimeters
-    if variable == 'HS':
-        station_data[variable] = station_data[variable] * 100
-        station_data['norm'] = station_data['norm'] * 100
-
     # Get data for the configured display window
-    display_begin, display_end = _snow_display_window(
+    display_begin, display_end = snow_display_window(
         snow_display_start_month, snow_display_start_day,
         date_picker.date() if hasattr(date_picker, 'date') else date_picker)
     current_year = station_data[
@@ -2306,21 +2308,9 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
         (station_data['date'] <= display_end)
     ].copy()
     current_year = current_year.sort_values('date')
-    norm_snow = current_year[['doy', 'norm', 'date']].copy()
-    norm_snow.rename(columns={"norm": variable}, inplace=True)
 
     # Get the forecasts for the selected date
     forecasts = current_year[current_year['date'] >= date_picker].copy()
-
-    # Calculate norm: mean by day-of-year, excluding current year
-    historical_data = station_data[station_data['year'] != date_picker.year]
-    # norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
-    
-    # Map doy back to dates in the current year for plotting
-    current_year_value = date_picker.year
-    # norm_snow['date'] = norm_snow['doy'].apply(
-    #     lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
-    # norm_snow = norm_snow.sort_values('date')
 
     # Get predictor period data — predictor data is only available for short
     # horizons. Under month/quarter/season the caller passes an empty
@@ -2351,55 +2341,73 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
     mean_value = predictor_snow[variable].mean()
     decimals = config['decimals']
-    current_year_text = f"{_('Current year')}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else _('Current year')
 
     # Forecast label
     forecast_text = _('Forecast')
 
+    mean_line_col = 'mean' if 'mean' in current_year.columns and not current_year['mean'].isnull().all() else 'norm'
+    mean_line_label = _('Mean legend entry') if mean_line_col == 'mean' else _('Norm')
+    current_year_col = 'current_year' if 'current_year' in current_year.columns else variable
+    if is_hydrological_year_display(snow_display_start_month, snow_display_start_day):
+        current_ref = _snow_current_season_reference(
+            current_year, date_picker, display_begin)
+        current_season = _snow_season_label(
+            current_ref, snow_display_start_month, snow_display_start_day)
+        previous_season = _snow_season_label(
+            current_ref - dt.timedelta(days=1),
+            snow_display_start_month,
+            snow_display_start_day)
+        current_year_label = _("Current season {season}").format(season=current_season)
+        last_year_label = _("Previous season {season}").format(season=previous_season)
+    else:
+        current_year_label = _("Current year")
+        last_year_label = _("Last year legend entry")
+    current_year_text = f"{current_year_label}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else current_year_label
+
     # Calculate y-axis limits safely
-    all_values = pd.concat([current_year[variable], norm_snow[variable]]).dropna()
+    y_axis_cols = [
+        'min', 'max', '5%', '25%', '75%', '95%', mean_line_col,
+        'last_year', current_year_col, variable
+    ]
+    if mean_line_col == 'norm':
+        y_axis_cols.append('norm')
+    visible_cols = [
+        col for index, col in enumerate(y_axis_cols)
+        if col in current_year.columns and col not in y_axis_cols[:index]
+    ]
+    all_values = pd.concat([current_year[col] for col in visible_cols]).dropna()
     if not all_values.empty:
         y_min = all_values.min() * 0.9
         y_max = all_values.max() * 1.1
     else:
         y_min, y_max = 0, 1
 
-    # Norm curve
-    hv_norm = hv.Curve(
-        norm_snow,
-        kdims='date',
-        vdims=variable,
-        label=_('Norm'))
-    hv_norm.opts(
-        interpolation='linear',
-        color=runoff_mean_color,
-        show_legend=True)
+    # Structural sibling of the daily hydrograph statistical overlay block above.
+    full_range_area = plot_runoff_range_area(
+        current_year, 'date', 'min', 'max',
+        _("Full range legend entry"), runoff_full_range_color)
+    area_05_95 = plot_runoff_range_area(
+        current_year, 'date', '5%', '95%',
+        _("90-percentile range legend entry"), runoff_90percentile_range_color)
+    area_25_75 = plot_runoff_range_area(
+        current_year, 'date', '25%', '75%',
+        _("50-percentile range legend entry"), runoff_50percentile_range_color)
+    mean_line = plot_runoff_line(
+        current_year, 'date', mean_line_col, mean_line_label, runoff_mean_color)
+    last_year_line = plot_runoff_line(
+        current_year, 'date', 'last_year',
+        last_year_label, runoff_last_year_color)
+    current_year_line = plot_runoff_line(
+        current_year, 'date', current_year_col,
+        current_year_text, runoff_current_year_color)
 
-    # Current year curve
-    hv_current_year = hv.Curve(
-        current_year,
-        kdims='date',
-        vdims=variable,
-        label=current_year_text)
-    hv_current_year.opts(
-        interpolation='linear',
-        color=runoff_current_year_color,
-        show_legend=True)
+    figure = full_range_area * area_05_95 * area_25_75 * mean_line * last_year_line * current_year_line
 
     # Forecast curve (if forecasts exist)
     if not forecasts.empty:
-        hv_forecast = hv.Curve(
-            forecasts,
-            kdims='date',
-            vdims=variable,
-            label=forecast_text)
-        hv_forecast.opts(
-            interpolation='linear',
-            color=runoff_forecast_color_list[3],
-            show_legend=True)
-        figure = hv_norm * hv_current_year * hv_forecast
-    else:
-        figure = hv_norm * hv_current_year
+        hv_forecast = plot_runoff_line(
+            forecasts, 'date', variable, forecast_text, runoff_forecast_color_list[3])
+        figure = figure * hv_forecast
 
     figure.opts(
         title=title_text,

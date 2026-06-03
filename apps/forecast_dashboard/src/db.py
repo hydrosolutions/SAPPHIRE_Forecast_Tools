@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+from datetime import date, datetime
 from functools import wraps
 
 import numpy as np
@@ -9,6 +9,7 @@ import requests
 
 from src import processing
 from src.gettext_config import _
+from src.snow_window import snow_display_window
 from dashboard.logger import setup_logger
 
 logger = setup_logger()
@@ -20,6 +21,20 @@ CURRENT_YEAR = datetime.now().year
 PREVIOUS_YEAR = CURRENT_YEAR - 1
 
 SNOW_VALUE_COLS = [f"value{i}" for i in range(1, 15)]
+SNOW_STAT_COLS = [
+    "norm", "mean", "min", "max",
+    "5%", "25%", "50%", "75%", "95%",
+    "last_year", "current_year",
+]
+SNOW_RENAME_MAP = {
+    "previous": "last_year",
+    "current": "current_year",
+    "q05": "5%",
+    "q25": "25%",
+    "q50": "50%",
+    "q75": "75%",
+    "q95": "95%",
+}
 
 # Neural Ensemble config
 NE_BASE_MODELS = ["TFT", "TiDE", "TSMixer"]
@@ -242,27 +257,71 @@ def get_temp(station) -> pd.DataFrame:
     return _get_meteo(station, "T")
 
 
-def _get_snow_single(station_code: str, snow_type: str, col_name: str) -> pd.DataFrame:
+def _get_snow_single(
+    station_code: str,
+    snow_type: str,
+    col_name: str,
+    display_start_month: int = 1,
+    display_start_day: int = 1,
+    ref_date: date | None = None,
+) -> pd.DataFrame:
+    contract_columns = ["code", "date", col_name, *SNOW_STAT_COLS]
+    effective_ref = ref_date or date.today()
+    display_begin, display_end = snow_display_window(
+        display_start_month,
+        display_start_day,
+        effective_ref,
+    )
     df = _read_data("preprocessing", "snow", {
         "snow_type": snow_type,
         "code": station_code,
-        "start_date": f"{PREVIOUS_YEAR}-01-01",
-        "end_date": f"{CURRENT_YEAR}-12-31",
+        "start_date": display_begin.strftime("%Y-%m-%d"),
+        "end_date": display_end.strftime("%Y-%m-%d"),
         "limit": 10000,
     })
-    df.rename(columns={"value": col_name}, inplace=True)
+    if df.empty:
+        return pd.DataFrame({
+            "code": pd.Series(dtype=object),
+            "date": pd.Series(dtype="datetime64[ns]"),
+            **{
+                column: pd.Series(dtype="float64")
+                for column in contract_columns
+                if column not in {"code", "date"}
+            },
+        })
+
+    df.rename(columns={"value": col_name, **SNOW_RENAME_MAP}, inplace=True)
     df.drop(columns=["snow_type", *SNOW_VALUE_COLS, "id"], inplace=True, errors="ignore")
+    for column in contract_columns:
+        if column not in df.columns:
+            df[column] = np.nan
+    df = df.reindex(columns=contract_columns)
     return _convert_na_to_nan(df)
 
 
 @_timed
-def get_snow_data(station) -> dict[str, pd.DataFrame]:
+def get_snow_data(
+    station,
+    display_start_month: int = 1,
+    display_start_day: int = 1,
+    snow_ref_date: date | None = None,
+) -> dict[str, pd.DataFrame]:
     code = _resolve_station(station)
-    return {
-        "HS":  _get_snow_single(code, "HS",  "HS"),
-        "RoF": _get_snow_single(code, "ROF", "RoF"),
-        "SWE": _get_snow_single(code, "SWE", "SWE"),
+    effective_ref = snow_ref_date or date.today()
+    snow_data = {
+        "HS": _get_snow_single(
+            code, "HS", "HS", display_start_month, display_start_day, effective_ref
+        ),
+        "RoF": _get_snow_single(
+            code, "ROF", "RoF", display_start_month, display_start_day, effective_ref
+        ),
+        "SWE": _get_snow_single(
+            code, "SWE", "SWE", display_start_month, display_start_day, effective_ref
+        ),
     }
+    hs_stat_columns = ["HS", *SNOW_STAT_COLS]
+    snow_data["HS"][hs_stat_columns] = snow_data["HS"][hs_stat_columns] * 100
+    return snow_data
 
 
 @_timed
@@ -636,16 +695,43 @@ def get_long_forecasts_season(station=None) -> pd.DataFrame:
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
-def get_data(horizon, station, all_stations) -> dict:
+def get_data(
+    horizon,
+    station,
+    all_stations,
+    snow_display_start_month: int = 1,
+    snow_display_start_day: int = 1,
+) -> dict:
     add_labels = lambda df: processing.add_labels_to_hydrograph(df, all_stations)
     i18n_models = lambda df: processing.internationalize_forecast_model_names(_, df)
 
     if horizon == "month":
-        return _get_data_monthly(station, all_stations, add_labels, i18n_models)
+        return _get_data_monthly(
+            station,
+            all_stations,
+            add_labels,
+            i18n_models,
+            snow_display_start_month,
+            snow_display_start_day,
+        )
     if horizon == "quarter":
-        return _get_data_quarter(station, all_stations, add_labels, i18n_models)
+        return _get_data_quarter(
+            station,
+            all_stations,
+            add_labels,
+            i18n_models,
+            snow_display_start_month,
+            snow_display_start_day,
+        )
     if horizon == "season":
-        return _get_data_season(station, all_stations, add_labels, i18n_models)
+        return _get_data_season(
+            station,
+            all_stations,
+            add_labels,
+            i18n_models,
+            snow_display_start_month,
+            snow_display_start_day,
+        )
 
     hin = _horizon_in_year_col(horizon)
 
@@ -654,7 +740,9 @@ def get_data(horizon, station, all_stations) -> dict:
         "hydrograph_pentad_all": add_labels(get_hydrograph_pentad_all(horizon, station)),
         "rain":                 get_rain(station),
         "temp":                 get_temp(station),
-        "snow_data":            get_snow_data(station),
+        "snow_data":            get_snow_data(
+            station, snow_display_start_month, snow_display_start_day
+        ),
         "ml_forecast":          add_labels(get_ml_forecast(horizon, station)),
         "linreg_predictor":     add_labels(get_linreg_predictor(horizon, station)),
         "forecasts_all":        i18n_models(add_labels(get_forecasts_all(horizon, station))),
@@ -682,7 +770,14 @@ def get_data(horizon, station, all_stations) -> dict:
     return data
 
 
-def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
+def _get_data_monthly(
+    station,
+    all_stations,
+    add_labels,
+    i18n_models,
+    snow_display_start_month: int = 1,
+    snow_display_start_day: int = 1,
+) -> dict:
     """Load data for monthly horizon — only long forecasts + daily hydrograph."""
     supported_modes = os.getenv(
         "ieasyhydroforecast_ml_long_term_supported_modes", ""
@@ -731,7 +826,9 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
         "hydrograph_pentad_all": pd.DataFrame(),
         "rain":                 get_rain(station),
         "temp":                 get_temp(station),
-        "snow_data":            get_snow_data(station),
+        "snow_data":            get_snow_data(
+            station, snow_display_start_month, snow_display_start_day
+        ),
         "ml_forecast":          pd.DataFrame(),
         "linreg_predictor":     pd.DataFrame(),
         "forecasts_all":        forecasts_all,
@@ -758,7 +855,14 @@ def _get_data_monthly(station, all_stations, add_labels, i18n_models) -> dict:
     return data
 
 
-def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
+def _get_data_quarter(
+    station,
+    all_stations,
+    add_labels,
+    i18n_models,
+    snow_display_start_month: int = 1,
+    snow_display_start_day: int = 1,
+) -> dict:
     """Load data for quarterly horizon — only long forecasts + daily hydrograph."""
     forecasts_all = i18n_models(add_labels(get_long_forecasts_quarter(station)))
     forecast_stats = i18n_models(get_forecast_stats("quarter", station))
@@ -784,7 +888,9 @@ def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
         "hydrograph_pentad_all": pd.DataFrame(),
         "rain":                  get_rain(station),
         "temp":                  get_temp(station),
-        "snow_data":             get_snow_data(station),
+        "snow_data":             get_snow_data(
+            station, snow_display_start_month, snow_display_start_day
+        ),
         "ml_forecast":           pd.DataFrame(),
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,
@@ -792,7 +898,14 @@ def _get_data_quarter(station, all_stations, add_labels, i18n_models) -> dict:
     }
 
 
-def _get_data_season(station, all_stations, add_labels, i18n_models) -> dict:
+def _get_data_season(
+    station,
+    all_stations,
+    add_labels,
+    i18n_models,
+    snow_display_start_month: int = 1,
+    snow_display_start_day: int = 1,
+) -> dict:
     """Load data for seasonal horizon — only long forecasts + daily hydrograph."""
     forecasts_all = i18n_models(add_labels(get_long_forecasts_season(station)))
     forecast_stats = i18n_models(get_forecast_stats("season", station))
@@ -818,7 +931,9 @@ def _get_data_season(station, all_stations, add_labels, i18n_models) -> dict:
         "hydrograph_pentad_all": pd.DataFrame(),
         "rain":                  get_rain(station),
         "temp":                  get_temp(station),
-        "snow_data":             get_snow_data(station),
+        "snow_data":             get_snow_data(
+            station, snow_display_start_month, snow_display_start_day
+        ),
         "ml_forecast":           pd.DataFrame(),
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,

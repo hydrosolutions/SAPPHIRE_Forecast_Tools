@@ -8,6 +8,7 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Page, expect
 import tag_library as tl
 import datetime as dt
+from src import db as dashboard_db
 
 
 TEST_PENTAD = False
@@ -1728,7 +1729,7 @@ def test_decad(page: Page):
     time.sleep(SLEEP)
 
 
-def test_local(page: Page):
+def test_local(snow_stats_available, page: Page):
     if not TEST_LOCAL:
         print("#### Skipping LOCAL test...")
         return
@@ -1875,6 +1876,36 @@ def test_local(page: Page):
         assert db["precipitation"],  f"Station {code}: no precipitation data in DB"
         assert db["temperature"],    f"Station {code}: no temperature data in DB"
         assert snow_total > 0,       f"Station {code}: no snow data in DB"
+
+        api_fields = [
+            "min", "max", "q05", "q25", "q50", "q75", "q95",
+            "mean", "previous", "current",
+        ]
+        for stype in ("HS", "ROF", "SWE"):
+            snow_rows = db[f"snow_{stype}"]
+            assert snow_rows, f"Station {code}: no snow {stype} rows in DB"
+            for field in api_fields:
+                present = [
+                    r.get(field) for r in snow_rows
+                    if r.get(field) is not None
+                ]
+                assert len(present) > 0, (
+                    f"Snow API field {field!r} is null across all "
+                    f"{len(snow_rows)} fetched rows for {stype}; population "
+                    f"path may have regressed."
+                )
+
+        dashboard_cols = [
+            "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
+        ]
+        dashboard_snow_data = dashboard_db.get_snow_data(code)
+        for stype, snow_df in dashboard_snow_data.items():
+            for col in dashboard_cols:
+                assert col in snow_df.columns, (
+                    f"Dashboard snow contract missing column {col!r} for "
+                    f"{stype}; check apps/forecast_dashboard/src/db.py "
+                    f"rename map."
+                )
 
         # Each pane renders ≥1 Bokeh <canvas> when its data is present; missing
         # data falls back to a markdown "No ... data" pane (no canvas). With
