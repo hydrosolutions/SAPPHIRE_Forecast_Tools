@@ -819,7 +819,17 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
             ("Оправдываемость",               "accuracy"),
         ]
     compared_count = 0
-    for row in page.locator('div.tabulator-row').all():
+    # Scope to the "Сводная таблица" (Summary table) card only.
+    # On the MONTH horizon the dashboard also renders a "Current month forecast"
+    # (month_0) card whose tabulator shares the same 'Модель' and 'Прогн. расх. воды'
+    # columns. summary_api is fetched for month_1 only, so iterating all
+    # div.tabulator-row on the page would wrongly compare month_0 UI values against
+    # month_1 API values. Scoping to the card is a no-op for short-term horizons
+    # (they have no month_0 card).
+    summary_card = page.locator("div.card").filter(
+        has=page.get_by_text("Сводная таблица", exact=True)
+    )
+    for row in summary_card.locator('div.tabulator-row').all():
         model_cell = row.locator('div[tabulator-field="Модель"]')
         if model_cell.count() == 0:
             continue
