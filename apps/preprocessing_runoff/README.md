@@ -99,6 +99,49 @@ docker run --rm --network host \
 - On macOS, `host.docker.internal` resolves to the host machine, allowing the container to reach the SSH tunnel
 - The `IEASYHYDROHF_HOST` environment variable overrides the value in the .env file
 
+## Yearly Long-Horizon Hydrograph Aggregation
+
+For the long-horizon (monthly + seasonal) runoff hydrograph table,
+the operator wrapper `bin/yearly_runoff_hydrograph_aggregation.sh`
+runs the long-horizon writer (`sync_long_horizon_hydrograph.py`)
+in a Docker container. The writer pulls monthly discharge norms
+from the iEH HF SDK and, in a single pass, writes the **full
+triad** (`norm` + `previous-year` + `current-year`) for every
+station-month plus a seasonal **April–September** aggregate row
+per station per year.
+
+**Cadence:** once a year, during the yearly maintenance window
+(e.g., 1 January 03:00 UTC).
+
+**Invocation:**
+
+```bash
+# Use current calendar year (default)
+bash bin/yearly_runoff_hydrograph_aggregation.sh /path/to/config/.env
+
+# Backfill a specific year
+bash bin/yearly_runoff_hydrograph_aggregation.sh /path/to/config/.env --target-year 2024
+```
+
+**Prerequisites:**
+- SAPPHIRE preprocessing API up and reachable
+- iEasyHydro HF SSH tunnel up (the wrapper establishes it via
+  `establish_ssh_tunnel`)
+
+**Behavior:** Stations whose monthly norm SDK call returns a
+non-12 result or raises are **skipped** and the run continues
+for the remaining stations (skip-and-continue P1-fix at commit
+`aeceebe`). This avoids one bad station blocking the entire
+yearly aggregation.
+
+**Predecessor:** The old `sync_monthly_norms.py` script
+(yearly-cron-launched via the retired Luigi task
+`YearlyMonthlyNormsRecalculation`) only wrote the norm column
+and left `previous` / `current` NULL. It is now **deprecated**.
+Operators should switch to
+`bin/yearly_runoff_hydrograph_aggregation.sh` for all yearly
+hydrograph aggregation runs.
+
 ## Data Flow
 
 ```
