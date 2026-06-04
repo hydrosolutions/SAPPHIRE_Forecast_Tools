@@ -662,19 +662,36 @@ def calculate_snow_stats_from_api(
 # --------------------------------------------------------------------
 
 
-def _read_existing_norms(
+SNOW_PRESERVED_STAT_FIELDS = (
+    "count",
+    "mean",
+    "std",
+    "min",
+    "max",
+    "q05",
+    "q25",
+    "q50",
+    "q75",
+    "q95",
+    "previous",
+    "current",
+)
+
+
+def _read_existing_snow_fields(
     client,
     snow_type: str,
     codes: list[str],
     start_date: str,
     end_date: str,
 ) -> dict:
-    """Read existing norm values from the API to prevent overwrite.
+    """Read existing snow metadata from the API to prevent overwrite.
 
-    Returns a dict keyed by ``(code, date_str)`` → ``norm_value``.
+    Returns a dict keyed by ``(code, date_str)`` with existing norm and
+    statistical fields.
     On any failure, returns an empty dict (writes proceed with None).
     """
-    norms: dict = {}
+    existing: dict = {}
     try:
         for code in codes:
             api_df = client.read_snow(
@@ -687,19 +704,29 @@ def _read_existing_norms(
             if api_df.empty:
                 continue
             for _, row in api_df.iterrows():
-                norm_val = row.get("norm")
-                if pd.notna(norm_val):
-                    d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
-                    norms[(str(row["code"]), d)] = float(norm_val)
+                d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
+                values = {}
+                for field in ("norm", *SNOW_PRESERVED_STAT_FIELDS):
+                    field_val = row.get(field)
+                    if pd.notna(field_val):
+                        values[field] = float(field_val)
+                if values:
+                    existing[(str(row["code"]), d)] = values
     except Exception as e:
         logger.warning(
-            "Could not read existing norms from API (%s): %s. "
-            "Proceeding without norm preservation.",
+            "Could not read existing snow metadata from API (%s): %s. "
+            "Proceeding without metadata preservation.",
             snow_type,
             e,
         )
         return {}
-    return norms
+    return existing
+
+
+def _format_existing_snow_field(field: str, value: float):
+    if field == "count":
+        return int(value)
+    return round(value, 3)
 
 
 def write_snow_to_api(
@@ -834,10 +861,11 @@ def write_snow_to_api(
         list(codes),
     )
 
-    # Read existing norms so we don't clobber them with None
+    # Read existing metadata so operational writes don't clobber full-year
+    # norms/statistics produced by recalculate_snow_norms.py.
     start_str = data_to_write["date"].min().strftime("%Y-%m-%d")
     end_str = data_to_write["date"].max().strftime("%Y-%m-%d")
-    existing_norms = _read_existing_norms(
+    existing_snow_fields = _read_existing_snow_fields(
         client,
         snow_type,
         [str(c) for c in codes],
@@ -866,25 +894,50 @@ def write_snow_to_api(
 
         date_str = date_obj.strftime("%Y-%m-%d")
         code_str = str(row["code"])
+        existing_fields = existing_snow_fields.get((code_str, date_str), {})
 
         # Determine norm: prefer incoming, fall back to existing API
         local_norm = None
         if "norm" in row and pd.notna(row.get("norm")):
             local_norm = round(float(row["norm"]), 3)
-        elif (code_str, date_str) in existing_norms:
-            local_norm = round(existing_norms[(code_str, date_str)], 3)
+        elif "norm" in existing_fields:
+            local_norm = round(existing_fields["norm"], 3)
+
+        local_value = (
+            round(float(row[main_value_col]), 3)
+            if main_value_col and pd.notna(row.get(main_value_col))
+            else None
+        )
 
         record = {
             "snow_type": snow_type.upper(),
             "code": code_str,
             "date": date_str,
-            "value": (
-                round(float(row[main_value_col]), 3)
-                if main_value_col and pd.notna(row.get(main_value_col))
-                else None
-            ),
+            "value": local_value,
             "norm": local_norm,
+            "current": (
+                local_value
+                if local_value is not None
+                else (
+                    _format_existing_snow_field("current", existing_fields["current"])
+                    if "current" in existing_fields
+                    else None
+                )
+            ),
         }
+        for field in SNOW_PRESERVED_STAT_FIELDS:
+            if field in ("previous", "current"):
+                continue
+            record[field] = (
+                _format_existing_snow_field(field, existing_fields[field])
+                if field in existing_fields
+                else None
+            )
+        record["previous"] = (
+            _format_existing_snow_field("previous", existing_fields["previous"])
+            if "previous" in existing_fields
+            else None
+        )
 
         # Add elevation band values (value1-value14)
         for band_num, col_name in value_columns.items():

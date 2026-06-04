@@ -2023,6 +2023,65 @@ class TestSnowNormPreservation:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
+    def test_existing_stats_preserved_and_current_updated(self, mock_client_class):
+        """Operational writes keep stat fields and set current from new value."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": ["12345"],
+                    "snow_type": ["SWE"],
+                    "value": [100.0],
+                    "norm": [42.5],
+                    "count": [20],
+                    "mean": [43.0],
+                    "std": [4.5],
+                    "min": [10.0],
+                    "max": [80.0],
+                    "q05": [12.0],
+                    "q25": [30.0],
+                    "q50": [45.0],
+                    "q75": [60.0],
+                    "q95": [75.0],
+                    "previous": [91.25],
+                    "current": [100.0],
+                }
+            )
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": [12345],
+                    "SWE": [105.125],
+                }
+            )
+
+            result = dg_utils.write_snow_to_api(data, "SWE", "test_hru", mode="initial")
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 1
+            record = records[0]
+            assert record["value"] == 105.125
+            assert record["current"] == 105.125
+            assert record["norm"] == 42.5
+            assert record["count"] == 20
+            assert record["previous"] == 91.25
+            assert record["q05"] == 12.0
+            assert record["q50"] == 45.0
+            assert record["q95"] == 75.0
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
     def test_local_norm_takes_precedence(self, mock_client_class):
         """Incoming data has norm → overrides existing API norm."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
