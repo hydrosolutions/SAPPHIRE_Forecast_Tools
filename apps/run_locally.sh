@@ -57,7 +57,7 @@
 #
 # Maintenance targets:
 #   maintenance                              All maintenance tasks
-#   maintenance:preprocessing_runoff         Runoff gap-filling (30-day lookback)
+#   maintenance:preprocessing_runoff         Runoff gap-filling + long-horizon hydrograph
 #   maintenance:preprocessing_gateway        Extend ERA5 reanalysis data
 #   maintenance:linear_regression            Linear regression hindcast
 #   maintenance:machine_learning             ML NaN recalc + gap-fill + new stations
@@ -689,14 +689,25 @@ run_long_term_forecasting_operational() {
 # ---------------------------------------------------------------------------
 
 run_maintenance_preprocessing_runoff() {
-    banner "Maintenance: preprocessing_runoff --maintenance"
+    banner "Maintenance: preprocessing_runoff --maintenance + long-horizon hydrograph"
     local start
     start=$(get_timestamp)
+    local rc=0
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
     > "$CURRENT_MODULE_LOG"
-    run_in_venv preprocessing_runoff preprocessing_runoff.py -- --maintenance
-    local rc=$?
+    run_in_venv preprocessing_runoff preprocessing_runoff.py -- --maintenance || rc=$?
+
+    if [ $rc -eq 0 ]; then
+        log INFO "Daily runoff maintenance completed; syncing long-horizon hydrograph norms"
+        if [ -n "${RUNOFF_LONG_HORIZON_TARGET_YEAR:-}" ]; then
+            log INFO "  Long-horizon target year: ${RUNOFF_LONG_HORIZON_TARGET_YEAR}"
+            run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
+                --target-year "${RUNOFF_LONG_HORIZON_TARGET_YEAR}" || rc=$?
+        else
+            run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py || rc=$?
+        fi
+    fi
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
@@ -1578,7 +1589,7 @@ Operational targets:
 
 Maintenance targets:
   maintenance             Run all maintenance tasks (gap-fill + hindcast)
-  maintenance:preprocessing_runoff    Runoff gap-filling (30-day lookback)
+  maintenance:preprocessing_runoff    Runoff gap-filling + long-horizon hydrograph
   maintenance:preprocessing_gateway   Extend ERA5 reanalysis data
   maintenance:linear_regression       Linear regression hindcast
   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
@@ -1619,6 +1630,9 @@ Environment variables:
   LT_OPERATIONAL_ISSUE_DAYS            Days of month for LT issue window (default: "10 25").
                                         25th runs all horizons; 10th runs monthly only.
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
+  RUNOFF_LONG_HORIZON_TARGET_YEAR        Optional target year for monthly/seasonal runoff
+                                        hydrograph rows in maintenance:preprocessing_runoff.
+                                        Defaults to the current calendar year.
   ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm, uzhm).
                                           Demo/uzhm skip: preprocessing_gateway, machine_learning, long_term_forecasting.
   ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
