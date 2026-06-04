@@ -1583,7 +1583,7 @@ least five historical years.
 
 ```text
 ${REPO}/apps/long_term_forecasting/dev_code/simulate_forecasts.py
-Docker image: mabesa/sapphire-long-term-forecasting:${ieasyhydroforecast_backend_docker_image_tag}
+Docker image: mabesa/sapphire-lt-forecasting:${ieasyhydroforecast_backend_docker_image_tag}
 ```
 
 ### Depends on
@@ -1614,7 +1614,7 @@ source bin/utils/common_functions.sh
 read_configuration "$ENV_FILE"
 
 export BACKEND_TAG="${ieasyhydroforecast_backend_docker_image_tag:-latest}"
-export IMAGE_ID="mabesa/sapphire-long-term-forecasting:${BACKEND_TAG}"
+export IMAGE_ID="mabesa/sapphire-lt-forecasting:${BACKEND_TAG}"
 export LOG_DIR="${ieasyhydroforecast_data_root_dir}/logs/lt_hindcast_backfill"
 mkdir -p "$LOG_DIR"
 

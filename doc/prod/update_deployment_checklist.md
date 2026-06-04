@@ -334,7 +334,7 @@ These are the `apps/*` layer images run by Luigi tasks and dashboards.
 
 - [ ] **Pull long-term forecasting image** (new since 2026-01-30)
   ```bash
-  docker pull mabesa/sapphire-long-term-forecasting:local
+  docker pull mabesa/sapphire-lt-forecasting:local
   ```
 
 - [ ] **Pull postprocessing image** (operational app — distinct from the service-side image)
