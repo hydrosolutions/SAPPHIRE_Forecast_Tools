@@ -860,6 +860,150 @@ If the container exits non-zero:
 
 ---
 
+## P1.5: Historical snow value backfill (workaround)
+
+### Goal
+
+Populate `snow.value` for the full historical date range across all
+configured snow types and stations. This phase is a workaround for two
+known bugs in the standard P1 write path that together leave ~96% of
+`snow.value` NULL after P1 completes. P3 (`recalculate_snow_norms.py`)
+requires populated historical `snow.value` to compute meaningful
+climatologies, so this phase must run between P1 and P3.
+
+### Files / scripts invoked
+
+```text
+${REPO}/bin/initialize_snow_history.sh
+${REPO}/bin/utils/common_functions.sh
+Docker image: mabesa/sapphire-prepgateway:${ieasyhydroforecast_backend_docker_image_tag}
+```
+
+The script writes a small Python helper to a temp path and runs it
+inside the prepgateway image (which already has python3 + urllib in
+stdlib). The helper reads each snow CSV under
+`${ieasyhydroforecast_data_ref_dir}/intermediate_data/snow_data/`, filters
+rows where the value column is a parseable real number, and POSTs
+minimal payloads `{snow_type, code, date, value}` to the preprocessing
+API's `/snow/` endpoint in batches.
+
+### Depends on
+
+P0.5, P1.
+
+### Expected duration
+
+5-15 minutes for a typical 26-year × 17-station deployment with two HRU
+models. Scales linearly with the number of (snow_type, HRU) CSV files
+under `intermediate_data/snow_data/`.
+
+### Log location
+
+```text
+${ieasyhydroforecast_data_root_dir}/logs/snow_history_init/
+${ieasyhydroforecast_data_root_dir}/logs/snow_history_init/snow_history_init_<timestamp>.log
+```
+
+### Server commands
+
+Skip P1.5 if P0 classifies snow `value_rows` as `DONE` (i.e., already
+populated for the full historical range). Run after P1 completes.
+
+```bash
+cd "$REPO"
+
+# 1. Dry run — discover CSVs, count records with values, do NOT POST.
+bash bin/initialize_snow_history.sh "$ENV_FILE" --dry-run
+
+# 2. Real run — POSTs records in batches of 500.
+bash bin/initialize_snow_history.sh "$ENV_FILE"
+```
+
+Monitoring (the script tees output to the log path above):
+
+```bash
+LATEST_LOG="$(ls -t "${ieasyhydroforecast_data_root_dir}/logs/snow_history_init/"snow_history_init_*.log | head -1)"
+tail -f "$LATEST_LOG"
+```
+
+### Why this workaround exists
+
+Two known bugs combine to drop ~96% of `snow.value` in the standard P1
+flow:
+
+1. `apps/preprocessing_gateway/dg_utils.py::write_snow_to_api` sends
+   `value=None` for most records despite the source CSV having real
+   values. Empirically this leaves only the ~365-day Data Gateway
+   operational window populated. Root cause not fully characterized as
+   of this writing; mechanism appears tied to how the function
+   constructs records when two HRU CSVs share the same `(snow_type,
+   code, date)` keys.
+2. `sapphire/services/preprocessing/app/crud.py::create_snow`'s
+   `_has_changes + setattr` loop overwrites existing non-NULL `value`
+   with incoming NULL when any field differs. So when the first HRU's
+   records write valid values and the second HRU's records (for the
+   same key) carry NULL, the second pass destroys the first pass's
+   values.
+
+This phase bypasses both bugs by reading CSVs directly and posting only
+rows with real numeric values. It never sends NULL, so the
+`_has_changes` overwrite path is not triggered.
+
+### Acceptance criteria
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+  psql -U postgres -d preprocessing_db -P pager=off <<SQL
+SELECT
+  snow_type,
+  COUNT(*) AS rows,
+  COUNT(value) AS value_rows,
+  ROUND(100.0 * COUNT(value) / NULLIF(COUNT(*), 0), 1) AS pct_populated,
+  MIN(date) FILTER (WHERE value IS NOT NULL) AS first_value_date,
+  MAX(date) FILTER (WHERE value IS NOT NULL) AS last_value_date
+FROM snow
+GROUP BY snow_type
+ORDER BY snow_type;
+SQL
+```
+
+Accept when:
+
+```text
+1. Each configured snow type has value_rows close to total rows
+   (typically >95% populated).
+2. first_value_date is at or before START_DATE.
+3. last_value_date reaches today or the latest source-data date.
+4. No HTTP errors in the snow_history_init log.
+```
+
+### Failure recovery
+
+The script is idempotent: each POST upserts on `(snow_type, code, date)`
+and the script only sends records with real values, so re-running is
+safe — completed rows are no-ops.
+
+If the script exits non-zero or batches show `FAILED`:
+
+```text
+1. Read the most recent log under
+   ${ieasyhydroforecast_data_root_dir}/logs/snow_history_init/.
+2. Confirm api-gateway readiness:
+   curl -sf http://localhost:8000/health/ready
+3. Confirm the snow CSVs exist with non-zero size at
+   ${ieasyhydroforecast_data_ref_dir}/intermediate_data/snow_data/.
+4. Re-run with --dry-run to confirm record counts before retrying the
+   real run.
+```
+
+### Removal criteria
+
+This phase can be removed from the runbook once the underlying bugs in
+`dg_utils.write_snow_to_api` and the service-side `_has_changes` upsert
+logic are fixed and verified end-to-end on at least one deployment.
+
+---
+
 ## P2: Daily runoff and day hydrograph historical backfill
 
 ### Goal
@@ -1008,7 +1152,7 @@ Docker image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image
 
 ### Depends on
 
-P0.5, P1.
+P0.5, P1, P1.5.
 
 ### Expected duration
 
@@ -2280,6 +2424,13 @@ Confirm these before execution starts:
       "writes_data": true,
       "skip_if": ["P0.meteo == DONE", "P0.raw_snow == DONE"]
     },
+    "P1.5": {
+      "depends_on": ["P0.5", "P1"],
+      "parallel_agents": 1,
+      "writes_data": true,
+      "skip_if": "snow_value_rows DONE",
+      "note": "workaround for value-loss bug; see P1.5 section"
+    },
     "P2": {
       "name": "Daily runoff and day hydrograph historical backfill",
       "depends_on": ["P0.5"],
@@ -2289,7 +2440,7 @@ Confirm these before execution starts:
     },
     "P3": {
       "name": "Historical snow stats and snow norms",
-      "depends_on": ["P0.5", "P1"],
+      "depends_on": ["P0.5", "P1", "P1.5"],
       "parallel_agents": 1,
       "writes_data": true,
       "skip_if": ["P0.snow_stats_norms == DONE"]
