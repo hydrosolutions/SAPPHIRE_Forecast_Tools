@@ -172,6 +172,64 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                 )
 
     # ------------------------------------------------------------------
+    # Formula helpers
+    # ------------------------------------------------------------------
+
+    def _write_perc_formulas(self, row, section_cells):
+        """Write the K (% of norm) and L (% of previous year) Excel formulas
+        for one data row, deriving column letters from the section's tags.
+
+        K = midpoint of the forecast interval (Q_MIN..Q_MAX) as % of NORM.
+        L = the same midpoint as % of the previous year's discharge (VNORM).
+        IFERROR yields a blank cell when a denominator is empty/zero. Overwrites
+        whatever the PERC_NORM / PERC_PREVYEAR tags wrote into K / L.
+        """
+        from openpyxl.utils import get_column_letter
+        cols = {
+            ci["tag"].name: get_column_letter(ci["cell"].column)
+            for ci in section_cells
+        }
+        qmin = cols.get("Q_MIN")
+        qmax = cols.get("Q_MAX")
+        norm = cols.get("NORM")
+        vnorm = cols.get("VNORM")
+        k_col = cols.get("PERC_NORM")
+        l_col = cols.get("PERC_PREVYEAR")
+        if k_col and qmin and qmax and norm:
+            self.sheet[f"{k_col}{row}"] = (
+                f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{norm}{row}*100,0),"")'
+            )
+        if l_col and qmin and qmax and vnorm:
+            self.sheet[f"{l_col}{row}"] = (
+                f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{vnorm}{row}*100,0),"")'
+            )
+
+    # ------------------------------------------------------------------
+    # Header-bearing section rendering
+    # ------------------------------------------------------------------
+
+    def _handle_header_and_data_tags(self, grouped_data):
+        original_header_cell = self.header_tag_info["cell"]
+        original_header_row = original_header_cell.row
+        original_header_col = original_header_cell.col_idx
+        current_row = original_header_row
+        for header_value, item_group in grouped_data.items():
+            cell = self.sheet.cell(
+                row=current_row,
+                column=original_header_col
+            )
+            cell.value = header_value
+            current_row += 1
+            for item in item_group:
+                for idx, data_tag in enumerate(self.data_tags_info):
+                    tag = data_tag["tag"]
+                    tag.set_context({"obj": item})
+                    data_cell = self.sheet.cell(row=current_row, column=data_tag["cell"].column)
+                    data_cell.value = tag.replace(data_cell.value)
+                self._write_perc_formulas(current_row, self.data_tags_info)
+                current_row += 1
+
+    # ------------------------------------------------------------------
     # Multi-section report generation
     # ------------------------------------------------------------------
 
@@ -266,6 +324,7 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                             row=current_row, column=cell_info["cell"].column
                         )
                         dest_cell.value = tag.replace(dest_cell.value)
+                    self._write_perc_formulas(current_row, section_cells)
                     current_row += 1
 
         self._handle_general_tags()
