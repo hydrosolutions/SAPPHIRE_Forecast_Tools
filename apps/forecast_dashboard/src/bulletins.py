@@ -203,6 +203,43 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                 f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{vnorm}{row}*100,0),"")'
             )
 
+    def _numerify_value_cells(self, row, section_cells):
+        """Convert the value columns (Q_MIN/Q_MAX/V_MIN/V_MAX/NORM/VNORM) of one
+        data row from the comma-decimal text the tags wrote into real numeric
+        cells, preserving the displayed precision via a number format.
+
+        The tag-written string already carries the correct rounding (e.g.
+        '12,3'); we parse it back to a number and set a number format matching
+        its decimal count ('0', '0.0', '0.00'), so Excel shows the same value
+        (with the locale decimal separator) but stores a number. Blank / dash /
+        unparseable cells are left untouched.
+        """
+        from openpyxl.utils import get_column_letter
+        value_tags = {"Q_MIN", "Q_MAX", "V_MIN", "V_MAX", "NORM", "VNORM"}
+        for ci in section_cells:
+            if ci["tag"].name not in value_tags:
+                continue
+            col = get_column_letter(ci["cell"].column)
+            cell = self.sheet[f"{col}{row}"]
+            raw = cell.value
+            if not isinstance(raw, str):
+                continue
+            text = raw.strip()
+            if not text:
+                continue
+            normalized = text.replace(",", ".")
+            try:
+                num = float(normalized)
+            except ValueError:
+                continue
+            decimals = len(text.split(",", 1)[1]) if "," in text else 0
+            if decimals == 0:
+                cell.value = int(round(num))
+                cell.number_format = "0"
+            else:
+                cell.value = num
+                cell.number_format = "0." + "0" * decimals
+
     # ------------------------------------------------------------------
     # Header-bearing section rendering
     # ------------------------------------------------------------------
@@ -225,6 +262,7 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                     tag.set_context({"obj": item})
                     data_cell = self.sheet.cell(row=current_row, column=data_tag["cell"].column)
                     data_cell.value = tag.replace(data_cell.value)
+                self._numerify_value_cells(current_row, self.data_tags_info)
                 self._write_perc_formulas(current_row, self.data_tags_info)
                 current_row += 1
 
@@ -323,6 +361,7 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                             row=current_row, column=cell_info["cell"].column
                         )
                         dest_cell.value = tag.replace(dest_cell.value)
+                    self._numerify_value_cells(current_row, section_cells)
                     self._write_perc_formulas(current_row, section_cells)
                     current_row += 1
 
