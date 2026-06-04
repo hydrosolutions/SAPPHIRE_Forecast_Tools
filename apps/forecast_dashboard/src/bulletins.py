@@ -1,6 +1,5 @@
 import os
 import math
-from decimal import Decimal, ROUND_HALF_UP
 import openpyxl
 import panel as pn
 import pandas as pd
@@ -454,46 +453,6 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         print(f'Error in round_discharge: {e}')
         return None
 
-
-def hydrological_round(number):
-    """Round a value to three significant figures (hydrological convention).
-
-    Returns a Decimal, or None for None input.
-    """
-    if number is None:
-        return None
-    number = Decimal(str(number))
-    if number == Decimal("0"):
-        return Decimal("0.00")
-    if number < Decimal("1"):
-        return number.quantize(Decimal("1.00"), rounding=ROUND_HALF_UP)
-    exponent = number.adjusted()
-    scale_factor = Decimal("10") ** (2 - exponent)
-    scaled_number = (number * scale_factor).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return scaled_number / scale_factor
-
-
-def round_discharge_hydrological_to_comma_separated_string(value: float) -> str:
-    """Hydrological 3-significant-figure rounding rendered as a fixed-point,
-    comma-decimal string. Blank for None/NaN/negative input.
-
-    Fixed-point formatting (format(d, 'f')) is used instead of str(d) so that
-    values >= 1000 do not render in scientific notation (e.g. '12300', not
-    '1.23E+4').
-    """
-    try:
-        if value is None:
-            return ''
-        if value < 0.0:
-            return ''
-        rounded = hydrological_round(value)
-        if rounded is None:
-            return ''
-        return format(rounded, 'f').replace('.', ',')
-    except Exception:
-        return ''
-
-
 def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
                    header_df, horizon):
     """
@@ -719,12 +678,11 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 return None
 
         def _fmt_discharge(v):
-            """Render a float with hydrological 3-sig-fig, comma-decimal format,
-            or blank for None/NaN."""
+            """Render a float as comma-separated string, or blank for None/NaN."""
             fv = _as_float(v)
             if fv is None:
                 return ''
-            return round_discharge_hydrological_to_comma_separated_string(fv) or ''
+            return round_discharge_to_comma_separated_string(fv) or ''
 
         def _fmt_percentage(v):
             """Render a percentage as int string, or blank for None/NaN."""
