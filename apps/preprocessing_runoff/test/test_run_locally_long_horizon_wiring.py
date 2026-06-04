@@ -23,3 +23,5 @@ def test_run_locally_preprunoff_maintenance_runs_long_horizon_writer():
     assert function_body.index("preprocessing_runoff.py -- --maintenance") < function_body.index(
         "sync_long_horizon_hydrograph.py"
     )
+    assert "lt_rc -eq 2" in function_body
+    assert "Long-horizon hydrograph sync produced no records" in function_body

@@ -699,13 +699,28 @@ run_maintenance_preprocessing_runoff() {
     run_in_venv preprocessing_runoff preprocessing_runoff.py -- --maintenance || rc=$?
 
     if [ $rc -eq 0 ]; then
+        local lt_rc=0
         log INFO "Daily runoff maintenance completed; syncing long-horizon hydrograph norms"
         if [ -n "${RUNOFF_LONG_HORIZON_TARGET_YEAR:-}" ]; then
             log INFO "  Long-horizon target year: ${RUNOFF_LONG_HORIZON_TARGET_YEAR}"
-            run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
-                --target-year "${RUNOFF_LONG_HORIZON_TARGET_YEAR}" || rc=$?
+            if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
+                --target-year "${RUNOFF_LONG_HORIZON_TARGET_YEAR}"; then
+                lt_rc=0
+            else
+                lt_rc=$?
+            fi
         else
-            run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py || rc=$?
+            if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py; then
+                lt_rc=0
+            else
+                lt_rc=$?
+            fi
+        fi
+
+        if [ $lt_rc -eq 2 ]; then
+            log WARN "Long-horizon hydrograph sync produced no records; continuing maintenance"
+        elif [ $lt_rc -ne 0 ]; then
+            rc=$lt_rc
         fi
     fi
 
