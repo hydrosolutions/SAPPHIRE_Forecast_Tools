@@ -188,16 +188,13 @@ def snow_stats_available():
     message rather than silently skipping (per the project's
     Zero-Skips Policy).
     """
-    # TEMP-DISABLED-SNOW-STATS (revert: doc/plans/working/snow_stat_writeside_gap_memo.md)
-    # Snow-stat write-side not populated in local DB; gate bypassed so the rest
-    # of the integration test can run. Restore the block below on revert.
-    # val = os.environ.get("SAPPHIRE_SNOW_STATS_AVAILABLE")
-    # if val != "true":
-    #     pytest.fail(
-    #         "SAPPHIRE_SNOW_STATS_AVAILABLE must be set to 'true' "
-    #         "to run snow stat integration assertions. This is an "
-    #         "operator assertion that the preprocessing API has "
-    #         "populated snow stat columns for the environment under "
-    #         "test. See conftest.py docstring."
-    #     )
+    val = os.environ.get("SAPPHIRE_SNOW_STATS_AVAILABLE")
+    if val != "true":
+        pytest.fail(
+            "SAPPHIRE_SNOW_STATS_AVAILABLE must be set to 'true' "
+            "to run snow stat integration assertions. This is an "
+            "operator assertion that the preprocessing API has "
+            "populated snow stat columns for the environment under "
+            "test. See conftest.py docstring."
+        )
     return True

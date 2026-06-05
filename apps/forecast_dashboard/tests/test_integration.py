@@ -1887,26 +1887,23 @@ def test_local(snow_stats_available, page: Page):
         assert db["temperature"],    f"Station {code}: no temperature data in DB"
         assert snow_total > 0,       f"Station {code}: no snow data in DB"
 
-        # TEMP-DISABLED-SNOW-STATS (revert: doc/plans/working/snow_stat_writeside_gap_memo.md)
-        # Snow-stat fields (min/max/q05..q95/mean/previous/current) are not yet
-        # populated by the write-side path in the local DB. Re-enable on revert.
-        # api_fields = [
-        #     "min", "max", "q05", "q25", "q50", "q75", "q95",
-        #     "mean", "previous", "current",
-        # ]
-        # for stype in ("HS", "ROF", "SWE"):
-        #     snow_rows = db[f"snow_{stype}"]
-        #     assert snow_rows, f"Station {code}: no snow {stype} rows in DB"
-        #     for field in api_fields:
-        #         present = [
-        #             r.get(field) for r in snow_rows
-        #             if r.get(field) is not None
-        #         ]
-        #         assert len(present) > 0, (
-        #             f"Snow API field {field!r} is null across all "
-        #             f"{len(snow_rows)} fetched rows for {stype}; population "
-        #             f"path may have regressed."
-        #         )
+        api_fields = [
+            "min", "max", "q05", "q25", "q50", "q75", "q95",
+            "mean", "previous", "current",
+        ]
+        for stype in ("HS", "ROF", "SWE"):
+            snow_rows = db[f"snow_{stype}"]
+            assert snow_rows, f"Station {code}: no snow {stype} rows in DB"
+            for field in api_fields:
+                present = [
+                    r.get(field) for r in snow_rows
+                    if r.get(field) is not None
+                ]
+                assert len(present) > 0, (
+                    f"Snow API field {field!r} is null across all "
+                    f"{len(snow_rows)} fetched rows for {stype}; population "
+                    f"path may have regressed."
+                )
 
         dashboard_cols = [
             "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
