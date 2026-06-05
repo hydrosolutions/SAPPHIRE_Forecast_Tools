@@ -410,6 +410,48 @@ rerunning the same wrapper with the same args is safe. To narrow the
 re-run on failure, combine `--station-filter <HRU>` with `--meteo-type T`
 or `--meteo-type P` and a smaller `--batch-size` (e.g. `--batch-size 200`).
 
+### 5.3 Snow HS/SWE/ROF (existing wrapper)
+
+Snow data migration uses the existing `bin/initialize_snow_history.sh` wrapper (operationally validated on TAJ 2026-06-04, ported to `develop_migration_toolkit` via PR #347). No new wrapper is needed in P1.
+
+#### Background
+
+Snow CSVs live under `${ieasyhydroforecast_data_ref_dir}/intermediate_data/snow_data/<TYPE>/<HRU>_<TYPE>.csv` where `<TYPE>` is `HS`, `SWE`, or `ROF`. The wrapper:
+
+- Reads each CSV via a Dockerized stdlib-Python helper inside `mabesa/sapphire-prepgateway:<tag>`.
+- Filters to rows with non-null numeric values.
+- POSTs minimal payloads `{snow_type, code, date, value}` to `/snow/`, bypassing the `dg_utils.write_snow_to_api` + service-side `_has_changes` overwrite-with-NULL bugs.
+- Idempotent on `(snow_type, code, date)`.
+
+#### Canary single-station run
+
+```bash
+# Dry-run (read-only inventory)
+bash bin/initialize_snow_history.sh "$ENV_FILE" --dry-run
+
+# Full migration (per-snow_type, all configured HRUs)
+bash bin/initialize_snow_history.sh "$ENV_FILE"
+
+# Verification — confirm value rows landed
+docker exec -i sapphire-preprocessing-db \
+  psql -U postgres -d preprocessing_db -P pager=off <<SQL
+SELECT snow_type, COUNT(*) AS rows, COUNT(value) AS value_rows
+FROM snow GROUP BY snow_type ORDER BY snow_type;
+SQL
+```
+
+#### Snow stats / norms
+
+The raw snow value migration above populates only `snow.value`. Snow `norm`, stats (`mean/q05/q95`), and `previous`/`current` are populated by a separate regenerate hook documented in §7 (filled by P6). DO NOT attempt to migrate snow stats via this CSV path — that's the architecture's regenerate category.
+
+#### Forward-contract note
+
+Snow predates the P0 helper (`bin/utils/update_migration_helpers.sh`) and the `migration_py` package. It does not consume `umh_resolve_image` / `umh_acquire_temp_workspace` etc. — by design, per architecture §Q1 ("Exception: keep the verified `bin/initialize_snow_history.sh` embedded helper unchanged unless a future snow-specific PR has a reason to refactor it"). The `--station-filter` forward contract from P0 is NOT honored by the snow wrapper today; if a sub-station canary is needed, the operator filters at the input-data level instead. A future refactor could harmonize snow with the P0 helpers; that's out of scope here.
+
+#### CI gating
+
+As of PR #347, the wrapper is included in the new `shellcheck_migration_scripts` CI job and the `koalaman/shellcheck-precommit` pre-commit hook.
+
 ## 6. Laptop local-export migrations
 
 [Filled by P2a (runoff PENTAD/DECADE), P2b (hydrograph PENTAD/DECADE), P4a
