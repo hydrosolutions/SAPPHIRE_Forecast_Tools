@@ -121,10 +121,16 @@ def audit_stdlib_only(package_dir: pathlib.Path) -> list[str]:
             continue
         try:
             source = entry.read_text(encoding="utf-8")
-        except OSError as exc:  # pragma: no cover - defensive
+        except (OSError, UnicodeDecodeError) as exc:  # pragma: no cover - defensive
             violations.append(f"{entry.name}: cannot read source: {exc}")
             continue
-        imported = collect_imported_roots(source)
+        try:
+            imported = collect_imported_roots(source)
+        except SyntaxError as exc:  # pragma: no cover - defensive
+            # A syntactically invalid module fails audit loudly rather than
+            # crashing CI with an unhelpful traceback.
+            violations.append(f"{entry.name}: syntax error during audit: {exc}")
+            continue
         for offending in sorted(imported - allowed):
             violations.append(f"{entry.name}: non-stdlib import: {offending}")
     return violations

@@ -385,7 +385,8 @@ def acquire_temp_workspace(
 
         <data_root_dir>/logs/<wrapper_short_name>_tmp/<timestamp>
 
-    where ``timestamp`` defaults to ``datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")``.
+    where ``timestamp`` defaults to the current UTC time formatted as
+    ``YYYYMMDDTHHMMSSZ`` (via timezone-aware ``datetime.now(timezone.utc)``).
 
     Creates the directory with mode ``0o700`` (via ``os.makedirs`` + an explicit
     ``os.chmod`` because the mode passed to ``mkdir`` is masked by the current
@@ -420,7 +421,8 @@ def acquire_temp_workspace(
         PermissionError: if creation fails due to permissions.
     """
     if timestamp is None:
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        # Use timezone-aware now() (utcnow() is deprecated in Python 3.12+).
+        timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
 
     root = pathlib.Path(data_root_dir)
     target = root / "logs" / f"{wrapper_short_name}_tmp" / timestamp
