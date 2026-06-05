@@ -16,3 +16,14 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        # NOTE: scope narrowed to migration-toolkit files only (v2 R5 carve-out).
+        # Legacy bin/ scripts have 55 pre-existing findings, tracked in
+        # doc/plans/issues/high_prio_gi_draft_infra_legacy_bin_shellcheck_cleanup.md.
+        # Broaden to ^bin/.*\.sh$ after that cleanup PR lands.
+        files: ^bin/(initialize_[a-z0-9_]+_history|export_[a-z0-9_]+_history)\.sh$|^bin/utils/update_migration_helpers\.sh$
+        args: ["--external-sources"]
