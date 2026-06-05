@@ -1147,7 +1147,7 @@ historical snow rows.
 ```text
 ${REPO}/bin/backfill_snow_stats_history.sh
 ${REPO}/apps/preprocessing_gateway/recalculate_snow_norms.py
-Docker image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag}
+Docker image: mabesa/sapphire-prepgateway:${ieasyhydroforecast_backend_docker_image_tag}
 ```
 
 ### Depends on
