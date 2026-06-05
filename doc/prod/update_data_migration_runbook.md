@@ -223,6 +223,103 @@ Each section gives copy-paste dry-run + write commands plus expected dry-run
 output shape, and reuses the §4.3 canary template via the
 `--station-filter <code>` interface.]
 
+### 5.2 Meteo T/P
+
+Source: `<data_ref_dir>/intermediate_data/hindcast_forcing/<HRU>_T_reanalysis.csv`
+plus matching `<HRU>_P_reanalysis.csv`, and optional norm sidecars at
+`<HRU>_T_reanalysis_dashboard.csv` / `<HRU>_P_reanalysis_dashboard.csv`.
+Target table: `meteo` (one row per `(meteo_type, code, date)`). Wrapper:
+`bin/initialize_meteo_history.sh`. Discovers all HRU codes via filename
+glob (no hardcoded HRU literals — see architecture §Q3 row "Archive CSV
+files" and Stage A.2 §C).
+
+Architecture note: operational `extend_era5_reanalysis.py` skips API
+writes for reanalysis data. Historical reanalysis lives ONLY in CSV, so
+this wrapper is the historical migration path.
+
+#### 5.2.1 Canary dry-run (sentinel HRU)
+
+```bash
+# Read-only: inventory HRUs, row counts, date ranges; do NOT POST.
+bash bin/initialize_meteo_history.sh "$ENV_FILE" --dry-run \
+    --station-filter 19999
+```
+
+Expected dry-run inventory shape (Stage E §4.4 contract):
+
+```
+Discovered <N> reanalysis CSV(s):
+  meteo_type=T hru=<HRU> dashboard=yes (<MiB>) -> <HRU>_T_reanalysis.csv
+  meteo_type=P hru=<HRU> dashboard=no  (<MiB>) -> <HRU>_P_reanalysis.csv
+distinct HRUs discovered (redacted count): <N>
+MODE meteo_type=T: mode=<full-import|pre-cutoff> cutoff=<date|none> target_count=<n>
+MODE meteo_type=P: mode=<full-import|pre-cutoff> cutoff=<date|none> target_count=<n>
+[meteo_type=T/hru=<HRU>] read <n> record(s) (skipped <a> null, <b> parse, cutoff=<...>, range=YYYY-MM-DD..YYYY-MM-DD) in <s>s
+[meteo_type=P/hru=<HRU>] read <n> record(s) ...
+```
+
+Read the inventory carefully. If `distinct HRUs discovered` looks wrong
+(e.g. zero, or fewer than the number of HRUs configured for this
+deployment), stop and investigate before any write.
+
+#### 5.2.2 Canary write (single HRU)
+
+```bash
+# Write meteo data for ONE HRU only — sentinel or a single low-risk code.
+bash bin/initialize_meteo_history.sh "$ENV_FILE" --station-filter 19999
+```
+
+Verify rows landed for `code='19999'` before scaling to the full population:
+
+```bash
+docker exec sapphire-preprocessing-db \
+    psql -U postgres -d preprocessing_db -P pager=off -c \
+    "SELECT meteo_type, COUNT(*) AS rows, COUNT(value) AS value_rows, COUNT(norm) AS norm_rows, MIN(date) AS min_date, MAX(date) AS max_date FROM meteo WHERE code='19999' GROUP BY meteo_type ORDER BY meteo_type;"
+```
+
+#### 5.2.3 Full population
+
+After the canary verifies, drop `--station-filter` and run for all HRUs:
+
+```bash
+bash bin/initialize_meteo_history.sh "$ENV_FILE"
+```
+
+#### 5.2.4 Filtering by meteo type
+
+```bash
+# Process only Temperature CSVs:
+bash bin/initialize_meteo_history.sh "$ENV_FILE" --meteo-type T
+
+# Process only Precipitation CSVs:
+bash bin/initialize_meteo_history.sh "$ENV_FILE" --meteo-type P
+```
+
+#### 5.2.5 Acceptance SQL
+
+Compare to the dry-run inventory's `distinct HRUs discovered (redacted
+count)` and per-HRU row counts. Per architecture §Q9 acceptance block
+for `meteo`:
+
+```bash
+docker exec sapphire-preprocessing-db \
+    psql -U postgres -d preprocessing_db -P pager=off -c \
+    "SELECT meteo_type, COUNT(*) AS rows, COUNT(DISTINCT code) AS code_count, COUNT(value) AS value_rows, COUNT(norm) AS norm_rows, MIN(date) AS min_date, MAX(date) AS max_date FROM meteo GROUP BY meteo_type ORDER BY meteo_type;"
+```
+
+Both `value_rows` and `norm_rows` reflect the universal safe-write rule:
+the wrapper sends only non-null fields, so an HRU lacking a dashboard
+sidecar yields rows with `value` populated and `norm` NULL (and vice
+versa for dashboard-only entries). This is intentional — see
+architecture §Q2 row `meteo`.
+
+#### 5.2.6 Idempotency and rerun
+
+The natural key `(meteo_type, code, date)` is upserted service-side, so
+rerunning the same wrapper with the same args is safe. To narrow the
+re-run on failure, combine `--station-filter <HRU>` with `--meteo-type T`
+or `--meteo-type P` and a smaller `--batch-size` (e.g. `--batch-size 200`).
+
 ## 6. Laptop local-export migrations
 
 [Filled by P2a (runoff PENTAD/DECADE), P2b (hydrograph PENTAD/DECADE), P4a
