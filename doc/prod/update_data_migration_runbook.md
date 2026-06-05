@@ -311,21 +311,7 @@ and `SOURCE_DATE_MAX`. For pre-cutoff mode, expect `MIN(date)` to be the
 earliest source date AND `MAX(date)` to be one day before the prior
 cutoff.
 
-### 5.2 Meteo DAY
-
-(Filled by P1b — parallel sibling phase. Follows the same dry-run /
-canary / full-population / acceptance shape as §5.1.)
-
-### 5.3 Snow raw values
-
-(Filled by P1c — parallel sibling phase. The existing
-`bin/initialize_snow_history.sh` predates the migration toolkit; P1c
-documents its `--station-filter` integration here.)
-
-### 5.4 Hydrograph DAY
-
-(Filled by P3. Depends on P1a runoff DAY landing first per architecture
-§Q6.)
+(§5.2 Meteo T/P, §5.3 Snow HS/SWE/ROF, §5.4 Hydrograph DAY are filled by sibling phases P1b, P1c, and P3 respectively. See per-phase gi_drafts for status.)
 
 ## 6. Laptop local-export migrations
 
