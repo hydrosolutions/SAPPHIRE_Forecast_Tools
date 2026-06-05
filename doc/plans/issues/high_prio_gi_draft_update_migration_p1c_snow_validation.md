@@ -136,8 +136,8 @@ After P1c merges to `develop_migration_toolkit`:
 - [x] gi_draft filed at
       `doc/plans/issues/high_prio_gi_draft_update_migration_p1c_snow_validation.md`.
 - [ ] PR open against `develop_migration_toolkit`.
-- [ ] `code-review` skill run on the cumulative diff (small diff — runbook
-      addition + gi_draft only).
+- [x] `code-review` skill run on the cumulative diff (small diff — runbook
+      addition + gi_draft only). Zero findings.
 
 ## Out of Scope
 
