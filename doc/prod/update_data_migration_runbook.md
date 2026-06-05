@@ -452,6 +452,148 @@ Snow predates the P0 helper (`bin/utils/update_migration_helpers.sh`) and the `m
 
 As of PR #347, the wrapper is included in the new `shellcheck_migration_scripts` CI job and the `koalaman/shellcheck-precommit` pre-commit hook.
 
+### 5.4 Hydrograph DAY
+
+Source: `${ieasyhydroforecast_data_ref_dir}/intermediate_data/hydrograph_day.csv`
+(wide header with `index, code, count, mean, std, min, 5%, 25%, 50%, 75%, 95%, norm,
+<year_N-1>, <year_N>, date, day_of_year` — year columns rotate every January).
+Target: `hydrographs` rows with `horizon_type='DAY'`. MODE branches on target
+state — empty target = `full-import`; populated target =
+`pre-cutoff (cutoff=MIN(date))`. Reruns are idempotent (service-side upsert on
+`(horizon_type, code, date)`).
+
+#### Background
+
+The legacy in-service migrator
+(`sapphire/services/preprocessing/app/data_migrator.py:264-265`) hardcoded year
+columns `'2024'` and `'2025'`, so each January the mapping silently mis-pointed
+`previous`/`current` to the wrong year. The P3 wrapper instead performs
+DYNAMIC year-column discovery: it inspects the CSV header, finds all 4-digit
+numeric column names, sorts them, and maps the newest to `current` and the
+second-newest to `previous`. The dry-run inventory prints the inferred
+mapping as:
+
+```text
+HYDROGRAPH_YEAR_MAPPING={previous: <year>, current: <year>}
+```
+
+so the operator validates the discovery before any write.
+
+The wrapper sends only non-NULL fields per the universal safe-write rule
+(architecture §Q2 layer 2). Hydrograph rows have many nullable stat / quantile
+/ year fields; the wrapper omits any field that is absent or unparseable in
+the source CSV — never sends `field: null` — so the service-side
+`_has_changes` + `setattr` overwrite path cannot wipe out an existing
+non-NULL target value with an incoming NULL. Rows missing required columns
+(`code`, `date`) or rows whose date is unparseable are counted as
+`SKIPPED_PARSE` and not POSTed. CSV quantile column names `5%` / `25%` /
+`50%` / `75%` / `95%` are normalized to the API payload keys `q05` / `q25` /
+`q50` / `q75` / `q95`.
+
+NOTE on `--strict-merge` (read-before-merge): the architecture allows an
+optional read-before-merge step (GET target row, merge incoming non-NULL with
+existing target, POST merged record) for tables with many nullable fields.
+P3 ships **Option A** (send-only-non-NULL) because:
+- The universal safe-write rule already prevents NULL erasure.
+- A `--strict-merge` flag would add an extra GET per row (~10-50 rec/s
+  throughput vs ~500 rec/batch streaming) for a benefit operators have not
+  yet reported needing in practice.
+- Snow (existing wrapper) and runoff DAY (P1a) both use Option A
+  successfully.
+
+If an operator observes stat erasure in production, the P3 issue's follow-up
+work (tracked in the gi_draft P3) adds `--strict-merge` as an opt-in flag.
+Until then, raise an issue if any hydrograph stat row regresses after a
+migration.
+
+#### 5.4.1 Dry-run
+
+```bash
+bash bin/initialize_hydrograph_day_history.sh "$ENV_FILE" --dry-run
+```
+
+Expected output includes (per §4.4 inventory):
+
+```text
+MODE=<full-import (target empty) | pre-cutoff (cutoff=YYYY-MM-DD)>
+TARGET_TABLE=hydrographs
+CUTOFF=<date or none>
+SOURCE_FILES=['/hydrograph_day.csv']
+SOURCE_ROW_COUNT=<n>
+FILTERED_ROW_COUNT=<n>
+SOURCE_DATE_MIN=<date>
+SOURCE_DATE_MAX=<date>
+DISTINCT_STATION_COUNT_REDACTED=<n>
+SKIPPED_PARSE=<n> SKIPPED_CUTOFF=<n> SKIPPED_STATION=<n>
+HYDROGRAPH_YEAR_MAPPING={previous: <year>, current: <year>}
+post_filter_stations: count=<n> (all redacted)
+IMAGE=mabesa/sapphire-prepgateway:<tag> source=<cli|configured|fallback>
+```
+
+Read the dry-run BEFORE proceeding. Specifically:
+- **`HYDROGRAPH_YEAR_MAPPING`** — confirm both years match what you expect.
+  Around the January year-rollover, expect to see the new current year
+  pre-populated in the source CSV (the operational regenerate job creates
+  the new column automatically).
+- If MODE is unexpected, or SOURCE_DATE_MIN/MAX or SKIPPED_* counters look
+  off, stop and investigate.
+
+#### 5.4.2 Canary (single station, per §4.3 acceptance criterion)
+
+Run with a single sentinel/real low-risk station code before full population.
+Substitute `<code>` with the canary station code (sentinel `19999` if
+available, otherwise a low-risk operational code):
+
+```bash
+# Canary dry-run
+bash bin/initialize_hydrograph_day_history.sh "$ENV_FILE" --dry-run --station-filter <code>
+
+# Canary write (only one station)
+bash bin/initialize_hydrograph_day_history.sh "$ENV_FILE" --station-filter <code>
+```
+
+Verify the canary row count in §8 acceptance SQL (filtered on the same
+`code`). Then proceed to the full-population step below.
+
+#### 5.4.3 Full population
+
+```bash
+bash bin/initialize_hydrograph_day_history.sh "$ENV_FILE"
+```
+
+Tunables:
+- `--batch-size <N>` — records per POST batch (default 500). Lower to
+  diagnose API-side timeouts; raise if the API tolerates larger envelopes.
+- `--api-url <URL>` — override target endpoint (default
+  `http://localhost:8002/hydrograph/`).
+- `--image <IMAGE>` — pin a specific Docker image (overrides resolution).
+
+#### 5.4.4 Acceptance SQL pointer
+
+After completion, run the §8 acceptance block. For a quick local check:
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+  psql -U postgres -d preprocessing_db -P pager=off <<SQL
+SELECT horizon_type, COUNT(*) AS rows,
+       COUNT(mean) AS mean_rows,
+       COUNT(previous) AS previous_rows,
+       COUNT(current) AS current_rows,
+       MIN(date), MAX(date)
+FROM hydrographs
+WHERE horizon_type='DAY'
+GROUP BY horizon_type;
+SQL
+```
+
+Compare `rows` and `MAX(date)` against the dry-run's `FILTERED_ROW_COUNT`
+and `SOURCE_DATE_MAX`. `mean_rows`, `previous_rows`, and `current_rows`
+reflect the universal safe-write rule: an existing row whose stat / year
+field was already populated stays populated even if the new source row had
+that field absent. For pre-cutoff mode, expect `MIN(date)` to be the
+earliest source date AND `MAX(date)` to be one day before the prior
+cutoff. For full-import mode, both should match the source date range.
+
 ## 6. Laptop local-export migrations
 
 [Filled by P2a (runoff PENTAD/DECADE), P2b (hydrograph PENTAD/DECADE), P4a
