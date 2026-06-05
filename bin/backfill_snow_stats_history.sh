@@ -34,7 +34,7 @@ Options:
   --start-year YYYY  Start year for the backfill loop (default: 2010).
   --local            Bypass Docker. Run recalc directly via \`uv run\`.
                      Use this on developer machines where the
-                     mabesa/sapphire-pipeline image is not built
+                     mabesa/sapphire-prepgateway image is not built
                      locally (e.g. arm64 Mac). Production servers
                      should omit this flag and use Docker.
   -h, --help         Show this message.
@@ -140,7 +140,7 @@ if [[ "$LOCAL_MODE" != "1" ]]; then
     fi
 
     # Check if the Docker image exists, pull if not
-    IMAGE_ID="mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
+    IMAGE_ID="mabesa/sapphire-prepgateway:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
     if ! docker image inspect "$IMAGE_ID" > /dev/null 2>&1; then
         log_message "Image $IMAGE_ID not found locally, pulling..."
         if ! docker pull "$IMAGE_ID"; then
