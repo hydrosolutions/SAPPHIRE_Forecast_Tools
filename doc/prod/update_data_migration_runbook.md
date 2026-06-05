@@ -218,10 +218,100 @@ NOT proceed to write.
 
 ## 5. CSV-source migrations
 
-[Filled by P1a (runoff DAY), P1b (meteo), P1c (snow), P3 (hydrograph DAY).
-Each section gives copy-paste dry-run + write commands plus expected dry-run
-output shape, and reuses the §4.3 canary template via the
-`--station-filter <code>` interface.]
+Per-data-type subsections. Each filled by its owning phase: §5.1 by P1a,
+§5.2 by P1b, §5.3 by P1c, §5.4 hydrograph DAY by P3. Each section reuses
+the §4.3 canary template via the binding `--station-filter <code>`
+interface and emits the §4.4 dry-run inventory before any write.
+
+### 5.1 Runoff DAY
+
+Source: `${ieasyhydroforecast_data_ref_dir}/intermediate_data/runoff_day.csv`
+(header `code,date,discharge`). Target: `runoffs` rows with
+`horizon_type='DAY'`. MODE branches on target state — empty target =
+`full-import`; populated target = `pre-cutoff (cutoff=MIN(date))`. Reruns
+are idempotent (service-side upsert on `(horizon_type, code, date)`).
+
+The wrapper sends only non-NULL fields per the universal safe-write rule
+(architecture §Q2 layer 2). Rows with parse-failed or NULL `discharge` are
+skipped, never sent as `discharge=null` (which would trigger the service-
+side `_has_changes`/setattr overwrite bug).
+
+#### 5.1.1 Dry-run
+
+```bash
+bash bin/initialize_runoff_day_history.sh "$ENV_FILE" --dry-run
+```
+
+Expected output includes (per §4.4 inventory):
+
+```text
+MODE=<full-import (target empty) | pre-cutoff (cutoff=YYYY-MM-DD)>
+TARGET_TABLE=runoffs
+CUTOFF=<date or none>
+SOURCE_FILES=['/runoff_day.csv']
+SOURCE_ROW_COUNT=<n>
+FILTERED_ROW_COUNT=<n>
+SOURCE_DATE_MIN=<date>
+SOURCE_DATE_MAX=<date>
+DISTINCT_STATION_COUNT_REDACTED=<n>
+SKIPPED_NULL=<n> SKIPPED_PARSE=<n> SKIPPED_CUTOFF=<n> SKIPPED_STATION=<n>
+post_filter_stations: count=<n> (all redacted)
+IMAGE=mabesa/sapphire-prepgateway:<tag> source=<cli|configured|fallback>
+```
+
+Read the dry-run BEFORE proceeding. If MODE is unexpected, or
+SOURCE_DATE_MIN/MAX or SKIPPED_* counters look off, stop and investigate.
+
+#### 5.1.2 Canary (single station, per §4.3 acceptance criterion)
+
+Run with a single sentinel/real low-risk station code before full
+population. Substitute `<code>` with the canary station code (sentinel
+`19999` if available, otherwise a low-risk operational code):
+
+```bash
+# Canary dry-run
+bash bin/initialize_runoff_day_history.sh "$ENV_FILE" --dry-run --station-filter <code>
+
+# Canary write (only one station)
+bash bin/initialize_runoff_day_history.sh "$ENV_FILE" --station-filter <code>
+```
+
+Verify the canary row count in §8 acceptance SQL (filtered on the same
+`code`). Then proceed to the full-population step below.
+
+#### 5.1.3 Full population
+
+```bash
+bash bin/initialize_runoff_day_history.sh "$ENV_FILE"
+```
+
+Tunables:
+- `--batch-size <N>` — records per POST batch (default 500). Lower to
+  diagnose API-side timeouts; raise if the API tolerates larger envelopes.
+- `--api-url <URL>` — override target endpoint (default
+  `http://localhost:8002/runoff/`).
+- `--image <IMAGE>` — pin a specific Docker image (overrides resolution).
+
+#### 5.1.4 Acceptance SQL pointer
+
+After completion, run the §8 acceptance block. For a quick local check:
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+  psql -U postgres -d preprocessing_db -P pager=off <<SQL
+SELECT horizon_type, COUNT(*) AS rows, MIN(date), MAX(date)
+FROM runoffs
+WHERE horizon_type='DAY'
+GROUP BY horizon_type;
+SQL
+```
+
+Compare `rows` and `MAX(date)` against the dry-run's `FILTERED_ROW_COUNT`
+and `SOURCE_DATE_MAX`. For pre-cutoff mode, expect `MIN(date)` to be the
+earliest source date AND `MAX(date)` to be one day before the prior
+cutoff.
+
+(§5.2 Meteo T/P, §5.3 Snow HS/SWE/ROF, §5.4 Hydrograph DAY are filled by sibling phases P1b, P1c, and P3 respectively. See per-phase gi_drafts for status.)
 
 ### 5.2 Meteo T/P
 
