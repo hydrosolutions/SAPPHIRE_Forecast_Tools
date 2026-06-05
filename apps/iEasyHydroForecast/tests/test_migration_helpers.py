@@ -66,11 +66,15 @@ def test_resolve_image_empty_string_treated_as_none():
 def test_log_redacted_station_count_only_logs_count(caplog):
     logger = logging.getLogger("migration_py.test.redacted_only_count")
     caplog.set_level(logging.INFO, logger=logger.name)
-    codes = ["11111", "12345", "67890", "19999"]  # not all sentinel
+    # Mix of synthetic non-sentinel codes (19xxx but not the 19999 prefix) and
+    # a real sentinel; this drives the "all redacted" branch. Using 19xxx
+    # synthetics keeps the codes outside the real-station-code regex
+    # (\b1[0-8][0-9]{3}\b|\b[2-9][0-9]{4}\b) used by the fixture guard.
+    codes = ["19000", "19001", "19002", "19999"]  # not all sentinel
     _common.log_redacted_station_count(logger, codes)
     # None of the non-sentinel codes appear in the log text.
     text = caplog.text
-    for code in ("11111", "12345", "67890"):
+    for code in ("19000", "19001", "19002"):
         assert code not in text, f"code {code!r} leaked into log: {text!r}"
     assert "count=4" in text
     assert "all redacted" in text
