@@ -18,7 +18,7 @@
 #   is currently running. The export pattern is intended for laptops only —
 #   if the laptop and deployment server happen to be the same host, the
 #   operator should use the in-place server wrapper instead. Override only
-#   with ``--allow-server-host`` if you know what you are doing.
+#   with ``--i-am-on-laptop`` if you know what you are doing.
 #
 # Default horizon filter (user-lock L6):
 #   The export defaults to ``horizon_type='day'`` rows only — the canonical
@@ -54,12 +54,11 @@
 #   --db-port <PORT>     PostgreSQL port (default: 5432).
 #   --db-user <USER>     PostgreSQL user (default: postgres).
 #   --db-name <NAME>     Database name (default: postgres).
-#   --allow-server-host  BYPASS the location guard (DANGER — only if you are
-#                        sure the laptop and server are intentionally co-located).
+#   --i-am-on-laptop     BYPASS the location guard (use only when laptop and
+#                        server are intentionally co-located on the same host).
 #   -h, --help           Print this message and exit 0.
 #
 # Examples:
-#   bash bin/export_ml_forecast_history.sh /tmp/ml_export --dry-run
 #   bash bin/export_ml_forecast_history.sh /tmp/ml_export --station-filter 19999
 #   bash bin/export_ml_forecast_history.sh /tmp/ml_export --include-legacy-horizons
 #
@@ -88,7 +87,7 @@ DB_HOST="localhost"
 DB_PORT="5432"
 DB_USER="postgres"
 DB_NAME="postgres"
-ALLOW_SERVER_HOST=false
+I_AM_ON_LAPTOP=false
 
 print_usage() {
     cat <<'USAGE'
@@ -114,12 +113,12 @@ Options:
   --db-port <PORT>     PostgreSQL port (default: 5432).
   --db-user <USER>     PostgreSQL user (default: postgres).
   --db-name <NAME>     Database name (default: postgres).
-  --allow-server-host  BYPASS the location guard (DANGER).
+  --i-am-on-laptop     BYPASS the location guard.
   -h, --help           Print this message and exit 0.
 
 Location guard:
   This script refuses to run when sapphire-postprocessing-db is running on
-  this host. Override with --allow-server-host.
+  this host. Override with --i-am-on-laptop.
 USAGE
 }
 
@@ -221,8 +220,8 @@ parse_args() {
                 DB_NAME="$2"
                 shift 2
                 ;;
-            --allow-server-host)
-                ALLOW_SERVER_HOST=true
+            --i-am-on-laptop)
+                I_AM_ON_LAPTOP=true
                 shift
                 ;;
             -h|--help)
@@ -312,17 +311,17 @@ main() {
     echo -e "========================================${NC}"
 
     # Location guard.
-    if [[ "$ALLOW_SERVER_HOST" != true ]]; then
+    if [[ "$I_AM_ON_LAPTOP" != true ]]; then
         if command -v docker >/dev/null 2>&1; then
             if docker ps --filter "name=sapphire-postprocessing-db" --quiet 2>/dev/null | grep -q .; then
                 echo -e "${RED}ERROR: sapphire-postprocessing-db is running on this host.${NC}" >&2
                 echo "This script is for laptop-side export only." >&2
-                echo "If you really mean to export from a server, pass --allow-server-host." >&2
+                echo "If you really mean to export from a server, pass --i-am-on-laptop." >&2
                 exit 1
             fi
         fi
     else
-        echo -e "${YELLOW}WARNING: --allow-server-host active; location guard bypassed.${NC}" >&2
+        echo -e "${YELLOW}WARNING: running on apparent deployment host — bypass enabled by operator (--i-am-on-laptop).${NC}" >&2
     fi
 
     if [[ -z "$OUT_DIR" ]]; then
@@ -424,6 +423,19 @@ for m, c in sorted(model_counts.items()):
 PYEOF
     )"; then
         echo -e "${RED}ERROR: failed to compute manifest summary stats.${NC}" >&2
+        rm -f "$csv_path"
+        exit 1
+    fi
+
+    # Reject zero-row exports up front (review feedback): a blank
+    # date_min/date_max produces a manifest the server-side validator rejects
+    # as non-ISO. Surface this as a clear operator error before any sidecar
+    # is written. The CSV header file is removed too so re-runs start clean.
+    local row_count
+    row_count="$(echo "$summary_out" | grep '^row_count=' | cut -d= -f2-)"
+    if [[ "$row_count" == "0" ]]; then
+        echo -e "${RED}ERROR: no rows matched filter — nothing to export.${NC}" >&2
+        echo "Check the station list, horizon filter (--include-legacy-horizons), and date range." >&2
         rm -f "$csv_path"
         exit 1
     fi

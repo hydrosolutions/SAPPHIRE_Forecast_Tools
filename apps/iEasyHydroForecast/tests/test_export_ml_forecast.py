@@ -132,3 +132,55 @@ def test_wrapper_documents_enum_case_mapping():
     assert "TFT" in text
     assert "TiDE" in text
     assert "TSMixer" in text
+
+
+def test_export_help_uses_i_am_on_laptop_not_allow_server_host():
+    """Charter §Stage E #6: bypass flag is --i-am-on-laptop, not --allow-server-host.
+    Reviewer flagged P4b shipping the wrong name; this regression guard locks it in."""
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "--i-am-on-laptop" in result.stdout
+    assert "--allow-server-host" not in result.stdout
+    # And the same shape applies to the script source: no stale ALLOW_SERVER_HOST.
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "ALLOW_SERVER_HOST" not in src
+    assert "allow-server-host" not in src
+
+
+def test_export_help_no_longer_documents_dry_run():
+    """The export script never implemented --dry-run; the docs used to imply it.
+    Reviewer asked for the docs to match reality (the import wrapper has its own --dry-run).
+    Regression guard: neither --help nor source mentions a --dry-run flag for this script."""
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "--dry-run" not in result.stdout
+
+
+def test_export_rejects_zero_row_filter():
+    """Reviewer finding: zero-row exports must fail up front with a clear error and
+    no manifest written, instead of emitting blank date_min/date_max that the
+    server-side validator rejects as non-ISO.
+
+    This regression test uses the embedded zero-row guard as a string-level check.
+    A live-DB test would require a running PostgreSQL with a known-empty filter,
+    which is out of scope per architecture §Q7."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    # The guard is implemented in shell between summary computation and manifest write.
+    assert "row_count=" in src and "cut -d=" in src
+    # And the error message is specific enough that an operator can act on it.
+    assert "no rows matched filter" in src
+    # The manifest must NOT be written in the zero-row path; verify the early-exit
+    # falls between summary computation and manifest emission.
+    pre_manifest, _, post_manifest = src.partition("# Write the manifest.")
+    assert "no rows matched filter" in pre_manifest
+    assert "no rows matched filter" not in post_manifest
