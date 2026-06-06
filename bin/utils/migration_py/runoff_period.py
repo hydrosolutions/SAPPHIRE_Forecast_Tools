@@ -138,6 +138,11 @@ def _build_record(row: dict[str, str], horizon: str) -> dict | None:
     ``horizon_in_year``) are always included; ``discharge`` / ``predictor``
     are omitted when the source value is absent / unparseable.
 
+    Mixed-export guard (review feedback): if the CSV row carries its own
+    ``horizon_type`` column and it does not match the CLI ``horizon`` value
+    after case-normalization, the row is dropped (returns ``None``). Rows
+    without a ``horizon_type`` column fall through to trusting the CLI.
+
     Args:
         row: CSV row as ``{column_name: value_str}``.
         horizon: ``"pentad"`` or ``"decade"`` (lowercase payload form).
@@ -145,10 +150,20 @@ def _build_record(row: dict[str, str], horizon: str) -> dict | None:
     Returns:
         A payload dict matching ``RunoffCreate``, or ``None`` if the row
         cannot satisfy the required fields (caller treats this as a parse
-        skip).
+        skip) OR if the row's ``horizon_type`` column disagrees with
+        ``horizon`` (caller treats this as a horizon-mismatch skip).
     """
     if horizon not in _HORIZON_TO_PAYLOAD:
         return None
+
+    # Mixed-export defense: when the CSV row carries an explicit horizon_type
+    # column, it must match the CLI flag. A mismatch is treated as a drop
+    # rather than silently relabeling the payload from the CLI value.
+    row_horizon_raw = row.get("horizon_type")
+    if row_horizon_raw is not None:
+        row_horizon = row_horizon_raw.strip().lower()
+        if row_horizon and row_horizon != horizon:
+            return None
 
     code = (row.get("code") or "").strip()
     date_str = (row.get("date") or "").strip()[:10]
@@ -238,7 +253,9 @@ def _read_filtered_records_with_manifest(
         "skipped_parse": 0,
         "skipped_cutoff": 0,
         "skipped_station": 0,
+        "skipped_horizon_mismatch": 0,
     }
+    horizon_mismatch_logged = False
     records: list[dict] = []
     distinct_codes: set[str] = set()
     date_min: str | None = None
@@ -278,6 +295,26 @@ def _read_filtered_records_with_manifest(
             if cutoff is not None and date_str >= cutoff:
                 counters["skipped_cutoff"] += 1
                 continue
+
+            # Horizon-mismatch pre-check (mixed-export defense — review feedback):
+            # if the CSV row's horizon_type column disagrees with the CLI flag,
+            # drop the row under a distinct counter. First occurrence emits a
+            # WARNING line so the operator can investigate.
+            row_horizon_raw = row.get("horizon_type")
+            if row_horizon_raw is not None:
+                row_horizon = row_horizon_raw.strip().lower()
+                if row_horizon and row_horizon != horizon:
+                    counters["skipped_horizon_mismatch"] += 1
+                    if not horizon_mismatch_logged:
+                        print(
+                            f"WARNING: row code={code} date={date_str} carries "
+                            f"horizon_type={row_horizon!r} but --horizon={horizon!r}; "
+                            "dropping this row and any further mismatches "
+                            "(see SKIPPED_HORIZON_MISMATCH counter).",
+                            file=sys.stderr,
+                        )
+                        horizon_mismatch_logged = True
+                    continue
 
             record = _build_record(row, horizon)
             if record is None:
@@ -344,12 +381,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to the runoff_period export CSV inside the container.",
     )
-    p.add_argument(
-        "--manifest-path",
-        required=True,
-        type=Path,
-        help="Path to the sidecar ``<csv>.manifest`` file (for error clarity).",
-    )
+    # --manifest-path removed (review feedback): the actual validation
+    # derives the sidecar path from --csv-path via _common.validate_manifest,
+    # so a separate CLI arg was decorative. Operators always pass matching
+    # paths from the bash wrapper anyway.
     p.add_argument(
         "--horizon",
         required=True,
@@ -404,7 +439,9 @@ def _print_dry_run_inventory(
     """
     print(f"MODE={mode}" + (f" (cutoff={cutoff})" if cutoff else " (target empty)"))
     print("TARGET_TABLE=runoffs")
-    print(f"HORIZON_TYPE={horizon.upper()}")
+    # Lowercase per architecture §Q4 (review feedback): API/DB enum is
+    # lowercase 'pentad' / 'decade'; uppercase here misled operators.
+    print(f"HORIZON_TYPE={horizon.lower()}")
     print(f"CUTOFF={cutoff if cutoff else 'none'}")
     print(f"SOURCE_FILES=['{csv_path}']")
     print(f"SOURCE_ROW_COUNT={counters['source_row_count']}")
@@ -415,7 +452,8 @@ def _print_dry_run_inventory(
     print(
         f"SKIPPED_PARSE={counters['skipped_parse']} "
         f"SKIPPED_CUTOFF={counters['skipped_cutoff']} "
-        f"SKIPPED_STATION={counters['skipped_station']}"
+        f"SKIPPED_STATION={counters['skipped_station']} "
+        f"SKIPPED_HORIZON_MISMATCH={counters['skipped_horizon_mismatch']}"
     )
     # Safe-write policy line so operators see the active mode in the inventory.
     # P2a runs enrichment-only only; no --strict-merge sibling for this narrow
@@ -437,16 +475,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     csv_path: Path = args.csv_path
-    manifest_path: Path = args.manifest_path
     if not csv_path.is_file():
         print(f"ERROR: CSV not found: {csv_path}", file=sys.stderr)
         return 1
-    # The manifest path is allowed to be a hint; _common.validate_manifest
-    # derives the sidecar path from the CSV path. We still surface a clear
-    # error if the operator-supplied hint doesn't exist on disk.
-    if not manifest_path.is_file():
-        print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
-        return 1
+    # Manifest sidecar path is derived from the CSV path
+    # (--manifest-path arg was removed as decorative per review feedback).
+    # validate_manifest reads it directly.
+    manifest_path = csv_path.with_name(csv_path.name + ".manifest")
 
     # MODE is decided by the wrapper from the psql query; we just receive
     # the cutoff (or None) and pass it through.

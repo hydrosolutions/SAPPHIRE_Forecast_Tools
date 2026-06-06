@@ -86,6 +86,7 @@ HORIZON=""
 STATIONS_FILE=""
 OUT_DIR=""
 DRY_RUN=false
+I_AM_ON_LAPTOP=false
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -108,6 +109,9 @@ Options:
   --out-dir PATH            REQUIRED. Directory to write the CSV + manifest.
                             Created with mode 0o700 if missing.
   --dry-run                 Run the COUNT(*) query only; do NOT export rows.
+  --i-am-on-laptop          BYPASS the location guard (charter Stage E #6).
+                            Use only when the laptop and deployment server
+                            are intentionally co-located on the same host.
   -h, --help                Print this message and exit 0.
 
 Environment:
@@ -115,7 +119,10 @@ Environment:
                                           in CLI; use ~/.pgpass (mode 0600).
 
 Refuses to run if any sapphire-* container is detected locally (this script
-is for laptops / jump hosts, NOT deployment servers — Stage E #6).
+is for laptops / jump hosts, NOT deployment servers — Stage E #6). Override
+with --i-am-on-laptop (operator-facing flag) when intentional. The
+``_P2A_EXPORT_SKIP_LOCATION_GUARD=1`` env var is retained as a
+testing-only bypass.
 USAGE
 }
 
@@ -159,6 +166,10 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                shift
+                ;;
+            --i-am-on-laptop)
+                I_AM_ON_LAPTOP=true
                 shift
                 ;;
             -h|--help)
@@ -208,6 +219,11 @@ parse_args() {
 location_guard() {
     if [[ "${_P2A_EXPORT_SKIP_LOCATION_GUARD:-}" == "1" ]]; then
         # Testing-only bypass; see docstring above.
+        return 0
+    fi
+    if [[ "$I_AM_ON_LAPTOP" == "true" ]]; then
+        # Operator-facing bypass (charter Stage E #6 / review feedback).
+        echo -e "${YELLOW}WARNING: running on apparent deployment host — bypass enabled by operator (--i-am-on-laptop).${NC}" >&2
         return 0
     fi
     if ! command -v docker >/dev/null 2>&1; then
@@ -375,6 +391,16 @@ SQL
     row_count=$(($(wc -l < "${csv_path}") - 1))
     if [[ "$row_count" -lt 0 ]]; then
         row_count=0
+    fi
+
+    # Reject zero-row exports up front (review feedback): a blank date_min /
+    # date_max manifest is non-ISO and the server-side validator rejects it.
+    # Surface this as a clear operator error before any sidecar is written.
+    if [[ "$row_count" -eq 0 ]]; then
+        umh_log_redacted "ERROR: no rows matched filter — nothing to export."
+        umh_log_redacted "Check the stations file and --horizon flag."
+        rm -f "${csv_path}"
+        exit 1
     fi
 
     # distinct codes + date range — single python pass for performance.

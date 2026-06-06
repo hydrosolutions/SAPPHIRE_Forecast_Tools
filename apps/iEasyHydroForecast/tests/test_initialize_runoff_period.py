@@ -628,8 +628,6 @@ def test_main_dry_run_with_station_filter_reduces_filtered_count(tmp_path, capsy
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -646,7 +644,7 @@ def test_main_dry_run_with_station_filter_reduces_filtered_count(tmp_path, capsy
     assert "MODE=full-import" in out
     assert "DISTINCT_STATION_COUNT_REDACTED=1" in out
     assert "TARGET_TABLE=runoffs" in out
-    assert "HORIZON_TYPE=PENTAD" in out
+    assert "HORIZON_TYPE=pentad" in out  # lowercase per Q4 (was uppercase pre-review)
 
 
 def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
@@ -672,8 +670,6 @@ def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "decade",
             "--api-url",
@@ -687,7 +683,7 @@ def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "MODE=pre-cutoff (cutoff=2026-01-06)" in out
     assert "FILTERED_ROW_COUNT=1" in out
-    assert "HORIZON_TYPE=DECADE" in out
+    assert "HORIZON_TYPE=decade" in out  # lowercase per Q4 (was uppercase pre-review)
 
 
 def test_main_dry_run_default_inventory_lists_enrichment_only_policy(tmp_path, capsys):
@@ -709,8 +705,6 @@ def test_main_dry_run_default_inventory_lists_enrichment_only_policy(tmp_path, c
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -728,8 +722,6 @@ def test_main_missing_csv_returns_nonzero(tmp_path):
         [
             "--csv-path",
             str(tmp_path / "does_not_exist.csv"),
-            "--manifest-path",
-            str(tmp_path / "does_not_exist.csv.manifest"),
             "--horizon",
             "pentad",
             "--api-url",
@@ -747,8 +739,6 @@ def test_main_missing_manifest_returns_nonzero(tmp_path):
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(tmp_path / "no_such.manifest"),
             "--horizon",
             "pentad",
             "--api-url",
@@ -810,3 +800,94 @@ def test_shipped_decade_fixture_round_trips():
     assert dmax == "2026-01-21"
     for r in records:
         assert r["horizon_type"] == "decade"
+
+
+def test_build_record_rejects_row_with_mismatched_horizon_type():
+    """Review feedback: when the CSV row carries its own ``horizon_type`` column
+    and it disagrees with the CLI flag, drop the row instead of silently
+    relabeling the payload from the CLI value."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "horizon_type": "decade",  # disagrees with the CLI value below
+    }
+    assert runoff_period._build_record(row, "pentad") is None
+
+
+def test_build_record_accepts_row_with_matching_horizon_type():
+    """When the CSV row's horizon_type agrees with the CLI flag, the record
+    is built normally."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "horizon_type": "pentad",
+    }
+    rec = runoff_period._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_build_record_normalizes_case_in_row_horizon_type():
+    """Row horizon_type is case-normalized before comparison."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "horizon_type": "PENTAD",
+    }
+    rec = runoff_period._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_manifest_path_arg_removed():
+    """Review feedback: --manifest-path CLI argument was decorative
+    (existence-check-only; actual validation derives the sidecar path from
+    --csv-path). It was removed."""
+    parser = runoff_period._build_arg_parser()
+    actions = {a.option_strings[0] for a in parser._actions if a.option_strings}
+    assert "--csv-path" in actions
+    assert "--manifest-path" not in actions
+    # And the bash wrapper must stop passing it.
+    wrapper_text = (_REPO_ROOT / "bin" / "initialize_runoff_period_history.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "--manifest-path" not in wrapper_text
+
+
+def test_dry_run_output_uses_lowercase_horizon_type():
+    """Review feedback: dry-run HORIZON_TYPE was uppercase; enum lock (Q4)
+    requires lowercase to match the API/DB."""
+    import contextlib
+    import io
+
+    counters = {
+        "source_row_count": 0,
+        "filtered_row_count": 0,
+        "skipped_parse": 0,
+        "skipped_cutoff": 0,
+        "skipped_station": 0,
+        "skipped_horizon_mismatch": 0,
+    }
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        runoff_period._print_dry_run_inventory(
+            csv_path=Path("/tmp/x.csv"),
+            horizon="pentad",
+            counters=counters,
+            distinct_codes=set(),
+            date_min=None,
+            date_max=None,
+            mode="full-import",
+            cutoff=None,
+        )
+    out = buf.getvalue()
+    assert "HORIZON_TYPE=pentad" in out
+    assert "HORIZON_TYPE=PENTAD" not in out
+    # And the new counter is surfaced.
+    assert "SKIPPED_HORIZON_MISMATCH=0" in out

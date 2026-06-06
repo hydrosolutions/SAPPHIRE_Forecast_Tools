@@ -372,3 +372,33 @@ def test_decade_csv_uses_discharge_not_discharge_avg():
     cols = [c.strip() for c in header.split(",")]
     assert "discharge" in cols
     assert "discharge_avg" not in cols
+
+
+def test_export_help_documents_i_am_on_laptop_flag():
+    """Review feedback: location-guard bypass MUST be operator-facing
+    --i-am-on-laptop (charter Stage E #6), not just a hidden env var."""
+    import subprocess
+
+    result = subprocess.run(
+        ["bash", str(_REPO_ROOT / "bin" / "export_runoff_period_history.sh"), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "--i-am-on-laptop" in result.stdout
+
+
+def test_export_rejects_zero_row_filter():
+    """Review feedback: zero-row exports must abort with a clear error and no
+    manifest written. String-level check on the script source confirms the
+    early-exit lives between row_count computation and manifest emission."""
+    src = (_REPO_ROOT / "bin" / "export_runoff_period_history.sh").read_text(encoding="utf-8")
+    # The guard checks row_count -eq 0 and exits.
+    assert "row_count" in src and 'row_count" -eq 0' in src
+    # The operator-facing error message is specific.
+    assert "no rows matched filter" in src
+    # The early-exit lives BEFORE the manifest heredoc.
+    pre_manifest, _, post_manifest = src.partition('cat > "${manifest_path}"')
+    assert "no rows matched filter" in pre_manifest
+    assert "no rows matched filter" not in post_manifest

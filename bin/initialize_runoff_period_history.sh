@@ -471,7 +471,6 @@ main() {
         "$IMAGE" \
         python3 -m migration_py.runoff_period \
             --csv-path /runoff_period.csv \
-            --manifest-path /runoff_period.csv.manifest \
             --horizon "${HORIZON}" \
             --api-url "${API_URL}" \
             --batch-size "${BATCH_SIZE}" \
