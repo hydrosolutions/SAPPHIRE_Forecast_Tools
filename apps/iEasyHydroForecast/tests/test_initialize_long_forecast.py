@@ -1004,3 +1004,33 @@ def test_main_dry_run_with_shipped_fixtures(tmp_path, capsys):
     ]
     assert len(lr_lines) == 1 and "source_rows=3" in lr_lines[0]
     assert len(gbt_lines) == 1 and "source_rows=3" in gbt_lines[0]
+
+
+def test_wrapper_help_documents_allow_global_cutoff():
+    """Review feedback (round 2): the wrapper's MODE-detection query is
+    unscoped by horizon_value, so applying its result to every mode can
+    skip valid data. Fail-closed gate requires --allow-global-cutoff when
+    the target has rows AND --mode filter is absent. --help must surface
+    the operator-facing flag + the per-mode escape hatch."""
+    import subprocess
+
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "--allow-global-cutoff" in result.stdout
+    # And the wrapper source documents the fail-closed gate logic.
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "ALLOW_GLOBAL_CUTOFF" in src
+    assert "TARGET_MODE" in src and "pre-cutoff" in src
+    # The gate aborts with a non-zero exit when triggered. Check the
+    # control-flow shape exists (defense against accidental removal of
+    # the gate during future refactors).
+    assert (
+        'ALLOW_GLOBAL_CUTOFF" != true' in src
+        or 'ALLOW_GLOBAL_CUTOFF}" != true' in src
+        or 'ALLOW_GLOBAL_CUTOFF" == true' in src
+    )

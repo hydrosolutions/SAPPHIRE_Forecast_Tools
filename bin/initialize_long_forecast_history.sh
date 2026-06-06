@@ -113,6 +113,7 @@ STATION_FILTER=""
 MODE_FILTER=""
 MODEL_FILTER=""
 SKIP_MODE=""
+ALLOW_GLOBAL_CUTOFF=false
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -158,6 +159,14 @@ Options:
                        selected modes (e.g. LR_Base).
   --skip-mode <LIST>   Comma-separated list of mode names to skip
                        (in addition to the always-skipped `monthly`).
+  --allow-global-cutoff
+                       Opt-in to apply a single conservative cutoff (the
+                       global MIN(date) across ALL horizon_value rows) to
+                       every mode in this run. Without it, the wrapper
+                       refuses to proceed when the target table has rows
+                       AND no --mode filter is set. Resolution path:
+                       run per-mode with --mode <name> separately, or
+                       opt in here.
   -h, --help           Print this message and exit 0.
 
 Examples:
@@ -261,6 +270,17 @@ parse_args() {
                 fi
                 SKIP_MODE="$2"
                 shift 2
+                ;;
+            --allow-global-cutoff)
+                # Opt-in to apply a single conservative cutoff (the global
+                # MIN(date) across ALL horizon_value rows) to every mode in
+                # this run. Default: refuse if any month rows exist when
+                # the run spans multiple modes (review feedback — header
+                # contract advertised per-mode cutoffs which weren't being
+                # computed). Operators wanting per-mode cutoffs should use
+                # --mode <single_mode> per mode separately.
+                ALLOW_GLOBAL_CUTOFF=true
+                shift
                 ;;
             -h|--help)
                 print_usage
@@ -427,6 +447,35 @@ main() {
     fi
 
     umh_log_redacted "MODE=${TARGET_MODE}$( [[ -n "$CUTOFF" ]] && echo " (cutoff=${CUTOFF})" || echo " (target empty)")"
+
+    # Fail-closed gate (review feedback): the cutoff is computed globally
+    # across ALL horizon_value rows, but the wrapper processes multiple modes
+    # (each with a distinct horizon_value). Applying one global cutoff to
+    # every mode can skip valid data when, for example, month_1 already has
+    # target rows but month_2 is still empty. When the target table has data
+    # AND no single-mode filter is set, refuse to proceed unless the operator
+    # explicitly opts in via --allow-global-cutoff. Single-mode runs
+    # (--mode <name>) are unaffected because the global query result IS the
+    # per-mode cutoff for that one mode's horizon_value.
+    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$ALLOW_GLOBAL_CUTOFF" != true ]]; then
+        umh_log_redacted "ERROR: target long_forecasts table has rows (count=${TARGET_COUNT}) but"
+        umh_log_redacted "this wrapper would apply ONE global cutoff to every mode it processes."
+        umh_log_redacted "That can skip valid data because different modes have independent"
+        umh_log_redacted "horizon_value scopes (month_1 / month_2 / quarter / seasonal_*)."
+        umh_log_redacted ""
+        umh_log_redacted "Resolution — pick ONE:"
+        umh_log_redacted "  (a) Run per-mode separately (recommended for partially-populated targets):"
+        umh_log_redacted "        bash $0 \"\$ENV_FILE\" --mode month_1"
+        umh_log_redacted "        bash $0 \"\$ENV_FILE\" --mode month_2"
+        umh_log_redacted "        ..."
+        umh_log_redacted "  (b) Accept the conservative global cutoff (skips rows >= ${CUTOFF}"
+        umh_log_redacted "      in EVERY mode — may under-populate empty horizon_value modes):"
+        umh_log_redacted "        bash $0 \"\$ENV_FILE\" --allow-global-cutoff"
+        exit 1
+    fi
+    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$ALLOW_GLOBAL_CUTOFF" == true ]]; then
+        umh_log_redacted "WARNING: applying global cutoff (${CUTOFF}) to every mode (operator opted in via --allow-global-cutoff)."
+    fi
 
     # -------------------------------------------------------------------------
     # Acquire a temp workspace (mode 0o700, trap-cleaned on EXIT INT TERM).
