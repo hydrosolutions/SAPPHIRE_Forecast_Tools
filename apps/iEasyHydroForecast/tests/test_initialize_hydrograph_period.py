@@ -690,8 +690,6 @@ def test_main_dry_run_pentad_empty_csv_emits_full_import(tmp_path, capsys):
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -740,8 +738,6 @@ def test_main_dry_run_with_station_filter_reduces_filtered_count(tmp_path, capsy
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -758,7 +754,7 @@ def test_main_dry_run_with_station_filter_reduces_filtered_count(tmp_path, capsy
     assert "MODE=full-import" in out
     assert "DISTINCT_STATION_COUNT_REDACTED=1" in out
     assert "TARGET_TABLE=hydrographs" in out
-    assert "HORIZON_TYPE=PENTAD" in out
+    assert "HORIZON_TYPE=pentad" in out
 
 
 def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
@@ -786,8 +782,6 @@ def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "decade",
             "--api-url",
@@ -801,7 +795,7 @@ def test_main_dry_run_with_cutoff_emits_pre_cutoff(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "MODE=pre-cutoff (cutoff=2026-01-06)" in out
     assert "FILTERED_ROW_COUNT=1" in out
-    assert "HORIZON_TYPE=DECADE" in out
+    assert "HORIZON_TYPE=decade" in out
 
 
 def test_main_missing_csv_returns_nonzero(tmp_path):
@@ -809,8 +803,6 @@ def test_main_missing_csv_returns_nonzero(tmp_path):
         [
             "--csv-path",
             str(tmp_path / "does_not_exist.csv"),
-            "--manifest-path",
-            str(tmp_path / "does_not_exist.csv.manifest"),
             "--horizon",
             "pentad",
             "--api-url",
@@ -824,12 +816,11 @@ def test_main_missing_csv_returns_nonzero(tmp_path):
 def test_main_missing_manifest_returns_nonzero(tmp_path):
     csv = tmp_path / "lonely.csv"
     csv.write_text(",".join(_DEFAULT_HEADER) + "\n", encoding="utf-8")
+    # Note: no <csv>.manifest sidecar written; expect non-zero exit.
     exit_code = hydrograph_period.main(
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(tmp_path / "no_such.manifest"),
             "--horizon",
             "pentad",
             "--api-url",
@@ -872,8 +863,6 @@ def test_strict_merge_flag_changes_post_behavior(tmp_path, capsys):
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -911,8 +900,6 @@ def test_dry_run_default_inventory_lists_enrichment_only_policy(tmp_path, capsys
         [
             "--csv-path",
             str(csv),
-            "--manifest-path",
-            str(manifest),
             "--horizon",
             "pentad",
             "--api-url",
@@ -975,3 +962,196 @@ def test_shipped_decade_fixture_round_trips(tmp_path):
     assert dmax == "2026-01-21"
     for r in records:
         assert r["horizon_type"] == "decade"
+
+
+# ===========================================================================
+# 9. Review-feedback fixes (P2b review round)
+# ===========================================================================
+
+
+def test_build_record_rejects_row_with_mismatched_horizon_type():
+    """_build_record returns None when row horizon_type differs from CLI horizon.
+
+    A row with ``horizon_type=decade`` in the CSV MUST be dropped when the
+    CLI passes ``--horizon pentad``, and vice versa.
+    """
+    row = {
+        "horizon_type": "decade",  # mismatch: CLI says pentad
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "day_of_year": "1",
+    }
+    assert hydrograph_period._build_record(row, "pentad") is None
+
+    # Reverse case: pentad row rejected when CLI says decade.
+    row2 = {
+        "horizon_type": "pentad",
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "day_of_year": "1",
+    }
+    assert hydrograph_period._build_record(row2, "decade") is None
+
+
+def test_build_record_accepts_row_with_matching_horizon_type():
+    """_build_record succeeds when row horizon_type matches CLI horizon."""
+    row = {
+        "horizon_type": "pentad",
+        "code": "19999",
+        "date": "2026-01-01",
+        "horizon_value": "1",
+        "horizon_in_year": "1",
+        "day_of_year": "1",
+    }
+    rec = hydrograph_period._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_build_record_normalizes_case_in_row_horizon_type():
+    """_build_record normalizes the row horizon_type to lowercase for comparison.
+
+    Export CSVs from older versions may emit ``PENTAD`` or ``Pentad``.
+    A matching row must NOT be rejected due to case differences.
+    """
+    for raw_value in ("PENTAD", "Pentad", "pEnTaD"):
+        row = {
+            "horizon_type": raw_value,
+            "code": "19999",
+            "date": "2026-01-01",
+            "horizon_value": "1",
+            "horizon_in_year": "1",
+            "day_of_year": "1",
+        }
+        rec = hydrograph_period._build_record(row, "pentad")
+        assert rec is not None, (
+            f"Expected row with horizon_type={raw_value!r} to match CLI 'pentad', but got None"
+        )
+
+    # Mixed-case DECADE also matches.
+    for raw_value in ("DECADE", "Decade", "dEcAdE"):
+        row = {
+            "horizon_type": raw_value,
+            "code": "19999",
+            "date": "2026-01-01",
+            "horizon_value": "2",
+            "horizon_in_year": "2",
+            "day_of_year": "11",
+        }
+        rec = hydrograph_period._build_record(row, "decade")
+        assert rec is not None, (
+            f"Expected row with horizon_type={raw_value!r} to match CLI 'decade', but got None"
+        )
+
+
+def test_manifest_path_arg_removed():
+    """``--manifest-path`` must NOT be a recognised argument of the CLI parser.
+
+    After Fix 2 it was removed because it was decorative (existence-check
+    only; the sidecar path is always derived from ``--csv-path``). Passing it
+    must produce a non-zero exit code (argparse unknown-arg error).
+    """
+    # We need a real CSV + manifest on disk so the CSV-exists check passes,
+    # giving argparse a chance to reject the unknown flag.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpd:
+        csv_path = Path(tmpd) / "test.csv"
+        csv_path.write_text(",".join(_DEFAULT_HEADER) + "\n", encoding="utf-8")
+        manifest_path = Path(tmpd) / "test.csv.manifest"
+        manifest_path.write_text(
+            "export_type=hydrograph_period\nrow_count=0\nstation_count=0\n"
+            "date_min=2026-01-01\ndate_max=2026-01-01\n",
+            encoding="utf-8",
+        )
+        # Argparse raises SystemExit(2) for unrecognised arguments.
+        import pytest
+
+        with pytest.raises(SystemExit) as exc_info:
+            hydrograph_period.main(
+                [
+                    "--csv-path",
+                    str(csv_path),
+                    "--manifest-path",  # <-- must be rejected
+                    str(manifest_path),
+                    "--horizon",
+                    "pentad",
+                    "--api-url",
+                    "http://localhost:8002/hydrograph/",
+                    "--dry-run",
+                ]
+            )
+        assert exc_info.value.code != 0
+
+
+def test_dry_run_output_uses_lowercase_horizon_type(tmp_path, capsys):
+    """HORIZON_TYPE line in dry-run inventory must be lowercase (Fix 4).
+
+    Previously ``HORIZON_TYPE=PENTAD``; after Fix 4 it must be
+    ``HORIZON_TYPE=pentad`` (and similarly ``HORIZON_TYPE=decade``).
+    """
+    csv, manifest = _write_csv_and_manifest(
+        tmp_path,
+        [
+            {
+                "code": "19999",
+                "date": "2026-01-01",
+                "horizon_value": "1",
+                "horizon_in_year": "1",
+                "day_of_year": "1",
+            },
+        ],
+        horizon="pentad",
+    )
+    exit_code = hydrograph_period.main(
+        [
+            "--csv-path",
+            str(csv),
+            "--horizon",
+            "pentad",
+            "--api-url",
+            "http://localhost:8002/hydrograph/",
+            "--dry-run",
+        ]
+    )
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # Must be lowercase.
+    assert "HORIZON_TYPE=pentad" in out
+    # Must NOT be uppercase.
+    assert "HORIZON_TYPE=PENTAD" not in out
+
+    # Also verify for decade.
+    csv2, manifest2 = _write_csv_and_manifest(
+        tmp_path,
+        [
+            {
+                "code": "19999",
+                "date": "2026-01-01",
+                "horizon_value": "1",
+                "horizon_in_year": "1",
+                "day_of_year": "1",
+            },
+        ],
+        horizon="decade",
+        csv_name="fixture_decade.csv",
+    )
+    exit_code2 = hydrograph_period.main(
+        [
+            "--csv-path",
+            str(csv2),
+            "--horizon",
+            "decade",
+            "--api-url",
+            "http://localhost:8002/hydrograph/",
+            "--dry-run",
+        ]
+    )
+    assert exit_code2 == 0
+    out2 = capsys.readouterr().out
+    assert "HORIZON_TYPE=decade" in out2
+    assert "HORIZON_TYPE=DECADE" not in out2

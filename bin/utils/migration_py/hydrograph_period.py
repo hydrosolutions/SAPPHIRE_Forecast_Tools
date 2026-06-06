@@ -169,17 +169,31 @@ def _build_record(row: dict[str, str], horizon: str) -> dict | None:
     ``horizon_in_year``, ``day_of_year``) are always included; every other
     field is omitted when the source value is absent / unparseable.
 
+    Row ``horizon_type`` validation: if the source CSV row includes a
+    ``horizon_type`` column, its value (lowercased) is compared to the CLI
+    ``horizon`` argument. A mismatch causes this function to return ``None``
+    (the row is dropped). This catches mixed-horizon CSV files and the
+    common export mistake of passing --horizon=pentad for a decade CSV.
+
     Args:
         row: CSV row as ``{column_name: value_str}``.
         horizon: ``"pentad"`` or ``"decade"`` (lowercase payload form).
 
     Returns:
         A payload dict matching ``HydrographCreate``, or ``None`` if the row
-        cannot satisfy the required fields (caller treats this as a parse
-        skip).
+        cannot satisfy the required fields OR if the row's ``horizon_type``
+        column (when present) does not match ``horizon`` (caller treats this
+        as a parse skip with mismatch warning).
     """
     if horizon not in _HORIZON_TO_PAYLOAD:
         return None
+
+    # Validate row horizon_type against CLI horizon when the column is present.
+    row_horizon_raw = row.get("horizon_type")
+    if row_horizon_raw is not None:
+        row_horizon = row_horizon_raw.strip().lower()
+        if row_horizon and row_horizon != horizon:
+            return None
 
     code = (row.get("code") or "").strip()
     date_str = (row.get("date") or "").strip()[:10]
@@ -288,6 +302,7 @@ def _read_filtered_records_with_manifest(
         "skipped_parse": 0,
         "skipped_cutoff": 0,
         "skipped_station": 0,
+        "skipped_horizon_mismatch": 0,
     }
     records: list[dict] = []
     distinct_codes: set[str] = set()
@@ -328,6 +343,25 @@ def _read_filtered_records_with_manifest(
             if cutoff is not None and date_str >= cutoff:
                 counters["skipped_cutoff"] += 1
                 continue
+
+            # Horizon-type mismatch check (before _build_record so we can
+            # count mismatches distinctly and emit a first-mismatch warning).
+            row_horizon_raw = row.get("horizon_type")
+            if row_horizon_raw is not None:
+                row_horizon = row_horizon_raw.strip().lower()
+                if row_horizon and row_horizon != horizon:
+                    counters["skipped_horizon_mismatch"] += 1
+                    if counters["skipped_horizon_mismatch"] == 1:
+                        logger.warning(
+                            "Row horizon_type mismatch: row has %r but CLI --horizon=%r; "
+                            "dropping row (code=%r date=%r). Further mismatches counted "
+                            "but not individually logged.",
+                            row_horizon,
+                            horizon,
+                            code,
+                            date_str,
+                        )
+                    continue
 
             record = _build_record(row, horizon)
             if record is None:
@@ -395,12 +429,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Path to the hydrograph_period export CSV inside the container.",
     )
     p.add_argument(
-        "--manifest-path",
-        required=True,
-        type=Path,
-        help="Path to the sidecar ``<csv>.manifest`` file (for error clarity).",
-    )
-    p.add_argument(
         "--horizon",
         required=True,
         choices=sorted(_HORIZON_TO_PAYLOAD.keys()),
@@ -464,7 +492,7 @@ def _print_dry_run_inventory(
     """
     print(f"MODE={mode}" + (f" (cutoff={cutoff})" if cutoff else " (target empty)"))
     print("TARGET_TABLE=hydrographs")
-    print(f"HORIZON_TYPE={horizon.upper()}")
+    print(f"HORIZON_TYPE={horizon.lower()}")
     print(f"CUTOFF={cutoff if cutoff else 'none'}")
     print(f"SOURCE_FILES=['{csv_path}']")
     print(f"SOURCE_ROW_COUNT={counters['source_row_count']}")
@@ -475,7 +503,8 @@ def _print_dry_run_inventory(
     print(
         f"SKIPPED_PARSE={counters['skipped_parse']} "
         f"SKIPPED_CUTOFF={counters['skipped_cutoff']} "
-        f"SKIPPED_STATION={counters['skipped_station']}"
+        f"SKIPPED_STATION={counters['skipped_station']} "
+        f"SKIPPED_HORIZON_MISMATCH={counters.get('skipped_horizon_mismatch', 0)}"
     )
     # Safe-write policy line so operators see the active mode in the inventory.
     if strict_merge:
@@ -497,13 +526,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     csv_path: Path = args.csv_path
-    manifest_path: Path = args.manifest_path
     if not csv_path.is_file():
         print(f"ERROR: CSV not found: {csv_path}", file=sys.stderr)
         return 1
-    # The manifest path is allowed to be a hint; _common.validate_manifest
-    # derives the sidecar path from the CSV path. We still surface a clear
-    # error if the operator-supplied hint doesn't exist on disk.
+    # The manifest is the sidecar at <csv_path>.manifest; validate_manifest
+    # derives the path from the CSV path. Surface a clear error if missing.
+    manifest_path: Path = Path(str(csv_path) + ".manifest")
     if not manifest_path.is_file():
         print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
         return 1

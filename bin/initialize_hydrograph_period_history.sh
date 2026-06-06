@@ -488,7 +488,6 @@ main() {
         "$IMAGE" \
         python3 -m migration_py.hydrograph_period \
             --csv-path /hydrograph_period.csv \
-            --manifest-path /hydrograph_period.csv.manifest \
             --horizon "${HORIZON}" \
             --api-url "${API_URL}" \
             --batch-size "${BATCH_SIZE}" \

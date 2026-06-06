@@ -78,6 +78,7 @@ HORIZON=""
 STATIONS_FILE=""
 OUT_DIR=""
 DRY_RUN=false
+I_AM_ON_LAPTOP=false
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -100,6 +101,12 @@ Options:
   --out-dir PATH            REQUIRED. Directory to write the CSV + manifest.
                             Created with mode 0o700 if missing.
   --dry-run                 Run the COUNT(*) query only; do NOT export rows.
+  --i-am-on-laptop          Operator-facing bypass for the location guard.
+                            Use this flag when you are on your operator laptop
+                            but the SAPPHIRE stack is also running locally
+                            (e.g., development machine with the stack up for
+                            testing). Equivalent to the hidden env-var bypass
+                            but documented and operator-visible.
   -h, --help                Print this message and exit 0.
 
 Environment:
@@ -153,6 +160,10 @@ parse_args() {
                 DRY_RUN=true
                 shift
                 ;;
+            --i-am-on-laptop)
+                I_AM_ON_LAPTOP=true
+                shift
+                ;;
             -h|--help)
                 print_usage
                 exit 0
@@ -200,6 +211,12 @@ parse_args() {
 location_guard() {
     if [[ "${_P2B_EXPORT_SKIP_LOCATION_GUARD:-}" == "1" ]]; then
         # Testing-only bypass; see docstring above.
+        return 0
+    fi
+    if [[ "${I_AM_ON_LAPTOP:-false}" == "true" ]]; then
+        # Operator-facing bypass: the --i-am-on-laptop flag was passed
+        # explicitly, meaning the operator knows they are on their laptop even
+        # though the SAPPHIRE stack is running locally (e.g., for development).
         return 0
     fi
     if ! command -v docker >/dev/null 2>&1; then
@@ -377,6 +394,22 @@ SQL
     row_count=$(($(wc -l < "${csv_path}") - 1))
     if [[ "$row_count" -lt 0 ]]; then
         row_count=0
+    fi
+
+    # Reject zero-row exports BEFORE writing the manifest. A zero-row export
+    # almost always means the --horizon or --stations-file filter matched
+    # nothing (wrong horizon_type in the DB, wrong station codes, or the table
+    # is truly empty). Fail loudly rather than producing a useless artifact.
+    if [[ "$row_count" -eq 0 ]]; then
+        echo -e "${RED}Error: COPY produced 0 data rows — export aborted BEFORE manifest write.${NC}" >&2
+        echo "" >&2
+        echo "Possible causes:" >&2
+        echo "  - The --horizon value does not match any rows in the source DB" >&2
+        echo "    (check: SELECT COUNT(*) FROM hydrographs WHERE horizon_type='${horizon_upper}';)" >&2
+        echo "  - None of the station codes in --stations-file exist in hydrographs" >&2
+        echo "  - The hydrographs table is empty" >&2
+        rm -f "${csv_path}"
+        exit 1
     fi
 
     # distinct codes + date range — single python pass for performance.
