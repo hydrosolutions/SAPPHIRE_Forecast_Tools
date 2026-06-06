@@ -594,6 +594,103 @@ that field absent. For pre-cutoff mode, expect `MIN(date)` to be the
 earliest source date AND `MAX(date)` to be one day before the prior
 cutoff. For full-import mode, both should match the source date range.
 
+### 5.5 Long-term forecasts (configured-mode hindcasts)
+
+Wrapper: `bin/initialize_long_forecast_history.sh`. Source: tree-walk under
+`${ieasyhydroforecast_data_ref_dir}/intermediate_data/long_term_predictions/<mode>/<model>/<model>_hindcast.csv`
+discovered through the JSON configs at
+`${ieasyhydroforecast_data_ref_dir}/config/long_term_configs/*.json`.
+Target API: `http://localhost:8003/long-forecast/` (postprocessing — NOT
+preprocessing).
+
+This is the most complex CSV-source wrapper in the toolkit: it walks a
+directory tree (one mode → N models → N CSV files) rather than reading a
+single file. Three deterministic skip rules apply at discovery time:
+
+1. **`monthly` is always hard-skipped.** Non-operational per
+   `apps/long_term_forecasting/lt_schedule_query.py:54-91`. Even if a
+   `monthly.json` config exists on disk, `_discover_modes` will not return
+   it.
+2. **Modes without a JSON config are hard-skipped.** No synthetic configs
+   are created from the directory layout (architecture §Q3 lock). On TAJ
+   this means `month_4`–`month_9` are skipped if no config files exist for
+   them.
+3. **`--skip-mode <list>` lets the operator additionally skip** configured
+   modes (comma-separated for multiple skips).
+
+**UZB no-op acceptance.** If zero modes pass the discover-and-filter
+pipeline (e.g. a deployment with no configured long-term modes), the
+wrapper exits 0 with a logged `[no source data for this deployment]`
+message — NOT an error. This is the Stage E item #12 acceptance the test
+suite encodes.
+
+**Dry-run inventory** (per-mode + per-model breakdown):
+
+```bash
+bash bin/initialize_long_forecast_history.sh "$ENV_FILE" --dry-run
+```
+
+Expected output: one block per discovered (mode, model) pair with
+`SOURCE_CSV`, `SOURCE_ROW_COUNT`, `FILTERED_ROW_COUNT`, `SOURCE_DATE_MIN`,
+`SOURCE_DATE_MAX`, plus a `MODE` line (full-import vs pre-cutoff)
+computed independently per mode's horizon_value.
+
+**Canary** (single mode, single model, single station):
+
+```bash
+bash bin/initialize_long_forecast_history.sh "$ENV_FILE" \
+    --mode month_1 --model LR_Base --station-filter <test-code>
+```
+
+Verify the count delta matches expectations against the dry-run inventory's
+`FILTERED_ROW_COUNT` for the same `(mode, model, station-filter)` triple.
+
+**Full population** (all configured modes, all models):
+
+```bash
+bash bin/initialize_long_forecast_history.sh "$ENV_FILE"
+```
+
+Per-model log lines stream the dry-run inventory followed by per-batch POST
+counts. Re-runs are idempotent: the postprocessing service upserts on the
+full natural key `(horizon_type, horizon_value, code, date, model_type,
+valid_from, valid_to)`.
+
+**Per-model payload variance.** The Python helper assembles per-row
+payloads from the variable column set each model family writes:
+
+- **LR family** (e.g. `LR_Base`): `q` (from `Q_<model>`) + `q05/q10/q25/q50/q75/q90/q95`
+  (from `Q5/.../Q95` columns).
+- **GBT family** (e.g. `GBT`): LR set PLUS `q_xgb/q_lgbm/q_catboost` (from
+  `Q_<model>_xgb`, `_lgbm`, `_catboost`).
+- **MC_ALD**: LR set PLUS `q_loc` (from `Q_loc`).
+
+The universal safe-write rule applies: any column absent or NULL/NaN is
+OMITTED from the payload — never sent as null — so existing populated
+fields in the DB are preserved.
+
+**Acceptance SQL** (run after a full population):
+
+```bash
+docker exec -i sapphire-postprocessing-db psql -U $POSTGRES_USER \
+    -d $POSTGRES_DB <<'SQL'
+SELECT horizon_type, horizon_value, model_type,
+       COUNT(*) AS rows,
+       COUNT(q) AS q_rows,
+       MIN(date), MAX(date)
+FROM long_forecasts
+GROUP BY horizon_type, horizon_value, model_type
+ORDER BY horizon_value, model_type;
+SQL
+```
+
+Compare per-(mode, model) row counts against the dry-run inventory.
+`q_rows` will equal `rows` for any model where the point forecast column
+was present; gaps indicate the source CSV omitted the column for some
+rows. For pre-cutoff mode runs, expect `MIN(date)` to be the earliest
+source date AND `MAX(date)` to be one day before the prior cutoff for that
+horizon_value.
+
 ## 6. Laptop local-export migrations
 
 [Filled by P2a (runoff PENTAD/DECADE), P2b (hydrograph PENTAD/DECADE), P4a
