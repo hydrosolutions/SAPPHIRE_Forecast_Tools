@@ -609,6 +609,294 @@ cutoff. For full-import mode, both should match the source date range.
   containers are present (Stage E item #6 for export scripts).
 ]
 
+### 6.4 ML forecasts (TFT / TiDE / TSMixer)
+
+Source: laptop `sapphire-postprocessing-db`, table `forecasts`, filtered to
+`model_type IN ('TFT','TiDE','TSMixer')`. Target: deployment-server
+`forecasts` rows with the same three model_types. Default storage shape is
+`horizon_type='day'` per user-lock L6 — modern ML writes (operational pipeline
+post commit `1cb3495`) only emit `day` rows. Pre-cutoff vs full-import is
+decided by the deployment-side `forecasts` table state, filtered to the three
+ML model_types only (so a populated LR-forecasts table does not block a fresh
+ML migration). Reruns are idempotent (service-side upsert on
+`(horizon_type, code, model_type, date, target)`).
+
+#### Background
+
+ML forecast history lives only on the laptop where the operational pipeline
+ran historically — there is no in-deployment-server source for these rows
+(see architecture §Q5). The migration moves rows from the laptop's
+`sapphire-postprocessing-db.forecasts` into the deployment-server's
+`postprocessing` API in two steps:
+
+1. Laptop-side: `bin/export_ml_forecast_history.sh <out_dir>` emits a
+   CSV + sidecar `.manifest` pair into `<out_dir>`. Default filter is
+   `horizon_type='day'`; pass `--include-legacy-horizons` to ALSO export
+   the pre-1cb3495 PENTAD/DECADE rows.
+2. Transfer (scp) both files to the deployment server.
+3. Server-side: `bin/initialize_ml_forecast_history.sh "$ENV_FILE"
+   --from-export <PATH>` resolves the deployment image, validates the
+   manifest, runs MODE detection (filtered to ML model_types only), and
+   POSTs the parsed records to the postprocessing API.
+
+The wrapper sends only non-NULL fields per the universal safe-write rule
+(architecture §Q2 layer 2). ML forecast rows have nullable quantile
+(`q05`/`q25`/`q75`/`q95`) and `forecasted_discharge` / `flag` fields; the
+wrapper omits any field that is absent or unparseable in the source CSV —
+never sends `field: null` — so the service-side upsert path cannot wipe
+out an existing non-NULL target value with an incoming NULL.
+
+##### WARNING: enum case (Stage A §E live-test result)
+
+The API `ModelType` enum values are **MIXED-CASE**:
+
+| Form         | Spelling   | Where seen                                       |
+|--------------|------------|--------------------------------------------------|
+| Legacy dir   | `TFT`      | `predictions/TFT/`, on-disk model artifacts      |
+| Legacy dir   | `TIDE`     | `predictions/TIDE/`                              |
+| Legacy dir   | `TSMIXER`  | `predictions/TSMIXER/`                           |
+| API canonical| `TFT`      | `sapphire/services/postprocessing/.../ModelType` |
+| API canonical| `TiDE`     | `sapphire/services/postprocessing/.../ModelType` |
+| API canonical| `TSMixer`  | `sapphire/services/postprocessing/.../ModelType` |
+
+The helper `bin/utils/migration_py/ml_forecast.py` exposes the
+`MODEL_DIR_TO_API` constant to map both forms to the canonical mixed-case
+API spelling. Any source string outside the six known spellings raises
+`UnknownMLModelTypeError` and the affected row is counted as
+`SKIPPED_UNKNOWN_MODEL` in the dry-run inventory (no silent fallback).
+
+The export CSV preserves the canonical API spelling (mixed case) — the
+mapping table above documents the historical mismatch so operators
+investigating older on-disk artifacts know what to expect.
+
+##### WARNING: default horizon='day' vs `--preserve-legacy-ml-horizons`
+
+Per user-lock L6, the wrapper writes all migrated ML rows as
+`horizon_type='day'` regardless of any source-CSV `horizon_type` cell.
+This matches the operational writer at
+`apps/machine_learning/scr/utils_ml_forecast.py:_write_ml_forecast_to_api`
+(commit `1cb3495`) — the modern ML pipeline only stores `day` rows.
+
+The opt-in `--preserve-legacy-ml-horizons` flag changes this behavior:
+when active, source rows whose `horizon_type` is `pentad` or `decade` are
+accepted AND POSTed with that horizon_type preserved (and
+`horizon_value=0` / `horizon_in_year=0` per the legacy
+`ForecastDataMigrator` convention). Source rows with any other
+`horizon_type` still take the default `day` mapping.
+
+Use `--preserve-legacy-ml-horizons` ONLY to migrate the pre-1cb3495 legacy
+rows that the modern operational pipeline no longer produces. Both the
+laptop-export wrapper (`--include-legacy-horizons`) AND the server-side
+wrapper (`--preserve-legacy-ml-horizons`) must be set for legacy rows to
+land. The server-side wrapper emits a prominent WARNING log line when the
+flag is active — operators MUST read the log line and confirm the
+intended behavior before proceeding.
+
+When the default (legacy flag OFF) sees a `pentad`/`decade` source row, it
+counts the row as `SKIPPED_HORIZON` in the dry-run inventory and does NOT
+POST it.
+
+#### 6.4.1 Laptop-side export procedure
+
+On the laptop (NOT on the deployment server — the export script's
+location guard refuses to run on a host with `sapphire-postprocessing-db`
+running unless `--allow-server-host` is set):
+
+```bash
+# Credentials in env var OR ~/.pgpass (NEVER on the command line):
+export PGPASSWORD='<laptop_db_password>'
+
+# Default: export only horizon_type='day' rows.
+bash bin/export_ml_forecast_history.sh /tmp/ml_export --station-filter 19999
+
+# Legacy pull (PENTAD/DECADE + day):
+bash bin/export_ml_forecast_history.sh /tmp/ml_export \
+    --station-filter 19999 --include-legacy-horizons
+
+# Restrict to one model variant:
+bash bin/export_ml_forecast_history.sh /tmp/ml_export \
+    --station-filter 19999 --model TiDE
+
+unset PGPASSWORD
+```
+
+The script writes:
+- `/tmp/ml_export/ml_forecast_<timestamp>.csv` — header + rows.
+- `/tmp/ml_export/ml_forecast_<timestamp>.csv.manifest` — the 5 required
+  P0-validated keys: `export_type=ml_forecast`, `row_count`,
+  `station_count`, `date_min`, `date_max`. Optional `model_counts`
+  metadata is appended for operator reference but not validated.
+
+**Secret hygiene**:
+- Never pass `--password` on the command line — it would appear in shell
+  history and process lists. Use `PGPASSWORD` (unset after) or `~/.pgpass`
+  (mode 0600).
+- The temp dir is created with `umask 077` so the CSV is laptop-user-only.
+- `scp` both files together in a single command so the manifest never
+  arrives without its CSV (or vice versa). Example:
+
+  ```bash
+  scp /tmp/ml_export/ml_forecast_<timestamp>.csv{,.manifest} \
+      <operator>@<server>:/data/<org>_data/imports/
+  ```
+
+#### 6.4.2 Manifest validation (P0 contract)
+
+The server-side wrapper invokes `umh_validate_export_manifest <CSV>
+ml_forecast` before any POST. The 5 required manifest keys and their
+failure modes:
+
+| Key            | On mismatch raises                          | Catches                            |
+|----------------|---------------------------------------------|------------------------------------|
+| `export_type`  | `ManifestExportTypeMismatchError`           | wrong wrapper used for the CSV     |
+| `row_count`    | `ManifestRowCountMismatchError`             | partial CSV / truncated transfer   |
+| `station_count`| `ManifestStationCountMismatchError`         | unfiltered or cross-org export     |
+| `date_min`     | `ManifestDateRangeMismatchError`            | stale export reused from last run  |
+| `date_max`     | `ManifestDateRangeMismatchError`            | stale export reused from last run  |
+
+If any validation fails, the wrapper exits non-zero BEFORE the docker
+container starts, and no POST is attempted. The log file under
+`<data_root>/logs/ml_forecast_history_init/` records the exact failure.
+
+#### 6.4.3 Canary single-station run (per §4.3 acceptance criterion)
+
+Run with a single sentinel/real low-risk station code before full
+population. Substitute `<code>` with the canary station code (sentinel
+`19999` if available, otherwise a low-risk operational code):
+
+```bash
+# Canary dry-run — verify counters, per-model breakdown, MODE.
+bash bin/initialize_ml_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/imports/ml_forecast_<timestamp>.csv \
+    --dry-run --station-filter <code>
+
+# Canary write (only one station, default horizon='day').
+bash bin/initialize_ml_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/imports/ml_forecast_<timestamp>.csv \
+    --station-filter <code>
+```
+
+Expected dry-run output includes (per §4.4 inventory):
+
+```text
+MODE=<full-import (target empty) | pre-cutoff (cutoff=YYYY-MM-DD)>
+TARGET_TABLE=forecasts
+CUTOFF=<date or none>
+SOURCE_FILES=['/ml_forecast.csv']
+SOURCE_ROW_COUNT=<n>
+FILTERED_ROW_COUNT=<n>
+SOURCE_DATE_MIN=<date>
+SOURCE_DATE_MAX=<date>
+DISTINCT_STATION_COUNT_REDACTED=1
+SKIPPED_PARSE=<n> SKIPPED_CUTOFF=<n> SKIPPED_STATION=<n> \
+SKIPPED_MODEL=<n> SKIPPED_HORIZON=<n> SKIPPED_UNKNOWN_MODEL=<n>
+ML_PER_MODEL_COUNTS={TFT: <n>, TiDE: <n>, TSMixer: <n>}
+post_filter_stations: count=1 (sentinel-only: 19999-class)
+IMAGE=mabesa/sapphire-prepgateway:<tag> source=<cli|configured|fallback>
+```
+
+Read the dry-run BEFORE proceeding. Specifically:
+- **`ML_PER_MODEL_COUNTS`** — confirm the per-model counts match what
+  you expect for this canary station.
+- **`SKIPPED_UNKNOWN_MODEL`** — must be 0. Non-zero means the source CSV
+  has a `model_type` value outside the six known spellings (typo,
+  forward-compat issue, or wrong-export source).
+- **`SKIPPED_HORIZON`** — when running without `--preserve-legacy-ml-horizons`,
+  any non-`day` source rows are skipped here. If you expected PENTAD/DECADE
+  rows to migrate, re-export with `--include-legacy-horizons` AND re-run
+  the server-side wrapper with `--preserve-legacy-ml-horizons`.
+- If MODE is unexpected, or `SOURCE_DATE_MIN`/`MAX` or `SKIPPED_*` counters
+  look off, stop and investigate. Verify the canary row count with the
+  acceptance SQL below (filtered on the same `code`) before full-population.
+
+#### 6.4.4 Full population
+
+```bash
+bash bin/initialize_ml_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/imports/ml_forecast_<timestamp>.csv
+```
+
+Tunables:
+- `--batch-size <N>` — records per POST batch (default 500). Lower to
+  diagnose API-side timeouts; raise if the API tolerates larger envelopes.
+- `--api-url <URL>` — override target endpoint
+  (default `http://localhost:8003/forecast/`).
+- `--image <IMAGE>` — pin a specific Docker image (overrides resolution).
+- `--model TFT|TiDE|TSMixer` — restrict to a single ML variant. Useful
+  when migrating large histories incrementally per model.
+- `--station-filter <CODE>` — restrict to a single station (binding P0
+  interface contract — same flag name across every CSV-source wrapper).
+- `--preserve-legacy-ml-horizons` — opt-in (see WARNING above).
+
+#### 6.4.5 Legacy-row migration (PENTAD / DECADE rows)
+
+If your laptop history includes pre-1cb3495 rows that were written with
+`horizon_type='pentad'` or `'decade'`, migrate them as a SEPARATE export
++ import pass to keep the standard-`day` migration log clean:
+
+```bash
+# Laptop side — include legacy horizons in the export.
+bash bin/export_ml_forecast_history.sh /tmp/ml_legacy \
+    --station-filter 19999 --include-legacy-horizons
+
+# Transfer (both files together).
+scp /tmp/ml_legacy/ml_forecast_<timestamp>.csv{,.manifest} \
+    <operator>@<server>:/data/<org>_data/imports/
+
+# Server side — opt in to legacy horizon preservation.
+bash bin/initialize_ml_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/imports/ml_forecast_<timestamp>.csv \
+    --preserve-legacy-ml-horizons --station-filter 19999 --dry-run
+
+# After the dry-run looks clean, run the real pass.
+bash bin/initialize_ml_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/imports/ml_forecast_<timestamp>.csv \
+    --preserve-legacy-ml-horizons
+```
+
+The server-side wrapper emits a prominent WARNING block when
+`--preserve-legacy-ml-horizons` is active. Read it before proceeding. If
+the operator did NOT intend to migrate legacy horizons (the most common
+case), kill the run and re-export with the default day-only filter.
+
+#### 6.4.6 Acceptance SQL pointer
+
+After completion, run the §8 acceptance block. For a quick local check
+on the deployment server:
+
+```bash
+docker exec -i sapphire-postprocessing-db \
+  psql -U postgres -d postprocessing_db -P pager=off <<SQL
+SELECT horizon_type, model_type, COUNT(*) AS rows,
+       MIN(date) AS first_date, MAX(date) AS last_date
+FROM forecasts
+WHERE model_type IN ('TFT','TiDE','TSMixer')
+GROUP BY horizon_type, model_type
+ORDER BY model_type, horizon_type;
+SQL
+```
+
+Compare `rows`, `first_date`, and `last_date` per (model_type,
+horizon_type) against the dry-run's `ML_PER_MODEL_COUNTS` and
+`SOURCE_DATE_MIN`/`MAX`. Expectations:
+
+- Default (no legacy flag): only `horizon_type='day'` rows appear per
+  model. `MAX(date)` matches `SOURCE_DATE_MAX`.
+- With `--preserve-legacy-ml-horizons`: also `horizon_type='pentad'` and/or
+  `'decade'` rows appear; the `day` row count may be lower if the export
+  was legacy-only.
+- For pre-cutoff mode, expect `MIN(date)` to be the earliest source date
+  AND `MAX(date)` to be one day before the prior cutoff (the cutoff was
+  computed from the existing target's MIN(date) at run start).
+- `forecasted_discharge` is populated when the source CSV had either an
+  explicit `forecasted_discharge` column or a `Q50` quantile; the
+  universal safe-write rule preserves any pre-existing non-NULL value
+  on a rerun.
+
+If any model is missing entirely after the migration, recheck the
+`ML_PER_MODEL_COUNTS` line from the run log — a count of 0 means no
+source rows of that variant existed (or were filtered out).
+
 ## 7. Regenerate / gap-backfill hooks
 
 [Filled by P6. Required content per architecture §Q10:
