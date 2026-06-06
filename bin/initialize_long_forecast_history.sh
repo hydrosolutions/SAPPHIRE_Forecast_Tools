@@ -289,7 +289,7 @@ parse_args() {
 query_target_state() {
     docker exec sapphire-postprocessing-db psql \
         -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type='MONTH';"
+        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type='month';"
 }
 
 # ---------------------------------------------------------------------------

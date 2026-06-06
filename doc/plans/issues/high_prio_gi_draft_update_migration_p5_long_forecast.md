@@ -123,6 +123,51 @@ pre-cutoff (cutoff = the populated mode's `MIN(date)`) for the
 populated one — within the same `bash` invocation. This avoids the
 operator having to re-invoke the wrapper per mode.
 
+## Manifest exemption (vs P2/P4)
+
+P2 (runoff period history) and P4a/P4b (LR / ML forecast history) both
+carry a **manifest sidecar** — an operator-produced `manifest.json` that
+declares the set of CSV files to be transferred from the analyst's
+laptop to the deployment server before the wrapper runs. The manifest
+serves two purposes: it provides an integrity cross-check (the wrapper
+aborts if a declared file is absent on the server) and it documents the
+transfer in the runbook chain so the operator knows exactly which CSV
+files the session consumed.
+
+P5 does **not** use a manifest, and this is intentional. The source data
+for P5 is the deployment server's own `intermediate_data/` tree — the
+hindcast CSVs in `long_term_predictions/<mode>/<model>/` are written
+there by the operational `long_term_forecasting` module as a by-product
+of normal pipeline runs. No laptop-to-server file transfer is needed
+because the data already lives on the target machine. Without a
+laptop-to-server transfer step there is no portable artifact list to
+declare, so a manifest sidecar adds process overhead without adding
+integrity value.
+
+Integrity for P5 comes instead from the three-layer discovery pipeline:
+
+1. **`_discover_modes`** — fails closed: only JSON files under
+   `long_term_configs/` become modes; a missing directory yields zero
+   modes and exits 0 (no false-positive POSTs).
+2. **`_load_mode_config`** — raises typed errors (`FileNotFoundError`,
+   `ValueError`) on missing file, malformed JSON, missing
+   `models_to_use`, or an unsupported `horizon_type`. No silent
+   degenerate state.
+3. **`_discover_hindcast_csvs`** — checks that each model's hindcast
+   CSV physically exists before including it; absent CSVs are logged
+   and omitted, not skipped silently.
+
+This fail-closed behaviour provides equivalent protection to the
+manifest's presence check: if any expected source file is absent, the
+wrapper either errors (at the config layer) or logs a warning and
+excludes the affected model (at the CSV layer). The operator sees the
+gap in the dry-run inventory output before any POSTs are attempted.
+
+The `--dry-run` flag is the P5 equivalent of the P2/P4 manifest
+review step: operators are expected to run with `--dry-run` first,
+inspect the `MODE_INVENTORY` lines, verify source row counts per
+(mode, model), and only then proceed to the live POST run.
+
 ## Forward interface contract (P0 lock)
 
 `--station-filter <code>` is honoured per the P0-locked binding contract.

@@ -258,6 +258,14 @@ def _load_mode_config(config_dir: Path, mode_name: str) -> dict:
     horizon_type = raw.get("horizon_type", "month")
     if not isinstance(horizon_type, str) or not horizon_type:
         horizon_type = "month"
+    horizon_type = horizon_type.lower()
+    _ALLOWED_HORIZON_TYPES = {"month"}
+    if horizon_type not in _ALLOWED_HORIZON_TYPES:
+        raise ValueError(
+            f"long-term config {config_path.name}: "
+            f"'horizon_type' must be one of {sorted(_ALLOWED_HORIZON_TYPES)!r}, "
+            f"got {horizon_type!r}"
+        )
 
     return {
         "models": models,

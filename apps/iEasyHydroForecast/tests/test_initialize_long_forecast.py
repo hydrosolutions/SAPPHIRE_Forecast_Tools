@@ -785,6 +785,77 @@ def test_main_dry_run_reports_missing_hindcast(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
+# 19a. SQL enum case in MODE detection uses lowercase 'month'
+# ---------------------------------------------------------------------------
+
+
+def test_mode_detection_query_uses_lowercase_month_enum():
+    """The query_target_state SQL must use horizon_type='month' (lowercase).
+
+    The DB/API enum stores the value as lowercase 'month'. If the query
+    used 'MONTH', it would return 0 rows on a populated table, causing
+    the wrapper to enter full-import mode and re-POST existing records.
+    """
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "horizon_type='month'" in src, (
+        "query_target_state must use horizon_type='month' (lowercase); "
+        "found uppercase or missing reference in the script"
+    )
+    assert "horizon_type='MONTH'" not in src, (
+        "uppercase 'MONTH' found in script; must be lowercase 'month'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 19b. _load_mode_config lowercases horizon_type
+# ---------------------------------------------------------------------------
+
+
+def test_load_mode_config_lowercases_horizon_type(tmp_path):
+    """A config JSON with 'horizon_type': 'MONTH' (uppercase) must be
+    normalised to lowercase 'month' so payloads hit the DB enum correctly."""
+    _make_config(
+        tmp_path,
+        "month_1",
+        {
+            "models_to_use": {"LR_family": ["LR_Base"]},
+            "operational_month_lead_time": 1,
+            "horizon_type": "MONTH",
+        },
+    )
+    config_dir, _ = _layout_dirs(tmp_path)
+    cfg = long_forecast._load_mode_config(config_dir, "month_1")
+    assert cfg["horizon_type"] == "month", (
+        f"expected 'month' after lowercasing; got {cfg['horizon_type']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 19c. _load_mode_config rejects unknown horizon_type values
+# ---------------------------------------------------------------------------
+
+
+def test_load_mode_config_rejects_unknown_horizon_type(tmp_path):
+    """A config JSON with an unsupported 'horizon_type' (e.g. 'week' or
+    'pentad') must raise ValueError with a descriptive message.
+
+    Only 'month' is valid for long-term forecasts per architecture §Q4.
+    """
+    _make_config(
+        tmp_path,
+        "month_1",
+        {
+            "models_to_use": {"LR_family": ["LR_Base"]},
+            "operational_month_lead_time": 1,
+            "horizon_type": "pentad",
+        },
+    )
+    config_dir, _ = _layout_dirs(tmp_path)
+    with pytest.raises(ValueError, match="horizon_type"):
+        long_forecast._load_mode_config(config_dir, "month_1")
+
+
+# ---------------------------------------------------------------------------
 # 19. Stdlib-only audit covers long_forecast.py
 # ---------------------------------------------------------------------------
 
