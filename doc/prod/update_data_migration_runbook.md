@@ -609,6 +609,274 @@ cutoff. For full-import mode, both should match the source date range.
   containers are present (Stage E item #6 for export scripts).
 ]
 
+### 6.3 LR forecasts (linear regression — pentad / decade)
+
+Source: laptop's local `sapphire-postprocessing-db.lr_forecasts` table
+(**postprocessing-db, NOT preprocessing-db** — `lr_forecasts` is owned by
+the postprocessing service), filtered on `horizon_type IN ('pentad','decade')`
+(lowercase per architecture §Q4 enum lock) and optionally on the
+deployment's station list. Target: `lr_forecasts` rows with
+`horizon_type='pentad'` or `horizon_type='decade'` (one wrapper run per
+horizon). MODE branches on target state per-horizon — empty target =
+`full-import`; populated target = `pre-cutoff (cutoff=MIN(date))`. Reruns
+are idempotent (service-side upsert on `(horizon_type, code, date)`).
+
+#### Background
+
+The `lr_forecasts` table stores the operational linear-regression forecasts
+produced by `apps/linear_regression`. Each row records a pentad-or-decade
+forecast and its supporting model statistics. Required fields per row are
+`horizon_type`, `code`, `date`, `horizon_value`, `horizon_in_year`. Optional
+(nullable) model-stat fields are `discharge_avg`, `predictor`, `slope`,
+`intercept`, `forecasted_discharge`, `q_mean`, `q_std_sigma`, `delta`,
+`rsquared`.
+
+**No `model_type` column.** Unlike the `forecasts` table (which uses
+`model_type` to distinguish TFT / TiDE / TSMixer / LR rows), `lr_forecasts`
+has the DB unique key `(horizon_type, code, date)` — LR is implicit. This
+is also the reason the P-postprocessing `combined_forecasts` migrator
+filters LR rows OUT of `combined_forecasts` (Stage A.2 §C): the LR forecast
+of record lives here, in this dedicated table. The export script's
+`COPY (SELECT ...)` therefore does NOT emit a `model_type` column, and the
+server-side helper actively drops any stray `model_type` cell that happens
+to appear in a malformed CSV.
+
+**Horizon-type enum (architecture §Q4 lock).** The API accepts
+`HorizonType` values `'pentad'` and `'decade'` in lowercase. Uppercase
+`'PENTAD'` / `'DECADE'` would be rejected at the Pydantic boundary. The
+laptop export emits the lowercase form (`lower(horizon_type::text)` in
+the `COPY`), the wrapper rejects any other `--horizon` value, and the
+server-side helper double-checks the enum before constructing the
+payload.
+
+**Per-horizon column mapping (CSV legacy).** The `lr_forecasts` DB has
+literal columns `horizon_value` / `horizon_in_year`. The legacy CSV-source
+flow used in `data_migrator.py::LRForecastDataMigrator` instead expects
+the names `pentad_in_month` / `pentad_in_year` (or `decad_in_month` /
+`decad_in_year`). The export script ALIASES the DB columns out to the
+legacy CSV names so the server-side helper's column-mapping table finds
+them. This keeps the CSV shape uniform with the rest of the laptop-export
+family.
+
+**Safe-write policy (architecture §Q2 layer 2).** The wrapper sends only
+non-NULL source fields per the universal safe-write rule. The nine
+nullable model-stat fields are omitted from the payload whenever the
+source CSV cell is empty / `nan` / `null` / unparseable — never sent as
+`field: null`. The service-side `_has_changes + setattr` overwrite-with-
+NULL path is therefore not triggered by this wrapper. (LR rows in
+practice tend to be either fully populated or fully missing per
+forecast-cycle output, so partial-NULL erasure is uncommon for LR
+specifically; the universal rule still applies.)
+
+#### 6.3.1 Laptop side — export
+
+Run on the OPERATOR LAPTOP / jump host. The export script refuses to run
+on the deployment server (a
+`sapphire-{preprocessing,postprocessing,api-gateway}-...` container
+detected via `docker ps` triggers an explicit error — Stage E #6). For a
+developer machine that intentionally runs the SAPPHIRE stack locally,
+pass `--i-am-on-laptop` to acknowledge the override; operators do NOT
+set this in real workflows.
+
+Pre-requisites (per §3):
+
+- `~/.pgpass` mode `0600` with credentials for the laptop's
+  postprocessing-db. The canonical local dev port is `PGPORT=5433`.
+- `PGHOST` / `PGPORT` / `PGUSER` / `PGDATABASE` env vars set (no
+  password in CLI).
+- Optional `<station_list_file>` listing the deployment's station
+  codes, one per line. When supplied, `code IN (<list>)` is appended to
+  the `COPY` query so cross-org codes never leak. Generate from the
+  deployment's `intermediate_data/runoff_day.csv`
+  (e.g. `awk -F, 'NR>1 {print $1}' /data/<org>_data/intermediate_data/runoff_day.csv | sort -u > /tmp/stations.txt`).
+
+```bash
+# Pentad export, dry-run first to confirm the COUNT(*) matches expectations.
+bash bin/export_lr_forecast_history.sh ~/.env_<org> \
+    --horizon pentad \
+    --station-list-file /tmp/stations.txt \
+    --output-dir /tmp/lr_export \
+    --dry-run
+
+# If the count looks right, run without --dry-run:
+bash bin/export_lr_forecast_history.sh ~/.env_<org> \
+    --horizon pentad \
+    --station-list-file /tmp/stations.txt \
+    --output-dir /tmp/lr_export
+
+# Decade export (same flags; different --horizon).
+bash bin/export_lr_forecast_history.sh ~/.env_<org> \
+    --horizon decade \
+    --station-list-file /tmp/stations.txt \
+    --output-dir /tmp/lr_export
+```
+
+Each export emits TWO files in `<output-dir>`:
+
+```
+lr_forecast_<horizon>_<UTC_timestamp>.csv
+lr_forecast_<horizon>_<UTC_timestamp>.csv.manifest
+```
+
+Both files have mode `0600`. The manifest contains the 5 P0-required
+keys (`export_type=lr_forecast`, `row_count`, `station_count`, `date_min`,
+`date_max`) plus a `horizon=<pentad|decade>` annotation and a
+generation-timestamp comment. `station_count` and `date_min` / `date_max`
+are recomputed from the produced CSV (not the input station list), so
+manifest validation on the server side catches any mid-flight tampering.
+
+Transfer BOTH files together to the deployment server's data root logs
+directory (or wherever the operator chooses):
+
+```bash
+scp /tmp/lr_export/lr_forecast_pentad_*.csv* \
+    <user>@<server>:/data/<org>_data/logs/
+scp /tmp/lr_export/lr_forecast_decade_*.csv* \
+    <user>@<server>:/data/<org>_data/logs/
+```
+
+If only one file lands on the server, the server-side wrapper refuses
+with `manifest file not found beside export CSV`.
+
+#### 6.3.2 Server side — dry-run
+
+Validate the manifest, MODE, and filtered row count BEFORE any write:
+
+```bash
+bash bin/initialize_lr_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/lr_forecast_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --dry-run
+```
+
+Expected inventory shape (per §4.4):
+
+```text
+MODE=<full-import (target empty) | pre-cutoff (cutoff=YYYY-MM-DD)>
+TARGET_TABLE=lr_forecasts
+HORIZON=<pentad|decade>
+CUTOFF=<date or none>
+SOURCE_FILES=['/lr_forecast.csv']
+SOURCE_ROW_COUNT=<n>
+FILTERED_ROW_COUNT=<n>
+SOURCE_DATE_MIN=<date>
+SOURCE_DATE_MAX=<date>
+DISTINCT_STATION_COUNT_REDACTED=<n>
+SKIPPED_PARSE=<n> SKIPPED_CUTOFF=<n> SKIPPED_STATION=<n>
+post_filter_stations: count=<n> (all redacted)
+IMAGE=mabesa/sapphire-prepgateway:<tag> source=<cli|configured|fallback>
+```
+
+If `HORIZON`, `MODE`, source counts, or `IMAGE` line look unexpected,
+STOP and investigate. Do NOT proceed to write.
+
+Common dry-run failure causes:
+
+- **Manifest validation error.** A typo in the station list file, a
+  stale CSV, or the wrong `--horizon` flag. The error names the failing
+  key (`row_count`, `station_count`, `date_min`, `date_max`, or
+  `export_type`). Re-run the laptop export to regenerate the manifest.
+- **`CSV is missing required column(s)`.** The CSV header is missing
+  the per-horizon column the helper expects: `pentad_in_month` /
+  `pentad_in_year` for `--horizon pentad`, or `decad_in_month` /
+  `decad_in_year` for `--horizon decade`. Most commonly caused by
+  invoking the wrapper with the wrong `--horizon` for the file.
+- **Empty `FILTERED_ROW_COUNT`.** Either the cutoff is later than the
+  source's `date_max`, the station-filter was set to a code not in the
+  CSV, or the station list excluded every code the laptop DB has LR
+  rows for. Inspect `SOURCE_ROW_COUNT`, `SOURCE_DATE_MAX`, and
+  `SKIPPED_*` to diagnose.
+
+#### 6.3.3 Canary (single station, per §4.3 acceptance criterion)
+
+Run with a single sentinel / low-risk station code before full
+population. Substitute `<code>` with the canary code (`19999` sentinel
+when available, otherwise a single low-risk operational code):
+
+```bash
+# Canary dry-run
+bash bin/initialize_lr_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/lr_forecast_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --dry-run --station-filter <code>
+
+# Canary write (one station only)
+bash bin/initialize_lr_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/lr_forecast_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --station-filter <code>
+```
+
+Verify the canary row count via the §8 acceptance SQL (filtered on the
+same `code`). Then proceed to full population.
+
+#### 6.3.4 Full population (per horizon)
+
+```bash
+# Pentad
+bash bin/initialize_lr_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/lr_forecast_pentad_<UTC_timestamp>.csv \
+    --horizon pentad
+
+# Decade
+bash bin/initialize_lr_forecast_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/lr_forecast_decade_<UTC_timestamp>.csv \
+    --horizon decade
+```
+
+Tunables:
+
+- `--batch-size <N>` — records per POST batch (default `500`). Lower to
+  diagnose API-side timeouts; raise if the API tolerates larger
+  envelopes.
+- `--api-url <URL>` — override target endpoint (default
+  `http://localhost:8003/lr-forecast/`). Note: this targets the
+  POSTPROCESSING API (port 8003), NOT the preprocessing API (8002).
+- `--image <IMAGE>` — pin a specific Docker image (overrides resolution
+  via env file's `ieasyhydroforecast_backend_docker_image_tag`).
+- `--station-filter <CODE>` — restrict the run to a single station code
+  (binding interface contract from P0; honored by all migration
+  wrappers).
+
+#### 6.3.5 Acceptance SQL pointer
+
+After completion (per horizon), run the §8 acceptance block. For a
+quick local check (note: postprocessing-db, not preprocessing-db):
+
+```bash
+docker exec -i sapphire-postprocessing-db \
+  psql -U postgres -d postprocessing_db -P pager=off <<SQL
+SELECT horizon_type, COUNT(*) AS rows,
+       COUNT(forecasted_discharge) AS forecast_rows,
+       COUNT(slope) AS slope_rows,
+       COUNT(intercept) AS intercept_rows,
+       COUNT(rsquared) AS rsquared_rows,
+       MIN(date), MAX(date)
+FROM lr_forecasts
+WHERE horizon_type IN ('pentad','decade')
+GROUP BY horizon_type
+ORDER BY horizon_type;
+SQL
+```
+
+Compare `rows` and `MAX(date)` against the dry-run's
+`FILTERED_ROW_COUNT` and `SOURCE_DATE_MAX`. `forecast_rows`,
+`slope_rows`, `intercept_rows`, `rsquared_rows` reflect the
+enrichment-only safe-write policy: an existing row whose stat field was
+already populated stays populated even if the new source row had that
+field absent. For pre-cutoff mode, expect `MIN(date)` to be the
+earliest source date AND `MAX(date)` to be one day before the prior
+cutoff. For full-import mode, both should match the source date range.
+
+#### 6.3.6 Idempotency and rerun
+
+The natural key `(horizon_type, code, date)` is upserted service-side,
+so rerunning the same wrapper with the same args is safe. To narrow a
+rerun on failure, combine `--station-filter <code>` with a smaller
+`--batch-size` (e.g. `--batch-size 200`). On the laptop side, re-export
+into a fresh `--output-dir` if the source DB has changed since the
+last export.
+
 ## 7. Regenerate / gap-backfill hooks
 
 [Filled by P6. Required content per architecture §Q10:
