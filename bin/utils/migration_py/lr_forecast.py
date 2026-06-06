@@ -164,6 +164,11 @@ def _build_record(row: dict[str, str], horizon: str) -> dict | None:
     are included in the returned dict. Required fields are always included
     when they parse.
 
+    Mixed-export guard (review feedback): if the CSV row carries its own
+    ``horizon_type`` column and it does not match the CLI ``horizon`` value
+    after case-normalization, the row is dropped (returns ``None``). Rows
+    without a ``horizon_type`` column fall through to trusting the CLI.
+
     Args:
         row: CSV row as ``{column_name: value_str}``.
         horizon: ``"pentad"`` or ``"decade"`` — selects the
@@ -171,11 +176,23 @@ def _build_record(row: dict[str, str], horizon: str) -> dict | None:
 
     Returns:
         A payload dict, or ``None`` if the row cannot satisfy the required
-        fields (caller treats this as a parse skip).
+        fields (caller treats this as a parse skip) OR if the row's
+        ``horizon_type`` column disagrees with ``horizon`` (caller treats
+        this as a horizon-mismatch skip).
     """
     if horizon not in _ALLOWED_HORIZONS:
         # Defensive: callers normalize this; raise an explicit error if not.
         raise ValueError(f"horizon must be one of {sorted(_ALLOWED_HORIZONS)}, got {horizon!r}")
+
+    # Mixed-export defense: when the CSV row carries an explicit horizon_type
+    # column, it must match the CLI flag. A mismatch is treated as a drop
+    # (returns None) rather than silently relabeling the payload from the CLI
+    # value (which would let mixed/tampered exports re-key target rows).
+    row_horizon_raw = row.get("horizon_type")
+    if row_horizon_raw is not None:
+        row_horizon = row_horizon_raw.strip().lower()
+        if row_horizon and row_horizon != horizon:
+            return None
 
     code = (row.get("code") or "").strip()
     date_str = (row.get("date") or "").strip()[:10]
@@ -253,7 +270,9 @@ def _read_filtered_records(
         "skipped_parse": 0,
         "skipped_cutoff": 0,
         "skipped_station": 0,
+        "skipped_horizon_mismatch": 0,
     }
+    horizon_mismatch_logged = False
     records: list[dict] = []
     distinct_codes: set[str] = set()
     date_min: str | None = None
@@ -300,6 +319,27 @@ def _read_filtered_records(
             if cutoff is not None and date_str >= cutoff:
                 counters["skipped_cutoff"] += 1
                 continue
+
+            # Horizon-mismatch pre-check (mixed-export defense — review feedback):
+            # if the CSV row's horizon_type column disagrees with the CLI flag,
+            # drop the row and account for it under a distinct counter. The
+            # first occurrence emits a single WARNING line so the operator can
+            # investigate; subsequent mismatches increment silently.
+            row_horizon_raw = row.get("horizon_type")
+            if row_horizon_raw is not None:
+                row_horizon = row_horizon_raw.strip().lower()
+                if row_horizon and row_horizon != horizon:
+                    counters["skipped_horizon_mismatch"] += 1
+                    if not horizon_mismatch_logged:
+                        print(
+                            f"WARNING: row code={code} date={date_str} carries "
+                            f"horizon_type={row_horizon!r} but --horizon={horizon!r}; "
+                            "dropping this row and any further mismatches "
+                            "(see SKIPPED_HORIZON_MISMATCH counter).",
+                            file=sys.stderr,
+                        )
+                        horizon_mismatch_logged = True
+                    continue
 
             record = _build_record(row, horizon)
             if record is None:
@@ -429,7 +469,8 @@ def _print_dry_run_inventory(
     print(
         f"SKIPPED_PARSE={counters['skipped_parse']} "
         f"SKIPPED_CUTOFF={counters['skipped_cutoff']} "
-        f"SKIPPED_STATION={counters['skipped_station']}"
+        f"SKIPPED_STATION={counters['skipped_station']} "
+        f"SKIPPED_HORIZON_MISMATCH={counters['skipped_horizon_mismatch']}"
     )
     # Redacted log line (count only, never the actual codes).
     _common.log_redacted_station_count(

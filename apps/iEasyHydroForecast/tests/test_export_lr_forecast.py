@@ -433,3 +433,23 @@ def test_decade_fixture_uses_lowercase_horizon_type():
             continue
         ht_cell = line.split(",", 1)[0].strip()
         assert ht_cell == "decade", f"horizon_type cell {ht_cell!r} is not the lowercase 'decade'"
+
+
+def test_export_rejects_zero_row_filter():
+    """Review feedback: zero-row exports must abort with a clear error and no
+    manifest written. String-level check on the script source confirms the
+    early-exit lives between row_count computation and manifest emission.
+
+    A live-DB test would require a running PostgreSQL with a known-empty
+    filter, which is out of scope per architecture §Q7."""
+    src = (_REPO_ROOT / "bin" / "export_lr_forecast_history.sh").read_text(encoding="utf-8")
+    # The guard checks row_count -eq 0 and exits.
+    assert 'row_count" -eq 0' in src or 'row_count" -eq "0"' in src or "row_count -eq 0" in src
+    # The operator-facing error message is specific.
+    assert "no rows matched filter" in src
+    # The early-exit lives BEFORE the manifest is written. Anchor on the
+    # heredoc that writes the manifest (the docstring above also mentions
+    # export_type=lr_forecast, so we need a more specific marker).
+    pre_manifest, _, post_manifest = src.partition('cat > "${manifest_path}"')
+    assert "no rows matched filter" in pre_manifest
+    assert "no rows matched filter" not in post_manifest

@@ -522,6 +522,18 @@ SQL
         row_count=0
     fi
 
+    # Reject zero-row exports up front (review feedback): a blank date_min /
+    # date_max manifest is non-ISO and gets rejected by the server-side
+    # validator anyway. Surface this as a clear operator error before any
+    # sidecar is written. The partial CSV (header only) is removed so re-runs
+    # start clean.
+    if [[ "$row_count" -eq 0 ]]; then
+        umh_log_redacted "ERROR: no rows matched filter — nothing to export."
+        umh_log_redacted "Check the station list, --horizon flag, and date range."
+        rm -f "${csv_path}"
+        exit 1
+    fi
+
     # distinct codes + date range — single python pass for performance.
     local manifest_fields
     manifest_fields=$(python3 - "$csv_path" <<'PYEOF'

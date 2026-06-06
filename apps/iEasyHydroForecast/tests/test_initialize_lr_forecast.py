@@ -788,3 +788,88 @@ def test_build_record_does_not_emit_model_type():
     rec = lr_forecast._build_record(row, "pentad")
     assert rec is not None
     assert "model_type" not in rec
+
+
+def test_build_record_rejects_row_with_mismatched_horizon_type():
+    """Review feedback: when the CSV row carries its own ``horizon_type`` column
+    and it disagrees with the CLI flag, drop the row (return None) instead of
+    silently relabeling the payload to the CLI value. Defends against mixed
+    or tampered exports re-keying unrelated target rows."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "pentad_in_month": "1",
+        "pentad_in_year": "1",
+        "horizon_type": "decade",  # disagrees with the CLI value below
+    }
+    assert lr_forecast._build_record(row, "pentad") is None
+
+
+def test_build_record_accepts_row_with_matching_horizon_type():
+    """When the CSV row's ``horizon_type`` agrees with the CLI flag, the
+    record is built normally."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "pentad_in_month": "1",
+        "pentad_in_year": "1",
+        "horizon_type": "pentad",
+    }
+    rec = lr_forecast._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_build_record_normalizes_case_in_row_horizon_type():
+    """The row's ``horizon_type`` is case-normalized before comparison so
+    operator-side hand-edits with uppercase still match."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "pentad_in_month": "1",
+        "pentad_in_year": "1",
+        "horizon_type": "PENTAD",  # uppercase
+    }
+    rec = lr_forecast._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_build_record_trusts_cli_when_row_lacks_horizon_type_column():
+    """If the source CSV omits the ``horizon_type`` column altogether (the
+    legacy case), fall through to trusting the CLI horizon — preserves
+    backwards compatibility with single-horizon export fixtures."""
+    row = {
+        "code": "19999",
+        "date": "2026-01-01",
+        "pentad_in_month": "1",
+        "pentad_in_year": "1",
+        # no horizon_type column at all
+    }
+    rec = lr_forecast._build_record(row, "pentad")
+    assert rec is not None
+    assert rec["horizon_type"] == "pentad"
+
+
+def test_read_filtered_records_counts_horizon_mismatch_separately(tmp_path):
+    """Mixed-export CSV with one pentad row + one decade row read with --horizon
+    pentad: the decade row goes to skipped_horizon_mismatch (NOT
+    skipped_parse), and the pentad row makes it into the records."""
+    csv_path = tmp_path / "mixed.csv"
+    csv_path.write_text(
+        "horizon_type,code,date,pentad_in_month,pentad_in_year\n"
+        "pentad,19999,2026-01-01,1,1\n"
+        "decade,19999,2026-01-02,1,1\n"
+    )
+    records, counters, codes, dmin, dmax = lr_forecast._read_filtered_records(
+        csv_path,
+        horizon="pentad",
+        cutoff=None,
+        station_filter=None,
+    )
+    assert counters["source_row_count"] == 2
+    assert counters["filtered_row_count"] == 1
+    assert counters["skipped_horizon_mismatch"] == 1
+    assert counters["skipped_parse"] == 0
+    assert len(records) == 1
+    assert records[0]["horizon_type"] == "pentad"
