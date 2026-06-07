@@ -1034,3 +1034,45 @@ def test_wrapper_help_documents_allow_global_cutoff():
         or 'ALLOW_GLOBAL_CUTOFF}" != true' in src
         or 'ALLOW_GLOBAL_CUTOFF" == true' in src
     )
+
+
+def test_wrapper_per_mode_query_uses_horizon_value_filter():
+    """Round-3 review feedback: --mode runs must use a per-mode psql query
+    scoped to the selected mode's horizon_value, not the global query.
+    String-level regression guard on the wrapper source confirms the
+    per-mode query exists and references both horizon_type='month' AND
+    horizon_value=${MODE_HORIZON_VALUE}."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    # The per-mode branch must guard on MODE_FILTER being set...
+    assert 'if [[ -n "$MODE_FILTER" ]]' in src
+    # ...and execute a scoped query that filters on the mode's horizon_value.
+    assert "MODE_HORIZON_VALUE" in src
+    assert "horizon_value=${MODE_HORIZON_VALUE}" in src
+    # The per-mode branch must parse horizon_value from the mode's config JSON.
+    assert "operational_month_lead_time" in src
+
+
+def test_wrapper_dry_run_exempt_from_gate():
+    """Round-3 review feedback: --dry-run is exempt from the fail-closed
+    gate so operators can preview a partially-populated target. The gate
+    check must include "$DRY_RUN" != true so the exit path is bypassed
+    for dry-runs; instead a WARNING line surfaces what would have aborted
+    on a real run."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    # The gate's abort condition must include the DRY_RUN exemption.
+    assert '"$DRY_RUN" != true' in src
+    # And the dry-run-WARNING path must exist.
+    assert "dry-run exemption" in src.lower()
+
+
+def test_wrapper_gate_error_message_uses_actual_env_file_path():
+    """Round-3 review feedback: the error message must show the operator's
+    actual env file path so the suggested command is copy-pasteable.
+    Previously the heredoc emitted a literal "$ENV_FILE" token."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    # The suggested commands in the gate error must reference ${ENV_FILE}
+    # (which the shell expands) rather than escaped \$ENV_FILE.
+    assert "bash $0 ${ENV_FILE} --mode month_1" in src
+    assert "bash $0 ${ENV_FILE} --allow-global-cutoff" in src
+    # And the prior buggy escape must be gone.
+    assert '\\"\\$ENV_FILE\\"' not in src

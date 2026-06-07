@@ -632,8 +632,36 @@ bash bin/initialize_long_forecast_history.sh "$ENV_FILE" --dry-run
 
 Expected output: one block per discovered (mode, model) pair with
 `SOURCE_CSV`, `SOURCE_ROW_COUNT`, `FILTERED_ROW_COUNT`, `SOURCE_DATE_MIN`,
-`SOURCE_DATE_MAX`, plus a `MODE` line (full-import vs pre-cutoff)
-computed independently per mode's horizon_value.
+`SOURCE_DATE_MAX`.
+
+**MODE / cutoff scoping (round-3 review feedback).** The cutoff query is
+scoped *per-mode* only when `--mode <name>` is set — in that case the
+query uses `WHERE horizon_type='month' AND horizon_value=<mode's value>`,
+giving a true per-mode cutoff. Without `--mode`, the query is global
+across all `month` rows and the wrapper applies one cutoff to every mode
+it processes, which can under-import any mode whose target rows are
+empty. A fail-closed gate refuses to proceed when the target has rows
+AND `--mode` is unset AND `--allow-global-cutoff` is not passed. Choose
+one path:
+
+1. **Per-mode runs** (recommended for partially-populated targets):
+
+   ```bash
+   bash bin/initialize_long_forecast_history.sh "$ENV_FILE" --mode month_1
+   bash bin/initialize_long_forecast_history.sh "$ENV_FILE" --mode month_2
+   # ... one invocation per configured mode
+   ```
+
+2. **Global cutoff with explicit opt-in** (conservative; may
+   under-populate empty horizon_value modes):
+
+   ```bash
+   bash bin/initialize_long_forecast_history.sh "$ENV_FILE" --allow-global-cutoff
+   ```
+
+**Dry-run exemption.** `--dry-run` is exempt from the gate so it can
+preview a partially-populated target. A `WARNING (dry-run exemption)`
+log line is emitted when the gate would have fired on a real run.
 
 **Canary** (single mode, single model, single station):
 
