@@ -1951,18 +1951,24 @@ bash bin/initialize_regenerate_hooks.sh "$ENV_FILE"
 ```
 
 The wrapper:
-1. Preflight-validates that mandatory hooks 1-3 are on disk + executable
+1. Checks the late-start guard against the current crontab.
+2. Preflight-validates that mandatory hooks 1-3 are on disk + executable
    (or explicitly skipped). Missing-script abort happens BEFORE workspace
    acquisition and BEFORE cron is touched.
-2. Acquires a temp workspace via the umh helper at
-   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>`.
-3. Checks the late-start guard against the current crontab.
-4. Pauses cron (saves a backup to `${workspace}/crontab_backup.txt`).
+3. Acquires a temp workspace via the umh helper at
+   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>`
+   (used internally; the cron backup does NOT live here — see step 4).
+4. Pauses cron. The backup is written to
+   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`
+   — INSIDE the wrapper's log directory, OUTSIDE the umh-managed
+   workspace. This placement is what lets the file survive trap-driven
+   cleanup when restore fails or `--allow-unpaused-cron` is set.
 5. Runs the four hooks in order; the first failure aborts the rest (default
    fail-fast). Pass `--continue-on-error` to soldier on through hook failures.
-6. Restores cron on EXIT/INT/TERM via the trap; the helper cleanup also
-   removes the workspace on normal/INT/TERM exits (the backup persists
-   ONLY on SIGKILL/power-loss — see §7.6).
+6. Restores cron on EXIT/INT/TERM via the trap. On RESTORE SUCCESS the
+   backup file is removed. On RESTORE FAILURE the backup PERSISTS in the
+   log directory + the wrapper logs the manual-recovery command pointing
+   at the surviving file. See §7.6 for the full backup-lifetime contract.
 
 Common variants:
 
@@ -2035,25 +2041,44 @@ internally (continue-on-mode-failure). Typical runtime: 60–120 minutes.
 
 | Failure mode                                     | What the wrapper does                            |
 |--------------------------------------------------|--------------------------------------------------|
-| Hook 1 fails, default policy                     | Abort hooks 2–4; restore cron via trap.          |
-| Hook 1 fails, `--continue-on-error`              | Log + continue with hooks 2–4; restore cron.     |
-| Operator hits Ctrl-C mid-hook                    | INT trap fires `_on_signal 130`; restore cron + clean workspace; exit 130. |
-| TERM signal (kill, systemd timeout)              | TERM trap fires `_on_signal 143`; restore cron + clean workspace; exit 143. |
-| Operator's terminal dies                         | EXIT trap fires `_on_exit`; restore cron from backup; preserve incoming exit code. |
-| SIGKILL or power loss                            | Cron NOT restored automatically. The workspace + backup file persist (no trap could fire). Manual recovery: `crontab "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>/crontab_backup.txt"`. The exact backup path is logged BEFORE the pause attempt so it's grep-able from the wrapper's log file. |
+| Hook 1 fails, default policy                     | Abort hooks 2–4; restore cron via trap; backup removed on restore success. |
+| Hook 1 fails, `--continue-on-error`              | Log + continue with hooks 2–4; restore cron; backup removed on restore success. |
+| Operator hits Ctrl-C mid-hook                    | INT trap fires `_on_signal 130`; restore cron + clean workspace; exit 130. Backup removed on restore success. |
+| TERM signal (kill, systemd timeout)              | TERM trap fires `_on_signal 143`; restore cron + clean workspace; exit 143. Backup removed on restore success. |
+| Operator's terminal dies                         | EXIT trap fires `_on_exit`; restore cron from backup; preserve incoming exit code. Backup removed on restore success. |
+| **Restore failure (`crontab <backup>` fails)**   | **Cron stays paused.** The backup PERSISTS in `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`. Wrapper logs the manual-recovery command pointing at the surviving file. Operator runs `crontab "<that path>"` to recover, then deletes the backup. |
+| SIGKILL or power loss                            | Cron NOT restored automatically. The backup persists at the same `logs/regenerate_hooks/crontab_backup_<utc-ts>.txt` path (the umh workspace cleanup never runs because no trap fires). The exact path is logged BEFORE the pause attempt so it's grep-able from the wrapper's log file. |
 | Hook 1, 2, or 3 script missing on disk           | Preflight ABORTS the run BEFORE cron is touched. Treat as a deploy/packaging error; either fix the deploy or pass `--skip-hook-<name>` if the absence is intentional. |
 | Hook 4 (long-term-skill) script missing          | Graceful skip with prominent WARNING + reference to the follow-up issue. Operator must manually recompute long-term skill metrics. |
 | `crontab` binary missing                         | Hard-fail with NO bypass. `--allow-unpaused-cron` does NOT cover this case (a missing binary blocks both pause AND restore). |
 | `crontab -l` real error (perm denied, etc.)      | Hard-fail by default; `--allow-unpaused-cron` downgrades to WARNING + proceeds with cron ACTIVE. |
-| `crontab -` write failure                        | Hard-fail by default; `--allow-unpaused-cron` downgrades to WARNING + proceeds with cron ACTIVE. Backup file is retained as a reference (NOT an active-restore artifact). |
+| `crontab -` write failure                        | Hard-fail by default; partial backup is REMOVED before exit. With `--allow-unpaused-cron`: downgrades to WARNING, proceeds with cron ACTIVE, and KEEPS the backup at `logs/regenerate_hooks/crontab_backup_<utc-ts>.txt` as a pre-attempt-state reference (NOT an active-restore artifact; the operator is responsible for reviewing or removing it). |
 
-> **Backup-file lifetime.** The crontab backup at
-> `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>/crontab_backup.txt`
-> persists ONLY on unclean exits (SIGKILL, power loss, or
-> `--allow-unpaused-cron` failure path). On normal exit AND on INT/TERM,
-> the umh helper cleanup removes the workspace including the backup
-> because the wrapper's trap-driven `_restore_cron` has already run; no
-> manual restore is needed.
+> **Backup-file lifetime (round-3 contract).** The crontab backup at
+> `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`
+> lives in the wrapper's LOG directory (NOT the umh-managed
+> `logs/regenerate_hooks_tmp/` workspace), so it is NOT touched by
+> trap-driven cleanup. Lifetime rules:
+>
+> - **Restore success** (normal exit + INT + TERM): backup REMOVED by
+>   `_restore_cron`. No operator action needed.
+> - **Restore failure**: backup PERSISTS. Operator runs the logged
+>   `crontab "<path>"` command to recover, then deletes the backup.
+> - **`--allow-unpaused-cron` write-failure bypass**: backup PERSISTS as
+>   a pre-attempt-state reference. Cron was NEVER paused; operator may
+>   review or remove the file.
+> - **Hard-fail write-failure (no bypass)**: partial backup REMOVED
+>   before the wrapper exits non-zero.
+> - **SIGKILL / power loss**: backup PERSISTS (no trap fires; cron stays
+>   in whatever state the wrapper left it).
+> - **`crontab -l` "no crontab for user"** (day-0 servers + dev laptops):
+>   NO backup is ever written; the wrapper proceeds with INFO.
+> - **`crontab` binary missing**: NO backup is ever written; the wrapper
+>   hard-fails before any file is created.
+>
+> Persisted backups are operator-review artifacts and should be removed
+> manually after recovery. No automatic age-based cleanup is performed by
+> the wrapper.
 
 > The cron-pause helper lives inline in
 > `bin/initialize_regenerate_hooks.sh` because
