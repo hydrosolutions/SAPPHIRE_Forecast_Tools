@@ -891,7 +891,13 @@ _preflight_validate_hooks() {
 # helper's own EXIT trap. The `|| true` guards ensure a restore failure
 # cannot skip workspace cleanup.
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap
+# SC2329: invoked indirectly via the EXIT trap (shellcheck's flow analysis
+#         can't see the trap registration).
+# SC2317: shellcheck's reachability heuristic flags the post-cleanup
+#         conditional as unreachable because it follows
+#         `_umh_cleanup_tempdirs || true` (a sourced helper). The lines
+#         ARE reachable; the analysis is wrong.
+# shellcheck disable=SC2329,SC2317
 _on_exit() {
     local rc=$?
     _restore_cron || true
@@ -911,7 +917,9 @@ _on_exit() {
     return "$rc"
 }
 
-# shellcheck disable=SC2329  # invoked indirectly via the INT/TERM traps
+# SC2329/SC2317: same rationale as _on_exit above (indirect trap call +
+# helper-sourced cleanup confusing the reachability analyzer).
+# shellcheck disable=SC2329,SC2317
 _on_signal() {
     local code="$1"
     umh_log_redacted "received signal; restoring cron + cleaning workspace before exit ${code}"
