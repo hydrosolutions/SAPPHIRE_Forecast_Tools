@@ -56,6 +56,9 @@
 #   --db-name <NAME>     Database name (default: postgres).
 #   --i-am-on-laptop     BYPASS the location guard (use only when laptop and
 #                        server are intentionally co-located on the same host).
+#   --dry-run            Run COUNT(*) query only; do NOT export CSV or manifest.
+#                        Matches the shared toolkit contract (runbook §6 lists
+#                        --dry-run as a per-wrapper requirement).
 #   -h, --help           Print this message and exit 0.
 #
 # Examples:
@@ -88,6 +91,7 @@ DB_PORT="5432"
 DB_USER="postgres"
 DB_NAME="postgres"
 I_AM_ON_LAPTOP=false
+DRY_RUN=false
 
 print_usage() {
     cat <<'USAGE'
@@ -114,6 +118,8 @@ Options:
   --db-user <USER>     PostgreSQL user (default: postgres).
   --db-name <NAME>     Database name (default: postgres).
   --i-am-on-laptop     BYPASS the location guard.
+  --dry-run            Run COUNT(*) query only; do NOT export CSV or manifest.
+                       Matches the shared toolkit dry-run contract.
   -h, --help           Print this message and exit 0.
 
 Location guard:
@@ -222,6 +228,10 @@ parse_args() {
                 ;;
             --i-am-on-laptop)
                 I_AM_ON_LAPTOP=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
                 shift
                 ;;
             -h|--help)
@@ -350,7 +360,30 @@ main() {
     echo "  model_filter:           ${MODEL_FILTER:-<none>}"
     echo "  start_date:             ${START_DATE:-<none>}"
     echo "  end_date:               ${END_DATE:-<none>}"
+    echo "  dry_run:                ${DRY_RUN}"
     echo ""
+
+    # Dry-run path: COUNT(*) only, no CSV / manifest written
+    # (review feedback round 2: shared toolkit dry-run contract).
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${YELLOW}DRY RUN: running COUNT(*) only; no CSV / manifest will be written.${NC}"
+        local count_sql
+        count_sql="SELECT COUNT(*) AS row_count,
+                          COUNT(DISTINCT code) AS station_count,
+                          MIN(date)::text AS date_min,
+                          MAX(date)::text AS date_max
+                   FROM forecasts
+                   WHERE ${where};"
+        if ! psql -X -P pager=off -A -F $'\t' \
+            -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+            -c "$count_sql"; then
+            echo -e "${RED}ERROR: COUNT query failed. Check connection and PGPASSWORD / ~/.pgpass.${NC}" >&2
+            exit 1
+        fi
+        echo ""
+        echo -e "${YELLOW}DRY RUN complete — no files written.${NC}"
+        exit 0
+    fi
 
     # COPY the data with header. The exported columns mirror what the
     # server-side migration_py.ml_forecast module expects.

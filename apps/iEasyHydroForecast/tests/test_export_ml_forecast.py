@@ -152,10 +152,13 @@ def test_export_help_uses_i_am_on_laptop_not_allow_server_host():
     assert "allow-server-host" not in src
 
 
-def test_export_help_no_longer_documents_dry_run():
-    """The export script never implemented --dry-run; the docs used to imply it.
-    Reviewer asked for the docs to match reality (the import wrapper has its own --dry-run).
-    Regression guard: neither --help nor source mentions a --dry-run flag for this script."""
+def test_export_help_documents_dry_run():
+    """Review feedback (round 2): the runbook §6 contract says every CSV-/DB-
+    source wrapper supports --dry-run. P4b previously omitted it; the docs
+    were brought back into line + the COUNT-only path was implemented.
+
+    Regression guard: --help documents --dry-run AND the script source has
+    the DRY_RUN handling that the contract requires."""
     result = subprocess.run(
         ["bash", str(_WRAPPER), "--help"],
         capture_output=True,
@@ -163,7 +166,12 @@ def test_export_help_no_longer_documents_dry_run():
         timeout=30,
     )
     assert result.returncode == 0
-    assert "--dry-run" not in result.stdout
+    assert "--dry-run" in result.stdout
+    src = _WRAPPER.read_text(encoding="utf-8")
+    # The argparse case + the DRY_RUN branch must both be present.
+    assert "DRY_RUN=true" in src
+    assert 'DRY_RUN" == true' in src
+    assert "SELECT COUNT(*)" in src
 
 
 def test_export_rejects_zero_row_filter():
@@ -184,3 +192,52 @@ def test_export_rejects_zero_row_filter():
     pre_manifest, _, post_manifest = src.partition("# Write the manifest.")
     assert "no rows matched filter" in pre_manifest
     assert "no rows matched filter" not in post_manifest
+
+
+def test_export_rejects_zero_row_behaviorally(tmp_path):
+    """Round-2 review feedback: prior zero-row test was source-text only.
+    This stubs psql via PATH so the wrapper actually runs through its
+    post-COPY control flow with a header-only CSV and we verify:
+      (1) the wrapper exits non-zero,
+      (2) the operator-facing error message is emitted, and
+      (3) NO manifest sidecar is written.
+    """
+    import os
+    import stat
+
+    # Fake psql that emits just a CSV header line (no data rows).
+    fake_bin = tmp_path / "fake_bin"
+    fake_bin.mkdir()
+    fake_psql = fake_bin / "psql"
+    fake_psql.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "code,model_type,horizon_type,date,target,flag,Q5,Q25,Q50,Q75,Q95,forecasted_discharge"\n'
+        "exit 0\n"
+    )
+    fake_psql.chmod(fake_psql.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    out_dir = tmp_path / "out"
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    # The script's location guard probes docker for sapphire-postprocessing-db;
+    # use --i-am-on-laptop to bypass without depending on docker state.
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), str(out_dir), "--i-am-on-laptop"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode != 0, (
+        f"expected non-zero exit on zero-row export, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = (result.stdout + result.stderr).lower()
+    assert "no rows matched filter" in combined, (
+        f"expected zero-row error message in output, got:\n{result.stdout}\n{result.stderr}"
+    )
+    # The manifest sidecar must NOT exist (the guard runs BEFORE manifest write).
+    manifests = list(out_dir.glob("*.manifest")) if out_dir.exists() else []
+    assert manifests == [], f"manifest should not exist after zero-row reject, got {manifests}"
