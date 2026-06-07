@@ -140,6 +140,14 @@ HOOK_LONG_TERM_SKILL=""
 
 # Internal: cron-pause state. Populated by _pause_cron and consumed by
 # _restore_cron via the trap.
+#
+# _CRON_BACKUP_DIR: set by main() after LOG_DIR is created. The backup
+# lives in the wrapper's log directory (NOT in the umh-managed temp
+# workspace) so the file survives the trap-driven workspace cleanup. This
+# is required by the round-3 backup-lifetime contract: restore failure +
+# --allow-unpaused-cron write-failure must leave the backup on disk for
+# operator recovery.
+_CRON_BACKUP_DIR=""
 _CRON_BACKUP_PATH=""
 _CRON_WAS_PAUSED=false
 
@@ -372,13 +380,24 @@ _pause_cron() {
         return 0
     fi
 
-    # Workspace MUST exist (acquired by main before this function runs).
-    if [[ -z "${TMPDIRS[*]:-}" ]]; then
-        umh_log_redacted "cron-pause: ERROR temp workspace not acquired -> abort"
+    # Backup directory MUST be set by main() before _pause_cron runs.
+    # Round-3 contract: backup lives in LOG_DIR (NOT TMPDIRS[0]) so it
+    # survives trap-driven workspace cleanup when restore fails.
+    if [[ -z "$_CRON_BACKUP_DIR" ]]; then
+        umh_log_redacted "cron-pause: ERROR _CRON_BACKUP_DIR not set -> abort (main() ordering bug)"
+        return 1
+    fi
+    if [[ ! -d "$_CRON_BACKUP_DIR" ]]; then
+        umh_log_redacted "cron-pause: ERROR _CRON_BACKUP_DIR does not exist: ${_CRON_BACKUP_DIR}"
         return 1
     fi
 
-    _CRON_BACKUP_PATH="${TMPDIRS[0]}/crontab_backup.txt"
+    # Timestamped filename so concurrent attempts don't clobber each other
+    # (defensive — concurrent runs aren't supported but won't silently
+    # truncate one another's backups).
+    local backup_ts
+    backup_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    _CRON_BACKUP_PATH="${_CRON_BACKUP_DIR}/crontab_backup_${backup_ts}.txt"
     printf '%s\n' "$cron_dump_out" > "$_CRON_BACKUP_PATH"
     chmod 600 "$_CRON_BACKUP_PATH"
     # Log the backup path BEFORE attempting the pause so SIGKILL between
@@ -395,6 +414,11 @@ _pause_cron() {
             umh_log_redacted "cron-pause: WARNING --allow-unpaused-cron set; cron was NEVER paused"
             umh_log_redacted "cron-pause: backup retained at ${_CRON_BACKUP_PATH} as reference to pre-attempt state"
             umh_log_redacted "cron-pause: (not as an active-restore artifact; cron is still running)"
+            # Round-3 contract: bypass path KEEPS the backup in LOG_DIR
+            # so the operator can review or remove it manually. The umh
+            # workspace cleanup does NOT touch LOG_DIR. _CRON_BACKUP_PATH
+            # is cleared so _restore_cron's trap path skips restore (cron
+            # was never paused).
             _CRON_BACKUP_PATH=""
             return 0
         fi
@@ -417,9 +441,21 @@ _restore_cron() {
     fi
     if crontab "$_CRON_BACKUP_PATH"; then
         umh_log_redacted "cron-restore: user crontab restored"
+        # Round-3 contract: restore success removes the backup AND clears
+        # the state flags so a subsequent _restore_cron call (e.g. the
+        # EXIT trap firing after _on_signal already restored) is a no-op.
+        rm -f "$_CRON_BACKUP_PATH"
+        _CRON_BACKUP_PATH=""
+        _CRON_WAS_PAUSED=false
     else
+        # Round-3 contract: restore failure LEAVES the backup in LOG_DIR
+        # (it is outside the umh-managed workspace, so the trap-driven
+        # cleanup does not touch it). Operator uses the logged manual-
+        # recovery command. _CRON_WAS_PAUSED stays true so subsequent
+        # invocations or audits know cron was left in paused state.
         umh_log_redacted "cron-restore: ERROR failed to restore crontab from ${_CRON_BACKUP_PATH}"
         umh_log_redacted "cron-restore: manual recovery: crontab \"${_CRON_BACKUP_PATH}\""
+        umh_log_redacted "cron-restore: backup file PERSISTS at ${_CRON_BACKUP_PATH} until operator action"
     fi
 }
 
@@ -912,6 +948,13 @@ main() {
     TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
     log_file="${LOG_DIR}/regenerate_hooks_${TIMESTAMP}.log"
     export log_file
+
+    # Round-3 contract: cron backup lives in LOG_DIR (NOT TMPDIRS[0]) so
+    # the file survives the trap-driven umh workspace cleanup when the
+    # restore fails or --allow-unpaused-cron is set. _CRON_BACKUP_DIR is
+    # a script-scope variable consumed by _pause_cron + _restore_cron;
+    # LOG_DIR itself is not exported.
+    _CRON_BACKUP_DIR="$LOG_DIR"
 
     echo "| Log file: ${log_file}"
     echo ""
