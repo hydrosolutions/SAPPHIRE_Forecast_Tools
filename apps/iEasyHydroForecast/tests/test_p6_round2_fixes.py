@@ -413,15 +413,24 @@ def test_hook_3_failure_aborts_p6_run(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_pause_backup_lives_under_helper_workspace():
-    """Source-text guard: the backup-path computation references TMPDIRS[0]
-    (the helper-acquired workspace), NOT a `mktemp -t ...` fallback."""
+def test_pause_backup_lives_under_log_dir_not_workspace():
+    """Round-3 contract: cron backup lives in LOG_DIR (set via
+    _CRON_BACKUP_DIR), NOT in the umh-managed workspace (TMPDIRS[0]).
+    This ensures the backup survives the trap-driven workspace cleanup
+    when restore fails or --allow-unpaused-cron is set."""
     src = _WRAPPER.read_text(encoding="utf-8")
-    assert '_CRON_BACKUP_PATH="${TMPDIRS[0]}/crontab_backup.txt"' in src
-    # The mktemp fallback must be gone.
+    # Backup directory is the new script-scope variable, set from LOG_DIR.
+    assert "_CRON_BACKUP_DIR=" in src
+    assert '_CRON_BACKUP_DIR="$LOG_DIR"' in src
+    # Backup path is composed under _CRON_BACKUP_DIR with a timestamped
+    # filename.
+    assert '_CRON_BACKUP_PATH="${_CRON_BACKUP_DIR}/crontab_backup_${backup_ts}.txt"' in src
+    # The old TMPDIRS[0] target must be gone.
+    assert "TMPDIRS[0]}/crontab_backup.txt" not in src
+    # And the mktemp fallback that round-2 already removed must stay gone.
     assert "mktemp -t crontab_backup" not in src
     # And the backup-path log must precede the pause attempt.
-    pre_pause, _, post_pause = src.partition("printf '' | crontab -")
+    pre_pause, _, _ = src.partition("printf '' | crontab -")
     assert "backup written:" in pre_pause
 
 
@@ -607,3 +616,186 @@ def test_help_documents_allow_unpaused_cron_flag():
     assert "--allow-unpaused-cron" in result.stdout
     assert "no-race hosts" in result.stdout.lower()
     assert "does not bypass" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# Round-3 lifetime contract — behavioural tests
+# ---------------------------------------------------------------------------
+
+
+def _make_crontab_stub_restore_failure(tmp_path: Path) -> Path:
+    """`crontab -l` returns a tick line, `crontab -` succeeds (pause OK),
+    `crontab <file>` fails (restore fails)."""
+    fake_dir = tmp_path / "fake_path"
+    fake_dir.mkdir(exist_ok=True)
+    stub = fake_dir / "crontab"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == "-l" ]]; then\n'
+        '    echo "0 12 * * * /bin/true"\n'
+        "    exit 0\n"
+        "fi\n"
+        'if [[ "$1" == "-" ]]; then\n'
+        "    cat > /dev/null\n"
+        "    exit 0\n"
+        "fi\n"
+        # File arg (restore path) -> fail.
+        'if [[ -f "$1" ]]; then\n'
+        '    echo "crontab: restore failed" >&2\n'
+        "    exit 1\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    return fake_dir
+
+
+def test_restore_success_removes_backup(tmp_path):
+    """Round-3 contract: on successful restore the backup is rm'd + state
+    flags are cleared. Behavioural: pause OK + happy crontab; verify no
+    backup file under LOG_DIR after the wrapper exits."""
+    env_file = _make_env_file(tmp_path)
+    wrapper = _make_stub_bin(tmp_path)
+    fake_path = _make_crontab_stub(tmp_path, behavior="happy")
+    result = _run_wrapper(
+        wrapper,
+        [
+            str(env_file),
+            "--skip-hook-snow-stats",
+            "--skip-hook-hydrograph-month-season",
+            "--skip-hook-short-term-skill",
+            "--skip-hook-long-term-skill",
+            "--late-start-window-minutes",
+            "0",
+        ],
+        path_prepend=fake_path,
+    )
+    assert result.returncode == 0, (
+        f"expected clean exit, got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    # read_configuration derives ieasyhydroforecast_data_root_dir from the
+    # env-file location, so glob anywhere under tmp_path for the backup.
+    backups = list(tmp_path.rglob("crontab_backup_*.txt"))
+    assert backups == [], f"expected no surviving backup after restore success; found {backups}"
+
+
+def test_restore_failure_persists_backup_in_log_dir(tmp_path):
+    """Round-3 contract: when `crontab <file>` (restore) fails, the
+    backup file PERSISTS in LOG_DIR for operator manual recovery + the
+    wrapper logs the recovery command pointing at the surviving file."""
+    env_file = _make_env_file(tmp_path)
+    wrapper = _make_stub_bin(tmp_path)
+    fake_path = _make_crontab_stub_restore_failure(tmp_path)
+    result = _run_wrapper(
+        wrapper,
+        [
+            str(env_file),
+            "--skip-hook-snow-stats",
+            "--skip-hook-hydrograph-month-season",
+            "--skip-hook-short-term-skill",
+            "--skip-hook-long-term-skill",
+            "--late-start-window-minutes",
+            "0",
+        ],
+        path_prepend=fake_path,
+    )
+    combined = result.stdout + result.stderr
+    # The restore-failure log message must point the operator at the
+    # surviving backup.
+    assert "manual recovery: crontab" in combined, (
+        f"expected manual-recovery hint; got:\n{combined}"
+    )
+    assert "PERSISTS at" in combined or "backup file" in combined.lower()
+    # read_configuration derives ieasyhydroforecast_data_root_dir from the
+    # env-file location, so glob anywhere under tmp_path for the backup.
+    backups = list(tmp_path.rglob("crontab_backup_*.txt"))
+    assert len(backups) == 1, (
+        f"expected exactly one surviving backup after restore failure; found {backups}\n"
+        f"output:\n{combined}"
+    )
+    # The logged path must match the surviving file.
+    assert str(backups[0]) in combined, (
+        f"expected logged recovery path to match surviving file {backups[0]}; output:\n{combined}"
+    )
+
+
+def test_allow_unpaused_cron_write_failure_persists_backup_in_log_dir(tmp_path):
+    """Round-3 contract: when --allow-unpaused-cron + write failure, the
+    backup persists in LOG_DIR as a pre-attempt-state reference."""
+    env_file = _make_env_file(tmp_path)
+    wrapper = _make_stub_bin(tmp_path)
+    fake_path = _make_crontab_stub(tmp_path, behavior="write_failure")
+    result = _run_wrapper(
+        wrapper,
+        [
+            str(env_file),
+            "--allow-unpaused-cron",
+            "--skip-hook-snow-stats",
+            "--skip-hook-hydrograph-month-season",
+            "--skip-hook-short-term-skill",
+            "--skip-hook-long-term-skill",
+            "--late-start-window-minutes",
+            "0",
+        ],
+        path_prepend=fake_path,
+    )
+    assert result.returncode == 0
+    # read_configuration derives ieasyhydroforecast_data_root_dir from the
+    # env-file location, so glob anywhere under tmp_path for the backup.
+    backups = list(tmp_path.rglob("crontab_backup_*.txt"))
+    assert len(backups) == 1, (
+        f"expected one persisting backup under bypass write-failure; found {backups}"
+    )
+
+
+def test_hard_fail_write_failure_removes_backup(tmp_path):
+    """Round-3 contract: hard-fail write failure (no bypass) removes the
+    partial backup before exit."""
+    env_file = _make_env_file(tmp_path)
+    wrapper = _make_stub_bin(tmp_path)
+    fake_path = _make_crontab_stub(tmp_path, behavior="write_failure")
+    result = _run_wrapper(
+        wrapper,
+        [
+            str(env_file),
+            "--skip-hook-snow-stats",
+            "--skip-hook-hydrograph-month-season",
+            "--skip-hook-short-term-skill",
+            "--skip-hook-long-term-skill",
+            "--late-start-window-minutes",
+            "0",
+        ],
+        path_prepend=fake_path,
+    )
+    assert result.returncode != 0
+    # read_configuration derives ieasyhydroforecast_data_root_dir from the
+    # env-file location, so glob anywhere under tmp_path for the backup.
+    backups = list(tmp_path.rglob("crontab_backup_*.txt"))
+    assert backups == [], (
+        f"expected no surviving backup under hard-fail write-failure; found {backups}"
+    )
+
+
+def test_yearly_skill_metrics_exit_propagation_is_final(tmp_path):
+    """Strengthen C4 (round-3): the upstream yearly_skill_metrics_recalculation.sh
+    must have `exit "$CONTAINER_EXIT_CODE"` as the LAST line that can exit.
+    Defends against a future edit that adds a trailing `exit 0` (or any
+    other `exit` statement) after the capture line."""
+    src = _YEARLY_SKILL.read_text(encoding="utf-8")
+    # Find the capture and the propagation lines.
+    capture_pos = src.index("CONTAINER_EXIT_CODE=$?")
+    propagate_pos = src.index('exit "$CONTAINER_EXIT_CODE"')
+    assert capture_pos < propagate_pos
+    # After the propagate line, no further `exit` statement may appear.
+    after_propagate = src[propagate_pos + len('exit "$CONTAINER_EXIT_CODE"') :]
+    # Find any subsequent `exit ` (with space, to skip 'exited' / etc.).
+    # Heredocs / comments could in theory contain it; this is a simple
+    # textual guard sufficient for the maintenance-time check we want.
+    import re
+
+    rogue_exits = re.findall(r"^\s*exit\b", after_propagate, flags=re.MULTILINE)
+    assert rogue_exits == [], (
+        f"found {len(rogue_exits)} `exit` statement(s) after the CONTAINER_EXIT_CODE "
+        "propagation; the exit-code propagation must be the final exit"
+    )
