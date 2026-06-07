@@ -416,3 +416,71 @@ def test_export_rejects_zero_row_filter(tmp_path):
     # Error message must mention the empty / zero condition.
     combined = (result.stdout + result.stderr).lower()
     assert "empty" in combined or "0" in combined or "no code" in combined
+
+
+def test_export_rejects_zero_row_post_copy_behaviorally(tmp_path):
+    """Round-2 review feedback: the prior zero-row test (line 368) covers the
+    empty-stations PREFLIGHT path, not the post-COPY zero-row path the fix
+    targets. This stubs psql via PATH so the wrapper actually runs through
+    its post-COPY control flow with a header-only CSV and we verify:
+      (1) non-zero exit,
+      (2) the post-COPY operator-facing error message is emitted,
+      (3) NO manifest sidecar is written.
+    """
+    import os
+    import stat
+
+    fake_bin = tmp_path / "fake_bin"
+    fake_bin.mkdir()
+    fake_psql = fake_bin / "psql"
+    # Header-only output — wrapper computes row_count = wc -l - 1 = 0
+    # and triggers the post-COPY guard.
+    fake_psql.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "horizon_type,code,date,horizon_value,horizon_in_year,day_of_year,'
+        "count,mean,std,min,max,q05,q25,q50,q75,q95,norm,previous,current"
+        '"\n'
+        "exit 0\n"
+    )
+    fake_psql.chmod(fake_psql.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    stations = tmp_path / "stations.txt"
+    stations.write_text("19999\n")
+    out_dir = tmp_path / "out"
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["PGHOST"] = "127.0.0.1"
+    env["PGUSER"] = "postgres"
+    env["PGDATABASE"] = "test"
+    env["_P2B_EXPORT_SKIP_LOCATION_GUARD"] = "1"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_REPO_ROOT / "bin" / "export_hydrograph_period_history.sh"),
+            "--horizon",
+            "pentad",
+            "--stations-file",
+            str(stations),
+            "--out-dir",
+            str(out_dir),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode != 0, (
+        f"expected non-zero exit on post-COPY zero-row, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = (result.stdout + result.stderr).lower()
+    # P2b's post-COPY guard emits "copy produced 0 data rows" + a
+    # diagnostic block; either phrase confirms the post-COPY path fired.
+    assert "0 data rows" in combined or "manifest write" in combined, (
+        f"expected post-COPY zero-row error in output, got:\n{result.stdout}\n{result.stderr}"
+    )
+    manifests = list(out_dir.glob("*.manifest")) if out_dir.exists() else []
+    assert manifests == [], f"manifest should not exist after zero-row reject, got {manifests}"
