@@ -87,6 +87,12 @@ jobs:
           for f in bin/initialize_*_history.sh bin/export_*_history.sh; do
             [[ -f "$f" ]] && files+=("$f")
           done
+          # P6 regenerate-hooks wrapper + the underlying script it bundles
+          # (round-3 review NR1: the safety-critical wrapper was outside
+          # the prior glob because it doesn't match the *_history.sh
+          # naming convention).
+          [[ -f bin/initialize_regenerate_hooks.sh ]] && files+=(bin/initialize_regenerate_hooks.sh)
+          [[ -f bin/yearly_skill_metrics_recalculation.sh ]] && files+=(bin/yearly_skill_metrics_recalculation.sh)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No migration scripts found to shellcheck (gate is a no-op)."
             exit 0

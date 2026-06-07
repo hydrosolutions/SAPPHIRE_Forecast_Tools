@@ -26,7 +26,7 @@ P6 closes both gaps by adding a single meta-wrapper, `bin/initialize_regenerate_
 
 ## What
 
-A new wrapper script + tests + runbook section. **No edits to the four underlying hook scripts.** P6 is purely orchestration.
+A new wrapper script + tests + runbook section. P6 is orchestration with two narrow carve-outs on `yearly_skill_metrics_recalculation.sh` documented in the acceptance checkbox below (round-2 exit-code propagation + round-3 OQ3 shellcheck cleanup; both required by P6 fail-fast / lint hygiene). The other three hook scripts are untouched.
 
 ### Files
 

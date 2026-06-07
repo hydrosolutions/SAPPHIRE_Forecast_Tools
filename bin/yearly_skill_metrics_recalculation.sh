@@ -20,11 +20,13 @@
 #
 # Author: Beatrice Marti
 
-# Source the common functions
-# shellcheck source=./utils/common_functions.sh
+# Source the common functions. SC1091 is disabled (cwd-independent)
+# because the path is computed at runtime via dirname "$0" and cannot
+# be statically resolved by shellcheck from any fixed working directory.
+# shellcheck disable=SC1091
 source "$(dirname "$0")/utils/common_functions.sh"
-# Source the shared skill-metrics recalc helper
-# shellcheck source=./utils/run_skill_metrics_recalc.sh
+# Source the shared skill-metrics recalc helper (same SC1091 rationale).
+# shellcheck disable=SC1091
 source "$(dirname "$0")/utils/run_skill_metrics_recalc.sh"
 
 # Print the banner

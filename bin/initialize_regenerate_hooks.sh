@@ -896,6 +896,18 @@ _on_exit() {
     local rc=$?
     _restore_cron || true
     _umh_cleanup_tempdirs || true
+    # Round-3 NR2: if the restore was attempted and failed,
+    # _CRON_WAS_PAUSED is still true (restore-success clears it). Cron is
+    # left empty on the host. The wrapper would otherwise exit with the
+    # hook rc — exit 0 on success — and operations monitoring would see
+    # a successful run. Force a non-zero exit when hooks passed but
+    # restore failed so the signal reaches monitoring + cron supervisors.
+    # If a hook ALSO failed, we keep the hook rc (don't mask a real
+    # hook failure with the restore-failure signal).
+    if [[ "$_CRON_WAS_PAUSED" == true && "$rc" -eq 0 ]]; then
+        umh_log_redacted "exit: hooks succeeded but cron restore FAILED -> exit 1 (monitoring signal)"
+        rc=1
+    fi
     return "$rc"
 }
 
@@ -905,6 +917,13 @@ _on_signal() {
     umh_log_redacted "received signal; restoring cron + cleaning workspace before exit ${code}"
     _restore_cron || true
     _umh_cleanup_tempdirs || true
+    # Round-3 NR2: same restore-failure signal as in _on_exit. If the
+    # signal exit code is 0 (shouldn't happen for INT/TERM but defensive)
+    # AND restore failed, surface it. Otherwise keep the conventional
+    # signal exit code.
+    if [[ "$_CRON_WAS_PAUSED" == true && "$code" -eq 0 ]]; then
+        code=1
+    fi
     exit "$code"
 }
 
@@ -998,8 +1017,13 @@ main() {
     fi
 
     # Acquire the temp workspace AFTER preflight so a doomed run does not
-    # create a logs/regenerate_hooks_tmp/<timestamp> dir. The helper appends
-    # the path to TMPDIRS; _pause_cron reads TMPDIRS[0] for the backup target.
+    # create a logs/regenerate_hooks_tmp/<timestamp> dir. Round-3 contract:
+    # the cron backup does NOT live in this workspace — it lives at
+    # ${_CRON_BACKUP_DIR}/crontab_backup_<ts>.txt (i.e. inside LOG_DIR)
+    # so it survives trap-driven workspace cleanup when restore fails or
+    # --allow-unpaused-cron is set. The workspace is retained for the
+    # umask-077 + chmod-700 hygiene primitives from Fix 4 and holds
+    # nothing the wrapper itself writes.
     umh_acquire_temp_workspace regenerate_hooks
 
     # Register the exit + signal traps AFTER workspace acquisition so the

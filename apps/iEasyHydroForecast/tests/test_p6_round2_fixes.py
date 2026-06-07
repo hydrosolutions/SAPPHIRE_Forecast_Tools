@@ -799,3 +799,36 @@ def test_yearly_skill_metrics_exit_propagation_is_final(tmp_path):
         f"found {len(rogue_exits)} `exit` statement(s) after the CONTAINER_EXIT_CODE "
         "propagation; the exit-code propagation must be the final exit"
     )
+
+
+def test_restore_failure_forces_nonzero_exit_when_hooks_passed(tmp_path):
+    """Round-3 NR2: when hooks succeed (rc=0) but _restore_cron fails,
+    _on_exit must bump the wrapper rc to 1 so operational monitoring
+    catches the 'cron left paused' condition. This is the operator-safety
+    signal — a successful-hooks run with restore failure should NOT exit 0."""
+    env_file = _make_env_file(tmp_path)
+    wrapper = _make_stub_bin(tmp_path)
+    fake_path = _make_crontab_stub_restore_failure(tmp_path)
+    result = _run_wrapper(
+        wrapper,
+        [
+            str(env_file),
+            "--skip-hook-snow-stats",
+            "--skip-hook-hydrograph-month-season",
+            "--skip-hook-short-term-skill",
+            "--skip-hook-long-term-skill",
+            "--late-start-window-minutes",
+            "0",
+        ],
+        path_prepend=fake_path,
+    )
+    # All hooks were skipped (rc=0 from the orchestration loop), but the
+    # restore call failed -> _on_exit must bump rc to 1.
+    assert result.returncode == 1, (
+        f"expected exit 1 on restore-failure even when hooks passed, "
+        f"got {result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    combined = result.stdout + result.stderr
+    assert "cron restore FAILED" in combined, (
+        f"expected monitoring-signal log line; got:\n{combined}"
+    )
