@@ -21,8 +21,10 @@
 # Author: Beatrice Marti
 
 # Source the common functions
+# shellcheck source=./utils/common_functions.sh
 source "$(dirname "$0")/utils/common_functions.sh"
 # Source the shared skill-metrics recalc helper
+# shellcheck source=./utils/run_skill_metrics_recalc.sh
 source "$(dirname "$0")/utils/run_skill_metrics_recalc.sh"
 
 # Print the banner
@@ -30,7 +32,7 @@ print_banner
 echo "| Running Yearly Skill Metrics Recalculation"
 
 # Read the configuration from the .env file
-read_configuration $1
+read_configuration "$1"
 
 # Validate required environment variables
 if [ -z "$ieasyhydroforecast_data_root_dir" ] || \
@@ -43,7 +45,7 @@ fi
 
 # Create log directory if it doesn't exist
 LOG_DIR="${ieasyhydroforecast_data_root_dir}/logs/skill_metrics_recalc"
-mkdir -p ${LOG_DIR}
+mkdir -p "${LOG_DIR}"
 echo "| Log directory: ${LOG_DIR}"
 
 # Set main log file path with timestamp
@@ -65,10 +67,9 @@ fi
 
 # Check if the Docker image exists, pull if not
 IMAGE_ID="mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
-if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
+if ! docker image inspect "$IMAGE_ID" > /dev/null 2>&1; then
     log_message "Image $IMAGE_ID not found locally, pulling..."
-    docker pull $IMAGE_ID
-    if [ $? -ne 0 ]; then
+    if ! docker pull "$IMAGE_ID"; then
         log_message "ERROR: Failed to pull Docker image $IMAGE_ID"
         exit 1
     fi
@@ -80,9 +81,12 @@ establish_ssh_tunnel
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
 
-# Memory settings — skill recalculation is memory-intensive
-MEMORY_LIMIT="8g"
-MEMORY_SWAP="12g"
+# NOTE: the active memory limits live in bin/utils/run_skill_metrics_recalc.sh
+# (hard-coded inside run_skill_metrics_recalc_once). The MEMORY_LIMIT /
+# MEMORY_SWAP variables that used to sit here were never read by the helper
+# and have been removed as dead code (review-round-3 OQ3). Helper
+# parameterisation is a separate follow-up if operators ever need to tune
+# the limits per deployment.
 
 CONTAINER_NAME="postprc-skill-recalc"
 
@@ -108,7 +112,7 @@ fi
 
 # Clean up old log files (older than 15 days)
 log_message "Removing log files older than 15 days"
-find $LOG_DIR -type f -mtime +15 -delete
+find "$LOG_DIR" -type f -mtime +15 -delete
 
 log_message "Yearly Skill Metrics Recalculation completed (container exit=${CONTAINER_EXIT_CODE})"
 echo "|"
