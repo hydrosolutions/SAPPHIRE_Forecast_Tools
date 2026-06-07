@@ -453,3 +453,68 @@ def test_export_rejects_zero_row_filter():
     pre_manifest, _, post_manifest = src.partition('cat > "${manifest_path}"')
     assert "no rows matched filter" in pre_manifest
     assert "no rows matched filter" not in post_manifest
+
+
+def test_export_rejects_zero_row_behaviorally(tmp_path):
+    """Round-2 review feedback: prior zero-row test was source-text only.
+    This stubs psql via PATH so the wrapper actually runs through its
+    post-COPY control flow with a header-only CSV, verifying:
+      (1) non-zero exit,
+      (2) the operator-facing "no rows matched filter" error fires,
+      (3) NO manifest sidecar is written.
+    """
+    import os
+    import stat
+    import subprocess
+
+    fake_bin = tmp_path / "fake_bin"
+    fake_bin.mkdir()
+    fake_psql = fake_bin / "psql"
+    fake_psql.write_text(
+        "#!/usr/bin/env bash\n"
+        # LR forecast COPY header.
+        'echo "horizon_type,code,date,pentad_in_month,pentad_in_year,discharge_avg,predictor,slope,intercept,forecasted_discharge,q_mean,q_std_sigma,delta,rsquared"\n'
+        "exit 0\n"
+    )
+    fake_psql.chmod(fake_psql.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Minimal env file so the wrapper's "env file exists" check passes.
+    env_file = tmp_path / ".env_test"
+    env_file.write_text("# empty test env\n")
+
+    out_dir = tmp_path / "out"
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["PGHOST"] = "127.0.0.1"
+    env["PGUSER"] = "postgres"
+    env["PGDATABASE"] = "test"
+    env["_P4A_EXPORT_SKIP_LOCATION_GUARD"] = "1"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_REPO_ROOT / "bin" / "export_lr_forecast_history.sh"),
+            str(env_file),
+            "--horizon",
+            "pentad",
+            "--output-dir",
+            str(out_dir),
+            "--i-am-on-laptop",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode != 0, (
+        f"expected non-zero exit on zero-row export, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = (result.stdout + result.stderr).lower()
+    assert "no rows matched filter" in combined, (
+        f"expected zero-row error in output, got:\n{result.stdout}\n{result.stderr}"
+    )
+    manifests = list(out_dir.glob("*.manifest")) if out_dir.exists() else []
+    assert manifests == [], f"manifest should not exist after zero-row reject, got {manifests}"
