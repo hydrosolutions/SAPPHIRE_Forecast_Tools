@@ -140,6 +140,17 @@ The tests use `crontab(1)` shims on PATH so the real user crontab is never touch
 2. **A `--single-hook <name>` flag.** Convenience for the "only run one" case. Currently expressible via `--skip-hook-A --skip-hook-B --skip-hook-C`. Add only if operators actually complain about the verbosity.
 3. **A wrapper for the short-term `initialize_site_backfill.sh`** that the architecture document references but does not exist on this branch. If a future branch reintroduces that script, update the short-term-skill hook target in `bin/initialize_regenerate_hooks.sh` (and §7.1 of the runbook) to call it.
 4. **Discovery from a known crontab file** rather than `crontab -l`. The current wrapper assumes the operator's user crontab is the source of truth. Some deployments may ship a system crontab in `/etc/cron.d/`; the late-start guard would miss those. Document as a known limitation.
+5. **Flip hook 4 (long-term-skill) to mandatory** once the underlying script lands on `develop_migration_toolkit`. Tracked at `doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md`.
+
+## Operational risks (round-2 review)
+
+The round-2 reviewer identified five operator-safety findings; all are now resolved. The lasting operational risks the resolutions introduce:
+
+1. **Four-way cron-pause classification.** `_pause_cron` now distinguishes `crontab` binary missing (hard-fail, NO bypass), `no crontab for user` (INFO + proceed — normal on day-0 servers + dev laptops), real `crontab -l` errors (hard-fail; bypass via `--allow-unpaused-cron`), and `crontab -` write failures (hard-fail; bypass via `--allow-unpaused-cron`). The bypass downgrades to WARNING and proceeds with cron ACTIVE — operator must use it ONLY on verified no-race hosts. The bypass-path log explicitly states the backup is retained as a pre-attempt state reference, NOT as an active-restore artifact.
+2. **Separate INT/TERM trap handlers.** `_on_signal` exits with 130 (INT) or 143 (TERM) per POSIX convention. Both `_on_exit` and `_on_signal` guard cleanup with `|| true` so a `_restore_cron` failure cannot skip `_umh_cleanup_tempdirs`. The wrapper's traps overwrite the umh helper's own EXIT trap; the explicit `_umh_cleanup_tempdirs` call from both handlers ensures workspace cleanup still runs.
+3. **Preflight runs BEFORE cron pause.** A missing hook 1/2/3 script aborts the run with a hard error before the workspace is acquired or cron is touched. Hook 4 is the only graceful-skip carve-out (see follow-up issue). Operators who genuinely don't want one of the mandatory hooks must pass the corresponding `--skip-hook-<name>` flag — this is the path that bypasses preflight for that specific hook.
+4. **Backup-file lifetime.** The crontab backup at `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>/crontab_backup.txt` persists ONLY on unclean exits (SIGKILL, power loss, or `--allow-unpaused-cron` failure path). On normal/INT/TERM exits, the helper cleanup removes the workspace including the backup — `_restore_cron` has already restored, so no manual recovery is needed.
+5. **Upstream `yearly_skill_metrics_recalculation.sh` exit propagation.** The script now `exit "$CONTAINER_EXIT_CODE"`s at end. Bundled into this PR (out of P6's original file-scope but directly breaks P6 fail-fast). Cron callers that previously saw exit 0 on a failed recalc now see the container's actual exit code.
 
 ## Risks + mitigations
 

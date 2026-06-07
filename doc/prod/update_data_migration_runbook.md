@@ -1877,11 +1877,26 @@ Before invoking the meta-wrapper:
 3. **iEH HF SSH tunnel.** Hooks #2 and #3/#4 invoke containers that may
    reach iEH HF; verify the operator-side tunnel is up (the underlying
    scripts re-establish it but a healthy tunnel reduces failure noise).
-4. **Cron schedule sanity.** Run `crontab -l | head` and confirm the
+4. **SAPPHIRE cron installed on the deployment server.** The wrapper's
+   late-start guard + pause discipline only protects against cron jobs
+   that exist when it starts. If you run P6 on a fresh server BEFORE
+   installing the SAPPHIRE cron, the guard and pause are no-ops (the
+   wrapper detects "no crontab for user" and proceeds with INFO; this is
+   the normal day-0 state and is NOT an error). Install cron via
+   `crontab -e` before regenerating on a live deployment.
+5. **Cron schedule sanity.** Run `crontab -l | head` and confirm the
    short-term + long-term schedules are the ones you expect. The
    meta-wrapper's late-start guard reads `crontab -l`.
-5. **Decide the late-start window.** Default is 30 minutes; widen to 60 if
+6. **Decide the late-start window.** Default is 30 minutes; widen to 60 if
    you're nervous, narrow to 0 to disable the guard entirely.
+7. **Mandatory-hook preflight runs BEFORE cron is touched.** Hooks 1-3
+   (snow-stats, hydrograph-month-season, short-term-skill) MUST be on
+   disk + executable unless explicitly skipped via `--skip-hook-<name>`.
+   A missing script aborts the run with a hard error treating it as a
+   deploy/packaging mistake. Hook 4 (long-term-skill) is the only
+   graceful-skip carve-out — the underlying script is not yet on
+   `develop_migration_toolkit`; see follow-up at
+   `doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md`.
 
 ### 7.3 Dry-run inventory
 
@@ -1936,11 +1951,18 @@ bash bin/initialize_regenerate_hooks.sh "$ENV_FILE"
 ```
 
 The wrapper:
-1. Checks the late-start guard against the current crontab.
-2. Pauses cron (saves a backup to a private temp file).
-3. Runs the four hooks in order; the first failure aborts the rest (default
+1. Preflight-validates that mandatory hooks 1-3 are on disk + executable
+   (or explicitly skipped). Missing-script abort happens BEFORE workspace
+   acquisition and BEFORE cron is touched.
+2. Acquires a temp workspace via the umh helper at
+   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>`.
+3. Checks the late-start guard against the current crontab.
+4. Pauses cron (saves a backup to `${workspace}/crontab_backup.txt`).
+5. Runs the four hooks in order; the first failure aborts the rest (default
    fail-fast). Pass `--continue-on-error` to soldier on through hook failures.
-4. Restores cron on EXIT/INT/TERM via the trap.
+6. Restores cron on EXIT/INT/TERM via the trap; the helper cleanup also
+   removes the workspace on normal/INT/TERM exits (the backup persists
+   ONLY on SIGKILL/power-loss — see §7.6).
 
 Common variants:
 
@@ -1959,6 +1981,12 @@ bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --allow-late-start
 
 # Continue when one hook fails so the rest still run.
 bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --continue-on-error
+
+# Verified no-race host (e.g. SAPPHIRE cron not yet installed, OR you have
+# manually paused other races). Downgrades real `crontab -l` errors and
+# `crontab -` write failures to WARNING and proceeds with cron ACTIVE.
+# Does NOT bypass "crontab(1) missing" — that's still a hard-fail.
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --allow-unpaused-cron
 ```
 
 > `--station-filter` is **not** honored by this wrapper. All four hooks
@@ -1995,16 +2023,37 @@ Iterates over MONTHLY, QUARTERLY, SEASONAL modes and recalculates skill
 metrics for each. The underlying script handles per-mode failure
 internally (continue-on-mode-failure). Typical runtime: 60–120 minutes.
 
+> **Hook 4 is the only graceful-skip carve-out.** The underlying script
+> is not yet on `develop_migration_toolkit`. When the wrapper detects it
+> missing, it emits a prominent WARNING and continues; the operator must
+> manually recompute long-term skill metrics after long-term forecast
+> data is populated. Follow-up to flip hook 4 to mandatory once the
+> script lands:
+> `doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md`.
+
 ### 7.6 Failure modes and cron-restore guarantees
 
 | Failure mode                                     | What the wrapper does                            |
 |--------------------------------------------------|--------------------------------------------------|
 | Hook 1 fails, default policy                     | Abort hooks 2–4; restore cron via trap.          |
 | Hook 1 fails, `--continue-on-error`              | Log + continue with hooks 2–4; restore cron.     |
-| Operator hits Ctrl-C mid-hook                    | Trap fires on INT; restore cron; exit non-zero.  |
-| Operator's terminal dies                         | Trap fires on EXIT; restore cron from backup.    |
-| SIGKILL or power loss                            | Cron NOT restored. Manual recovery: `crontab <backup>` from the temp file under `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/`. |
-| Underlying hook script is missing on disk        | Log WARNING and skip the hook (graceful — does not crash). |
+| Operator hits Ctrl-C mid-hook                    | INT trap fires `_on_signal 130`; restore cron + clean workspace; exit 130. |
+| TERM signal (kill, systemd timeout)              | TERM trap fires `_on_signal 143`; restore cron + clean workspace; exit 143. |
+| Operator's terminal dies                         | EXIT trap fires `_on_exit`; restore cron from backup; preserve incoming exit code. |
+| SIGKILL or power loss                            | Cron NOT restored automatically. The workspace + backup file persist (no trap could fire). Manual recovery: `crontab "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>/crontab_backup.txt"`. The exact backup path is logged BEFORE the pause attempt so it's grep-able from the wrapper's log file. |
+| Hook 1, 2, or 3 script missing on disk           | Preflight ABORTS the run BEFORE cron is touched. Treat as a deploy/packaging error; either fix the deploy or pass `--skip-hook-<name>` if the absence is intentional. |
+| Hook 4 (long-term-skill) script missing          | Graceful skip with prominent WARNING + reference to the follow-up issue. Operator must manually recompute long-term skill metrics. |
+| `crontab` binary missing                         | Hard-fail with NO bypass. `--allow-unpaused-cron` does NOT cover this case (a missing binary blocks both pause AND restore). |
+| `crontab -l` real error (perm denied, etc.)      | Hard-fail by default; `--allow-unpaused-cron` downgrades to WARNING + proceeds with cron ACTIVE. |
+| `crontab -` write failure                        | Hard-fail by default; `--allow-unpaused-cron` downgrades to WARNING + proceeds with cron ACTIVE. Backup file is retained as a reference (NOT an active-restore artifact). |
+
+> **Backup-file lifetime.** The crontab backup at
+> `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>/crontab_backup.txt`
+> persists ONLY on unclean exits (SIGKILL, power loss, or
+> `--allow-unpaused-cron` failure path). On normal exit AND on INT/TERM,
+> the umh helper cleanup removes the workspace including the backup
+> because the wrapper's trap-driven `_restore_cron` has already run; no
+> manual restore is needed.
 
 > The cron-pause helper lives inline in
 > `bin/initialize_regenerate_hooks.sh` because
