@@ -402,3 +402,60 @@ def test_export_rejects_zero_row_filter():
     pre_manifest, _, post_manifest = src.partition('cat > "${manifest_path}"')
     assert "no rows matched filter" in pre_manifest
     assert "no rows matched filter" not in post_manifest
+
+
+def test_export_rejects_zero_row_behaviorally(tmp_path):
+    """Round-2 review feedback: prior zero-row test was source-text only.
+    This stubs psql via PATH so the wrapper actually runs through its
+    post-COPY control flow with a header-only CSV, verifying behavior
+    (non-zero exit, error message, no manifest written)."""
+    import os
+    import stat
+
+    fake_bin = tmp_path / "fake_bin"
+    fake_bin.mkdir()
+    fake_psql = fake_bin / "psql"
+    fake_psql.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "horizon_type,code,date,discharge,predictor,horizon_value,horizon_in_year"\n'
+        "exit 0\n"
+    )
+    fake_psql.chmod(fake_psql.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    stations = tmp_path / "stations.txt"
+    stations.write_text("19999\n")
+    out_dir = tmp_path / "out"
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["PGHOST"] = "127.0.0.1"
+    env["PGUSER"] = "postgres"
+    env["PGDATABASE"] = "test"
+    env["_P2A_EXPORT_SKIP_LOCATION_GUARD"] = "1"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_REPO_ROOT / "bin" / "export_runoff_period_history.sh"),
+            "--horizon",
+            "pentad",
+            "--stations-file",
+            str(stations),
+            "--out-dir",
+            str(out_dir),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode != 0, (
+        f"expected non-zero exit on zero-row export, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = (result.stdout + result.stderr).lower()
+    assert "no rows matched filter" in combined
+    # Manifest sidecar must NOT exist (guard runs BEFORE manifest write).
+    manifests = list(out_dir.glob("*.manifest")) if out_dir.exists() else []
+    assert manifests == [], f"manifest should not exist after zero-row reject, got {manifests}"
