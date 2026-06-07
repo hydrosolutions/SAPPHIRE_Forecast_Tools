@@ -96,6 +96,14 @@
 #       --allow-late-start
 # ============================================================================
 
+# File-level shellcheck disable for SC2317 (Command appears to be unreachable).
+# Newer shellcheck versions in CI flag many lines inside trap-invoked functions
+# (_pause_cron, _restore_cron, _on_exit, _on_signal) as unreachable because
+# its flow analyzer can't trace the trap call sites + sourced-helper
+# returns. The lines ARE reachable; per-function disables would clutter the
+# code. Locally shellcheck 0.11.0 doesn't fire SC2317 at all.
+# shellcheck disable=SC2317
+
 set -eo pipefail
 # NOTE: set -u is intentionally omitted; common_functions.sh is not strict-mode
 # safe (see comment in update_migration_helpers.sh).
