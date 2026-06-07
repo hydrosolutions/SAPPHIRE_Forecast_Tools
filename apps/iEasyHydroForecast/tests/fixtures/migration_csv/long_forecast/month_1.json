@@ -1,0 +1,8 @@
+{
+    "models_to_use": {
+        "LR_family": ["LR_Base"],
+        "GBT_family": ["GBT"]
+    },
+    "operational_month_lead_time": 1,
+    "horizon_type": "month"
+}
