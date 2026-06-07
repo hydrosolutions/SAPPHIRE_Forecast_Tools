@@ -441,6 +441,11 @@ main() {
             umh_log_redacted "ERROR: --mode '${MODE_FILTER}' has no config at ${mode_config}"
             exit 1
         fi
+        # NOTE: keep this in sync with migration_py.long_forecast
+        # ._load_mode_config — both parsers read 'operational_month_lead_time'
+        # and validate the same enum set ({"month"} for horizon_type). If the
+        # Python helper's validation rules change, mirror them here so the
+        # host-side per-mode query reflects the same semantics.
         local hv_out
         if ! hv_out=$(python3 - "$mode_config" <<'PYEOF' 2>&1
 import json, sys
@@ -517,6 +522,12 @@ PYEOF
     # A prominent WARNING is logged so the operator sees the gate would
     # have fired on a real run.
     if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$ALLOW_GLOBAL_CUTOFF" != true && "$DRY_RUN" != true ]]; then
+        # Shell-quote the script + env file paths so the suggested commands
+        # survive copy-paste even when either contains spaces or other
+        # metacharacters (round-3 review feedback).
+        local script_q env_q
+        printf -v script_q '%q' "$0"
+        printf -v env_q '%q' "$ENV_FILE"
         umh_log_redacted "ERROR: target long_forecasts table has rows (count=${TARGET_COUNT}) but"
         umh_log_redacted "this wrapper would apply ONE global cutoff to every mode it processes."
         umh_log_redacted "That can skip valid data because different modes have independent"
@@ -524,17 +535,22 @@ PYEOF
         umh_log_redacted ""
         umh_log_redacted "Resolution — pick ONE:"
         umh_log_redacted "  (a) Run per-mode separately (recommended for partially-populated targets):"
-        umh_log_redacted "        bash $0 ${ENV_FILE} --mode month_1"
-        umh_log_redacted "        bash $0 ${ENV_FILE} --mode month_2"
+        umh_log_redacted "        bash ${script_q} ${env_q} --mode month_1"
+        umh_log_redacted "        bash ${script_q} ${env_q} --mode month_2"
         umh_log_redacted "        ..."
         umh_log_redacted "  (b) Accept the conservative global cutoff (skips rows >= ${CUTOFF}"
         umh_log_redacted "      in EVERY mode — may under-populate empty horizon_value modes):"
-        umh_log_redacted "        bash $0 ${ENV_FILE} --allow-global-cutoff"
+        umh_log_redacted "        bash ${script_q} ${env_q} --allow-global-cutoff"
         umh_log_redacted ""
         umh_log_redacted "Note: --dry-run is exempt from this gate; rerun with --dry-run to preview."
         exit 1
     fi
-    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$DRY_RUN" == true ]]; then
+    # Dry-run exemption WARNING is only meaningful when the operator did NOT
+    # already opt in via --allow-global-cutoff. With both --dry-run AND
+    # --allow-global-cutoff set, the opt-in WARNING below is the right
+    # diagnostic (and the dry-run-exemption text would lie about the missing
+    # opt-in). Round-3 review feedback.
+    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$DRY_RUN" == true && "$ALLOW_GLOBAL_CUTOFF" != true ]]; then
         umh_log_redacted "WARNING (dry-run exemption): target has rows + no --mode + no --allow-global-cutoff."
         umh_log_redacted "  A real run with these args would abort. Inventory below previews the global-cutoff effect."
     fi

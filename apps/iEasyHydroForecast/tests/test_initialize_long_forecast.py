@@ -1065,14 +1065,46 @@ def test_wrapper_dry_run_exempt_from_gate():
     assert "dry-run exemption" in src.lower()
 
 
-def test_wrapper_gate_error_message_uses_actual_env_file_path():
-    """Round-3 review feedback: the error message must show the operator's
-    actual env file path so the suggested command is copy-pasteable.
-    Previously the heredoc emitted a literal "$ENV_FILE" token."""
+def test_wrapper_gate_error_message_is_shell_quoted():
+    """Round-3/4 review feedback: the suggested commands must shell-quote
+    both $0 and $ENV_FILE so copy-paste survives paths with spaces or other
+    metacharacters. The fix uses ``printf -v ... '%q'`` to compute quoted
+    forms before logging."""
     src = _WRAPPER.read_text(encoding="utf-8")
-    # The suggested commands in the gate error must reference ${ENV_FILE}
-    # (which the shell expands) rather than escaped \$ENV_FILE.
-    assert "bash $0 ${ENV_FILE} --mode month_1" in src
-    assert "bash $0 ${ENV_FILE} --allow-global-cutoff" in src
-    # And the prior buggy escape must be gone.
+    # The fix precomputes shell-quoted forms via printf %q.
+    assert "printf -v script_q '%q' \"$0\"" in src
+    assert "printf -v env_q '%q' \"$ENV_FILE\"" in src
+    # The suggested commands reference the quoted forms (not raw $0 / $ENV_FILE).
+    assert "bash ${script_q} ${env_q} --mode month_1" in src
+    assert "bash ${script_q} ${env_q} --allow-global-cutoff" in src
+    # The prior unquoted form must be gone.
+    assert "bash $0 ${ENV_FILE} --mode month_1" not in src
+    # And the original literal-escape from before round 3 must still be gone.
     assert '\\"\\$ENV_FILE\\"' not in src
+
+
+def test_wrapper_dry_run_exemption_suppressed_when_allow_global_cutoff():
+    """Round-4 review feedback: with --dry-run AND --allow-global-cutoff
+    set, the dry-run-exemption WARNING is misleading because it says
+    "no --allow-global-cutoff" while the operator HAS opted in. The fix
+    gates the dry-run-exemption WARNING on ALLOW_GLOBAL_CUTOFF != true
+    so only the opt-in WARNING fires in that combination."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    needle = (
+        '"$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" '
+        '&& "$DRY_RUN" == true && "$ALLOW_GLOBAL_CUTOFF" != true'
+    )
+    assert needle in src, (
+        "expected dry-run exemption guard to include "
+        "'$ALLOW_GLOBAL_CUTOFF != true' so it does not contradict the opt-in WARNING"
+    )
+
+
+def test_per_mode_parser_documents_sync_with_python_helper():
+    """Round-4 reviewer flagged drift risk: the host-side per-mode parser
+    duplicates logic that ``migration_py.long_forecast._load_mode_config``
+    also implements. The fix adds a sync-note comment so host-side
+    maintainers see the cross-reference."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "migration_py.long_forecast" in src
+    assert "_load_mode_config" in src
