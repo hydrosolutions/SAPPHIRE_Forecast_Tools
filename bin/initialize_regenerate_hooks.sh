@@ -65,6 +65,13 @@
 #   --late-start-window-minutes <N>        Refuse to start within N minutes of
 #                                          the next cron tick. Default: 30.
 #   --allow-late-start                     Bypass the late-start guard.
+#   --allow-unpaused-cron                  Downgrade pause failures (real
+#                                          `crontab -l` errors or `crontab -`
+#                                          write failures) from hard-fail to
+#                                          WARNING and proceed with cron
+#                                          ACTIVE. Use ONLY on verified
+#                                          no-race hosts. Does NOT bypass the
+#                                          "crontab(1) missing" hard-fail.
 #   --continue-on-error                    Continue to next hook on failure.
 #                                          Default: fail-fast.
 #   -h, --help                             Print this message and exit 0.
@@ -120,6 +127,7 @@ SKIP_SHORT_TERM_SKILL=false
 SKIP_LONG_TERM_SKILL=false
 LATE_START_WINDOW_MIN=30
 ALLOW_LATE_START=false
+ALLOW_UNPAUSED_CRON=false
 CONTINUE_ON_ERROR=false
 
 # Internal: per-script paths discovered relative to this wrapper. Recomputed in
@@ -174,6 +182,10 @@ Options:
                                          the next cron tick. Default: 30.
                                          Set to 0 to disable.
   --allow-late-start                     Bypass the late-start guard.
+  --allow-unpaused-cron                  Downgrade pause failures to WARNING
+                                         and proceed with cron ACTIVE.
+                                         Use ONLY on verified no-race hosts.
+                                         Does NOT bypass crontab(1) missing.
   --continue-on-error                    Keep running subsequent hooks when
                                          one fails. Default: fail-fast.
   -h, --help                             Print this message and exit 0.
@@ -273,6 +285,15 @@ parse_args() {
                 ALLOW_LATE_START=true
                 shift
                 ;;
+            --allow-unpaused-cron)
+                # Use only on verified no-race hosts. Downgrades pause failures
+                # (real `crontab -l` errors or `crontab -` write failures) from
+                # hard-fail to WARNING and proceeds with cron ACTIVE. Does NOT
+                # bypass the "crontab binary missing" hard-fail (that is a
+                # deployment configuration error).
+                ALLOW_UNPAUSED_CRON=true
+                shift
+                ;;
             --continue-on-error)
                 CONTINUE_ON_ERROR=true
                 shift
@@ -310,24 +331,40 @@ parse_args() {
 #   no-op.
 # ---------------------------------------------------------------------------
 _pause_cron() {
+    # Four-way classification (round-2 review feedback):
+    #
+    #   1. crontab(1) binary missing             -> hard-fail, NO bypass
+    #   2. crontab -l "no crontab for $USER"     -> INFO + proceed (normal on
+    #                                               dev laptops + day-0 servers)
+    #   3. crontab -l real error (perm denied,  -> hard-fail; bypass via
+    #      broken pipe, etc.)                      --allow-unpaused-cron
+    #   4. crontab - (write) failure             -> hard-fail; bypass via
+    #                                               --allow-unpaused-cron
+    #
+    # LC_ALL=C neutralises locale-translated stderr so the broad "no crontab"
+    # regex stays portable across BSD / macOS / Linux + non-English locales.
+
     if ! command -v crontab >/dev/null 2>&1; then
-        umh_log_redacted "cron-pause: crontab(1) not installed; skipping pause/restore"
-        return 0
+        umh_log_redacted "cron-pause: ERROR crontab(1) is not installed on this host"
+        umh_log_redacted "cron-pause: cannot pause/restore -> abort (no bypass available)"
+        return 1
     fi
 
     local cron_dump_rc=0
     local cron_dump_out
-    cron_dump_out="$(crontab -l 2>&1)" || cron_dump_rc=$?
+    cron_dump_out="$(LC_ALL=C crontab -l 2>&1)" || cron_dump_rc=$?
 
-    # `crontab -l` exits 1 when no crontab exists. Distinguish that benign
-    # case from a real error.
     if [[ $cron_dump_rc -ne 0 ]]; then
-        if echo "$cron_dump_out" | grep -qiE "no crontab|no such"; then
+        if echo "$cron_dump_out" | grep -qiE "no crontab"; then
             umh_log_redacted "cron-pause: no crontab installed for user; skipping pause/restore"
             return 0
         fi
-        umh_log_redacted "cron-pause: WARNING crontab -l failed (${cron_dump_rc}); skipping pause"
-        return 0
+        umh_log_redacted "cron-pause: ERROR crontab -l failed (rc=${cron_dump_rc}): ${cron_dump_out}"
+        if [[ "$ALLOW_UNPAUSED_CRON" == true ]]; then
+            umh_log_redacted "cron-pause: WARNING --allow-unpaused-cron set; proceeding with cron ACTIVE"
+            return 0
+        fi
+        return 1
     fi
 
     if [[ -z "$cron_dump_out" ]]; then
@@ -335,22 +372,37 @@ _pause_cron() {
         return 0
     fi
 
-    # Stash the backup under the temp workspace if available; otherwise mktemp.
-    if [[ -n "${TMPDIRS[*]:-}" ]]; then
-        _CRON_BACKUP_PATH="${TMPDIRS[0]}/crontab_backup.txt"
-    else
-        _CRON_BACKUP_PATH="$(mktemp -t crontab_backup.XXXXXX)"
+    # Workspace MUST exist (acquired by main before this function runs).
+    if [[ -z "${TMPDIRS[*]:-}" ]]; then
+        umh_log_redacted "cron-pause: ERROR temp workspace not acquired -> abort"
+        return 1
     fi
+
+    _CRON_BACKUP_PATH="${TMPDIRS[0]}/crontab_backup.txt"
     printf '%s\n' "$cron_dump_out" > "$_CRON_BACKUP_PATH"
     chmod 600 "$_CRON_BACKUP_PATH"
+    # Log the backup path BEFORE attempting the pause so SIGKILL between
+    # write and pause leaves the operator a clear recovery breadcrumb.
+    umh_log_redacted "cron-pause: backup written: ${_CRON_BACKUP_PATH}"
 
-    # Install an empty crontab.
     if printf '' | crontab -; then
         _CRON_WAS_PAUSED=true
-        umh_log_redacted "cron-pause: paused user crontab (backup saved to a private temp file)"
+        umh_log_redacted "cron-pause: paused user crontab; will restore at exit"
     else
-        umh_log_redacted "cron-pause: WARNING failed to install empty crontab; pause aborted"
+        local write_rc=$?
+        umh_log_redacted "cron-pause: ERROR failed to install empty crontab (rc=${write_rc})"
+        if [[ "$ALLOW_UNPAUSED_CRON" == true ]]; then
+            umh_log_redacted "cron-pause: WARNING --allow-unpaused-cron set; cron was NEVER paused"
+            umh_log_redacted "cron-pause: backup retained at ${_CRON_BACKUP_PATH} as reference to pre-attempt state"
+            umh_log_redacted "cron-pause: (not as an active-restore artifact; cron is still running)"
+            _CRON_BACKUP_PATH=""
+            return 0
+        fi
+        # Hard-fail path: remove the backup so it doesn't look like a stale
+        # restore artifact later, then return non-zero.
+        rm -f "$_CRON_BACKUP_PATH"
         _CRON_BACKUP_PATH=""
+        return 1
     fi
 }
 
@@ -572,8 +624,8 @@ _print_dry_run_inventory() {
     # 1. snow-stats
     if [[ "$SKIP_SNOW_STATS" == true ]]; then
         umh_log_redacted "  [SKIP]  hook 1/4: snow-stats (--skip-hook-snow-stats)"
-    elif [[ ! -x "$HOOK_SNOW_STATS" && ! -f "$HOOK_SNOW_STATS" ]]; then
-        umh_log_redacted "  [MISS]  hook 1/4: snow-stats — script not found at ${HOOK_SNOW_STATS}; will skip at run-time"
+    elif [[ ! -x "$HOOK_SNOW_STATS" ]]; then
+        umh_log_redacted "  [MISS fatal]  hook 1/4: snow-stats — script not found at ${HOOK_SNOW_STATS}; will ABORT before any hook runs"
     else
         umh_log_redacted "  [RUN]   hook 1/4: snow-stats"
         umh_log_redacted "          cmd: ieasyhydroforecast_env_file_path=${ENV_FILE} bash $(_build_snow_stats_cmd)"
@@ -582,8 +634,8 @@ _print_dry_run_inventory() {
     # 2. hydrograph month-season
     if [[ "$SKIP_HYDROGRAPH_MS" == true ]]; then
         umh_log_redacted "  [SKIP]  hook 2/4: hydrograph-month-season (--skip-hook-hydrograph-month-season)"
-    elif [[ ! -x "$HOOK_HYDROGRAPH_MS" && ! -f "$HOOK_HYDROGRAPH_MS" ]]; then
-        umh_log_redacted "  [MISS]  hook 2/4: hydrograph-month-season — script not found at ${HOOK_HYDROGRAPH_MS}; will skip at run-time"
+    elif [[ ! -x "$HOOK_HYDROGRAPH_MS" ]]; then
+        umh_log_redacted "  [MISS fatal]  hook 2/4: hydrograph-month-season — script not found at ${HOOK_HYDROGRAPH_MS}; will ABORT before any hook runs"
     else
         umh_log_redacted "  [RUN]   hook 2/4: hydrograph-month-season (per-year loop)"
         local year
@@ -602,18 +654,19 @@ _print_dry_run_inventory() {
     # 3. short-term-skill
     if [[ "$SKIP_SHORT_TERM_SKILL" == true ]]; then
         umh_log_redacted "  [SKIP]  hook 3/4: short-term-skill (--skip-hook-short-term-skill)"
-    elif [[ ! -x "$HOOK_SHORT_TERM_SKILL" && ! -f "$HOOK_SHORT_TERM_SKILL" ]]; then
-        umh_log_redacted "  [MISS]  hook 3/4: short-term-skill — script not found at ${HOOK_SHORT_TERM_SKILL}; will skip at run-time"
+    elif [[ ! -x "$HOOK_SHORT_TERM_SKILL" ]]; then
+        umh_log_redacted "  [MISS fatal]  hook 3/4: short-term-skill — script not found at ${HOOK_SHORT_TERM_SKILL}; will ABORT before any hook runs"
     else
         umh_log_redacted "  [RUN]   hook 3/4: short-term-skill"
         umh_log_redacted "          cmd: bash $(_build_short_term_skill_cmd)"
     fi
 
-    # 4. long-term-skill
+    # 4. long-term-skill (graceful-skip carve-out — see hook4 follow-up issue)
     if [[ "$SKIP_LONG_TERM_SKILL" == true ]]; then
         umh_log_redacted "  [SKIP]  hook 4/4: long-term-skill (--skip-hook-long-term-skill)"
-    elif [[ ! -x "$HOOK_LONG_TERM_SKILL" && ! -f "$HOOK_LONG_TERM_SKILL" ]]; then
-        umh_log_redacted "  [MISS]  hook 4/4: long-term-skill — script not found at ${HOOK_LONG_TERM_SKILL}; will skip at run-time"
+    elif [[ ! -x "$HOOK_LONG_TERM_SKILL" ]]; then
+        umh_log_redacted "  [GRACEFUL SKIP — see WARNING]  hook 4/4: long-term-skill — script ${HOOK_LONG_TERM_SKILL} not deployed"
+        umh_log_redacted "          See follow-up: doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md"
     else
         umh_log_redacted "  [RUN]   hook 4/4: long-term-skill"
         umh_log_redacted "          cmd: bash $(_build_long_term_skill_cmd)"
@@ -621,9 +674,12 @@ _print_dry_run_inventory() {
 
     umh_log_redacted ""
     umh_log_redacted "Pause/restore plan:"
+    umh_log_redacted "  - preflight: hooks 1-3 mandatory; abort if missing (no cron touched)"
+    umh_log_redacted "  - acquire temp workspace via umh_acquire_temp_workspace"
     umh_log_redacted "  - pause: 'crontab -' (empty crontab) before any hook runs"
     umh_log_redacted "  - restore: 'crontab <backup_file>' on EXIT/INT/TERM"
     umh_log_redacted "  - dry-run does NOT actually pause cron"
+    umh_log_redacted "  - --allow-unpaused-cron: $( [[ "$ALLOW_UNPAUSED_CRON" == true ]] && echo "ON (will proceed with cron ACTIVE on pause failure)" || echo "off (hard-fail on pause failure)" )"
     umh_log_redacted ""
     umh_log_redacted "Late-start window: ${LATE_START_WINDOW_MIN} minute(s)$( [[ "$ALLOW_LATE_START" == true ]] && echo " (--allow-late-start: would bypass)" )"
     umh_log_redacted "Fail policy:        $( [[ "$CONTINUE_ON_ERROR" == true ]] && echo "continue-on-error" || echo "fail-fast" )"
@@ -640,9 +696,11 @@ _run_snow_stats_hook() {
         umh_log_redacted "snow-stats: SKIPPED (--skip-hook-snow-stats)"
         return 0
     fi
-    if [[ ! -f "$HOOK_SNOW_STATS" ]]; then
-        umh_log_redacted "snow-stats: WARNING script not found at ${HOOK_SNOW_STATS}; skipping gracefully"
-        return 0
+    # Preflight already validated this; defensive check for direct unit
+    # callers (the function should never be reached with a missing script).
+    if [[ ! -x "$HOOK_SNOW_STATS" ]]; then
+        umh_log_redacted "snow-stats: ERROR script missing or not executable at ${HOOK_SNOW_STATS}"
+        return 1
     fi
     umh_log_redacted "snow-stats: BEGIN ($(_build_snow_stats_cmd))"
     local start_args=()
@@ -669,9 +727,9 @@ _run_hydrograph_ms_hook() {
         umh_log_redacted "hydrograph-month-season: SKIPPED (--skip-hook-hydrograph-month-season)"
         return 0
     fi
-    if [[ ! -f "$HOOK_HYDROGRAPH_MS" ]]; then
-        umh_log_redacted "hydrograph-month-season: WARNING script not found at ${HOOK_HYDROGRAPH_MS}; skipping gracefully"
-        return 0
+    if [[ ! -x "$HOOK_HYDROGRAPH_MS" ]]; then
+        umh_log_redacted "hydrograph-month-season: ERROR script missing or not executable at ${HOOK_HYDROGRAPH_MS}"
+        return 1
     fi
     local years
     years="$(_hydrograph_year_range)"
@@ -707,9 +765,9 @@ _run_short_term_skill_hook() {
         umh_log_redacted "short-term-skill: SKIPPED (--skip-hook-short-term-skill)"
         return 0
     fi
-    if [[ ! -f "$HOOK_SHORT_TERM_SKILL" ]]; then
-        umh_log_redacted "short-term-skill: WARNING script not found at ${HOOK_SHORT_TERM_SKILL}; skipping gracefully"
-        return 0
+    if [[ ! -x "$HOOK_SHORT_TERM_SKILL" ]]; then
+        umh_log_redacted "short-term-skill: ERROR script missing or not executable at ${HOOK_SHORT_TERM_SKILL}"
+        return 1
     fi
     umh_log_redacted "short-term-skill: BEGIN ($(_build_short_term_skill_cmd))"
     local rc=0
@@ -728,8 +786,14 @@ _run_long_term_skill_hook() {
         umh_log_redacted "long-term-skill: SKIPPED (--skip-hook-long-term-skill)"
         return 0
     fi
-    if [[ ! -f "$HOOK_LONG_TERM_SKILL" ]]; then
-        umh_log_redacted "long-term-skill: WARNING script not found at ${HOOK_LONG_TERM_SKILL}; skipping gracefully"
+    # Hook 4 is the only graceful-skip: the underlying script does not yet
+    # exist on develop_migration_toolkit. Follow-up to flip this to mandatory:
+    # doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md
+    if [[ ! -x "$HOOK_LONG_TERM_SKILL" ]]; then
+        umh_log_redacted "long-term-skill: WARNING long-term skill recalc skipped (script ${HOOK_LONG_TERM_SKILL} not deployed)."
+        umh_log_redacted "long-term-skill:         You must manually recompute long-term skill metrics after long-term"
+        umh_log_redacted "long-term-skill:         forecast data is populated. See follow-up:"
+        umh_log_redacted "long-term-skill:         doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md"
         return 0
     fi
     umh_log_redacted "long-term-skill: BEGIN ($(_build_long_term_skill_cmd))"
@@ -745,13 +809,67 @@ _run_long_term_skill_hook() {
 }
 
 # ---------------------------------------------------------------------------
-# Trap: restore cron on any exit path.
+# Preflight: validate that mandatory hooks (1-3) have their scripts on disk.
+#
+# Runs BEFORE _pause_cron so a missing-script deploy/packaging error aborts
+# without ever touching cron. Hook 4 (long-term skill) is the only carve-out
+# — it gracefully skips with a WARNING because the underlying script is
+# not yet on develop_migration_toolkit. See:
+# doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md
+#
+# Operators who genuinely want to skip one of the mandatory hooks must pass
+# the corresponding --skip-hook-<name> flag.
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2329  # invoked indirectly via the EXIT/INT/TERM trap
+_preflight_validate_hooks() {
+    local errs=0
+    if [[ "$SKIP_SNOW_STATS" != true && ! -x "$HOOK_SNOW_STATS" ]]; then
+        umh_log_redacted "preflight: ERROR hook 1/4 (snow-stats) script missing or not executable: ${HOOK_SNOW_STATS}"
+        errs=$((errs + 1))
+    fi
+    if [[ "$SKIP_HYDROGRAPH_MS" != true && ! -x "$HOOK_HYDROGRAPH_MS" ]]; then
+        umh_log_redacted "preflight: ERROR hook 2/4 (hydrograph-month-season) script missing or not executable: ${HOOK_HYDROGRAPH_MS}"
+        errs=$((errs + 1))
+    fi
+    if [[ "$SKIP_SHORT_TERM_SKILL" != true && ! -x "$HOOK_SHORT_TERM_SKILL" ]]; then
+        umh_log_redacted "preflight: ERROR hook 3/4 (short-term-skill) script missing or not executable: ${HOOK_SHORT_TERM_SKILL}"
+        errs=$((errs + 1))
+    fi
+    if [[ "$errs" -gt 0 ]]; then
+        umh_log_redacted "preflight: ${errs} mandatory hook(s) failed validation -> abort (deploy/packaging error)"
+        umh_log_redacted "preflight: pass the corresponding --skip-hook-<name> flag if a hook is intentionally not deployed"
+        return 1
+    fi
+    umh_log_redacted "preflight: mandatory hooks validated (hooks 1-3 present or explicitly skipped)"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Traps: restore cron + clean temp workspace on any exit path.
+#
+# Round-2 review feedback split this into separate handlers:
+#   - _on_exit handles natural exit (preserves the propagated exit code)
+#   - _on_signal handles INT/TERM (exits with 128 + signal — POSIX convention)
+#
+# Both call _restore_cron + _umh_cleanup_tempdirs explicitly because the
+# wrapper's later `trap _on_exit EXIT` registration overwrites the umh
+# helper's own EXIT trap. The `|| true` guards ensure a restore failure
+# cannot skip workspace cleanup.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap
 _on_exit() {
     local rc=$?
-    _restore_cron
+    _restore_cron || true
+    _umh_cleanup_tempdirs || true
     return "$rc"
+}
+
+# shellcheck disable=SC2329  # invoked indirectly via the INT/TERM traps
+_on_signal() {
+    local code="$1"
+    umh_log_redacted "received signal; restoring cron + cleaning workspace before exit ${code}"
+    _restore_cron || true
+    _umh_cleanup_tempdirs || true
+    exit "$code"
 }
 
 # ---------------------------------------------------------------------------
@@ -828,12 +946,35 @@ main() {
     fi
 
     # -------------------------------------------------------------------------
-    # Real run: install the exit trap BEFORE pausing cron so any failure of
-    # _pause_cron still triggers _restore_cron.
+    # Real run: preflight mandatory hooks BEFORE acquiring workspace + pausing
+    # cron. A missing-script deploy error aborts cleanly without touching
+    # either resource.
     # -------------------------------------------------------------------------
-    trap _on_exit EXIT INT TERM
+    if ! _preflight_validate_hooks; then
+        exit 1
+    fi
 
-    _pause_cron
+    # Acquire the temp workspace AFTER preflight so a doomed run does not
+    # create a logs/regenerate_hooks_tmp/<timestamp> dir. The helper appends
+    # the path to TMPDIRS; _pause_cron reads TMPDIRS[0] for the backup target.
+    umh_acquire_temp_workspace regenerate_hooks
+
+    # Register the exit + signal traps AFTER workspace acquisition so the
+    # umh helper's own EXIT INT TERM trap is overwritten — _on_exit and
+    # _on_signal explicitly call _umh_cleanup_tempdirs to compensate.
+    trap _on_exit EXIT
+    trap '_on_signal 130' INT
+    trap '_on_signal 143' TERM
+
+    # Pause cron AFTER the traps are installed so any failure path still
+    # triggers cleanup. The four-way classification inside _pause_cron
+    # returns non-zero on hard-fail; the bypass flag (--allow-unpaused-cron)
+    # downgrades real-error + write-failure cases to WARNING + return 0.
+    if ! _pause_cron; then
+        umh_log_redacted "main: cron-pause failed -> abort before any hook runs"
+        umh_log_redacted "main: re-run with --allow-unpaused-cron on verified no-race hosts to bypass"
+        exit 1
+    fi
 
     # -------------------------------------------------------------------------
     # Hook execution loop. Each runner returns the underlying script's exit
