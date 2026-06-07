@@ -110,7 +110,13 @@ fi
 log_message "Removing log files older than 15 days"
 find $LOG_DIR -type f -mtime +15 -delete
 
-log_message "Yearly Skill Metrics Recalculation completed"
+log_message "Yearly Skill Metrics Recalculation completed (container exit=${CONTAINER_EXIT_CODE})"
 echo "|"
 echo "| Recalculation complete. Check logs at: $LOG_DIR"
 echo "|"
+
+# Propagate the container's exit code so callers (P6 regenerate-hooks
+# wrapper, cron, etc.) can fail-fast on a failed recalculation. The
+# previous version logged a WARNING and fell off the end with exit 0,
+# which silently masked failures (round-2 review feedback).
+exit "$CONTAINER_EXIT_CODE"
