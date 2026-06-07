@@ -354,6 +354,7 @@ _pause_cron() {
     fi
 }
 
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT/INT/TERM trap
 _restore_cron() {
     if [[ "$_CRON_WAS_PAUSED" != true ]]; then
         return 0
@@ -746,6 +747,7 @@ _run_long_term_skill_hook() {
 # ---------------------------------------------------------------------------
 # Trap: restore cron on any exit path.
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT/INT/TERM trap
 _on_exit() {
     local rc=$?
     _restore_cron
