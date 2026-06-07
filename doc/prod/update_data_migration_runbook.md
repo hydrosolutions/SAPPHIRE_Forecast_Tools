@@ -609,6 +609,275 @@ cutoff. For full-import mode, both should match the source date range.
   containers are present (Stage E item #6 for export scripts).
 ]
 
+### 6.2 Hydrograph PENTAD/DECADE
+
+Source: laptop's local `sapphire-preprocessing-db.hydrographs` table,
+filtered on `horizon_type IN ('PENTAD','DECADE')` and on the deployment's
+station list. Target: `hydrographs` rows with `horizon_type='PENTAD'` or
+`horizon_type='DECADE'` (one wrapper run per horizon). MODE branches on
+target state per-horizon — empty target = `full-import`; populated
+target = `pre-cutoff (cutoff=MIN(date))`. Reruns are idempotent
+(service-side upsert on `(horizon_type, code, date)`).
+
+#### Background
+
+Hydrograph PENTAD/DECADE rows are climatological stat rows aggregated to
+the 5-day or 10-day horizon — `mean`, `min`, `max`, `q05/q25/q50/q75/q95`,
+`norm`, plus `previous` / `current` (the last two years' aggregated
+hydrograph). The underlying CSV under `intermediate_data/` is not
+operationally usable for the migration: on TAJ the pentad CSV exists but
+is header-only (Stage A.2 RED finding), and the decade CSV uses a wider /
+older format that has diverged from the DB row layout. The migration
+therefore goes through the laptop's preprocessing DB instead of CSV.
+
+**Year-column handling (NOT P3-style discovery).** The laptop export
+emits `previous` / `current` as literal DB column names (the row model in
+`sapphire/services/preprocessing/app/schemas.py:59-60` defines these
+fields directly), so the server-side wrapper passes them through with no
+year-column discovery. This intentionally differs from P3 (hydrograph
+DAY), which reads `intermediate_data/hydrograph_day.csv` — a wide CSV
+where year columns rotate annually. Keeping `previous` / `current` as
+canonical column names matches the payload, avoids per-deployment
+discovery surprises, and keeps the export trivial (one `COPY (SELECT
+...) TO STDOUT`).
+
+**Safe-write policy (architecture §Q2 layer 2).** The wrapper sends only
+non-NULL source fields per the universal safe-write rule. Hydrograph
+rows have many nullable stat / quantile / year-mapped fields; the
+wrapper omits any field that is absent or unparseable in the source —
+never sends `field: null`. The service-side `_has_changes + setattr`
+overwrite-with-NULL path is therefore not triggered by this wrapper.
+The dry-run inventory prints `SAFE_WRITE_POLICY=enrichment-only
+(default)` so the operator confirms the active policy before any write.
+
+**Stat-erasure caveat (cross-link to architecture §Q2 layer 2).** Under
+the default enrichment-only policy, a target row's existing non-NULL
+stat is preserved across reruns. However, if a different upstream
+process subsequently writes a row with a different non-NULL stat plus
+some NULL fields, the `_has_changes` bug can erase already-populated
+target fields. This wrapper does NOT introduce the bug, but its
+default policy does not actively defend against it either. The
+`--strict-merge` flag is the documented future-flag mitigation; see the
+next paragraph.
+
+**`--strict-merge` opt-in (deferred to follow-up PR).** The wrapper
+accepts `--strict-merge` as an opt-in flag, but in this release it logs
+a warning and falls back to enrichment-only. When implemented, the flag
+will perform read-before-merge: GET the target row, merge the incoming
+non-NULL source with existing target values, POST the merged record.
+This trades ~10–50 rec/s throughput (one extra GET per row) for
+guaranteed preservation of existing target values regardless of which
+upstream process touched the row last. Operators should NOT depend on
+`--strict-merge` for safety yet; if stat erasure is observed in
+production, file an issue referencing the P2b gi_draft and the
+architecture §Q2 layer 2 row for `hydrographs`. The flag's CLI surface,
+the dry-run policy line, and the design rationale are all in place so a
+future PR can land the implementation without changing the runbook
+shape.
+
+#### 6.2.1 Laptop side — export
+
+Run on the OPERATOR LAPTOP / jump host. The export script refuses to run
+on the deployment server (a `sapphire-{preprocessing,postprocessing,
+api-gateway}-...` container detected via `docker ps` triggers an
+explicit error — Stage E #6).
+
+Pre-requisites (per §3):
+
+- `~/.pgpass` mode `0600` with credentials for the laptop's
+  preprocessing DB.
+- `PGHOST` / `PGPORT` / `PGUSER` / `PGDATABASE` env vars set (no
+  password in CLI).
+- `<stations_file>` listing the deployment's station codes, one per
+  line. Generate from the deployment's `intermediate_data/runoff_day.csv`
+  (e.g. `awk -F, 'NR>1 {print $1}' /data/<org>_data/intermediate_data/runoff_day.csv | sort -u > /tmp/stations.txt`).
+- `<out_dir>` writable; will be created with mode `0o700` if missing.
+
+```bash
+# PENTAD export (do BOTH if migrating both horizons).
+bash bin/export_hydrograph_period_history.sh \
+    --horizon pentad \
+    --stations-file /tmp/stations.txt \
+    --out-dir /tmp/hydrograph_period_export \
+    --dry-run
+
+# Inspect the COUNT(*) output. If it matches expectations, run without --dry-run:
+bash bin/export_hydrograph_period_history.sh \
+    --horizon pentad \
+    --stations-file /tmp/stations.txt \
+    --out-dir /tmp/hydrograph_period_export
+
+# DECADE export (same flags; different --horizon).
+bash bin/export_hydrograph_period_history.sh \
+    --horizon decade \
+    --stations-file /tmp/stations.txt \
+    --out-dir /tmp/hydrograph_period_export
+```
+
+Each export emits TWO files in `<out_dir>`:
+
+```
+hydrograph_period_<horizon>_<UTC_timestamp>.csv
+hydrograph_period_<horizon>_<UTC_timestamp>.csv.manifest
+```
+
+Both files have mode `0600`. The manifest contains the 5 P0-required
+keys plus a `horizon=<pentad|decade>` annotation and a generation
+timestamp comment.
+
+Transfer BOTH files together to the deployment server's data root logs
+directory (or wherever the operator chooses):
+
+```bash
+scp /tmp/hydrograph_period_export/hydrograph_period_pentad_*.csv* \
+    <user>@<server>:/data/<org>_data/logs/
+scp /tmp/hydrograph_period_export/hydrograph_period_decade_*.csv* \
+    <user>@<server>:/data/<org>_data/logs/
+```
+
+If only one file lands on the server, the server-side wrapper will
+refuse (`sidecar manifest not found`).
+
+#### 6.2.2 Server side — dry-run
+
+Validate the manifest, MODE, and filtered row count BEFORE any write:
+
+```bash
+bash bin/initialize_hydrograph_period_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/hydrograph_period_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --dry-run
+```
+
+Expected inventory shape (per §4.4):
+
+```text
+MODE=<full-import (target empty) | pre-cutoff (cutoff=YYYY-MM-DD)>
+TARGET_TABLE=hydrographs
+HORIZON_TYPE=PENTAD
+CUTOFF=<date or none>
+SOURCE_FILES=['/hydrograph_period.csv']
+SOURCE_ROW_COUNT=<n>
+FILTERED_ROW_COUNT=<n>
+SOURCE_DATE_MIN=<date>
+SOURCE_DATE_MAX=<date>
+DISTINCT_STATION_COUNT_REDACTED=<n>
+SKIPPED_PARSE=<n> SKIPPED_CUTOFF=<n> SKIPPED_STATION=<n>
+SAFE_WRITE_POLICY=enrichment-only (default)
+post_filter_stations: count=<n> (all redacted)
+IMAGE=mabesa/sapphire-prepgateway:<tag> source=<cli|configured|fallback>
+```
+
+If `HORIZON_TYPE`, `MODE`, source counts, or `SAFE_WRITE_POLICY` look
+unexpected — STOP and investigate. Do NOT proceed to write.
+
+Common dry-run failure causes:
+
+- **Manifest validation error.** A typo in the stations file or a stale
+  CSV. The error names the failing key (`row_count`, `station_count`,
+  `date_min`, `date_max`, or `export_type`). Re-run the laptop export to
+  regenerate the manifest.
+- **`SAFE_WRITE_POLICY=strict-merge (NOT YET IMPLEMENTED ...)`.** The
+  operator passed `--strict-merge`. That flag is still a stub; the run
+  will fall back to enrichment-only with a warning. See the background
+  section above.
+- **Empty `FILTERED_ROW_COUNT`.** Either the cutoff is later than the
+  source's `date_max`, the station-filter was set to a code not in the
+  CSV, or the stations file didn't include any codes that the laptop DB
+  has hydrograph period rows for. Inspect `SOURCE_ROW_COUNT`,
+  `SOURCE_DATE_MAX`, and `SKIPPED_*` to diagnose.
+
+#### 6.2.3 Canary (single station, per §4.3 acceptance criterion)
+
+Run with a single sentinel / low-risk station code before full
+population. Substitute `<code>` with the canary code (`19999` sentinel
+when available, otherwise a single low-risk operational code):
+
+```bash
+# Canary dry-run
+bash bin/initialize_hydrograph_period_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/hydrograph_period_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --dry-run --station-filter <code>
+
+# Canary write (one station only)
+bash bin/initialize_hydrograph_period_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/hydrograph_period_pentad_<UTC_timestamp>.csv \
+    --horizon pentad \
+    --station-filter <code>
+```
+
+Verify the canary row count via the §8 acceptance SQL (filtered on the
+same `code`). Then proceed to full population.
+
+#### 6.2.4 Full population (per horizon)
+
+```bash
+# Pentad
+bash bin/initialize_hydrograph_period_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/hydrograph_period_pentad_<UTC_timestamp>.csv \
+    --horizon pentad
+
+# Decade
+bash bin/initialize_hydrograph_period_history.sh "$ENV_FILE" \
+    --from-export /data/<org>_data/logs/hydrograph_period_decade_<UTC_timestamp>.csv \
+    --horizon decade
+```
+
+Tunables:
+
+- `--batch-size <N>` — records per POST batch (default `500`). Lower to
+  diagnose API-side timeouts; raise if the API tolerates larger
+  envelopes.
+- `--api-url <URL>` — override target endpoint (default
+  `http://localhost:8002/hydrograph/`).
+- `--image <IMAGE>` — pin a specific Docker image (overrides resolution
+  via env file's `ieasyhydroforecast_backend_docker_image_tag`).
+- `--strict-merge` — opt-in read-before-merge. **NOT YET IMPLEMENTED.**
+  Logs a warning and falls back to enrichment-only. Do not depend on
+  this flag's eventual behavior; file an issue if stat erasure is
+  observed.
+
+#### 6.2.5 Acceptance SQL pointer
+
+After completion (per horizon), run the §8 acceptance block. For a
+quick local check:
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+  psql -U postgres -d preprocessing_db -P pager=off <<SQL
+SELECT horizon_type, COUNT(*) AS rows,
+       COUNT(mean) AS mean_rows,
+       COUNT(q50) AS q50_rows,
+       COUNT(previous) AS previous_rows,
+       COUNT(current) AS current_rows,
+       COUNT(norm) AS norm_rows,
+       MIN(date), MAX(date)
+FROM hydrographs
+WHERE horizon_type IN ('PENTAD','DECADE')
+GROUP BY horizon_type
+ORDER BY horizon_type;
+SQL
+```
+
+Compare `rows` and `MAX(date)` against the dry-run's
+`FILTERED_ROW_COUNT` and `SOURCE_DATE_MAX`. `mean_rows`, `q50_rows`,
+`previous_rows`, `current_rows`, and `norm_rows` reflect the
+enrichment-only safe-write policy: an existing row whose stat field was
+already populated stays populated even if the new source row had that
+field absent. For pre-cutoff mode, expect `MIN(date)` to be the
+earliest source date AND `MAX(date)` to be one day before the prior
+cutoff. For full-import mode, both should match the source date range.
+
+#### 6.2.6 Idempotency and rerun
+
+The natural key `(horizon_type, code, date)` is upserted service-side,
+so rerunning the same wrapper with the same args is safe. To narrow a
+rerun on failure, combine `--station-filter <code>` with a smaller
+`--batch-size` (e.g. `--batch-size 200`). On the laptop side, re-export
+into a fresh `--out-dir` if the source DB has changed since the last
+export.
+
 ## 7. Regenerate / gap-backfill hooks
 
 [Filled by P6. Required content per architecture §Q10:
