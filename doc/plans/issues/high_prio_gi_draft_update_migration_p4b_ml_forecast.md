@@ -258,9 +258,11 @@ rule surfaces immediately.
 - **Stage E item #6** (location guard on laptop scripts): the export
   script detects deployment-server markers via
   `docker ps --filter name=sapphire-postprocessing-db` and refuses to run
-  unless `--allow-server-host` is set. The location-guard documentation is
-  surfaced in `--help` (see `test_wrapper_help_documents_location_guard`
-  in `test_export_ml_forecast.py`).
+  unless `--i-am-on-laptop` is set (charter-compliant bypass; the prior
+  `--allow-server-host` flag was renamed in the round-1 review). The
+  location-guard documentation is surfaced in `--help` (see
+  `test_wrapper_help_documents_location_guard` in
+  `test_export_ml_forecast.py`).
 - **Stage E item #7** (canary single-station acceptance criterion):
   runbook §6.4.3 mandates the canary step before full population; the
   acceptance SQL block scopes the verification to a single station.

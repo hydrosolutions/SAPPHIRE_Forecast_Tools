@@ -700,7 +700,7 @@ POST it.
 
 On the laptop (NOT on the deployment server — the export script's
 location guard refuses to run on a host with `sapphire-postprocessing-db`
-running unless `--allow-server-host` is set):
+running unless `--i-am-on-laptop` is set):
 
 ```bash
 # Credentials in env var OR ~/.pgpass (NEVER on the command line):
@@ -708,6 +708,10 @@ export PGPASSWORD='<laptop_db_password>'
 
 # Default: export only horizon_type='day' rows.
 bash bin/export_ml_forecast_history.sh /tmp/ml_export --station-filter 19999
+
+# Dry-run first (COUNT(*) only; no CSV / manifest written):
+bash bin/export_ml_forecast_history.sh /tmp/ml_export \
+    --station-filter 19999 --dry-run
 
 # Legacy pull (PENTAD/DECADE + day):
 bash bin/export_ml_forecast_history.sh /tmp/ml_export \
