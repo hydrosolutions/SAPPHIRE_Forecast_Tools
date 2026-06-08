@@ -56,6 +56,50 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
 
+  # Shellcheck the update-migration toolkit shell scripts.
+  # NOTE (v2 R5 carve-out): scope narrowed to migration-pattern files only.
+  # Legacy bin/ scripts have 55 pre-existing findings tracked in
+  # doc/plans/issues/high_prio_gi_draft_infra_legacy_bin_shellcheck_cleanup.md.
+  # When that cleanup PR lands, this job can be broadened to scandir './bin'.
+  shellcheck_migration_scripts:
+    runs-on: ubuntu-latest
+    name: Shellcheck migration toolkit scripts
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck migration toolkit scripts (carve-out per v2 R5)
+        run: |
+          set -e
+          shopt -s nullglob
+          # NOTE: scope narrowed to migration-toolkit files only.
+          # Legacy bin/ scripts tracked separately. See:
+          # doc/plans/issues/high_prio_gi_draft_infra_legacy_bin_shellcheck_cleanup.md
+          files=()
+          [[ -f bin/utils/update_migration_helpers.sh ]] && files+=(bin/utils/update_migration_helpers.sh)
+          for f in bin/initialize_*_history.sh bin/export_*_history.sh; do
+            [[ -f "$f" ]] && files+=("$f")
+          done
+          # P6 regenerate-hooks wrapper + the underlying script it bundles
+          # (round-3 review NR1: the safety-critical wrapper was outside
+          # the prior glob because it doesn't match the *_history.sh
+          # naming convention).
+          [[ -f bin/initialize_regenerate_hooks.sh ]] && files+=(bin/initialize_regenerate_hooks.sh)
+          [[ -f bin/yearly_skill_metrics_recalculation.sh ]] && files+=(bin/yearly_skill_metrics_recalculation.sh)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No migration scripts found to shellcheck (gate is a no-op)."
+            exit 0
+          fi
+          echo "Linting (default severity): ${files[*]}"
+          shellcheck -x "${files[@]}"
+
   # Build but don't push the Python 3.12 + uv base image
   build_base_image:
     needs: [test_ieasyhydroforecast]

@@ -1,0 +1,7 @@
+# Fixture manifest for hydrograph_period (pentad). Sentinel codes only.
+export_type=hydrograph_period
+horizon=pentad
+row_count=3
+station_count=1
+date_min=2026-01-01
+date_max=2026-01-11
