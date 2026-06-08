@@ -910,6 +910,57 @@ For a comprehensive test, run a full pentadal forecast cycle:
 
 ---
 
+### 3.4 Historical Data Migration (one-time, post-update)
+
+**When to run this step:** Only on (a) the initial deployment to a new
+server, or (b) a deliberate refresh of the historical archive after a
+forecast-tools update that touched table schemas, hook scripts, or the
+CSV/API I/O surface. Routine `update_deployment_checklist` runs that
+only bump image tags + cron + `.env` do NOT need this step.
+
+**Reference:** [`doc/prod/update_data_migration_runbook.md`](./update_data_migration_runbook.md)
+
+The migration runbook is a self-contained ten-section procedure:
+
+| Section | Purpose                                                |
+|---------|--------------------------------------------------------|
+| §1      | Purpose, scope, anti-goals                             |
+| §2      | Prerequisites and source selection                     |
+| §3      | Credentials and secret hygiene                         |
+| §4      | P0 diagnostics, backup (`pg_dump`), cron pause, dry-run |
+| §5      | CSV-source migrations (runoff DAY, meteo, snow, hydrograph DAY, long forecasts) |
+| §6      | Laptop local-export migrations (runoff/hydrograph PENTAD/DECADE, LR + ML forecasts) |
+| §7      | Regenerate / gap-backfill hooks (snow stats, hydrograph MONTH/SEASON, skill recalcs) |
+| §8      | Acceptance SQL (per-DB consolidated verification)      |
+| §9      | Failure recovery and rerun                             |
+| §10     | Rollback and cleanup (literal `pg_restore`)            |
+
+**Order of operations relative to this checklist:**
+
+1. Complete §1–§3.3 of THIS checklist first (services up, healthz green,
+   test forecast OK). The migration toolkit assumes a healthy stack.
+2. Take the §4.1 `pg_dump` backup from the migration runbook BEFORE
+   running any migration wrapper. This is a hard gate.
+3. Pause cron via the runbook §4.2 procedure (this is in addition to
+   any cron changes made in §2.5 of this checklist).
+4. Execute §5–§7 migration wrappers per the runbook in order.
+5. Run §8 acceptance SQL to verify all data families.
+6. Resume cron from the §4.2 snapshot.
+
+**If anything fails:** the runbook's §9 (recovery) and §10 (rollback)
+both reference the `pg_dump` backup from step 2 above. Do NOT proceed
+with a migration whose `pg_dump` log does not contain `All four dumps
+succeeded and verified`.
+
+- [ ] Decided whether this deployment needs historical data migration
+      (initial deployment OR forecast-tools schema change since last
+      migration). If not, skip to §4.
+- [ ] If yes: follow `update_data_migration_runbook.md` end-to-end.
+- [ ] Confirmed all `§8` acceptance SQL blocks return expected row
+      counts before resuming cron + leaving the host.
+
+---
+
 ## 4. LOG CLEANUP (Optional)
 
 Clean up old log files to prevent disk space issues.
