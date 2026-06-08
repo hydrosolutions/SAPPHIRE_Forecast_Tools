@@ -5,9 +5,21 @@ Owner: SAPPHIRE deployment team
 
 This runbook governs update-time data migrations: importing or backfilling
 historical preprocessing and forecast data into an existing SAPPHIRE deployment
-without rebuilding the whole database. It is invoked from the update deployment
-checklist (`doc/prod/update_deployment_checklist.md`) between Alembic migrations
-(§2.4.6) and verification (§3.2).
+without rebuilding the whole database. It is invoked from the update
+deployment checklist (`doc/prod/update_deployment_checklist.md` §3.4
+"Historical Data Migration") AFTER the §3.3 post-update verification
+confirms the stack is healthy (services up, healthz green, test forecast
+run OK). The deployment checklist's order is:
+
+  §2 (core update: stop services, pull images, .env, cron)
+  §3.1–§3.3 (start services, verify, test forecast)
+  §3.4 (THIS runbook — one-time, only when needed)
+  §4 (log cleanup) / §5 (rollback)
+
+`§3.4` gates whether this runbook fires at all: routine image-tag /
+.env / cron updates do NOT need historical migration. Only initial
+deployment to a new server OR a deliberate refresh after a
+forecast-tools schema change triggers it.
 
 For initial historical backfill on a fresh deployment, see
 `doc/prod/historical_backfill_runbook.md`. This runbook is the update-time
@@ -2093,14 +2105,19 @@ internally (continue-on-mode-failure). Typical runtime: 60–120 minutes.
 After a successful run, verify each hook produced data using §8 acceptance
 SQL. The minimum checks per hook are:
 
-- **snow-stats** — confirm `snow_data` rows for each backfilled year and
-  that `mean / min / max / q*` columns are non-NULL.
+- **snow-stats** — confirm snow rows for each backfilled year have the
+  stat columns (`mean / min / max / q05–q95`) populated. The stats live
+  on the `snow` table itself (no separate `snow_data` table); the P6
+  hook 1 backfill writes them via the operational `client.write_snow()`
+  path (see `apps/preprocessing_gateway/recalculate_snow_norms.py:274`).
 
   ```sql
-  SELECT EXTRACT(YEAR FROM date) AS yr, COUNT(*) AS rows,
+  SELECT snow_type,
+         EXTRACT(YEAR FROM date) AS yr,
+         COUNT(*) AS rows,
          COUNT(*) FILTER (WHERE mean IS NOT NULL) AS nonnull_mean
-  FROM snow_data
-  GROUP BY yr ORDER BY yr;
+  FROM snow
+  GROUP BY snow_type, yr ORDER BY snow_type, yr;
   ```
 
 - **hydrograph-month-season** — confirm monthly + seasonal rows for each
@@ -2213,15 +2230,24 @@ FROM snow
 GROUP BY snow_type
 ORDER BY snow_type;
 
--- 8.1.5 snow stats (P6 hook 1 — populated by yearly backfill)
-SELECT EXTRACT(YEAR FROM date) AS yr,
+-- 8.1.5 snow stats (P6 hook 1 — populated by yearly backfill).
+-- The snow stats are columns on the `snow` table itself (no separate
+-- snow_data table exists). Grouping by snow_type + year reflects how
+-- the operational reader joins these — see
+-- apps/preprocessing_gateway/recalculate_snow_norms.py:274 (write path).
+SELECT snow_type,
+       EXTRACT(YEAR FROM date)                 AS yr,
        COUNT(*)                                AS rows,
        COUNT(mean)                             AS mean_rows,
+       COUNT(std)                              AS std_rows,
        COUNT(q05)                              AS q05_rows,
-       COUNT(q95)                              AS q95_rows
-FROM snow_data
-GROUP BY yr
-ORDER BY yr;
+       COUNT(q50)                              AS q50_rows,
+       COUNT(q95)                              AS q95_rows,
+       COUNT(min)                              AS min_rows,
+       COUNT(max)                              AS max_rows
+FROM snow
+GROUP BY snow_type, yr
+ORDER BY snow_type, yr;
 
 SQL
 ```
@@ -2454,6 +2480,13 @@ or operator confidence loss.
 export BACKUP_UTC="<the UTC timestamp from §4.1, e.g. 20260608T064802Z>"
 export BACKUP_DIR="/var/backups/sapphire/pre_update_migration_${BACKUP_UTC}"
 
+# Load POSTGRES_USER (and other DB credentials) from the deployment env
+# block — the rollback psql + pg_restore commands below depend on it.
+# The exact path may vary by deployment; the canonical location is the
+# sapphire/.env that docker-compose reads.
+set -a; source "${SAPPHIRE_ROOT:-/data/SAPPHIRE_forecast_tools}/sapphire/.env"; set +a
+[[ -n "$POSTGRES_USER" ]] || { echo "POSTGRES_USER not loaded — abort"; exit 1; }
+
 # Confirm the dump files are present.
 ls -la "$BACKUP_DIR"/*.dump
 # Expect 4 files:
@@ -2607,8 +2640,12 @@ Recovery path:
 
 ```bash
 # 1. Confirm no wrapper is currently running (otherwise you'll delete
-#    a live workspace).
-pgrep -af 'initialize_.*_history\.sh' || echo "no wrappers running"
+#    a live workspace). Include both the history wrappers AND the
+#    regenerate-hooks wrapper — the latter creates a
+#    regenerate_hooks_tmp/<TS> workspace via umh_acquire_temp_workspace
+#    that the rm -rf below also covers.
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    || echo "no wrappers running"
 
 # 2. Inspect the orphan workspaces (read-only, do not transfer off the
 #    server).
