@@ -5,9 +5,21 @@ Owner: SAPPHIRE deployment team
 
 This runbook governs update-time data migrations: importing or backfilling
 historical preprocessing and forecast data into an existing SAPPHIRE deployment
-without rebuilding the whole database. It is invoked from the update deployment
-checklist (`doc/prod/update_deployment_checklist.md`) between Alembic migrations
-(§2.4.6) and verification (§3.2).
+without rebuilding the whole database. It is invoked from the update
+deployment checklist (`doc/prod/update_deployment_checklist.md` §3.4
+"Historical Data Migration") AFTER the §3.3 post-update verification
+confirms the stack is healthy (services up, healthz green, test forecast
+run OK). The deployment checklist's order is:
+
+  §2 (core update: stop services, pull images, .env, cron)
+  §3.1–§3.3 (start services, verify, test forecast)
+  §3.4 (THIS runbook — one-time, only when needed)
+  §4 (log cleanup) / §5 (rollback)
+
+`§3.4` gates whether this runbook fires at all: routine image-tag /
+.env / cron updates do NOT need historical migration. Only initial
+deployment to a new server OR a deliberate refresh after a
+forecast-tools schema change triggers it.
 
 For initial historical backfill on a fresh deployment, see
 `doc/prod/historical_backfill_runbook.md`. This runbook is the update-time
@@ -2093,14 +2105,19 @@ internally (continue-on-mode-failure). Typical runtime: 60–120 minutes.
 After a successful run, verify each hook produced data using §8 acceptance
 SQL. The minimum checks per hook are:
 
-- **snow-stats** — confirm `snow_data` rows for each backfilled year and
-  that `mean / min / max / q*` columns are non-NULL.
+- **snow-stats** — confirm snow rows for each backfilled year have the
+  stat columns (`mean / min / max / q05–q95`) populated. The stats live
+  on the `snow` table itself (no separate `snow_data` table); the P6
+  hook 1 backfill writes them via the operational `client.write_snow()`
+  path (see `apps/preprocessing_gateway/recalculate_snow_norms.py:274`).
 
   ```sql
-  SELECT EXTRACT(YEAR FROM date) AS yr, COUNT(*) AS rows,
+  SELECT snow_type,
+         EXTRACT(YEAR FROM date) AS yr,
+         COUNT(*) AS rows,
          COUNT(*) FILTER (WHERE mean IS NOT NULL) AS nonnull_mean
-  FROM snow_data
-  GROUP BY yr ORDER BY yr;
+  FROM snow
+  GROUP BY snow_type, yr ORDER BY snow_type, yr;
   ```
 
 - **hydrograph-month-season** — confirm monthly + seasonal rows for each
@@ -2146,43 +2163,533 @@ exit codes. Grep `BEGIN|END|SUMMARY` to skim it.
 
 ## 8. Acceptance SQL
 
-[Filled by P6/P7. Required content per architecture §Q9: per-family
-`docker exec sapphire-*-db psql -P pager=off <<SQL ... SQL` blocks covering
-runoff, hydrograph, meteo, snow, forecasts, lr_forecasts, long_forecasts,
-skill_metrics. Each block returns the grouping shape (counts, min/max date,
-non-null field counts) so the operator can compare to dry-run output.]
+Run after the full migration sweep (all §5 + §6 + §7 wrappers completed)
+to verify each data family was populated as expected. Each prior section
+contains its own narrower per-wrapper acceptance query — §8 is the
+consolidated end-to-end verification block the operator runs ONCE after
+everything has shipped, and compares against the migration-day dry-run
+inventories collected in §4.4.
+
+Defaults below assume the standard SAPPHIRE Docker network; `POSTGRES_USER`
+and `POSTGRES_DB` are taken from the deployment's `.env` block. All
+queries are non-destructive (read-only `SELECT`).
+
+### 8.1 Preprocessing DB (port 5432, container `sapphire-preprocessing-db`)
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+    psql -U "$POSTGRES_USER" -d preprocessing_db -P pager=off <<'SQL'
+
+-- 8.1.1 runoff (P1a DAY + P2a PENTAD/DECADE)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(discharge)                        AS discharge_rows,
+       COUNT(predictor)                        AS predictor_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM runoffs
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.1.2 hydrograph (P3 DAY + P2b PENTAD/DECADE + P6 hook 2 MONTH/SEASON)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(mean)                             AS mean_rows,
+       COUNT(q50)                              AS q50_rows,
+       COUNT(norm)                             AS norm_rows,
+       COUNT(previous)                         AS previous_rows,
+       COUNT(current)                          AS current_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM hydrographs
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.1.3 meteo (P1b T/P)
+SELECT meteo_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(value)                            AS value_rows,
+       COUNT(norm)                             AS norm_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM meteo
+GROUP BY meteo_type
+ORDER BY meteo_type;
+
+-- 8.1.4 snow values (P1c + snow port HS/SWE/ROF)
+SELECT snow_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(value)                            AS value_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM snow
+GROUP BY snow_type
+ORDER BY snow_type;
+
+-- 8.1.5 snow stats (P6 hook 1 — populated by yearly backfill).
+-- The snow stats are columns on the `snow` table itself (no separate
+-- snow_data table exists). Grouping by snow_type + year reflects how
+-- the operational reader joins these — see
+-- apps/preprocessing_gateway/recalculate_snow_norms.py:274 (write path).
+SELECT snow_type,
+       EXTRACT(YEAR FROM date)                 AS yr,
+       COUNT(*)                                AS rows,
+       COUNT(mean)                             AS mean_rows,
+       COUNT(std)                              AS std_rows,
+       COUNT(q05)                              AS q05_rows,
+       COUNT(q50)                              AS q50_rows,
+       COUNT(q95)                              AS q95_rows,
+       COUNT(min)                              AS min_rows,
+       COUNT(max)                              AS max_rows
+FROM snow
+GROUP BY snow_type, yr
+ORDER BY snow_type, yr;
+
+SQL
+```
+
+### 8.2 Postprocessing DB (port 5433, container `sapphire-postprocessing-db`)
+
+```bash
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postprocessing_db -P pager=off <<'SQL'
+
+-- 8.2.1 LR forecasts (P4a pentad + decade)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(forecasted_discharge)             AS forecast_rows,
+       COUNT(slope)                            AS slope_rows,
+       COUNT(rsquared)                         AS rsquared_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM lr_forecasts
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.2.2 ML forecasts (P4b — TFT / TiDE / TSMixer).
+-- Live-DB observation (round-1 reviewer): some deployments store the
+-- model_type enum in UPPERCASE (DAY / TIDE / TSMIXER) and some in
+-- mixed-case (TFT / TiDE / TSMixer) depending on which toolchain
+-- version wrote them. The query has no model_type WHERE clause so
+-- BOTH variants will appear in the output. If you see ONLY uppercase
+-- on a deployment that should have mixed-case (or vice versa), the
+-- API enum mapping needs reconciliation upstream — track it as a
+-- follow-up but do NOT block this acceptance step on it.
+SELECT horizon_type, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(forecasted_discharge)             AS forecast_rows,
+       COUNT(q05)                              AS q05_rows,
+       COUNT(q95)                              AS q95_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM forecasts
+GROUP BY horizon_type, model_type
+ORDER BY horizon_type, model_type;
+
+-- 8.2.3 long-term forecasts (P5 configured modes)
+SELECT horizon_type, horizon_value, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(q)                                AS q_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM long_forecasts
+GROUP BY horizon_type, horizon_value, model_type
+ORDER BY horizon_value, model_type;
+
+-- 8.2.4 skill metrics (P6 hook 3 short-term + hook 4 long-term).
+-- The skill_metrics natural key uses `horizon_in_year` (not
+-- `horizon_value`, despite what some sibling tables use). Verified
+-- against the live schema; round-1 reviewer caught the column-name
+-- drift before this shipped.
+SELECT horizon_type, horizon_in_year, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(n_pairs)                          AS n_pairs_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM skill_metrics
+GROUP BY horizon_type, horizon_in_year, model_type
+ORDER BY horizon_type, horizon_in_year, model_type;
+
+SQL
+```
+
+### 8.3 How to interpret results
+
+For each block:
+
+1. **`rows` per group** should match what the corresponding wrapper's
+   dry-run inventory predicted for that horizon_type / meteo_type /
+   snow_type / model_type. A row-count gap means either a hook didn't
+   run (skipped with `--skip-hook-...` or aborted) OR the source CSV
+   was empty for that family.
+2. **`distinct_codes` per group** should equal the deployment's
+   station-list size (or a subset if `--station-filter` was used during
+   a canary). A mismatch is the first place to look for cross-org
+   leakage or a missing station.
+3. **`<field>_rows` non-NULL counts** should equal or be close to `rows`
+   for fields the operational pipeline produces (e.g. `discharge_rows`
+   ≈ `rows` for runoff DAY). Lower-than-expected counts indicate the
+   universal safe-write rule preserved a populated cell across migration,
+   OR the source CSV truly omitted the field for some rows. Investigate
+   with the per-section acceptance queries in §5/§6/§7.
+4. **`min_date` / `max_date`** should bracket the full operational
+   archive window. `max_date` should be very close to the day before
+   §4.2's cron-pause start.
+
+If any block returns zero rows, check the wrapper's log file under
+`${ieasyhydroforecast_data_root_dir}/logs/<family>/` — the most common
+causes are (a) the wrapper was skipped with `--skip-hook-*`, (b) the
+source CSV was missing or empty, or (c) the wrapper exited non-zero
+before any POSTs (preflight / manifest validation / cron-pause failure
+— see §9 for the failure-recovery pattern).
 
 ## 9. Failure recovery and rerun
 
-[Filled by P6/P7. Required content:
-- Rerun the same wrapper with same args; the API upsert is idempotent on
-  natural keys.
-- Narrow with `--start-date`/`--end-date` and lower `--batch-size` on
-  repeated failures.
-- Scoped purge with the existing purge tool if the operator can define the
-  affected site/date/horizon range.
-- Restore the pre-migration dump for uncertain or broad wrong-data incidents.
-]
+The toolkit is designed for safe reruns. Every wrapper POSTs through the
+preprocessing / postprocessing APIs which upsert on the natural keys
+documented in each gi_draft. A second invocation with the same arguments
+re-issues the same POSTs and the service-side upsert + universal
+safe-write rule (architecture §Q2) ensures populated cells are preserved.
+
+### 9.1 First-line recovery — rerun the same wrapper
+
+After investigating the wrapper's log under
+`${ieasyhydroforecast_data_root_dir}/logs/<family>/`, re-invoke with the
+SAME arguments:
+
+```bash
+bash bin/initialize_<family>_history.sh "$ENV_FILE" [previous args ...]
+```
+
+Idempotency anchors per family:
+
+| Wrapper                                          | Upsert key                                                                         |
+|--------------------------------------------------|------------------------------------------------------------------------------------|
+| `initialize_runoff_day_history.sh`               | `(horizon_type='day', code, date)`                                                 |
+| `initialize_runoff_period_history.sh`            | `(horizon_type, code, date)`                                                       |
+| `initialize_hydrograph_day_history.sh`           | `(horizon_type='DAY', code, date)`                                                 |
+| `initialize_hydrograph_period_history.sh`        | `(horizon_type, code, date)`                                                       |
+| `initialize_meteo_history.sh`                    | `(meteo_type, code, date)`                                                         |
+| `initialize_snow_history.sh`                     | `(snow_type, code, date)`                                                          |
+| `initialize_lr_forecast_history.sh`              | `(horizon_type, code, date)`                                                       |
+| `initialize_ml_forecast_history.sh`              | `(horizon_type, code, model_type, date, target)`                                   |
+| `initialize_long_forecast_history.sh`            | `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`      |
+| `initialize_regenerate_hooks.sh`                 | Per-hook (snow/hydrograph/skill); each hook's own idempotency contract             |
+| `skill_metrics` (computed by hooks 3+4, not a wrapper) | `(horizon_type, code, model_type, date, horizon_in_year)`                  |
+
+A clean rerun produces the same row counts as the original run plus
+**zero new rows** for the previously-successful range (the upsert is a
+no-op on identical payloads). The dry-run inventory should match
+identically between the two runs.
+
+### 9.2 Narrow + retry on transient failures
+
+When the failure is partial (some batches POSTed before the abort), narrow
+the rerun to the affected window:
+
+```bash
+# CSV-source wrappers: most accept --station-filter for canary scope.
+bash bin/initialize_<family>_history.sh "$ENV_FILE" --station-filter 19999
+
+# DB-source wrappers: re-export with a date window via the laptop script's
+# --start-date / --end-date flags, then re-run the server-side wrapper
+# on the narrower CSV.
+bash bin/export_<family>_history.sh "$ENV_FILE" \
+    --start-date 2024-01-01 --end-date 2024-06-30 ...
+```
+
+Reduce `--batch-size` if HTTP timeouts or service-side memory pressure
+appear in the wrapper log. The default (500 records per batch) is
+deliberately conservative for the operational network but can be
+narrowed further to 100 or 50 on stressed deployments:
+
+```bash
+bash bin/initialize_<family>_history.sh "$ENV_FILE" --batch-size 100
+```
+
+### 9.3 Scoped purge (rare — operator-defined window)
+
+If a wrapper POSTed wrong data (e.g. operator passed a CSV with a
+mis-labeled `model_type` column before the round-2 mixed-export guard
+landed), and the operator can precisely define the affected `(code,
+date, horizon_*, model_type)` window, a scoped `DELETE` followed by a
+clean re-import is faster than a full rollback:
+
+```bash
+# Example: purge wrong ML forecasts for one station + one model + one
+# day-window, then re-run the wrapper from a fresh export.
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postprocessing_db -P pager=off <<SQL
+BEGIN;
+DELETE FROM forecasts
+ WHERE code = '19999'
+   AND model_type = 'TFT'
+   AND horizon_type = 'day'
+   AND date BETWEEN '2024-01-01' AND '2024-06-30';
+-- Inspect the row count before committing.
+SQL
+```
+
+This path is rare and operator-defined: if you cannot precisely scope
+the affected rows, skip to §10 (full rollback). Do NOT use `TRUNCATE`
+or unscoped `DELETE` — those would lose operational data the migration
+did not touch.
+
+### 9.4 Cron-pause failure mid-migration
+
+If `bin/initialize_regenerate_hooks.sh` exited with rc=1 and the log
+shows the round-3 monitoring signal (`cron restore FAILED -> exit 1`),
+cron is left paused on the host. Recover manually:
+
+```bash
+# The wrapper logs the exact backup path BEFORE attempting the pause:
+grep "cron-pause: backup written:" \
+    "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/regenerate_hooks_<TS>.log"
+
+# Restore from the surviving file (always under logs/regenerate_hooks/,
+# never under the umh `_tmp` workspace):
+crontab "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<TS>.txt"
+
+# Verify the schedule is back:
+crontab -l | head
+```
+
+After manual recovery, delete the backup file and rerun any hooks that
+hadn't completed before the failure. See §7.6 for the full
+backup-lifetime contract.
+
+### 9.5 Last-resort recovery — restore from pre-migration dump
+
+If §9.1–§9.4 cannot resolve the failure (broad wrong-data incident,
+schema drift, or operator confidence loss), proceed to §10. The
+pre-migration `pg_dump` from §4.1 is the canonical recovery point.
 
 ## 10. Rollback and cleanup
 
-[Filled by P7. Required content (Stage E item #1 — literal `pg_restore`):
-- Identify the pre-migration backup directory `pre_update_migration_<UTC>`
-  (from §4.1) and its dump files inside.
-- Stop migration wrappers; pause cron if not already paused (use snapshot
-  from §4.2).
-- Stop the affected sapphire-*-db container, drop the database, recreate,
-  and restore via `pg_restore` against the specific dump file. Provide the
-  exact command shape with both `preprocessing_db` and `postprocessing_db`
-  covered.
-- Restart the container, verify with acceptance SQL §8.
-- Restore cron from `crontab_backup.txt`.
-- Final temp cleanup: `rm -rf <data_root>/logs/*_tmp` (operator-reviewed
-  glob).
-- **(v2 R3 SIGKILL / power-loss fallback):** if a wrapper was killed by
-  SIGKILL or the host lost power mid-migration, the EXIT / INT / TERM trap in
-  `umh_acquire_temp_workspace` did not fire — orphaned temp dirs under
-  `${data_root}/logs/*_tmp/` may contain real station codes. The manual
-  cleanup glob above is the recovery path for this case. Run it after any
-  unclean wrapper exit.
-]
+The pre-migration `pg_dump` from §4.1 is the canonical recovery point.
+This section gives the literal `pg_restore` command shape for both
+preprocessing and postprocessing databases. Use it when §9.1–§9.4
+cannot resolve the failure — broad wrong-data incident, schema drift,
+or operator confidence loss.
+
+> **Before you start:** Confirm that the §4.1 backup completed
+> successfully. The `BACKUP_DIR` log file must contain
+> `All four dumps succeeded and verified` and the four `.dump` files
+> must exist on disk. If the backup did not complete, escalate
+> (rollback without a verified backup is not safe).
+
+### 10.1 Pre-rollback state
+
+```bash
+# Re-set the env vars from §4.1 if this is a new shell session.
+export BACKUP_UTC="<the UTC timestamp from §4.1, e.g. 20260608T064802Z>"
+export BACKUP_DIR="/var/backups/sapphire/pre_update_migration_${BACKUP_UTC}"
+
+# Load POSTGRES_USER from the running DB container — the rollback
+# psql + pg_restore commands below depend on it.
+#
+# Why container-printenv (not source <some>/.env):
+#   The deployment path varies (TAJ / KGZ / UZB / dev laptop all use
+#   different repo locations) and not every install ships a single
+#   sapphire/.env file — many deployments derive credentials at compose
+#   time from per-org env files. Reading the variable from the live
+#   container is always correct because that IS the value
+#   docker-compose injected at start.
+#
+# This requires the DB containers to be running. They MUST be running
+# at this point — §10.3/§10.4 stop only the *-api services, not the
+# *-db containers. If a *-db container is down, start it first
+# Use either of the equivalent forms below (compose service names lack
+# the `sapphire-` prefix; container names include it):
+#   docker compose -f sapphire/docker-compose.yml start preprocessing-db postprocessing-db
+#   # OR (plain docker — no compose context needed):
+#   docker start sapphire-preprocessing-db sapphire-postprocessing-db
+# before continuing.
+
+POSTGRES_USER="$(docker exec sapphire-preprocessing-db printenv POSTGRES_USER 2>/dev/null \
+    || docker exec sapphire-postprocessing-db printenv POSTGRES_USER 2>/dev/null)"
+export POSTGRES_USER
+[[ -n "$POSTGRES_USER" ]] \
+    || { echo "POSTGRES_USER not loaded from either DB container — abort"; exit 1; }
+echo "Loaded POSTGRES_USER (length=${#POSTGRES_USER}); proceeding."
+
+# Confirm the dump files are present.
+ls -la "$BACKUP_DIR"/*.dump
+# Expect 4 files:
+#   sapphire-preprocessing-db_<TS>.dump
+#   sapphire-postprocessing-db_<TS>.dump
+#   sapphire-user-db_<TS>.dump
+#   sapphire-auth-db_<TS>.dump
+```
+
+The migration toolkit writes to `preprocessing_db` and `postprocessing_db`
+only. The `user_db` and `auth_db` databases are untouched by any wrapper
+in §5/§6/§7 — restoring them is unnecessary (and would log out every
+operator). Restore ONLY the two affected databases below.
+
+### 10.2 Stop migration wrappers + confirm cron is paused
+
+```bash
+# Kill any running wrapper processes (defensive; usually none if you
+# reached this section after a failure).
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    | tee /dev/stderr \
+    | awk '{print $1}' \
+    | xargs -r kill -TERM
+sleep 2
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    && echo "WARNING: wrappers still running; investigate before rolling back" \
+    || echo "no migration wrappers running — safe to proceed"
+
+# Confirm cron is paused (the §4.2 snapshot is the canonical reference).
+crontab -l 2>&1 | head
+# Expected: no operational SAPPHIRE entries (output is empty OR "no crontab for user")
+# If cron is still active, pause it now:
+[[ -f "$BACKUP_DIR/crontab_backup.txt" ]] || crontab -l > "$BACKUP_DIR/crontab_backup.txt"
+crontab -r
+```
+
+### 10.3 Rollback `preprocessing_db`
+
+```bash
+# Identify the dump file (exact timestamp depends on the §4.1 run).
+PREPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-preprocessing-db_*.dump | head -1)
+echo "Restoring from: $PREPROCESSING_DUMP"
+
+# Stop the API + restore the DB.
+docker compose -f sapphire/docker-compose.yml stop preprocessing-api
+
+# Drop + recreate the database. The user / role inside the container is
+# typically POSTGRES_USER from the .env block.
+docker exec -i sapphire-preprocessing-db \
+    psql -U "$POSTGRES_USER" -d postgres -P pager=off <<SQL
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+ WHERE datname = 'preprocessing_db' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS preprocessing_db;
+CREATE DATABASE preprocessing_db OWNER "${POSTGRES_USER}";
+SQL
+
+# Restore from the custom-format dump.
+docker exec -i sapphire-preprocessing-db \
+    pg_restore -U "$POSTGRES_USER" -d preprocessing_db \
+        --no-owner --no-privileges --exit-on-error \
+        --verbose < "$PREPROCESSING_DUMP"
+
+# Restart the API.
+docker compose -f sapphire/docker-compose.yml start preprocessing-api
+
+# Quick health check.
+sleep 5
+curl -fsS http://localhost:8000/api/preprocessing/healthz || \
+    echo "WARNING: preprocessing-api healthz failed; investigate before proceeding"
+```
+
+### 10.4 Rollback `postprocessing_db`
+
+```bash
+POSTPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-postprocessing-db_*.dump | head -1)
+echo "Restoring from: $POSTPROCESSING_DUMP"
+
+docker compose -f sapphire/docker-compose.yml stop postprocessing-api
+
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postgres -P pager=off <<SQL
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+ WHERE datname = 'postprocessing_db' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS postprocessing_db;
+CREATE DATABASE postprocessing_db OWNER "${POSTGRES_USER}";
+SQL
+
+docker exec -i sapphire-postprocessing-db \
+    pg_restore -U "$POSTGRES_USER" -d postprocessing_db \
+        --no-owner --no-privileges --exit-on-error \
+        --verbose < "$POSTPROCESSING_DUMP"
+
+docker compose -f sapphire/docker-compose.yml start postprocessing-api
+
+sleep 5
+curl -fsS http://localhost:8000/api/postprocessing/healthz || \
+    echo "WARNING: postprocessing-api healthz failed; investigate before proceeding"
+```
+
+### 10.5 Verify with §8 acceptance SQL
+
+Re-run the §8 blocks. After a clean rollback the row counts should
+match the pre-migration baseline (i.e. the row counts you captured in
+§4.4's dry-run inventory BEFORE any wrapper ran):
+
+```bash
+# Re-run §8.1 (preprocessing) and §8.2 (postprocessing) — copy-paste
+# both blocks from §8. Compare row counts to §4.4's pre-migration dry-run.
+```
+
+If the counts match: rollback succeeded. If counts are still elevated
+or the field-count totals are off: the rollback didn't restore cleanly
+— escalate before re-running migration.
+
+### 10.6 Restore cron
+
+```bash
+# Restore from the snapshot saved in §4.2.
+crontab "$BACKUP_DIR/crontab_backup.txt"
+crontab -l | head   # operator confirms cron is back to pre-migration shape
+```
+
+### 10.7 Final cleanup
+
+```bash
+# Operator-reviewed glob — verify the matched paths look right BEFORE rm.
+ls -d "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/ 2>/dev/null
+# If the list is what you expect (workspace-tmp dirs from umh helper):
+rm -rf "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+
+# The wrapper logs themselves (regenerate_hooks_<TS>.log, snow_<TS>.log,
+# etc.) stay — they are the operator's record of the rollback decision.
+# Standard logrotate / retention policy applies.
+```
+
+### 10.8 SIGKILL / power-loss fallback (v2 R3)
+
+If a wrapper was killed by `SIGKILL`, the host lost power mid-migration,
+or the operator forcibly terminated the wrapper via `kill -9`, the EXIT
+/ INT / TERM trap in `umh_acquire_temp_workspace` did NOT fire — orphaned
+temp directories under `${ieasyhydroforecast_data_root_dir}/logs/*_tmp/`
+may contain real station codes from the in-flight CSV.
+
+**These directories are NOT operator-readable artifacts** (the wrappers
+log redacted counts, never real codes) — they exist only because the
+umh helper failed to clean up after itself.
+
+Recovery path:
+
+```bash
+# 1. Confirm no wrapper is currently running (otherwise you'll delete
+#    a live workspace). Include both the history wrappers AND the
+#    regenerate-hooks wrapper — the latter creates a
+#    regenerate_hooks_tmp/<TS> workspace via umh_acquire_temp_workspace
+#    that the rm -rf below also covers.
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    || echo "no wrappers running"
+
+# 2. Inspect the orphan workspaces (read-only, do not transfer off the
+#    server).
+ls -la "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+
+# 3. After confirming no live workspace, hard-remove the orphans.
+rm -rf "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+```
+
+This recovery is also required after the round-3 cron-pause monitoring
+signal fires (rc=1 from `initialize_regenerate_hooks.sh`) — see §9.4
+for the cron-restore step; the workspace cleanup here covers the temp
+directory side of the SIGKILL contract documented in §7.6.
