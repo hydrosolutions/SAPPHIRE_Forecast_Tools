@@ -2271,7 +2271,15 @@ FROM lr_forecasts
 GROUP BY horizon_type
 ORDER BY horizon_type;
 
--- 8.2.2 ML forecasts (P4b — TFT / TiDE / TSMixer, default horizon='day')
+-- 8.2.2 ML forecasts (P4b — TFT / TiDE / TSMixer).
+-- Live-DB observation (round-1 reviewer): some deployments store the
+-- model_type enum in UPPERCASE (DAY / TIDE / TSMIXER) and some in
+-- mixed-case (TFT / TiDE / TSMixer) depending on which toolchain
+-- version wrote them. The query has no model_type WHERE clause so
+-- BOTH variants will appear in the output. If you see ONLY uppercase
+-- on a deployment that should have mixed-case (or vice versa), the
+-- API enum mapping needs reconciliation upstream — track it as a
+-- follow-up but do NOT block this acceptance step on it.
 SELECT horizon_type, model_type,
        COUNT(*)                                AS rows,
        COUNT(DISTINCT code)                    AS distinct_codes,
@@ -2295,16 +2303,20 @@ FROM long_forecasts
 GROUP BY horizon_type, horizon_value, model_type
 ORDER BY horizon_value, model_type;
 
--- 8.2.4 skill metrics (P6 hook 3 short-term + hook 4 long-term)
-SELECT horizon_type, horizon_value, model_type,
+-- 8.2.4 skill metrics (P6 hook 3 short-term + hook 4 long-term).
+-- The skill_metrics natural key uses `horizon_in_year` (not
+-- `horizon_value`, despite what some sibling tables use). Verified
+-- against the live schema; round-1 reviewer caught the column-name
+-- drift before this shipped.
+SELECT horizon_type, horizon_in_year, model_type,
        COUNT(*)                                AS rows,
        COUNT(DISTINCT code)                    AS distinct_codes,
        COUNT(n_pairs)                          AS n_pairs_rows,
        MIN(date)                               AS min_date,
        MAX(date)                               AS max_date
 FROM skill_metrics
-GROUP BY horizon_type, horizon_value, model_type
-ORDER BY horizon_type, horizon_value, model_type;
+GROUP BY horizon_type, horizon_in_year, model_type
+ORDER BY horizon_type, horizon_in_year, model_type;
 
 SQL
 ```
@@ -2371,6 +2383,7 @@ Idempotency anchors per family:
 | `initialize_ml_forecast_history.sh`              | `(horizon_type, code, model_type, date, target)`                                   |
 | `initialize_long_forecast_history.sh`            | `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`      |
 | `initialize_regenerate_hooks.sh`                 | Per-hook (snow/hydrograph/skill); each hook's own idempotency contract             |
+| `skill_metrics` (computed by hooks 3+4, not a wrapper) | `(horizon_type, code, model_type, date, horizon_in_year)`                  |
 
 A clean rerun produces the same row counts as the original run plus
 **zero new rows** for the previously-successful range (the upsert is a
@@ -2480,12 +2493,29 @@ or operator confidence loss.
 export BACKUP_UTC="<the UTC timestamp from §4.1, e.g. 20260608T064802Z>"
 export BACKUP_DIR="/var/backups/sapphire/pre_update_migration_${BACKUP_UTC}"
 
-# Load POSTGRES_USER (and other DB credentials) from the deployment env
-# block — the rollback psql + pg_restore commands below depend on it.
-# The exact path may vary by deployment; the canonical location is the
-# sapphire/.env that docker-compose reads.
-set -a; source "${SAPPHIRE_ROOT:-/data/SAPPHIRE_forecast_tools}/sapphire/.env"; set +a
-[[ -n "$POSTGRES_USER" ]] || { echo "POSTGRES_USER not loaded — abort"; exit 1; }
+# Load POSTGRES_USER from the running DB container — the rollback
+# psql + pg_restore commands below depend on it.
+#
+# Why container-printenv (not source <some>/.env):
+#   The deployment path varies (TAJ / KGZ / UZB / dev laptop all use
+#   different repo locations) and not every install ships a single
+#   sapphire/.env file — many deployments derive credentials at compose
+#   time from per-org env files. Reading the variable from the live
+#   container is always correct because that IS the value
+#   docker-compose injected at start.
+#
+# This requires the DB containers to be running. They MUST be running
+# at this point — §10.3/§10.4 stop only the *-api services, not the
+# *-db containers. If a *-db container is down, start it first
+# (docker compose start sapphire-preprocessing-db sapphire-postprocessing-db)
+# before continuing.
+
+POSTGRES_USER="$(docker exec sapphire-preprocessing-db printenv POSTGRES_USER 2>/dev/null \
+    || docker exec sapphire-postprocessing-db printenv POSTGRES_USER 2>/dev/null)"
+export POSTGRES_USER
+[[ -n "$POSTGRES_USER" ]] \
+    || { echo "POSTGRES_USER not loaded from either DB container — abort"; exit 1; }
+echo "Loaded POSTGRES_USER (length=${#POSTGRES_USER}); proceeding."
 
 # Confirm the dump files are present.
 ls -la "$BACKUP_DIR"/*.dump
