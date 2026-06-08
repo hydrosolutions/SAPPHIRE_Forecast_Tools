@@ -2524,10 +2524,10 @@ echo "Loaded POSTGRES_USER (length=${#POSTGRES_USER}); proceeding."
 # Confirm the dump files are present.
 ls -la "$BACKUP_DIR"/*.dump
 # Expect 4 files:
-#   sapphire-preprocessing-db_<TS>.dump
-#   sapphire-postprocessing-db_<TS>.dump
-#   sapphire-user-db_<TS>.dump
-#   sapphire-auth-db_<TS>.dump
+#   preprocessing_db_<TS>.dump
+#   postprocessing_db_<TS>.dump
+#   user_db_<TS>.dump
+#   auth_db_<TS>.dump
 ```
 
 The migration toolkit writes to `preprocessing_db` and `postprocessing_db`
@@ -2561,7 +2561,14 @@ crontab -r
 
 ```bash
 # Identify the dump file (exact timestamp depends on the §4.1 run).
-PREPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-preprocessing-db_*.dump | head -1)
+# Filename pattern: <db_name>_<TS>.dump (NOT sapphire-<container>-db_*).
+# See bin/backup_sapphire_db.sh:210 for the authoritative format.
+PREPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/preprocessing_db_*.dump 2>/dev/null | head -1)
+# Hard guard: refuse to DROP+CREATE without a readable, non-empty dump.
+# `-n` (var non-empty), `-s` (file non-empty), `-r` (file readable). The previous
+# `-f`-only check silently accepted zero-byte and unreadable dumps.
+[[ -n "$PREPROCESSING_DUMP" && -s "$PREPROCESSING_DUMP" && -r "$PREPROCESSING_DUMP" ]] \
+    || { echo "FATAL: no readable non-empty preprocessing_db dump found in $BACKUP_DIR; refusing to DROP+CREATE empty DB"; exit 1; }
 echo "Restoring from: $PREPROCESSING_DUMP"
 
 # Stop the API + restore the DB.
@@ -2596,7 +2603,12 @@ curl -fsS http://localhost:8000/api/preprocessing/healthz || \
 ### 10.4 Rollback `postprocessing_db`
 
 ```bash
-POSTPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-postprocessing-db_*.dump | head -1)
+# Filename pattern: <db_name>_<TS>.dump (NOT sapphire-<container>-db_*).
+# See bin/backup_sapphire_db.sh:210 for the authoritative format.
+POSTPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/postprocessing_db_*.dump 2>/dev/null | head -1)
+# Hard guard: refuse to DROP+CREATE without a readable, non-empty dump.
+[[ -n "$POSTPROCESSING_DUMP" && -s "$POSTPROCESSING_DUMP" && -r "$POSTPROCESSING_DUMP" ]] \
+    || { echo "FATAL: no readable non-empty postprocessing_db dump found in $BACKUP_DIR; refusing to DROP+CREATE empty DB"; exit 1; }
 echo "Restoring from: $POSTPROCESSING_DUMP"
 
 docker compose -f sapphire/docker-compose.yml stop postprocessing-api
