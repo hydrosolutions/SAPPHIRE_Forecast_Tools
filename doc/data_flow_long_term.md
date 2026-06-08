@@ -201,7 +201,7 @@ Each model writes one row per (station, forecast date, target month):
 |-------|-------|---------|
 | `horizon_type` | `month` (always) | `month` |
 | `horizon_value` | Lead time in months | `1` |
-| `code` | Station code | `15013` |
+| `code` | Station code | `19999` |
 | `date` | Forecast issuance date | `2026-02-25` |
 | `model_type` | Model name | `GBT` |
 | `valid_from` | Target period start | `2026-03-01` |
