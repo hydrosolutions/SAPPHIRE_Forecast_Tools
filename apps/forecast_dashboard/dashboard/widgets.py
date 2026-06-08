@@ -326,17 +326,18 @@ def get_predictors_warning(station, data):
     # predictors_warning.objects = []  # clear old content
     # today_date = today.date()
     today_date = dt.datetime.now().date()
+    year_col = str(today_date.year)
     filtered = data["hydrograph_day_all"][
         (data["hydrograph_day_all"]["station_labels"] == station.value) &
         (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
     ]
 
     if not filtered.empty:
-        if pd.notna(filtered["2026"].iloc[0]):
-            print("2026 has a value:", filtered["2026"].iloc[0])
+        if year_col in filtered.columns and pd.notna(filtered[year_col].iloc[0]):
+            print(f"{year_col} has a value:", filtered[year_col].iloc[0])
             return
         else:
-            print("2026 is NaN/empty")
+            print(f"{year_col} is NaN/empty")
             return get_pane_alert(f"No discharge record available today for {station.value}")
     else:
         print("No record for today and given station")

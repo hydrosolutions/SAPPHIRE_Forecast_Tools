@@ -137,3 +137,140 @@ class TestSetForecastCardsVisibility:
 
         # Should complete without AttributeError
         pm.set_forecast_cards_visibility(visible=False, is_month=False)
+
+
+# ---------------------------------------------------------------------------
+# TestGetPredictorsWarning — dynamic year column, no hardcoded "2026"
+# ---------------------------------------------------------------------------
+
+import datetime
+import numpy as np
+import pandas as pd
+
+
+class _FixedDateTimeClass:
+    """Stand-in for the datetime.datetime class, frozen at 2030-06-15."""
+
+    @staticmethod
+    def now():
+        # Construct the return value via the real datetime.date to avoid
+        # any circular reference with the monkeypatched attribute.
+        return _FixedDateTimeClass._FIXED_DT
+
+    _FIXED_DT = datetime.datetime(2030, 6, 15, 12, 0, 0)
+
+
+class _FakeDtModule:
+    """Minimal stand-in for the ``datetime`` module as used in widgets.py.
+
+    widgets.py does ``import datetime as dt`` then calls
+    ``dt.datetime.now().date()``.  Replacing ``widgets.dt`` with this object
+    keeps the real ``datetime`` module untouched.
+    """
+
+    datetime = _FixedDateTimeClass
+
+
+def _fake_station(label="15013 - Test"):
+    return types.SimpleNamespace(value=label)
+
+
+def _hydrograph_df(station_label, date_val, year_col, discharge_val):
+    """Build a minimal hydrograph_day_all DataFrame."""
+    return pd.DataFrame({
+        "station_labels": [station_label],
+        "date": [pd.to_datetime(date_val)],
+        year_col: [discharge_val],
+    })
+
+
+class TestGetPredictorsWarning:
+    """get_predictors_warning uses the current year dynamically (no hardcoded 2026)."""
+
+    def _patch_date(self, monkeypatch):
+        # Replace the entire ``dt`` name in widgets so dt.datetime.now()
+        # returns 2030-06-15 without mutating the real datetime module.
+        monkeypatch.setattr(widgets, "dt", _FakeDtModule)
+
+    # ------------------------------------------------------------------
+    # Regression: current-year column present and has a valid value → None
+    # ------------------------------------------------------------------
+    def test_current_year_value_present_returns_none(self, monkeypatch):
+        """REGRESSION: with year_col='2030' having a value, no warning is issued.
+
+        Before the fix this raises KeyError because it tries to read column '2026'.
+        After the fix it reads '2030' and returns None.
+        """
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2030",
+            discharge_val=123.4,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is None, (
+            "Expected no warning when today's discharge is present"
+        )
+
+    # ------------------------------------------------------------------
+    # Current-year value is NaN → alert returned
+    # ------------------------------------------------------------------
+    def test_current_year_value_nan_returns_alert(self, monkeypatch):
+        """NaN discharge for today in the correct year column → alert pane."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2030",
+            discharge_val=np.nan,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when today's discharge is NaN"
+        )
+
+    # ------------------------------------------------------------------
+    # No row for today → alert returned
+    # ------------------------------------------------------------------
+    def test_no_row_for_today_returns_alert(self, monkeypatch):
+        """No matching row for today's date → alert pane."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-14",  # yesterday, not today
+            year_col="2030",
+            discharge_val=99.0,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when there is no row for today"
+        )
+
+    # ------------------------------------------------------------------
+    # year_col entirely absent from DataFrame → alert, no KeyError
+    # ------------------------------------------------------------------
+    def test_year_col_absent_returns_alert_not_keyerror(self, monkeypatch):
+        """Missing year column (e.g. data not yet updated) → alert, not KeyError."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        # Build a row for today but with a *different* year column
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2029",  # '2030' column is absent
+            discharge_val=50.0,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when the year column is absent"
+        )
+
+
