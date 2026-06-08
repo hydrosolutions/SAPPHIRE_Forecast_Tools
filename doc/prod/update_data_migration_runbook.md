@@ -2507,7 +2507,11 @@ export BACKUP_DIR="/var/backups/sapphire/pre_update_migration_${BACKUP_UTC}"
 # This requires the DB containers to be running. They MUST be running
 # at this point — §10.3/§10.4 stop only the *-api services, not the
 # *-db containers. If a *-db container is down, start it first
-# (docker compose start sapphire-preprocessing-db sapphire-postprocessing-db)
+# Use either of the equivalent forms below (compose service names lack
+# the `sapphire-` prefix; container names include it):
+#   docker compose -f sapphire/docker-compose.yml start preprocessing-db postprocessing-db
+#   # OR (plain docker — no compose context needed):
+#   docker start sapphire-preprocessing-db sapphire-postprocessing-db
 # before continuing.
 
 POSTGRES_USER="$(docker exec sapphire-preprocessing-db printenv POSTGRES_USER 2>/dev/null \
