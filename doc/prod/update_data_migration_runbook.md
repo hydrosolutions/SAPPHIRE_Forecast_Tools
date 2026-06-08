@@ -69,6 +69,8 @@ The deployment server must have:
 - The deployment's `.env_<org>` file present (positional arg to every wrapper).
 - The deployment data root with `intermediate_data/` populated for the station-list extraction.
 - Write access to `<data_root>/logs/` for the wrapper's temp workspace and log files.
+- `sapphire/.env` populated with `POSTGRES_USER`, `POSTGRES_PASSWORD`, `PREPROCESSING_DB`, `POSTPROCESSING_DB`, `USER_DB`, and `AUTH_DB`. These are the keys consumed by `bin/backup_sapphire_db.sh` (per its header comment) at §4.1. Use `sapphire/.env.example` as a template. The same populated `sapphire/.env` (full key set per `.env.example`) is what §3 uses to start services; if you started the services on this host, this file is already in place.
+- **Apple Silicon / arm64 hosts**: the `mabesa/sapphire-prepgateway` images are currently amd64-only. Set `DOCKER_DEFAULT_PLATFORM=linux/amd64` in the operator's shell before invoking any migration wrapper, or the docker pull will fail with `no matching manifest for linux/arm64/v8`. The wrappers will emit a warning on stderr if this is missing on an arm64 host.
 
 ### Laptop prerequisites (for PENTAD/DECADE/forecast exports only)
 

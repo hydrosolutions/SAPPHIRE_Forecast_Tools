@@ -46,8 +46,11 @@ def test_resolve_image_cli_override_wins():
 
 
 def test_resolve_image_configured_tag_used():
-    image, source = _common.resolve_image(None, "v1.0.0")
-    assert image == "mabesa/sapphire-prepgateway:v1.0.0"
+    # Use a dated-tag form (YYYY-MM) — the canonical operator-pin shape after
+    # Finding 4 (Tajik walkthrough): v1.0.0 was never published to Docker Hub,
+    # so test fixtures no longer enshrine it.
+    image, source = _common.resolve_image(None, "2026-06")
+    assert image == "mabesa/sapphire-prepgateway:2026-06"
     assert source == "configured"
 
 
