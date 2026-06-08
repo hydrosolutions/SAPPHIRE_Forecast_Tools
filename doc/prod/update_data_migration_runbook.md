@@ -2146,11 +2146,172 @@ exit codes. Grep `BEGIN|END|SUMMARY` to skim it.
 
 ## 8. Acceptance SQL
 
-[Filled by P6/P7. Required content per architecture §Q9: per-family
-`docker exec sapphire-*-db psql -P pager=off <<SQL ... SQL` blocks covering
-runoff, hydrograph, meteo, snow, forecasts, lr_forecasts, long_forecasts,
-skill_metrics. Each block returns the grouping shape (counts, min/max date,
-non-null field counts) so the operator can compare to dry-run output.]
+Run after the full migration sweep (all §5 + §6 + §7 wrappers completed)
+to verify each data family was populated as expected. Each prior section
+contains its own narrower per-wrapper acceptance query — §8 is the
+consolidated end-to-end verification block the operator runs ONCE after
+everything has shipped, and compares against the migration-day dry-run
+inventories collected in §4.4.
+
+Defaults below assume the standard SAPPHIRE Docker network; `POSTGRES_USER`
+and `POSTGRES_DB` are taken from the deployment's `.env` block. All
+queries are non-destructive (read-only `SELECT`).
+
+### 8.1 Preprocessing DB (port 5432, container `sapphire-preprocessing-db`)
+
+```bash
+docker exec -i sapphire-preprocessing-db \
+    psql -U "$POSTGRES_USER" -d preprocessing_db -P pager=off <<'SQL'
+
+-- 8.1.1 runoff (P1a DAY + P2a PENTAD/DECADE)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(discharge)                        AS discharge_rows,
+       COUNT(predictor)                        AS predictor_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM runoffs
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.1.2 hydrograph (P3 DAY + P2b PENTAD/DECADE + P6 hook 2 MONTH/SEASON)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(mean)                             AS mean_rows,
+       COUNT(q50)                              AS q50_rows,
+       COUNT(norm)                             AS norm_rows,
+       COUNT(previous)                         AS previous_rows,
+       COUNT(current)                          AS current_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM hydrographs
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.1.3 meteo (P1b T/P)
+SELECT meteo_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(value)                            AS value_rows,
+       COUNT(norm)                             AS norm_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM meteo
+GROUP BY meteo_type
+ORDER BY meteo_type;
+
+-- 8.1.4 snow values (P1c + snow port HS/SWE/ROF)
+SELECT snow_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(value)                            AS value_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM snow
+GROUP BY snow_type
+ORDER BY snow_type;
+
+-- 8.1.5 snow stats (P6 hook 1 — populated by yearly backfill)
+SELECT EXTRACT(YEAR FROM date) AS yr,
+       COUNT(*)                                AS rows,
+       COUNT(mean)                             AS mean_rows,
+       COUNT(q05)                              AS q05_rows,
+       COUNT(q95)                              AS q95_rows
+FROM snow_data
+GROUP BY yr
+ORDER BY yr;
+
+SQL
+```
+
+### 8.2 Postprocessing DB (port 5433, container `sapphire-postprocessing-db`)
+
+```bash
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postprocessing_db -P pager=off <<'SQL'
+
+-- 8.2.1 LR forecasts (P4a pentad + decade)
+SELECT horizon_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(forecasted_discharge)             AS forecast_rows,
+       COUNT(slope)                            AS slope_rows,
+       COUNT(rsquared)                         AS rsquared_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM lr_forecasts
+GROUP BY horizon_type
+ORDER BY horizon_type;
+
+-- 8.2.2 ML forecasts (P4b — TFT / TiDE / TSMixer, default horizon='day')
+SELECT horizon_type, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(forecasted_discharge)             AS forecast_rows,
+       COUNT(q05)                              AS q05_rows,
+       COUNT(q95)                              AS q95_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM forecasts
+GROUP BY horizon_type, model_type
+ORDER BY horizon_type, model_type;
+
+-- 8.2.3 long-term forecasts (P5 configured modes)
+SELECT horizon_type, horizon_value, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(q)                                AS q_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM long_forecasts
+GROUP BY horizon_type, horizon_value, model_type
+ORDER BY horizon_value, model_type;
+
+-- 8.2.4 skill metrics (P6 hook 3 short-term + hook 4 long-term)
+SELECT horizon_type, horizon_value, model_type,
+       COUNT(*)                                AS rows,
+       COUNT(DISTINCT code)                    AS distinct_codes,
+       COUNT(n_pairs)                          AS n_pairs_rows,
+       MIN(date)                               AS min_date,
+       MAX(date)                               AS max_date
+FROM skill_metrics
+GROUP BY horizon_type, horizon_value, model_type
+ORDER BY horizon_type, horizon_value, model_type;
+
+SQL
+```
+
+### 8.3 How to interpret results
+
+For each block:
+
+1. **`rows` per group** should match what the corresponding wrapper's
+   dry-run inventory predicted for that horizon_type / meteo_type /
+   snow_type / model_type. A row-count gap means either a hook didn't
+   run (skipped with `--skip-hook-...` or aborted) OR the source CSV
+   was empty for that family.
+2. **`distinct_codes` per group** should equal the deployment's
+   station-list size (or a subset if `--station-filter` was used during
+   a canary). A mismatch is the first place to look for cross-org
+   leakage or a missing station.
+3. **`<field>_rows` non-NULL counts** should equal or be close to `rows`
+   for fields the operational pipeline produces (e.g. `discharge_rows`
+   ≈ `rows` for runoff DAY). Lower-than-expected counts indicate the
+   universal safe-write rule preserved a populated cell across migration,
+   OR the source CSV truly omitted the field for some rows. Investigate
+   with the per-section acceptance queries in §5/§6/§7.
+4. **`min_date` / `max_date`** should bracket the full operational
+   archive window. `max_date` should be very close to the day before
+   §4.2's cron-pause start.
+
+If any block returns zero rows, check the wrapper's log file under
+`${ieasyhydroforecast_data_root_dir}/logs/<family>/` — the most common
+causes are (a) the wrapper was skipped with `--skip-hook-*`, (b) the
+source CSV was missing or empty, or (c) the wrapper exited non-zero
+before any POSTs (preflight / manifest validation / cron-pause failure
+— see §9 for the failure-recovery pattern).
 
 ## 9. Failure recovery and rerun
 
