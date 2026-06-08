@@ -1816,24 +1816,333 @@ source rows of that variant existed (or were filtered out).
 
 ## 7. Regenerate / gap-backfill hooks
 
-[Filled by P6. Required content per architecture §Q10:
-- Snow stats: `bin/backfill_snow_stats_history.sh --start-year ...` with
-  cron-pause discipline (see §4.2).
-- Hydrograph MONTH/SEASON: per-year loop over
-  `bin/yearly_runoff_hydrograph_aggregation.sh "$ENV_FILE" --target-year $YEAR`.
-- Short-term skill: `bin/initialize_site_backfill.sh "$ENV_FILE" --skip-preprunoff --skip-linreg`.
-- Long-term skill: `bin/bimonthly_long_term_skill_metrics_recalculation.sh "$ENV_FILE"`.
-- **`--skip-hook-<name>` overrides (v2 R7):** each regenerate-hook invocation
-  supports `--skip-hook-<hook_name>` for selective skip; defaults are ON per
-  user-lock #4. P6 implementer encodes the override syntax per hook (e.g.,
-  `--skip-hook-snow-stats`, `--skip-hook-hydrograph-month-season`,
-  `--skip-hook-short-term-skill`, `--skip-hook-long-term-skill`).
-- Late-start guard reminder: do not start a multi-hour hook after ~15:00 UTC.
-- Each hook's CLI signature is verified against the script source before
-  publication (Stage E item #4).
-- Each hook section includes the acceptance SQL block from §8 below for the
-  regenerated rows.
-]
+After the CSV-source migrations (§5) and the laptop local-export migrations
+(§6) complete, four orchestration-managed regenerate / gap-backfill hooks
+close residual coverage gaps in the target database. All four hooks already
+exist as standalone shell scripts in `bin/`; the P6 meta-wrapper
+`bin/initialize_regenerate_hooks.sh` orchestrates them under cron-pause
+discipline + a late-start guard so a partially-finished hook is not stomped
+by the next short-term cron tick.
+
+### 7.1 Background
+
+Why a meta-wrapper instead of running each hook by hand?
+
+1. **Cron-pause discipline (architecture §Q9).** The hooks run for tens of
+   minutes to several hours. If the short-term cron ticks while a hook is
+   mid-run, the cron task and the hook will race on the same containers and
+   the same target tables. The meta-wrapper installs an empty crontab for
+   the duration of the run and restores the backup on EXIT/INT/TERM via a
+   trap, regardless of which hook failed.
+2. **Late-start guard (architecture §Q9).** Even with cron paused, starting
+   a 3-hour backfill 15 minutes before an operator expects the next pentad
+   forecast is bad UX. The wrapper refuses to start when the next configured
+   cron tick is within `--late-start-window-minutes` (default 30). The
+   operator may opt in with `--allow-late-start` or disable the guard with
+   `--late-start-window-minutes 0`.
+3. **Default-on / opt-out (architecture §3.3 L4).** All four hooks run by
+   default. The operator opts each one out with `--skip-hook-<name>`. This
+   matches user-lock #4 — operators should run all four after a full
+   migration; skipping is the exception, not the rule.
+
+The four hooks are:
+
+| # | Hook                          | Underlying script                                          | Target rows                          |
+|---|-------------------------------|------------------------------------------------------------|--------------------------------------|
+| 1 | snow-stats                    | `bin/backfill_snow_stats_history.sh`                       | snow norms + per-year stats          |
+| 2 | hydrograph-month-season       | `bin/yearly_runoff_hydrograph_aggregation.sh` (per-year)   | runoff_hydrograph MONTH + SEASON     |
+| 3 | short-term-skill              | `bin/yearly_skill_metrics_recalculation.sh`                | skill_metrics for pentad + decade    |
+| 4 | long-term-skill               | `bin/bimonthly_long_term_skill_metrics_recalculation.sh`   | skill_metrics for month/quarter/season |
+
+> Note on script names. The architecture document originally referenced
+> `bin/initialize_site_backfill.sh` for the short-term skill hook. That
+> script does not exist on the `develop_migration_toolkit` branch;
+> `bin/yearly_skill_metrics_recalculation.sh` is the functional equivalent
+> on this branch (delegates to `run_skill_metrics_recalc_once` with mode
+> `BOTH`, the same helper used by the new-site backfill path). The P6
+> meta-wrapper calls the script that exists on this branch. If a future
+> branch reintroduces `initialize_site_backfill.sh`, update the hook target
+> here and in `bin/initialize_regenerate_hooks.sh`.
+
+### 7.2 Pre-flight
+
+Before invoking the meta-wrapper:
+
+1. **All CSV-source migrations from §5 are complete.** The regenerate hooks
+   read the same target tables those migrations populated. Running them on
+   an empty target produces empty rebuilt history.
+2. **Snow inputs available.** The snow-stats hook calls
+   `recalculate_snow_norms.py`, which expects the snow inputs that snow-
+   port (covered in §5.x) wrote.
+3. **iEH HF SSH tunnel.** Hooks #2 and #3/#4 invoke containers that may
+   reach iEH HF; verify the operator-side tunnel is up (the underlying
+   scripts re-establish it but a healthy tunnel reduces failure noise).
+4. **SAPPHIRE cron installed on the deployment server.** The wrapper's
+   late-start guard + pause discipline only protects against cron jobs
+   that exist when it starts. If you run P6 on a fresh server BEFORE
+   installing the SAPPHIRE cron, the guard and pause are no-ops (the
+   wrapper detects "no crontab for user" and proceeds with INFO; this is
+   the normal day-0 state and is NOT an error). Install cron via
+   `crontab -e` before regenerating on a live deployment.
+5. **Cron schedule sanity.** Run `crontab -l | head` and confirm the
+   short-term + long-term schedules are the ones you expect. The
+   meta-wrapper's late-start guard reads `crontab -l`.
+6. **Decide the late-start window.** Default is 30 minutes; widen to 60 if
+   you're nervous, narrow to 0 to disable the guard entirely.
+7. **Mandatory-hook preflight runs BEFORE cron is touched.** Hooks 1-3
+   (snow-stats, hydrograph-month-season, short-term-skill) MUST be on
+   disk + executable unless explicitly skipped via `--skip-hook-<name>`.
+   A missing script aborts the run with a hard error treating it as a
+   deploy/packaging mistake. Hook 4 (long-term-skill) is the only
+   graceful-skip carve-out — the underlying script is not yet on
+   `develop_migration_toolkit`; see follow-up at
+   `doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md`.
+
+### 7.3 Dry-run inventory
+
+Always start with a dry-run:
+
+```bash
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --dry-run
+```
+
+Expected output shape:
+
+```
+[ts] Starting regenerate / gap-backfill hooks orchestrator
+[ts]   env_file:                       /data/<org>/config/.env_<org>
+[ts]   start_year:                     <hook default>
+[ts]   skip_hook_snow_stats:           false
+[ts]   skip_hook_hydrograph_ms:        false
+[ts]   skip_hook_short_term_skill:     false
+[ts]   skip_hook_long_term_skill:      false
+[ts]   late_start_window_minutes:      30
+[ts]   allow_late_start:               false
+[ts]   continue_on_error:              false
+[ts]   dry_run:                        true
+[ts] late-start guard: next cron tick in NN minute(s) (window=30)
+[ts] late-start guard: WITHIN/OK
+[ts] ========================================
+[ts]  DRY RUN — inventory only, no hook script invoked
+[ts] ========================================
+[ts]  [RUN]   hook 1/4: snow-stats
+[ts]          cmd: ieasyhydroforecast_env_file_path=... bash <path>/backfill_snow_stats_history.sh
+[ts]  [RUN]   hook 2/4: hydrograph-month-season (per-year loop)
+[ts]          cmd: bash <path>/yearly_runoff_hydrograph_aggregation.sh "$ENV_FILE" --target-year 2021
+[ts]          cmd: bash <path>/yearly_runoff_hydrograph_aggregation.sh "$ENV_FILE" --target-year 2022
+[ts]          ...
+[ts]  [RUN]   hook 3/4: short-term-skill
+[ts]          cmd: bash <path>/yearly_skill_metrics_recalculation.sh "$ENV_FILE"
+[ts]  [RUN]   hook 4/4: long-term-skill
+[ts]          cmd: bash <path>/bimonthly_long_term_skill_metrics_recalculation.sh "$ENV_FILE"
+[ts] Pause/restore plan:
+[ts]   - pause: 'crontab -' (empty crontab) before any hook runs
+[ts]   - restore: 'crontab <backup_file>' on EXIT/INT/TERM
+[ts]   - dry-run does NOT actually pause cron
+```
+
+The dry-run never touches the database and never invokes the hook scripts.
+It is safe to rerun.
+
+### 7.4 Full run
+
+```bash
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE"
+```
+
+The wrapper:
+1. Checks the late-start guard against the current crontab.
+2. Preflight-validates that mandatory hooks 1-3 are on disk + executable
+   (or explicitly skipped). Missing-script abort happens BEFORE workspace
+   acquisition and BEFORE cron is touched.
+3. Acquires a temp workspace via the umh helper at
+   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks_tmp/<timestamp>`
+   (used internally; the cron backup does NOT live here — see step 4).
+4. Pauses cron. The backup is written to
+   `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`
+   — INSIDE the wrapper's log directory, OUTSIDE the umh-managed
+   workspace. This placement is what lets the file survive trap-driven
+   cleanup when restore fails or `--allow-unpaused-cron` is set.
+5. Runs the four hooks in order; the first failure aborts the rest (default
+   fail-fast). Pass `--continue-on-error` to soldier on through hook failures.
+6. Restores cron on EXIT/INT/TERM via the trap. On RESTORE SUCCESS the
+   backup file is removed. On RESTORE FAILURE the backup PERSISTS in the
+   log directory + the wrapper logs the manual-recovery command pointing
+   at the surviving file. See §7.6 for the full backup-lifetime contract.
+
+Common variants:
+
+```bash
+# Only run the snow-stats hook; skip the other three.
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" \
+    --skip-hook-hydrograph-month-season \
+    --skip-hook-short-term-skill \
+    --skip-hook-long-term-skill
+
+# Backfill from a specific year (forwarded to snow + hydrograph hooks).
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --start-year 2010
+
+# Late-start window: operator accepts the risk.
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --allow-late-start
+
+# Continue when one hook fails so the rest still run.
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --continue-on-error
+
+# Verified no-race host (e.g. SAPPHIRE cron not yet installed, OR you have
+# manually paused other races). Downgrades real `crontab -l` errors and
+# `crontab -` write failures to WARNING and proceeds with cron ACTIVE.
+# Does NOT bypass "crontab(1) missing" — that's still a hard-fail.
+bash bin/initialize_regenerate_hooks.sh "$ENV_FILE" --allow-unpaused-cron
+```
+
+> `--station-filter` is **not** honored by this wrapper. All four hooks
+> operate organisation-wide. If you need to recompute a single station's
+> metrics, fall back to invoking the underlying script directly.
+
+### 7.5 Per-hook details
+
+**Hook 1: snow-stats** (`backfill_snow_stats_history.sh`).
+Loops from `--start-year` (default 2010) through the prior calendar year,
+running `recalculate_snow_norms.py` once per year and stamping completed
+years in a progress file for resume. Typical runtime: 2–3 hours per
+deployment. Reads from snow inputs populated by snow-port (§5.x). Writes
+to the snow API. **Idempotent** — reruns will rewrite the same per-year
+rows.
+
+**Hook 2: hydrograph-month-season** (`yearly_runoff_hydrograph_aggregation.sh`).
+Invoked once per year in [start-year, current-year]. The default start
+year is `current_year - 5` (a conservative recent-window); pass
+`--start-year` to extend the range. Each invocation fetches monthly norms
++ per-month previous/current aggregates from iEH HF SDK and writes them
+to the preprocessing API (one row per station per month, plus one
+April–September seasonal row per station per year). **Idempotent** on the
+natural key `(code, horizon_type, horizon_value, date)`.
+
+**Hook 3: short-term-skill** (`yearly_skill_metrics_recalculation.sh`).
+Full pentad+decad skill recalculation. Delegates to
+`run_skill_metrics_recalc_once "BOTH"`. Reads from forecasts +
+lr_forecasts populated by P3 / P4a / P4b. Writes to skill_metrics in the
+postprocessing API. Typical runtime: 30–60 minutes.
+
+**Hook 4: long-term-skill** (`bimonthly_long_term_skill_metrics_recalculation.sh`).
+Iterates over MONTHLY, QUARTERLY, SEASONAL modes and recalculates skill
+metrics for each. The underlying script handles per-mode failure
+internally (continue-on-mode-failure). Typical runtime: 60–120 minutes.
+
+> **Hook 4 is the only graceful-skip carve-out.** The underlying script
+> is not yet on `develop_migration_toolkit`. When the wrapper detects it
+> missing, it emits a prominent WARNING and continues; the operator must
+> manually recompute long-term skill metrics after long-term forecast
+> data is populated. Follow-up to flip hook 4 to mandatory once the
+> script lands:
+> `doc/plans/issues/mid_prio_gi_draft_p6_hook4_long_term_skill_mandatory.md`.
+
+### 7.6 Failure modes and cron-restore guarantees
+
+| Failure mode                                     | What the wrapper does                            |
+|--------------------------------------------------|--------------------------------------------------|
+| Hook 1 fails, default policy                     | Abort hooks 2–4; restore cron via trap; backup removed on restore success. |
+| Hook 1 fails, `--continue-on-error`              | Log + continue with hooks 2–4; restore cron; backup removed on restore success. |
+| Operator hits Ctrl-C mid-hook                    | INT trap fires `_on_signal 130`; restore cron + clean workspace; exit 130. Backup removed on restore success. |
+| TERM signal (kill, systemd timeout)              | TERM trap fires `_on_signal 143`; restore cron + clean workspace; exit 143. Backup removed on restore success. |
+| Operator's terminal dies                         | EXIT trap fires `_on_exit`; restore cron from backup; preserve incoming exit code. Backup removed on restore success. |
+| **Restore failure (`crontab <backup>` fails)**   | **Cron stays paused.** The backup PERSISTS in `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`. Wrapper logs the manual-recovery command pointing at the surviving file. Operator runs `crontab "<that path>"` to recover, then deletes the backup. **Wrapper exits with rc=1** (even if all hooks passed) so cron / systemd monitoring catches the "cron left paused" state — this is the monitoring signal you should alert on. |
+| SIGKILL or power loss                            | Cron NOT restored automatically. The backup persists at the same `logs/regenerate_hooks/crontab_backup_<utc-ts>.txt` path (the umh workspace cleanup never runs because no trap fires). The exact path is logged BEFORE the pause attempt so it's grep-able from the wrapper's log file. |
+| Hook 1, 2, or 3 script missing on disk           | Preflight ABORTS the run BEFORE cron is touched. Treat as a deploy/packaging error; either fix the deploy or pass `--skip-hook-<name>` if the absence is intentional. |
+| Hook 4 (long-term-skill) script missing          | Graceful skip with prominent WARNING + reference to the follow-up issue. Operator must manually recompute long-term skill metrics. |
+| `crontab` binary missing                         | Hard-fail with NO bypass. `--allow-unpaused-cron` does NOT cover this case (a missing binary blocks both pause AND restore). |
+| `crontab -l` real error (perm denied, etc.)      | Hard-fail by default; `--allow-unpaused-cron` downgrades to WARNING + proceeds with cron ACTIVE. |
+| `crontab -` write failure                        | Hard-fail by default; partial backup is REMOVED before exit. With `--allow-unpaused-cron`: downgrades to WARNING, proceeds with cron ACTIVE, and KEEPS the backup at `logs/regenerate_hooks/crontab_backup_<utc-ts>.txt` as a pre-attempt-state reference (NOT an active-restore artifact; the operator is responsible for reviewing or removing it). |
+
+> **Backup-file lifetime (round-3 contract).** The crontab backup at
+> `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<utc-ts>.txt`
+> lives in the wrapper's LOG directory (NOT the umh-managed
+> `logs/regenerate_hooks_tmp/` workspace), so it is NOT touched by
+> trap-driven cleanup. Lifetime rules:
+>
+> - **Restore success** (normal exit + INT + TERM): backup REMOVED by
+>   `_restore_cron`. No operator action needed.
+> - **Restore failure**: backup PERSISTS. Operator runs the logged
+>   `crontab "<path>"` command to recover, then deletes the backup.
+> - **`--allow-unpaused-cron` write-failure bypass**: backup PERSISTS as
+>   a pre-attempt-state reference. Cron was NEVER paused; operator may
+>   review or remove the file.
+> - **Hard-fail write-failure (no bypass)**: partial backup REMOVED
+>   before the wrapper exits non-zero.
+> - **SIGKILL / power loss**: backup PERSISTS (no trap fires; cron stays
+>   in whatever state the wrapper left it).
+> - **`crontab -l` "no crontab for user"** (day-0 servers + dev laptops):
+>   NO backup is ever written; the wrapper proceeds with INFO.
+> - **`crontab` binary missing**: NO backup is ever written; the wrapper
+>   hard-fails before any file is created.
+>
+> Persisted backups are operator-review artifacts and should be removed
+> manually after recovery. No automatic age-based cleanup is performed by
+> the wrapper.
+
+> The cron-pause helper lives inline in
+> `bin/initialize_regenerate_hooks.sh` because
+> `bin/utils/common_functions.sh` does not currently ship one. Extracting
+> the helper into the shared library is a follow-up issue (see the P6
+> gi_draft). Until then, the meta-wrapper is the ONLY caller that pauses
+> cron — if you invoke the underlying hook scripts directly, you are
+> responsible for pausing cron yourself.
+
+### 7.7 Acceptance
+
+After a successful run, verify each hook produced data using §8 acceptance
+SQL. The minimum checks per hook are:
+
+- **snow-stats** — confirm `snow_data` rows for each backfilled year and
+  that `mean / min / max / q*` columns are non-NULL.
+
+  ```sql
+  SELECT EXTRACT(YEAR FROM date) AS yr, COUNT(*) AS rows,
+         COUNT(*) FILTER (WHERE mean IS NOT NULL) AS nonnull_mean
+  FROM snow_data
+  GROUP BY yr ORDER BY yr;
+  ```
+
+- **hydrograph-month-season** — confirm monthly + seasonal rows for each
+  backfilled year and that `norm / previous / current` columns are all
+  populated (no all-NULL rows):
+
+  ```sql
+  SELECT horizon_type, horizon_value, COUNT(*) AS rows,
+         COUNT(*) FILTER (WHERE norm IS NOT NULL) AS norm_ok
+  FROM runoff_hydrograph
+  WHERE horizon_type IN ('month', 'season')
+  GROUP BY horizon_type, horizon_value
+  ORDER BY horizon_type, horizon_value;
+  ```
+
+- **short-term-skill** — confirm skill_metrics rows for pentad + decade
+  horizons, with `n_pairs > 2` (anything stuck at `n_pairs ∈ {1, 2}`
+  signals an upstream coverage gap):
+
+  ```sql
+  SELECT horizon_type, model_type, COUNT(*) AS rows,
+         MIN(n_pairs) AS min_pairs, MAX(n_pairs) AS max_pairs
+  FROM skill_metrics
+  WHERE horizon_type IN ('pentad', 'decade')
+  GROUP BY horizon_type, model_type ORDER BY horizon_type, model_type;
+  ```
+
+- **long-term-skill** — confirm skill_metrics for month / quarter /
+  season:
+
+  ```sql
+  SELECT horizon_type, model_type, COUNT(*) AS rows,
+         MIN(n_pairs) AS min_pairs, MAX(n_pairs) AS max_pairs
+  FROM skill_metrics
+  WHERE horizon_type IN ('month', 'quarter', 'season')
+  GROUP BY horizon_type, model_type ORDER BY horizon_type, model_type;
+  ```
+
+The log file at
+`${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/regenerate_hooks_<TS>.log`
+contains the full transcript including each hook's BEGIN/END markers and
+exit codes. Grep `BEGIN|END|SUMMARY` to skim it.
 
 ## 8. Acceptance SQL
 
