@@ -314,11 +314,49 @@ def refresh_predictors_warning(warning_col, station, data):
     if warning:
         warning_col.append(warning)
 
-def refresh_forecast_warning(warning_col, station, data, date_value):
+def get_period_warning(horizon, forecast_period, forecast_year, today=None):
+    """Warn when the displayed forecast's target period differs from the
+    current period for this horizon (e.g. a pentad-31 forecast still shown
+    once we're in pentad 32). Returns an alert pane or None.
+    """
+    if forecast_period is None or forecast_year is None:
+        return None
+    if today is None:
+        today = dt.datetime.now().date()
+    if horizon == "pentad":
+        current = tl.get_pentad_in_year(today)
+    elif horizon == "decade":
+        current = tl.get_decad_in_year(today)
+    elif horizon == "month":
+        current = today.month
+    elif horizon == "quarter":
+        current = (today.month - 1) // 3 + 1
+    elif horizon == "season":
+        current = 1  # one season per year — only the year distinguishes periods
+    else:
+        return None
+    try:
+        same = (int(forecast_year), int(forecast_period)) == (today.year, int(current))
+    except (TypeError, ValueError):
+        return None
+    if same:
+        return None
+    return get_pane_alert(
+        f"The displayed {horizon} forecast is for {horizon} {forecast_period} of "
+        f"{forecast_year}, but the current {horizon} is {current} of {today.year}. "
+        f"This forecast may be outdated."
+    )
+
+
+def refresh_forecast_warning(warning_col, station, data, date_value,
+                             horizon=None, forecast_period=None, forecast_year=None):
     warning_col.objects = []
-    warning = get_forecast_warning(station, data, date_value)
-    if warning:
-        warning_col.append(warning)
+    w_models = get_forecast_warning(station, data, date_value)
+    if w_models:
+        warning_col.append(w_models)
+    w_period = get_period_warning(horizon, forecast_period, forecast_year)
+    if w_period:
+        warning_col.append(w_period)
 
 # ============================== Widgets for Predictors Tab ==============================
 

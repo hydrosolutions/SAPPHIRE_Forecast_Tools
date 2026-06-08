@@ -528,3 +528,160 @@ class TestGetForecastWarning:
         assert "models" not in alert_text, (
             f"Alert must not contain 'models' when all models are absent; got: {alert_text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestGetPeriodWarning — deterministic via explicit today= argument
+# ---------------------------------------------------------------------------
+
+
+class TestGetPeriodWarning:
+    """get_period_warning warns when displayed forecast target period != current period."""
+
+    # ------------------------------------------------------------------
+    # pentad: forecast_period=31, today=2026-06-08 → current pentad is 32
+    # ------------------------------------------------------------------
+    def test_pentad_outdated_returns_alert(self):
+        """Pentad-31 forecast shown on a day that is in pentad-32 → non-None alert."""
+        today = datetime.date(2026, 6, 8)
+        # Verify via the real tl helper so the test stays correct if the
+        # formula ever changes.
+        expected_current = int(widgets.tl.get_pentad_in_year(today))
+        assert expected_current == 32, (
+            f"Test pre-condition: expected pentad 32 for 2026-06-08, got {expected_current}"
+        )
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=31,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed pentad (31) != current pentad (32)"
+        )
+        alert_text = result.object
+        assert "31" in alert_text, f"Alert should mention forecast period 31; got: {alert_text}"
+        assert "32" in alert_text, f"Alert should mention current period 32; got: {alert_text}"
+
+    # ------------------------------------------------------------------
+    # decade: forecast_period=16, today=2026-06-08 → current decad is 16 → None
+    # ------------------------------------------------------------------
+    def test_decade_current_period_returns_none(self):
+        """Decad-16 forecast shown on a day that is in decad-16 → None."""
+        today = datetime.date(2026, 6, 8)
+        expected_current = int(widgets.tl.get_decad_in_year(today))
+        assert expected_current == 16, (
+            f"Test pre-condition: expected decad 16 for 2026-06-08, got {expected_current}"
+        )
+        result = widgets.get_period_warning(
+            horizon="decade",
+            forecast_period=16,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed decad (16) == current decad (16)"
+        )
+
+    # ------------------------------------------------------------------
+    # month: forecast_period=6, today=2026-06-08 → current month is 6 → None
+    # ------------------------------------------------------------------
+    def test_month_current_period_returns_none(self):
+        """Month-6 forecast shown on a June day → None."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=6,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed month (6) == current month (6)"
+        )
+
+    # ------------------------------------------------------------------
+    # month: forecast_period=6, today=2026-07-01 → current month is 7 → alert
+    # ------------------------------------------------------------------
+    def test_month_outdated_returns_alert(self):
+        """Month-6 forecast shown in July → non-None alert."""
+        today = datetime.date(2026, 7, 1)
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=6,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed month (6) != current month (7)"
+        )
+
+    # ------------------------------------------------------------------
+    # season: forecast_period=1, forecast_year=2025, today=2026-06-08 → alert
+    # ------------------------------------------------------------------
+    def test_season_outdated_year_returns_alert(self):
+        """Season forecast for 2025 shown in 2026 → non-None alert (year differs)."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="season",
+            forecast_period=1,
+            forecast_year=2025,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed season year (2025) != current year (2026)"
+        )
+
+    # ------------------------------------------------------------------
+    # season: forecast_period=1, forecast_year=2026, today=2026-06-08 → None
+    # ------------------------------------------------------------------
+    def test_season_current_year_returns_none(self):
+        """Season forecast for 2026 shown in 2026 → None (same year, period always 1)."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="season",
+            forecast_period=1,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed season year (2026) == current year (2026)"
+        )
+
+    # ------------------------------------------------------------------
+    # forecast_period is None → None (no warning, guard clause)
+    # ------------------------------------------------------------------
+    def test_none_forecast_period_returns_none(self):
+        """forecast_period=None → None without error."""
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=None,
+            forecast_year=2026,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None when forecast_period is None"
+
+    # ------------------------------------------------------------------
+    # forecast_year is None → None (no warning, guard clause)
+    # ------------------------------------------------------------------
+    def test_none_forecast_year_returns_none(self):
+        """forecast_year=None → None without error."""
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=31,
+            forecast_year=None,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None when forecast_year is None"
+
+    # ------------------------------------------------------------------
+    # Unknown horizon → None
+    # ------------------------------------------------------------------
+    def test_unknown_horizon_returns_none(self):
+        """An unrecognised horizon string → None without error."""
+        result = widgets.get_period_warning(
+            horizon="biweekly",
+            forecast_period=5,
+            forecast_year=2026,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None for an unknown horizon"

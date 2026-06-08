@@ -212,8 +212,6 @@ class WidgetManager:
                 if is_month:
                     pm.update_forecast_tabulator_m0()
                     pm.update_quarterly_summary_tabulator()
-            else:
-                self.refresh_warnings()
             # Always re-render the active tab so the Predictors-tab panes
             # (which are horizon-independent — daily hydrograph / rain /
             # temp / snow) update on station change even under long
@@ -231,6 +229,7 @@ class WidgetManager:
                 )
             except (KeyError, IndexError, TypeError, ValueError):
                 pass  # no data for this horizon yet; bulletin callback handles it
+            self.refresh_warnings()
             self._refresh_horizon_info_pane()
 
             for cb in self._post_load_callbacks:
@@ -326,6 +325,9 @@ class WidgetManager:
             self.station_selector,
             self._dm._data,
             self.date_picker.value,
+            self.horizon_selector.value,
+            getattr(self, "forecast_horizon", None),
+            getattr(self, "forecast_year", None),
         )
 
     def _refresh_downloader_for_horizon(self, event) -> None:
