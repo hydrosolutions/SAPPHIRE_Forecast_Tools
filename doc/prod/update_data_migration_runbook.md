@@ -2315,15 +2315,123 @@ before any POSTs (preflight / manifest validation / cron-pause failure
 
 ## 9. Failure recovery and rerun
 
-[Filled by P6/P7. Required content:
-- Rerun the same wrapper with same args; the API upsert is idempotent on
-  natural keys.
-- Narrow with `--start-date`/`--end-date` and lower `--batch-size` on
-  repeated failures.
-- Scoped purge with the existing purge tool if the operator can define the
-  affected site/date/horizon range.
-- Restore the pre-migration dump for uncertain or broad wrong-data incidents.
-]
+The toolkit is designed for safe reruns. Every wrapper POSTs through the
+preprocessing / postprocessing APIs which upsert on the natural keys
+documented in each gi_draft. A second invocation with the same arguments
+re-issues the same POSTs and the service-side upsert + universal
+safe-write rule (architecture §Q2) ensures populated cells are preserved.
+
+### 9.1 First-line recovery — rerun the same wrapper
+
+After investigating the wrapper's log under
+`${ieasyhydroforecast_data_root_dir}/logs/<family>/`, re-invoke with the
+SAME arguments:
+
+```bash
+bash bin/initialize_<family>_history.sh "$ENV_FILE" [previous args ...]
+```
+
+Idempotency anchors per family:
+
+| Wrapper                                          | Upsert key                                                                         |
+|--------------------------------------------------|------------------------------------------------------------------------------------|
+| `initialize_runoff_day_history.sh`               | `(horizon_type='day', code, date)`                                                 |
+| `initialize_runoff_period_history.sh`            | `(horizon_type, code, date)`                                                       |
+| `initialize_hydrograph_day_history.sh`           | `(horizon_type='DAY', code, date)`                                                 |
+| `initialize_hydrograph_period_history.sh`        | `(horizon_type, code, date)`                                                       |
+| `initialize_meteo_history.sh`                    | `(meteo_type, code, date)`                                                         |
+| `initialize_snow_history.sh`                     | `(snow_type, code, date)`                                                          |
+| `initialize_lr_forecast_history.sh`              | `(horizon_type, code, date)`                                                       |
+| `initialize_ml_forecast_history.sh`              | `(horizon_type, code, model_type, date, target)`                                   |
+| `initialize_long_forecast_history.sh`            | `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`      |
+| `initialize_regenerate_hooks.sh`                 | Per-hook (snow/hydrograph/skill); each hook's own idempotency contract             |
+
+A clean rerun produces the same row counts as the original run plus
+**zero new rows** for the previously-successful range (the upsert is a
+no-op on identical payloads). The dry-run inventory should match
+identically between the two runs.
+
+### 9.2 Narrow + retry on transient failures
+
+When the failure is partial (some batches POSTed before the abort), narrow
+the rerun to the affected window:
+
+```bash
+# CSV-source wrappers: most accept --station-filter for canary scope.
+bash bin/initialize_<family>_history.sh "$ENV_FILE" --station-filter 19999
+
+# DB-source wrappers: re-export with a date window via the laptop script's
+# --start-date / --end-date flags, then re-run the server-side wrapper
+# on the narrower CSV.
+bash bin/export_<family>_history.sh "$ENV_FILE" \
+    --start-date 2024-01-01 --end-date 2024-06-30 ...
+```
+
+Reduce `--batch-size` if HTTP timeouts or service-side memory pressure
+appear in the wrapper log. The default (500 records per batch) is
+deliberately conservative for the operational network but can be
+narrowed further to 100 or 50 on stressed deployments:
+
+```bash
+bash bin/initialize_<family>_history.sh "$ENV_FILE" --batch-size 100
+```
+
+### 9.3 Scoped purge (rare — operator-defined window)
+
+If a wrapper POSTed wrong data (e.g. operator passed a CSV with a
+mis-labeled `model_type` column before the round-2 mixed-export guard
+landed), and the operator can precisely define the affected `(code,
+date, horizon_*, model_type)` window, a scoped `DELETE` followed by a
+clean re-import is faster than a full rollback:
+
+```bash
+# Example: purge wrong ML forecasts for one station + one model + one
+# day-window, then re-run the wrapper from a fresh export.
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postprocessing_db -P pager=off <<SQL
+BEGIN;
+DELETE FROM forecasts
+ WHERE code = '19999'
+   AND model_type = 'TFT'
+   AND horizon_type = 'day'
+   AND date BETWEEN '2024-01-01' AND '2024-06-30';
+-- Inspect the row count before committing.
+SQL
+```
+
+This path is rare and operator-defined: if you cannot precisely scope
+the affected rows, skip to §10 (full rollback). Do NOT use `TRUNCATE`
+or unscoped `DELETE` — those would lose operational data the migration
+did not touch.
+
+### 9.4 Cron-pause failure mid-migration
+
+If `bin/initialize_regenerate_hooks.sh` exited with rc=1 and the log
+shows the round-3 monitoring signal (`cron restore FAILED -> exit 1`),
+cron is left paused on the host. Recover manually:
+
+```bash
+# The wrapper logs the exact backup path BEFORE attempting the pause:
+grep "cron-pause: backup written:" \
+    "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/regenerate_hooks_<TS>.log"
+
+# Restore from the surviving file (always under logs/regenerate_hooks/,
+# never under the umh `_tmp` workspace):
+crontab "${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/crontab_backup_<TS>.txt"
+
+# Verify the schedule is back:
+crontab -l | head
+```
+
+After manual recovery, delete the backup file and rerun any hooks that
+hadn't completed before the failure. See §7.6 for the full
+backup-lifetime contract.
+
+### 9.5 Last-resort recovery — restore from pre-migration dump
+
+If §9.1–§9.4 cannot resolve the failure (broad wrong-data incident,
+schema drift, or operator confidence loss), proceed to §10. The
+pre-migration `pg_dump` from §4.1 is the canonical recovery point.
 
 ## 10. Rollback and cleanup
 
