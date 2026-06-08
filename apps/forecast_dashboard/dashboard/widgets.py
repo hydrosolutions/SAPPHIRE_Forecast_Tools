@@ -353,27 +353,43 @@ def create_predictors_warning(station, data):
 # ============================== Widgets for Forecast Tab ==============================
 
 def get_forecast_warning(station, data, date_picker_value):
-    # forecast_warning.objects = []  # clear old content
-    filtered = data["forecasts_all"][
-        (data["forecasts_all"]["station_labels"] == station.value) &
-        (data["forecasts_all"]["date"] == pd.to_datetime(date_picker_value))
+    forecasts_all = data.get("forecasts_all")
+    if (
+        forecasts_all is None
+        or forecasts_all.empty
+        or "station_labels" not in forecasts_all.columns
+    ):
+        return get_pane_alert(
+            f"No forecast data available for {station.value} on {date_picker_value}."
+        )
+
+    station_rows = forecasts_all[forecasts_all["station_labels"] == station.value]
+    if station_rows.empty:
+        return get_pane_alert(
+            f"No forecast data available for {station.value} on {date_picker_value}."
+        )
+
+    expected_models = set(station_rows["model_short"].dropna().unique())
+
+    on_date = station_rows[
+        station_rows["date"] == pd.to_datetime(date_picker_value)
     ]
-    if not filtered.empty:
-        # filter rows where forecasted_discharge is NaN
-        missing_forecasts = filtered[filtered["forecasted_discharge"].isna()]
+    present_models = set(
+        on_date.loc[on_date["forecasted_discharge"].notna(), "model_short"].dropna()
+    )
 
-        # collect the model_short values into a list
-        missing_models = missing_forecasts["model_short"].tolist()
-
-        if missing_models:
-            print("Missing forecasts for models:", missing_models)
+    missing_models = sorted(expected_models - present_models)
+    if missing_models:
+        if not present_models:
+            # No model has a forecast for this date — don't enumerate every model.
             return get_pane_alert(
-                f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker_value}.")
-        else:
-            print("All models have forecast data.")
-            return
-    else:
-        return get_pane_alert(f"No forecast data available for {station.value} on {date_picker_value}.")
+                f"No forecast data available for {station.value} on {date_picker_value}."
+            )
+        return get_pane_alert(
+            f"No forecast data available for models {', '.join(missing_models)}"
+            f" at {station.value} on {date_picker_value}."
+        )
+    return
 
 
 def create_forecast_warning(station, data, date_value):

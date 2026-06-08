@@ -274,3 +274,257 @@ class TestGetPredictorsWarning:
         )
 
 
+# ---------------------------------------------------------------------------
+# TestGetForecastWarning — missing-model detection across all dates
+# ---------------------------------------------------------------------------
+
+
+def _make_forecasts_all(rows):
+    """Build a forecasts_all DataFrame from a list of dicts."""
+    return pd.DataFrame(rows, columns=["station_labels", "date", "model_short",
+                                       "forecasted_discharge"])
+
+
+class TestGetForecastWarning:
+    """get_forecast_warning warns when expected models are absent for the date."""
+
+    TARGET_DATE = pd.Timestamp("2026-05-31")
+    EARLIER_DATE = pd.Timestamp("2026-05-26")
+    STATION_LABEL = "15013 - Test"
+
+    def _station(self):
+        return types.SimpleNamespace(value=self.STATION_LABEL)
+
+    # ------------------------------------------------------------------
+    # Regression #1 (MUST FAIL before fix):
+    # LR present on target date; EM+TFT only on an earlier date → warns
+    # ------------------------------------------------------------------
+    def test_regression_absent_models_trigger_warning(self):
+        """REGRESSION: models absent on the target date (rows only on earlier dates)
+        must be flagged as missing.
+
+        Old code returns None here because there are no NaN rows on target date.
+        New code computes expected={LR,EM,TFT} from all station rows, finds only
+        LR present on target date, and returns an alert listing EM and TFT.
+        """
+        df = _make_forecasts_all([
+            # LR present on target date with a valid value
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            # EM and TFT only on an earlier date → they are part of expected set
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "TFT",
+                "forecasted_discharge": 60.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected a warning when models (EM, TFT) are absent on the target date"
+        )
+        alert_text = result.object
+        assert "EM" in alert_text, f"Alert should mention EM; got: {alert_text}"
+        assert "TFT" in alert_text, f"Alert should mention TFT; got: {alert_text}"
+
+    # ------------------------------------------------------------------
+    # Present-but-NaN: row exists on target date but discharge is NaN → flagged
+    # ------------------------------------------------------------------
+    def test_present_but_nan_is_flagged(self):
+        """A model row with NaN forecasted_discharge on target date is missing."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": np.nan,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected a warning when a model has NaN forecasted_discharge"
+        )
+        assert "EM" in result.object
+
+    # ------------------------------------------------------------------
+    # All expected models present with valid values → no warning (None)
+    # ------------------------------------------------------------------
+    def test_all_models_present_returns_none(self):
+        """No warning when every expected model has a value on the target date."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is None, (
+            "Expected no warning when all models have values on the target date"
+        )
+
+    # ------------------------------------------------------------------
+    # LR-only station: expected == {LR}, LR present → no false positive
+    # ------------------------------------------------------------------
+    def test_lr_only_station_no_false_positive(self):
+        """A station with only LR in its history and LR present → no warning."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 30.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is None, (
+            "LR-only station with LR present must not trigger a warning"
+        )
+
+    # ------------------------------------------------------------------
+    # Station has no rows at all → alert
+    # ------------------------------------------------------------------
+    def test_station_not_in_data_returns_alert(self):
+        """Station label not present in forecasts_all → alert, no exception."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": "99999 - Other",
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 10.0,
+            },
+        ])
+        station = self._station()  # "15013 - Test" is absent
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when the station has no rows in forecasts_all"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all is empty → alert, no exception
+    # ------------------------------------------------------------------
+    def test_empty_forecasts_all_returns_alert(self):
+        """Empty forecasts_all DataFrame → alert pane, no KeyError."""
+        df = _make_forecasts_all([])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert pane when forecasts_all is empty"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all missing station_labels column → alert, no exception
+    # ------------------------------------------------------------------
+    def test_missing_station_labels_column_returns_alert(self):
+        """forecasts_all without 'station_labels' column → alert, no exception."""
+        df = pd.DataFrame({"date": [self.TARGET_DATE], "model_short": ["LR"],
+                           "forecasted_discharge": [1.0]})
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when station_labels column is absent"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all is None → alert, no exception
+    # ------------------------------------------------------------------
+    def test_none_forecasts_all_returns_alert(self):
+        """forecasts_all key is None → alert pane, no AttributeError."""
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": None},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when forecasts_all is None"
+        )
+
+    # ------------------------------------------------------------------
+    # All models missing on target date → generic message (no model list)
+    # ------------------------------------------------------------------
+    def test_all_models_missing_uses_generic_message(self):
+        """When NO model has a forecast for the target date, the alert must use
+        the generic 'No forecast data available for {station} on {date}' message
+        and must NOT enumerate the individual model names.
+
+        The station has rows for LR, EM, TFT on an earlier date (so they are
+        part of expected_models) but has NO rows at all on TARGET_DATE.
+        present_models will be empty, so old code would list all three models;
+        new code must fall back to the generic message.
+        """
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "TFT",
+                "forecasted_discharge": 60.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when no model has a forecast for the target date"
+        )
+        alert_text = result.object
+        # Generic message must be present
+        assert self.STATION_LABEL in alert_text, (
+            f"Alert should mention the station label; got: {alert_text}"
+        )
+        # Must NOT list individual model names
+        assert "LR" not in alert_text, (
+            f"Alert must not list model LR when all models are absent; got: {alert_text}"
+        )
+        assert "EM" not in alert_text, (
+            f"Alert must not list model EM when all models are absent; got: {alert_text}"
+        )
+        assert "TFT" not in alert_text, (
+            f"Alert must not list model TFT when all models are absent; got: {alert_text}"
+        )
+        assert "models" not in alert_text, (
+            f"Alert must not contain 'models' when all models are absent; got: {alert_text}"
+        )
