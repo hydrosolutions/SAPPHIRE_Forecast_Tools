@@ -184,6 +184,7 @@ flowchart TD
 
     subgraph Norms["Norms Recalculation"]
         N_SNOW["Recalculate snow norms<br/>──────────<br/>SWE, HS normals<br/>from historical snow data"]
+        N_RUNOFF["Recalculate long-horizon runoff<br/>hydrograph norms<br/>──────────<br/>sync_long_horizon_hydrograph.py<br/>month (12), season (1, Apr-Sep),<br/>quarter (4) rows per station<br/>to hydrographs table (norm-only)"]
     end
 ```
 
@@ -200,7 +201,7 @@ Each model writes one row per (station, forecast date, target month):
 |-------|-------|---------|
 | `horizon_type` | `month` (always) | `month` |
 | `horizon_value` | Lead time in months | `1` |
-| `code` | Station code | `15013` |
+| `code` | Station code | `19999` |
 | `date` | Forecast issuance date | `2026-02-25` |
 | `model_type` | Model name | `GBT` |
 | `valid_from` | Target period start | `2026-03-01` |
@@ -208,6 +209,48 @@ Each model writes one row per (station, forecast date, target month):
 | `q50` | Median forecast | `45.2` |
 | `q05`–`q95` | Full quantile distribution | `12.1`–`78.5` |
 | `flag` | Status (0=ok, 2=failed) | `0` |
+
+### Long-Horizon Hydrograph Norms (preprocessing)
+
+Entry point: `preprocessing_runoff/sync_long_horizon_hydrograph.py`, run once
+per year by `bin/yearly_runoff_hydrograph_aggregation.sh`. The job writes
+long-horizon runoff hydrograph norm rows to the preprocessing `hydrographs`
+table through the sapphire-api-client (`write_hydrograph`).
+
+QUARTER rows use the same period keys as postprocessing `long_forecasts`
+quarter rows so dashboard consumers can join climatology norms to quarterly
+forecasts.
+
+| Field | QUARTER value |
+|-------|---------------|
+| `horizon_type` | `quarter` |
+| `code` | Station code, e.g. `19999` |
+| `date` | First day of the quarter start month: `YYYY-01-01`, `YYYY-04-01`, `YYYY-07-01`, `YYYY-10-01` |
+| `day_of_year` | Leap-aware first-of-quarter day (`1`, `91/92`, `182/183`, `274/275`) |
+| `horizon_value` | Quarter number `1`-`4` |
+| `horizon_in_year` | Same quarter number `1`-`4` |
+| `norm`, `previous`, `current` | Mean of the 3 constituent monthly values; `NULL` if any constituent month is missing or non-finite |
+| Stat fields | `NULL` (`count`, `mean`, `std`, `min`, `max`, `q05`-`q95` are not populated) |
+
+MONTH and SEASON rows follow the same norm-only shape. MONTH writes 12 rows per
+station; SEASON writes one Apr-Sep row whose `norm`, `previous`, and `current`
+values are the all-or-nothing mean of Apr through Sep. QUARTER mirrors the
+SEASON all-or-nothing rule. This intentionally differs from postprocessing's
+quarterly forecast aggregation, where `QUARTER_MIN_MONTHS = 2` allows a
+2-of-3-month tolerance.
+
+Consumer join contract: a future dashboard join between preprocessing QUARTER
+hydrograph norms and postprocessing `long_forecasts` QUARTER rows must use
+period keys (`code`, `horizon_type`, `horizon_value`), not `date` or
+`day_of_year`. Hydrograph norm rows are written for the current target year
+only, without historical backfill, while long forecasts span many years. The
+`norm` column is climatology; `previous` and `current` are year-specific
+aggregates.
+
+Deployment prerequisite: sapphire-api-client must include `quarter` in
+`VALID_HORIZONS`, and consumers must re-pin to that client version, before the
+quarter write path and dashboard read path work end-to-end. The preprocessing
+service enum and Alembic migration that add QUARTER are already shipped.
 
 ### Ensemble Creation
 
@@ -230,12 +273,13 @@ models.
 | `discharge` | preprocessing | preprocessing_runoff | per-record |
 | `meteo` | preprocessing | preprocessing_gateway | per-record |
 | `snow` | preprocessing | preprocessing_gateway | per-record |
+| `hydrographs` | preprocessing | preprocessing_runoff | `(horizon_type, code, date)` |
 
 ## Differences from Short-Term Pipeline
 
 | Aspect | Short-Term | Long-Term |
 |--------|-----------|-----------|
-| Horizon types | pentad, decade | month |
+| Horizon types | pentad, decade | Forecasts: month; hydrograph norms: month, season, quarter |
 | Output table | `forecasts` + `lr_forecasts` | `long_forecasts` |
 | Models | LR, TFT, TiDE, TSMixer | LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF, GBT, SM_GBT, SM_GBT_LR, SM_GBT_Norm, MC_ALD |
 | Ensembles | NE, EM | EM, Skilled Mean, Naive Mean |
