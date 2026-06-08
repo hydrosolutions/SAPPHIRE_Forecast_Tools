@@ -922,7 +922,13 @@ _on_exit() {
         umh_log_redacted "exit: hooks succeeded but cron restore FAILED -> exit 1 (monitoring signal)"
         rc=1
     fi
-    return "$rc"
+    # Use `exit` (not `return`) so the override takes effect even if a
+    # future maintainer relaxes `set -eo pipefail` above. `return` from
+    # an EXIT trap is only authoritative under set -e; `exit "$rc"` is
+    # option-independent (and well-defined — calling exit from an EXIT
+    # trap does NOT re-enter the trap). Round-3 reviewer NR1: hardens
+    # the operator-safety signal against silent regression.
+    exit "$rc"
 }
 
 # SC2329/SC2317: same rationale as _on_exit above (indirect trap call +
