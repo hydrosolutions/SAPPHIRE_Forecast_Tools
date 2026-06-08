@@ -2435,23 +2435,190 @@ pre-migration `pg_dump` from §4.1 is the canonical recovery point.
 
 ## 10. Rollback and cleanup
 
-[Filled by P7. Required content (Stage E item #1 — literal `pg_restore`):
-- Identify the pre-migration backup directory `pre_update_migration_<UTC>`
-  (from §4.1) and its dump files inside.
-- Stop migration wrappers; pause cron if not already paused (use snapshot
-  from §4.2).
-- Stop the affected sapphire-*-db container, drop the database, recreate,
-  and restore via `pg_restore` against the specific dump file. Provide the
-  exact command shape with both `preprocessing_db` and `postprocessing_db`
-  covered.
-- Restart the container, verify with acceptance SQL §8.
-- Restore cron from `crontab_backup.txt`.
-- Final temp cleanup: `rm -rf <data_root>/logs/*_tmp` (operator-reviewed
-  glob).
-- **(v2 R3 SIGKILL / power-loss fallback):** if a wrapper was killed by
-  SIGKILL or the host lost power mid-migration, the EXIT / INT / TERM trap in
-  `umh_acquire_temp_workspace` did not fire — orphaned temp dirs under
-  `${data_root}/logs/*_tmp/` may contain real station codes. The manual
-  cleanup glob above is the recovery path for this case. Run it after any
-  unclean wrapper exit.
-]
+The pre-migration `pg_dump` from §4.1 is the canonical recovery point.
+This section gives the literal `pg_restore` command shape for both
+preprocessing and postprocessing databases. Use it when §9.1–§9.4
+cannot resolve the failure — broad wrong-data incident, schema drift,
+or operator confidence loss.
+
+> **Before you start:** Confirm that the §4.1 backup completed
+> successfully. The `BACKUP_DIR` log file must contain
+> `All four dumps succeeded and verified` and the four `.dump` files
+> must exist on disk. If the backup did not complete, escalate
+> (rollback without a verified backup is not safe).
+
+### 10.1 Pre-rollback state
+
+```bash
+# Re-set the env vars from §4.1 if this is a new shell session.
+export BACKUP_UTC="<the UTC timestamp from §4.1, e.g. 20260608T064802Z>"
+export BACKUP_DIR="/var/backups/sapphire/pre_update_migration_${BACKUP_UTC}"
+
+# Confirm the dump files are present.
+ls -la "$BACKUP_DIR"/*.dump
+# Expect 4 files:
+#   sapphire-preprocessing-db_<TS>.dump
+#   sapphire-postprocessing-db_<TS>.dump
+#   sapphire-user-db_<TS>.dump
+#   sapphire-auth-db_<TS>.dump
+```
+
+The migration toolkit writes to `preprocessing_db` and `postprocessing_db`
+only. The `user_db` and `auth_db` databases are untouched by any wrapper
+in §5/§6/§7 — restoring them is unnecessary (and would log out every
+operator). Restore ONLY the two affected databases below.
+
+### 10.2 Stop migration wrappers + confirm cron is paused
+
+```bash
+# Kill any running wrapper processes (defensive; usually none if you
+# reached this section after a failure).
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    | tee /dev/stderr \
+    | awk '{print $1}' \
+    | xargs -r kill -TERM
+sleep 2
+pgrep -af 'initialize_.*_history\.sh|initialize_regenerate_hooks\.sh' \
+    && echo "WARNING: wrappers still running; investigate before rolling back" \
+    || echo "no migration wrappers running — safe to proceed"
+
+# Confirm cron is paused (the §4.2 snapshot is the canonical reference).
+crontab -l 2>&1 | head
+# Expected: no operational SAPPHIRE entries (output is empty OR "no crontab for user")
+# If cron is still active, pause it now:
+[[ -f "$BACKUP_DIR/crontab_backup.txt" ]] || crontab -l > "$BACKUP_DIR/crontab_backup.txt"
+crontab -r
+```
+
+### 10.3 Rollback `preprocessing_db`
+
+```bash
+# Identify the dump file (exact timestamp depends on the §4.1 run).
+PREPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-preprocessing-db_*.dump | head -1)
+echo "Restoring from: $PREPROCESSING_DUMP"
+
+# Stop the API + restore the DB.
+docker compose -f sapphire/docker-compose.yml stop preprocessing-api
+
+# Drop + recreate the database. The user / role inside the container is
+# typically POSTGRES_USER from the .env block.
+docker exec -i sapphire-preprocessing-db \
+    psql -U "$POSTGRES_USER" -d postgres -P pager=off <<SQL
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+ WHERE datname = 'preprocessing_db' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS preprocessing_db;
+CREATE DATABASE preprocessing_db OWNER "${POSTGRES_USER}";
+SQL
+
+# Restore from the custom-format dump.
+docker exec -i sapphire-preprocessing-db \
+    pg_restore -U "$POSTGRES_USER" -d preprocessing_db \
+        --no-owner --no-privileges --exit-on-error \
+        --verbose < "$PREPROCESSING_DUMP"
+
+# Restart the API.
+docker compose -f sapphire/docker-compose.yml start preprocessing-api
+
+# Quick health check.
+sleep 5
+curl -fsS http://localhost:8000/api/preprocessing/healthz || \
+    echo "WARNING: preprocessing-api healthz failed; investigate before proceeding"
+```
+
+### 10.4 Rollback `postprocessing_db`
+
+```bash
+POSTPROCESSING_DUMP=$(ls -1 "$BACKUP_DIR"/sapphire-postprocessing-db_*.dump | head -1)
+echo "Restoring from: $POSTPROCESSING_DUMP"
+
+docker compose -f sapphire/docker-compose.yml stop postprocessing-api
+
+docker exec -i sapphire-postprocessing-db \
+    psql -U "$POSTGRES_USER" -d postgres -P pager=off <<SQL
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+ WHERE datname = 'postprocessing_db' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS postprocessing_db;
+CREATE DATABASE postprocessing_db OWNER "${POSTGRES_USER}";
+SQL
+
+docker exec -i sapphire-postprocessing-db \
+    pg_restore -U "$POSTGRES_USER" -d postprocessing_db \
+        --no-owner --no-privileges --exit-on-error \
+        --verbose < "$POSTPROCESSING_DUMP"
+
+docker compose -f sapphire/docker-compose.yml start postprocessing-api
+
+sleep 5
+curl -fsS http://localhost:8000/api/postprocessing/healthz || \
+    echo "WARNING: postprocessing-api healthz failed; investigate before proceeding"
+```
+
+### 10.5 Verify with §8 acceptance SQL
+
+Re-run the §8 blocks. After a clean rollback the row counts should
+match the pre-migration baseline (i.e. the row counts you captured in
+§4.4's dry-run inventory BEFORE any wrapper ran):
+
+```bash
+# Re-run §8.1 (preprocessing) and §8.2 (postprocessing) — copy-paste
+# both blocks from §8. Compare row counts to §4.4's pre-migration dry-run.
+```
+
+If the counts match: rollback succeeded. If counts are still elevated
+or the field-count totals are off: the rollback didn't restore cleanly
+— escalate before re-running migration.
+
+### 10.6 Restore cron
+
+```bash
+# Restore from the snapshot saved in §4.2.
+crontab "$BACKUP_DIR/crontab_backup.txt"
+crontab -l | head   # operator confirms cron is back to pre-migration shape
+```
+
+### 10.7 Final cleanup
+
+```bash
+# Operator-reviewed glob — verify the matched paths look right BEFORE rm.
+ls -d "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/ 2>/dev/null
+# If the list is what you expect (workspace-tmp dirs from umh helper):
+rm -rf "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+
+# The wrapper logs themselves (regenerate_hooks_<TS>.log, snow_<TS>.log,
+# etc.) stay — they are the operator's record of the rollback decision.
+# Standard logrotate / retention policy applies.
+```
+
+### 10.8 SIGKILL / power-loss fallback (v2 R3)
+
+If a wrapper was killed by `SIGKILL`, the host lost power mid-migration,
+or the operator forcibly terminated the wrapper via `kill -9`, the EXIT
+/ INT / TERM trap in `umh_acquire_temp_workspace` did NOT fire — orphaned
+temp directories under `${ieasyhydroforecast_data_root_dir}/logs/*_tmp/`
+may contain real station codes from the in-flight CSV.
+
+**These directories are NOT operator-readable artifacts** (the wrappers
+log redacted counts, never real codes) — they exist only because the
+umh helper failed to clean up after itself.
+
+Recovery path:
+
+```bash
+# 1. Confirm no wrapper is currently running (otherwise you'll delete
+#    a live workspace).
+pgrep -af 'initialize_.*_history\.sh' || echo "no wrappers running"
+
+# 2. Inspect the orphan workspaces (read-only, do not transfer off the
+#    server).
+ls -la "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+
+# 3. After confirming no live workspace, hard-remove the orphans.
+rm -rf "${ieasyhydroforecast_data_root_dir}/logs/"*_tmp/
+```
+
+This recovery is also required after the round-3 cron-pause monitoring
+signal fires (rc=1 from `initialize_regenerate_hooks.sh`) — see §9.4
+for the cron-restore step; the workspace cleanup here covers the temp
+directory side of the SIGKILL contract documented in §7.6.
