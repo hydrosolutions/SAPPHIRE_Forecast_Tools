@@ -1537,8 +1537,9 @@ last export.
 ### 6.4 ML forecasts (TFT / TiDE / TSMixer)
 
 Source: laptop `sapphire-postprocessing-db`, table `forecasts`, filtered to
-`model_type IN ('TFT','TiDE','TSMixer')`. Target: deployment-server
-`forecasts` rows with the same three model_types. Default storage shape is
+`model_type::text IN ('TFT','TIDE','TSMIXER')` (PG enum LABELS; see the
+"Representation note" below). Target: deployment-server `forecasts` rows
+with the same three model_types. Default storage shape is
 `horizon_type='day'` per user-lock L6 — modern ML writes (operational pipeline
 post commit `1cb3495`) only emit `day` rows. Pre-cutoff vs full-import is
 decided by the deployment-side `forecasts` table state, filtered to the three
@@ -1593,6 +1594,29 @@ API spelling. Any source string outside the six known spellings raises
 The export CSV preserves the canonical API spelling (mixed case) — the
 mapping table above documents the historical mismatch so operators
 investigating older on-disk artifacts know what to expect.
+
+##### Representation note: PG enum LABEL vs API wire value (Finding 11)
+
+`model_type` has TWO representations and both must stay correct end-to-end.
+The Tajik live-deployment walkthrough hit a hard failure
+(`ERROR: invalid input value for enum modeltype: "TiDE"`) because the
+wrappers' raw SQL used the API wire spellings as enum literals. The fix
+splits the two boundaries explicitly:
+
+| Boundary | Spelling | Where used |
+|---|---|---|
+| PG enum LABELS | UPPERCASE: `TFT` / `TIDE` / `TSMIXER` | Raw SQL in `bin/export_ml_forecast_history.sh` and `bin/initialize_ml_forecast_history.sh`, compared via `model_type::text IN (...)` |
+| API wire values | MIXED-CASE: `TFT` / `TiDE` / `TSMixer` | Exported CSV `model_type` column AND JSON body POSTed by `migration_py.ml_forecast` to `/forecast/` |
+
+Authority: the `ModelType` enum in
+`sapphire/services/postprocessing/app/models.py:23-24` carries the
+inline comment `# TSMIXER(how it is stored in PostgreSQL), TSMixer(how
+it is passed in API)`. SQLAlchemy uses Python enum NAMES (uppercase) as
+the PG enum labels; `.value` is the API JSON form.
+
+If you write an ad-hoc acceptance SQL against the live `forecasts` table,
+ALWAYS use the uppercase labels with `::text` (see §6.4.6 below). Mixed-case
+literals will hard-fail the query.
 
 ##### WARNING: default horizon='day' vs `--preserve-legacy-ml-horizons`
 
@@ -1796,10 +1820,13 @@ on the deployment server:
 ```bash
 docker exec -i sapphire-postprocessing-db \
   psql -U postgres -d postprocessing_db -P pager=off <<SQL
+-- Finding 11 (Tajik live test): compare against PG enum LABELS
+-- (UPPERCASE) via ``::text``; mixed-case literals fail with
+-- ``invalid input value for enum modeltype: "TiDE"`` on real DBs.
 SELECT horizon_type, model_type, COUNT(*) AS rows,
        MIN(date) AS first_date, MAX(date) AS last_date
 FROM forecasts
-WHERE model_type IN ('TFT','TiDE','TSMixer')
+WHERE model_type::text IN ('TFT','TIDE','TSMIXER')
 GROUP BY horizon_type, model_type
 ORDER BY model_type, horizon_type;
 SQL

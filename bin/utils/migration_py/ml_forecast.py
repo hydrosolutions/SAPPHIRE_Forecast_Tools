@@ -2,19 +2,34 @@
 
 Called from ``bin/initialize_ml_forecast_history.sh`` as
 ``python3 -m migration_py.ml_forecast``. Reads a CSV exported from the
-laptop's ``sapphire-postprocessing-db`` (table ``forecasts``) filtered to
-ML model rows (``model_type IN ('TFT','TiDE','TSMixer')``) and POSTs the
-records to the postprocessing API ``/forecast/`` endpoint.
+laptop's ``sapphire-postprocessing-db`` (filtered upstream via
+``model_type::text IN ('TFT','TIDE','TSMIXER')`` — the PG enum LABELS;
+see Finding 11 below) and POSTs the records to the postprocessing API
+``/forecast/`` endpoint as MIXED-CASE ``TFT`` / ``TiDE`` / ``TSMixer``
+API wire values.
 
 Two architectural quirks documented in the P4b gi_draft:
 
-1. **Enum case sensitivity (Stage A §E live test):** the API ``ModelType``
-   enum values are MIXED-CASE — ``TFT``, ``TiDE``, ``TSMixer`` — not all
-   uppercase. The legacy on-disk directory naming uses uppercase
+1. **Enum case sensitivity (Stage A §E; Finding 11 — Tajik live test):**
+   ``model_type`` has TWO representations, and BOTH must remain correct
+   end-to-end:
+
+   - PG enum LABELS (raw SQL only, in the wrapper ``.sh`` scripts):
+     UPPERCASE ``TFT`` / ``TIDE`` / ``TSMIXER``. Real deployments fail with
+     ``invalid input value for enum modeltype: "TiDE"`` if mixed-case
+     literals are used in a WHERE clause.
+   - API wire values (the JSON payload assembled HERE and POSTed): the
+     MIXED-CASE form ``TFT`` / ``TiDE`` / ``TSMixer``, exactly as declared
+     in ``sapphire/services/postprocessing/app/models.py:23-24``
+     (see the inline ``# TSMIXER(how it is stored in PostgreSQL),
+     TSMixer(how it is passed in API)`` comment).
+
+   The legacy on-disk directory naming uses uppercase
    (``predictions/TFT/``, ``predictions/TIDE/``, ``predictions/TSMIXER/``).
-   This module exposes ``MODEL_DIR_TO_API`` to map between them. Any source
-   string outside the three known dir / API spellings is rejected with
-   ``UnknownMLModelTypeError``.
+   ``MODEL_DIR_TO_API`` / ``resolve_model_type`` map every accepted
+   spelling to the mixed-case API form (NEVER the uppercase PG label —
+   uppercase is for SQL only). Any source string outside the known dir /
+   API spellings is rejected with ``UnknownMLModelTypeError``.
 
 2. **Default horizon storage = ``day`` (user-lock L6):** modern ML CSV-derived
    writes go in as ``horizon_type='day'`` regardless of the caller's pentad /
@@ -70,10 +85,13 @@ logger = logging.getLogger("migration_py.ml_forecast")
 # Enum case mapping (Stage A §E live-test result)
 # ---------------------------------------------------------------------------
 
-# Maps a source spelling (whether the upstream uses the legacy on-disk
-# uppercase ``TIDE``/``TSMIXER`` dir convention, or the API mixed-case form)
-# to the canonical API enum value as defined in
-# ``sapphire/services/postprocessing/app/models.py::ModelType``.
+# Two model_type representations are in play (Finding 11 — Tajik live test):
+#   - PG enum LABELS (raw SQL only, used in the wrapper ``.sh`` scripts):
+#     UPPERCASE ``TFT`` / ``TIDE`` / ``TSMIXER``.
+#   - API wire values (JSON POST payload built here): MIXED-CASE
+#     ``TFT`` / ``TiDE`` / ``TSMixer``.
+# This map normalizes every accepted source spelling to the API wire form.
+# Authority: ``sapphire/services/postprocessing/app/models.py:23-24``.
 MODEL_DIR_TO_API: dict[str, str] = {
     "TFT": "TFT",
     "TIDE": "TiDE",

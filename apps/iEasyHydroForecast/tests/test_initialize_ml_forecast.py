@@ -930,3 +930,127 @@ def test_shipped_TFT_fixture_round_trips(tmp_path):
     for rec in records:
         assert rec["horizon_type"] == "day"
         assert rec["model_type"] == "TFT"
+
+
+# ===========================================================================
+# 9. Finding 11 (Tajik live test): PG enum-label SQL regression guard
+# ===========================================================================
+
+
+def _capture_query_target_state_sql(tmp_path):
+    """Behaviorally exercise the wrapper's ``query_target_state`` shell
+    function with a fake ``docker`` shell function that records the
+    ``-c`` argument (the SQL the wrapper would send to psql).
+
+    Approach:
+      1. Copy the wrapper to ``tmp_path`` with its trailing ``main "$@"``
+         line removed — sourcing the file then defines all functions
+         (including ``query_target_state``) without invoking ``main``.
+      2. Spawn a bash subshell that pre-defines ``docker`` as a function
+         capturing its ``-c`` argument, then sources the stripped wrapper
+         and calls ``query_target_state`` directly.
+
+    Returns the SQL string the wrapper would have sent (or ``""`` if the
+    helper failed to capture).
+    """
+    capture_file = tmp_path / "captured.sql"
+    stripped_wrapper = tmp_path / "init_nomain.sh"
+
+    # Strip the final ``main "$@"`` line so sourcing only defines functions.
+    src = _WRAPPER.read_text(encoding="utf-8")
+    src_lines = src.rstrip("\n").splitlines()
+    while src_lines and not src_lines[-1].strip().startswith("main "):
+        src_lines.pop()
+    if src_lines and src_lines[-1].strip().startswith("main "):
+        src_lines.pop()
+    stripped_wrapper.write_text("\n".join(src_lines) + "\n", encoding="utf-8")
+
+    driver = f"""
+docker() {{
+    local prev=""
+    local got_sql=""
+    for arg in "$@"; do
+        if [[ "$prev" == "-c" ]]; then
+            got_sql="$arg"
+        fi
+        prev="$arg"
+    done
+    if [[ -n "$got_sql" ]]; then
+        printf '%s' "$got_sql" > {capture_file!s}
+    fi
+    # Emit a fake "count<TAB>min_date" line so the caller's parsing succeeds.
+    printf '0\\t\\n'
+    return 0
+}}
+# Set $0 to the ORIGINAL wrapper path so the wrapper's
+# ``source "$(dirname "$0")/utils/update_migration_helpers.sh"`` resolves
+# to the real helpers library.
+source "{stripped_wrapper!s}"
+query_target_state
+"""
+    result = subprocess.run(
+        ["bash", "-c", driver, str(_WRAPPER)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    captured = capture_file.read_text(encoding="utf-8") if capture_file.is_file() else ""
+    return result, captured
+
+
+def test_query_target_state_sql_uses_uppercase_pg_enum_labels(tmp_path):
+    """Finding 11 regression: ``query_target_state`` (the MODE-detection
+    helper in ``bin/initialize_ml_forecast_history.sh``) must send SQL
+    that compares ``model_type`` against the PG enum LABELS in UPPERCASE
+    (``TFT``/``TIDE``/``TSMIXER``) via ``::text`` — never the mixed-case
+    API wire values.
+
+    Reverting to the old form
+    (``model_type IN ('TFT','TiDE','TSMixer')``) MUST make this test FAIL.
+
+    Authority for the two-representation rule:
+    ``sapphire/services/postprocessing/app/models.py:23-24``.
+    """
+    result, captured = _capture_query_target_state_sql(tmp_path)
+    assert result.returncode == 0, (
+        f"driver exited non-zero: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert captured, (
+        "fake docker did not capture any SQL from query_target_state\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+    # Required: uppercase PG enum labels.
+    assert "'TFT'" in captured, f"missing 'TFT' literal in SQL: {captured!r}"
+    assert "'TIDE'" in captured, f"missing 'TIDE' literal in SQL: {captured!r}"
+    assert "'TSMIXER'" in captured, f"missing 'TSMIXER' literal in SQL: {captured!r}"
+    # Required: ``::text`` cast.
+    assert "model_type::text" in captured, f"missing ``model_type::text`` cast in SQL: {captured!r}"
+    # Forbidden: mixed-case API spellings as SQL literals.
+    assert "'TiDE'" not in captured, f"mixed-case 'TiDE' SQL literal slipped back in: {captured!r}"
+    assert "'TSMixer'" not in captured, (
+        f"mixed-case 'TSMixer' SQL literal slipped back in: {captured!r}"
+    )
+
+
+def test_verify_sql_tip_uses_uppercase_pg_enum_labels():
+    """The post-completion verify SQL the wrapper PRINTS to the operator
+    must also use PG enum LABELS (uppercase + ``::text``) so the operator
+    can paste the snippet straight into psql against the live DB without
+    hitting ``invalid input value for enum modeltype: "TiDE"``.
+
+    This is a source-text check because the echo lines are unconditional
+    output after the docker-run step — exercising the full path would
+    require a stack of stubs (docker, helpers, env file, manifest)
+    disproportionate to the contract under test."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "model_type::text IN ('TFT','TIDE','TSMIXER')" in src, (
+        "post-run verify SQL tip must use uppercase PG enum labels with "
+        "``::text`` cast (Finding 11)"
+    )
+    # The mixed-case literals must NOT appear in the verify tip.
+    assert "'TiDE'" not in src or src.count("'TiDE'") == 0, (
+        "mixed-case 'TiDE' literal must not appear in wrapper SQL"
+    )
+    assert "'TSMixer'" not in src, "mixed-case 'TSMixer' literal must not appear in wrapper SQL"
