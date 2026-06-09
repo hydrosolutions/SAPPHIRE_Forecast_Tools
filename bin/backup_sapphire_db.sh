@@ -18,11 +18,13 @@
 #   bash bin/backup_sapphire_db.sh -d /mnt/backups/sapphire
 #   bash bin/backup_sapphire_db.sh --retention-days 60
 #   bash bin/backup_sapphire_db.sh --dry-run
+#   bash bin/backup_sapphire_db.sh --env-file /data/<data>/config/.env_develop_kghm
 #
 # Prerequisites:
 #   - Docker daemon running with SAPPHIRE DB containers up
 #   - sapphire/.env populated with POSTGRES_USER, POSTGRES_PASSWORD and the
-#     four DB names (PREPROCESSING_DB, POSTPROCESSING_DB, USER_DB, AUTH_DB)
+#     four DB names (PREPROCESSING_DB, POSTPROCESSING_DB, USER_DB, AUTH_DB),
+#     or pass a custom path via --env-file to override the default sapphire/.env
 #   - Run from repository root (parent of sapphire/)
 #   - $BACKUP_DIR must exist and be writable by the invoking user
 # =============================================================================
@@ -118,6 +120,9 @@ Dump the four SAPPHIRE Postgres databases to timestamped .dump files.
 Flags:
   -d, --backup-dir PATH      Directory to write dumps to
                              (default: /var/backups/sapphire)
+  -e, --env-file PATH        Path to the env file with POSTGRES_USER,
+                             POSTGRES_PASSWORD and the four DB names
+                             (default: sapphire/.env)
   -r, --retention-days N     Delete .dump files older than N days
                              (default: 30; pass 0 to keep all)
       --dry-run              Log actions without running pg_dump or deleting
@@ -131,6 +136,7 @@ Examples:
   bash bin/backup_sapphire_db.sh
   bash bin/backup_sapphire_db.sh -d /mnt/backups/sapphire -r 60
   bash bin/backup_sapphire_db.sh --dry-run
+  bash bin/backup_sapphire_db.sh --env-file /data/<data>/config/.env_develop_kghm
 USAGE
 }
 
@@ -323,6 +329,14 @@ main() {
                     exit 1
                 fi
                 RETENTION_DAYS="$2"
+                shift 2
+                ;;
+            -e|--env-file)
+                if [ $# -lt 2 ]; then
+                    log ERROR "Flag $1 requires a value."
+                    exit 1
+                fi
+                ENV_FILE="$2"
                 shift 2
                 ;;
             --dry-run)

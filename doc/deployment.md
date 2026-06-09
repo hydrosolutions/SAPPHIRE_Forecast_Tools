@@ -853,6 +853,12 @@ Add the following to the crontab file:
 # Log cleanup: delete logs older than 7 days (runs daily at 02:00 UTC)
 0 2 * * * find /home/ubuntu/logs -name "sapphire_*.log" -mtime +7 -delete
 #
+# Daily database backup at 01:00 UTC: pg_dump all four SAPPHIRE DBs and prune
+# dumps older than the retention window (default 30 days; pass -r N to change).
+# The backup dir (default /var/backups/sapphire) must exist and be writable by
+# the cron user. See doc/operations/backup_restore.md for setup and restore drills.
+0 1 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/backup_sapphire_db.sh --env-file /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_backup_$(date +\%Y\%m\%d).log 2>&1
+#
 # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
 0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_gateway_$(date +\%Y\%m\%d).log 2>&1
 #
