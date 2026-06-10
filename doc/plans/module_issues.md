@@ -61,6 +61,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-014** | Add deployment initialization workflow | infra | **High** | Review | [`review_gi_draft_infra_new_deployment_initialization.md`](issues/review_gi_draft_infra_new_deployment_initialization.md) | FD-001 (partial) |
 | **P-004** | Fix silent timeout failure in `execute_with_retries` — timed-out tasks marked DONE | pipeline | **High** | Review | [`high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md`](issues/high_prio_gi_draft_pipeline_disable_unfulfilled_deps_check.md) |
 | **MIG-002** | Runbook §10 rollback uses wrong dump filename glob — silent data destruction on operator rollback | migration-toolkit | **High** | Draft | [`high_prio_gi_draft_runbook_rollback_dump_glob_bug.md`](issues/high_prio_gi_draft_runbook_rollback_dump_glob_bug.md) | Discovered during Tajik runbook walkthrough 2026-06-08; data-loss class. Reviewer round-1 APPROVE WITH REVISIONS applied. |
+| **MIG-005** | LT config raw .split(',') doesn't strip whitespace — operator env-var edits with spaces cause membership check failures | long_term_forecasting | Low | Draft | [`low_prio_gi_draft_lt_config_strip_on_split.md`](issues/low_prio_gi_draft_lt_config_strip_on_split.md) | Surfaced 2026-06-10 during dev_local_backfill.sh v3.x reviewer round-5. Companion to bin/ workaround. |
 
 ---
 
