@@ -1,6 +1,6 @@
 # SAPPHIRE Forecast Tools - First Deployment Checklist
 
-This checklist covers one-time setup steps required when deploying SAPPHIRE Forecast Tools to a new server. These steps install permanent services (such as the SSH tunnel systemd unit) and prepare the server for routine forecast operations. Run this checklist once per new deployment; for ongoing updates use `doc/prod/update_deployment_checklist.md`. For quarterly OS-level maintenance see `doc/prod/server_os_maintenance.md`.
+This checklist covers one-time setup steps required when deploying SAPPHIRE Forecast Tools to a new server. These steps install permanent services (such as the SSH tunnel systemd unit) and prepare the server for routine forecast operations. Run this checklist once per new deployment; for ongoing updates use `doc/prod/update_deployment_checklist.md`.
 
 > **First deploy vs. update:** "Stop services" and "Backup Critical Files" sections do not apply on a first deploy — there are no prior services to stop and no prior state to preserve. They are covered in `doc/prod/update_deployment_checklist.md`.
 >
@@ -906,8 +906,7 @@ Run each cron command once to confirm the wrapper script, env file, and microser
 The microservices stack, Luigi daemon, dashboards, and cron schedule are now running. The deployment is on a production cadence.
 
 1. **Routine updates** — for subsequent image-tag bumps, `.env` diffs, microservices restarts, and cron schedule changes, follow `doc/prod/update_deployment_checklist.md`. That checklist also covers stopping services, backups, alembic migrations, and rollback for an existing deployment.
-2. **OS maintenance** — for quarterly apt updates, kernel patches, reboots, and Docker pruning, follow `doc/prod/server_os_maintenance.md`. After any reboot, re-run the smoke probes in section 11 above to confirm SAPPHIRE recovered cleanly.
 
 ---
 
-*This is the first-deploy checklist. For routine updates see `doc/prod/update_deployment_checklist.md`; for OS maintenance see `doc/prod/server_os_maintenance.md`.*
+*This is the first-deploy checklist. For routine updates see `doc/prod/update_deployment_checklist.md`.*

@@ -4,7 +4,6 @@ This checklist guides you through a **routine update** of an existing SAPPHIRE F
 
 > **First-time deployment?** Use `doc/prod/first_deploy_checklist.md` instead. That doc covers the one-time steps (SSH tunnel setup, initial schema preparation, `RunInitializeWorkflow`, historical backfill) that are *not* part of a routine update.
 >
-> **Server OS maintenance?** Use `doc/prod/server_os_maintenance.md` for quarterly apt upgrades, reboots, Docker pruning, and post-reboot SAPPHIRE verification.
 
 ## Operator setup — set these once per session
 
@@ -1320,4 +1319,3 @@ docker system df
 ---
 
 *Last updated: 2026-06-04*
-*Section 7 split into doc/prod/server_os_maintenance.md*
