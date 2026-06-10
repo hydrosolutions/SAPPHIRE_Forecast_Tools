@@ -364,3 +364,91 @@ def test_export_dry_run_sql_model_filter_uses_uppercase_label(tmp_path):
         f"model-filter clause must use uppercase PG label via ::text cast, got: {captured!r}"
     )
     assert "'TiDE'" not in captured, f"mixed-case 'TiDE' literal must not appear; got: {captured!r}"
+
+
+# ---------------------------------------------------------------------------
+# MIG-003: horizon_type PG enum-label SQL regression guard
+# ---------------------------------------------------------------------------
+
+
+def test_export_dry_run_sql_horizon_type_uses_uppercase_pg_enum_label(tmp_path):
+    """MIG-003 regression: the default-mode dry-run COUNT query must filter
+    ``horizon_type`` against the PG enum LABEL in UPPERCASE (``DAY``) via
+    a ``::text`` cast, NOT the API wire value ``'day'`` that the wrapper
+    used to ship.
+
+    Reverting the SQL to the old form (``horizon_type = 'day'``) must
+    make this test FAIL with
+    ``ERROR: invalid input value for enum horizontype: "day"`` on
+    real deployments.
+
+    Authority for the two-representation rule:
+    ``sapphire/services/postprocessing/app/models.py:9-17`` — the
+    ``HorizonType`` Python enum where NAMES (uppercase ``DAY``/``PENTAD``/
+    ``DECADE``/``MONTH``/``QUARTER``/``SEASON``) become the PG enum
+    labels, and ``.value`` strings (lowercase ``'day'``/...) are the API
+    JSON wire form.
+    """
+    import re
+
+    result, captured = _capture_dry_run_sql(tmp_path)
+    assert result.returncode == 0, (
+        f"expected dry-run to exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert captured, "no SQL captured"
+
+    # Required: uppercase PG enum label + ``::text`` cast (the chosen fix
+    # form per MIG-003, mirrors Finding 11 / model_type pattern).
+    assert "horizon_type::text" in captured, (
+        f"missing ``horizon_type::text`` cast in SQL: {captured!r}"
+    )
+    assert "'DAY'" in captured, f"missing uppercase 'DAY' literal in SQL: {captured!r}"
+
+    # Forbidden: bare lowercase ``horizon_type`` equality / IN with
+    # lowercase enum-label literal would hard-fail on real deployments.
+    # Use a regex anchored to the column to avoid false positives from
+    # column names like ``horizon_in_year`` or fragments of words.
+    # Case-sensitive: we explicitly forbid lowercase, allow uppercase.
+    forbidden = re.compile(r"horizon_type\s*=\s*'day'")
+    assert not forbidden.search(captured), (
+        f"lowercase ``horizon_type = 'day'`` slipped back into SQL: {captured!r}"
+    )
+
+
+def test_export_dry_run_sql_horizon_type_legacy_uses_uppercase_pg_enum_labels(tmp_path):
+    """MIG-003 regression: with ``--include-legacy-horizons`` the IN-list
+    must contain UPPERCASE PG enum labels (``'DAY'``/``'PENTAD'``/
+    ``'DECADE'``) via a ``::text`` cast.
+
+    Reverting the SQL to the old form
+    (``horizon_type IN ('day','pentad','decade')``) must make this
+    test FAIL on real deployments.
+    """
+    import re
+
+    result, captured = _capture_dry_run_sql(tmp_path, "--include-legacy-horizons")
+    assert result.returncode == 0, (
+        f"expected dry-run to exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert captured, "no SQL captured"
+
+    # Required: uppercase PG enum labels are present.
+    assert "'DAY'" in captured, f"missing 'DAY' literal in SQL: {captured!r}"
+    assert "'PENTAD'" in captured, f"missing 'PENTAD' literal in SQL: {captured!r}"
+    assert "'DECADE'" in captured, f"missing 'DECADE' literal in SQL: {captured!r}"
+    assert "horizon_type::text" in captured, (
+        f"missing ``horizon_type::text`` cast in SQL: {captured!r}"
+    )
+
+    # Forbidden: lowercase PG enum-label literals inside an IN-list
+    # against ``horizon_type``. Scope the regex to the WHERE-clause
+    # column to avoid matching e.g. ``horizon_in_year``. Case-sensitive:
+    # we forbid lowercase, allow uppercase (the fix form).
+    forbidden = re.compile(
+        r"horizon_type[^,)]*IN\s*\([^)]*'(day|pentad|decade)'",
+    )
+    assert not forbidden.search(captured), (
+        f"lowercase horizon_type IN-list literal slipped back into SQL: {captured!r}"
+    )
