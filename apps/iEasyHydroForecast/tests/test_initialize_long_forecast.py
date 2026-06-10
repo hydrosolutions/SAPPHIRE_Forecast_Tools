@@ -785,24 +785,33 @@ def test_main_dry_run_reports_missing_hindcast(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
-# 19a. SQL enum case in MODE detection uses lowercase 'month'
+# 19a. SQL enum case in MODE detection uses ::text cast + UPPERCASE 'MONTH'
 # ---------------------------------------------------------------------------
 
 
-def test_mode_detection_query_uses_lowercase_month_enum():
-    """The query_target_state SQL must use horizon_type='month' (lowercase).
+def test_mode_detection_query_uses_uppercase_month_pg_enum_label():
+    """MIG-003 regression: query_target_state SQL must use
+    ``horizon_type::text='MONTH'`` (PG enum LABEL, UPPERCASE).
 
-    The DB/API enum stores the value as lowercase 'month'. If the query
-    used 'MONTH', it would return 0 rows on a populated table, causing
-    the wrapper to enter full-import mode and re-POST existing records.
+    Authority: ``sapphire/services/postprocessing/app/models.py:9-17``
+    (``HorizonType`` Python enum). SQLAlchemy stores the Python NAME
+    (``MONTH``) as the PG enum label; ``.value`` (``'month'``) is the
+    API wire form only. Comparing against lowercase ``'month'`` literals
+    hard-fails with ``invalid input value for enum horizontype: "month"``
+    on real deployments.
+
+    Reverting the SQL to the old form
+    (``horizon_type='month'``) must make this test FAIL.
     """
     src = _WRAPPER.read_text(encoding="utf-8")
-    assert "horizon_type='month'" in src, (
-        "query_target_state must use horizon_type='month' (lowercase); "
-        "found uppercase or missing reference in the script"
+    assert "horizon_type::text='MONTH'" in src, (
+        "query_target_state must use horizon_type::text='MONTH' "
+        "(PG enum LABEL uppercase via ::text cast)"
     )
-    assert "horizon_type='MONTH'" not in src, (
-        "uppercase 'MONTH' found in script; must be lowercase 'month'"
+    # The bare lowercase form was the original bug — must not reappear in
+    # executable SQL (allowed in comments/docstrings).
+    assert "horizon_type='month'" not in src, (
+        "lowercase 'horizon_type=\\'month\\'' found; must be horizon_type::text='MONTH' per MIG-003"
     )
 
 
@@ -1040,14 +1049,20 @@ def test_wrapper_per_mode_query_uses_horizon_value_filter():
     """Round-3 review feedback: --mode runs must use a per-mode psql query
     scoped to the selected mode's horizon_value, not the global query.
     String-level regression guard on the wrapper source confirms the
-    per-mode query exists and references both horizon_type='month' AND
-    horizon_value=${MODE_HORIZON_VALUE}."""
+    per-mode query exists and references both
+    ``horizon_type::text='MONTH'`` (MIG-003: PG enum LABEL UPPERCASE via
+    ``::text`` cast) AND ``horizon_value=${MODE_HORIZON_VALUE}``."""
     src = _WRAPPER.read_text(encoding="utf-8")
     # The per-mode branch must guard on MODE_FILTER being set...
     assert 'if [[ -n "$MODE_FILTER" ]]' in src
     # ...and execute a scoped query that filters on the mode's horizon_value.
     assert "MODE_HORIZON_VALUE" in src
     assert "horizon_value=${MODE_HORIZON_VALUE}" in src
+    # MIG-003: the per-mode query MUST use the PG enum LABEL via ::text cast.
+    assert "horizon_type::text='MONTH'" in src, (
+        "per-mode query must filter horizon_type::text='MONTH' (PG enum "
+        "LABEL uppercase); lowercase literals hard-fail on real deployments"
+    )
     # The per-mode branch must parse horizon_value from the mode's config JSON.
     assert "operational_month_lead_time" in src
 
@@ -1108,3 +1123,69 @@ def test_per_mode_parser_documents_sync_with_python_helper():
     src = _WRAPPER.read_text(encoding="utf-8")
     assert "migration_py.long_forecast" in src
     assert "_load_mode_config" in src
+
+
+# ---------------------------------------------------------------------------
+# MIG-003: horizon_type PG enum-label SQL regression guard (behavioral)
+# ---------------------------------------------------------------------------
+
+
+def test_wrapper_psql_sql_uses_uppercase_horizon_type_pg_enum_labels():
+    """MIG-003 behavioral regression: every ``psql -c <SQL>`` call in the
+    wrapper must reference ``horizon_type`` only via the PG enum LABEL
+    UPPERCASE through a ``::text`` cast.
+
+    The wrapper invokes psql twice — once in ``query_target_state`` for
+    the global-mode MODE detection and once in the per-mode branch
+    (``--mode <name>``). Both queries hit the live
+    ``sapphire-postprocessing-db.long_forecasts`` table whose
+    ``horizon_type`` column is a PG enum with UPPERCASE labels
+    (``DAY``/``PENTAD``/``DECADE``/``MONTH``/...).
+
+    This test extracts every ``-c "..."`` string passed to ``psql`` from
+    the wrapper source and asserts the WHERE clause uses
+    ``horizon_type::text='MONTH'``. Reverting either SQL site to the old
+    lowercase form (``horizon_type='month'``) makes this test FAIL — and
+    the live query hard-fails with
+    ``ERROR: invalid input value for enum horizontype: "month"``.
+
+    Authority for the two-representation rule:
+    ``sapphire/services/postprocessing/app/models.py:9-17`` — the
+    ``HorizonType`` Python enum where NAMES (uppercase) become the PG
+    enum labels and ``.value`` strings (lowercase) are the API JSON form.
+    """
+    src = _WRAPPER.read_text(encoding="utf-8")
+
+    # Extract every psql -c "<SQL>" invocation. The wrapper formats them
+    # across multiple lines with backslash continuations, so allow any
+    # whitespace between ``-c`` and the opening quote.
+    sql_blocks = re.findall(
+        r'\bpsql\b[\s\S]*?-c\s+"([^"]+)"',
+        src,
+    )
+    assert sql_blocks, (
+        'expected at least one ``psql -c "..."`` invocation in the '
+        "wrapper source; regex extraction returned no matches — has the "
+        "wrapper layout changed?"
+    )
+
+    horizon_blocks = [s for s in sql_blocks if "horizon_type" in s]
+    assert horizon_blocks, (
+        "expected at least one psql SQL block to reference "
+        f"horizon_type; regex returned only: {sql_blocks!r}"
+    )
+
+    for block in horizon_blocks:
+        # Required: PG enum LABEL UPPERCASE via ``::text`` cast.
+        assert "horizon_type::text='MONTH'" in block, (
+            f"psql SQL block missing horizon_type::text='MONTH' "
+            f"(PG enum LABEL uppercase via ::text cast): {block!r}"
+        )
+        # Forbidden: bare lowercase ``horizon_type='month'`` literal in
+        # an equality predicate (anchored to the column, so column names
+        # like ``horizon_in_year`` are not matched). Case-sensitive:
+        # forbid lowercase, allow uppercase (the fix form).
+        forbidden = re.compile(r"horizon_type\s*=\s*'month'")
+        assert not forbidden.search(block), (
+            f"lowercase ``horizon_type = 'month'`` predicate slipped back into psql SQL: {block!r}"
+        )

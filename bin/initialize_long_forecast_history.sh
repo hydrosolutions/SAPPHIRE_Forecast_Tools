@@ -317,7 +317,7 @@ parse_args() {
 query_target_state() {
     docker exec sapphire-postprocessing-db psql \
         -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type='month';"
+        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type::text='MONTH';"
 }
 
 # ---------------------------------------------------------------------------
@@ -466,7 +466,7 @@ PYEOF
             local query_out
             if query_out="$(docker exec sapphire-postprocessing-db psql \
                 -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-                -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type='month' AND horizon_value=${MODE_HORIZON_VALUE};" 2>&1)"; then
+                -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type::text='MONTH' AND horizon_value=${MODE_HORIZON_VALUE};" 2>&1)"; then
                 TARGET_COUNT="${query_out%%$'\t'*}"
                 TARGET_MIN_DATE="${query_out#*$'\t'}"
                 TARGET_COUNT="${TARGET_COUNT//[$'\r\n ']/}"
