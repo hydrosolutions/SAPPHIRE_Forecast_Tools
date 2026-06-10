@@ -137,3 +137,551 @@ class TestSetForecastCardsVisibility:
 
         # Should complete without AttributeError
         pm.set_forecast_cards_visibility(visible=False, is_month=False)
+
+
+# ---------------------------------------------------------------------------
+# TestGetPredictorsWarning — dynamic year column, no hardcoded "2026"
+# ---------------------------------------------------------------------------
+
+import datetime
+import numpy as np
+import pandas as pd
+
+
+class _FixedDateTimeClass:
+    """Stand-in for the datetime.datetime class, frozen at 2030-06-15."""
+
+    @staticmethod
+    def now():
+        # Construct the return value via the real datetime.date to avoid
+        # any circular reference with the monkeypatched attribute.
+        return _FixedDateTimeClass._FIXED_DT
+
+    _FIXED_DT = datetime.datetime(2030, 6, 15, 12, 0, 0)
+
+
+class _FakeDtModule:
+    """Minimal stand-in for the ``datetime`` module as used in widgets.py.
+
+    widgets.py does ``import datetime as dt`` then calls
+    ``dt.datetime.now().date()``.  Replacing ``widgets.dt`` with this object
+    keeps the real ``datetime`` module untouched.
+    """
+
+    datetime = _FixedDateTimeClass
+
+
+def _fake_station(label="15013 - Test"):
+    return types.SimpleNamespace(value=label)
+
+
+def _hydrograph_df(station_label, date_val, year_col, discharge_val):
+    """Build a minimal hydrograph_day_all DataFrame."""
+    return pd.DataFrame({
+        "station_labels": [station_label],
+        "date": [pd.to_datetime(date_val)],
+        year_col: [discharge_val],
+    })
+
+
+class TestGetPredictorsWarning:
+    """get_predictors_warning uses the current year dynamically (no hardcoded 2026)."""
+
+    def _patch_date(self, monkeypatch):
+        # Replace the entire ``dt`` name in widgets so dt.datetime.now()
+        # returns 2030-06-15 without mutating the real datetime module.
+        monkeypatch.setattr(widgets, "dt", _FakeDtModule)
+
+    # ------------------------------------------------------------------
+    # Regression: current-year column present and has a valid value → None
+    # ------------------------------------------------------------------
+    def test_current_year_value_present_returns_none(self, monkeypatch):
+        """REGRESSION: with year_col='2030' having a value, no warning is issued.
+
+        Before the fix this raises KeyError because it tries to read column '2026'.
+        After the fix it reads '2030' and returns None.
+        """
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2030",
+            discharge_val=123.4,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is None, (
+            "Expected no warning when today's discharge is present"
+        )
+
+    # ------------------------------------------------------------------
+    # Current-year value is NaN → alert returned
+    # ------------------------------------------------------------------
+    def test_current_year_value_nan_returns_alert(self, monkeypatch):
+        """NaN discharge for today in the correct year column → alert pane."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2030",
+            discharge_val=np.nan,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when today's discharge is NaN"
+        )
+
+    # ------------------------------------------------------------------
+    # No row for today → alert returned
+    # ------------------------------------------------------------------
+    def test_no_row_for_today_returns_alert(self, monkeypatch):
+        """No matching row for today's date → alert pane."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-14",  # yesterday, not today
+            year_col="2030",
+            discharge_val=99.0,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when there is no row for today"
+        )
+
+    # ------------------------------------------------------------------
+    # year_col entirely absent from DataFrame → alert, no KeyError
+    # ------------------------------------------------------------------
+    def test_year_col_absent_returns_alert_not_keyerror(self, monkeypatch):
+        """Missing year column (e.g. data not yet updated) → alert, not KeyError."""
+        self._patch_date(monkeypatch)
+        station = _fake_station()
+        # Build a row for today but with a *different* year column
+        df = _hydrograph_df(
+            station_label=station.value,
+            date_val="2030-06-15",
+            year_col="2029",  # '2030' column is absent
+            discharge_val=50.0,
+        )
+        data = {"hydrograph_day_all": df}
+        result = widgets.get_predictors_warning(station, data)
+        assert result is not None, (
+            "Expected an alert pane when the year column is absent"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGetForecastWarning — missing-model detection across all dates
+# ---------------------------------------------------------------------------
+
+
+def _make_forecasts_all(rows):
+    """Build a forecasts_all DataFrame from a list of dicts."""
+    return pd.DataFrame(rows, columns=["station_labels", "date", "model_short",
+                                       "forecasted_discharge"])
+
+
+class TestGetForecastWarning:
+    """get_forecast_warning warns when expected models are absent for the date."""
+
+    TARGET_DATE = pd.Timestamp("2026-05-31")
+    EARLIER_DATE = pd.Timestamp("2026-05-26")
+    STATION_LABEL = "15013 - Test"
+
+    def _station(self):
+        return types.SimpleNamespace(value=self.STATION_LABEL)
+
+    # ------------------------------------------------------------------
+    # Regression #1 (MUST FAIL before fix):
+    # LR present on target date; EM+TFT only on an earlier date → warns
+    # ------------------------------------------------------------------
+    def test_regression_absent_models_trigger_warning(self):
+        """REGRESSION: models absent on the target date (rows only on earlier dates)
+        must be flagged as missing.
+
+        Old code returns None here because there are no NaN rows on target date.
+        New code computes expected={LR,EM,TFT} from all station rows, finds only
+        LR present on target date, and returns an alert listing EM and TFT.
+        """
+        df = _make_forecasts_all([
+            # LR present on target date with a valid value
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            # EM and TFT only on an earlier date → they are part of expected set
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "TFT",
+                "forecasted_discharge": 60.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected a warning when models (EM, TFT) are absent on the target date"
+        )
+        alert_text = result.object
+        assert "EM" in alert_text, f"Alert should mention EM; got: {alert_text}"
+        assert "TFT" in alert_text, f"Alert should mention TFT; got: {alert_text}"
+
+    # ------------------------------------------------------------------
+    # Present-but-NaN: row exists on target date but discharge is NaN → flagged
+    # ------------------------------------------------------------------
+    def test_present_but_nan_is_flagged(self):
+        """A model row with NaN forecasted_discharge on target date is missing."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": np.nan,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected a warning when a model has NaN forecasted_discharge"
+        )
+        assert "EM" in result.object
+
+    # ------------------------------------------------------------------
+    # All expected models present with valid values → no warning (None)
+    # ------------------------------------------------------------------
+    def test_all_models_present_returns_none(self):
+        """No warning when every expected model has a value on the target date."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is None, (
+            "Expected no warning when all models have values on the target date"
+        )
+
+    # ------------------------------------------------------------------
+    # LR-only station: expected == {LR}, LR present → no false positive
+    # ------------------------------------------------------------------
+    def test_lr_only_station_no_false_positive(self):
+        """A station with only LR in its history and LR present → no warning."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 30.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is None, (
+            "LR-only station with LR present must not trigger a warning"
+        )
+
+    # ------------------------------------------------------------------
+    # Station has no rows at all → alert
+    # ------------------------------------------------------------------
+    def test_station_not_in_data_returns_alert(self):
+        """Station label not present in forecasts_all → alert, no exception."""
+        df = _make_forecasts_all([
+            {
+                "station_labels": "99999 - Other",
+                "date": self.TARGET_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 10.0,
+            },
+        ])
+        station = self._station()  # "15013 - Test" is absent
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when the station has no rows in forecasts_all"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all is empty → alert, no exception
+    # ------------------------------------------------------------------
+    def test_empty_forecasts_all_returns_alert(self):
+        """Empty forecasts_all DataFrame → alert pane, no KeyError."""
+        df = _make_forecasts_all([])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert pane when forecasts_all is empty"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all missing station_labels column → alert, no exception
+    # ------------------------------------------------------------------
+    def test_missing_station_labels_column_returns_alert(self):
+        """forecasts_all without 'station_labels' column → alert, no exception."""
+        df = pd.DataFrame({"date": [self.TARGET_DATE], "model_short": ["LR"],
+                           "forecasted_discharge": [1.0]})
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when station_labels column is absent"
+        )
+
+    # ------------------------------------------------------------------
+    # forecasts_all is None → alert, no exception
+    # ------------------------------------------------------------------
+    def test_none_forecasts_all_returns_alert(self):
+        """forecasts_all key is None → alert pane, no AttributeError."""
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": None},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when forecasts_all is None"
+        )
+
+    # ------------------------------------------------------------------
+    # All models missing on target date → generic message (no model list)
+    # ------------------------------------------------------------------
+    def test_all_models_missing_uses_generic_message(self):
+        """When NO model has a forecast for the target date, the alert must use
+        the generic 'No forecast data available for {station} on {date}' message
+        and must NOT enumerate the individual model names.
+
+        The station has rows for LR, EM, TFT on an earlier date (so they are
+        part of expected_models) but has NO rows at all on TARGET_DATE.
+        present_models will be empty, so old code would list all three models;
+        new code must fall back to the generic message.
+        """
+        df = _make_forecasts_all([
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "LR",
+                "forecasted_discharge": 42.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "EM",
+                "forecasted_discharge": 55.0,
+            },
+            {
+                "station_labels": self.STATION_LABEL,
+                "date": self.EARLIER_DATE,
+                "model_short": "TFT",
+                "forecasted_discharge": 60.0,
+            },
+        ])
+        station = self._station()
+        result = widgets.get_forecast_warning(station, {"forecasts_all": df},
+                                              self.TARGET_DATE)
+        assert result is not None, (
+            "Expected an alert when no model has a forecast for the target date"
+        )
+        alert_text = result.object
+        # Generic message must be present
+        assert self.STATION_LABEL in alert_text, (
+            f"Alert should mention the station label; got: {alert_text}"
+        )
+        # Must NOT list individual model names
+        assert "LR" not in alert_text, (
+            f"Alert must not list model LR when all models are absent; got: {alert_text}"
+        )
+        assert "EM" not in alert_text, (
+            f"Alert must not list model EM when all models are absent; got: {alert_text}"
+        )
+        assert "TFT" not in alert_text, (
+            f"Alert must not list model TFT when all models are absent; got: {alert_text}"
+        )
+        assert "models" not in alert_text, (
+            f"Alert must not contain 'models' when all models are absent; got: {alert_text}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGetPeriodWarning — deterministic via explicit today= argument
+# ---------------------------------------------------------------------------
+
+
+class TestGetPeriodWarning:
+    """get_period_warning warns when displayed forecast target period != current period."""
+
+    # ------------------------------------------------------------------
+    # pentad: forecast_period=31, today=2026-06-08 → current pentad is 32
+    # ------------------------------------------------------------------
+    def test_pentad_outdated_returns_alert(self):
+        """Pentad-31 forecast shown on a day that is in pentad-32 → non-None alert."""
+        today = datetime.date(2026, 6, 8)
+        # Verify via the real tl helper so the test stays correct if the
+        # formula ever changes.
+        expected_current = int(widgets.tl.get_pentad_in_year(today))
+        assert expected_current == 32, (
+            f"Test pre-condition: expected pentad 32 for 2026-06-08, got {expected_current}"
+        )
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=31,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed pentad (31) != current pentad (32)"
+        )
+        alert_text = result.object
+        assert "31" in alert_text, f"Alert should mention forecast period 31; got: {alert_text}"
+        assert "32" in alert_text, f"Alert should mention current period 32; got: {alert_text}"
+
+    # ------------------------------------------------------------------
+    # decade: forecast_period=16, today=2026-06-08 → current decad is 16 → None
+    # ------------------------------------------------------------------
+    def test_decade_current_period_returns_none(self):
+        """Decad-16 forecast shown on a day that is in decad-16 → None."""
+        today = datetime.date(2026, 6, 8)
+        expected_current = int(widgets.tl.get_decad_in_year(today))
+        assert expected_current == 16, (
+            f"Test pre-condition: expected decad 16 for 2026-06-08, got {expected_current}"
+        )
+        result = widgets.get_period_warning(
+            horizon="decade",
+            forecast_period=16,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed decad (16) == current decad (16)"
+        )
+
+    # ------------------------------------------------------------------
+    # month: forecast_period=6, today=2026-06-08 → current month is 6 → None
+    # ------------------------------------------------------------------
+    def test_month_current_period_returns_none(self):
+        """Month-6 forecast shown on a June day → None."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=6,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed month (6) == current month (6)"
+        )
+
+    # ------------------------------------------------------------------
+    # month: forecast_period=6, today=2026-07-01 → current month is 7 → alert
+    # ------------------------------------------------------------------
+    def test_month_outdated_returns_alert(self):
+        """Month-6 forecast shown in July → non-None alert."""
+        today = datetime.date(2026, 7, 1)
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=6,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed month (6) != current month (7)"
+        )
+
+    # ------------------------------------------------------------------
+    # season: forecast_period=1, forecast_year=2025, today=2026-06-08 → alert
+    # ------------------------------------------------------------------
+    def test_season_outdated_year_returns_alert(self):
+        """Season forecast for 2025 shown in 2026 → non-None alert (year differs)."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="season",
+            forecast_period=1,
+            forecast_year=2025,
+            today=today,
+        )
+        assert result is not None, (
+            "Expected an alert when displayed season year (2025) != current year (2026)"
+        )
+
+    # ------------------------------------------------------------------
+    # season: forecast_period=1, forecast_year=2026, today=2026-06-08 → None
+    # ------------------------------------------------------------------
+    def test_season_current_year_returns_none(self):
+        """Season forecast for 2026 shown in 2026 → None (same year, period always 1)."""
+        today = datetime.date(2026, 6, 8)
+        result = widgets.get_period_warning(
+            horizon="season",
+            forecast_period=1,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed season year (2026) == current year (2026)"
+        )
+
+    # ------------------------------------------------------------------
+    # forecast_period is None → None (no warning, guard clause)
+    # ------------------------------------------------------------------
+    def test_none_forecast_period_returns_none(self):
+        """forecast_period=None → None without error."""
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=None,
+            forecast_year=2026,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None when forecast_period is None"
+
+    # ------------------------------------------------------------------
+    # forecast_year is None → None (no warning, guard clause)
+    # ------------------------------------------------------------------
+    def test_none_forecast_year_returns_none(self):
+        """forecast_year=None → None without error."""
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=31,
+            forecast_year=None,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None when forecast_year is None"
+
+    # ------------------------------------------------------------------
+    # Unknown horizon → None
+    # ------------------------------------------------------------------
+    def test_unknown_horizon_returns_none(self):
+        """An unrecognised horizon string → None without error."""
+        result = widgets.get_period_warning(
+            horizon="biweekly",
+            forecast_period=5,
+            forecast_year=2026,
+            today=datetime.date(2026, 6, 8),
+        )
+        assert result is None, "Expected None for an unknown horizon"

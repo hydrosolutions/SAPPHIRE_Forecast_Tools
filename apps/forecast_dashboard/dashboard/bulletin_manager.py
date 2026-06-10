@@ -20,6 +20,45 @@ _HYDROGRAPH_DEFAULTS = {
     "linreg_predictor":        float('nan'),
 }
 
+
+def resolve_bulletin_header_date(horizon, last_date, forecasts_all):
+    """Return the date whose month/year the bulletin header should use.
+
+    Monthly forecasts are issued in the month before their target month,
+    so `last_date` (issue date + 1 day) can still fall in the previous
+    month. For the month horizon, use the forecast target month start
+    (`valid_from` of the latest forecast row) so the bulletin title shows
+    the forecasted month, not the issue month. Other horizons are
+    unaffected and return `last_date` unchanged.
+
+    Args:
+        horizon: Forecast horizon string (e.g. ``"month"``, ``"pentad"``).
+        last_date: The date derived from the maximum issue date + 1 day.
+        forecasts_all: DataFrame of all loaded forecasts; must contain a
+            ``valid_from`` column for the month horizon.
+
+    Returns:
+        ``pd.Timestamp`` to use for bulletin header month/year derivation.
+    """
+    if horizon != "month":
+        return last_date
+
+    try:
+        if (
+            forecasts_all is None
+            or forecasts_all.empty
+            or "valid_from" not in forecasts_all.columns
+        ):
+            return last_date
+        raw = forecasts_all["valid_from"].tail(1).values[0]
+        ts = pd.Timestamp(raw)
+        if pd.isna(ts):
+            return last_date
+        return ts
+    except Exception:
+        return last_date
+
+
 def _reshape_long_forecast_for_bulletin(q_df: pd.DataFrame, _) -> pd.DataFrame:
     """Rename raw long-forecast columns into the gettext schema that
     get_{monthly,quarterly}_forecast_attributes_for_site reads."""
@@ -342,7 +381,7 @@ class BulletinManager:
             )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_station, horizon_value=1)
+                q_df = db.get_long_forecasts_quarter(selected_site.code, horizon_value=1)
                 if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
                     filtered_q = q_df[q_df["code"] == selected_site.code]
                     if not filtered_q.empty:
@@ -360,7 +399,7 @@ class BulletinManager:
             else:
                 selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
         elif horizon == "season":
-            s_df = db.get_long_forecasts_season(selected_station)
+            s_df = db.get_long_forecasts_season(selected_site.code)
             model_short = None
             if not selected_rows.empty and _("Model") in selected_rows.columns:
                 model_short = selected_rows[_("Model")].values[0]
@@ -442,7 +481,7 @@ class BulletinManager:
             )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_station, horizon_value=1)
+                q_df = db.get_long_forecasts_quarter(selected_site.code, horizon_value=1)
                 if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
                     filtered_q = q_df[q_df["code"] == selected_site.code]
                     if not filtered_q.empty:
@@ -532,7 +571,8 @@ class BulletinManager:
                 horizon
             )
             legacy_horizon = "decad" if horizon == "decade" else horizon
-            bulletin_header_info = self._processing.get_bulletin_header_info(last_date, legacy_horizon)
+            header_date = resolve_bulletin_header_date(horizon, last_date, self.dm.forecasts_all)
+            bulletin_header_info = self._processing.get_bulletin_header_info(header_date, legacy_horizon)
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
                 self.cfg.env_file_path, horizon=legacy_horizon,

@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 VALUE_FIELD = "discharge"
 MONTHS = tuple(range(1, 13))
 MID_MONTH_DOY = (15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349)
+QUARTER_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
 
 
 def _json_safe(value: Any) -> Any:
@@ -264,6 +265,75 @@ def write_station_seasonal_hydrograph(
     return record
 
 
+def _quarterly_field_mean(
+    monthly_records: list[dict[str, Any]],
+    quarter: int,
+    field: str,
+) -> float | None:
+    monthly_by_value = {record.get("horizon_value"): record for record in monthly_records}
+    monthly_values = []
+    for month in QUARTER_MONTHS[quarter]:
+        record = monthly_by_value.get(month, {})
+        value = record.get(field)
+        if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
+            monthly_values.append(None)
+        else:
+            monthly_values.append(float(value))
+
+    if any(value is None for value in monthly_values):
+        return None
+    return sum(monthly_values) / 3
+
+
+def build_quarterly_records(
+    monthly_records: list[dict[str, Any]],
+    code: str,
+    target_year: int,
+) -> list[dict[str, Any]]:
+    """Build quarterly records with leap-aware start-date DOY and all-or-nothing means."""
+    records = []
+    for quarter in range(1, 5):
+        start_month = QUARTER_MONTHS[quarter][0]
+        quarter_start = dt.date(target_year, start_month, 1)
+        records.append(
+            {
+                "horizon_type": "quarter",
+                "code": str(code),
+                "date": quarter_start.isoformat(),
+                "day_of_year": quarter_start.timetuple().tm_yday,
+                "horizon_value": quarter,
+                "horizon_in_year": quarter,
+                "norm": _json_safe(_quarterly_field_mean(monthly_records, quarter, "norm")),
+                "previous": _json_safe(_quarterly_field_mean(monthly_records, quarter, "previous")),
+                "current": _json_safe(_quarterly_field_mean(monthly_records, quarter, "current")),
+            }
+        )
+    return records
+
+
+def write_station_quarterly_hydrograph(
+    code: str,
+    monthly_records: list[dict[str, Any]],
+    client: Any,
+    target_year: int,
+    today: dt.date,
+) -> list[dict[str, Any]]:
+    """Build and write quarterly hydrograph records for one station."""
+    logger.info(
+        "Building long-horizon quarterly hydrograph for station %s using today=%s",
+        code,
+        today.isoformat(),
+    )
+    records = build_quarterly_records(
+        monthly_records=monthly_records,
+        code=code,
+        target_year=target_year,
+    )
+    client.write_hydrograph(records)
+    logger.info("Wrote %d quarterly hydrograph records for station %s", len(records), code)
+    return records
+
+
 def write_long_horizon_hydrograph(
     codes: Iterable[str],
     iehhf_sdk: Any,
@@ -287,6 +357,15 @@ def write_long_horizon_hydrograph(
         all_records.extend(monthly_records)
         all_records.append(
             write_station_seasonal_hydrograph(
+                code=str(code),
+                monthly_records=monthly_records,
+                client=client,
+                target_year=target_year,
+                today=today,
+            )
+        )
+        all_records.extend(
+            write_station_quarterly_hydrograph(
                 code=str(code),
                 monthly_records=monthly_records,
                 client=client,

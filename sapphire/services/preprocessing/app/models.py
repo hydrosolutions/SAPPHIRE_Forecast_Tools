@@ -9,6 +9,7 @@ class HorizonType(str, Enum):
     PENTAD = "pentad"
     DECADE = "decade"
     MONTH = "month"
+    QUARTER = "quarter"
     SEASON = "season"
     YEAR = "year"
 

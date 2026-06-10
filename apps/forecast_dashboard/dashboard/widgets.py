@@ -314,11 +314,49 @@ def refresh_predictors_warning(warning_col, station, data):
     if warning:
         warning_col.append(warning)
 
-def refresh_forecast_warning(warning_col, station, data, date_value):
+def get_period_warning(horizon, forecast_period, forecast_year, today=None):
+    """Warn when the displayed forecast's target period differs from the
+    current period for this horizon (e.g. a pentad-31 forecast still shown
+    once we're in pentad 32). Returns an alert pane or None.
+    """
+    if forecast_period is None or forecast_year is None:
+        return None
+    if today is None:
+        today = dt.datetime.now().date()
+    if horizon == "pentad":
+        current = tl.get_pentad_in_year(today)
+    elif horizon == "decade":
+        current = tl.get_decad_in_year(today)
+    elif horizon == "month":
+        current = today.month
+    elif horizon == "quarter":
+        current = (today.month - 1) // 3 + 1
+    elif horizon == "season":
+        current = 1  # one season per year — only the year distinguishes periods
+    else:
+        return None
+    try:
+        same = (int(forecast_year), int(forecast_period)) == (today.year, int(current))
+    except (TypeError, ValueError):
+        return None
+    if same:
+        return None
+    return get_pane_alert(
+        f"The displayed {horizon} forecast is for {horizon} {forecast_period} of "
+        f"{forecast_year}, but the current {horizon} is {current} of {today.year}. "
+        f"This forecast may be outdated."
+    )
+
+
+def refresh_forecast_warning(warning_col, station, data, date_value,
+                             horizon=None, forecast_period=None, forecast_year=None):
     warning_col.objects = []
-    warning = get_forecast_warning(station, data, date_value)
-    if warning:
-        warning_col.append(warning)
+    w_models = get_forecast_warning(station, data, date_value)
+    if w_models:
+        warning_col.append(w_models)
+    w_period = get_period_warning(horizon, forecast_period, forecast_year)
+    if w_period:
+        warning_col.append(w_period)
 
 # ============================== Widgets for Predictors Tab ==============================
 
@@ -326,17 +364,18 @@ def get_predictors_warning(station, data):
     # predictors_warning.objects = []  # clear old content
     # today_date = today.date()
     today_date = dt.datetime.now().date()
+    year_col = str(today_date.year)
     filtered = data["hydrograph_day_all"][
         (data["hydrograph_day_all"]["station_labels"] == station.value) &
         (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
     ]
 
     if not filtered.empty:
-        if pd.notna(filtered["2026"].iloc[0]):
-            print("2026 has a value:", filtered["2026"].iloc[0])
+        if year_col in filtered.columns and pd.notna(filtered[year_col].iloc[0]):
+            print(f"{year_col} has a value:", filtered[year_col].iloc[0])
             return
         else:
-            print("2026 is NaN/empty")
+            print(f"{year_col} is NaN/empty")
             return get_pane_alert(f"No discharge record available today for {station.value}")
     else:
         print("No record for today and given station")
@@ -352,27 +391,43 @@ def create_predictors_warning(station, data):
 # ============================== Widgets for Forecast Tab ==============================
 
 def get_forecast_warning(station, data, date_picker_value):
-    # forecast_warning.objects = []  # clear old content
-    filtered = data["forecasts_all"][
-        (data["forecasts_all"]["station_labels"] == station.value) &
-        (data["forecasts_all"]["date"] == pd.to_datetime(date_picker_value))
+    forecasts_all = data.get("forecasts_all")
+    if (
+        forecasts_all is None
+        or forecasts_all.empty
+        or "station_labels" not in forecasts_all.columns
+    ):
+        return get_pane_alert(
+            f"No forecast data available for {station.value} on {date_picker_value}."
+        )
+
+    station_rows = forecasts_all[forecasts_all["station_labels"] == station.value]
+    if station_rows.empty:
+        return get_pane_alert(
+            f"No forecast data available for {station.value} on {date_picker_value}."
+        )
+
+    expected_models = set(station_rows["model_short"].dropna().unique())
+
+    on_date = station_rows[
+        station_rows["date"] == pd.to_datetime(date_picker_value)
     ]
-    if not filtered.empty:
-        # filter rows where forecasted_discharge is NaN
-        missing_forecasts = filtered[filtered["forecasted_discharge"].isna()]
+    present_models = set(
+        on_date.loc[on_date["forecasted_discharge"].notna(), "model_short"].dropna()
+    )
 
-        # collect the model_short values into a list
-        missing_models = missing_forecasts["model_short"].tolist()
-
-        if missing_models:
-            print("Missing forecasts for models:", missing_models)
+    missing_models = sorted(expected_models - present_models)
+    if missing_models:
+        if not present_models:
+            # No model has a forecast for this date — don't enumerate every model.
             return get_pane_alert(
-                f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker_value}.")
-        else:
-            print("All models have forecast data.")
-            return
-    else:
-        return get_pane_alert(f"No forecast data available for {station.value} on {date_picker_value}.")
+                f"No forecast data available for {station.value} on {date_picker_value}."
+            )
+        return get_pane_alert(
+            f"No forecast data available for models {', '.join(missing_models)}"
+            f" at {station.value} on {date_picker_value}."
+        )
+    return
 
 
 def create_forecast_warning(station, data, date_value):

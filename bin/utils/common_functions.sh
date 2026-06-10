@@ -114,7 +114,7 @@ read_configuration(){
         export ieasyhydroforecast_url_pentad=kyg.fc.$ieasyhydroforecast_url
         export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
     elif [ "$env_ending" == "tjhm" ]; then
-        export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
+        export ieasyhydroforecast_url_pentad=taj.fc.$ieasyhydroforecast_url
         export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
     elif [ "$env_ending" == "uzhm" ]; then
         export ieasyhydroforecast_url_pentad=uzb.fc.$ieasyhydroforecast_url

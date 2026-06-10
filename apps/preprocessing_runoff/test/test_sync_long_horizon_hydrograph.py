@@ -366,6 +366,132 @@ def test_season_april_first_day_of_year_in_leap_year():
     assert season["day_of_year"] == 92
 
 
+def test_quarterly_field_mean_returns_constituent_month_mean():
+    monthly_records = _monthly_records_for_season(target_year=2025, norm=0.0)
+
+    for quarter, months in sync_lhh.QUARTER_MONTHS.items():
+        expected = sum(float(month) for month in months) / 3
+        assert sync_lhh._quarterly_field_mean(monthly_records, quarter, "norm") == expected
+
+
+def test_quarterly_field_mean_returns_none_when_constituent_month_is_none():
+    monthly_records = _monthly_records_for_season(target_year=2025)
+    _record_for_month(monthly_records, 2)["norm"] = None
+
+    assert sync_lhh._quarterly_field_mean(monthly_records, 1, "norm") is None
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_quarterly_field_mean_returns_none_when_constituent_month_is_non_finite(non_finite):
+    monthly_records = _monthly_records_for_season(target_year=2025)
+    _record_for_month(monthly_records, 5)["previous"] = non_finite
+
+    assert sync_lhh._quarterly_field_mean(monthly_records, 2, "previous") is None
+
+
+def test_quarterly_field_mean_returns_none_when_constituent_month_is_absent():
+    monthly_records = [
+        record
+        for record in _monthly_records_for_season(target_year=2025)
+        if record["horizon_value"] != 5
+    ]
+
+    assert sync_lhh._quarterly_field_mean(monthly_records, 2, "norm") is None
+
+
+@pytest.mark.parametrize(
+    ("target_year", "expected_days"),
+    [
+        (2025, (1, 91, 182, 274)),
+        (2024, (1, 92, 183, 275)),
+    ],
+)
+def test_build_quarterly_records_dates_leap_aware_days_and_no_stat_fields(
+    target_year,
+    expected_days,
+):
+    monthly_records = _monthly_records_for_season(target_year=target_year, norm=0.0)
+    stat_fields = {
+        "count",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "q05",
+        "q10",
+        "q25",
+        "q50",
+        "q75",
+        "q90",
+        "q95",
+    }
+
+    records = sync_lhh.build_quarterly_records(monthly_records, TEST_CODE, target_year=target_year)
+
+    assert [record["date"] for record in records] == [
+        f"{target_year}-01-01",
+        f"{target_year}-04-01",
+        f"{target_year}-07-01",
+        f"{target_year}-10-01",
+    ]
+    assert [record["day_of_year"] for record in records] == list(expected_days)
+    for record in records:
+        quarter = record["horizon_value"]
+        expected_norm = sum(float(month) for month in sync_lhh.QUARTER_MONTHS[quarter]) / 3
+        assert record["horizon_type"] == "quarter"
+        assert record["horizon_in_year"] == quarter
+        assert record["norm"] == pytest.approx(expected_norm, abs=1e-9)
+        assert stat_fields.isdisjoint(record)
+
+
+def test_quarter_current_is_none_for_in_progress_target_year():
+    in_progress_monthly = _monthly_records_for_season(target_year=2026)
+    for month in sync_lhh.QUARTER_MONTHS[2]:
+        _record_for_month(in_progress_monthly, month)["current"] = None
+
+    in_progress_quarters = sync_lhh.build_quarterly_records(
+        in_progress_monthly,
+        TEST_CODE,
+        target_year=2026,
+    )
+    completed_quarters = sync_lhh.build_quarterly_records(
+        _monthly_records_for_season(target_year=2025),
+        TEST_CODE,
+        target_year=2025,
+    )
+
+    assert in_progress_quarters[1]["current"] is None
+    assert completed_quarters[0]["current"] is not None
+
+
+def test_write_long_horizon_hydrograph_writes_quarterly_records():
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+    ]
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    quarterly_records = client.write_hydrograph.call_args_list[2].args[0]
+    assert len(records) == 17
+    assert client.write_hydrograph.call_count == 3
+    assert len(quarterly_records) == 4
+    assert all(record["horizon_type"] == "quarter" for record in quarterly_records)
+    for record in quarterly_records:
+        quarter = record["horizon_value"]
+        expected_norm = sum(float(month) for month in sync_lhh.QUARTER_MONTHS[quarter]) / 3
+        assert record["norm"] == pytest.approx(expected_norm, abs=1e-9)
+
+
 @pytest.mark.parametrize(("norms", "actual_count"), [([], 0), ([1.0] * 7, 7)])
 def test_skips_station_when_norms_missing(norms, actual_count, caplog):
     sdk = MagicMock()
@@ -426,8 +552,9 @@ def test_orchestrator_continues_after_skipped_station():
         today=dt.date(2027, 1, 1),
     )
 
-    assert len(records) == 13
+    assert len(records) == 17
     assert {record["code"] for record in records} == {valid_code}
-    assert client.write_hydrograph.call_count == 2
+    assert client.write_hydrograph.call_count == 3
     assert len(client.write_hydrograph.call_args_list[0].args[0]) == 12
     assert len(client.write_hydrograph.call_args_list[1].args[0]) == 1
+    assert len(client.write_hydrograph.call_args_list[2].args[0]) == 4

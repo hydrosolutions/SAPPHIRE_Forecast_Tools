@@ -327,49 +327,11 @@ def run_single_model(
         else:
             logger.warning(f"Unknown data dependency type: {input_type}")
 
+
     logger.info(
         f"Head of temporal data after processing dependencies for model {model_name}:\n{temporal_data.head()}"
     )
 
-    """# get the actual date - now - not the one in the init
-    now_date = pd.Timestamp.now()   
-    now_date = now_date.normalize()  # only keep date part
-    today = get_today()
-
-    # Simple constraint: today can't be after now - we can not issue forecasts for a date in the future
-    assert today <= now_date, f"Forecast can not be issued for a future date. Forecast Issue Date: {today}, Now Date: {now_date}"
-    
-    # Compare when the forecast is issued and when it should be issued
-    forecast_issue_day = forecast_configs.get_operational_issue_day()
-    possible_forecast_months = forecast_configs.get_forecast_months(model_name=model_name)
-    scheduled_issue_date = nearest_scheduled_issue_date(today, forecast_issue_day, possible_forecast_months)
-    day_offset = (today - scheduled_issue_date).days  # negative = early, positive = late
-
-    # If more than 5 days off, don't run
-    if abs(day_offset) > 5:
-        raise ValueError(
-            f"Forecast for model {model_name} is {abs(day_offset)} days away from the "
-            f"scheduled issue date ({scheduled_issue_date.date()}). This could can lead to wrong results or model performance which doesn't match historical one."
-            f" Refusing to run."
-        )
-
-    # If late, snap back to the scheduled issue date
-    if day_offset > 0:
-        logger.info(
-            f"Adjusting forecast issue date from {today.date()} to "
-            f"scheduled issue date {scheduled_issue_date.date()} for model {model_name}"
-        )
-        today = scheduled_issue_date
-
-    if day_offset != 0:
-        direction = "before" if day_offset < 0 else "after"
-        days = abs(day_offset)
-        unit = "day" if days == 1 else "days"
-        logger.warning(
-            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue date "
-            f"({scheduled_issue_date.date()}). Forecasts are normalized to calendar monthly values; "
-            f"off-schedule runs may lead to degradation in forecast quality."
-        )"""
 
     today = check_valid_forecast_issue_date(
         forecast_configs=forecast_configs, model_name=model_name

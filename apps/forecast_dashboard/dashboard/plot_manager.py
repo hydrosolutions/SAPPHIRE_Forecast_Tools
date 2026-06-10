@@ -153,8 +153,9 @@ class PlotManager:
             else:
                 st_card.sizing_mode = "stretch_width"
                 st_card.height = 600 if len(self._wm.forecast_summary_table.value) > 1 else 240
-        # Also toggle the forecast warning pane
-        self._wm.forecast_warning.visible = visible
+        # The forecast warning (missing models / outdated period) applies to all
+        # horizons; it renders nothing when there are no warnings.
+        self._wm.forecast_warning.visible = True
 
     # ------------------------------------------------------------------
     # Pane factories and initilisation helpers

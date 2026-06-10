@@ -1,0 +1,4 @@
+horizon_type,code,date,discharge,predictor,horizon_value,horizon_in_year
+pentad,19999,2026-01-01,12.5,11.8,1,1
+pentad,19999,2026-01-06,13.1,12.4,2,2
+pentad,19999,2026-01-11,14.2,13.6,3,3

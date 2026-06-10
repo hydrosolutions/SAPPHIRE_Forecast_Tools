@@ -1,0 +1,4 @@
+horizon_type,code,date,decad_in_month,decad_in_year,discharge_avg,predictor,slope,intercept,forecasted_discharge,q_mean,q_std_sigma,delta,rsquared
+decade,19999,2026-01-01,1,1,11.5,7.4,1.55,2.50,13.20,11.10,0.95,1.10,0.74
+decade,19999,2026-01-11,2,2,12.2,8.1,1.52,2.60,14.10,11.20,0.97,1.20,0.76
+decade,19999,2026-01-21,3,3,13.0,8.8,1.50,2.70,15.00,11.30,0.99,1.30,0.78

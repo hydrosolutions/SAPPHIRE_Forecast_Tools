@@ -1,0 +1,4 @@
+horizon_type,code,date,discharge,predictor,horizon_value,horizon_in_year
+decade,19999,2026-01-01,12.5,11.8,1,1
+decade,19999,2026-01-11,13.4,12.7,2,2
+decade,19999,2026-01-21,14.6,13.9,3,3
