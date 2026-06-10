@@ -5,7 +5,8 @@
 # Laptop-side export wrapper for the ML forecast migration toolkit (P4b).
 # Pulls historical ML forecast rows from a laptop's
 # ``sapphire-postprocessing-db`` table ``forecasts``, filtered to the three
-# ML model variants (``model_type IN ('TFT','TiDE','TSMixer')``), and writes:
+# ML model variants (``model_type::text IN ('TFT','TIDE','TSMIXER')``), and
+# writes:
 #
 #   1. ``<out_dir>/ml_forecast_<timestamp>.csv`` — header + rows
 #   2. ``<out_dir>/ml_forecast_<timestamp>.csv.manifest`` — sidecar with the
@@ -27,10 +28,21 @@
 #   pass ``--include-legacy-horizons``. The exported CSV preserves the
 #   source ``horizon_type`` cell so the server wrapper can filter as needed.
 #
-# Enum case (Stage A §E):
-#   The exported ``model_type`` column uses MIXED-CASE values exactly as
-#   stored in PostgreSQL: ``TFT``, ``TiDE``, ``TSMixer``. Downstream
-#   ``migration_py.ml_forecast.MODEL_DIR_TO_API`` accepts both forms.
+# Enum case (Stage A §E; Finding 11 — Tajik live test):
+#   Two representations of ``model_type`` are in play:
+#     - PG enum LABELS (used in raw SQL WHERE / model-filter clauses):
+#       UPPERCASE — ``TFT`` / ``TIDE`` / ``TSMIXER`` — compared via
+#       ``model_type::text`` to sidestep the enum-literal coercion error
+#       that bites mixed-case literals (``invalid input value for enum
+#       modeltype: "TiDE"``).
+#     - API wire values (the ``model_type`` cell of the exported CSV, and
+#       the JSON payload posted by the server-side helper): MIXED-CASE —
+#       ``TFT`` / ``TiDE`` / ``TSMixer`` — exactly as ``ModelType`` is
+#       declared in
+#       ``sapphire/services/postprocessing/app/models.py:23-24`` (see the
+#       inline comment there).
+#   Downstream ``migration_py.ml_forecast.MODEL_DIR_TO_API`` accepts both
+#   spellings on read.
 #
 # Usage:
 #   bash bin/export_ml_forecast_history.sh <out_dir> [OPTIONS]
@@ -99,6 +111,9 @@ Usage: bash bin/export_ml_forecast_history.sh <out_dir> [OPTIONS]
 
 Export ML forecast history rows (TFT, TiDE, TSMixer) from the laptop's
 sapphire-postprocessing-db.forecasts table to a CSV + manifest pair.
+The DB filter compares ``model_type::text`` against the PG enum LABELS
+(``TFT``/``TIDE``/``TSMIXER``); the exported CSV preserves the mixed-case
+API spelling (``TFT``/``TiDE``/``TSMixer``).
 
 Arguments:
   out_dir              Destination directory for the CSV + manifest pair.
@@ -266,14 +281,17 @@ validate_model_filter() {
 }
 
 # ---------------------------------------------------------------------------
-# Normalize the model filter to the canonical API value (mixed case).
+# Normalize the model filter to the canonical PG enum LABEL (uppercase).
+# Used ONLY in the raw SQL WHERE clause (compared via ``model_type::text``).
+# The API wire spelling (mixed case ``TFT`` / ``TiDE`` / ``TSMixer``) is
+# resolved server-side by ``migration_py.ml_forecast.MODEL_DIR_TO_API``.
 # Echoes the normalized form on stdout.
 # ---------------------------------------------------------------------------
 normalize_model_filter() {
     case "$1" in
         TFT) echo "TFT" ;;
-        TIDE|TiDE) echo "TiDE" ;;
-        TSMIXER|TSMixer) echo "TSMixer" ;;
+        TIDE|TiDE) echo "TIDE" ;;
+        TSMIXER|TSMixer) echo "TSMIXER" ;;
         *) echo "" ;;
     esac
 }
@@ -283,7 +301,11 @@ normalize_model_filter() {
 # Echoes the clause on stdout.
 # ---------------------------------------------------------------------------
 build_where_clause() {
-    local where="model_type IN ('TFT','TiDE','TSMixer')"
+    # Finding 11 (Tajik live test): compare PG enum LABELS via ``::text``
+    # to sidestep the enum-literal coercion error against real deployments
+    # (``invalid input value for enum modeltype: "TiDE"``). The CSV export
+    # below still emits the API mixed-case spelling.
+    local where="model_type::text IN ('TFT','TIDE','TSMIXER')"
 
     if [[ "$INCLUDE_LEGACY_HORIZONS" == true ]]; then
         # Accept both 'day' (modern) AND 'pentad'/'decade' (legacy).
@@ -298,7 +320,7 @@ build_where_clause() {
     if [[ -n "$MODEL_FILTER" ]]; then
         local m
         m="$(normalize_model_filter "$MODEL_FILTER")"
-        where+=" AND model_type = '${m}'"
+        where+=" AND model_type::text = '${m}'"
     fi
     if [[ -n "$START_DATE" ]]; then
         where+=" AND date >= '${START_DATE//\'/\'\'}'"

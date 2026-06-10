@@ -6,8 +6,10 @@
 # migration toolkit). Reads a CSV that was produced by
 # ``bin/export_ml_forecast_history.sh`` on the laptop's
 # ``sapphire-postprocessing-db`` (table ``forecasts``, filtered to
-# ``model_type IN ('TFT','TiDE','TSMixer')``) and POSTs the rows to the
-# deployment postprocessing API ``/forecast/`` endpoint.
+# ``model_type::text IN ('TFT','TIDE','TSMIXER')`` — PG enum LABELS, see
+# Finding 11 below) and POSTs the rows to the deployment postprocessing
+# API ``/forecast/`` endpoint as mixed-case ``TFT`` / ``TiDE`` / ``TSMixer``
+# wire values.
 #
 # Uses the P0 helper (bin/utils/update_migration_helpers.sh) for image
 # resolution, temp workspace, redacted logging, manifest validation, and the
@@ -18,10 +20,21 @@
 # Two architectural quirks (see also bin/utils/migration_py/ml_forecast.py
 # docstring):
 #
-# 1. Enum case (Stage A §E): the API ``ModelType`` enum values are
-#    MIXED-CASE — ``TFT``, ``TiDE``, ``TSMixer`` — not the legacy uppercase
-#    on-disk dir spellings. ``MODEL_DIR_TO_API`` in the Python helper maps
-#    both forms to the canonical spelling.
+# 1. Enum case (Stage A §E; Finding 11 — Tajik live test):
+#    Two ``model_type`` representations are in play, and BOTH must stay
+#    correct in this wrapper:
+#      - PG enum LABELS (this script's raw SQL only): UPPERCASE
+#        ``TFT`` / ``TIDE`` / ``TSMIXER``, compared via ``::text`` to
+#        sidestep the enum-literal coercion error
+#        (``invalid input value for enum modeltype: "TiDE"``) that bit
+#        the live Tajik DB on real-data walkthrough.
+#      - API wire values (JSON payload POSTed by the Python helper):
+#        MIXED-CASE ``TFT`` / ``TiDE`` / ``TSMixer`` per
+#        ``sapphire/services/postprocessing/app/models.py:23-24`` (see
+#        the inline ``# TSMIXER(how it is stored in PostgreSQL),
+#        TSMixer(how it is passed in API)`` comment).
+#    ``MODEL_DIR_TO_API`` in the Python helper maps both spellings to the
+#    mixed-case API form.
 #
 # 2. Default horizon = ``day`` (user-lock L6): modern ML CSV-derived writes
 #    store as ``horizon_type='day'`` regardless of pentad / decade workflow.
@@ -262,10 +275,18 @@ parse_args() {
 
 # Query the postprocessing-db for MODE detection (ML rows only).
 # Echoes "count<TAB>min_date_or_empty" on stdout.
+#
+# Finding 11 (Tajik live test): ``model_type`` is a PostgreSQL enum whose
+# LABELS are UPPERCASE — ``TFT`` / ``TIDE`` / ``TSMIXER`` — per the comment
+# at ``sapphire/services/postprocessing/app/models.py:23-24``. We compare
+# via ``::text`` to sidestep the enum-literal coercion error
+# (``invalid input value for enum modeltype: "TiDE"``) that bit the live
+# Tajik DB before this fix. The Python helper still POSTs the API
+# mixed-case wire values; the two representations are intentional.
 query_target_state() {
     docker exec sapphire-postprocessing-db psql \
         -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM forecasts WHERE model_type IN ('TFT','TiDE','TSMixer');"
+        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM forecasts WHERE model_type::text IN ('TFT','TIDE','TSMIXER');"
 }
 
 main() {
@@ -495,7 +516,7 @@ main() {
     echo "  docker exec sapphire-postprocessing-db \\"
     echo "    psql -U postgres -d postprocessing_db -c \\"
     echo "    \"SELECT horizon_type, model_type, COUNT(*) AS rows, MIN(date), MAX(date)"
-    echo "       FROM forecasts WHERE model_type IN ('TFT','TiDE','TSMixer')"
+    echo "       FROM forecasts WHERE model_type::text IN ('TFT','TIDE','TSMIXER')"
     echo "       GROUP BY horizon_type, model_type ORDER BY model_type, horizon_type;\""
     echo ""
     echo "Log file: ${log_file}"
