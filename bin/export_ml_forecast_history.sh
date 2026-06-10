@@ -308,10 +308,13 @@ build_where_clause() {
     local where="model_type::text IN ('TFT','TIDE','TSMIXER')"
 
     if [[ "$INCLUDE_LEGACY_HORIZONS" == true ]]; then
-        # Accept both 'day' (modern) AND 'pentad'/'decade' (legacy).
-        where+=" AND horizon_type IN ('day','pentad','decade')"
+        # Accept both 'DAY' (modern) AND 'PENTAD'/'DECADE' (legacy).
+        # MIG-003: compare PG enum LABELS via ``::text`` (same pattern as
+        # model_type above) — lowercase literals hard-fail the
+        # ``horizontype`` enum coercion on real deployments.
+        where+=" AND horizon_type::text IN ('DAY','PENTAD','DECADE')"
     else
-        where+=" AND horizon_type = 'day'"
+        where+=" AND horizon_type::text = 'DAY'"
     fi
 
     if [[ -n "$STATION_FILTER" ]]; then

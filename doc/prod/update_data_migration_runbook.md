@@ -1620,6 +1620,17 @@ If you write an ad-hoc acceptance SQL against the live `forecasts` table,
 ALWAYS use the uppercase labels with `::text` (see §6.4.6 below). Mixed-case
 literals will hard-fail the query.
 
+The **same dual-representation rule applies to `horizon_type`** (MIG-003,
+discovered 2026-06-10). The `HorizonType` enum in
+`sapphire/services/postprocessing/app/models.py:9-17` carries PG enum
+LABELS in UPPERCASE (`DAY` / `PENTAD` / `DECADE` / `MONTH` / `QUARTER` /
+`SEASON`) while `.value` strings (`'day'` / `'pentad'` / ...) are the
+API JSON wire form. Raw SQL in `bin/export_ml_forecast_history.sh` and
+`bin/initialize_long_forecast_history.sh` must compare via
+`horizon_type::text IN ('DAY','PENTAD','DECADE')` or
+`horizon_type::text='MONTH'`; lowercase literals hard-fail with
+`ERROR: invalid input value for enum horizontype: "day"`.
+
 ##### WARNING: default horizon='day' vs `--preserve-legacy-ml-horizons`
 
 Per user-lock L6, the wrapper writes all migrated ML rows as
