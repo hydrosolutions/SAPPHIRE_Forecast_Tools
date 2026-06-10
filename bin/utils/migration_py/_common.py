@@ -118,8 +118,10 @@ def _warn_if_unpinned_tag(image: str) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(
             "Resolved Docker image '%s' uses an unpinned tag. "
-            "Operational deployments must pin to the release tag "
-            "(e.g. mabesa/sapphire-prepgateway:v1.0.0).",
+            "Operational deployments must pin to a current dated tag "
+            "published on Docker Hub (format YYYY-MM, e.g. the latest "
+            "available). Verify available tags at "
+            "https://hub.docker.com/r/mabesa/sapphire-prepgateway/tags.",
             image,
         )
 

@@ -77,11 +77,33 @@ umh_log_redacted() {
 }
 
 # ---------------------------------------------------------------------------
+# umh_check_arch_platform: warn Apple Silicon / arm64 operators if
+# DOCKER_DEFAULT_PLATFORM is unset. The published mabesa/sapphire-prepgateway
+# tags are currently amd64-only; without the override, docker pull fails on
+# arm64 with a "no matching manifest for linux/arm64/v8 in the manifest list"
+# error.
+#
+# Testability seam:
+#   The architecture string is taken from $UMH_ARCH_OVERRIDE when set, else
+#   `uname -m`. The override env var lets the shell test suite simulate an
+#   arm64 host without stubbing `uname` on PATH. It is an internal test hook
+#   and is intentionally NOT documented in operator-facing material.
+# ---------------------------------------------------------------------------
+umh_check_arch_platform() {
+    local _arch
+    _arch="${UMH_ARCH_OVERRIDE:-$(uname -m)}"
+    if [[ "$_arch" =~ ^(arm64|aarch64)$ && -z "${DOCKER_DEFAULT_PLATFORM:-}" ]]; then
+        echo "WARNING: arm64/Apple Silicon host detected. The mabesa/sapphire-prepgateway images are amd64-only. Set DOCKER_DEFAULT_PLATFORM=linux/amd64 before invoking the wrapper, or the docker pull will fail." >&2
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # umh_resolve_image: pick CLI override > configured tag > FALLBACK.
 # Inputs:  $1 = CLI override (may be empty), $2 = configured tag (may be empty)
 # Stdout:  resolved image string
 # Stderr:  WARNING line if resolved tag is :local or :latest AND a deployment
-#          container is detected on this host.
+#          container is detected on this host. Also emits an arm64 platform
+#          warning (via umh_check_arch_platform) so every wrapper inherits it.
 #
 # NOTE: docker ps (no -a) misses stopped containers; maintenance-stopped
 # deployments fall through to Python-only warning (not elevated). Override
@@ -92,6 +114,11 @@ umh_resolve_image() {
     local configured_tag="${2:-}"
     local image=""
     local source=""
+
+    # Arm64 preflight: warn on Apple Silicon hosts without
+    # DOCKER_DEFAULT_PLATFORM=linux/amd64. Wrappers inherit this automatically
+    # by calling umh_resolve_image during their image-resolution step.
+    umh_check_arch_platform
 
     if [[ -n "$cli_override" ]]; then
         image="$cli_override"
@@ -106,11 +133,13 @@ umh_resolve_image() {
 
     # Elevated warning when an unpinned tag is resolved on a deployment host.
     # (S1 limitation comment above describes the maintenance-stopped gap.)
+    # Guidance is abstract (no literal month) because dated tags rotate
+    # month-by-month; operators verify currently-available tags on Docker Hub.
     case "$image" in
         *:local|*:latest)
             if command -v docker >/dev/null 2>&1; then
                 if [[ -n "$(docker ps --filter 'name=sapphire-preprocessing-db' --quiet 2>/dev/null)" ]]; then
-                    echo "WARNING: resolved image '${image}' uses an unpinned tag on a deployment host. Pin to a release tag (e.g. mabesa/sapphire-prepgateway:v1.0.0)." >&2
+                    echo "WARNING: resolved image '${image}' uses an unpinned tag on a deployment host. Pin to a current dated tag published on Docker Hub (format YYYY-MM, e.g. the latest available). Verify available tags at https://hub.docker.com/r/mabesa/sapphire-prepgateway/tags." >&2
                 fi
             fi
             ;;

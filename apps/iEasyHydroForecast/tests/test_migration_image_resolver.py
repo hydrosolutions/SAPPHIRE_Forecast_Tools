@@ -44,11 +44,31 @@ def test_resolve_image_warns_on_local_tag(caplog):
     assert "local" in caplog.text
 
 
-def test_resolve_image_no_warning_on_release_tag(caplog):
+def test_resolve_image_no_warning_on_dated_tag(caplog):
+    # Dated YYYY-MM tags (e.g. 2026-06) are the canonical operator-pin form
+    # after Finding 4 — v1.0.0 was never published to Docker Hub.
     caplog.set_level(logging.WARNING, logger=_LOGGER_NAME)
-    _common.resolve_image(None, "v1.0.0")
+    _common.resolve_image(None, "2026-06")
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings == []
+
+
+def test_resolve_image_warning_does_not_advise_v1_0_0(caplog):
+    """Regression proof for Finding 4 (Tajik walkthrough, 2026-06-08).
+
+    The operator-facing warning previously recommended pinning to
+    ``mabesa/sapphire-prepgateway:v1.0.0``. That tag does not exist on
+    Docker Hub; operators following the advice hit a pull failure. The
+    abstract dated-tag guidance replaces it and must not regress.
+    """
+    caplog.set_level(logging.WARNING, logger=_LOGGER_NAME)
+    _common.resolve_image(None, "latest")
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings, "expected at least one WARNING for unpinned :latest tag"
+    combined = " ".join(r.getMessage() for r in warnings)
+    assert "v1.0.0" not in combined, (
+        f"warning text must not advise v1.0.0 (Finding 4 regression); got: {combined!r}"
+    )
 
 
 def test_resolve_image_warn_on_unpinned_can_be_disabled(caplog):
