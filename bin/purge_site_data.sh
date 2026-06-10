@@ -25,10 +25,10 @@
 #   -h, --help                 Show this help message and exit 0
 #
 # Examples:
-#   bash bin/purge_site_data.sh 10001 2024-01-01 --dry-run
-#   bash bin/purge_site_data.sh 10001 2024-01-01
-#   bash bin/purge_site_data.sh 10001 2024-01-01 --include-hydrographs -y
-#   bash bin/purge_site_data.sh 10001 2024-01-01 --postprocessing-only
+#   bash bin/purge_site_data.sh 19999 2024-01-01 --dry-run
+#   bash bin/purge_site_data.sh 19999 2024-01-01
+#   bash bin/purge_site_data.sh 19999 2024-01-01 --include-hydrographs -y
+#   bash bin/purge_site_data.sh 19999 2024-01-01 --postprocessing-only
 #
 # Prerequisites:
 #   - Docker daemon running
@@ -149,10 +149,10 @@ Tables purged:
                      bulletins (year >= from_year), lr_visibility (year >= from_year)
 
 Examples:
-  bash bin/purge_site_data.sh 10001 2024-01-01 --dry-run
-  bash bin/purge_site_data.sh 10001 2024-01-01
-  bash bin/purge_site_data.sh 10001 2024-01-01 --include-hydrographs -y
-  bash bin/purge_site_data.sh 10001 2024-01-01 --postprocessing-only
+  bash bin/purge_site_data.sh 19999 2024-01-01 --dry-run
+  bash bin/purge_site_data.sh 19999 2024-01-01
+  bash bin/purge_site_data.sh 19999 2024-01-01 --include-hydrographs -y
+  bash bin/purge_site_data.sh 19999 2024-01-01 --postprocessing-only
 USAGE
 }
 
