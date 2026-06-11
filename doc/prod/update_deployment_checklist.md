@@ -1295,7 +1295,7 @@ Complete this summary checklist before considering the update complete.
   - Backend image tag: _______________
   - Frontend image tag: _______________
 
-### Monitoring (if configured)
+### Monitoring (if configured) [Required]
 
 - [ ] Verify monitoring services are running:
   ```bash
