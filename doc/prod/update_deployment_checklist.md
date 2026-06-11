@@ -270,6 +270,106 @@ Pull the latest changes from the repository.
 
 ---
 
+### 2.3 Update .env File (BEFORE running containers)
+
+> **IMPORTANT**: Complete this section BEFORE Section 2.4 (Pull Docker Images). The .env file must be updated before pulling images or running any containers, as scripts read configuration from this file.
+
+#### Step 1: Download server .env to local machine
+
+The server .env and the local repo .env are on different machines, so you need to compare them locally.
+
+- [ ] **Copy server .env to local machine via scp**
+  ```bash
+  # From your LOCAL machine (not the server)
+  # Replace <server> with your server hostname/alias
+  # If you connect via a specific user, use user@<server>
+  # If you connect via a specific port, add -P <port>
+  scp <server>:${ENV_FILE_PATH} \
+      ~/Downloads/.env_develop_${ORG_SLUG}_server
+  ```
+
+#### Step 2: Compare with local repo .env
+
+- [ ] **Compare the two files locally**
+  ```bash
+  # On your LOCAL machine
+  diff ~/Downloads/.env_develop_${ORG_SLUG}_server \
+       /path/to/SAPPHIRE_forecast_tools/apps/config/.env_develop_${ORG_SLUG}
+  ```
+
+  Or side-by-side:
+  ```bash
+  diff -y --suppress-common-lines \
+       ~/Downloads/.env_develop_${ORG_SLUG}_server \
+       /path/to/SAPPHIRE_forecast_tools/apps/config/.env_develop_${ORG_SLUG}
+  ```
+
+#### Step 3: Identify changes needed
+
+- [ ] **New variables to add** (in local repo but not on server)
+- [ ] **Variables to update** (different values between server and repo)
+- [ ] **Variables to keep unchanged** (server-specific credentials, API keys, paths)
+
+**Key variables to review:**
+
+| Variable | Description | Expected Value |
+|----------|-------------|----------------|
+| `ieasyhydroforecast_backend_docker_image_tag` | Backend image tag | `local` |
+| `ieasyhydroforecast_frontend_docker_image_tag` | Frontend image tag | `local` |
+| `ieasyhydroforecast_run_ML_models` | Enable ML forecasting | `true` or `false` |
+| `ieasyhydroforecast_run_CM_models` | Enable conceptual models | `true` or `false` |
+| `ieasyhydroforecast_organization` | Organization identifier | `${ORG_SLUG}` |
+
+**Variables to preserve** (don't overwrite with repo values):
+- `IEASYHYDRO_HOST` - Server-specific API endpoint
+- `IEASYHYDRO_PASSWORD` - Credentials
+- `ieasyhydroforecast_API_KEY_GATEAWAY` - API keys
+- Path variables if customized for server
+
+#### Step 4: Edit the server .env locally
+
+- [ ] **Make a working copy**
+  ```bash
+  cp ~/Downloads/.env_develop_${ORG_SLUG}_server ~/Downloads/.env_develop_${ORG_SLUG}_updated
+  ```
+
+- [ ] **Edit the file locally** (use your preferred editor)
+  ```bash
+  code ~/Downloads/.env_develop_${ORG_SLUG}_updated
+  # Or: nano, vim, etc.
+  ```
+
+- [ ] **Add new variables**
+- [ ] **Update changed variables**
+- [ ] **Verify Docker image tags are set correctly**
+
+#### Step 5: Upload updated .env back to server
+
+- [ ] **Copy updated .env to server via scp**
+  ```bash
+  # From your LOCAL machine
+  scp ~/Downloads/.env_develop_${ORG_SLUG}_updated \
+      <server>:${ENV_FILE_PATH}
+  ```
+
+- [ ] **Verify on server**
+  ```bash
+  # On the SERVER
+  grep -E "docker_image_tag" ${ENV_FILE_PATH}
+  ```
+  Expected output:
+  ```
+  ieasyhydroforecast_backend_docker_image_tag=local
+  ieasyhydroforecast_frontend_docker_image_tag=local
+  ```
+
+- [ ] **Validate syntax on server** (no trailing spaces, proper quoting)
+  ```bash
+  grep -n "= " ${ENV_FILE_PATH}  # Spaces after =
+  grep -n " $" ${ENV_FILE_PATH}  # Trailing spaces
+  ```
+
+---
 ### 2.4 Pull New Docker Images
 
 > **Prerequisite**: Complete Section 2.3 (Update .env File) first!
@@ -402,106 +502,6 @@ To force a rebuild after a code update:
 
 ---
 
-### 2.3 Update .env File (BEFORE running containers)
-
-> **IMPORTANT**: Complete this section BEFORE Section 2.4 (Pull Docker Images). The .env file must be updated before pulling images or running any containers, as scripts read configuration from this file.
-
-#### Step 1: Download server .env to local machine
-
-The server .env and the local repo .env are on different machines, so you need to compare them locally.
-
-- [ ] **Copy server .env to local machine via scp**
-  ```bash
-  # From your LOCAL machine (not the server)
-  # Replace <server> with your server hostname/alias
-  # If you connect via a specific user, use user@<server>
-  # If you connect via a specific port, add -P <port>
-  scp <server>:${ENV_FILE_PATH} \
-      ~/Downloads/.env_develop_${ORG_SLUG}_server
-  ```
-
-#### Step 2: Compare with local repo .env
-
-- [ ] **Compare the two files locally**
-  ```bash
-  # On your LOCAL machine
-  diff ~/Downloads/.env_develop_${ORG_SLUG}_server \
-       /path/to/SAPPHIRE_forecast_tools/apps/config/.env_develop_${ORG_SLUG}
-  ```
-
-  Or side-by-side:
-  ```bash
-  diff -y --suppress-common-lines \
-       ~/Downloads/.env_develop_${ORG_SLUG}_server \
-       /path/to/SAPPHIRE_forecast_tools/apps/config/.env_develop_${ORG_SLUG}
-  ```
-
-#### Step 3: Identify changes needed
-
-- [ ] **New variables to add** (in local repo but not on server)
-- [ ] **Variables to update** (different values between server and repo)
-- [ ] **Variables to keep unchanged** (server-specific credentials, API keys, paths)
-
-**Key variables to review:**
-
-| Variable | Description | Expected Value |
-|----------|-------------|----------------|
-| `ieasyhydroforecast_backend_docker_image_tag` | Backend image tag | `local` |
-| `ieasyhydroforecast_frontend_docker_image_tag` | Frontend image tag | `local` |
-| `ieasyhydroforecast_run_ML_models` | Enable ML forecasting | `true` or `false` |
-| `ieasyhydroforecast_run_CM_models` | Enable conceptual models | `true` or `false` |
-| `ieasyhydroforecast_organization` | Organization identifier | `${ORG_SLUG}` |
-
-**Variables to preserve** (don't overwrite with repo values):
-- `IEASYHYDRO_HOST` - Server-specific API endpoint
-- `IEASYHYDRO_PASSWORD` - Credentials
-- `ieasyhydroforecast_API_KEY_GATEAWAY` - API keys
-- Path variables if customized for server
-
-#### Step 4: Edit the server .env locally
-
-- [ ] **Make a working copy**
-  ```bash
-  cp ~/Downloads/.env_develop_${ORG_SLUG}_server ~/Downloads/.env_develop_${ORG_SLUG}_updated
-  ```
-
-- [ ] **Edit the file locally** (use your preferred editor)
-  ```bash
-  code ~/Downloads/.env_develop_${ORG_SLUG}_updated
-  # Or: nano, vim, etc.
-  ```
-
-- [ ] **Add new variables**
-- [ ] **Update changed variables**
-- [ ] **Verify Docker image tags are set correctly**
-
-#### Step 5: Upload updated .env back to server
-
-- [ ] **Copy updated .env to server via scp**
-  ```bash
-  # From your LOCAL machine
-  scp ~/Downloads/.env_develop_${ORG_SLUG}_updated \
-      <server>:${ENV_FILE_PATH}
-  ```
-
-- [ ] **Verify on server**
-  ```bash
-  # On the SERVER
-  grep -E "docker_image_tag" ${ENV_FILE_PATH}
-  ```
-  Expected output:
-  ```
-  ieasyhydroforecast_backend_docker_image_tag=local
-  ieasyhydroforecast_frontend_docker_image_tag=local
-  ```
-
-- [ ] **Validate syntax on server** (no trailing spaces, proper quoting)
-  ```bash
-  grep -n "= " ${ENV_FILE_PATH}  # Spaces after =
-  grep -n " $" ${ENV_FILE_PATH}  # Trailing spaces
-  ```
-
----
 
 ### 2.4.5 Bring up SAPPHIRE microservices stack
 
