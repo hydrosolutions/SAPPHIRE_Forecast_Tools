@@ -5,7 +5,7 @@ This checklist guides you through a **routine update** of an existing SAPPHIRE F
 > **First-time deployment?** Use `doc/prod/first_deploy_checklist.md` instead. That doc covers the one-time steps (SSH tunnel setup, initial schema preparation, `RunInitializeWorkflow`, historical backfill) that are *not* part of a routine update.
 >
 
-## Operator setup — set these once per session
+## Operator setup — set these once per session [Required]
 
 Before running any command below, set these variables once in your shell session. Everywhere in this doc that you see `${ORG_SLUG}`, `${DATA_DIR}`, `${ENV_FILE_PATH}`, or `${LOG_DIR}`, those are the values being substituted.
 
@@ -27,9 +27,9 @@ export LOG_DIR=/home/ubuntu/logs                                 # adapt to your
 
 ---
 
-## 1. PRE-UPDATE PREPARATION
+## 1. PRE-UPDATE PREPARATION [Required]
 
-### 1.1 SSH Access Verification
+### 1.1 SSH Access Verification [Required]
 
 - [ ] Verify you have SSH access to the server
   ```bash
@@ -44,11 +44,11 @@ export LOG_DIR=/home/ubuntu/logs                                 # adapt to your
   ls -la /data/SAPPHIRE_Forecast_Tools
   ```
 
-### 1.2 iEasyHydro HF Connectivity (if applicable)
+### 1.2 iEasyHydro HF Connectivity (if applicable) [Required]
 
 If you are setting up this server for the first time, complete the SSH tunnel setup steps in `doc/prod/first_deploy_checklist.md` first. For routine updates, just verify the tunnel is healthy: `sudo systemctl status <tunnel-service>.service`.
 
-### 1.3 Timing Considerations
+### 1.3 Timing Considerations [Required]
 
 - [ ] Check the current time relative to scheduled cron jobs
   ```bash
@@ -60,7 +60,7 @@ If you are setting up this server for the first time, complete the SSH tunnel se
 - [ ] Consider notifying stakeholders if dashboards will be temporarily unavailable
 - [ ] Plan update during low-usage period (e.g., weekends or early morning local time)
 
-### 1.4 Verify Current State
+### 1.4 Verify Current State [Required]
 
 **Check running services:**
 
@@ -108,7 +108,7 @@ If you are setting up this server for the first time, complete the SSH tunnel se
   git branch --show-current
   ```
 
-### 1.5 Backup Critical Files
+### 1.5 Backup Critical Files [Required]
 
 **Create timestamped backup directory:**
 
@@ -185,7 +185,7 @@ If you are setting up this server for the first time, complete the SSH tunnel se
   echo "Backup complete: $BACKUP_DIR"
   ```
 
-### 1.6 Pre-Update Checklist Summary
+### 1.6 Pre-Update Checklist Summary [Required]
 
 Before proceeding to the update steps, confirm:
 
@@ -203,9 +203,9 @@ Before proceeding to the update steps, confirm:
 
 ---
 
-## 2. CORE UPDATE STEPS
+## 2. CORE UPDATE STEPS [Required]
 
-### 2.1 Stop Services
+### 2.1 Stop Services [Required]
 
 Before updating, stop all running SAPPHIRE services to prevent conflicts during the update.
 
@@ -239,7 +239,7 @@ Before updating, stop all running SAPPHIRE services to prevent conflicts during 
 
 ---
 
-### 2.2 Update Repository
+### 2.2 Update Repository [Required]
 
 Pull the latest changes from the repository.
 
@@ -278,7 +278,7 @@ Pull the latest changes from the repository.
 
 ---
 
-### 2.3 Update .env File (BEFORE running containers)
+### 2.3 Update .env File (BEFORE running containers) [Required]
 
 > **IMPORTANT**: Complete this section BEFORE Section 2.4 (Pull Docker Images). The .env file must be updated before pulling images or running any containers, as scripts read configuration from this file.
 
@@ -378,7 +378,7 @@ The server .env and the local repo .env are on different machines, so you need t
   ```
 
 ---
-### 2.4 Pull New Docker Images
+### 2.4 Pull New Docker Images [Required]
 
 - [ ] **Remove old SAPPHIRE DockerHub images only**
   ```bash
@@ -522,7 +522,7 @@ To force a rebuild after a code update:
 ---
 
 
-### 2.4.5 Bring up SAPPHIRE microservices stack
+### 2.4.5 Bring up SAPPHIRE microservices stack [Required]
 
 **Why this step matters:** the cron scripts (`bin/run_pentadal_forecasts.sh`,
 `bin/run_decadal_forecasts.sh`, `bin/run_preprocessing_gateway.sh`, etc.) and the
@@ -578,7 +578,7 @@ The stack is defined in `sapphire/docker-compose.yml` and includes:
 
 ---
 
-### 2.4.6 Apply schema migrations
+### 2.4.6 Apply schema migrations [Required]
 
 The preprocessing and postprocessing services use **Alembic** for schema management.
 Pulling new images without applying outstanding migrations can leave the DB schema
@@ -622,7 +622,7 @@ behind the code — for example, the snow-stat write path requires migration
 
 ---
 
-### 2.5 Update Crontabs
+### 2.5 Update Crontabs [Required]
 
 Update the cron schedule for automated forecast runs.
 
@@ -749,7 +749,7 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   ls -ld /var/backups/sapphire
   ```
 
-### 2.6 Test Cron Commands Manually
+### 2.6 Test Cron Commands Manually [Required]
 
 > **Prerequisite — the SAPPHIRE microservices stack must be up before any
 > cron command below will succeed.** Every cron command reads/writes through
@@ -821,9 +821,9 @@ After updating crontabs, run each cron command manually (one by one) to verify t
 
 ---
 
-## 3. POST-UPDATE VERIFICATION
+## 3. POST-UPDATE VERIFICATION [Required]
 
-### 3.1 Start Services
+### 3.1 Start Services [Required]
 
 Start the services in the correct order to ensure proper initialization.
 
@@ -880,7 +880,7 @@ Expected output should include the microservices (`sapphire-api-gateway`,
 - `sapphire-luigi-daemon` (or similar) - Up, port 8082
 - `sapphire-dashboard` - Up, port 5006
 
-### 3.2 Verify Services Running
+### 3.2 Verify Services Running [Required]
 
 #### Post-deploy probe suite
 
@@ -979,7 +979,7 @@ apply the `network_mode: host` fix.
   docker logs sapphire-dashboard --tail 50
   ```
 
-### 3.3 Test Forecast Run
+### 3.3 Test Forecast Run [Required]
 
 Perform a quick manual test to verify the pipeline works correctly.
 
@@ -1074,11 +1074,11 @@ succeeded and verified`.
 
 ---
 
-## 4. LOG CLEANUP (Optional)
+## 4. LOG CLEANUP [Optional]
 
 Clean up old log files to prevent disk space issues.
 
-### 4.1 Clean Up Pipeline Logs
+### 4.1 Clean Up Pipeline Logs [Optional]
 
 Log files are stored in `${LOG_DIR}/`
 
@@ -1097,7 +1097,7 @@ Log files are stored in `${LOG_DIR}/`
   ls -lh ${LOG_DIR}/
   ```
 
-### 4.2 Clean Up Docker Logs (Optional)
+### 4.2 Clean Up Docker Logs [Optional]
 
 Docker container logs can also grow large over time.
 
@@ -1111,7 +1111,7 @@ Docker container logs can also grow large over time.
   find ${DATA_DIR}/intermediate_data/docker_logs -name "*.log" -mtime +7 -delete 2>/dev/null
   ```
 
-### 4.3 Prune Docker System (Optional)
+### 4.3 Prune Docker System [Optional]
 
 Remove unused Docker resources:
 
@@ -1127,7 +1127,7 @@ Remove unused Docker resources:
 
 ---
 
-## 5. ROLLBACK PROCEDURE
+## 5. ROLLBACK PROCEDURE [Emergency only]
 
 If the update causes issues, follow these steps to revert. The forward path had four
 state-changing actions: image pull (§2.4), `.env` edit (§2.3), `alembic upgrade head`
@@ -1135,7 +1135,7 @@ state-changing actions: image pull (§2.4), `.env` edit (§2.3), `alembic upgrad
 each in the opposite order: stop services → restore `.env` → downgrade schema (if
 upgraded forward) → restore Luigi markers → restart with previous image tag.
 
-### 5.1 Stop Current Services
+### 5.1 Stop Current Services [Emergency only]
 
 - [ ] Stop all SAPPHIRE services (project-name-safe `down` on the Luigi compose):
   ```bash
@@ -1145,7 +1145,7 @@ upgraded forward) → restore Luigi markers → restart with previous image tag.
   Without `-p sapphire` on the Luigi compose, the persistent `luigi-daemon` container
   is silently missed (see §2.1 note). The dashboard stops with the microservices stack.
 
-### 5.2 Restore Previous Docker Images
+### 5.2 Restore Previous Docker Images [Emergency only]
 
 - [ ] Pull previous image versions (replace `<previous-tag>` with actual version):
   ```bash
@@ -1158,7 +1158,7 @@ upgraded forward) → restore Luigi markers → restart with previous image tag.
   docker images | grep sapphire
   ```
 
-### 5.3 Restore .env Backup
+### 5.3 Restore .env Backup [Emergency only]
 
 If you backed up your .env file before the update:
 
@@ -1167,7 +1167,7 @@ If you backed up your .env file before the update:
   cp ${BACKUP_DIR}/.env_develop_${ORG_SLUG} ${ENV_FILE_PATH}
   ```
 
-### 5.4 Update Image Tags
+### 5.4 Update Image Tags [Emergency only]
 
 - [ ] Edit your .env file to use the previous image tag:
   ```bash
@@ -1176,7 +1176,7 @@ If you backed up your .env file before the update:
   ieasyhydroforecast_frontend_docker_image_tag=<previous-tag>
   ```
 
-### 5.5 Restore database state
+### 5.5 Restore database state [Emergency only]
 
 Apply this section only if the forward path included `alembic upgrade head` (§2.4.6)
 or if data was corrupted by the update. Skip the schema-downgrade step if alembic
@@ -1220,7 +1220,7 @@ Bring the microservices stack up briefly to run the downgrade:
 > dashboard write path will silently null out stat fields until the schema is
 > re-upgraded.
 
-### 5.6 Restore Luigi marker files
+### 5.6 Restore Luigi marker files [Emergency only]
 
 If the rolled-back image expects an earlier marker state, restore from backup. If
 markers are not restored, tasks may silently short-circuit on stale completion
@@ -1231,7 +1231,7 @@ markers from the failed forward run.
   cp ${BACKUP_DIR}/luigi_markers/*.marker ${DATA_DIR}/intermediate_data/luigi_markers/
   ```
 
-### 5.7 Restart Services with Previous Version
+### 5.7 Restart Services with Previous Version [Emergency only]
 
 The microservices stack may still be up from §5.5.2; only Luigi and dashboards
 need to be (re)started.
@@ -1261,17 +1261,17 @@ The dashboard was restarted as part of the microservices stack `up -d` above; no
 
 ---
 
-## 6. FINAL CHECKLIST
+## 6. FINAL CHECKLIST [Required]
 
 Complete this summary checklist before considering the update complete.
 
-### Services Running
+### Services Running [Required]
 
 - [ ] Luigi daemon is running and accessible at port 8082
 - [ ] Dashboard is running and accessible at port 5006
 - [ ] All containers show "healthy" status
 
-### Crontabs Configured
+### Crontabs Configured [Required]
 
 - [ ] Verify crontab entries are correct:
   ```bash
@@ -1281,13 +1281,13 @@ Complete this summary checklist before considering the update complete.
 - [ ] Confirm scheduled times are appropriate for your timezone
 - [ ] Verify log cleanup job is configured (typically at 02:00 UTC)
 
-### Next Scheduled Run
+### Next Scheduled Run [Required]
 
 - [ ] Identify next scheduled forecast run from crontab
 - [ ] Note the expected time: _______________
 - [ ] Plan to check logs after next scheduled run to confirm everything works
 
-### Documentation
+### Documentation [Required]
 
 - [ ] Note any configuration changes made during this update
 - [ ] Update deployment notes if procedures changed
