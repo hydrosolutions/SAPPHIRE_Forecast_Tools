@@ -79,11 +79,13 @@ If you are setting up this server for the first time, complete the SSH tunnel se
   ```bash
   docker inspect --format "{{.State.Health.Status}}" sapphire-dashboard
   ```
+  TODO carried forward: known Dockerfile healthcheck bug — `sapphire-dashboard` container reports unhealthy despite dashboard being functional. Operator may safely ignore this status; not blocking ops. Fix tracked separately.
 
 - [ ] Verify dashboards are accessible
   ```bash
   curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
   ```
+  TBD: confirm expected HTTP code on staging (likely 200; possibly 302 if dashboard root redirects to a sub-path). Update this line once verified.
 
 **Check recent pipeline activity:**
 
@@ -138,8 +140,12 @@ If you are setting up this server for the first time, complete the SSH tunnel se
 
 - [ ] Dump preprocessing, postprocessing, user, and auth DBs to timestamped `.dump` files
   ```bash
-  bash bin/backup_sapphire_db.sh -d /var/backups/sapphire/pre_update_$(date +%Y%m%d_%H%M%S)
+  export DB_BACKUP_DIR="/var/backups/sapphire/pre_update_$(date +%Y%m%d_%H%M%S)"
+  sudo mkdir -p "$DB_BACKUP_DIR"
+  sudo chown "$USER" "$DB_BACKUP_DIR"
+  bash bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d "$DB_BACKUP_DIR" -r 30
   ```
+  The `-e` flag points the backup script at the deployment env file; `-d` must point to an existing writable directory because `bin/backup_sapphire_db.sh` does not create it for you. Use `-r 0` instead of `-r 30` if no retention pruning should happen during this backup.
   This is the supported `pg_dump`-based backup mechanism (`bin/backup_sapphire_db.sh`).
   It writes one `.dump` file per database to the target directory. Required before
   applying schema migrations — DB state is the only state that cannot be regenerated
@@ -151,12 +157,14 @@ If you are setting up this server for the first time, complete the SSH tunnel se
   ```bash
   cp ${DATA_DIR}/intermediate_data/last_successful_run.txt "$BACKUP_DIR/" 2>/dev/null || echo "File not found"
   ```
+  Optional — only required if this deployment uses `ieasyforecast_last_successful_run_file`. Verify with: `grep ieasyforecast_last_successful_run_file ${ENV_FILE_PATH}` before skipping. Retained pending LR-003 cleanup gi_draft.
 
 - [ ] Backup Luigi marker files (required for clean rollback — see §5)
   ```bash
   mkdir -p "$BACKUP_DIR/luigi_markers"
   cp ${DATA_DIR}/intermediate_data/luigi_markers/*.marker "$BACKUP_DIR/luigi_markers/" 2>/dev/null || echo "No marker files"
   ```
+  Optional — only required for clean Luigi rollback; can skip if Luigi state was already reset elsewhere.
 
 **Record current Docker image versions:**
 
@@ -371,6 +379,17 @@ The server .env and the local repo .env are on different machines, so you need t
 
 ---
 ### 2.4 Pull New Docker Images
+
+- [ ] **Remove old SAPPHIRE DockerHub images only**
+  ```bash
+  old_sapphire_images="$(docker images 'mabesa/sapphire-*' --format '{{.Repository}}:{{.Tag}}' | sort -u)"
+  printf '%s\n' "$old_sapphire_images"
+  read -r -p "Remove only the mabesa/sapphire-* images listed above? [y/N] " confirm
+  if [ "$confirm" = "y" ] && [ -n "$old_sapphire_images" ]; then
+    printf '%s\n' "$old_sapphire_images" | xargs -r docker rmi
+  fi
+  ```
+  Do not remove `nginx-proxy-manager`, `postgres:15`, locally built microservice images, or any other non-`mabesa/sapphire-*` image.
 
 > **Prerequisite**: Complete Section 2.3 (Update .env File) first!
 
@@ -651,7 +670,7 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   0 2 * * * find ${LOG_DIR} -name "sapphire_*.log" -mtime +7 -delete
 
   # Daily DB backup at 01:00 UTC (pg_dump-based, 30-day retention)
-  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
+  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 30 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
 
   # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
   0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +\%Y\%m\%d).log 2>&1
@@ -751,7 +770,7 @@ After updating crontabs, run each cron command manually (one by one) to verify t
 
 - [ ] **Run database backup**
   ```bash
-  bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30
+  bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 30
   ```
 
 - [ ] **Run gateway preprocessing**
