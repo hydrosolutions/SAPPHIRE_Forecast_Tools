@@ -198,10 +198,12 @@ pull_docker_images() {
 
 # Function to establish an SSH tunnel to the iEasyHydro (HF) server
 establish_ssh_tunnel() {
-    echo "| ieasyhydroforecast_ssh_to_iEH: $ieasyhydroforecast_ssh_to_iEH"
+    local ssh_to_ieh
+    ssh_to_ieh="$(printf '%s' "${ieasyhydroforecast_ssh_to_iEH:-}" | tr '[:upper:]' '[:lower:]')"
+    echo "| ieasyhydroforecast_ssh_to_iEH: ${ieasyhydroforecast_ssh_to_iEH:-}"
 
     # Check if SSH tunnel is required
-    if [ "${ieasyhydroforecast_ssh_to_iEH,,}" != "true" ]; then
+    if [ "$ssh_to_ieh" != "true" ]; then
         echo "| SSH tunnel not required (ieasyhydroforecast_ssh_to_iEH is not set to true)"
         return 0
     fi
@@ -277,8 +279,8 @@ cleanup() {
   echo "| ------"
   echo "| Cleaning up"
   echo "| ------"
-  if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
-    kill $ieasyhydroforecast_ssh_tunnel_pid
+  if [ -n "${ieasyhydroforecast_ssh_tunnel_pid:-}" ]; then
+    kill "$ieasyhydroforecast_ssh_tunnel_pid" 2>/dev/null || true
   fi
 }
 
@@ -288,8 +290,8 @@ cleanup_deployment() {
   echo "| ------"
   echo "| Cleaning up"
   echo "| ------"
-  if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
-    kill $ieasyhydroforecast_ssh_tunnel_pid
+  if [ -n "${ieasyhydroforecast_ssh_tunnel_pid:-}" ]; then
+    kill "$ieasyhydroforecast_ssh_tunnel_pid" 2>/dev/null || true
   fi
   echo "|       "
   echo "| ------"
@@ -349,4 +351,3 @@ cleanup_long_term_forecasting_containers() {
     stop_and_remove_container lt_forecast
     stop_and_remove_container lt-postprocessing
 }
-

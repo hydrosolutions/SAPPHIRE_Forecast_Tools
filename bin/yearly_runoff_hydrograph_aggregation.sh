@@ -85,14 +85,19 @@ while [ $# -gt 0 ]; do
 done
 
 # Source the common functions
+# shellcheck source=bin/utils/common_functions.sh
 source "$(dirname "$0")/utils/common_functions.sh"
 
 # Print the banner
 print_banner
 echo "| Running Yearly Runoff Hydrograph Aggregation (monthly + seasonal triads)"
 
-# Read the configuration from the .env file
+# Read the configuration from the .env file. common_functions.sh sources the
+# env file and predates strict unset-variable checks, so relax -u only while
+# loading configuration.
+set +u
 read_configuration "$ENV_FILE_PATH"
+set -u
 
 # Validate required environment variables
 if [ -z "${ieasyhydroforecast_data_root_dir-}" ] || \
@@ -151,14 +156,14 @@ MEMORY_LIMIT="4g"
 MEMORY_SWAP="6g"
 
 # macOS Docker compatibility
-DOCKER_HOST_OVERRIDE=""
+DOCKER_HOST_OVERRIDE=()
 if [[ "$(uname)" == "Darwin" ]]; then
     if [[ "${IEASYHYDROHF_HOST-}" == *"localhost"* ]]; then
         DOCKER_IEASYHYDROHF_HOST="${IEASYHYDROHF_HOST//localhost/host.docker.internal}"
         log_message "macOS detected: overriding IEASYHYDROHF_HOST for Docker container"
         log_message "  Original: $IEASYHYDROHF_HOST"
         log_message "  Docker:   $DOCKER_IEASYHYDROHF_HOST"
-        DOCKER_HOST_OVERRIDE="-e IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}"
+        DOCKER_HOST_OVERRIDE=(-e "IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}")
     fi
 fi
 
@@ -190,7 +195,7 @@ docker run \
     -e ieasyhydroforecast_env_file_path="${ieasyhydroforecast_env_file_path}" \
     -e SAPPHIRE_OPDEV_ENV=True \
     -e IN_DOCKER=True \
-    ${DOCKER_HOST_OVERRIDE} \
+    "${DOCKER_HOST_OVERRIDE[@]}" \
     -v "${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config" \
     -v "${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data" \
     --memory="${MEMORY_LIMIT}" \

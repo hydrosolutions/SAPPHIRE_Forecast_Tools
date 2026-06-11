@@ -956,6 +956,15 @@ _on_signal() {
 main() {
     parse_args "$@"
 
+    case "$ENV_FILE" in
+        \~)
+            ENV_FILE="$HOME"
+            ;;
+        \~/*)
+            ENV_FILE="$HOME/${ENV_FILE#\~/}"
+            ;;
+    esac
+
     print_banner
     echo "| Running Regenerate / Gap-Backfill Hooks (P6 meta-wrapper)"
 
