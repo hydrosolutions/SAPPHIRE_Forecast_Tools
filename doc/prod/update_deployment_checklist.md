@@ -44,7 +44,7 @@ export LOG_DIR=/home/ubuntu/logs                                 # adapt to your
   ls -la /data/SAPPHIRE_Forecast_Tools
   ```
 
-### 1.2 iEasyHydro HF Connectivity (if applicable) [Required]
+### 1.2 iEasyHydro HF Connectivity (if applicable)
 
 If you are setting up this server for the first time, complete the SSH tunnel setup steps in `doc/prod/first_deploy_checklist.md` first. For routine updates, just verify the tunnel is healthy: `sudo systemctl status <tunnel-service>.service`.
 
