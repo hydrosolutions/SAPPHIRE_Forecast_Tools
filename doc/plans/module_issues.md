@@ -103,7 +103,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
 | **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
 | **INFRA-018** | Playwright integration tests fail at browser launch under macOS sandbox (verification noise + potential CI coverage gap) | infra | **Low** | Draft | [`low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md`](issues/low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md) | — |
-| **INFRA-019** | sapphire-api-client `horizon_type` Literals diverge — `quarter` missing on most paths (hygiene, deferred from PREPQ-008 D3) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md`](issues/mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md) | — |
+| ~~**INFRA-019**~~ | ~~sapphire-api-client `horizon_type` Literals diverge — `quarter` missing on most paths (hygiene, deferred from PREPQ-008 D3)~~ | infra | | Complete | [`mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md`](issues/mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md) | Fixed in sapphire-api-client v0.5.0 (`4fd543e`); pin bumped via PR #373 (2026-06-12). |
 | ~~**P-006**~~ | ~~Move long-term schedule query into Luigi pipeline~~ | ~~pipeline~~ | | Complete | [`review_gi_draft_pipeline_lt_schedule_into_luigi.md`](issues/review_gi_draft_pipeline_lt_schedule_into_luigi.md) | — |
 
 ---

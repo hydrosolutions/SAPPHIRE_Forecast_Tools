@@ -1,6 +1,6 @@
 ## sapphire-api-client `horizon_type` Literals diverge — `quarter` missing on most write/read paths (INFRA-019)
 
-**Status**: Draft (2026-06-12)
+**Status**: Resolved 2026-06-12 — fixed upstream in `sapphire-api-client` v0.5.0 (`4fd543e`); pin bumped 0.4.0 → 0.5.0 across all consuming modules and landed on `maxat_sapphire_2` via PR #373. Upstream now exposes a single `HorizonTypeLiteral` source of truth in `validators.py` (includes `quarter`), with `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))` derived from it so type hints and runtime validation cannot drift.
 **Module**: `sapphire-api-client` (external repo: `hydrosolutions/sapphire-api-client`) + every SAPPHIRE module that pins it
 **Priority**: **Medium** (hygiene / latent footgun — no current operational failure traces to it)
 **Labels**: `api-client`, `enum`, `consistency`, `tech-debt`, `cross-module`
@@ -39,6 +39,6 @@ The pinned `sapphire-api-client` (rev `7bd349172ef24576b654a7b78f38734de3f2e657`
 
 ## Acceptance criteria
 
-- [ ] All `horizon_type` Literals in the client match the server `HorizonType` value set (incl. `quarter`).
-- [ ] New client rev cut upstream and pin bumped across all consuming modules.
-- [ ] `SAPPHIRE_TEST_ENV=True bash run_tests.sh` green across affected modules after re-pin.
+- [x] All `horizon_type` Literals in the client match the server `HorizonType` value set (incl. `quarter`) — unified behind `HorizonTypeLiteral` in v0.5.0.
+- [x] New client rev cut upstream (v0.5.0, `4fd543e`) and pin bumped across all consuming modules (PR #373).
+- [x] `SAPPHIRE_TEST_ENV=True bash run_tests.sh` green across affected modules after re-pin (all 8 client-consuming modules pass; 40/40 CI checks green on #373).
