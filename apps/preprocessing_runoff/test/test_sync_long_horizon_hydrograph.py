@@ -558,3 +558,236 @@ def test_orchestrator_continues_after_skipped_station():
     assert len(client.write_hydrograph.call_args_list[0].args[0]) == 12
     assert len(client.write_hydrograph.call_args_list[1].args[0]) == 1
     assert len(client.write_hydrograph.call_args_list[2].args[0]) == 4
+
+
+def test_orchestrator_continues_after_quarterly_api_write_failure(caplog):
+    first_code = "19999"
+    second_code = "19998"
+    sdk = MagicMock()
+    sdk.get_norm_for_site.side_effect = [_norms(), _norms()]
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+        _full_year_rows(2026, {month: 30.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 15.0 for month in range(1, 13)}),
+    ]
+    write_calls = []
+
+    def fail_third_write(_records):
+        write_calls.append(_records)
+        if len(write_calls) == 3:
+            raise sync_lhh.SapphireAPIError("quarter rejected", status_code=422)
+
+    client.write_hydrograph.side_effect = fail_third_write
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=[first_code, second_code],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert client.write_hydrograph.call_count == 6
+    assert len(records) == 30
+    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
+    assert "1/2 attempted station(s)" in caplog.text
+    assert records.attempted_station_codes == ["19999", "19998"]
+    assert records.completed_station_codes == ["19998"]
+    assert records.failed_station_codes == ["19999"]
+
+
+def test_orchestrator_preserves_monthly_when_seasonal_api_write_fails(caplog):
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+    ]
+    write_calls = []
+
+    def fail_second_write(_records):
+        write_calls.append(_records)
+        if len(write_calls) == 2:
+            raise sync_lhh.SapphireAPIError("season rejected", status_code=422)
+
+    client.write_hydrograph.side_effect = fail_second_write
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=["19999"],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert len(records) == 12
+    assert client.write_hydrograph.call_count == 2
+    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
+    assert records.attempted_station_codes == ["19999"]
+    assert records.completed_station_codes == []
+    assert records.failed_station_codes == ["19999"]
+
+
+def test_orchestrator_marks_read_runoff_failure_as_attempted_failed(caplog):
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+    client = MagicMock()
+    client.read_runoff.side_effect = sync_lhh.SapphireAPIError("runoff unavailable")
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=["19999"],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert len(records) == 0
+    client.write_hydrograph.assert_not_called()
+    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
+    assert "read/write" in caplog.text
+    assert records.attempted_station_codes == ["19999"]
+    assert records.completed_station_codes == []
+    assert records.failed_station_codes == ["19999"]
+
+
+def test_orchestrator_skip_has_metadata_but_no_attempt_completion_or_failure():
+    sdk = MagicMock()
+    sdk.get_norm_for_site.side_effect = ConnectionError("tunnel down")
+    client = MagicMock()
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert isinstance(records, sync_lhh._LongHorizonWriteResult)
+    assert records == []
+    assert records.attempted_station_codes == []
+    assert records.completed_station_codes == []
+    assert records.failed_station_codes == []
+
+
+def _patch_main_dependencies(monkeypatch, records):
+    monkeypatch.setattr(sync_lhh.sys, "argv", ["sync_long_horizon_hydrograph.py"])
+    monkeypatch.setattr(sync_lhh.sl, "load_environment", MagicMock())
+    monkeypatch.setattr(sync_lhh, "IEasyHydroHFSDK", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(sync_lhh, "resolve_sdk_station_codes", MagicMock(return_value=["19999"]))
+    monkeypatch.setattr(sync_lhh, "_get_preprocessing_client", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        sync_lhh,
+        "write_long_horizon_hydrograph",
+        MagicMock(return_value=records),
+    )
+
+
+def test_main_exits_two_when_every_attempted_station_has_api_read_write_failure(
+    monkeypatch,
+    caplog,
+):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.attempted_station_codes = ["19999"]
+    records.completed_station_codes = []
+    records.failed_station_codes = ["19999"]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 2
+    assert (
+        "All 1 attempted station(s) had long-horizon hydrograph API read/write failures"
+        in caplog.text
+    )
+
+
+def test_main_exits_zero_when_some_station_completes_after_api_read_write_failure(
+    monkeypatch,
+):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}, {"code": "19998"}])
+    records.attempted_station_codes = ["19999", "19998"]
+    records.completed_station_codes = ["19998"]
+    records.failed_station_codes = ["19999"]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 0
+
+
+def test_main_empty_records_path_when_no_station_attempted(monkeypatch, caplog):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.attempted_station_codes = []
+    records.completed_station_codes = []
+    records.failed_station_codes = []
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 2
+    assert "No monthly hydrograph records produced - nothing to write." in caplog.text
+    assert "All 0 attempted station(s)" not in caplog.text
+
+
+def test_orchestrator_does_not_catch_programming_errors():
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+    ]
+    write_calls = []
+
+    def fail_third_write(_records):
+        write_calls.append(_records)
+        if len(write_calls) == 3:
+            raise KeyError("bad record shape")
+
+    client.write_hydrograph.side_effect = fail_third_write
+
+    with pytest.raises(KeyError):
+        sync_lhh.write_long_horizon_hydrograph(
+            codes=["19999"],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+
+def test_build_quarterly_records_api_contract_fields():
+    records = sync_lhh.build_quarterly_records(
+        _monthly_records_for_season(target_year=2026),
+        TEST_CODE,
+        2026,
+    )
+    expected_fields = {
+        "horizon_type",
+        "code",
+        "date",
+        "day_of_year",
+        "horizon_value",
+        "horizon_in_year",
+        "norm",
+        "previous",
+        "current",
+    }
+
+    assert len(records) == 4
+    for record in records:
+        assert set(record) == expected_fields
+        assert record["horizon_type"] == "quarter"
+        assert record["code"] == TEST_CODE
+        assert record["horizon_value"] == record["horizon_in_year"]
