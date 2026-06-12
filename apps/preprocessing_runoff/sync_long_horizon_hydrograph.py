@@ -19,6 +19,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import pandas as pd
+import requests
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _IEHF_DIR = os.path.join(_SCRIPT_DIR, "..", "iEasyHydroForecast")
@@ -35,12 +36,29 @@ from setup_library import (
 )
 
 try:
-    from sapphire_api_client import SapphirePreprocessingClient
+    from sapphire_api_client import SapphireAPIError, SapphirePreprocessingClient
 
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
+    SapphireAPIError = None
     SapphirePreprocessingClient = None
     SAPPHIRE_API_AVAILABLE = False
+
+_API_READ_WRITE_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
+if SapphireAPIError is not None:
+    _API_READ_WRITE_ERRORS = (SapphireAPIError, *_API_READ_WRITE_ERRORS)
+
+
+class _LongHorizonWriteResult(list):
+    def __init__(self, records: Iterable[dict[str, Any]] = ()) -> None:
+        super().__init__(records)
+        self.attempted_station_codes: list[str] = []
+        self.completed_station_codes: list[str] = []
+        self.failed_station_codes: list[str] = []
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -342,36 +360,62 @@ def write_long_horizon_hydrograph(
     today: dt.date,
 ) -> list[dict[str, Any]]:
     """Build and write monthly hydrograph records for all supplied stations."""
-    all_records = []
+    all_records = _LongHorizonWriteResult()
     for code in codes:
-        monthly_records = write_station_monthly_hydrograph(
-            code=str(code),
-            iehhf_sdk=iehhf_sdk,
-            client=client,
-            target_year=target_year,
-            today=today,
-        )
-        if not monthly_records:
-            logger.info("Skipping seasonal hydrograph for station %s without monthly records", code)
+        code_str = str(code)
+        all_records.attempted_station_codes.append(code_str)
+        try:
+            monthly_records = write_station_monthly_hydrograph(
+                code=code_str,
+                iehhf_sdk=iehhf_sdk,
+                client=client,
+                target_year=target_year,
+                today=today,
+            )
+            if not monthly_records:
+                all_records.attempted_station_codes.pop()
+                logger.info(
+                    "Skipping seasonal hydrograph for station %s without monthly records",
+                    code,
+                )
+                continue
+            all_records.extend(monthly_records)
+            all_records.append(
+                write_station_seasonal_hydrograph(
+                    code=code_str,
+                    monthly_records=monthly_records,
+                    client=client,
+                    target_year=target_year,
+                    today=today,
+                )
+            )
+            all_records.extend(
+                write_station_quarterly_hydrograph(
+                    code=code_str,
+                    monthly_records=monthly_records,
+                    client=client,
+                    target_year=target_year,
+                    today=today,
+                )
+            )
+            all_records.completed_station_codes.append(code_str)
+        except _API_READ_WRITE_ERRORS as exc:
+            all_records.failed_station_codes.append(code_str)
+            logger.warning(
+                "Long-horizon hydrograph API read/write failed for station %s; preserving "
+                "any records already written for this station and continuing. Error: %s: %s",
+                code_str,
+                type(exc).__name__,
+                exc,
+            )
             continue
-        all_records.extend(monthly_records)
-        all_records.append(
-            write_station_seasonal_hydrograph(
-                code=str(code),
-                monthly_records=monthly_records,
-                client=client,
-                target_year=target_year,
-                today=today,
-            )
-        )
-        all_records.extend(
-            write_station_quarterly_hydrograph(
-                code=str(code),
-                monthly_records=monthly_records,
-                client=client,
-                target_year=target_year,
-                today=today,
-            )
+
+    if all_records.failed_station_codes:
+        logger.warning(
+            "Long-horizon hydrograph API read/write failures for %d/%d attempted station(s): %s",
+            len(all_records.failed_station_codes),
+            len(all_records.attempted_station_codes),
+            ", ".join(all_records.failed_station_codes),
         )
     return all_records
 
@@ -453,6 +497,15 @@ def main() -> None:
             target_year=target_year,
             today=today,
         )
+        attempted_station_codes = getattr(records, "attempted_station_codes", [])
+        completed_station_codes = getattr(records, "completed_station_codes", [])
+        if len(completed_station_codes) == 0 and len(attempted_station_codes) > 0:
+            logger.error(
+                "All %d attempted station(s) had long-horizon hydrograph API read/write "
+                "failures; exiting 2 after preserving any successful partial writes.",
+                len(attempted_station_codes),
+            )
+            sys.exit(2)
         if not records:
             logger.error("No monthly hydrograph records produced - nothing to write.")
             sys.exit(2)

@@ -103,6 +103,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-002b** | Synthetic integration tests with fake data | fd | **Medium** | Open | — (plan file never created) | — |
 | **INFRA-017** | Document DB initialization for fresh deployments (`SAPPHIRE_SYNC_MODE=initial`) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_initial_sync_docs.md`](issues/mid_prio_gi_draft_infra_initial_sync_docs.md) | — |
 | **INFRA-018** | Playwright integration tests fail at browser launch under macOS sandbox (verification noise + potential CI coverage gap) | infra | **Low** | Draft | [`low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md`](issues/low_prio_gi_draft_infra_playwright_sandbox_browser_launch.md) | — |
+| **INFRA-019** | sapphire-api-client `horizon_type` Literals diverge — `quarter` missing on most paths (hygiene, deferred from PREPQ-008 D3) | infra | **Medium** | Draft | [`mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md`](issues/mid_prio_gi_draft_infra_api_client_quarter_literal_consistency.md) | — |
 | ~~**P-006**~~ | ~~Move long-term schedule query into Luigi pipeline~~ | ~~pipeline~~ | | Complete | [`review_gi_draft_pipeline_lt_schedule_into_luigi.md`](issues/review_gi_draft_pipeline_lt_schedule_into_luigi.md) | — |
 
 ---
@@ -125,6 +126,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | **PREPQ-004** | Swiss data source integration & module refactoring | **Low** | Blocked | [`low_prio_gi_PR-003_swiss_data_source_refactor.md`](issues/low_prio_gi_PR-003_swiss_data_source_refactor.md) | Swiss API docs unavailable |
 | **PREPQ-007** | External site data ingestion (manual sites via Google Sheets) | **High** | Code complete; deployment wiring + hardening landed; pending operator rollout | [`external_site_data_ingestion_plan.md`](external_site_data_ingestion_plan.md) | — |
+| **PREPQ-008** | Long-horizon quarterly hydrograph write fails — deployed API rejects `horizon_type="quarter"` (schema/deployment drift) | **High** | Draft | [`high_prio_gi_draft_runoff_quarter_horizon_type_rejected.md`](issues/high_prio_gi_draft_runoff_quarter_horizon_type_rejected.md) | Discovered 2026-06-12 in maintenance run; 422 abort. Source already has QUARTER (commit 2be58f7 + migration d4e5f6a7b8c9); deployed image/DB behind. Related: MIG-003, FD-015. |
 
 ### Linear Regression (`lr`)
 
