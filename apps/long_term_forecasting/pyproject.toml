@@ -44,7 +44,7 @@ dependencies = [
     "requests>=2.32.0",
     "aiohttp>=3.13.4",
     "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk",
-    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@7bd349172ef24576b654a7b78f38734de3f2e657",
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@4fd543e852f1eb0c834d8ab649a849a0a56d4e9b",
     # Local library dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
     "lt-forecasting",
