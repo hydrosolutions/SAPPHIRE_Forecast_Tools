@@ -24,8 +24,7 @@ Integration against a live docker stack is out of scope per architecture §Q7
 (disposable integration belongs to a separate sprint). The wrapper's
 docker-run path is exercised manually in the runbook §6.4 canary.
 
-Sentinel codes (19999-class) only — see ``no real station codes in tests``
-project rule.
+Fixture station codes are restricted by ``test_migration_fixture_guard``.
 """
 
 from __future__ import annotations
@@ -865,11 +864,6 @@ def test_ml_forecast_module_imports_only_stdlib_and_intra_package():
     )
 
 
-# ===========================================================================
-# 8. Shipped fixtures round-trip through the parser
-# ===========================================================================
-
-
 _FIXTURE_DIR = (
     _REPO_ROOT
     / "apps"
@@ -879,6 +873,255 @@ _FIXTURE_DIR = (
     / "migration_csv"
     / "ml_forecast"
 )
+
+_RAW_FIXTURE_ROOT = _FIXTURE_DIR / "raw_predictions"
+
+
+# ===========================================================================
+# 8. Workstream A raw ML -> export reshape helper
+# ===========================================================================
+
+
+def _run_raw_to_export(args: list[str]) -> int:
+    from migration_py import ml_raw_to_export
+
+    return ml_raw_to_export.main(args)
+
+
+def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
+    import csv
+
+    with csv_path.open(newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def test_raw_local_branch_file_cannot_be_fed_directly_to_ml_importer():
+    """Local-branch raw ML files do not carry export-only ``model_type`` /
+    ``target`` columns, so feeding them directly to ``migration_py.ml_forecast``
+    must fail before any API write path is reachable."""
+    raw_csv = _RAW_FIXTURE_ROOT / "predictions" / "TFT" / "pentad_TFT_forecast.csv"
+    assert raw_csv.is_file()
+
+    with pytest.raises(ValueError, match="model_type|target"):
+        ml_forecast._read_filtered_records(
+            raw_csv,
+            cutoff=None,
+            station_filter=None,
+            model_filter=None,
+            preserve_legacy_horizons=False,
+        )
+
+
+def test_ml_raw_to_export_reshapes_contract_and_manifest(tmp_path):
+    """Raw local-branch ML rows are reshaped to the export schema consumed by
+    ``migration_py.ml_forecast``.
+
+    ``Q10`` / ``Q90`` are intentionally ignored for short-term ML because the
+    target forecast schema and the operational writer store only Q5/Q25/Q75/Q95
+    plus ``forecasted_discharge``.
+    """
+    out_csv = tmp_path / "ml_export.csv"
+    exit_code = _run_raw_to_export(["--data-ref", str(_RAW_FIXTURE_ROOT), "--out", str(out_csv)])
+    assert exit_code == 0
+
+    rows = _read_csv_rows(out_csv)
+    assert len(rows) == 4
+    assert set(rows[0]) == {
+        "code",
+        "model_type",
+        "horizon_type",
+        "date",
+        "target",
+        "flag",
+        "Q5",
+        "Q25",
+        "Q50",
+        "Q75",
+        "Q95",
+        "forecasted_discharge",
+    }
+    assert "Q10" not in rows[0]
+    assert "Q90" not in rows[0]
+
+    by_model_target = {(r["model_type"], r["target"]): r for r in rows}
+    tft = by_model_target[("TFT", "2026-01-10")]
+    assert tft["code"] == "19999"
+    assert tft["horizon_type"] == "day"
+    assert tft["date"] == "2026-01-01"  # issue date <- raw forecast_date
+    assert tft["target"] == "2026-01-10"  # target date <- raw date
+    assert tft["Q50"] == "12.50"
+    assert tft["forecasted_discharge"] == "12.50"
+    assert tft["flag"] == "0"
+
+    assert by_model_target[("TiDE", "2026-02-11")]["date"] == "2026-02-01"
+    assert by_model_target[("TSMixer", "2026-03-06")]["date"] == "2026-03-01"
+
+    manifest = _common.validate_manifest(out_csv, "ml_forecast")
+    assert manifest["row_count"] == "4"
+    assert manifest["station_count"] == "2"
+    # Manifest range is over reshaped issue-date column, not raw target dates.
+    assert manifest["date_min"] == "2026-01-01"
+    assert manifest["date_max"] == "2026-03-01"
+
+    records, counters, parsed_codes, date_min, date_max, per_model = (
+        ml_forecast._read_filtered_records(
+            out_csv,
+            cutoff=None,
+            station_filter=None,
+            model_filter=None,
+            preserve_legacy_horizons=False,
+        )
+    )
+    assert counters["filtered_row_count"] == 4
+    assert parsed_codes == {"19999", "00001"}
+    assert date_min == "2026-01-01"
+    assert date_max == "2026-03-01"
+    assert per_model == {"TFT": 2, "TiDE": 1, "TSMixer": 1}
+    assert {rec["horizon_type"] for rec in records} == {"day"}
+
+
+def test_ml_raw_to_export_dry_run_inventory_redacts_station_codes(tmp_path, capsys):
+    out_csv = tmp_path / "dry_run_export.csv"
+    exit_code = _run_raw_to_export(
+        [
+            "--data-ref",
+            str(_RAW_FIXTURE_ROOT),
+            "--out",
+            str(out_csv),
+            "--dry-run",
+        ]
+    )
+    assert exit_code == 0
+    assert not out_csv.exists()
+    assert not out_csv.with_name(out_csv.name + ".manifest").exists()
+
+    out = capsys.readouterr().out
+    assert "SOURCE_ROW_COUNT=4" in out
+    assert "FILTERED_ROW_COUNT=4" in out
+    assert "ISSUE_DATE_MIN=2026-01-01" in out
+    assert "ISSUE_DATE_MAX=2026-03-01" in out
+    assert "TARGET_DATE_MIN=2026-01-10" in out
+    assert "TARGET_DATE_MAX=2026-03-06" in out
+    assert "SKIPPED_BAD_DATE=0" in out
+    assert "SKIPPED_MISSING_REQUIRED=0" in out
+    assert "SKIPPED_UNKNOWN_MODEL=0" in out
+    assert "RAW_ML_PER_MODEL_COUNTS={TFT: 2, TiDE: 1, TSMixer: 1}" in out
+    assert "19999" not in out
+    assert "00001" not in out
+
+
+def test_ml_raw_to_export_station_filter(tmp_path):
+    out_csv = tmp_path / "station_export.csv"
+    exit_code = _run_raw_to_export(
+        [
+            "--data-ref",
+            str(_RAW_FIXTURE_ROOT),
+            "--out",
+            str(out_csv),
+            "--station-filter",
+            "00001",
+        ]
+    )
+    assert exit_code == 0
+
+    rows = _read_csv_rows(out_csv)
+    assert len(rows) == 1
+    assert rows[0]["code"] == "00001"
+    manifest = _common.validate_manifest(out_csv, "ml_forecast")
+    assert manifest["row_count"] == "1"
+    assert manifest["station_count"] == "1"
+
+
+def test_ml_raw_to_export_model_filter_accepts_legacy_dir_spelling(tmp_path):
+    out_csv = tmp_path / "model_export.csv"
+    exit_code = _run_raw_to_export(
+        [
+            "--data-ref",
+            str(_RAW_FIXTURE_ROOT),
+            "--out",
+            str(out_csv),
+            "--model",
+            "TIDE",
+        ]
+    )
+    assert exit_code == 0
+
+    rows = _read_csv_rows(out_csv)
+    assert len(rows) == 1
+    assert rows[0]["model_type"] == "TiDE"
+    assert rows[0]["target"] == "2026-02-11"
+
+
+def test_ml_raw_to_export_rejects_bad_dates(tmp_path):
+    data_ref = tmp_path / "raw"
+    model_dir = data_ref / "predictions" / "TFT"
+    model_dir.mkdir(parents=True)
+    (model_dir / "pentad_TFT_forecast.csv").write_text(
+        (
+            "Q5,Q25,Q50,Q75,Q95,date,code,forecast_date,flag\n"
+            "10.05,11.25,12.50,13.75,14.95,not-a-date,19999,2026-01-01,0\n"
+        ),
+        encoding="utf-8",
+    )
+    out_csv = tmp_path / "bad_dates.csv"
+
+    exit_code = _run_raw_to_export(["--data-ref", str(data_ref), "--out", str(out_csv)])
+    assert exit_code != 0
+    assert not out_csv.exists()
+
+
+def test_ml_raw_to_export_rejects_missing_required_raw_columns(tmp_path):
+    data_ref = tmp_path / "raw"
+    model_dir = data_ref / "predictions" / "TFT"
+    model_dir.mkdir(parents=True)
+    (model_dir / "pentad_TFT_forecast.csv").write_text(
+        ("Q5,Q25,Q50,Q75,Q95,date,code,flag\n10.05,11.25,12.50,13.75,14.95,2026-01-10,19999,0\n"),
+        encoding="utf-8",
+    )
+    out_csv = tmp_path / "missing_cols.csv"
+
+    exit_code = _run_raw_to_export(["--data-ref", str(data_ref), "--out", str(out_csv)])
+    assert exit_code != 0
+    assert not out_csv.exists()
+
+
+def test_ml_raw_to_export_rejects_unknown_model_dirs(tmp_path):
+    data_ref = tmp_path / "raw"
+    model_dir = data_ref / "predictions" / "UNKNOWN"
+    model_dir.mkdir(parents=True)
+    (model_dir / "pentad_UNKNOWN_forecast.csv").write_text(
+        (
+            "Q5,Q25,Q50,Q75,Q95,date,code,forecast_date,flag\n"
+            "10.05,11.25,12.50,13.75,14.95,2026-01-10,19999,2026-01-01,0\n"
+        ),
+        encoding="utf-8",
+    )
+    out_csv = tmp_path / "unknown_model.csv"
+
+    exit_code = _run_raw_to_export(["--data-ref", str(data_ref), "--out", str(out_csv)])
+    assert exit_code != 0
+    assert not out_csv.exists()
+
+
+def test_ml_raw_to_export_no_rows_after_filter_is_failure(tmp_path):
+    out_csv = tmp_path / "empty_export.csv"
+    exit_code = _run_raw_to_export(
+        [
+            "--data-ref",
+            str(_RAW_FIXTURE_ROOT),
+            "--out",
+            str(out_csv),
+            "--station-filter",
+            "19997",
+        ]
+    )
+    assert exit_code != 0
+    assert not out_csv.exists()
+
+
+# ===========================================================================
+# 9. Shipped fixtures round-trip through the parser
+# ===========================================================================
 
 
 def test_shipped_TFT_fixture_round_trips(tmp_path):
@@ -933,7 +1176,7 @@ def test_shipped_TFT_fixture_round_trips(tmp_path):
 
 
 # ===========================================================================
-# 9. Finding 11 (Tajik live test): PG enum-label SQL regression guard
+# 10. Finding 11 (Tajik live test): PG enum-label SQL regression guard
 # ===========================================================================
 
 

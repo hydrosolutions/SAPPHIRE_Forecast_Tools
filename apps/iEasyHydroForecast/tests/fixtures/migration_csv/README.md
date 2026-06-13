@@ -7,7 +7,9 @@ toolkit tests under `apps/iEasyHydroForecast/tests/test_migration_*.py`.
 
 All fixture files in this directory MUST use sentinel station codes:
 
-- `19999` for general runoff/hydrograph/meteo/snow station codes.
+- `19999` for general runoff/hydrograph/meteo/snow station codes, and for ML
+  backfill canary fixtures; use `00001`/`00002` when a second distinct sentinel
+  is needed.
 - `00000` through `00009` for HRU (hydrological response unit) sentinels.
 
 Any other 5-digit code is treated as a real station code and is forbidden. The
