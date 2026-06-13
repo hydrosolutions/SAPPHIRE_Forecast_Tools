@@ -8,12 +8,12 @@
 #
 # Usage (on the server):
 #   load_backfill_env            # sets $ieasyhydroforecast_data_root_dir and START_DATE
-#   bash bin/check_p3_p4_progress.sh
+#   bash bin/backfill/check_p3_p4_progress.sh
 #
 # Optional overrides (if your paths / container names differ):
 #   DATA_ROOT=/data START_DATE=2010-01-01 \
 #   PREP_DB=sapphire-preprocessing-db POST_DB=sapphire-postprocessing-db \
-#     bash bin/check_p3_p4_progress.sh
+#     bash bin/backfill/check_p3_p4_progress.sh
 #
 # Notes:
 #   - GROUP BY all horizon/snow types (no enum-literal WHERE) to avoid the
