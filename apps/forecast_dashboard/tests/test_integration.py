@@ -22,6 +22,14 @@ API_BASE = "http://localhost:8000/api"
 API_TIMEOUT = 30
 horizon = "pentad"  # pentad or decad
 
+# Stations the integration test adds to the bulletin. _get_latest_forecast_metadata
+# must derive horizon_value from THESE stations only — the postprocessing DB may be
+# shared with other deployments whose stations carry fresher dates / different
+# period-in-year values, which would otherwise hijack the global max() and make the
+# bulletin read query the wrong horizon_value. Mirrors the dashboard's
+# get_bulletin_metadata, which is scoped to the loaded (kyg) stations.
+BULLETIN_STATION_CODES = ("15013", "16936", "15212", "15256")
+
 def normalize_spaces(s):
     return re.sub(r'\s+', ' ', s).strip()
 
@@ -57,8 +65,9 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
         )
         resp.raise_for_status()
         records = resp.json()
+        records = [r for r in records if str(r.get("code")) in BULLETIN_STATION_CODES]
         if not records:
-            raise RuntimeError("No long-forecast (month) records found")
+            raise RuntimeError("No long-forecast (month) records found for bulletin stations")
         latest = max(records, key=lambda r: r["date"])
         max_date = dt.datetime.strptime(latest["date"][:10], "%Y-%m-%d").date()
         last_date = max_date + dt.timedelta(days=1)
@@ -79,8 +88,9 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
         )
         resp.raise_for_status()
         records = resp.json()
+        records = [r for r in records if str(r.get("code")) in BULLETIN_STATION_CODES]
         if not records:
-            raise RuntimeError("No long-forecast (season) records found")
+            raise RuntimeError("No long-forecast (season) records found for bulletin stations")
         latest = max(records, key=lambda r: r["date"])
         max_date = dt.datetime.strptime(latest["date"][:10], "%Y-%m-%d").date()
         last_date = max_date + dt.timedelta(days=1)
@@ -108,8 +118,9 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
             if len(page) < page_size:
                 break
             skip += page_size
+    records = [r for r in records if str(r.get("code")) in BULLETIN_STATION_CODES]
     if not records:
-        raise RuntimeError(f"No forecast records found for horizon {horizon}")
+        raise RuntimeError(f"No forecast records found for horizon {horizon} among bulletin stations")
     latest = max(records, key=lambda r: r["date"])
     max_date = dt.datetime.strptime(latest["date"], "%Y-%m-%d").date()
     last_date = max_date + dt.timedelta(days=1)
