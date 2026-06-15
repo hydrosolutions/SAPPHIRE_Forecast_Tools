@@ -16,7 +16,14 @@ def create_date_picker(forecast_df):
     """Create date picker widget."""
     # Widget for date selection, always visible
     # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
-    forecast_date = forecast_df['date'].max().date()
+    if 'date' in forecast_df.columns and not forecast_df.empty:
+        max_val = forecast_df['date'].max()
+    else:
+        max_val = None
+    if max_val is not None and not pd.isna(max_val) and hasattr(max_val, 'date'):
+        forecast_date = max_val.date()
+    else:
+        forecast_date = dt.datetime.now().date()
 
     date_picker = pn.widgets.DatePicker(
         name=_("Select date:"),

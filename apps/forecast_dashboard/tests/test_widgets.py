@@ -685,3 +685,61 @@ class TestGetPeriodWarning:
             today=datetime.date(2026, 6, 8),
         )
         assert result is None, "Expected None for an unknown horizon"
+
+
+# ---------------------------------------------------------------------------
+# TestCreateDatePicker — empty / NaN / populated DataFrame
+# ---------------------------------------------------------------------------
+
+class TestCreateDatePicker:
+    """create_date_picker falls back to today when forecast_df has no valid dates."""
+
+    def _today(self):
+        return datetime.datetime.now().date()
+
+    def _patch_gettext(self, monkeypatch):
+        monkeypatch.setattr(widgets, "_", lambda s: s)
+
+    # ------------------------------------------------------------------
+    # Empty DataFrame (zero rows) → no crash, value == today
+    # ------------------------------------------------------------------
+    def test_empty_dataframe_returns_picker_with_today(self, monkeypatch):
+        """Empty DataFrame → DatePicker built without error; .value == today."""
+        self._patch_gettext(monkeypatch)
+        df = pd.DataFrame({"date": pd.Series([], dtype="datetime64[ns]")})
+        picker = widgets.create_date_picker(df)
+        assert isinstance(picker, widgets.pn.widgets.DatePicker), (
+            "Expected a DatePicker widget"
+        )
+        assert picker.value == self._today(), (
+            f"Expected value=today ({self._today()}), got {picker.value}"
+        )
+
+    # ------------------------------------------------------------------
+    # DataFrame whose 'date' column is all NaT → no crash, value == today
+    # ------------------------------------------------------------------
+    def test_all_nat_date_column_returns_picker_with_today(self, monkeypatch):
+        """All-NaT 'date' column → DatePicker built without error; .value == today."""
+        self._patch_gettext(monkeypatch)
+        df = pd.DataFrame(
+            {"date": pd.to_datetime([None, None, None])}
+        )
+        picker = widgets.create_date_picker(df)
+        assert isinstance(picker, widgets.pn.widgets.DatePicker)
+        assert picker.value == self._today(), (
+            f"Expected value=today ({self._today()}), got {picker.value}"
+        )
+
+    # ------------------------------------------------------------------
+    # Populated DataFrame with valid dates → .value == max date (unchanged behaviour)
+    # ------------------------------------------------------------------
+    def test_populated_dataframe_returns_max_date(self, monkeypatch):
+        """Populated DataFrame → .value equals the max date's .date()."""
+        self._patch_gettext(monkeypatch)
+        dates = pd.to_datetime(["2026-03-01", "2026-04-15", "2026-02-10"])
+        df = pd.DataFrame({"date": dates})
+        picker = widgets.create_date_picker(df)
+        expected = datetime.date(2026, 4, 15)
+        assert picker.value == expected, (
+            f"Expected value={expected}, got {picker.value}"
+        )
