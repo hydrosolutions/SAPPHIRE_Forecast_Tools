@@ -237,6 +237,7 @@ Before updating, stop all running SAPPHIRE services to prevent conflicts during 
   docker ps -a | grep sapphire-pipeline | awk '{print $1}' | xargs -r docker rm -f
   ```
 
+TODO: remove all unused images
 ---
 
 ### 2.2 Update Repository [Required]
@@ -377,6 +378,9 @@ The server .env and the local repo .env are on different machines, so you need t
   grep -n " $" ${ENV_FILE_PATH}  # Trailing spaces
   ```
 
+TODO: need to set snow data display start date in .env 
+# Define the start date for which the snow data should be retrieved. This is relevant for the snow data visualization in the forecast dashboard. The format is MM-DD. Note that the year is not relevant, as this variable defines the day of the year from which on snow data should be visualized in the dashboard. For example, if you set ieasyhydroforecast_SNOW_DISPLAY_START_MMDD to 01-01, snow data will be visualized in the dashboard from January 1st on. If you set it to 15-10, snow data will only be visualized from October 15th on.
+ieasyhydroforecast_SNOW_DISPLAY_START_MMDD=09-01
 ---
 ### 2.4 Pull New Docker Images [Required]
 
@@ -422,7 +426,8 @@ and the infrastructure layer mixes a locally-built Luigi daemon with the upstrea
 #### 2.4.1 Pipeline images (pulled from DockerHub)
 
 These are the `apps/*` layer images run by Luigi tasks and dashboards.
-
+ 
+TODO: No need to pull them manually, they are pulled automatically when testing the crontabs. 
 **Core (required for all deployments):**
 
 - [ ] **Pull base image**
@@ -502,6 +507,7 @@ The `docker compose ... up -d` in §2.5 will build any missing images automatica
 To force a rebuild after a code update:
 
 - [ ] **Rebuild microservices** (only if Dockerfiles or `requirements.txt` changed)
+TODO: no need to build microservices, we can directly run up -d command further below. 
   ```bash
   docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml build
   ```
@@ -669,8 +675,8 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # Log cleanup: delete logs older than 7 days (runs daily at 02:00 UTC)
   0 2 * * * find ${LOG_DIR} -name "sapphire_*.log" -mtime +7 -delete
 
-  # Daily DB backup at 01:00 UTC (pg_dump-based, 30-day retention)
-  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 30 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
+  # Daily DB backup at 01:00 UTC (pg_dump-based, 3-day retention)
+  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 3 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
 
   # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
   0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +\%Y\%m\%d).log 2>&1
@@ -820,6 +826,8 @@ After updating crontabs, run each cron command manually (one by one) to verify t
 - [ ] **Check logs** for errors after each command completes
 
 ---
+
+TODO: need to verify that all relevant files are present in the data folder (e.g. bulletin templates). Update if necessary. 
 
 ## 3. POST-UPDATE VERIFICATION [Required]
 
