@@ -265,6 +265,14 @@ def _fill_gaps_for_horizon(config, max_lookback_months, errors, codes: list[str]
             affected_dates,
             codes=list(gap_codes) if gap_codes else None,
         )
+        if modelled.empty:
+            logger.warning(
+                "No %s modelled data for %d affected date(s) and %d gap code(s). Cannot fill gaps.",
+                label,
+                len(affected_dates),
+                len(gap_codes),
+            )
+            return
         modelled = sl.calculate_virtual_stations_data(modelled)
         modelled = config.neural_ensemble_func(modelled)
 

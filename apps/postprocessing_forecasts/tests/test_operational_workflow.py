@@ -109,7 +109,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
-                module._read_station_codes = lambda config: ["10001"]
+                module._read_station_codes = lambda config: ["19999"]
                 module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
@@ -355,8 +355,8 @@ class TestOperationalEdgeCases:
                 with pytest.raises(FileNotFoundError, match="missing .env"):
                     module.postprocessing_operational()
 
-    def test_empty_modelled_with_nonempty_skill(self, mock_data, mock_skill):
-        """Empty observed/modelled + non-empty skill → ensemble still called."""
+    def test_empty_modelled_with_nonempty_skill_saves_empty_noop(self, mock_data, mock_skill):
+        """Empty modelled read skips ensembles and saves the empty no-op output."""
         empty_df = pd.DataFrame()
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
@@ -375,8 +375,13 @@ class TestOperationalEdgeCases:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                # Ensemble creation called despite empty modelled data
-                mocks["ensemble_calc"].create_ensemble_forecasts.assert_called_once()
+                mocks["sl"].calculate_virtual_stations_data.assert_not_called()
+                mocks["sl"].calculate_neural_ensemble_forecast.assert_not_called()
+                mocks["ensemble_calc"].create_ensemble_forecasts.assert_not_called()
+                mocks["file_writer"].save_forecast_data.assert_called_once()
+                saved_df = mocks["file_writer"].save_forecast_data.call_args[0][1]
+                assert saved_df is empty_df
+                assert saved_df.empty
 
     def test_save_success_path(self, mock_data, mock_skill):
         """Save returning None → exit 0, save was called."""
