@@ -126,8 +126,14 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
             start_year=today.year,
             end_year=today.year,
         )
-        modelled = sl.calculate_virtual_stations_data(modelled)
-        modelled = config.neural_ensemble_func(modelled)
+        if modelled.empty:
+            logger.warning(
+                "No %s modelled data available. Skipping virtual stations.",
+                config.name,
+            )
+        else:
+            modelled = sl.calculate_virtual_stations_data(modelled)
+            modelled = config.neural_ensemble_func(modelled)
 
     with timer(timing_stats_, f"reading {config.name} skill metrics"):
         logger.info(f"\n\n------ Reading pre-calculated {config.name} skill metrics ----")
@@ -138,6 +144,11 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
             "No %s skill metrics available. "
             "Skipping ensemble creation. "
             "Run recalculate_skill_metrics.py first.",
+            config.name,
+        )
+    elif modelled.empty:
+        logger.warning(
+            "No %s modelled data available. Skipping ensemble creation.",
             config.name,
         )
     else:

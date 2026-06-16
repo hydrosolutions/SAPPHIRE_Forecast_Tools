@@ -98,7 +98,7 @@ services:
 
   # Daily maintenance workflow
   # Runs all daily maintenance tasks with dependency ordering.
-  # ML concurrency is limited to 3 via Luigi resources.
+  # ML concurrency is limited to 1 via Luigi resources.
   # Usage: docker compose -f bin/docker-compose-luigi.yml run --rm daily-maintenance
   daily-maintenance:
     extends: pipeline-base

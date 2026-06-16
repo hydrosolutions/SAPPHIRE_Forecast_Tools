@@ -2738,3 +2738,94 @@ class TestCheckStationCodeCollisions:
 
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
         assert any("FOREIGN ORG CONTAMINATION" in m for m in warning_messages)
+
+
+class TestNeuralEnsembleForecastGuards:
+    """Regression tests for empty/incomplete neural-ensemble inputs."""
+
+    @staticmethod
+    def _assert_guarded_unchanged(func, forecasts, caplog):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            result = func(forecasts)
+
+        assert result is forecasts
+        assert "Cannot calculate neural ensemble forecast" in caplog.text
+
+    @staticmethod
+    def _schemaful_empty(period_cols):
+        required_cols = [
+            "model_short",
+            "date",
+            "code",
+            "forecasted_discharge",
+            *period_cols,
+        ]
+        return pd.DataFrame(columns=required_cols)
+
+    @staticmethod
+    def _matching_ml_frame(period_data, include_date=True, include_code=True):
+        data = {
+            "model_short": ["TFT"],
+            "forecasted_discharge": [1.0],
+            **period_data,
+        }
+        if include_date:
+            data["date"] = pd.to_datetime(["2024-01-05"])
+        if include_code:
+            data["code"] = ["19999"]
+        return pd.DataFrame(data)
+
+    def test_pentad_and_decad_columnless_empty_return_unchanged(self, caplog):
+        for func in (
+            sl.calculate_neural_ensemble_forecast,
+            sl.calculate_neural_ensemble_forecast_decade,
+        ):
+            forecasts = pd.DataFrame()
+
+            self._assert_guarded_unchanged(func, forecasts, caplog)
+
+    def test_pentad_and_decad_schemaful_empty_return_unchanged(self, caplog):
+        cases = [
+            (
+                sl.calculate_neural_ensemble_forecast,
+                ["pentad_in_month", "pentad_in_year"],
+            ),
+            (
+                sl.calculate_neural_ensemble_forecast_decade,
+                ["decad_in_month", "decad_in_year"],
+            ),
+        ]
+        for func, period_cols in cases:
+            forecasts = self._schemaful_empty(period_cols)
+
+            self._assert_guarded_unchanged(func, forecasts, caplog)
+            assert forecasts.empty
+            assert "NE" not in forecasts["model_short"].values
+
+    def test_pentad_and_decad_missing_period_columns_return_unchanged(self, caplog):
+        for func in (
+            sl.calculate_neural_ensemble_forecast,
+            sl.calculate_neural_ensemble_forecast_decade,
+        ):
+            forecasts = self._matching_ml_frame({})
+
+            self._assert_guarded_unchanged(func, forecasts, caplog)
+
+    def test_pentad_and_decad_missing_date_or_code_return_unchanged(self, caplog):
+        cases = [
+            (
+                sl.calculate_neural_ensemble_forecast,
+                {"pentad_in_month": [1], "pentad_in_year": [1]},
+            ),
+            (
+                sl.calculate_neural_ensemble_forecast_decade,
+                {"decad_in_month": [1], "decad_in_year": [1]},
+            ),
+        ]
+        for func, period_data in cases:
+            missing_date = self._matching_ml_frame(period_data, include_date=False)
+            self._assert_guarded_unchanged(func, missing_date, caplog)
+
+            missing_code = self._matching_ml_frame(period_data, include_code=False)
+            self._assert_guarded_unchanged(func, missing_code, caplog)

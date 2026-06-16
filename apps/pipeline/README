@@ -85,7 +85,18 @@ RunDailyMaintenanceWorkflow
 Frontend update is handled on the host by `bin/daily_update_sapphire_frontend.sh`
 after the Luigi pipeline completes (see `bin/run_daily_maintenance.sh`).
 
-ML concurrency is limited to 3 via Luigi resources (`--resources ml_memory=3`).
+ML concurrency is limited to 1 by `MLMaintenance.resources = {"ml_memory": 1}`
+and `[resources] ml_memory = 1` in `luigi.cfg`.
+
+ML maintenance timeout operator steps:
+- Confirm `current_env` inside the pipeline container before editing runtime
+  YAML. For `kghm`, image tags containing `local` resolve to `kghm_local`;
+  other tags, including `latest`, resolve to `kghm_aws`.
+- Edit the loaded, bind-mounted `timeout_config.yaml`, not a repo file.
+- Set `tasks.MLMaintenance.<confirmed_env>_override: 46800`; on the Kyrgyz
+  `latest` deployment this is `tasks.MLMaintenance.kghm_aws_override: 46800`.
+- Re-check `get_task_parameters("MLMaintenance")["timeout_seconds"]` inside
+  the next worker. A mismatched env key falls back to the 900s default.
 
 Shell wrappers:
 - `bin/run_daily_maintenance.sh <env_file_path>`

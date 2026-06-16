@@ -52,6 +52,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**ML-012**~~ | ~~recalculate_nan_forecasts crashes on NaN flag values (astype crash)~~ | ~~ml~~ | | Complete | [`archive/high_prio_gi_draft_ml_recalc_flag_astype_crash.md`](issues/archive/high_prio_gi_draft_ml_recalc_flag_astype_crash.md) | — |
 | ~~**ML-013**~~ | ~~recalculate_nan_forecasts API write overwrites valid operational rows~~ | ~~ml~~ | | Complete | [`archive/review_gi_draft_ml_recalc_api_overwrite.md`](issues/archive/review_gi_draft_ml_recalc_api_overwrite.md) | — |
 | ~~**ML-014**~~ | ~~Hindcast subprocess has no timeout — maintenance containers hang indefinitely~~ | ~~ml~~ | | Complete | [`archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md`](issues/archive/high_prio_gi_draft_ml_hindcast_subprocess_timeout.md) | — |
+| **ML-015** | Operational ML NaN forecasts never remediated → blank ML dashboard (MLMaintenance 900s timeout kills the 4h recalc-hindcast + not configurable; flag-convention drift) | ml | **High** | Draft | [`high_prio_gi_draft_ml_operational_nan_not_remediated.md`](issues/high_prio_gi_draft_ml_operational_nan_not_remediated.md) | Found 2026-06-15 on kghm. The 900s timeout ML-014 added is now too short + unwired from `config/timeout_config`. Related: ML-002; memo `working/ml_maintenance_timeout_investigation.md`. |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
 | **SEC-006** | Remove hardcoded DB password and add fail-fast validation for connection env vars | ltf | **High** | Review | [`review_gi_draft_ltf_remove_hardcoded_db_credentials.md`](issues/review_gi_draft_ltf_remove_hardcoded_db_credentials.md) |
 | ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
@@ -149,6 +150,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 | ~~**LTF-004**~~ | ~~Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation~~ | | Complete | [`archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Resolved 2026-05-29: `q` is now populated; `q50` null is harmless via `q`-first fallback at `skill_metrics.py:1090` |
 | **LTF-005** | Add climatological quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Review | [`review_gi_draft_lt_gbt_quantile_bounds.md`](issues/review_gi_draft_lt_gbt_quantile_bounds.md) | — |
+| **LTF-006** | `GBT_Base` has no `ModelType` enum value → long-term forecast writes 422 (operational + from-file backfill) | **High** | Draft — **next-week high-prio** | [`high_prio_gi_draft_ltf_gbt_base_modeltype_gap.md`](issues/high_prio_gi_draft_ltf_gbt_base_modeltype_gap.md) | Coordinate with LT/model owner: map→GBT, add enum value (service change), or remove from config. Found 2026-06-13 during ML from-file backfill WS-B planning. |
 
 ### Postprocessing Forecasts (`pp`)
 
@@ -189,6 +191,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-035** | Deduplicate skill metrics before API write to fix monthly/quarterly/seasonal bulk upsert | **Medium** | Review | [`review_gi_draft_pp_skill_metric_dedup.md`](issues/review_gi_draft_pp_skill_metric_dedup.md) | — |
 | **PP-028b** | Skill metrics crash/silent failure — missing `q50` column across all horizons | **High** | Review | [`review_gi_draft_pp_monthly_skill_q50_regression.md`](issues/review_gi_draft_pp_monthly_skill_q50_regression.md) | — |
 | ~~**PP-036**~~ | ~~ML pentad/decadal skill metrics starved by `horizon='day'` short-circuit in API reader~~ | | Complete | [`archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md`](issues/archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md) | — |
+| **PP-037** | Maintenance `model_short` KeyError on empty DECAD individual-model read (neural ensemble called before empty guard) | Crash fix **High** / P2–P3 **Low** | Phase 1 Complete; P2/P3 deferred | [`review_gi_draft_pp_maintenance_model_short_keyerror.md`](issues/review_gi_draft_pp_maintenance_model_short_keyerror.md) | Phase 1 (ensemble + maintenance + operational empty guards) shipped — crash resolved. Phase 2 (reader contract) and Phase 3 (stale-EM lookback scoping) deferred **low-prio**: defensive hardening / efficiency + an operational coverage decision, not crash fixes. |
 
 ### Forecast Dashboard (`fd`)
 
@@ -365,4 +368,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-04-16 — Issue draft audit: SEC-006 Draft→Review (implemented, PR #330). P-005 (wrapper task) → Complete/archived. P-006 (LT schedule into Luigi) → Complete. LTF-005 Draft→Review (implemented). Added P-004 (pipeline timeout, Draft), FD-014 (snow visualization, In Progress), PP-028b (q50 regression, Review).*
+*Last updated: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). Earlier: 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*

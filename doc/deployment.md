@@ -639,6 +639,12 @@ curl http://localhost:8000/health/ready
 Verify all containers are up with `docker ps --filter "name=sapphire"`
 before moving on.
 
+> **Managing dashboard accounts.** Day-to-day creation, deactivation, and
+> deletion of dashboard user accounts is done against the `user` and `auth`
+> services through the gateway on `localhost`. See the
+> [User Management Runbook](operations/user_management.md) for the step-by-step
+> procedure.
+
 #### Populating historical data
 
 The preprocessing database must contain historical daily runoff going back
@@ -735,6 +741,13 @@ These are general recommendations — not a step-by-step recipe. Pick tooling th
 | Decad dashboard | `https://fc.decad.<base_url>/forecast_dashboard` → `localhost:5007` |
 
 Everything else stays bound to `localhost` on the server: API gateway (`8000`), the four services (`8002`–`8005`), their databases (`5433`–`5436`), and the Luigi daemon UI (`8082`). If any hydromet operator needs the API gateway or Luigi UI remotely, tunnel them over SSH rather than exposing them publicly. On AWS, mirror this in the security group — only `80`/`443` inbound from the internet, everything else from your office IP range or SSH bastion only.
+
+> **Never proxy the API gateway or `/api/auth/register`.** The gateway
+> (`localhost:8000`) and especially the unauthenticated `/api/auth/register`
+> endpoint must not be exposed through the public reverse proxy — anyone
+> reaching `register` could create accounts. Manage dashboard user accounts
+> from the server over SSH, against the gateway on `localhost`, following the
+> [User Management Runbook](operations/user_management.md).
 
 **TLS certificates.** Use Let's Encrypt for free, auto-renewing certificates. Two common approaches:
 

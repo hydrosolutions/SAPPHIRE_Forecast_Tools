@@ -3820,6 +3820,24 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
 
 
 def calculate_neural_ensemble_forecast(forecasts):
+    required_columns = [
+        "model_short",
+        "date",
+        "code",
+        "forecasted_discharge",
+        "pentad_in_month",
+        "pentad_in_year",
+    ]
+    missing_columns = [column for column in required_columns if column not in forecasts.columns]
+    if forecasts.empty or missing_columns:
+        guard_reasons = []
+        if forecasts.empty:
+            guard_reasons.append("empty forecasts")
+        if missing_columns:
+            guard_reasons.append(f"missing required columns: {missing_columns}")
+        logger.warning("Cannot calculate neural ensemble forecast: %s.", "; ".join(guard_reasons))
+        return forecasts
+
     # Define the models we're interested in
     target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 
@@ -3887,6 +3905,24 @@ def calculate_neural_ensemble_forecast(forecasts):
 
 
 def calculate_neural_ensemble_forecast_decade(forecasts):
+    required_columns = [
+        "model_short",
+        "date",
+        "code",
+        "forecasted_discharge",
+        "decad_in_month",
+        "decad_in_year",
+    ]
+    missing_columns = [column for column in required_columns if column not in forecasts.columns]
+    if forecasts.empty or missing_columns:
+        guard_reasons = []
+        if forecasts.empty:
+            guard_reasons.append("empty forecasts")
+        if missing_columns:
+            guard_reasons.append(f"missing required columns: {missing_columns}")
+        logger.warning("Cannot calculate neural ensemble forecast: %s.", "; ".join(guard_reasons))
+        return forecasts
+
     # Define the models we're interested in
     target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 

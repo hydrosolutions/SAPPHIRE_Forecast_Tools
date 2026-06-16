@@ -50,6 +50,7 @@ nav:
   - Operations:
       - Workflows: workflows.md
       - Dashboard: dashboard.md
+      - User Management: operations/user_management.md
       - Bulletin Templates: bulletin_template_tags.md
       - Monitoring: monitoring/forecast_tools_monitoring.md
   - Luigi Pipeline:

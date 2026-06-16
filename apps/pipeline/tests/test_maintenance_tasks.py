@@ -13,6 +13,8 @@ Covers:
 import datetime
 import os
 import sys
+from configparser import ConfigParser
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -148,6 +150,14 @@ class TestMLMaintenance:
         task = MLMaintenance(model_type="TFT", prediction_mode="PENTAD")
         assert hasattr(task, "resources")
         assert task.resources == {"ml_memory": 1}
+
+    def test_luigi_daemon_resource_pool_limits_ml_memory_to_one(self):
+        """The Luigi daemon config exposes one ml_memory slot for ML serialization."""
+        config = ConfigParser()
+        luigi_cfg = Path(__file__).parents[1] / "luigi.cfg"
+        config.read(luigi_cfg)
+
+        assert config.getint("resources", "ml_memory") == 1
 
     def test_output_includes_model_and_mode(self, mock_env):
         """Output marker includes model type and prediction mode."""

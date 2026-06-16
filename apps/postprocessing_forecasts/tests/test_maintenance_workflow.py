@@ -1287,3 +1287,72 @@ class TestPP024DirectAPIWrite:
                 # CSV save still called
                 mocks["file_writer"].save_forecast_data.assert_called_once()
                 assert "direct API write returned False" in caplog.text
+
+
+class TestMaintenanceEmptyModelledGuard:
+    """Regression tests for empty scoped modelled reads during gap-fill."""
+
+    def test_decad_columnless_empty_read_returns_before_virtual_and_neural(
+        self,
+        mock_data,
+        mock_skill,
+        caplog,
+    ):
+        """Columnless DECAD scoped read no-ops before virtual/NE processing."""
+        import logging
+
+        affected_date = pd.Timestamp("2024-01-10")
+        combined = pd.DataFrame(
+            {
+                "date": [affected_date],
+                "code": ["19999"],
+                "model_short": ["LR"],
+                "forecasted_discharge": [1.0],
+                "q05": [1.0],
+                "decad_in_month": [1],
+                "decad_in_year": [1],
+            }
+        )
+        gaps = pd.DataFrame(
+            {
+                "date": [affected_date],
+                "code": ["19999"],
+                "model_short": ["EM"],
+            }
+        )
+
+        with patch.dict(sys.modules, {}):
+            mocks = _setup_mocks(
+                mock_data,
+                mock_skill,
+                combined=combined,
+                gaps=gaps,
+            )
+            mocks["data_reader"].read_individual_model_forecasts_for_dates.return_value = (
+                pd.DataFrame(),
+                pd.DataFrame(),
+            )
+            mocks["sl"].calculate_virtual_stations_data.side_effect = AssertionError(
+                "virtual stations should not run for empty modelled data"
+            )
+            mocks["sl"].calculate_neural_ensemble_forecast_decade.side_effect = KeyError(
+                "model_short"
+            )
+
+            module, spec = import_maintenance_module()
+            spec.loader.exec_module(module)
+            logging.getLogger().addHandler(caplog.handler)
+            caplog.set_level(logging.WARNING)
+
+            module._fill_gaps_for_horizon(
+                module.DECAD,
+                max_lookback_months=13,
+                errors=[],
+                codes=["19999"],
+            )
+
+            mocks["sl"].calculate_virtual_stations_data.assert_not_called()
+            mocks["sl"].calculate_neural_ensemble_forecast_decade.assert_not_called()
+            assert "DECAD" in caplog.text
+            assert "1 affected date" in caplog.text
+            assert "1 gap code" in caplog.text

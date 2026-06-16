@@ -11,6 +11,8 @@ Covers:
 import os
 import sys
 
+import yaml
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
 from apps.pipeline.src.timeout_manager import TimeoutManager
@@ -109,6 +111,54 @@ class TestTaskSpecificOverrides:
         tm = TimeoutManager()
         params = tm.get_task_parameters("OverrideTask")
         assert params["timeout_seconds"] == 3600
+
+    def test_mlmaintenance_kghm_aws_override_resolves_to_46800(
+        self, tmp_path, reset_timeout_singleton, monkeypatch
+    ):
+        """Kyrgyz non-local tags resolve to kghm_aws and use the matching ML override."""
+        config_path = tmp_path / "timeout_config.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "environments": {"kghm_aws": {"base_timeout": 900}},
+                    "tasks": {"MLMaintenance": {"kghm_aws_override": 46800}},
+                }
+            )
+        )
+        monkeypatch.setenv("IEASYHYDROFORECAST_TIMEOUT_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+        monkeypatch.setenv("ieasyhydroforecast_backend_docker_image_tag", "latest")
+        monkeypatch.delenv("IEASYHYDROFORECAST_ENVIRONMENT", raising=False)
+
+        tm = TimeoutManager()
+        params = tm.get_task_parameters("MLMaintenance")
+
+        assert tm.current_env == "kghm_aws"
+        assert params["timeout_seconds"] == 46800
+
+    def test_mlmaintenance_wrong_env_key_keeps_900_default(
+        self, tmp_path, reset_timeout_singleton, monkeypatch
+    ):
+        """A kghm_local key is a silent no-op when the detected env is kghm_aws."""
+        config_path = tmp_path / "timeout_config.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "environments": {"kghm_aws": {"base_timeout": 900}},
+                    "tasks": {"MLMaintenance": {"kghm_local_override": 46800}},
+                }
+            )
+        )
+        monkeypatch.setenv("IEASYHYDROFORECAST_TIMEOUT_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+        monkeypatch.setenv("ieasyhydroforecast_backend_docker_image_tag", "latest")
+        monkeypatch.delenv("IEASYHYDROFORECAST_ENVIRONMENT", raising=False)
+
+        tm = TimeoutManager()
+        params = tm.get_task_parameters("MLMaintenance")
+
+        assert tm.current_env == "kghm_aws"
+        assert params["timeout_seconds"] == 900
 
 
 class TestSingleton:

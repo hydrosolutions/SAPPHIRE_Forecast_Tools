@@ -1802,8 +1802,7 @@ class LinRegMaintenance(DockerTaskBase):
 class MLMaintenance(DockerTaskBase):
     """Run a single ML model in maintenance mode.
 
-    Uses Luigi resources to limit concurrency (matching the shell script's
-    MAX_PARALLEL_JOBS=3 behavior).
+    Uses Luigi resources to serialize ML maintenance containers.
     """
 
     model_type = luigi.Parameter()
