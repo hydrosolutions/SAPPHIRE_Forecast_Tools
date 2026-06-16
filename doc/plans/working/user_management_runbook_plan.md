@@ -105,20 +105,30 @@ Required content:
   - Access to deployment env file or `API_KEY` for management operations.
 - Set Shell Variables:
   - Use placeholder values only, e.g. `new.user@example.org`.
-  - Use `read -s SAPPHIRE_NEW_USER_PASSWORD` to avoid shell history leakage.
+  - Use `read -rs -p "Password: " PASSWORD` to avoid shell history leakage.
 - Create a User:
   - Local-only curl to `/api/auth/register`.
   - No API-key header.
   - Document username min 3 and password min 8.
+  - Use the tested shell pattern below for the primary example. It passes shell
+    variables to Python via `sys.argv`, not `os.environ`, so it works without
+    exporting variables:
+
+```bash
+read -r -p "Email: " EMAIL; read -r -p "Username: " USERNAME; read -r -p "Full name: " FULL_NAME; read -rs -p "Password: " PASSWORD; echo; python3 -c 'import json,sys; email,username,full_name,password=sys.argv[1:5]; print(json.dumps({"email":email,"username":username,"full_name":full_name,"password":password}))' "$EMAIL" "$USERNAME" "$FULL_NAME" "$PASSWORD" | curl -sS -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost:8000/api/auth/register -H "Content-Type: application/json" --data-binary @-
+```
+
+  - Expected success is `HTTP 201`.
 - Confirm the New Account Can Log In:
   - Purpose: smoke test before handing credentials to staff.
-  - Must use exactly this form, suppressing token output:
+  - Must use exactly this form, suppressing token output and reusing the
+    `$USERNAME` and `$PASSWORD` variables from the create-user command:
 
 ```bash
 curl -s -o /dev/null -w "HTTP %{http_code}\n" \
   -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=$USERNAME&password=$SAPPHIRE_NEW_USER_PASSWORD"
+  -d "username=$USERNAME&password=$PASSWORD"
 ```
 
   - No API-key header.
