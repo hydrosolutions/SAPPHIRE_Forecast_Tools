@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------
 #
 # Description: This script checks if there are any nan values in the forecasts and then recalculates them.
-# Nan values from operational forecasts have flag == 0, while nan values from hindcasts have flag == 1.
+# Operational NaN placeholders use flag == 1; recalc selects candidates with flag in [1, 2].
 # This script checks if there are nan values in the forecasts and then recalculates them, by calling the hindcast script.
 # The hindcast will return a file which is already flagged:
 # - flag == 3 for nan values even after the hindcast
