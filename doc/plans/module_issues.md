@@ -191,6 +191,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-035** | Deduplicate skill metrics before API write to fix monthly/quarterly/seasonal bulk upsert | **Medium** | Review | [`review_gi_draft_pp_skill_metric_dedup.md`](issues/review_gi_draft_pp_skill_metric_dedup.md) | — |
 | **PP-028b** | Skill metrics crash/silent failure — missing `q50` column across all horizons | **High** | Review | [`review_gi_draft_pp_monthly_skill_q50_regression.md`](issues/review_gi_draft_pp_monthly_skill_q50_regression.md) | — |
 | ~~**PP-036**~~ | ~~ML pentad/decadal skill metrics starved by `horizon='day'` short-circuit in API reader~~ | | Complete | [`archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md`](issues/archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md) | — |
+| **PP-037** | Maintenance `model_short` KeyError on empty DECAD individual-model read (neural ensemble called before empty guard) | **High** | Ready | [`review_gi_draft_pp_maintenance_model_short_keyerror.md`](issues/review_gi_draft_pp_maintenance_model_short_keyerror.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
@@ -367,4 +368,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-04-16 — Issue draft audit: SEC-006 Draft→Review (implemented, PR #330). P-005 (wrapper task) → Complete/archived. P-006 (LT schedule into Luigi) → Complete. LTF-005 Draft→Review (implemented). Added P-004 (pipeline timeout, Draft), FD-014 (snow visualization, In Progress), PP-028b (q50 regression, Review).*
+*Last updated: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). Earlier: 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*
