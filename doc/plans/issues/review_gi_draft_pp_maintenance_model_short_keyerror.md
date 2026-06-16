@@ -1,10 +1,22 @@
 # Postprocessing maintenance `model_short` KeyError on empty DECAD read
 
-**Status:** Review — implementation-ready. This plan has been through two
-review cycles (critical review → planner revision → verification review →
-planner revision). All blocking findings are folded in. Phase 1, with the
-widened consolidated ensemble guard, is the **minimum-safe production fix** and
-can be promoted and implemented independently of Phases 2 and 3.
+**Status:** Phase 1 **complete** (crash resolved); Phases 2–3 **deferred
+low-prio**. This plan went through two review cycles (critical review → planner
+revision → verification review → planner revision); all blocking findings were
+folded in.
+
+- **Phase 1 — Crash-Fix Core: DONE.** Shipped the consolidated ensemble guards,
+  the maintenance empty guard before virtual-stations, and the operational no-op
+  guard. The DECAD `KeyError: 'model_short'` is fully closed via all paths. This
+  was the high-priority content.
+- **Phase 2 — Reader Contract: DEFERRED (low-prio).** Defensive hardening + a
+  cleaner long-term empty-read contract; explicitly *not* required to stop the
+  crash once Phase 1 landed, and the highest-blast-radius change of the three.
+  Do it when the reader layer is next touched.
+- **Phase 3 — Stale-EM Lookback Scoping: DEFERRED (low-prio).** With Phase 1's
+  guards, the old trigger now no-ops gracefully; what remains is an efficiency
+  gain plus an operational coverage decision (+ operator note + separate
+  backfill). Not a crash fix. Depends on P1 only and may ship standalone.
 
 ## Problem
 
