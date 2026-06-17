@@ -16,8 +16,26 @@ colleague review before merge.
 
 | Package | Bumped to | Severity | Services | Status |
 |---|---|---|---|---|
-| **urllib3** | 2.6.3 → **2.7.0** | high | postprocessing, preprocessing | ✅ done |
-| **Mako** | 1.3.10/1.3.11 → **1.3.12** | high | postprocessing, preprocessing | ✅ done |
+| **urllib3** | 2.6.3 → **2.7.0** | high | postprocessing, preprocessing | ✅ done (PR #378) |
+| **Mako** | 1.3.10/1.3.11 → **1.3.12** | high | postprocessing, preprocessing | ✅ done (PR #378) |
+| **idna** | 3.11 → **3.18** | medium | api-gateway, postprocessing, preprocessing | ✅ done (tier-1 PR) |
+| **python-dotenv** | 1.2.1 → **1.2.2** | medium | postprocessing | ✅ done (tier-1 PR) |
+| **Pygments** | 2.19.2 → **2.20.0** | low | postprocessing | ✅ done (tier-1 PR) |
+| **requests** | 2.32.5 → **2.34.2** | medium | postprocessing | ✅ done (tier-2 PR, lock+requirements) |
+
+## ⚠️ auth + user — needs owner action (stale lock blocks a clean bump)
+
+`auth` and `user` declare `alembic>=1.17.0` in `pyproject.toml`, but **alembic is
+missing from their committed `uv.lock`** (the lock is stale). Any `uv lock` run
+reconciles this and adds `alembic` + its sub-deps `mako`/`markupsafe`. Because
+that expands the change beyond the security bump and touches dependency
+resolution, the following were **deferred to you** rather than forced through:
+
+- **auth**: cryptography 46.0.7 → 48.0.1 (high), idna 3.11 → 3.15+
+- **user**: idna 3.11 → 3.15+
+
+Recommend: first reconcile the lock (commit the alembic addition deliberately),
+then the idna/cryptography bumps are clean lock-only changes.
 
 ## Remaining — recommended bumps (bump to the highest target to clear all stacked alerts)
 
@@ -25,7 +43,7 @@ colleague review before merge.
 |---|---|---|---|
 | **starlette** | **1.3.1** | high | api-gateway, auth, postprocessing, preprocessing, user |
 | **python-multipart** | **0.0.31** | high | api-gateway, auth, user |
-| **cryptography** | **48.0.1** | high | auth |
+| **pytest** (requirements.txt `==8.4.2`) | **9.0.3** | medium | postprocessing, preprocessing |
 | **idna** | **3.15** | medium | api-gateway, auth, postprocessing, preprocessing, user |
 | **requests** | **2.33.0** | medium | postprocessing |
 | **pytest** | **9.0.3** | medium | postprocessing, preprocessing |
