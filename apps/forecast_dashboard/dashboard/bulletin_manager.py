@@ -4,6 +4,7 @@ import panel as pn
 
 from src.gettext_config import _
 from dashboard.logger import setup_logger
+from dashboard.utils import rehydrate_sites_hydrograph_stats
 from src import db  # _read_data, _save_data, _delete_data live here
 
 logger = setup_logger()
@@ -18,6 +19,9 @@ _HYDROGRAPH_DEFAULTS = {
     "hydrograph_min":          float('nan'),
     "last_year_q_pentad_mean": float('nan'),
     "linreg_predictor":        float('nan'),
+    "act_q_this":              float('nan'),
+    "act_q_last":              float('nan'),
+    "act_norm":                float('nan'),
 }
 
 
@@ -573,6 +577,20 @@ class BulletinManager:
             legacy_horizon = "decad" if horizon == "decade" else horizon
             header_date = resolve_bulletin_header_date(horizon, last_date, self.dm.forecasts_all)
             bulletin_header_info = self._processing.get_bulletin_header_info(header_date, legacy_horizon)
+
+            # Re-hydrate hydrograph stats for every bulletin site so that
+            # columns like last_year_q_pentad_mean / hydrograph_min/max fill
+            # correctly even when a station was never opened interactively.
+            # Wrapped in its own try/except so a stats-fetch failure never
+            # prevents the bulletin from being written.
+            try:
+                rehydrate_sites_hydrograph_stats(filtered, horizon, forecast_horizon, db)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "_on_write: re-hydration step failed (%s); proceeding "
+                    "without updated hydrograph stats.", exc,
+                )
+
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
                 self.cfg.env_file_path, horizon=legacy_horizon,

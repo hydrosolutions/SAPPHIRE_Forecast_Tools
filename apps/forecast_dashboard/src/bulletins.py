@@ -1,5 +1,6 @@
 import os
 import math
+from copy import copy
 import openpyxl
 import panel as pn
 import pandas as pd
@@ -534,74 +535,76 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
     except Exception as e:
         raise Exception(f"Error loading the generated report: {e}")
 
-    # If the file bulletin_file_name exists, do the following:
-    if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
-        # Load the final bulletin
-        try:
-            final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
-        except Exception as e:
-            raise Exception(f"Error loading the final bulletin: {e}")
+    final_path = os.path.join(report_settings.report_output_path, bulletin_file_name)
+    temp_path = os.path.join(report_settings.report_output_path, temp_bulletin_file_name)
+    sheet_title = f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"
 
+    # If the final bulletin file exists, try to load it and merge the new sheet in.
+    # If it is corrupt or missing, fall through to the rename path.
+    final_bulletin = None
+    if os.path.exists(final_path):
+        try:
+            final_bulletin = openpyxl.load_workbook(final_path)
+        except Exception as e:
+            print(f"DEBUG: copy_worksheet: Final bulletin corrupt or unreadable ({e}). "
+                  f"Deleting and recreating from temp.")
+            os.remove(final_path)
+            final_bulletin = None
+
+    if final_bulletin is not None:
         print(f"DEBUG: write_to_excel: initial final_bulletin.sheetnames: {final_bulletin.sheetnames}")
 
-        if f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}" in final_bulletin.sheetnames:
-                print(f"DEBUG: write_to_excel: Removing sheet for {sapphire_forecast_horizon} {_sheet_key(header_df, sapphire_forecast_horizon)}")
-                # Remove the sheet for the current pentad/decad/month
-                final_bulletin.remove(final_bulletin[f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"])
-        '''if sapphire_forecast_horizon == 'pentad':
-            # Test if we have a sheet already for the current pentad & remove if it exists
-            if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
-                print(f"DEBUG: write_to_excel: Removing sheet for pentad {int(header_df['pentad'].values[0])}")
-                # Remove the sheet for the current pentad
-                final_bulletin.remove(final_bulletin[f"{int(header_df['pentad'].values[0])} пентада"])
-        elif sapphire_forecast_horizon == 'decad':
-            if f"{int(header_df['decad'].values[0])} декада" in final_bulletin.sheetnames:
-                print(f"DEBUG: write_to_excel: Removing sheet for decad {int(header_df['decad'].values[0])}")
-                # Remove the sheet for the current decad
-                final_bulletin.remove(final_bulletin[f"{int(header_df['decad'].values[0])} декада"])'''
+        # Remove pre-existing sheet for this period if present
+        if sheet_title in final_bulletin.sheetnames:
+            print(f"DEBUG: write_to_excel: Removing sheet for {sapphire_forecast_horizon} "
+                  f"{_sheet_key(header_df, sapphire_forecast_horizon)}")
+            final_bulletin.remove(final_bulletin[sheet_title])
 
-        # Get the sheet 1 of the generated report
-        generated_sheet = generated_report.active
+        # Create a new sheet in the destination workbook and copy content cell-by-cell.
+        # This avoids the unsafe _parent/_add_sheet hack that leaves dangling style indices.
+        src = generated_report.active
+        new_ws = final_bulletin.create_sheet(title=sheet_title)
 
-        # Rename the sheet to the pentad/decad/month number
-        generated_sheet.title = f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"
-        '''if sapphire_forecast_horizon == 'pentad':
-            generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
-        elif sapphire_forecast_horizon == 'decad':
-            generated_sheet.title = f"{int(header_df['decad'].values[0])} декада"'''
+        for row in src.iter_rows():
+            for cell in row:
+                nc = new_ws.cell(row=cell.row, column=cell.column, value=cell.value)
+                if cell.has_style:
+                    nc.font = copy(cell.font)
+                    nc.border = copy(cell.border)
+                    nc.fill = copy(cell.fill)
+                    nc.alignment = copy(cell.alignment)
+                    nc.number_format = cell.number_format
+                    nc.protection = copy(cell.protection)
 
-        # Set parent workbook of the generated report to the final bulletin to allow copying
-        generated_sheet._parent = final_bulletin
+        for mr in list(src.merged_cells.ranges):
+            new_ws.merge_cells(str(mr))
 
-        # Add final_sheet to final_bulletin
-        final_bulletin._add_sheet(generated_sheet)
+        for col_letter, dim in src.column_dimensions.items():
+            if dim.width is not None:
+                new_ws.column_dimensions[col_letter].width = dim.width
+
+        for row_idx, dim in src.row_dimensions.items():
+            if dim.height is not None:
+                new_ws.row_dimensions[row_idx].height = dim.height
 
         # Save the final bulletin
-        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        final_bulletin.save(final_path)
 
         # Close the workbooks
         generated_report.close()
         final_bulletin.close()
 
-        # Delete the generated report
-        os.remove(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+        # Delete the generated report temp file
+        os.remove(temp_path)
 
     else:
-        # If the file does not exist, rename the temp_bulletin_file_name to bulletin_file_name
-        os.rename(os.path.join(report_settings.report_output_path, temp_bulletin_file_name),
-                  os.path.join(report_settings.report_output_path, bulletin_file_name))
-        # Test if the sheet name is correct (it should be the pentad number)
-        # Load the final bulletin
-        final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
-        # Rename the sheet to the pentad/decad/month number
-        final_bulletin.active.title = f"{_sheet_key(header_df, sapphire_forecast_horizon)} {horizon_string_ru}"
-        '''if sapphire_forecast_horizon == 'pentad':
-            final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
-        elif sapphire_forecast_horizon == 'decad':
-            final_bulletin.active.title = f"{int(header_df['decad_in_month'].values[0])} декада"'''
-        # Save the final bulletin
-        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
-        # Close the workbook
+        # Final bulletin does not exist (or was corrupt and deleted above):
+        # rename the temp file into place as the new final.
+        os.rename(temp_path, final_path)
+        # Load to rename the sheet correctly, then save.
+        final_bulletin = openpyxl.load_workbook(final_path)
+        final_bulletin.active.title = sheet_title
+        final_bulletin.save(final_path)
         final_bulletin.close()
 
 def oder_sites_list_according_to_bulletin_order(sites_list):
@@ -878,6 +881,13 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         data=True
     )
 
+    q_last_year_tag = Tag(
+        name='Q_LAST_YEAR',
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.last_year_q_pentad_mean),
+        tag_settings=tag_settings,
+        data=True
+    )
+
     qdanger_tag = Tag(
         name='QDANGER',
         get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.qdanger),
@@ -891,6 +901,59 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         tag_settings=tag_settings,
         data=True
     )
+
+    def _safe_perc(numerator, denominator) -> str:
+        """Compute numerator/denominator*100 as an integer string.
+
+        Returns an empty string when either operand is None/NaN or the
+        denominator is zero.  Uses the same formatter as perc_norm_tag
+        (round_percentage_to_integer_string) for consistent display.
+        """
+        try:
+            import math as _math
+            n = float(numerator)
+            d = float(denominator)
+            if _math.isnan(n) or _math.isnan(d) or d == 0.0:
+                return ''
+            result = round_percentage_to_integer_string(n / d * 100)
+            return result if result is not None else ''
+        except (TypeError, ValueError, ZeroDivisionError):
+            return ''
+
+    q_act_this_tag = Tag(
+        name='Q_ACT_THIS',
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.act_q_this),
+        tag_settings=tag_settings,
+        data=True,
+    )
+
+    q_act_last_tag = Tag(
+        name='Q_ACT_LAST',
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.act_q_last),
+        tag_settings=tag_settings,
+        data=True,
+    )
+
+    norm_act_tag = Tag(
+        name='NORM_ACT',
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.act_norm),
+        tag_settings=tag_settings,
+        data=True,
+    )
+
+    perc_prevyear_act_tag = Tag(
+        name='PERC_PREVYEAR_ACT',
+        get_value_fn=lambda obj, **kwargs: _safe_perc(obj.act_q_this, obj.act_q_last),
+        tag_settings=tag_settings,
+        data=True,
+    )
+
+    perc_norm_act_tag = Tag(
+        name='PERC_NORM_ACT',
+        get_value_fn=lambda obj, **kwargs: _safe_perc(obj.act_q_this, obj.act_norm),
+        tag_settings=tag_settings,
+        data=True,
+    )
     # endregion tags
 
     report_settings.report_output_path = os.getenv("ieasyreports_report_output_path")
@@ -903,7 +966,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 day_start_pentad_tag, day_end_pentad_tag,
                 delta_tag, sdivsigma_tag,
                 forecast_lower_bound_tag, forecast_upper_bound_tag,
-                qdanger_tag, perc_norm_tag]
+                qdanger_tag, perc_norm_tag, q_last_year_tag,
+                q_act_this_tag, q_act_last_tag, norm_act_tag,
+                perc_prevyear_act_tag, perc_norm_act_tag]
         report_settings.report_output_path = os.path.join(
             report_settings.report_output_path,
             "bulletins",
@@ -919,7 +984,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 day_start_decad_tag, day_end_decad_tag,
                 delta_tag, sdivsigma_tag,
                 forecast_lower_bound_tag, forecast_upper_bound_tag,
-                qdanger_tag, perc_norm_tag]
+                qdanger_tag, perc_norm_tag, q_last_year_tag,
+                q_act_this_tag, q_act_last_tag, norm_act_tag,
+                perc_prevyear_act_tag, perc_norm_act_tag]
 
         report_settings.report_output_path = os.path.join(
             report_settings.report_output_path,
