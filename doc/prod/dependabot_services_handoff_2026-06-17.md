@@ -7,14 +7,24 @@ cryptography + bleach in `apps/`). Listed here so the service owner can action
 them. Each fix needs the service's `pyproject.toml`, `uv.lock`, and
 `requirements.txt` updated together (the same package is pinned in all three).
 
-## Recommended bumps (bump to the highest target to clear all stacked alerts)
+## Already handled in this PR (services boundary crossed with user authorization)
+
+These two were trivial transitive patch bumps (not pinned in pyproject.toml or
+requirements.txt), so they were done in this branch with user sign-off. Service
+tests pass (postprocessing 110 passed; preprocessing passed). Flagged for
+colleague review before merge.
+
+| Package | Bumped to | Severity | Services | Status |
+|---|---|---|---|---|
+| **urllib3** | 2.6.3 → **2.7.0** | high | postprocessing, preprocessing | ✅ done |
+| **Mako** | 1.3.10/1.3.11 → **1.3.12** | high | postprocessing, preprocessing | ✅ done |
+
+## Remaining — recommended bumps (bump to the highest target to clear all stacked alerts)
 
 | Package | Bump to | Severity | Affected services |
 |---|---|---|---|
 | **starlette** | **1.3.1** | high | api-gateway, auth, postprocessing, preprocessing, user |
 | **python-multipart** | **0.0.31** | high | api-gateway, auth, user |
-| **urllib3** | **2.7.0** | high | postprocessing, preprocessing |
-| **Mako** | **1.3.12** | high | postprocessing, preprocessing |
 | **cryptography** | **48.0.1** | high | auth |
 | **idna** | **3.15** | medium | api-gateway, auth, postprocessing, preprocessing, user |
 | **requests** | **2.33.0** | medium | postprocessing |
