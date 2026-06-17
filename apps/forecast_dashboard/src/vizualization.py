@@ -3417,7 +3417,7 @@ def select_and_plot_data(_, dm, wm, linreg_predictor, station_widget, pentad_sel
     forecast_table = linreg_predictor[
         (linreg_predictor['station_labels'] == station_widget) &
         (linreg_predictor[horizon_in_year] == horizon_value)
-        ].copy().reset_index(drop=True)
+        ].copy().sort_values('year').reset_index(drop=True)
 
     # Derive month and horizon_value_in_month (mirrors the logic in save_to_database)
     periods_per_month = 6 if horizon == "pentad" else 3
