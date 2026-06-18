@@ -135,6 +135,7 @@ MODULES=(
     "preprocessing_gateway"
     "linear_regression"
     "machine_learning"
+    "forecast_skill_eval"
     "postprocessing_forecasts"
     "pipeline"
     "long_term_forecasting"

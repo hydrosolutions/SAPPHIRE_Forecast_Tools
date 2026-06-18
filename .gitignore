@@ -173,6 +173,7 @@ apps/pipeline/logs/*
 apps/preprocessing_runoff/logs/*
 apps/preprocessing_gateway/logs/*
 apps/machine_learning/logs/*
+apps/forecast_skill_eval/artifacts/*
 apps/postprocessing_forecasts/logs/*
 apps/reset_forecast_run_date/logs/*
 
