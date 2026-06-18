@@ -264,6 +264,9 @@ class SapphireSite:
 
         # Not yet available for monthly
         self.perc_prevyear = None
+
+        # Last-year monthly discharge (populated by hydrate_month_hydrograph_stats)
+        self.forecast_prevyear_q = getattr(self, 'month_last_year_q', None)
         print(f"Updated site {self.code} with monthly forecast attributes from DataFrame.")
 
     def get_seasonal_forecast_attributes_for_site(self, _, df: pd.DataFrame, seconds_in_season: int):

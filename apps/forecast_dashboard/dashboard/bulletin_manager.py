@@ -4,7 +4,7 @@ import panel as pn
 
 from src.gettext_config import _
 from dashboard.logger import setup_logger
-from dashboard.utils import rehydrate_sites_hydrograph_stats
+from dashboard.utils import hydrate_month_hydrograph_stats, rehydrate_sites_hydrograph_stats
 from src import db  # _read_data, _save_data, _delete_data live here
 
 logger = setup_logger()
@@ -22,6 +22,7 @@ _HYDROGRAPH_DEFAULTS = {
     "act_q_this":              float('nan'),
     "act_q_last":              float('nan'),
     "act_norm":                float('nan'),
+    "month_last_year_q":       float('nan'),
 }
 
 
@@ -160,6 +161,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
             _ensure_site_defaults(site)
             if horizon_type == 'month':
                 days_in_month = calendar.monthrange(forecast_year, forecast_horizon)[1]
+                hydrate_month_hydrograph_stats(site, forecast_horizon, db)
                 site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
                 if 'вдхр' in (site.punkt_name_ru or ''):
                     q_df = db.get_long_forecasts_quarter(site.code, horizon_value=1)
@@ -380,6 +382,7 @@ class BulletinManager:
             from datetime import date as _date
             now = _date.today()
             days_in_month = calendar.monthrange(now.year, now.month)[1]
+            hydrate_month_hydrograph_stats(selected_site, now.month, db)
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
@@ -480,6 +483,7 @@ class BulletinManager:
             from datetime import date as _date
             now = _date.today()
             days_in_month = calendar.monthrange(now.year, now.month)[1]
+            hydrate_month_hydrograph_stats(selected_site, now.month, db)
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
