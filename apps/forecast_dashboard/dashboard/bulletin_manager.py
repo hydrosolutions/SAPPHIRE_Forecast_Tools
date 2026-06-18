@@ -4,7 +4,7 @@ import panel as pn
 
 from src.gettext_config import _
 from dashboard.logger import setup_logger
-from dashboard.utils import hydrate_month_hydrograph_stats, rehydrate_sites_hydrograph_stats
+from dashboard.utils import hydrate_month_hydrograph_stats, hydrate_season_hydrograph_stats, rehydrate_sites_hydrograph_stats
 from src import db  # _read_data, _save_data, _delete_data live here
 
 logger = setup_logger()
@@ -23,6 +23,7 @@ _HYDROGRAPH_DEFAULTS = {
     "act_q_last":              float('nan'),
     "act_norm":                float('nan'),
     "month_last_year_q":       float('nan'),
+    "season_last_year_q":      float('nan'),
 }
 
 
@@ -204,6 +205,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 else:
                     seconds_in_season = 0
                 filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+                hydrate_season_hydrograph_stats(site, db)
                 site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
             else:
                 site.get_forecast_attributes_for_site(_, site.forecasts)
@@ -436,6 +438,7 @@ class BulletinManager:
             else:
                 seconds_in_season = 0
             filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+            hydrate_season_hydrograph_stats(selected_site, db)
             selected_site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
         else:
             selected_site.get_forecast_attributes_for_site(_, selected_rows)
@@ -603,7 +606,7 @@ class BulletinManager:
             # Refresh the file downloader panel
             self.wm.downloader.refresh_file_list()
         except Exception as e:
-            logger.error("Error writing bulletin to Excel: %s", e)
+            logger.error("Error writing bulletin to Excel: %s", e, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

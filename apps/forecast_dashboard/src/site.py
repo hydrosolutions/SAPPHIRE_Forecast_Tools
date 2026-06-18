@@ -287,6 +287,7 @@ class SapphireSite:
             self.forecast_vnorm = None
             self.perc_norm = None
             self.perc_prevyear = None
+            self.forecast_prevyear_q = getattr(self, 'season_last_year_q', None)
             self.seasonal_valid_from = None
             self.seasonal_valid_to = None
             return
@@ -310,6 +311,9 @@ class SapphireSite:
             self.perc_norm = None
 
         self.perc_prevyear = None
+
+        # Last-year seasonal discharge (populated by hydrate_season_hydrograph_stats)
+        self.forecast_prevyear_q = getattr(self, 'season_last_year_q', None)
 
         if "valid_from" in df.columns and "valid_to" in df.columns:
             vf = df["valid_from"].values[0]
