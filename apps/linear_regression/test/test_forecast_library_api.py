@@ -1377,6 +1377,42 @@ class TestWriteHydrographToApi:
 class TestWriteRunoffToApi:
     """Tests for the _write_runoff_to_api helper function."""
 
+    @staticmethod
+    def _pentad_runoff_row(date, discharge_avg, predictor, code="19999"):
+        return pd.DataFrame(
+            {
+                "code": [code],
+                "date": [pd.Timestamp(date)],
+                "pentad": [3],
+                "pentad_in_year": [33],
+                "discharge_avg": [discharge_avg],
+                "predictor": [predictor],
+            }
+        )
+
+    @staticmethod
+    def _existing_runoff_row(date, discharge, predictor, code="19999"):
+        return pd.DataFrame(
+            {
+                "horizon_type": ["pentad"],
+                "code": [code],
+                "date": [date],
+                "horizon_value": [3],
+                "horizon_in_year": [33],
+                "discharge": [discharge],
+                "predictor": [predictor],
+            }
+        )
+
+    @staticmethod
+    def _pinned_timestamp(today):
+        class PinnedTimestamp(pd.Timestamp):
+            @classmethod
+            def today(cls, tz=None):
+                return cls(today, tz=tz)
+
+        return PinnedTimestamp
+
     @pytest.fixture
     def sample_pentad_runoff_data(self):
         """Create sample pentad runoff data with multiple dates."""
@@ -1528,6 +1564,73 @@ class TestWriteRunoffToApi:
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
             os.environ.pop("SAPPHIRE_SYNC_MODE", None)
+
+    def test_maintenance_backfill_merges_preserves_existing_predictor(self, monkeypatch):
+        """Maintenance backfill should keep an existing predictor when incoming is null."""
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_runoff.return_value = self._existing_runoff_row(
+            "2026-06-10", discharge=None, predictor=47.5
+        )
+        mock_client.write_runoff.return_value = 1
+        monkeypatch.setattr(fl, "_get_preprocessing_client", lambda: mock_client)
+
+        data = self._pentad_runoff_row("2026-06-10", discharge_avg=123.4, predictor=np.nan)
+
+        with (
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}, clear=False),
+            patch.object(fl.pd, "Timestamp", self._pinned_timestamp("2026-06-19")),
+        ):
+            fl._write_runoff_to_api(data, "pentad", mode="maintenance")
+
+        record = mock_client.write_runoff.call_args[0][0][0]
+        assert record["discharge"] == 123.4
+        assert record["predictor"] == 47.5
+
+    def test_maintenance_backfill_does_not_clobber_existing_with_null(self, monkeypatch):
+        """Maintenance backfill should keep existing discharge when incoming is null."""
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_runoff.return_value = self._existing_runoff_row(
+            "2026-06-10", discharge=88.8, predictor=None
+        )
+        mock_client.write_runoff.return_value = 1
+        monkeypatch.setattr(fl, "_get_preprocessing_client", lambda: mock_client)
+
+        data = self._pentad_runoff_row("2026-06-10", discharge_avg=np.nan, predictor=12.3)
+
+        with (
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}, clear=False),
+            patch.object(fl.pd, "Timestamp", self._pinned_timestamp("2026-06-19")),
+        ):
+            fl._write_runoff_to_api(data, "pentad", mode="maintenance")
+
+        record = mock_client.write_runoff.call_args[0][0][0]
+        assert record["discharge"] == 88.8
+        assert record["predictor"] == 12.3
+
+    def test_operational_mode_still_allows_today_null_discharge(self, monkeypatch):
+        """Operational mode should still write today's null discharge without merge reads."""
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+        monkeypatch.setattr(fl, "_get_preprocessing_client", lambda: mock_client)
+
+        data = self._pentad_runoff_row("2026-06-19", discharge_avg=np.nan, predictor=12.3)
+
+        with (
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}, clear=False),
+            patch.object(fl.pd, "Timestamp", self._pinned_timestamp("2026-06-19")),
+        ):
+            fl._write_runoff_to_api(data, "pentad", mode="operational")
+
+        record = mock_client.write_runoff.call_args[0][0][0]
+        assert record["discharge"] is None
+        assert record["predictor"] == 12.3
+        mock_client.read_runoff.assert_not_called()
 
     @patch("forecast_library.SapphirePreprocessingClient")
     def test_initial_mode_writes_all_data(self, mock_client_class, sample_pentad_runoff_data):

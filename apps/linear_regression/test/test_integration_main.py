@@ -390,6 +390,69 @@ class TestMainHindcastMode:
         # No forecast processing should have happened
         mock_fl.write_linreg_pentad_forecast_data.assert_not_called()
 
+    @patch.object(lr_module, "tl")
+    @patch.object(lr_module, "fl")
+    @patch.object(lr_module, "sl")
+    def test_hindcast_up_to_date_refreshes_runoff_before_clean_exit(
+        self, mock_sl, mock_fl, mock_tl
+    ):
+        """Caught-up hindcast should refresh runoff time series before clean exit."""
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
+        pentad_data = _make_data_df(codes=["19999"])
+        decad_data = _make_data_df(codes=["19999"])
+        mock_fl.get_pentadal_and_decadal_data.return_value = (pentad_data, decad_data)
+
+        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "BOTH"}
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "linear_regression.py",
+                    "--hindcast",
+                    "--start-date",
+                    "2024-01-26",
+                    "--end-date",
+                    "2024-01-30",
+                ],
+            ),
+            patch.dict(os.environ, env, clear=False),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                lr_module.main()
+            assert exc_info.value.code == 0
+
+        mock_fl.write_pentad_time_series_data.assert_called_once_with(pentad_data)
+        mock_fl.write_decad_time_series_data.assert_called_once_with(decad_data)
+
+    @patch.object(lr_module, "tl")
+    @patch.object(lr_module, "fl")
+    @patch.object(lr_module, "sl")
+    def test_hindcast_up_to_date_does_not_write_lr_forecasts(self, mock_sl, mock_fl, mock_tl):
+        """Caught-up hindcast should not enter LR forecast production."""
+        _setup_common_mocks(mock_sl, mock_fl, mock_tl)
+
+        env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "BOTH"}
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "linear_regression.py",
+                    "--hindcast",
+                    "--start-date",
+                    "2024-01-26",
+                    "--end-date",
+                    "2024-01-30",
+                ],
+            ),
+            patch.dict(os.environ, env, clear=False),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                lr_module.main()
+            assert exc_info.value.code == 0
+
+        mock_fl.write_linreg_pentad_forecast_data.assert_not_called()
+        mock_fl.write_linreg_decad_forecast_data.assert_not_called()
+
 
 # ============================================================================
 # Early exits

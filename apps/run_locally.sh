@@ -763,7 +763,7 @@ run_maintenance_linear_regression() {
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/linear_regression_hindcast.log"
     > "$CURRENT_MODULE_LOG"
-    run_in_venv linear_regression linear_regression.py -- --hindcast
+    run_in_venv linear_regression linear_regression.py SAPPHIRE_SYNC_MODE=maintenance -- --hindcast
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
