@@ -13,7 +13,15 @@ from forecast_skill_eval.api_readers import (
     SapphirePreprocessingClient,
 )
 from forecast_skill_eval.artifacts import write_artifacts
-from forecast_skill_eval.config import DEFAULT_BASE_URL, DEFAULT_HORIZONS, ForecastSkillEvalConfig
+from forecast_skill_eval.config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_ERROR_FLAGS,
+    DEFAULT_HINDCAST_FLAGS,
+    DEFAULT_HORIZONS,
+    DEFAULT_NAN_EXCLUDE_FLAGS,
+    DEFAULT_OPERATIONAL_FLAGS,
+    ForecastSkillEvalConfig,
+)
 from forecast_skill_eval.orchestrator import run
 
 API_UNAVAILABLE_MESSAGE = "SAPPHIRE API client is unavailable; skipping forecast skill evaluation."
@@ -27,6 +35,10 @@ class _SapphireClientBundle:
     def read_short_term_forecasts(self, **kwargs: object) -> Any:
         """Delegate short-term forecast reads to the postprocessing client."""
         return self.postprocessing.read_short_term_forecasts(**kwargs)
+
+    def read_lr_forecasts(self, **kwargs: object) -> Any:
+        """Delegate LR forecast reads to the postprocessing client."""
+        return self.postprocessing.read_lr_forecasts(**kwargs)
 
     def read_long_term_forecasts(self, **kwargs: object) -> Any:
         """Delegate long-term forecast reads to the postprocessing client."""
@@ -78,6 +90,30 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--provenance", action="append", default=[], metavar="HORIZON=SOURCE")
     parser.add_argument("--min-years", type=int, default=10)
     parser.add_argument("--operational-start", default="2024-01-01")
+    parser.add_argument(
+        "--operational-flags",
+        nargs="+",
+        default=list(DEFAULT_OPERATIONAL_FLAGS),
+        metavar="FLAG",
+    )
+    parser.add_argument(
+        "--hindcast-flags",
+        nargs="+",
+        default=list(DEFAULT_HINDCAST_FLAGS),
+        metavar="FLAG",
+    )
+    parser.add_argument(
+        "--nan-exclude-flags",
+        nargs="+",
+        default=list(DEFAULT_NAN_EXCLUDE_FLAGS),
+        metavar="FLAG",
+    )
+    parser.add_argument(
+        "--error-flags",
+        nargs="+",
+        default=list(DEFAULT_ERROR_FLAGS),
+        metavar="FLAG",
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -95,6 +131,10 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         provenance_by_horizon=_provenance_overrides(args.provenance),
         min_years=args.min_years,
         operational_start=args.operational_start,
+        operational_flags=_split_int_values(args.operational_flags),
+        hindcast_flags=_split_int_values(args.hindcast_flags),
+        nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
+        error_flags=_split_int_values(args.error_flags),
     )
 
 
@@ -108,6 +148,16 @@ def _split_values(values: Sequence[str]) -> list[str]:
     split: list[str] = []
     for value in values:
         split.extend(part.strip() for part in value.split(",") if part.strip())
+    return split
+
+
+def _split_int_values(values: Sequence[object]) -> list[int]:
+    split: list[int] = []
+    for value in values:
+        if isinstance(value, int):
+            split.append(value)
+            continue
+        split.extend(int(part.strip()) for part in str(value).split(",") if part.strip())
     return split
 
 

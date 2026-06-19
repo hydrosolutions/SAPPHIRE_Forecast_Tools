@@ -7,7 +7,16 @@ from pathlib import Path
 from typing import Final
 
 from forecast_skill_eval.periods import normalize_horizon
-from forecast_skill_eval.regimes import DEFAULT_OPERATIONAL_START, parse_operational_start
+from forecast_skill_eval.regimes import (
+    DEFAULT_ERROR_FLAGS,
+    DEFAULT_HINDCAST_FLAGS,
+    DEFAULT_NAN_EXCLUDE_FLAGS,
+    DEFAULT_OPERATIONAL_FLAGS,
+    DEFAULT_OPERATIONAL_START,
+    OperationalStart,
+    RegimeFlagSets,
+    parse_operational_start,
+)
 
 DEFAULT_BASE_URL: Final = "http://localhost:8000"
 DEFAULT_HORIZONS: Final = ("day", "pentad", "decade", "month", "quarter", "season")
@@ -38,6 +47,10 @@ class ForecastSkillEvalConfig:
     )
     min_years: int = 10
     operational_start: str = DEFAULT_OPERATIONAL_START
+    operational_flags: Sequence[int] = DEFAULT_OPERATIONAL_FLAGS
+    hindcast_flags: Sequence[int] = DEFAULT_HINDCAST_FLAGS
+    nan_exclude_flags: Sequence[int] = DEFAULT_NAN_EXCLUDE_FLAGS
+    error_flags: Sequence[int] = DEFAULT_ERROR_FLAGS
 
     def __post_init__(self) -> None:
         if not self.base_url:
@@ -62,6 +75,21 @@ class ForecastSkillEvalConfig:
         )
         _validate_date_range(self.start_date, self.end_date)
         parse_operational_start(self.operational_start)
+        flag_sets = RegimeFlagSets(
+            operational_flags=self.operational_flags,
+            hindcast_flags=self.hindcast_flags,
+            nan_exclude_flags=self.nan_exclude_flags,
+            error_flags=self.error_flags,
+        )
+        object.__setattr__(
+            self,
+            "operational_start",
+            OperationalStart(self.operational_start, flag_sets),
+        )
+        object.__setattr__(self, "operational_flags", flag_sets.operational_flags)
+        object.__setattr__(self, "hindcast_flags", flag_sets.hindcast_flags)
+        object.__setattr__(self, "nan_exclude_flags", flag_sets.nan_exclude_flags)
+        object.__setattr__(self, "error_flags", flag_sets.error_flags)
 
 
 def _freeze_optional_strings(values: Sequence[str] | None) -> tuple[str, ...] | None:

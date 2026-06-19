@@ -31,12 +31,12 @@ def test_climatology_baseline_is_always_normal() -> None:
     assert row["pss"] == 0
 
 
-def test_operational_proxy_uses_matched_short_term_intersection() -> None:
+def test_operational_proxy_uses_lr_intersection_for_short_term_matching() -> None:
     pairs = pd.DataFrame(
         [
-            _pair("day", "candidate", STATION_CODE, 1, 2024, "calculated", "TP"),
-            _pair("day", "candidate", STATION_CODE, 2, 2024, "calculated", "FN"),
-            _pair("day", "candidate", STATION_CODE, 3, 2024, "calculated", "TN"),
+            _pair("day", "TFT", STATION_CODE, 1, 2024, "calculated", "TP"),
+            _pair("day", "TFT", STATION_CODE, 2, 2024, "calculated", "FN"),
+            _pair("day", "TFT", STATION_CODE, 3, 2024, "calculated", "TN"),
             _pair("day", "LR", STATION_CODE, 1, 2024, "calculated", "TN"),
             _pair("day", "LR", STATION_CODE, 2, 2024, "calculated", "FP"),
             _pair("day", "LR", STATION_CODE, 4, 2024, "calculated", "TP"),
@@ -45,14 +45,14 @@ def test_operational_proxy_uses_matched_short_term_intersection() -> None:
 
     baseline = build_operational_proxy_baseline(pairs)
 
-    candidate = _one_row(baseline, code=STATION_CODE, model="candidate")
-    assert candidate["comparison_model"] == "candidate"
+    candidate = _one_row(baseline, code=STATION_CODE, model="TFT")
+    assert candidate["comparison_model"] == "TFT"
     assert candidate["is_proxy"] is False
     assert int(candidate["n_matched"]) == 2
     assert _cells(candidate) == {"TP": 1, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 2}
 
     proxy = _one_row(baseline, code=STATION_CODE, model="LR")
-    assert proxy["comparison_model"] == "candidate"
+    assert proxy["comparison_model"] == "TFT"
     assert proxy["is_proxy"] is True
     assert int(proxy["n_matched"]) == 2
     assert _cells(proxy) == {"TP": 0, "FP": 1, "FN": 0, "TN": 1, "n_pairs": 2}

@@ -18,6 +18,7 @@ class FakeSapphireClient:
     """In-memory client that mimics paginated SAPPHIRE reads."""
 
     forecasts_rows: list[dict[str, Any]] = field(default_factory=list)
+    lr_forecasts_rows: list[dict[str, Any]] = field(default_factory=list)
     long_forecasts_rows: list[dict[str, Any]] = field(default_factory=list)
     hydrograph_rows: list[dict[str, Any]] = field(default_factory=list)
     runoff_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -46,6 +47,26 @@ class FakeSapphireClient:
         }
         self.calls.append(("read_short_term_forecasts", kwargs))
         return self._page(self._filter(self.forecasts_rows, kwargs), skip, limit)
+
+    def read_lr_forecasts(
+        self,
+        horizon: str,
+        code: str | None,
+        start_date: str | None,
+        end_date: str | None,
+        skip: int,
+        limit: int,
+    ) -> pd.DataFrame:
+        kwargs = {
+            "horizon": horizon,
+            "code": code,
+            "start_date": start_date,
+            "end_date": end_date,
+            "skip": skip,
+            "limit": limit,
+        }
+        self.calls.append(("read_lr_forecasts", kwargs))
+        return self._page(self._filter(self.lr_forecasts_rows, kwargs), skip, limit)
 
     def read_long_term_forecasts(
         self,

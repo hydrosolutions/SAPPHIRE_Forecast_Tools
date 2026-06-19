@@ -14,6 +14,7 @@ from forecast_skill_eval.api_readers import (
     read_forecasts,
     read_hydrograph_norms,
     read_long_forecasts,
+    read_lr_forecasts,
     read_runoff_observed,
 )
 from forecast_skill_eval.classifier import ClassLabel, classify, contingency
@@ -238,6 +239,7 @@ def _read_short_forecasts(
     ledger: ExclusionLedger,
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
+    include_lr = _include_lr_forecasts(model_filters)
     for code in code_filters:
         for model in model_filters:
             result = read_forecasts(
@@ -252,7 +254,22 @@ def _read_short_forecasts(
             frames.append(_result_frame(result))
             for _index in range(result.dropped_sentinels):
                 ledger.add(stage="pair", reason="forecast_sentinel")
+        if include_lr:
+            result = read_lr_forecasts(
+                client,
+                horizon=horizon,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            frames.append(_result_frame(result))
+            for _index in range(result.dropped_sentinels):
+                ledger.add(stage="pair", reason="forecast_sentinel")
     return _concat_frames(frames)
+
+
+def _include_lr_forecasts(model_filters: tuple[str | None, ...]) -> bool:
+    return any(model is None or model == "LR" for model in model_filters)
 
 
 def _read_long_forecasts(

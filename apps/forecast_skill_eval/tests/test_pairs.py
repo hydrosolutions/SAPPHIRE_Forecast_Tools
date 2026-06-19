@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pandas as pd
 import pytest
 
+from forecast_skill_eval.baselines import build_operational_proxy_baseline
 from forecast_skill_eval.config import ForecastSkillEvalConfig
-from forecast_skill_eval.pairs import build_pairs
+from forecast_skill_eval.ledger import ExclusionLedger
+from forecast_skill_eval.pairs import _read_short_forecasts, build_pairs
+from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
 STATION_CODE = "19999"
 
@@ -40,9 +44,10 @@ def _short_forecast(
     year: int = 2024,
     flag: int | None = 0,
     issue_date: str = "2024-01-01",
+    horizon: str = "day",
 ) -> dict[str, object]:
     row = {
-        "horizon": "day",
+        "horizon": horizon,
         "code": STATION_CODE,
         "date": issue_date,
         "target": f"{year}-01-{period_key:02d}",
@@ -73,6 +78,326 @@ def _day_norm(period_key: int, norm: float = 10.0) -> dict[str, object]:
         "norm": norm,
         "count": 30,
     }
+
+
+def _lr_forecast(
+    period_key: int,
+    value: float | None,
+    *,
+    horizon: str = "pentad",
+    issue_date: str = "2024-01-01",
+) -> dict[str, object]:
+    return {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "date": issue_date,
+        "horizon_in_year": period_key,
+        "forecasted_discharge": value,
+    }
+
+
+def _model_forecast(
+    period_key: int,
+    value: float | None,
+    *,
+    model: str,
+    horizon: str = "pentad",
+    year: int = 2024,
+    issue_date: str = "2024-01-01",
+    flag: int | None = 0,
+) -> dict[str, object]:
+    row = {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "date": issue_date,
+        "target": f"{year}-01-{period_key:02d}",
+        "horizon_in_year": period_key,
+        "model": model,
+        "forecasted_discharge": value,
+    }
+    if flag is not None:
+        row["flag"] = flag
+    return row
+
+
+def _observed(
+    period_key: int,
+    year: int,
+    discharge: float,
+    *,
+    horizon: str,
+) -> dict[str, object]:
+    return {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "horizon_in_year": period_key,
+        "year": year,
+        "discharge": discharge,
+    }
+
+
+def _norm(period_key: int, *, horizon: str, norm: float = 10.0) -> dict[str, object]:
+    return {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "horizon_in_year": period_key,
+        "norm": norm,
+        "count": 30,
+    }
+
+
+def _flag_frame(flags: list[int]) -> pd.DataFrame:
+    return pd.DataFrame({"code": [STATION_CODE] * len(flags), "flag": flags})
+
+
+def test_policy_uses_informative_hindcast_and_nan_flags_at_scale() -> None:
+    short_policy = choose_regime_policy(_flag_frame(([4] * 1100) + ([0] * 10)))
+    long_policy = choose_regime_policy(_flag_frame(([1] * 1100) + ([0] * 10)))
+    date_policy = choose_regime_policy(_flag_frame(([0] * 1100) + ([2] * 10)))
+
+    assert short_policy.source == "flag"
+    assert long_policy.source == "flag"
+    assert (
+        derive_regime(
+            {"flag": 1},
+            issue_date="2025-01-01",
+            policy=long_policy,
+        ).regime
+        == "hindcast"
+    )
+    assert date_policy.source == "date"
+
+
+@pytest.mark.parametrize(
+    ("flag", "issue_date", "expected_regime", "expected_reason"),
+    [
+        (0, "2020-01-01", "operational", None),
+        (1, "2025-01-01", "hindcast", None),
+        (4, "2025-01-01", "hindcast", None),
+        (3, "2025-01-01", None, "forecast_actual_nan_flag"),
+        (2, "2025-01-01", None, "forecast_error_flag"),
+        (None, "2024-01-01", "operational", None),
+        (None, "2023-12-31", "hindcast", None),
+        (99, "2024-01-01", "operational", None),
+    ],
+)
+def test_flag_regime_derivation_uses_taxonomy_and_date_fallback(
+    flag: int | None,
+    issue_date: str,
+    expected_regime: str | None,
+    expected_reason: str | None,
+) -> None:
+    policy = RegimePolicy(
+        source="flag",
+        operational_start=date(2024, 1, 1),
+        reason="test",
+        flag_counts={},
+    )
+    row = {} if flag is None else {"flag": flag}
+
+    decision = derive_regime(row, issue_date=issue_date, policy=policy)
+
+    assert decision.regime == expected_regime
+    assert decision.exclude_reason == expected_reason
+
+
+def test_flagless_lr_rows_date_fallback_match_flagged_operational_ml(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            _model_forecast(1, 9.0, model="TFT", flag=0, issue_date="2024-01-01"),
+            _model_forecast(2, 8.0, model="TFT", flag=4, issue_date="2020-01-01"),
+        ],
+        lr_forecasts_rows=[
+            _lr_forecast(1, 7.0, issue_date="2024-01-01"),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon="pentad"),
+            _observed(2, 2024, 8.0, horizon="pentad"),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon="pentad"),
+            _norm(2, horizon="pentad"),
+        ],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "pentad")
+    baseline = build_operational_proxy_baseline(pairs)
+
+    assert ("pair", "forecast_unknown_flag") not in ledger.counts_by_stage_reason()
+    operational_pairs = pairs[(pairs["period_key"] == 1) & (pairs["regime"] == "operational")]
+    assert set(operational_pairs["model"]) == {"TFT", "LR"}
+    assert pairs.attrs["regime_source"] == "flag"
+    assert not baseline.empty
+
+
+@pytest.mark.parametrize("horizon", ["pentad", "decade"])
+def test_lr_rows_score_beside_short_term_models(
+    fake_client_factory,
+    horizon: str,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            _model_forecast(1, 9.0, model="TFT", horizon=horizon),
+        ],
+        lr_forecasts_rows=[
+            _lr_forecast(1, 7.0, horizon=horizon),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon=horizon),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon=horizon),
+        ],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, horizon)
+
+    assert set(pairs["model"]) == {"TFT", "LR"}
+    assert pairs[pairs["model"].eq("LR")]["contingency"].tolist() == ["TP"]
+    assert ledger.entries == ()
+
+
+def test_short_forecast_reader_preserves_ml_rows_without_lr_data(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            _model_forecast(1, 7.0, model="TFT"),
+            _model_forecast(2, 9.0, model="XGB"),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon="pentad"),
+            _observed(2, 2024, 9.0, horizon="pentad"),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon="pentad"),
+            _norm(2, horizon="pentad"),
+        ],
+    )
+    ledger = ExclusionLedger()
+
+    forecasts = _read_short_forecasts(
+        client,
+        "pentad",
+        (STATION_CODE,),
+        (None,),
+        None,
+        None,
+        ledger,
+    )
+    pairs, pair_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        client,
+        "pentad",
+    )
+
+    assert forecasts[["model", "horizon_in_year", "point_value"]].to_dict("records") == [
+        {"model": "TFT", "horizon_in_year": 1, "point_value": 7.0},
+        {"model": "XGB", "horizon_in_year": 2, "point_value": 9.0},
+    ]
+    assert pairs[["model", "period_key", "forecast_value"]].to_dict("records") == [
+        {"model": "TFT", "period_key": 1, "forecast_value": 7.0},
+        {"model": "XGB", "period_key": 2, "forecast_value": 9.0},
+    ]
+    assert ledger.entries == ()
+    assert pair_ledger.entries == ()
+
+
+def test_lr_null_forecast_is_recorded_as_forecast_missing(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        lr_forecasts_rows=[
+            _lr_forecast(1, None),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon="pentad"),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon="pentad"),
+        ],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "pentad")
+
+    assert pairs.empty
+    assert ledger.counts_by_stage_reason() == {("pair", "forecast_missing"): 1}
+
+
+@pytest.mark.parametrize(
+    ("model_filter", "expect_lr"),
+    [
+        (None, True),
+        (["TFT"], False),
+        (["TFT", "LR"], True),
+    ],
+)
+def test_lr_read_respects_model_filter_gating(
+    fake_client_factory,
+    model_filter: list[str] | None,
+    expect_lr: bool,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            _model_forecast(1, 9.0, model="TFT"),
+        ],
+        lr_forecasts_rows=[
+            _lr_forecast(1, 7.0),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon="pentad"),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon="pentad"),
+        ],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        model_filter=model_filter,
+    )
+
+    pairs, _ledger = build_pairs(config, client, "pentad")
+
+    assert ("LR" in set(pairs["model"])) is expect_lr
+    assert _call_count(client, "read_lr_forecasts") == int(expect_lr)
+
+
+def test_lr_rows_are_not_duplicated_for_multi_model_filter(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            _model_forecast(1, 9.0, model="TFT"),
+            _model_forecast(1, 8.0, model="XGB"),
+        ],
+        lr_forecasts_rows=[
+            _lr_forecast(1, 7.0),
+        ],
+        runoff_rows=[
+            _observed(1, 2024, 7.0, horizon="pentad"),
+        ],
+        hydrograph_rows=[
+            _norm(1, horizon="pentad"),
+        ],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        model_filter=["TFT", "XGB", "LR"],
+    )
+
+    pairs, _ledger = build_pairs(config, client, "pentad")
+
+    lr_pairs = pairs[pairs["model"].eq("LR")]
+    assert len(lr_pairs) == 1
+    assert lr_pairs[["code", "period_key", "year"]].to_dict("records") == [
+        {"code": STATION_CODE, "period_key": 1, "year": 2024}
+    ]
+    assert _call_count(client, "read_lr_forecasts") == 1
 
 
 def test_short_term_pairs_emit_all_contingency_cells(fake_client_factory) -> None:

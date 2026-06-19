@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from forecast_skill_eval.cli import _SapphireClientBundle
 from forecast_skill_eval.config import ForecastSkillEvalConfig
 from forecast_skill_eval.orchestrator import run
 
@@ -85,6 +86,105 @@ def test_orchestrates_short_long_mix_and_records_empty_horizon(
     assert summary["pentad"].n_pairs == 0
     assert summary["pentad"].skipped is True
     assert summary["pentad"].skip_reason == "empty pairs"
+
+
+def test_orchestrator_builds_matched_lr_operational_proxy_baseline(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        forecasts_rows=[
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "date": "2024-01-01",
+                "target": "2024-01-02",
+                "horizon_in_year": 1,
+                "model": "TFT",
+                "forecasted_discharge": 9.0,
+                "flag": 0,
+            }
+        ],
+        lr_forecasts_rows=[
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "date": "2024-01-01",
+                "horizon_in_year": 1,
+                "forecasted_discharge": 7.0,
+            }
+        ],
+        runoff_rows=[
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "horizon_in_year": 1,
+                "year": 2024,
+                "discharge": 7.0,
+            },
+        ],
+        hydrograph_rows=[
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "horizon_in_year": 1,
+                "norm": 10.0,
+                "count": 30,
+            },
+        ],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="test-run")
+
+    assert set(bundle.pairs["model"]) == {"TFT", "LR"}
+    assert set(bundle.pairs["regime"]) == {"operational"}
+    assert bundle.horizon_summary[0].n_pairs == 2
+    proxy_rows = bundle.baselines[
+        bundle.baselines["baseline"].eq("operational_proxy")
+        & bundle.baselines["model"].eq("LR")
+        & bundle.baselines["comparison_model"].eq("TFT")
+        & bundle.baselines["regime"].eq("all")
+        & bundle.baselines["code"].eq(STATION_CODE)
+        & bundle.baselines["norm_provenance"].eq("all")
+        & bundle.baselines["lead"].isna()
+    ]
+    assert len(proxy_rows) == 1
+    proxy = proxy_rows.iloc[0]
+    assert proxy["is_proxy"] is True
+    assert int(proxy["n_matched"]) == 1
+    assert int(proxy["n_pairs"]) == 1
+
+
+def test_sapphire_client_bundle_delegates_lr_reads_to_postprocessing() -> None:
+    class StubPostprocessingClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def read_lr_forecasts(self, **kwargs: object) -> dict[str, object]:
+            self.calls.append(dict(kwargs))
+            return {"delegated": True, **kwargs}
+
+    postprocessing = StubPostprocessingClient()
+    bundle = _SapphireClientBundle(
+        postprocessing=postprocessing,
+        preprocessing=object(),
+    )
+    kwargs: dict[str, object] = {
+        "horizon": "pentad",
+        "code": STATION_CODE,
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "skip": 5,
+        "limit": 10,
+    }
+
+    result = bundle.read_lr_forecasts(**kwargs)
+
+    assert postprocessing.calls == [kwargs]
+    assert result == {"delegated": True, **kwargs}
 
 
 def test_orchestrator_skips_failed_horizon_and_continues(

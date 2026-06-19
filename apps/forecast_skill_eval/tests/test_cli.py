@@ -71,6 +71,14 @@ def test_cli_parses_args_into_one_config_and_prints_artifact_path(
             "12",
             "--operational-start",
             "2024-02-01",
+            "--operational-flags",
+            "10",
+            "--hindcast-flags",
+            "11,14",
+            "--nan-exclude-flags",
+            "13",
+            "--error-flags",
+            "12",
             "--run-id",
             "fixed-run",
         ]
@@ -90,6 +98,10 @@ def test_cli_parses_args_into_one_config_and_prints_artifact_path(
     assert config.provenance_by_horizon["decade"] == "custom-official"
     assert config.min_years == 12
     assert config.operational_start == "2024-02-01"
+    assert config.operational_flags == (10,)
+    assert config.hindcast_flags == (11, 14)
+    assert config.nan_exclude_flags == (13,)
+    assert config.error_flags == (12,)
     assert calls["run_id"] == "fixed-run"
     assert calls["write_run_id"] == "fixed-run"
     assert str(tmp_path / "fixed-run") in capsys.readouterr().out

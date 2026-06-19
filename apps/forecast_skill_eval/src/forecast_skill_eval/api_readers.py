@@ -64,6 +64,39 @@ def read_forecasts(
     return ReaderResult(_add_point_values(data, forecast_type="short"), dropped_sentinels)
 
 
+def read_lr_forecasts(
+    client: Any,
+    *,
+    horizon: str,
+    code: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    limit: int = DEFAULT_PAGE_SIZE,
+) -> ReaderResult:
+    """Read LR forecasts and normalize them for the short-term pair path.
+
+    Verified mapping: horizon_in_year is target-indexed (override at
+    linear_regression.py:925-933); date is the issue date; target := date+1
+    recovers the target year only; period_key derives from horizon_in_year,
+    never from date+1.
+    """
+    normalized_horizon = normalize_horizon(horizon)
+    data = _read_all_pages(
+        lambda skip, page_limit: client.read_lr_forecasts(
+            horizon=normalized_horizon,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=page_limit,
+        ),
+        limit=limit,
+    )
+    data = _normalize_lr_forecasts(data)
+    data, dropped_sentinels = _drop_short_term_sentinels(data, normalized_horizon)
+    return ReaderResult(_add_point_values(data, forecast_type="short"), dropped_sentinels)
+
+
 def read_long_forecasts(
     client: Any,
     *,
@@ -200,6 +233,17 @@ def _drop_short_term_sentinels(data: pd.DataFrame, horizon: str) -> tuple[pd.Dat
     dropped_count = int(sentinel_mask.sum())
     filtered = data.loc[~sentinel_mask].reset_index(drop=True)
     return filtered, dropped_count
+
+
+def _normalize_lr_forecasts(data: pd.DataFrame) -> pd.DataFrame:
+    normalized = data.copy()
+    normalized["model"] = "LR"
+    if "date" in normalized.columns:
+        issue_dates = pd.to_datetime(normalized["date"], errors="coerce")
+        normalized["target"] = issue_dates + pd.Timedelta(days=1)
+    else:
+        normalized["target"] = pd.Series(pd.NaT, index=normalized.index, dtype="datetime64[ns]")
+    return normalized
 
 
 def _add_point_values(data: pd.DataFrame, forecast_type: ForecastType) -> pd.DataFrame:
