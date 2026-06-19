@@ -65,8 +65,56 @@ Controls how much data is written to the API for pentad/decad runoff data:
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `operational` (default) | Write only the latest date's data | Daily forecast runs |
-| `maintenance` | Write the last 30 days of data | Backfill after outages, corrections |
+| `maintenance` | Write the last 90 days of data | Backfill after outages, corrections; refresh elapsed-period runoff discharge |
 | `initial` | Write all data | First-time setup, database rebuild |
+
+### Pentad/decad runoff discharge backfill
+
+The `runoffs` rows for `horizon_type` `pentad`/`decade` carry two values:
+
+- **`predictor`** — backward-looking (pentad: 3-day discharge sum before the issue
+  date; decad: previous decad mean). Computable at issue time.
+- **`discharge`** — the forward-looking **forecast target** (mean discharge of the
+  *upcoming* pentad/decad). It can only be computed once that period has elapsed, so
+  it is written `NULL` for the current issue date and **backfilled later**.
+
+The backfill happens in the **maintenance** run (`maintenance:linear_regression`,
+which sets `SAPPHIRE_SYNC_MODE=maintenance`). Maintenance re-aggregates and re-writes
+the trailing 90-day window of runoff **even when forecasts are already up to date**,
+so elapsed-period `discharge` gets filled. Operational runs only write today's slice
+and never backfill past rows.
+
+Writes in `maintenance`/`initial` mode are **clobber-safe**: the module reads the
+existing rows and merges, so an incoming `NULL` never overwrites an existing non-null
+`discharge`/`predictor`, and a freshly-computed `discharge` is never dropped just
+because its `predictor` is independently null. (Operational mode does not read/merge.)
+
+**Per organisation.** Each run only touches the stations in its own config, so run
+maintenance once per org with that org's env file:
+
+```bash
+ieasyhydroforecast_env_file_path=/path/to/<org>.env bash apps/run_locally.sh maintenance:linear_regression
+```
+
+**One-time backfill of older rows.** Rows older than the 90-day maintenance window
+need a single `initial`-mode run (per org; split by horizon to bound payload size):
+
+```bash
+ieasyhydroforecast_env_file_path=/path/to/<org>.env SAPPHIRE_SYNC_MODE=initial \
+  SAPPHIRE_PREDICTION_MODE=PENTAD bash apps/run_locally.sh maintenance:linear_regression
+ieasyhydroforecast_env_file_path=/path/to/<org>.env SAPPHIRE_SYNC_MODE=initial \
+  SAPPHIRE_PREDICTION_MODE=DECAD  bash apps/run_locally.sh maintenance:linear_regression
+```
+
+**Verify** (filter by the org's station-code prefix — the DB may hold several orgs):
+
+```bash
+curl -s "http://localhost:8000/api/preprocessing/runoff/?horizon=pentad&start_date=<YYYY-MM-DD>&limit=10000" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('discharge_null=', sum(1 for r in d if r.get('discharge') is None))"
+```
+
+Rows that remain `NULL` after maintenance are genuinely **daily-input-starved** (no
+daily discharge in the target window) — expected, not a bug.
 
 ### Operating Modes
 
@@ -74,7 +122,7 @@ Controls how much data is written to the API for pentad/decad runoff data:
 |------|----------------------|----------|
 | **Production** | Default settings | Read from API, write latest data only |
 | **Local Development** | `SAPPHIRE_API_ENABLED=false` | Read/write CSV files only |
-| **Maintenance** | `SAPPHIRE_SYNC_MODE=maintenance` | Write last 30 days to API |
+| **Maintenance** | `SAPPHIRE_SYNC_MODE=maintenance` | Write last 90 days to API; backfill elapsed-period runoff discharge |
 | **Initial Setup** | `SAPPHIRE_SYNC_MODE=initial` | Write all historical data to API |
 | **Validation** | `SAPPHIRE_CONSISTENCY_CHECK=true` | Read from both sources, compare data |
 
@@ -113,7 +161,8 @@ SAPPHIRE_TESTDEV_ENV=TRUE python -m pytest linear_regression/test -v
 
 | Test File | Description |
 |-----------|-------------|
-| `test_forecast_library_api.py` | Tests for API read integration and consistency checking |
+| `test_forecast_library_api.py` | Tests for API read integration, runoff write/backfill (read-merge-write), and consistency checking |
+| `test_integration_main.py` | Tests for `main()` control flow, incl. maintenance runoff refresh on caught-up hindcast |
 
 ## Troubleshooting
 
