@@ -131,6 +131,61 @@ Exceptions are swallowed with `print()` only — no `logger.error()`, no traceba
 
 ---
 
+### Failure Vector 9 — Predictor RUNS but emits all-NaN output (no crash, no empty df)
+
+**Observed**: local review 2026-06-19 (tjhm + kghm), `make_forecast.py` operational + hindcast.
+
+Distinct from Vectors 1–8 (which crash) and from Vector 8's swallowed-exception → empty DataFrame.
+Here `predictor.predict()` / `predictor.hindcast()` **execute successfully** (darts logs
+`Predicting DataLoader 0: 100%`) but return a frame whose value/quantile columns are **all NaN**.
+`make_forecast.py:745-752` then re-derives `flag=1` from the NaN output (placeholder), and
+`recalculate_nan_forecasts.py` later marks the still-NaN rows `flag=3` (permanent failure). No
+exception is ever raised, so none of the Vector 1–8 guards fire.
+
+**Root cause (verified 2026-06-19 with sentinel code `19999`):** the future-covariate block contains
+a NaN inside the model-required lookback/forecast window. `make_forecast.py:736-741` passes
+`qmapped_era5_code` straight to `predictor.predict()`; `BaseDartsDLPredictor._prepare_data()` then
+scales `P`, `T`, `PET`, and `daylight_hours` without filling or rejecting NaNs (`:284-288`), and
+`_create_time_series()` builds the Darts `future_covariates` series (`:337-340`). Darts does not
+raise; `model.predict()` (`:386-394`) returns a full raw prediction tensor of NaNs, which
+`create_prediction_df()` converts into all-NaN quantile columns.
+
+The decisive missing block was `P` and `T` on **2026-05-28** in the control-member forcing. `PET` was
+finite (`0.0`) and daylight was finite. Target discharge, rolling past covariates, static features,
+discharge scalers, ERA5 scalers, and static scalers were finite.
+
+**Why the cross-site/model pattern looked split:**
+- **TFT failed on both sites** because the Decad TFT artifact has `input_chunk_length=30`; for an
+  issue date of 2026-06-19 its covariate window starts 2026-05-19, so it includes the 2026-05-28
+  P/T NaN on both deployments.
+- **TiDE/TSMixer failed on tjhm but not kghm** because the tjhm Decad TiDE/TSMixer artifacts also use
+  `input_chunk_length=30`, while the kghm Decad TiDE artifact uses `input_chunk_length=20`; the kghm
+  TiDE covariate window starts 2026-05-29 and avoids the 2026-05-28 NaN. The failing tjhm
+  TiDE/TSMixer runs include the same 2026-05-28 P/T NaN as TFT.
+
+**Falsified hypotheses:**
+- Not a `TFT.pt` artifact/load/version failure: the kghm Decad `TFT.pt` produced finite raw output on
+  synthetic finite target/covariates, and the same operational TFT run became finite after only
+  interpolating/filling the covariate NaNs.
+- Not scaler/static/PET: scaler parameters and static rows were finite; PET was finite even on the
+  bad date.
+
+**Smallest proposed fix:** add a covariate finite-input gate in `BaseDartsDLPredictor` before Darts
+series creation, scoped to the required model window (`input_chunk_length + forecast_horizon + 1`):
+first log per-code NaN origins by block/column/date, then either (a) fail fast to flag an input-data
+problem, or (b) interpolate isolated `P`/`T` gaps with bounded `ffill`/`bfill` before scaling. The
+verified remediation is (b): filling `P`/`T` covariate NaNs made TFT, TiDE, and TSMixer emit finite
+raw predictions without changing model artifacts, target discharge, static features, or scalers.
+
+**NaN-origin diagnostic to keep:** when predictions contain NaN, log a compact per-code diagnostic:
+model, horizon, input/output lengths, target NaN count, future-covariate NaN rows by date/column for
+the required window, past-covariate NaN counts, static NaN columns, scaler zero-range/NaN columns,
+and raw prediction NaN count. Do not log real station codes or discharge values in committed
+artifacts; tests should use sentinel `19999`.
+
+This NaN-output vector is the likely reason ML-015's timeout fix alone does not restore forecasts
+(remediation completes but still yields NaN). See ML-015 "Field evidence — 2026-06-19".
+
 ## ERA5 CSV Filename Divergence (secondary)
 
 When `SAPPHIRE_API_ENABLED=false`, the CSV fallback paths differ between scripts:
