@@ -15,12 +15,14 @@ OUTPUT_COLUMNS: Final = (
     "model",
     "regime",
     "code",
+    "basin",
     "norm_provenance",
     "lead",
     *COUNT_COLUMNS,
 )
 POOLED_CODE: Final = "POOLED"
 ALL_PROVENANCE: Final = "all"
+ALL_BASIN: Final = "all"
 
 _REQUIRED_COLUMNS: Final = (
     "horizon",
@@ -28,6 +30,7 @@ _REQUIRED_COLUMNS: Final = (
     "model",
     "regime",
     "lead",
+    "basin",
     "norm_provenance",
     "contingency",
 )
@@ -41,8 +44,8 @@ def count_contingencies(pairs: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         Tidy rows containing station and pooled counts. Each scope is emitted once
-        for each norm provenance value and once with ``norm_provenance="all"``.
-        Long-term horizons also include per-lead rows.
+        for each basin/provenance value and once with ``basin="all"`` and
+        ``norm_provenance="all"``. Long-term horizons also include per-lead rows.
 
     Raises:
         ValueError: If required columns are missing or contingency labels are invalid.
@@ -52,14 +55,16 @@ def count_contingencies(pairs: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
     working = pairs.copy()
+    working["basin"] = working["basin"].map(_basin_label)
     working["norm_provenance"] = working["norm_provenance"].map(_provenance_label)
     working["regime"] = working["regime"].map(_regime_label)
     _validate_contingencies(working)
 
     frames: list[pd.DataFrame] = []
-    for provenance, provenance_frame in _provenance_slices(working):
-        for regime, regime_frame in _regime_slices(provenance_frame):
-            frames.extend(_count_scopes(regime_frame, provenance, regime))
+    for basin, basin_frame in _basin_slices(working):
+        for provenance, provenance_frame in _provenance_slices(basin_frame):
+            for regime, regime_frame in _regime_slices(provenance_frame):
+                frames.extend(_count_scopes(regime_frame, basin, provenance, regime))
 
     if not frames:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
@@ -67,13 +72,18 @@ def count_contingencies(pairs: pd.DataFrame) -> pd.DataFrame:
     result = pd.concat(frames, ignore_index=True)
     result = result.loc[:, OUTPUT_COLUMNS]
     return result.sort_values(
-        ["horizon", "model", "regime", "code", "norm_provenance", "lead"],
+        ["horizon", "model", "regime", "code", "basin", "norm_provenance", "lead"],
         kind="stable",
         na_position="first",
     ).reset_index(drop=True)
 
 
-def _count_scopes(frame: pd.DataFrame, provenance: str, regime: str) -> list[pd.DataFrame]:
+def _count_scopes(
+    frame: pd.DataFrame,
+    basin: str,
+    provenance: str,
+    regime: str,
+) -> list[pd.DataFrame]:
     frames: list[pd.DataFrame] = []
     for horizon, horizon_frame in frame.groupby("horizon", dropna=False, sort=True):
         for pooled in (False, True):
@@ -81,7 +91,9 @@ def _count_scopes(frame: pd.DataFrame, provenance: str, regime: str) -> list[pd.
             if not pooled:
                 group_columns.append("code")
 
-            frames.append(_count_frame(horizon_frame, group_columns, provenance, regime, pooled))
+            frames.append(
+                _count_frame(horizon_frame, group_columns, basin, provenance, regime, pooled)
+            )
             if str(horizon) in LONG_TERM_HORIZONS:
                 lead_frame = horizon_frame[horizon_frame["lead"].notna()]
                 if not lead_frame.empty:
@@ -89,6 +101,7 @@ def _count_scopes(frame: pd.DataFrame, provenance: str, regime: str) -> list[pd.
                         _count_frame(
                             lead_frame,
                             [*group_columns, "lead"],
+                            basin,
                             provenance,
                             regime,
                             pooled,
@@ -100,6 +113,7 @@ def _count_scopes(frame: pd.DataFrame, provenance: str, regime: str) -> list[pd.
 def _count_frame(
     frame: pd.DataFrame,
     group_columns: list[str],
+    basin: str,
     provenance: str,
     regime: str,
     pooled: bool,
@@ -117,10 +131,18 @@ def _count_frame(
     if "lead" not in group_columns:
         wide["lead"] = None
 
+    wide["basin"] = basin
     wide["norm_provenance"] = provenance
     wide["regime"] = regime
     wide["n_pairs"] = wide.loc[:, list(CONTINGENCY_LABELS)].sum(axis=1).astype("int64")
     return wide
+
+
+def _basin_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
+    yield ALL_BASIN, frame
+    basins = sorted(str(value) for value in frame["basin"].dropna().unique())
+    for basin in basins:
+        yield basin, frame[frame["basin"] == basin]
 
 
 def _provenance_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
@@ -151,6 +173,13 @@ def _regime_label(value: object) -> str:
         return "unknown"
     text = str(value)
     return text if text else "unknown"
+
+
+def _basin_label(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "other"
+    text = str(value)
+    return text if text else "other"
 
 
 def _require_columns(frame: pd.DataFrame) -> None:

@@ -99,6 +99,7 @@ def _pair(
     return {
         "horizon": "day",
         "code": STATION_CODE,
+        "basin": "other",
         "period_key": 1,
         "year": 2024,
         "model": model,
@@ -123,6 +124,7 @@ def _baselines() -> pd.DataFrame:
                 "model": "climatology",
                 "regime": "all",
                 "code": "POOLED",
+                "basin": "all",
                 "norm_provenance": "all",
                 "lead": None,
                 "TP": 0,

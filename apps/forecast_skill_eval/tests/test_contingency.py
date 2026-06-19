@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from forecast_skill_eval.baselines import build_operational_proxy_baseline
 from forecast_skill_eval.contingency import count_contingencies
 
 STATION_CODE = "19999"
@@ -19,7 +20,7 @@ def test_counts_include_provenance_rollups_station_and_pooled() -> None:
 
     counts = count_contingencies(pairs)
 
-    calculated = _one_row(counts, code=STATION_CODE, provenance="calculated")
+    calculated = _one_row(counts, code=STATION_CODE, provenance="calculated", basin="other")
     assert _cells(calculated) == {"TP": 1, "FP": 1, "FN": 0, "TN": 0, "n_pairs": 2}
 
     all_station = _one_row(counts, code=STATION_CODE, provenance="all")
@@ -28,6 +29,30 @@ def test_counts_include_provenance_rollups_station_and_pooled() -> None:
     pooled = _one_row(counts, code="POOLED", provenance="all")
     assert _cells(pooled) == {"TP": 1, "FP": 1, "FN": 1, "TN": 1, "n_pairs": 4}
     assert set(counts["code"]) == {STATION_CODE, "20000", "POOLED"}
+
+
+def test_counts_include_basin_rollups_station_and_pooled() -> None:
+    pairs = pd.DataFrame(
+        [
+            _pair("day", "model-a", "15999", "calculated", "TP"),
+            _pair("day", "model-a", "15999", "calculated", "FP"),
+            _pair("day", "model-a", "16999", "calculated", "FN"),
+            _pair("day", "model-a", "17999", "official", "TN"),
+            _pair("day", "model-a", "19999", "official", "TP"),
+        ]
+    )
+
+    counts = count_contingencies(pairs)
+
+    chu_station = _one_row(counts, code="15999", provenance="all", basin="chu_kyrgyz")
+    assert _cells(chu_station) == {"TP": 1, "FP": 1, "FN": 0, "TN": 0, "n_pairs": 2}
+
+    syr_pooled = _one_row(counts, code="POOLED", provenance="all", basin="syr_darya")
+    assert _cells(syr_pooled) == {"TP": 0, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 1}
+
+    all_basins = _one_row(counts, code="POOLED", provenance="all", basin="all")
+    assert _cells(all_basins) == {"TP": 2, "FP": 1, "FN": 1, "TN": 1, "n_pairs": 5}
+    assert {"all", "chu_kyrgyz", "syr_darya", "amu_darya", "other"}.issubset(set(counts["basin"]))
 
 
 def test_counts_include_regime_rollups_station_and_pooled() -> None:
@@ -75,6 +100,32 @@ def test_long_term_counts_include_per_lead_breakdown() -> None:
     assert _cells(lead_two) == {"TP": 0, "FP": 1, "FN": 0, "TN": 1, "n_pairs": 2}
 
 
+def test_operational_proxy_baseline_builds_and_carries_basin() -> None:
+    pairs = pd.DataFrame(
+        [
+            _pair("day", "TFT", "15999", "calculated", "TP"),
+            _pair("day", "TFT", "16999", "calculated", "FN"),
+            _pair("day", "LR", "15999", "calculated", "TN"),
+            _pair("day", "LR", "16999", "calculated", "FP"),
+        ]
+    )
+
+    baseline = build_operational_proxy_baseline(pairs)
+
+    assert not baseline.empty
+    assert "basin" in baseline.columns
+    candidate = _one_row(
+        baseline,
+        code="POOLED",
+        provenance="all",
+        basin="all",
+        model="TFT",
+    )
+    assert candidate["comparison_model"] == "TFT"
+    assert candidate["is_proxy"] is False
+    assert int(candidate["n_matched"]) == 2
+
+
 def _pair(
     horizon: str,
     model: str,
@@ -88,6 +139,7 @@ def _pair(
     return {
         "horizon": horizon,
         "code": code,
+        "basin": _basin_for_test_code(code),
         "period_key": 1,
         "year": 2024,
         "model": model,
@@ -105,16 +157,29 @@ def _one_row(
     provenance: str,
     lead: int | None = None,
     regime: str = "all",
+    basin: str = "all",
+    model: str | None = None,
 ) -> pd.Series:
     selected = frame[
         (frame["code"] == code)
+        & (frame["basin"] == basin)
         & (frame["regime"] == regime)
         & (frame["norm_provenance"] == provenance)
         & (frame["lead"].isna() if lead is None else frame["lead"].eq(lead))
     ]
+    if model is not None:
+        selected = selected[selected["model"] == model]
     assert len(selected) == 1
     return selected.iloc[0]
 
 
 def _cells(row: pd.Series) -> dict[str, int]:
     return {label: int(row[label]) for label in ("TP", "FP", "FN", "TN", "n_pairs")}
+
+
+def _basin_for_test_code(code: str) -> str:
+    return {
+        "15": "chu_kyrgyz",
+        "16": "syr_darya",
+        "17": "amu_darya",
+    }.get(code[:2], "other")

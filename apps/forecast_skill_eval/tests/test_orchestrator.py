@@ -148,6 +148,7 @@ def test_orchestrator_builds_matched_lr_operational_proxy_baseline(
         & bundle.baselines["comparison_model"].eq("TFT")
         & bundle.baselines["regime"].eq("all")
         & bundle.baselines["code"].eq(STATION_CODE)
+        & bundle.baselines["basin"].eq("all")
         & bundle.baselines["norm_provenance"].eq("all")
         & bundle.baselines["lead"].isna()
     ]

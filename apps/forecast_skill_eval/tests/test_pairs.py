@@ -8,7 +8,7 @@ import pytest
 from forecast_skill_eval.baselines import build_operational_proxy_baseline
 from forecast_skill_eval.config import ForecastSkillEvalConfig
 from forecast_skill_eval.ledger import ExclusionLedger
-from forecast_skill_eval.pairs import _read_short_forecasts, build_pairs
+from forecast_skill_eval.pairs import _read_short_forecasts, basin_for_code, build_pairs
 from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
 STATION_CODE = "19999"
@@ -45,10 +45,11 @@ def _short_forecast(
     flag: int | None = 0,
     issue_date: str = "2024-01-01",
     horizon: str = "day",
+    code: str = STATION_CODE,
 ) -> dict[str, object]:
     row = {
         "horizon": horizon,
-        "code": STATION_CODE,
+        "code": code,
         "date": issue_date,
         "target": f"{year}-01-{period_key:02d}",
         "horizon_in_year": period_key,
@@ -60,20 +61,31 @@ def _short_forecast(
     return row
 
 
-def _short_observed(period_key: int, year: int, discharge: float) -> dict[str, object]:
+def _short_observed(
+    period_key: int,
+    year: int,
+    discharge: float,
+    *,
+    code: str = STATION_CODE,
+) -> dict[str, object]:
     return {
         "horizon": "day",
-        "code": STATION_CODE,
+        "code": code,
         "horizon_in_year": period_key,
         "year": year,
         "discharge": discharge,
     }
 
 
-def _day_norm(period_key: int, norm: float = 10.0) -> dict[str, object]:
+def _day_norm(
+    period_key: int,
+    norm: float = 10.0,
+    *,
+    code: str = STATION_CODE,
+) -> dict[str, object]:
     return {
         "horizon": "day",
-        "code": STATION_CODE,
+        "code": code,
         "horizon_in_year": period_key,
         "norm": norm,
         "count": 30,
@@ -144,6 +156,21 @@ def _norm(period_key: int, *, horizon: str, norm: float = 10.0) -> dict[str, obj
         "norm": norm,
         "count": 30,
     }
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("15999", "chu_kyrgyz"),
+        ("16999", "syr_darya"),
+        ("17999", "amu_darya"),
+        ("19999", "other"),
+        (15, "other"),
+        ("1", "other"),
+    ],
+)
+def test_basin_for_code_uses_prefix_mapping(code: object, expected: str) -> None:
+    assert basin_for_code(code, ForecastSkillEvalConfig().basin_by_prefix) == expected
 
 
 def _flag_frame(flags: list[int]) -> pd.DataFrame:
@@ -426,6 +453,33 @@ def test_short_term_pairs_emit_all_contingency_cells(fake_client_factory) -> Non
     assert pairs["regime"].tolist() == ["operational"] * 4
     assert ledger.entries == ()
     assert _call_count(client, "read_hydrograph") == 1
+
+
+def test_pairs_carry_basin_from_station_code_prefix(fake_client_factory) -> None:
+    rows = [
+        ("15999", "chu_kyrgyz"),
+        ("16999", "syr_darya"),
+        ("17999", "amu_darya"),
+        ("19999", "other"),
+    ]
+    client = fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(index, 7.0, code=code) for index, (code, _basin) in enumerate(rows, 1)
+        ],
+        runoff_rows=[
+            _short_observed(index, 2024, 7.0, code=code)
+            for index, (code, _basin) in enumerate(rows, 1)
+        ],
+        hydrograph_rows=[
+            _day_norm(index, code=code) for index, (code, _basin) in enumerate(rows, 1)
+        ],
+    )
+
+    pairs, ledger = build_pairs(ForecastSkillEvalConfig(), client, "day")
+
+    basin_by_code = dict(zip(pairs["code"], pairs["basin"], strict=True))
+    assert basin_by_code == dict(rows)
+    assert ledger.entries == ()
 
 
 def test_regime_from_flag_and_error_flag_exclusion(fake_client_factory) -> None:

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from forecast_skill_eval.config import (
+    DEFAULT_BASINS_BY_PREFIX,
     DEFAULT_ERROR_FLAGS,
     DEFAULT_HINDCAST_FLAGS,
     DEFAULT_NAN_EXCLUDE_FLAGS,
@@ -28,10 +29,13 @@ def test_config_defaults_are_captured_once() -> None:
     assert config.horizons == ("day", "pentad", "decade", "month", "quarter", "season")
     assert config.provenance_by_horizon == DEFAULT_PROVENANCE
     assert config.provenance_by_horizon is not DEFAULT_PROVENANCE
+    assert config.basin_by_prefix == DEFAULT_BASINS_BY_PREFIX
+    assert config.basin_by_prefix is not DEFAULT_BASINS_BY_PREFIX
 
 
 def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
     provenance = {"decad": "custom-official", "month": "custom-month"}
+    basins = {"15": "custom-chu", "99": "custom-other"}
     config = ForecastSkillEvalConfig(
         base_url="https://example.test",
         threshold=0.65,
@@ -42,6 +46,7 @@ def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
         end_date="2024-12-31",
         output_dir=tmp_path,
         provenance_by_horizon=provenance,
+        basin_by_prefix=basins,
         min_years=12,
         operational_start="2024-02-01",
         operational_flags=[10],
@@ -50,6 +55,7 @@ def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
         error_flags=[12],
     )
     provenance["month"] = "mutated"
+    basins["15"] = "mutated"
 
     assert config.base_url == "https://example.test"
     assert config.threshold == 0.65
@@ -61,6 +67,8 @@ def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
     assert config.output_dir == tmp_path
     assert config.provenance_by_horizon["decade"] == "custom-official"
     assert config.provenance_by_horizon["month"] == "custom-month"
+    assert config.basin_by_prefix["15"] == "custom-chu"
+    assert config.basin_by_prefix["99"] == "custom-other"
     assert config.min_years == 12
     assert config.operational_start == "2024-02-01"
     assert config.operational_flags == (10,)
@@ -82,6 +90,8 @@ def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
         {"nan_exclude_flags": ["not-an-int"]},
         {"operational_flags": [0], "hindcast_flags": [0, 4]},
         {"provenance_by_horizon": {"hour": "calculated"}},
+        {"basin_by_prefix": {"": "empty-prefix"}},
+        {"basin_by_prefix": {"15": ""}},
     ],
 )
 def test_invalid_config_inputs_are_rejected(kwargs: dict[str, object]) -> None:

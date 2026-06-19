@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -28,6 +28,7 @@ from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, deri
 PAIR_COLUMNS = (
     "horizon",
     "code",
+    "basin",
     "period_key",
     "year",
     "model",
@@ -65,6 +66,7 @@ def build_pairs(
     """Join forecasts, observed truth, and norms into classified contingency pairs."""
     normalized_horizon = normalize_horizon(horizon)
     threshold = float(config.threshold)
+    basin_by_prefix = config.basin_by_prefix
     start_date = config.start_date
     end_date = config.end_date
     code_filters = tuple(config.station_filter or (None,))
@@ -187,6 +189,7 @@ def build_pairs(
                 observed_value=observed_value,
                 norm=resolution.norm,
                 norm_provenance=resolution.provenance,
+                basin_by_prefix=basin_by_prefix,
                 fc_class=fc_class,
                 obs_class=obs_class,
             )
@@ -351,12 +354,14 @@ def _pair_row(
     observed_value: float,
     norm: float,
     norm_provenance: str | None,
+    basin_by_prefix: Mapping[str, str],
     fc_class: ClassLabel,
     obs_class: ClassLabel,
 ) -> dict[str, object]:
     return {
         "horizon": horizon,
         "code": instance.code,
+        "basin": basin_for_code(instance.code, basin_by_prefix),
         "period_key": instance.period_key,
         "year": instance.year,
         "model": instance.model,
@@ -371,6 +376,13 @@ def _pair_row(
         "obs_class": obs_class,
         "contingency": contingency(fc_class, obs_class),
     }
+
+
+def basin_for_code(code: object, mapping: Mapping[str, str]) -> str:
+    """Return the configured aggregate basin label for a station code."""
+    if not isinstance(code, str) or len(code) < 2:
+        return "other"
+    return mapping.get(code[:2], "other")
 
 
 def _attach_regime_attrs(frame: pd.DataFrame, policy: RegimePolicy) -> None:

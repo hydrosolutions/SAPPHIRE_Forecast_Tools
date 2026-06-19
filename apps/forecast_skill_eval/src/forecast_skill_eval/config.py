@@ -28,6 +28,11 @@ DEFAULT_PROVENANCE: Final = {
     "pentad": "calculated",
     "day": "calculated",
 }
+DEFAULT_BASINS_BY_PREFIX: Final = {
+    "15": "chu_kyrgyz",
+    "16": "syr_darya",
+    "17": "amu_darya",
+}
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,9 @@ class ForecastSkillEvalConfig:
     output_dir: Path = Path("artifacts")
     provenance_by_horizon: Mapping[str, str] = field(
         default_factory=lambda: DEFAULT_PROVENANCE.copy()
+    )
+    basin_by_prefix: Mapping[str, str] = field(
+        default_factory=lambda: DEFAULT_BASINS_BY_PREFIX.copy()
     )
     min_years: int = 10
     operational_start: str = DEFAULT_OPERATIONAL_START
@@ -72,6 +80,11 @@ class ForecastSkillEvalConfig:
             self,
             "provenance_by_horizon",
             _normalize_provenance(self.provenance_by_horizon),
+        )
+        object.__setattr__(
+            self,
+            "basin_by_prefix",
+            _normalize_basin_by_prefix(self.basin_by_prefix),
         )
         _validate_date_range(self.start_date, self.end_date)
         parse_operational_start(self.operational_start)
@@ -106,6 +119,17 @@ def _normalize_provenance(overrides: Mapping[str, str]) -> dict[str, str]:
             raise ValueError("provenance values must not be empty")
         provenance[normalized_horizon] = source
     return provenance
+
+
+def _normalize_basin_by_prefix(mapping: Mapping[str, str]) -> dict[str, str]:
+    basin_by_prefix: dict[str, str] = {}
+    for prefix, basin in mapping.items():
+        if not isinstance(prefix, str) or not prefix:
+            raise ValueError("basin prefixes must be non-empty strings")
+        if not isinstance(basin, str) or not basin:
+            raise ValueError("basin labels must be non-empty strings")
+        basin_by_prefix[prefix] = basin
+    return basin_by_prefix
 
 
 def _validate_date_range(start_date: str | None, end_date: str | None) -> None:

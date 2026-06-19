@@ -109,6 +109,7 @@ def _pair(
     return {
         "horizon": horizon,
         "code": code,
+        "basin": "other",
         "period_key": period_key,
         "year": year,
         "model": model,
@@ -127,6 +128,7 @@ def _one_row(
 ) -> pd.Series:
     selected = frame[
         (frame["code"] == code)
+        & (frame["basin"] == "all")
         & (frame["model"] == model)
         & (frame["regime"] == "all")
         & (frame["norm_provenance"] == "all")
