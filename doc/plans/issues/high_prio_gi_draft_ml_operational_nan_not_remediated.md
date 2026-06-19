@@ -78,6 +78,41 @@ maintenance too (observed EM-empty and short-term skill `n_pairs=0` mid-DAG). Fi
 - [ ] Fix is on `maxat_sapphire_2` and the deployed `sapphire-ml` / pipeline images are rebuilt from it
       (the change must reach the running container).
 
+## Field evidence — local review 2026-06-19 (tjhm + kghm): timeout fix is necessary but NOT sufficient
+
+Reproduced live on both deployments (sentinel codes used below).
+
+1. **Local recalc completes and STILL cannot fill the NaN.** On tjhm, ran
+   `maintenance:machine_learning` standalone via `run_locally.sh` — there is **no Luigi 900s cap**
+   locally, and the recalc/hindcast **ran to completion (~2.5 min)**. Despite that, today's operational
+   placeholders went **`flag=1 → flag=3` (permanent failure)**, still NULL, for all three models and
+   both stations. Inputs were clean: daily discharge **31/31 continuous, no gaps** over the 30-day
+   window; the forecast horizon itself had non-NaN forcing. However, the Darts model window is
+   longer than the forecast horizon and includes lookback covariates. The required covariate window
+   contained a `P`/`T` NaN on **2026-05-28**, so removing the timeout would let remediation *run*, but
+   it would **still produce NaN** unless the ML covariate input is guarded or filled. **Prong 1
+   (timeout) is necessary but not sufficient.**
+
+2. **Cross-site root-cause split resolved (points at ML-002 Vector 9, not just timeout):**
+
+   | Model    | tjhm (both test stations) | kghm (both test stations) | Inference |
+   |----------|---------------------------|---------------------------|-----------|
+   | TFT      | NaN (flag=1→3)            | NaN (flag=1)              | `input_chunk_length=30` includes the 2026-05-28 P/T covariate NaN on both sites |
+   | TiDE     | NaN (flag=3)              | **GOOD (flag=0, non-null)** | tjhm Decad TiDE uses a 30-day covariate window; kghm TiDE uses a 20-day window and starts after the bad date |
+   | TSMixer  | NaN (flag=3)              | **GOOD (flag=0, non-null)** | same covariate-window exposure as TiDE on tjhm |
+
+   The durable ML fix is not artifact re-export. The same loaded `TFT.pt` produced finite output on
+   synthetic finite target/covariates, and the operational TFT/TiDE/TSMixer runs became finite after
+   only interpolating/filling the `P`/`T` covariate NaNs. Target discharge, static features, scaler
+   stats, PET, and daylight were finite. See ML-002 Vector 9 for the file/line root cause in
+   `BaseDartsDLPredictor`.
+
+3. **Trailing-gap trigger is not the only path.** Root-cause #1 above attributes the all-NaN to a
+   trailing-discharge gap tripping `THRESHOLD_MISSING_DAYS_END`. In this run tjhm discharge was fully
+   present through today (no trailing gap) yet the operational forecast was still all-NaN — so the
+   future-horizon `predictor.predict()` returns NaN even with no trailing gap if the required
+   covariate lookback/forecast window contains NaNs.
+
 ## Out of scope / notes
 - The immediate operational unblock (re-run pentadal ML after discharge is ingested, or run the recalc
   manually with adequate time) is an operator action, separate from this durable fix.
