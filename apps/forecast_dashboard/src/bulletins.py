@@ -216,7 +216,7 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
         unparseable cells are left untouched.
         """
         from openpyxl.utils import get_column_letter
-        value_tags = {"Q_MIN", "Q_MAX", "V_MIN", "V_MAX", "NORM", "VNORM"}
+        value_tags = {"Q_MIN", "Q_MAX", "V_MIN", "V_MAX", "NORM", "VNORM", "Q_LAST_YEAR"}
         for ci in section_cells:
             if ci["tag"].name not in value_tags:
                 continue
@@ -308,9 +308,16 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
             objects = list_objects_per_section[idx] if idx < len(list_objects_per_section) else None
 
             if not objects:
-                # Delete this section's rows
+                # Delete this section's rows.
                 start_row, end_row = section_bounds[idx]
                 row_count = end_row - start_row + 1
+                # openpyxl's delete_rows does NOT drop merged ranges in the
+                # deleted rows; left stale, a later _insert_rows -> unmerge_cells
+                # raises KeyError on the missing cells. Unmerge them first (while
+                # the cells still exist).
+                for mr in list(self.sheet.merged_cells.ranges):
+                    if mr.min_row >= start_row and mr.max_row <= end_row:
+                        self.sheet.unmerge_cells(str(mr))
                 self.sheet.delete_rows(start_row, row_count)
                 continue
 
@@ -1032,6 +1039,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
             Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
                 tag_settings=tag_settings, data=True),
+            Tag(name='Q_LAST_YEAR', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_prevyear_q', None)),
+                tag_settings=tag_settings, data=True),
             Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
@@ -1055,6 +1064,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             Tag(name='V_MAX', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_v_max', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='Q_LAST_YEAR', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_prevyear_q', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
                 tag_settings=tag_settings, data=True),
@@ -1080,6 +1091,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
             Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm_q', None)),
                 tag_settings=tag_settings, data=True),
+            Tag(name='Q_LAST_YEAR', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_prevyear_q', None)),
+                tag_settings=tag_settings, data=True),
             Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm_q', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm_q', None)),
@@ -1088,13 +1101,23 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
 
-        # Union of all per-section tags plus general tags for the generator's tag registry
+        # Union of all per-section tags plus general tags for the generator's tag registry.
+        # Legacy tags (VNORM, PERC_NORM, PERC_PREVYEAR) are kept in union_tags so that
+        # any template or code path that still references them by name does not break.
         all_section_tags = sec0_tags + sec1_tags + sec2_tags
         seen_names: "set[str]" = set()
         union_tags = [
             fc_month_tag, fc_year_tag, fc_prevyear_tag,
             fc_month_start_tag, fc_month_end_tag,
+            # Legacy tags retained for backward compatibility — not used by the monthly template
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
         ]
+        seen_names.update({"VNORM", "PERC_NORM", "PERC_PREVYEAR"})
         for t in all_section_tags:
             if t.name not in seen_names:
                 union_tags.append(t)
@@ -1156,6 +1179,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
             Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
                 tag_settings=tag_settings, data=True),
+            Tag(name='Q_LAST_YEAR', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_prevyear_q', None)),
+                tag_settings=tag_settings, data=True),
             Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
@@ -1180,6 +1205,8 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
             Tag(name='NORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_norm', None)),
                 tag_settings=tag_settings, data=True),
+            Tag(name='Q_LAST_YEAR', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_prevyear_q', None)),
+                tag_settings=tag_settings, data=True),
             Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
                 tag_settings=tag_settings, data=True),
             Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
@@ -1193,7 +1220,15 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         union_tags = [
             fc_month_tag, fc_year_tag, fc_prevyear_tag,
             fc_month_start_tag, fc_month_end_tag,
+            # Legacy tags retained for backward compatibility — used by the non-_tj seasonal template
+            Tag(name='VNORM', get_value_fn=lambda obj, **kwargs: _fmt_discharge(getattr(obj, 'forecast_vnorm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_NORM', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_norm', None)),
+                tag_settings=tag_settings, data=True),
+            Tag(name='PERC_PREVYEAR', get_value_fn=lambda obj, **kwargs: _fmt_percentage(getattr(obj, 'perc_prevyear', None)),
+                tag_settings=tag_settings, data=True),
         ]
+        seen_names.update({"VNORM", "PERC_NORM", "PERC_PREVYEAR"})
         for t in all_section_tags:
             if t.name not in seen_names:
                 union_tags.append(t)

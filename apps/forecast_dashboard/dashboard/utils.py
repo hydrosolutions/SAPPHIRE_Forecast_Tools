@@ -3,6 +3,155 @@ from dashboard.logger import setup_logger
 logger = setup_logger()
 
 
+def hydrate_month_hydrograph_stats(site, month_number: int, db) -> None:
+    """Fetch monthly hydrograph stats for *site* and populate norm + last-year Q.
+
+    Fetches ``db.get_hydrograph_pentad_all("month", site.code)``, selects the
+    row whose ``month_in_year`` column equals *month_number*, then sets:
+
+    * ``site.hydrograph_norm`` — climatological monthly mean discharge (norm)
+    * ``site.month_last_year_q`` — previous-year monthly discharge
+
+    Uses the same year-column resolution logic as
+    ``rehydrate_sites_hydrograph_stats``.  The function is NaN/empty/exception-
+    safe: on any failure the existing attribute values are left unchanged.
+
+    Args:
+        site: Site object with a ``.code`` attribute.
+        month_number: Calendar month (1–12) to look up in the hydrograph data.
+        db: The ``src.db`` module (injected so the function is testable).
+    """
+    try:
+        df = db.get_hydrograph_pentad_all("month", site.code)
+        if df is None or df.empty:
+            return
+
+        hin = "month_in_year"
+        if hin not in df.columns:
+            logger.warning(
+                "hydrate_month_hydrograph_stats: column '%s' missing "
+                "for station %s — skipping", hin, site.code,
+            )
+            return
+
+        row_df = df[df[hin] == month_number]
+        if row_df.empty:
+            logger.warning(
+                "hydrate_month_hydrograph_stats: no row for month %s "
+                "in station %s — skipping", month_number, site.code,
+            )
+            return
+
+        row = row_df.iloc[0]
+
+        # Norm
+        if "norm" in row_df.columns:
+            setattr(site, "hydrograph_norm", row["norm"])
+
+        # Last-year discharge — same year-column fallback as rehydrate_sites_hydrograph_stats
+        current_year = dt.datetime.now().year
+        yr = current_year
+        if str(yr) in df.columns:
+            last_yr_col = str(yr - 1)
+        elif str(yr - 1) in df.columns:
+            yr -= 1
+            last_yr_col = str(yr - 1)
+        elif str(yr - 2) in df.columns:
+            yr -= 2
+            last_yr_col = str(yr - 1)
+        else:
+            logger.warning(
+                "hydrate_month_hydrograph_stats: no current-year column "
+                "found for station %s — skipping month_last_year_q", site.code,
+            )
+            return
+
+        if last_yr_col in df.columns:
+            setattr(site, "month_last_year_q", row[last_yr_col])
+
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "hydrate_month_hydrograph_stats: unexpected error for "
+            "station %s — skipping", getattr(site, "code", "?"),
+            exc_info=True,
+        )
+
+
+def hydrate_season_hydrograph_stats(site, db, season_value: int = 1) -> None:
+    """Fetch seasonal hydrograph stats for *site* and populate norm + last-year Q.
+
+    Fetches ``db.get_hydrograph_pentad_all("season", site.code)``, selects the
+    row whose ``season_in_year`` column equals *season_value*, then sets:
+
+    * ``site.hydrograph_norm`` — climatological seasonal mean discharge (norm)
+    * ``site.season_last_year_q`` — previous-year seasonal discharge
+
+    Uses the same year-column resolution logic as
+    ``hydrate_month_hydrograph_stats``.  The function is NaN/empty/exception-
+    safe: on any failure the existing attribute values are left unchanged.
+
+    Args:
+        site: Site object with a ``.code`` attribute.
+        db: The ``src.db`` module (injected so the function is testable).
+        season_value: Vegetation season value (1 by default) to look up in
+            the hydrograph data.
+    """
+    try:
+        df = db.get_hydrograph_pentad_all("season", site.code)
+        if df is None or df.empty:
+            return
+
+        hin = "season_in_year"
+        if hin not in df.columns:
+            logger.warning(
+                "hydrate_season_hydrograph_stats: column '%s' missing "
+                "for station %s — skipping", hin, site.code,
+            )
+            return
+
+        row_df = df[df[hin] == season_value]
+        if row_df.empty:
+            logger.warning(
+                "hydrate_season_hydrograph_stats: no row for season_value %s "
+                "in station %s — skipping", season_value, site.code,
+            )
+            return
+
+        row = row_df.iloc[0]
+
+        # Norm
+        if "norm" in row_df.columns:
+            setattr(site, "hydrograph_norm", row["norm"])
+
+        # Last-year discharge — same year-column fallback as hydrate_month_hydrograph_stats
+        current_year = dt.datetime.now().year
+        yr = current_year
+        if str(yr) in df.columns:
+            last_yr_col = str(yr - 1)
+        elif str(yr - 1) in df.columns:
+            yr -= 1
+            last_yr_col = str(yr - 1)
+        elif str(yr - 2) in df.columns:
+            yr -= 2
+            last_yr_col = str(yr - 1)
+        else:
+            logger.warning(
+                "hydrate_season_hydrograph_stats: no current-year column "
+                "found for station %s — skipping season_last_year_q", site.code,
+            )
+            return
+
+        if last_yr_col in df.columns:
+            setattr(site, "season_last_year_q", row[last_yr_col])
+
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "hydrate_season_hydrograph_stats: unexpected error for "
+            "station %s — skipping", getattr(site, "code", "?"),
+            exc_info=True,
+        )
+
+
 def rehydrate_sites_hydrograph_stats(sites, horizon: str, period_value: int, db) -> None:
     """Re-hydrate hydrograph statistics on each site at bulletin write-time.
 
