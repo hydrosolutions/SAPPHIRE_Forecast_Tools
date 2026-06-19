@@ -3686,6 +3686,70 @@ def _write_runoff_to_api(
         for row_dict in records_df.to_dict("records")
     ]
 
+    discharge_only_count = sum(
+        record["discharge"] is not None and record["predictor"] is None for record in records
+    )
+    predictor_only_count = sum(
+        record["discharge"] is None and record["predictor"] is not None for record in records
+    )
+    logger.info(
+        "Runoff API preflight (%s, %s mode): %s records with discharge non-null/predictor null; "
+        "%s records with discharge null/predictor non-null",
+        horizon_type,
+        sync_mode,
+        discharge_only_count,
+        predictor_only_count,
+    )
+
+    if sync_mode in {"maintenance", "initial"} and records:
+        date_values = [record["date"] for record in records]
+        start_date = min(date_values)
+        end_date = max(date_values)
+        existing_by_key = {}
+
+        for code in sorted({record["code"] for record in records}):
+            existing = client.read_runoff(
+                horizon=horizon_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if existing is None:
+                continue
+            if not isinstance(existing, pd.DataFrame):
+                logger.warning(
+                    "Unexpected read_runoff result for %s/%s; treating as no existing rows",
+                    horizon_type,
+                    code,
+                )
+                continue
+            if existing.empty:
+                continue
+
+            existing = existing.copy()
+            existing["code"] = existing["code"].astype(str)
+            existing["date"] = pd.to_datetime(existing["date"], errors="coerce").dt.strftime(
+                "%Y-%m-%d"
+            )
+            existing = existing.dropna(subset=["date"])
+            for existing_record in existing.to_dict("records"):
+                existing_by_key[(existing_record["code"], existing_record["date"])] = (
+                    existing_record
+                )
+
+        for record in records:
+            existing_record = existing_by_key.get((record["code"], record["date"]))
+            if not existing_record:
+                continue
+            for field in ("discharge", "predictor"):
+                existing_value = existing_record.get(field)
+                if (
+                    record[field] is None
+                    and existing_value is not None
+                    and not pd.isna(existing_value)
+                ):
+                    record[field] = existing_value
+
     # Write to API
     if records:
         count = client.write_runoff(records)

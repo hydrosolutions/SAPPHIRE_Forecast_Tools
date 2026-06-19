@@ -358,9 +358,9 @@ def _get_last_dates_from_csv(prediction_mode):
                 if "date" in df.columns and "code" in df.columns and len(df) > 0:
                     df["date"] = pd.to_datetime(df["date"], errors="coerce")
                     df["code"] = df["code"].apply(
-                        lambda x: str(int(x))
-                        if pd.notna(x) and float(x) == int(float(x))
-                        else str(x)
+                        lambda x: (
+                            str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x)
+                        )
                     )
                     for code, group in df.groupby("code"):
                         max_date = group["date"].max()
@@ -383,9 +383,9 @@ def _get_last_dates_from_csv(prediction_mode):
                 if "date" in df.columns and "code" in df.columns and len(df) > 0:
                     df["date"] = pd.to_datetime(df["date"], errors="coerce")
                     df["code"] = df["code"].apply(
-                        lambda x: str(int(x))
-                        if pd.notna(x) and float(x) == int(float(x))
-                        else str(x)
+                        lambda x: (
+                            str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x)
+                        )
                     )
                     for code, group in df.groupby("code"):
                         max_date = group["date"].max()
@@ -715,23 +715,24 @@ def main():
         forecast_date = get_next_forecast_day(forecast_date, prediction_mode)
         bulletin_date = forecast_date + dt.timedelta(days=1)
 
-        # Check if there's anything to do
+        hindcast_caught_up = forecast_date > date_end
         if forecast_date > date_end:
             logger.info(
                 f"Hindcast mode: next forecast day ({forecast_date}) is after end date ({date_end})."
             )
-            logger.info("All forecasts are already up to date. Nothing to do.")
-            sys.exit(0)
+            logger.info("All forecasts are already up to date; refreshing runoff only.")
+        else:
+            # Count forecast days for logging
+            count_days = 0
+            check_date = forecast_date
+            while check_date <= date_end:
+                count_days += 1
+                check_date = get_next_forecast_day(
+                    check_date + dt.timedelta(days=1), prediction_mode
+                )
 
-        # Count forecast days for logging
-        count_days = 0
-        check_date = forecast_date
-        while check_date <= date_end:
-            count_days += 1
-            check_date = get_next_forecast_day(check_date + dt.timedelta(days=1), prediction_mode)
-
-        logger.info(f"Hindcast mode: running from {forecast_date} to {date_end}")
-        logger.info(f"Hindcast mode: {count_days} forecast days to process")
+            logger.info(f"Hindcast mode: running from {forecast_date} to {date_end}")
+            logger.info(f"Hindcast mode: {count_days} forecast days to process")
     else:
         # Operational mode: run for today only.
         # Catch-up for missed days is handled by hindcast mode (--hindcast).
@@ -820,6 +821,10 @@ def main():
                 "write_decad_time_series_data",
             )
             api_write_failures = True
+
+    if args.hindcast and hindcast_caught_up:
+        logger.info("Hindcast mode: forecasts already up to date; refreshed runoff only.")
+        sys.exit(0)
 
     # Iterate over the dates
     current_day = forecast_date
