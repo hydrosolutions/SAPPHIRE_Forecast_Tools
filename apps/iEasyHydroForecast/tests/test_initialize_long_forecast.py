@@ -644,6 +644,47 @@ def test_read_filtered_records_missing_cutoff_map_entry_means_no_cutoff(tmp_path
     assert [rec["date"] for rec in records] == ["2024-01-22", "2024-02-22"]
 
 
+def test_read_filtered_records_season_canary_does_not_starve_missing_codes(tmp_path):
+    """A populated season canary must not cutoff stations absent from the map."""
+    csv = _make_hindcast_csv(
+        tmp_path,
+        "season_1",
+        "LR_Base",
+        "code,date,valid_from,valid_to,Q_LR_Base",
+        [
+            "19999,2024-01-22,2024-02-01,2024-02-29,12.3",
+            "19999,2024-03-22,2024-04-01,2024-04-30,15.8",
+            "29999,2024-01-22,2024-02-01,2024-02-29,21.0",
+            "29999,2024-03-22,2024-04-01,2024-04-30,22.0",
+            "39999,2024-01-22,2024-02-01,2024-02-29,31.0",
+            "39999,2024-03-22,2024-04-01,2024-04-30,32.0",
+        ],
+    )
+    mode_config = {"horizon_value": 1, "horizon_type": "season"}
+    cutoff_map = {("season", 1, "19999"): "2024-03-22"}
+
+    records, counters, codes, _, _ = long_forecast._read_filtered_records(
+        csv,
+        "LR_Base",
+        mode_config,
+        cutoff=None,
+        station_filter=None,
+        cutoff_map=cutoff_map,
+    )
+
+    imported_by_code = {}
+    for record in records:
+        imported_by_code.setdefault(record["code"], []).append(record["date"])
+
+    assert counters["source_row_count"] == 6
+    assert counters["filtered_row_count"] == 5
+    assert counters["skipped_cutoff"] == 1
+    assert codes == {"19999", "29999", "39999"}
+    assert imported_by_code["19999"] == ["2024-01-22"]
+    assert imported_by_code["29999"] == ["2024-01-22", "2024-03-22"]
+    assert imported_by_code["39999"] == ["2024-01-22", "2024-03-22"]
+
+
 # ---------------------------------------------------------------------------
 # 15. UZB no-op acceptance: zero modes -> exit 0 with no-source message
 # ---------------------------------------------------------------------------
@@ -892,6 +933,76 @@ def test_main_dry_run_mode_filter_restricts_to_single_mode(tmp_path, capsys):
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "DISCOVERED_MODES=['month_2']" in out
+
+
+@pytest.mark.parametrize(
+    ("horizon_type", "horizon_value"),
+    [
+        ("quarter", 3),
+        ("season", 1),
+    ],
+)
+def test_main_dry_run_non_month_modes_carry_horizon_type(
+    tmp_path,
+    capsys,
+    monkeypatch,
+    horizon_type,
+    horizon_value,
+):
+    """Dry-run main path carries quarter/season horizon_type into records."""
+    mode = f"{horizon_type}_mode"
+    _make_config(
+        tmp_path,
+        mode,
+        {
+            "models_to_use": {"LR_family": ["LR_Base"]},
+            "operational_month_lead_time": horizon_value,
+            "horizon_type": horizon_type,
+        },
+    )
+    _make_hindcast_csv(
+        tmp_path,
+        mode,
+        "LR_Base",
+        "code,date,valid_from,valid_to,Q_LR_Base",
+        ["19999,2024-01-22,2024-02-01,2024-02-29,12.3"],
+    )
+    config_dir, data_dir = _layout_dirs(tmp_path)
+    captured_records = []
+    original_read_filtered_records = long_forecast._read_filtered_records
+
+    def spy_read_filtered_records(*args, **kwargs):
+        records, counters, distinct_codes, date_min, date_max = original_read_filtered_records(
+            *args,
+            **kwargs,
+        )
+        captured_records.extend(records)
+        return records, counters, distinct_codes, date_min, date_max
+
+    monkeypatch.setattr(long_forecast, "_read_filtered_records", spy_read_filtered_records)
+
+    exit_code = long_forecast.main(
+        [
+            "--config-dir",
+            str(config_dir),
+            "--data-dir",
+            str(data_dir),
+            "--api-url",
+            "http://localhost:8003/long-forecast/",
+            "--mode",
+            mode,
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "DRY RUN: no POSTs attempted." in out
+    assert f"DISCOVERED_MODES=['{mode}']" in out
+    assert len(captured_records) == 1
+    assert captured_records[0]["horizon_type"] == horizon_type
+    assert captured_records[0]["horizon_value"] == horizon_value
+    assert captured_records[0]["code"] == "19999"
 
 
 # ---------------------------------------------------------------------------
