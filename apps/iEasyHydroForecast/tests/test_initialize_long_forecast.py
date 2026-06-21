@@ -25,6 +25,7 @@ docker-run path is exercised manually in the runbook §5.5 canary.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -79,6 +80,86 @@ def _layout_dirs(tmp_path: Path) -> tuple[Path, Path]:
         tmp_path / "config" / "long_term_configs",
         tmp_path / "intermediate_data",
     )
+
+
+def _make_wrapper_env_file(tmp_path: Path) -> Path:
+    """Write a minimal env file accepted by initialize_long_forecast_history.sh."""
+    config_dir = tmp_path / "data_ref" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env_path = config_dir / ".env_kghm"
+    env_path.write_text(
+        "ieasyhydroforecast_env_file_path=\n"
+        "ieasyhydroforecast_backend_docker_image_tag=local\n"
+        "ieasyhydroforecast_frontend_docker_image_tag=local\n"
+        "ieasyhydroforecast_url=example.invalid\n",
+        encoding="utf-8",
+    )
+    return env_path
+
+
+def _make_wrapper_mode_fixture(
+    tmp_path: Path,
+    mode: str,
+    horizon_type: str,
+) -> None:
+    """Create a minimal wrapper-mode config and sentinel hindcast file."""
+    data_ref = tmp_path / "data_ref"
+    cfg_dir = data_ref / "config" / "long_term_configs"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / f"{mode}.json").write_text(
+        json.dumps(
+            {
+                "models_to_use": {"LR_family": ["LR_Base"]},
+                "operational_month_lead_time": 1,
+                "horizon_type": horizon_type,
+            }
+        ),
+        encoding="utf-8",
+    )
+    csv_dir = data_ref / "intermediate_data" / "long_term_predictions" / mode / "LR_Base"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    (csv_dir / "LR_Base_hindcast.csv").write_text(
+        "code,date,valid_from,valid_to,Q_LR_Base\n19999,2024-01-22,2024-02-01,2024-02-29,12.3\n",
+        encoding="utf-8",
+    )
+
+
+def _run_wrapper_with_stubbed_docker(
+    tmp_path: Path,
+    mode: str,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the real wrapper while stubbing docker to avoid DB/API work."""
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    docker_log = tmp_path / "docker.calls"
+    docker_stub = stub_dir / "docker"
+    docker_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >> "$DOCKER_CALL_LOG"\n'
+        'case "$1" in\n'
+        "  info) exit 0 ;;\n"
+        "  image) exit 0 ;;\n"
+        "  ps) [[ \"$*\" == *sapphire-postprocessing-db* ]] && printf 'stub-db\\n'; exit 0 ;;\n"
+        "  exec) printf '%b' \"${DOCKER_EXEC_OUTPUT:-}\"; exit 0 ;;\n"
+        "  run) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_stub.chmod(0o755)
+
+    env_file = _make_wrapper_env_file(tmp_path)
+    env = os.environ.copy()
+    env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
+    env["DOCKER_CALL_LOG"] = str(docker_log)
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), str(env_file), "--mode", mode, "--dry-run"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    return result, docker_log
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +304,17 @@ def test_load_mode_config_defaults_horizon_type_to_month(tmp_path):
     cfg = long_forecast._load_mode_config(config_dir, "month_2")
     assert cfg["horizon_type"] == "month"
     assert cfg["horizon_value"] == 2
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-02-01",
+        "valid_to": "2024-02-29",
+        "Q_LR_Base": "12.3",
+    }
+    rec = long_forecast._build_record(row, "LR_Base", cfg)
+    assert rec is not None
+    assert rec["horizon_type"] == "month"
+    assert rec["code"] == "19999"
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +577,71 @@ def test_read_filtered_records_cutoff(tmp_path):
     assert counters["filtered_row_count"] == 1
     assert counters["skipped_cutoff"] == 2
     assert records[0]["date"] == "2024-01-22"
+
+
+def test_read_filtered_records_cutoff_map_normalizes_key_parts(tmp_path):
+    """Uppercase/text/raw map keys must match lowercase/int/normalized rows."""
+    cutoff_map_path = tmp_path / "cutoff-map.json"
+    cutoff_map_path.write_text(
+        json.dumps({"MONTH\t1.0\t19999.0": "2024-02-22"}),
+        encoding="utf-8",
+    )
+    cutoff_map = long_forecast._load_cutoff_map(cutoff_map_path)
+    csv = _make_hindcast_csv(
+        tmp_path,
+        "month_1",
+        "LR_Base",
+        "code,date,valid_from,valid_to,Q_LR_Base",
+        [
+            "19999.0,2024-01-22,2024-02-01,2024-02-29,12.3",
+            "19999.0,2024-02-22,2024-03-01,2024-03-31,15.8",
+        ],
+    )
+    mode_config = {"horizon_value": 1, "horizon_type": "month"}
+    records, counters, _, _, _ = long_forecast._read_filtered_records(
+        csv,
+        "LR_Base",
+        mode_config,
+        cutoff=None,
+        station_filter=None,
+        cutoff_map=cutoff_map,
+    )
+    assert counters["filtered_row_count"] == 1
+    assert counters["skipped_cutoff"] == 1
+    assert records[0]["code"] == "19999"
+    assert records[0]["date"] == "2024-01-22"
+
+
+def test_read_filtered_records_missing_cutoff_map_entry_means_no_cutoff(tmp_path):
+    """A missing per-code map entry treats that row as empty target."""
+    cutoff_map_path = tmp_path / "cutoff-map.json"
+    cutoff_map_path.write_text(
+        json.dumps({"quarter\t1\t19999": "2024-02-22"}),
+        encoding="utf-8",
+    )
+    cutoff_map = long_forecast._load_cutoff_map(cutoff_map_path)
+    csv = _make_hindcast_csv(
+        tmp_path,
+        "month_1",
+        "LR_Base",
+        "code,date,valid_from,valid_to,Q_LR_Base",
+        [
+            "19999,2024-01-22,2024-02-01,2024-02-29,12.3",
+            "19999,2024-02-22,2024-03-01,2024-03-31,15.8",
+        ],
+    )
+    mode_config = {"horizon_value": 1, "horizon_type": "month"}
+    records, counters, _, _, _ = long_forecast._read_filtered_records(
+        csv,
+        "LR_Base",
+        mode_config,
+        cutoff=None,
+        station_filter=None,
+        cutoff_map=cutoff_map,
+    )
+    assert counters["filtered_row_count"] == 2
+    assert counters["skipped_cutoff"] == 0
+    assert [rec["date"] for rec in records] == ["2024-01-22", "2024-02-22"]
 
 
 # ---------------------------------------------------------------------------
@@ -785,34 +942,18 @@ def test_main_dry_run_reports_missing_hindcast(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
-# 19a. SQL enum case in MODE detection uses ::text cast + UPPERCASE 'MONTH'
+# 19a. SQL enum case in MODE detection uses derived PG enum labels
 # ---------------------------------------------------------------------------
 
 
-def test_mode_detection_query_uses_uppercase_month_pg_enum_label():
-    """MIG-003 regression: query_target_state SQL must use
-    ``horizon_type::text='MONTH'`` (PG enum LABEL, UPPERCASE).
-
-    Authority: ``sapphire/services/postprocessing/app/models.py:9-17``
-    (``HorizonType`` Python enum). SQLAlchemy stores the Python NAME
-    (``MONTH``) as the PG enum label; ``.value`` (``'month'``) is the
-    API wire form only. Comparing against lowercase ``'month'`` literals
-    hard-fails with ``invalid input value for enum horizontype: "month"``
-    on real deployments.
-
-    Reverting the SQL to the old form
-    (``horizon_type='month'``) must make this test FAIL.
-    """
+def test_mode_detection_query_uses_derived_pg_enum_label():
+    """MIG-003 regression: target SQL uses derived PG enum labels via ::text."""
     src = _WRAPPER.read_text(encoding="utf-8")
-    assert "horizon_type::text='MONTH'" in src, (
-        "query_target_state must use horizon_type::text='MONTH' "
-        "(PG enum LABEL uppercase via ::text cast)"
-    )
-    # The bare lowercase form was the original bug — must not reappear in
-    # executable SQL (allowed in comments/docstrings).
-    assert "horizon_type='month'" not in src, (
-        "lowercase 'horizon_type=\\'month\\'' found; must be horizon_type::text='MONTH' per MIG-003"
-    )
+    assert "query_cutoff_map_state" in src
+    assert "query_legacy_scalar_target_state" in src
+    assert "horizon_type::text='${MODE_HORIZON_ENUM}'" in src
+    assert "horizon_type::text='MONTH'" not in src
+    assert "horizon_type='month'" not in src
 
 
 # ---------------------------------------------------------------------------
@@ -820,22 +961,33 @@ def test_mode_detection_query_uses_uppercase_month_pg_enum_label():
 # ---------------------------------------------------------------------------
 
 
-def test_load_mode_config_lowercases_horizon_type(tmp_path):
-    """A config JSON with 'horizon_type': 'MONTH' (uppercase) must be
-    normalised to lowercase 'month' so payloads hit the DB enum correctly."""
+@pytest.mark.parametrize(
+    ("raw_horizon_type", "expected_horizon_type"),
+    [
+        ("MONTH", "month"),
+        ("QUARTER", "quarter"),
+        ("SEASON", "season"),
+    ],
+)
+def test_load_mode_config_lowercases_horizon_type(
+    tmp_path,
+    raw_horizon_type,
+    expected_horizon_type,
+):
+    """Supported uppercase horizon types must normalize to lowercase."""
     _make_config(
         tmp_path,
         "month_1",
         {
             "models_to_use": {"LR_family": ["LR_Base"]},
             "operational_month_lead_time": 1,
-            "horizon_type": "MONTH",
+            "horizon_type": raw_horizon_type,
         },
     )
     config_dir, _ = _layout_dirs(tmp_path)
     cfg = long_forecast._load_mode_config(config_dir, "month_1")
-    assert cfg["horizon_type"] == "month", (
-        f"expected 'month' after lowercasing; got {cfg['horizon_type']!r}"
+    assert cfg["horizon_type"] == expected_horizon_type, (
+        f"expected {expected_horizon_type!r} after lowercasing; got {cfg['horizon_type']!r}"
     )
 
 
@@ -844,11 +996,12 @@ def test_load_mode_config_lowercases_horizon_type(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_load_mode_config_rejects_unknown_horizon_type(tmp_path):
+@pytest.mark.parametrize("horizon_type", ["pentad", "week"])
+def test_load_mode_config_rejects_unknown_horizon_type(tmp_path, horizon_type):
     """A config JSON with an unsupported 'horizon_type' (e.g. 'week' or
     'pentad') must raise ValueError with a descriptive message.
 
-    Only 'month' is valid for long-term forecasts per architecture §Q4.
+    Only 'month', 'quarter', and 'season' are valid for long-term forecasts.
     """
     _make_config(
         tmp_path,
@@ -856,12 +1009,36 @@ def test_load_mode_config_rejects_unknown_horizon_type(tmp_path):
         {
             "models_to_use": {"LR_family": ["LR_Base"]},
             "operational_month_lead_time": 1,
-            "horizon_type": "pentad",
+            "horizon_type": horizon_type,
         },
     )
     config_dir, _ = _layout_dirs(tmp_path)
     with pytest.raises(ValueError, match="horizon_type"):
         long_forecast._load_mode_config(config_dir, "month_1")
+
+
+@pytest.mark.parametrize(
+    ("horizon_type", "horizon_value"),
+    [
+        ("quarter", 3),
+        ("season", 1),
+    ],
+)
+def test_build_record_carries_non_month_horizon_type(horizon_type, horizon_value):
+    """Quarter/season configs must POST their own horizon_type, not month."""
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-02-01",
+        "valid_to": "2024-02-29",
+        "Q_LR_Base": "12.3",
+    }
+    mode_config = {"horizon_value": horizon_value, "horizon_type": horizon_type}
+    rec = long_forecast._build_record(row, "LR_Base", mode_config)
+    assert rec is not None
+    assert rec["horizon_type"] == horizon_type
+    assert rec["horizon_value"] == horizon_value
+    assert rec["code"] == "19999"
 
 
 # ---------------------------------------------------------------------------
@@ -1048,21 +1225,17 @@ def test_wrapper_help_documents_allow_global_cutoff():
 def test_wrapper_per_mode_query_uses_horizon_value_filter():
     """Round-3 review feedback: --mode runs must use a per-mode psql query
     scoped to the selected mode's horizon_value, not the global query.
-    String-level regression guard on the wrapper source confirms the
-    per-mode query exists and references both
-    ``horizon_type::text='MONTH'`` (MIG-003: PG enum LABEL UPPERCASE via
-    ``::text`` cast) AND ``horizon_value=${MODE_HORIZON_VALUE}``."""
+    The per-mode filter must use the P2-derived enum label, not a re-hardcoded
+    ``MONTH`` literal."""
     src = _WRAPPER.read_text(encoding="utf-8")
     # The per-mode branch must guard on MODE_FILTER being set...
     assert 'if [[ -n "$MODE_FILTER" ]]' in src
     # ...and execute a scoped query that filters on the mode's horizon_value.
     assert "MODE_HORIZON_VALUE" in src
     assert "horizon_value=${MODE_HORIZON_VALUE}" in src
-    # MIG-003: the per-mode query MUST use the PG enum LABEL via ::text cast.
-    assert "horizon_type::text='MONTH'" in src, (
-        "per-mode query must filter horizon_type::text='MONTH' (PG enum "
-        "LABEL uppercase); lowercase literals hard-fail on real deployments"
-    )
+    assert "MODE_HORIZON_ENUM" in src
+    assert "horizon_type::text='${MODE_HORIZON_ENUM}'" in src
+    assert "horizon_type::text='MONTH'" not in src
     # The per-mode branch must parse horizon_value from the mode's config JSON.
     assert "operational_month_lead_time" in src
 
@@ -1090,7 +1263,6 @@ def test_wrapper_gate_error_message_is_shell_quoted():
     assert "printf -v script_q '%q' \"$0\"" in src
     assert "printf -v env_q '%q' \"$ENV_FILE\"" in src
     # The suggested commands reference the quoted forms (not raw $0 / $ENV_FILE).
-    assert "bash ${script_q} ${env_q} --mode month_1" in src
     assert "bash ${script_q} ${env_q} --allow-global-cutoff" in src
     # The prior unquoted form must be gone.
     assert "bash $0 ${ENV_FILE} --mode month_1" not in src
@@ -1106,7 +1278,7 @@ def test_wrapper_dry_run_exemption_suppressed_when_allow_global_cutoff():
     so only the opt-in WARNING fires in that combination."""
     src = _WRAPPER.read_text(encoding="utf-8")
     needle = (
-        '"$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" '
+        '"$TARGET_MODE" == "pre-cutoff" && "$LEGACY_SCALAR_FALLBACK" == true '
         '&& "$DRY_RUN" == true && "$ALLOW_GLOBAL_CUTOFF" != true'
     )
     assert needle in src, (
@@ -1125,67 +1297,104 @@ def test_per_mode_parser_documents_sync_with_python_helper():
     assert "_load_mode_config" in src
 
 
+@pytest.mark.parametrize(
+    ("horizon_type", "expected_enum"),
+    [
+        ("month", "MONTH"),
+        ("quarter", "QUARTER"),
+        ("season", "SEASON"),
+    ],
+)
+def test_wrapper_per_mode_parser_derives_horizon_enum_label(
+    tmp_path,
+    horizon_type,
+    expected_enum,
+):
+    """Per-mode parsing derives the PG enum label from the allow-list."""
+    mode = f"{horizon_type}_mode"
+    _make_wrapper_mode_fixture(tmp_path, mode, horizon_type)
+
+    result, _ = _run_wrapper_with_stubbed_docker(tmp_path, mode)
+
+    assert result.returncode == 0, (
+        f"wrapper failed for horizon_type={horizon_type!r}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert f"horizon_type_enum={expected_enum}" in result.stdout
+
+
+@pytest.mark.parametrize("horizon_type", ["pentad", "week"])
+def test_wrapper_per_mode_parser_rejects_unknown_horizon_before_sql(
+    tmp_path,
+    horizon_type,
+):
+    """Unsupported horizon types fail closed before target SQL or importer run."""
+    mode = f"{horizon_type}_mode"
+    _make_wrapper_mode_fixture(tmp_path, mode, horizon_type)
+
+    result, docker_log = _run_wrapper_with_stubbed_docker(tmp_path, mode)
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "unsupported horizon_type" in combined
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    assert not any("sapphire-postprocessing-db" in call for call in docker_calls), docker_calls
+    assert not any(call.startswith("exec ") for call in docker_calls), docker_calls
+    assert not any(call.startswith("run ") for call in docker_calls), docker_calls
+
+
+def test_wrapper_horizon_enum_uses_explicit_allow_list_mapping():
+    """MODE_HORIZON_ENUM must come from explicit labels, not raw config text."""
+    src = _WRAPPER.read_text(encoding="utf-8")
+    assert "MODE_HORIZON_ENUM" in src
+    assert 'case "$mode_horizon_type" in' in src
+    for horizon_type, enum_label in (
+        ("month", "MONTH"),
+        ("quarter", "QUARTER"),
+        ("season", "SEASON"),
+    ):
+        assert f"{horizon_type})" in src
+        assert f'MODE_HORIZON_ENUM="{enum_label}"' in src
+
+    assert 'MODE_HORIZON_ENUM="$mode_horizon_type"' not in src
+    assert 'MODE_HORIZON_ENUM="${mode_horizon_type^^}"' not in src
+    assert "horizon_type::text='${MODE_HORIZON_ENUM}'" in src
+
+
 # ---------------------------------------------------------------------------
 # MIG-003: horizon_type PG enum-label SQL regression guard (behavioral)
 # ---------------------------------------------------------------------------
 
 
-def test_wrapper_psql_sql_uses_uppercase_horizon_type_pg_enum_labels():
-    """MIG-003 behavioral regression: every ``psql -c <SQL>`` call in the
-    wrapper must reference ``horizon_type`` only via the PG enum LABEL
-    UPPERCASE through a ``::text`` cast.
+@pytest.mark.parametrize(
+    ("horizon_type", "expected_enum"),
+    [
+        ("month", "MONTH"),
+        ("quarter", "QUARTER"),
+        ("season", "SEASON"),
+    ],
+)
+def test_wrapper_psql_sql_uses_derived_uppercase_horizon_type_pg_enum_labels(
+    tmp_path,
+    horizon_type,
+    expected_enum,
+):
+    """MIG-003 behavioral regression: per-mode SQL uses derived PG enum labels."""
+    mode = f"{horizon_type}_mode"
+    _make_wrapper_mode_fixture(tmp_path, mode, horizon_type)
 
-    The wrapper invokes psql twice — once in ``query_target_state`` for
-    the global-mode MODE detection and once in the per-mode branch
-    (``--mode <name>``). Both queries hit the live
-    ``sapphire-postprocessing-db.long_forecasts`` table whose
-    ``horizon_type`` column is a PG enum with UPPERCASE labels
-    (``DAY``/``PENTAD``/``DECADE``/``MONTH``/...).
+    result, docker_log = _run_wrapper_with_stubbed_docker(tmp_path, mode)
 
-    This test extracts every ``-c "..."`` string passed to ``psql`` from
-    the wrapper source and asserts the WHERE clause uses
-    ``horizon_type::text='MONTH'``. Reverting either SQL site to the old
-    lowercase form (``horizon_type='month'``) makes this test FAIL — and
-    the live query hard-fails with
-    ``ERROR: invalid input value for enum horizontype: "month"``.
+    assert result.returncode == 0, result.stdout + result.stderr
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    exec_calls = [call for call in docker_calls if call.startswith("exec ")]
+    assert exec_calls, docker_calls
+    assert any(f"horizon_type::text='{expected_enum}'" in call for call in exec_calls)
+    assert not any("horizon_type::text='MONTH'" in call for call in exec_calls) or (
+        expected_enum == "MONTH"
+    )
+    assert not any("horizon_type='month'" in call for call in exec_calls)
 
-    Authority for the two-representation rule:
-    ``sapphire/services/postprocessing/app/models.py:9-17`` — the
-    ``HorizonType`` Python enum where NAMES (uppercase) become the PG
-    enum labels and ``.value`` strings (lowercase) are the API JSON form.
-    """
     src = _WRAPPER.read_text(encoding="utf-8")
-
-    # Extract every psql -c "<SQL>" invocation. The wrapper formats them
-    # across multiple lines with backslash continuations, so allow any
-    # whitespace between ``-c`` and the opening quote.
-    sql_blocks = re.findall(
-        r'\bpsql\b[\s\S]*?-c\s+"([^"]+)"',
-        src,
-    )
-    assert sql_blocks, (
-        'expected at least one ``psql -c "..."`` invocation in the '
-        "wrapper source; regex extraction returned no matches — has the "
-        "wrapper layout changed?"
-    )
-
-    horizon_blocks = [s for s in sql_blocks if "horizon_type" in s]
-    assert horizon_blocks, (
-        "expected at least one psql SQL block to reference "
-        f"horizon_type; regex returned only: {sql_blocks!r}"
-    )
-
-    for block in horizon_blocks:
-        # Required: PG enum LABEL UPPERCASE via ``::text`` cast.
-        assert "horizon_type::text='MONTH'" in block, (
-            f"psql SQL block missing horizon_type::text='MONTH' "
-            f"(PG enum LABEL uppercase via ::text cast): {block!r}"
-        )
-        # Forbidden: bare lowercase ``horizon_type='month'`` literal in
-        # an equality predicate (anchored to the column, so column names
-        # like ``horizon_in_year`` are not matched). Case-sensitive:
-        # forbid lowercase, allow uppercase (the fix form).
-        forbidden = re.compile(r"horizon_type\s*=\s*'month'")
-        assert not forbidden.search(block), (
-            f"lowercase ``horizon_type = 'month'`` predicate slipped back into psql SQL: {block!r}"
-        )
+    assert "GROUP BY horizon_type, horizon_value, code" in src
+    assert "horizon_type::text='MONTH'" not in src
