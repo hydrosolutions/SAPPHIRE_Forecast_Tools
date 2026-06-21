@@ -1,84 +1,111 @@
-# MIG-008: Long-forecast from-file importer collapses quarter/season to horizon_value=0
+# MIG-008: Quarter/season horizon_value needs a per-bucket config convention (the service is hv-agnostic)
 
-**Status**: Draft
+**Status**: Draft (blocked on a producer-side convention decision)
 **Priority**: Mid
-**Module**: migration-toolkit (`bin/initialize_long_forecast_history.sh`, `bin/utils/migration_py/long_forecast.py`)
-**Depends on**: MIG-007 (the importer must first accept `quarter`/`season` before this limitation is reachable)
+**Module**: migration-toolkit + `apps/long_term_forecasting` (hindcast/config production); the
+postprocessing **service stores hv but does not define it**
+**Depends on**: MIG-007 (the importer must accept `quarter`/`season` before this is reachable)
+**See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (the question posed to the
+service owner / modeller)
 
-## Problem
+## Summary
 
-The long-term from-file importer derives a record's `horizon_value` from the mode
-config's `operational_month_lead_time`. For `month_N` modes this is correct: each
-`month_1.json` ... `month_N.json` carries a distinct lead, so the importer
-reproduces the operational `MONTH` buckets (hv 0..3).
+The from-file backfill writes `horizon_value=0` for every quarter/season row. Investigation
+shows this is **not an importer bug** and **not fixable in the importer alone**: `horizon_value`
+has no derivation anywhere in the stack and no meaning imposed by the service. It is a
+**producer-side convention** carried by the config field `operational_month_lead_time`, and the
+quarter/season configs needed to express the desired buckets do not exist in this repo.
 
-`quarter` and `season` have only a **single config file each**
-(`quarter.json`, `seasonal_april.json`), both with `operational_month_lead_time: 0`.
-So the importer can only ever write **`horizon_value=0`** for those horizon types.
-The operational long-term pipeline, by contrast, populates a multi-bucket structure:
+## What the service does (postprocessing) - it is hv-agnostic
 
-| horizon_type | operational buckets in DB | from-file importer can write |
-|---|---|---|
-| MONTH | hv 0..3 (per `month_N` config) | hv 0..3 (correct) |
-| QUARTER | hv 1, 2, 3, 4 | hv 0 only |
-| SEASON | hv 0, 1, 2, 3 | hv 0 only |
+- `app/models.py`: `LongForecast.horizon_value = Column(Integer, nullable=False)` - a plain int in
+  the natural key `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`.
+- `app/schemas.py:50`: `horizon_value: int` - **no validator, no range, no quarter/season rule.**
+  The API accepts any integer.
+- `app/data_migrator.py:769`: stamps `"horizon_value": self.horizon_value` on every record;
+  `:669` sets that from `config["operational_month_lead_time"]`; `--type longforecast` loops
+  configs (`:877`), one config -> one constant hv for all its rows.
 
-## Impact
+The service stores whatever int it is sent. It derives nothing and validates no semantic.
 
-- **QUARTER**: a from-file import lands in `QUARTER hv=0`, an **orphan bucket
-  disjoint from the operational `hv 1..4`**. Skill metrics and the dashboard that
-  read the operational quarter buckets do not see it. The from-file path therefore
-  cannot backfill the operational quarter forecasts. (For this reason the local
-  quarter write was deliberately **held**.)
-- **SEASON**: a from-file import lands in `SEASON hv=0` only. The `hv 0` write is
-  itself valid (the April-issued seasonal forecast), and was applied locally as a
-  clean additive gap-fill (sentinel verification: 62 -> 79 stations at `hv 0`,
-  +731 rows, no overwrite of `hv 1..3`). But the operational `hv 1..3` seasons
-  cannot be reconstructed from the single `seasonal_april` config.
+## All three writers are identical
 
-## Root cause
+Every writer stamps `horizon_value = operational_month_lead_time` (a hand-set constant per config),
+and **none derives hv from a date**:
 
-`horizon_value` is derived from a **lead-time** concept (`operational_month_lead_time`)
-rather than from the **forecast target index** (which quarter / which seasonal issue
-point). The from-file config set lacks per-quarter / per-season config files, so
-there is no input from which the importer could derive hv 1..4.
+| Writer | Where |
+|---|---|
+| Service migrator (colleague-owned) | `sapphire/services/postprocessing/app/data_migrator.py:669,769` |
+| Operational pipeline | `apps/long_term_forecasting/run_forecast.py:269,409` -> `config_forecast.py:231` |
+| From-file importer (MIG-007) | `bin/utils/migration_py/long_forecast.py:251,272` |
 
-This is a configuration / derivation limitation, not a defect in the MIG-007 import
-logic (which faithfully writes whatever the config specifies).
+The established convention is therefore **one config file per hv bucket**. Months follow it
+exactly: `month_1/2/3`, each with its own `operational_month_lead_time` (0/1/2) and its own
+hindcast CSV, producing `MONTH hv 0..2`.
+
+## Why quarter/season collapse to hv0
+
+This repo ships a **single** config for each: `quarter.json` and `seasonal_april.json`, both
+`operational_month_lead_time: 0`. So each writes exactly one bucket (hv0). Meanwhile each hindcast
+CSV actually contains **many** issue points:
+
+- `quarter` = a **3-month forecast issued monthly Mar-Sep** (7 windows/yr): `valid_from -> valid_to`
+  = 03->05, 04->06, 05->07, 06->08, 07->09, 08->10, 09->11. All stamped hv0.
+- `seasonal_april` = the **Apr-Sep (6-month) forecast, issued in April only**. Stamped hv0, which
+  is correct for the April issue.
+
+## Desired semantics (per the operational data + modeller intent)
+
+- **Quarter**: hv should reflect the target quarter (e.g. Mar=Q1, Apr/May/Jun=Q2, Jul/Aug/Sep=Q3).
+- **Season**: hv should reflect the **issue date**. The DB convention is
+  `hv = target_start_month(April) - issue_month`: April=0, March=1, Feb=2, Jan=3.
+
+Caveats discovered:
+- The `quarter` hindcast is a rolling-3-month monthly product (7 windows), which does **not** map
+  cleanly onto 4 calendar quarters.
+- The existing operational `QUARTER hv1..4` is **internally inconsistent** (e.g. hv1 mixes issue
+  months Jan + Mar-Sep; hv2 mostly April; hv3 mostly July; hv4 October) -> likely migrated from a
+  config set that has since changed. Its provenance should be confirmed before trying to match it.
+- The repo has no `seasonal_january/february/march` configs or CSVs, so `SEASON hv1..3` cannot be
+  backfilled from here regardless of the rule.
 
 ## Options
 
-1. **Per-target config files** (mirrors the `month_N` pattern): add
-   `quarter_1.json` ... `quarter_4.json` and the seasonal variants, each carrying the
-   correct target index, and let the existing derivation produce the right hv.
-   Requires authoring the configs and confirming how the operational pipeline assigns
-   quarter/season hv.
-2. **Derive hv from the source CSV target** (e.g. map the forecast date to its
-   quarter / seasonal index) instead of the config lead. More invasive in
-   `long_forecast.py`; must match the operational convention exactly.
-3. **Document the limitation**: from-file backfill supports MONTH (multi-lead) plus
-   the single-bucket `QUARTER hv0` / `SEASON hv0`; operational `QUARTER hv1..4` /
-   `SEASON hv1..3` must come from operational reruns, not the from-file importer.
+1. **Config-per-bucket (architecturally consistent; recommended).** Produce per-bucket configs +
+   hindcast CSVs upstream (in `apps/long_term_forecasting` hindcast production), each with the
+   correct `operational_month_lead_time`. **No migrator code changes** -- all three writers already
+   loop configs and stamp the constant. MIG-007's importer is already correct under this model.
+2. **Date-derived hv in the importer.** Compute hv per row from `valid_from` (quarter) / issue date
+   (season). **Diverges** from the service migrator and the operational pipeline (which keep
+   stamping the constant), so hv would depend on which writer ran -- inconsistent unless all three
+   change, including the **colleague-owned service**. Discouraged.
+3. **Document the limitation (interim).** From-file backfill supports MONTH (multi-config) plus the
+   single-bucket `QUARTER hv0` / `SEASON hv0`; other buckets come from operational reruns. This is
+   the current de-facto contract.
 
 ## Recommendation
 
-Confirm first **how the operational `long_term_forecasting` pipeline assigns
-`horizon_value` for quarter and season** (target index vs lead). That answer decides
-between option 1 (config-only) and option 2 (importer change). Until then, treat
-from-file quarter/season backfill as `hv=0`-only and rely on operational reruns for
-the other buckets (option 3 as the interim contract).
+This is a **producer-side convention decision owned by the service owner (colleague) + modeller**,
+not a code fix. Do **not** add date-derivation to the importer (option 2) -- it would diverge from
+the canonical config-per-bucket design. Take the question in
+`doc/prod/longforecast_quarter_season_hv_convention.md` to the owner/modeller; if the answer is
+config-per-bucket (option 1), it becomes a hindcast-production + config task with the migrators
+unchanged.
 
-## Scope
+## Scope (once the convention is settled)
 
-- `bin/utils/migration_py/long_forecast.py` (hv derivation), the wrapper, and the
-  `long_term_configs/` config set. **No `sapphire/services/**` changes.**
-- Sentinel station codes only in any tests/examples (`19999`); no real codes or
-  discharge values.
+- Most likely `apps/long_term_forecasting` (hindcast/config production) + the `long_term_configs/`
+  set. The migrators (`bin/utils/migration_py/long_forecast.py`, the service `data_migrator.py`)
+  likely need **no change** under option 1. **No `sapphire/services/**` edits without coordination.**
+- Sentinel station codes only (`19999`); no real codes or discharge values.
 
 ## Evidence (local, sentinel-safe aggregates)
 
-- `quarter` dry-run derived `horizon_type_enum=QUARTER horizon_value=0`, target
-  cutoff map empty (entries=0) -> would create a fresh `QUARTER hv=0` of 17 stations
-  / 4876 rows, disjoint from operational `QUARTER hv 1..4` (78-79 stations each).
-- `seasonal_april` write derived `SEASON hv=0`, additive: `SEASON hv0` 62 -> 79
-  stations, 2940 -> 3671 rows; `hv 1..3` unchanged.
+- `quarter` dry-run: `horizon_type_enum=QUARTER horizon_value=0`, empty target map -> would create a
+  fresh `QUARTER hv=0` (17 stations / 4876 rows), disjoint from operational `QUARTER hv1..4`
+  (78-79 stations each). Write **held**.
+- `seasonal_april` write: `SEASON hv=0`, additive -> `SEASON hv0` 62 -> 79 stations, 2940 -> 3671
+  rows; `hv1..3` unchanged. Correct for the April issue.
+- Quarter source CSV (`quarter/<model>/<model>_hindcast.csv`) `valid_from->valid_to` months:
+  03->05, 04->06, 05->07, 06->08, 07->09, 08->10, 09->11 (7 monthly 3-month windows).
+- Season source CSV (`seasonal_april/...`): single issue month 04, `valid_from->valid_to` 04->09.
