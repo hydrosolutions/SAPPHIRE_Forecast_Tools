@@ -1509,3 +1509,156 @@ def test_wrapper_psql_sql_uses_derived_uppercase_horizon_type_pg_enum_labels(
     src = _WRAPPER.read_text(encoding="utf-8")
     assert "GROUP BY horizon_type, horizon_value, code" in src
     assert "horizon_type::text='MONTH'" not in src
+
+
+# ---------------------------------------------------------------------------
+# MIG-008 P2: horizon_value comes from config `operational_month_lead_time`,
+# NEVER derived from the row date or a calendar quarter. These tests lock the
+# resolved convention and must FAIL if anyone reintroduces date-derived or
+# calendar-quarter horizon_value.
+# ---------------------------------------------------------------------------
+
+
+def test_quarter_hv_is_config_lead_zero_tajik_style():
+    """Tajik-style quarter: operational_month_lead_time=0 -> horizon_value=0."""
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-02-01",
+        "valid_to": "2024-04-30",
+        "Q_LR_Base": "12.3",
+    }
+    mode_config = {"horizon_value": 0, "horizon_type": "quarter"}
+    rec = long_forecast._build_record(row, "LR_Base", mode_config)
+    assert rec is not None
+    assert rec["horizon_type"] == "quarter"
+    assert rec["horizon_value"] == 0
+    assert rec["code"] == "19999"
+
+
+def test_quarter_hv_is_config_lead_one_kyrgyz_style():
+    """Kyrgyz-style quarter: operational_month_lead_time=1 -> horizon_value=1."""
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-03-01",
+        "valid_to": "2024-05-31",
+        "Q_LR_Base": "12.3",
+    }
+    mode_config = {"horizon_value": 1, "horizon_type": "quarter"}
+    rec = long_forecast._build_record(row, "LR_Base", mode_config)
+    assert rec is not None
+    assert rec["horizon_type"] == "quarter"
+    assert rec["horizon_value"] == 1
+
+
+@pytest.mark.parametrize("lead", [3, 2, 1, 0])
+def test_season_hv_equals_config_lead(lead):
+    """Season configs (one per issue month): leads 3/2/1/0 -> hv 3/2/1/0."""
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-04-01",
+        "valid_to": "2024-09-30",
+        "Q_LR_Base": "12.3",
+    }
+    mode_config = {"horizon_value": lead, "horizon_type": "season"}
+    rec = long_forecast._build_record(row, "LR_Base", mode_config)
+    assert rec is not None
+    assert rec["horizon_type"] == "season"
+    assert rec["horizon_value"] == lead
+
+
+def test_quarter_hv_is_config_lead_not_calendar_quarter(tmp_path, capsys):
+    """ANTI-REGRESSION: a quarter config with operational_month_lead_time=0
+    whose source rows span multiple calendar quarters (March / June /
+    September of the same year) MUST yield horizon_value=0 for EVERY record.
+
+    This proves horizon_value is the config constant — not derived from the
+    row date or the calendar quarter implied by valid_from. If anyone later
+    reintroduces date/quarter-derived hv, the September row (Q3) and the June
+    row (Q2) would diverge from the config lead and this test fails.
+    """
+    mode = "quarter"
+    _make_config(
+        tmp_path,
+        mode,
+        {
+            "models_to_use": {"LR_family": ["LR_Base"]},
+            "operational_month_lead_time": 0,
+            "horizon_type": "quarter",
+        },
+    )
+    # Three rows: valid_from in March (Q1), June (Q2), September (Q3) 2024.
+    _make_hindcast_csv(
+        tmp_path,
+        mode,
+        "LR_Base",
+        "code,date,valid_from,valid_to,Q_LR_Base",
+        [
+            "19999,2024-02-22,2024-03-01,2024-05-31,12.3",
+            "19999,2024-05-22,2024-06-01,2024-08-31,15.8",
+            "19999,2024-08-22,2024-09-01,2024-11-30,18.0",
+        ],
+    )
+    config_dir, data_dir = _layout_dirs(tmp_path)
+    captured_records = []
+    original = long_forecast._read_filtered_records
+
+    def spy(*args, **kwargs):
+        records, counters, codes, dmin, dmax = original(*args, **kwargs)
+        captured_records.extend(records)
+        return records, counters, codes, dmin, dmax
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(long_forecast, "_read_filtered_records", spy):
+        exit_code = long_forecast.main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "--data-dir",
+                str(data_dir),
+                "--api-url",
+                "http://localhost:8003/long-forecast/",
+                "--mode",
+                mode,
+                "--dry-run",
+            ]
+        )
+
+    assert exit_code == 0
+    capsys.readouterr()  # drain
+    assert len(captured_records) == 3, captured_records
+    # Every record carries the config lead (0), regardless of its valid_from
+    # calendar quarter.
+    for rec in captured_records:
+        assert rec["horizon_type"] == "quarter"
+        assert rec["horizon_value"] == 0, (
+            f"row dated {rec['date']} / valid_from-derived quarter must NOT "
+            f"override config lead; got hv={rec['horizon_value']!r}"
+        )
+
+
+def test_model_type_casing_not_normalized_by_importer():
+    """Item 5 finding: the importer does NOT normalize model_type casing.
+
+    `_build_record` stamps ``model_type`` verbatim from the per-model loop
+    variable (long_forecast.py:346 — ``"model_type": model_name``), and the
+    module docstring (line 34) explicitly notes it is the "mixed-case" loop
+    variable. The DB stores uppercase (e.g. ``LR_BASE``) but that uppercasing
+    is handled SERVICE-SIDE, not by this importer. We therefore lock the
+    importer's pass-through behavior here rather than asserting uppercasing.
+    """
+    row = {
+        "code": "19999",
+        "date": "2024-01-22",
+        "valid_from": "2024-02-01",
+        "valid_to": "2024-02-29",
+        "Q_LR_Base": "12.3",
+    }
+    mode_config = {"horizon_value": 0, "horizon_type": "quarter"}
+    rec = long_forecast._build_record(row, "LR_Base", mode_config)
+    assert rec is not None
+    # Pass-through: the mixed-case config name is preserved verbatim.
+    assert rec["model_type"] == "LR_Base"
