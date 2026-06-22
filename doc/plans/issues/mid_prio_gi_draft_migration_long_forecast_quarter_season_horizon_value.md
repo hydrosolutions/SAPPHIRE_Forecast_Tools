@@ -5,7 +5,10 @@
 **Module**: `long_term_configs` (per-deployment) + `apps/long_term_forecasting` (hindcast/config
 production); the migration toolkit and the postprocessing service need **no hv change**
 **Depends on**: MIG-007 (importer accepts `quarter`/`season`)
-**See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer)
+**See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer);
+`doc/plans/working/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive
+cleanup as written); `doc/prod/longforecast_historical_data_decision_request.md` (owner/modeller
+decision needed before any `long_forecasts` mutation)
 
 ## Resolved convention (2026-06-22, from the service owner)
 
