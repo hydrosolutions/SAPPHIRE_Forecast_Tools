@@ -1,111 +1,69 @@
-# MIG-008: Quarter/season horizon_value needs a per-bucket config convention (the service is hv-agnostic)
+# MIG-008: Quarter/season horizon_value convention (RESOLVED) - config audit + DB reconciliation
 
-**Status**: Draft (blocked on a producer-side convention decision)
+**Status**: Draft - convention resolved 2026-06-22; awaiting a planner pass to scope the changes
 **Priority**: Mid
-**Module**: migration-toolkit + `apps/long_term_forecasting` (hindcast/config production); the
-postprocessing **service stores hv but does not define it**
-**Depends on**: MIG-007 (the importer must accept `quarter`/`season` before this is reachable)
-**See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (the question posed to the
-service owner / modeller)
+**Module**: `long_term_configs` (per-deployment) + `apps/long_term_forecasting` (hindcast/config
+production); the migration toolkit and the postprocessing service need **no hv change**
+**Depends on**: MIG-007 (importer accepts `quarter`/`season`)
+**See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer)
 
-## Summary
+## Resolved convention (2026-06-22, from the service owner)
 
-The from-file backfill writes `horizon_value=0` for every quarter/season row. Investigation
-shows this is **not an importer bug** and **not fixable in the importer alone**: `horizon_value`
-has no derivation anywhere in the stack and no meaning imposed by the service. It is a
-**producer-side convention** carried by the config field `operational_month_lead_time`, and the
-quarter/season configs needed to express the desired buckets do not exist in this repo.
+`horizon_value = operational_month_lead_time` from the config. The existing config-per-bucket
+mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-quarter mapping**.
+"Quarter" is a single quarterly product whose hv is just the config lead.
 
-## What the service does (postprocessing) - it is hv-agnostic
+- **Month**: hv = month lead. `month_0->0, month_1->1, month_2->2, month_3->3`. (Tajik filenames are
+  off by one -- `month_1.json` carries lead 0 -- but the `operational_month_lead_time` value inside
+  each config is authoritative, not the filename.)
+- **Quarter**: single quarterly forecast per deployment. lead `= 1` for **Kyrgyz** (hv1), `= 0` for
+  **Tajik** (hv0).
+- **Season**: one config per issue month, hv = months before the April target start. **Kyrgyz**:
+  Jan->hv3, Feb->hv2, Mar->hv1, Apr->hv0. **Tajik**: April only -> hv0.
 
-- `app/models.py`: `LongForecast.horizon_value = Column(Integer, nullable=False)` - a plain int in
-  the natural key `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`.
-- `app/schemas.py:50`: `horizon_value: int` - **no validator, no range, no quarter/season rule.**
-  The API accepts any integer.
-- `app/data_migrator.py:769`: stamps `"horizon_value": self.horizon_value` on every record;
-  `:669` sets that from `config["operational_month_lead_time"]`; `--type longforecast` loops
-  configs (`:877`), one config -> one constant hv for all its rows.
+## What this corrects from the earlier draft
 
-The service stores whatever int it is sent. It derives nothing and validates no semantic.
+- The "quarter is 7 rolling windows / should map to calendar quarters Q1..Q3" reading was **wrong**.
+  Quarter is one product; the 7 monthly issue windows in the hindcast CSV all share the deployment's
+  single quarter hv, distinguished by `date`/`valid_from`/`valid_to` in the natural key.
+- "Tajik `QUARTER hv0` is an orphan bucket" was **wrong**: for Tajik, hv0 is the **correct** quarter
+  bucket. The held Tajik quarter write should be reconsidered (likely proceed).
+- The Tajik `seasonal_april -> SEASON hv0` write already applied was **correct**.
+- The from-file importer (MIG-007) and the service migrator need **no hv code change** -- both
+  already stamp `operational_month_lead_time`.
 
-## All three writers are identical
+## What still needs adapting (for the planner to investigate + scope)
 
-Every writer stamps `horizon_value = operational_month_lead_time` (a hand-set constant per config),
-and **none derives hv from a date**:
+1. **Config audit, per deployment.** Confirm every needed config exists with the correct
+   `operational_month_lead_time`:
+   - Kyrgyz: `month_0..3` (leads 0..3), `quarter` (lead 1), and **all four** seasonal issues
+     `seasonal_january/february/march/april` (leads 3/2/1/0). Check whether the Jan/Feb/Mar
+     seasonal configs **and their hindcast CSVs** exist; if not, that is a hindcast-production gap.
+   - Tajik: `month_1..3` (lead values, not filenames), `quarter` (lead 0), `seasonal_april` (lead 0).
+2. **Existing DB reconciliation.** Investigate the provenance of the local DB's `QUARTER hv1..4` and
+   `SEASON hv1..3` rows (78-79 / 62-73 stations) vs the convention. Determine which deployment they
+   belong to (the local stack has carried both Tajik and Kyrgyz), whether any are mis-migrated under
+   an old convention, and whether cleanup / re-migration is required.
+3. **Held Tajik quarter write.** Re-evaluate: under the convention Tajik quarter -> `QUARTER hv0`, so
+   plan whether to proceed with the from-file quarter backfill to hv0 (and how it interacts with any
+   existing rows).
+4. **Importer verification (no code change expected).** Confirm via a dry-run / test that quarter and
+   season configs produce the intended hv; add a regression test if useful.
+5. **Server parity.** Ensure the convention and any config additions / data cleanup propagate to the
+   deployment server DBs, not just local.
 
-| Writer | Where |
-|---|---|
-| Service migrator (colleague-owned) | `sapphire/services/postprocessing/app/data_migrator.py:669,769` |
-| Operational pipeline | `apps/long_term_forecasting/run_forecast.py:269,409` -> `config_forecast.py:231` |
-| From-file importer (MIG-007) | `bin/utils/migration_py/long_forecast.py:251,272` |
+## Out of scope
 
-The established convention is therefore **one config file per hv bucket**. Months follow it
-exactly: `month_1/2/3`, each with its own `operational_month_lead_time` (0/1/2) and its own
-hindcast CSV, producing `MONTH hv 0..2`.
-
-## Why quarter/season collapse to hv0
-
-This repo ships a **single** config for each: `quarter.json` and `seasonal_april.json`, both
-`operational_month_lead_time: 0`. So each writes exactly one bucket (hv0). Meanwhile each hindcast
-CSV actually contains **many** issue points:
-
-- `quarter` = a **3-month forecast issued monthly Mar-Sep** (7 windows/yr): `valid_from -> valid_to`
-  = 03->05, 04->06, 05->07, 06->08, 07->09, 08->10, 09->11. All stamped hv0.
-- `seasonal_april` = the **Apr-Sep (6-month) forecast, issued in April only**. Stamped hv0, which
-  is correct for the April issue.
-
-## Desired semantics (per the operational data + modeller intent)
-
-- **Quarter**: hv should reflect the target quarter (e.g. Mar=Q1, Apr/May/Jun=Q2, Jul/Aug/Sep=Q3).
-- **Season**: hv should reflect the **issue date**. The DB convention is
-  `hv = target_start_month(April) - issue_month`: April=0, March=1, Feb=2, Jan=3.
-
-Caveats discovered:
-- The `quarter` hindcast is a rolling-3-month monthly product (7 windows), which does **not** map
-  cleanly onto 4 calendar quarters.
-- The existing operational `QUARTER hv1..4` is **internally inconsistent** (e.g. hv1 mixes issue
-  months Jan + Mar-Sep; hv2 mostly April; hv3 mostly July; hv4 October) -> likely migrated from a
-  config set that has since changed. Its provenance should be confirmed before trying to match it.
-- The repo has no `seasonal_january/february/march` configs or CSVs, so `SEASON hv1..3` cannot be
-  backfilled from here regardless of the rule.
-
-## Options
-
-1. **Config-per-bucket (architecturally consistent; recommended).** Produce per-bucket configs +
-   hindcast CSVs upstream (in `apps/long_term_forecasting` hindcast production), each with the
-   correct `operational_month_lead_time`. **No migrator code changes** -- all three writers already
-   loop configs and stamp the constant. MIG-007's importer is already correct under this model.
-2. **Date-derived hv in the importer.** Compute hv per row from `valid_from` (quarter) / issue date
-   (season). **Diverges** from the service migrator and the operational pipeline (which keep
-   stamping the constant), so hv would depend on which writer ran -- inconsistent unless all three
-   change, including the **colleague-owned service**. Discouraged.
-3. **Document the limitation (interim).** From-file backfill supports MONTH (multi-config) plus the
-   single-bucket `QUARTER hv0` / `SEASON hv0`; other buckets come from operational reruns. This is
-   the current de-facto contract.
-
-## Recommendation
-
-This is a **producer-side convention decision owned by the service owner (colleague) + modeller**,
-not a code fix. Do **not** add date-derivation to the importer (option 2) -- it would diverge from
-the canonical config-per-bucket design. Take the question in
-`doc/prod/longforecast_quarter_season_hv_convention.md` to the owner/modeller; if the answer is
-config-per-bucket (option 1), it becomes a hindcast-production + config task with the migrators
-unchanged.
-
-## Scope (once the convention is settled)
-
-- Most likely `apps/long_term_forecasting` (hindcast/config production) + the `long_term_configs/`
-  set. The migrators (`bin/utils/migration_py/long_forecast.py`, the service `data_migrator.py`)
-  likely need **no change** under option 1. **No `sapphire/services/**` edits without coordination.**
-- Sentinel station codes only (`19999`); no real codes or discharge values.
+- No `sapphire/services/**` edits (service is already hv-agnostic and correct).
+- No date-derived hv in the importer (explicitly rejected by the resolution).
 
 ## Evidence (local, sentinel-safe aggregates)
 
-- `quarter` dry-run: `horizon_type_enum=QUARTER horizon_value=0`, empty target map -> would create a
-  fresh `QUARTER hv=0` (17 stations / 4876 rows), disjoint from operational `QUARTER hv1..4`
-  (78-79 stations each). Write **held**.
-- `seasonal_april` write: `SEASON hv=0`, additive -> `SEASON hv0` 62 -> 79 stations, 2940 -> 3671
-  rows; `hv1..3` unchanged. Correct for the April issue.
-- Quarter source CSV (`quarter/<model>/<model>_hindcast.csv`) `valid_from->valid_to` months:
-  03->05, 04->06, 05->07, 06->08, 07->09, 08->10, 09->11 (7 monthly 3-month windows).
-- Season source CSV (`seasonal_april/...`): single issue month 04, `valid_from->valid_to` 04->09.
+- All three writers stamp `horizon_value = operational_month_lead_time`: service migrator
+  `data_migrator.py:669,769`; operational `run_forecast.py:269,409` (`config_forecast.py:231`);
+  from-file `long_forecast.py:251,272`. None derives hv from a date.
+- Tajik configs present: `month_1/2/3`, `quarter` (lead 0), `seasonal_april` (lead 0). No Tajik
+  Jan/Feb/Mar seasonal configs (expected -- Tajik season is April-only).
+- `seasonal_april` write: `SEASON hv0` 62 -> 79 stations, additive (correct for the April issue).
+- `quarter` dry-run: would write `QUARTER hv0` (17 stations / 4876 rows) -- correct bucket for Tajik;
+  write currently held pending this plan.

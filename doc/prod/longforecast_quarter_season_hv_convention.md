@@ -68,3 +68,33 @@ migrated from a config set that has since changed.
 
 Once you confirm the convention (esp. question 1), we'll proceed accordingly. No code changes are
 pending on our side until then.
+
+---
+
+## RESOLUTION (2026-06-22, from the service owner)
+
+`horizon_value = operational_month_lead_time` from the config -- the existing config-per-bucket
+mechanism is correct as-is (option 1). There is **no date-derivation and no 4-calendar-quarter
+mapping**; "quarter" is a single quarterly product whose hv is just the config lead. The values:
+
+- **Month**: hv = the month lead. `month_0 -> hv0, month_1 -> hv1, month_2 -> hv2, month_3 -> hv3`.
+  (Tajik filenames are off by one -- `month_1.json` carries lead 0 -- but the
+  `operational_month_lead_time` value inside each config is authoritative, not the filename.)
+- **Quarter**: a single quarterly forecast per deployment. `operational_month_lead_time = 1` for
+  **Kyrgyz** (-> hv1), `= 0` for **Tajik** (-> hv0).
+- **Season**: one config per issue month, hv = months before the April target start.
+  **Kyrgyz**: produced in January -> hv3, February -> hv2, March -> hv1, April -> hv0.
+  **Tajik**: only the April issue exists -> hv0.
+
+### Consequences
+
+- The earlier "quarter hv0 is an orphan bucket" concern was a **misread**: for Tajik, `QUARTER hv0`
+  is the **correct** bucket. The held Tajik quarter write should be reconsidered (likely proceed).
+- The Tajik `seasonal_april -> SEASON hv0` write already applied was **correct**.
+- The from-file importer (MIG-007) needs **no hv code change** -- it already stamps the config lead.
+- The work now is a **config audit** (do all needed configs exist with the right lead, per
+  deployment -- esp. the Kyrgyz `seasonal_january/february/march` issues), **reconciliation of the
+  existing DB `QUARTER hv1..4` / `SEASON hv1..3` rows** against the convention (provenance +
+  possible cleanup/re-migration), and proceeding with the correct from-file backfills.
+
+A planner pass (tracked in MIG-008) will detail exactly what needs adapting.
