@@ -326,6 +326,18 @@ postprocessing-service owner + long-term modeller before any mutation of `long_f
 
 ### P3 - Local Reconciliation (re-stamp + targeted delete, per the SIGNOFF decision)
 
+> **SUPERSEDED for ensemble handling (2026-06-22, P-PIPE review MF-A).** PP0 chose to **regenerate**
+> the EM/Naive/Skilled ensembles, so P3 step 2's blanket
+> `DELETE ... model_type NOT IN ('LR_BASE','LR_SM')` would delete rows that P-PIPE regenerates -- do
+> NOT run it as written. The ensemble cleanup is now **re-derived post-regen, scoped to the
+> old-convention signature** (season: `hv1` with `date==valid_from/target-start`; quarter: `hv2/3/4`
+> orphans + old calendar-`hv1`), per
+> `doc/plans/working/ppipe_postprocessing_ensemble_hv_plan.md` ("Cross-plan cleanup reconciliation").
+> The pre-regen counts below (2,890 / ~41,225 / 10,665) are **stale** and must be re-measured against
+> the post-regen state. The **raw `LR_BASE`/`LR_SM` re-stamp (step 3) still stands** as a cleanup op
+> (P-PIPE never moves raw LR). Sequencing: P-PIPE ships -> deploy -> full-history recalc -> verify ->
+> re-derive + reviewer-approve predicates -> execute.
+
 **Goal**: Apply the owner's decision: preserve configured-model history by re-stamping it to the
 correct bucket, delete only the deprecated-model rows. No blanket deletes.
 
