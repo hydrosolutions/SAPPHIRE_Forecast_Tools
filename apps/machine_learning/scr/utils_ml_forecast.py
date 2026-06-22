@@ -374,6 +374,64 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
     }, nans_at_at_end
 
 
+def _interpolate_with_gap_limits(s, recent_mask, gap_limit_recent, gap_limit_past):
+    """Linearly interpolate a daily Series, capping how long a gap may be.
+
+    Consecutive-NaN runs longer than the per-position limit (recent vs past) are
+    left as NaN. Leading/trailing NaNs are never extrapolated.
+    """
+    na = s.isna()
+    run = na.groupby((~na).cumsum()).transform("sum")  # NaN-run length per element
+    limit = np.where(recent_mask, gap_limit_recent, gap_limit_past)
+    interp = s.interpolate(method="linear", limit_area="inside")
+    return interp.where(~na | (run <= limit), s)  # keep NaN where gap too long
+
+
+def fill_forcing_gaps(
+    df: pd.DataFrame,
+    reference_date,
+    recent_day_threshold: int,
+    gap_limit_recent: int,
+    gap_limit_past: int,
+    value_cols: tuple = ("P", "T"),
+) -> pd.DataFrame:
+    """Reindex forcing data to a continuous daily index per code and linearly
+    interpolate short gaps in `value_cols`.
+
+    Gaps within `recent_day_threshold` days of `reference_date` are filled only
+    up to `gap_limit_recent` consecutive days; older gaps up to `gap_limit_past`.
+    Larger gaps remain NaN. Handles both missing rows (via reindex) and NaN cells.
+
+    Args:
+        df: long-format forcing data with at least 'code', 'date', and value_cols.
+        reference_date: anchor for the recent window (e.g. today).
+        recent_day_threshold: size in days of the strict recent window.
+        gap_limit_recent: max consecutive missing days interpolated in the recent window.
+        gap_limit_past: max consecutive missing days interpolated for older data.
+        value_cols: columns to interpolate. Defaults to ("P", "T").
+
+    Returns:
+        Long-format DataFrame, one continuous daily row per code, with gaps in
+        value_cols interpolated subject to the limits above.
+    """
+    reference_date = pd.Timestamp(reference_date)
+    recent_cutoff = reference_date - pd.Timedelta(days=recent_day_threshold)
+    out = []
+    for code, g in df.groupby("code"):
+        g = g.copy()
+        g["date"] = pd.to_datetime(g["date"])
+        g = g.sort_values("date").set_index("date")
+        g = g.reindex(pd.date_range(g.index.min(), g.index.max(), freq="D"))
+        g["code"] = code
+        recent_mask = g.index >= recent_cutoff
+        for col in value_cols:
+            g[col] = _interpolate_with_gap_limits(
+                g[col], recent_mask, gap_limit_recent, gap_limit_past
+            )
+        out.append(g.rename_axis("date").reset_index())
+    return pd.concat(out, ignore_index=True)
+
+
 # --------------------------------------------------------------------
 # WRITE OUTPUT TXT FILE
 # --------------------------------------------------------------------

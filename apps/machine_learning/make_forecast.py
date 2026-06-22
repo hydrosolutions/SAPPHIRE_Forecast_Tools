@@ -332,6 +332,7 @@ def prepare_forecast_data(
                 logger.debug(f"Second method failed: {e2}")
                 pass  # Both methods failed, moving on
 
+    
     # 5: Interpolate missing values and ffill missing values at the end
     # check again for missing values
     missing_values, nans_at_end = utils_ml_forecast.check_for_nans(
@@ -579,6 +580,21 @@ def make_ml_forecast():
     # get the codes to use
     codes_to_use = utils_ml_forecast.get_codes_to_use(past_discharge, qmapped_era5, static_features)
     logger.debug("codes_to_use: %s", codes_to_use)
+
+    # Gap-fill forcing data before PET is calculated so that PET (derived from T)
+    # inherits the filled T values and does not propagate NaNs downstream.
+    FORCING_GAP_RECENT_THRESHOLD = int(
+        os.getenv("ieasyhydroforecast_forcing_gap_fill_recent_day_threshold", 7)
+    )
+    FORCING_GAP_LIMIT_RECENT = int(os.getenv("ieasyhydroforecast_forcing_gap_limit_recent", 1))
+    FORCING_GAP_LIMIT_PAST = int(os.getenv("ieasyhydroforecast_forcing_gap_limit_past", 3))
+    qmapped_era5 = utils_ml_forecast.fill_forcing_gaps(
+        qmapped_era5,
+        reference_date=pd.to_datetime(datetime.datetime.now().date()),
+        recent_day_threshold=FORCING_GAP_RECENT_THRESHOLD,
+        gap_limit_recent=FORCING_GAP_LIMIT_RECENT,
+        gap_limit_past=FORCING_GAP_LIMIT_PAST,
+    )
 
     # --------------------------------------------------------------------
     # Calculate PET Oudin and Daylight Hours
