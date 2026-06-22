@@ -94,3 +94,18 @@ Collision verification (aggregate-only, before any write):
 
 Exact operations are in `doc/plans/working/longforecast_hv_convention_plan.md` (P3). Execution pending
 final SQL review + per-step scoped backups.
+
+---
+
+## BLOCKER found during execution review (2026-06-22) -> scope expanded
+
+The `QUARTER hv1-4` and `SEASON hv1` rows are **not** deprecated history: they are the live output of
+the `apps/postprocessing_forecasts` quarterly/seasonal **ensemble** pipeline, which writes
+`horizon_value = quarter_in_year` (1-4) for quarter and hardcoded `1` for season
+(`api_writer.py:1043-1067`, invoked operationally via `file_writer.py:686/718`). Cleaning them without
+changing that pipeline would be undone by the next operational run.
+
+**Decision: cover the postprocessing ensemble pipeline (option a).** Fix the ensemble writers to emit
+the config-lead `horizon_value` (quarter: kyg 1 / taj 0; season per issue: kyg 3/2/1/0, taj 0). This
+becomes phase **P-PIPE**, a hard prerequisite for the data cleanup (P3/P4). All `long_forecasts`
+mutation remains held until P-PIPE ships. P-PIPE gets its own planner + reviewer pass.

@@ -3,7 +3,16 @@
 **Status**: Draft - convention resolved 2026-06-22; awaiting a planner pass to scope the changes
 **Priority**: Mid
 **Module**: `long_term_configs` (per-deployment) + `apps/long_term_forecasting` (hindcast/config
-production); the migration toolkit and the postprocessing service need **no hv change**
+production) + **`apps/postprocessing_forecasts` (ensemble pipeline -- NEEDS an hv change, see below)**;
+the postprocessing *service* (sapphire/services) needs no change
+
+> **Scope expansion (2026-06-22):** an audit found the `apps/postprocessing_forecasts`
+> quarterly/seasonal **ensemble** pipeline writes `long_forecasts` with `horizon_value = quarter_in_year`
+> (1-4) for quarter and hardcoded `1` for season (`api_writer.py:1043-1067`), contradicting the
+> config-lead convention. This is the live source of the `QUARTER hv1-4` / `SEASON hv1` rows. Decision:
+> **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is a hard
+> prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE gets
+> its own planner+reviewer pass.
 **Depends on**: MIG-007 (importer accepts `quarter`/`season`)
 **See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer);
 `doc/plans/working/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive

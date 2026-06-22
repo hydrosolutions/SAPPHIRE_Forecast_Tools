@@ -24,6 +24,33 @@ sound; the destructive cleanup is not safe as specified. Incorporated changes:
 - **S3**: `MONTH hv4..12` (a few models, from 2006 -> the `month_1..9` backfill) is **out of cleanup
   scope** -- "not produced by current config" does not mean "stale".
 
+## BLOCKER + scope expansion (2026-06-22): postprocessing ensemble pipeline writes the old convention
+
+A consumer-impact audit (the second review iteration) found that `QUARTER hv1-4` and `SEASON hv1` are
+**not deprecated history** -- they are the live output of the `apps/postprocessing_forecasts`
+quarterly/seasonal **ensemble** pipeline, which writes a *different* `horizon_value` convention:
+
+- `api_writer._write_quarterly_ensemble_to_api` (`api_writer.py:917`) -> `client.write_long_forecasts()`
+  (`:1107`) with **`horizon_value = quarter_in_year`** (calendar quarter 1-4, `:1043-1051`).
+- `api_writer._write_seasonal_ensemble_to_api` (`:938`) -> same table with **`horizon_value = 1`
+  hardcoded** (`:1067`).
+- Operationally invoked: `postprocessing_operational_long_term.py` / `_maintenance_long_term.py` ->
+  `file_writer.save_quarterly/seasonal_forecast_data` -> `file_writer.py:686/718`.
+- `MODEL_TYPE_MAP` emits `EM` / `Naive Mean` / `Skilled Mean` -- the "12-model ensemble" in QUARTER is
+  this pipeline's product.
+
+Consequence: cleaning `QUARTER hv1-4` / `SEASON hv1` without changing this pipeline is **futile** (the
+next operational run regenerates them), and the cleanup premise ("deprecated old data") was wrong.
+
+**Decision (2026-06-22): cover the postprocessing ensemble pipeline (option a).** Extend the
+config-lead convention to `apps/postprocessing_forecasts` so the ensemble writers emit
+`horizon_value` per the deployment's quarter/season config lead (quarter: kyg 1 / taj 0; season per
+issue: kyg Jan/Feb/Mar/Apr = 3/2/1/0, taj Apr = 0) instead of `quarter_in_year` / hardcoded-1.
+
+**Re-sequencing**: a new phase **P-PIPE** (fix the ensemble pipeline) becomes a hard prerequisite of
+the data cleanup. P3 (re-stamp/delete) and P4 (Tajik hv0) must NOT run until P-PIPE ships, or they
+are immediately undone. P-PIPE needs its own planner + reviewer pass (see the planner handoff).
+
 ## Resolved Convention
 
 `horizon_value = operational_month_lead_time` from each long-term config. The
@@ -337,12 +364,23 @@ March rows; the April series lives in `hv0`. (Tajik `QUARTER hv0` arrives in P4.
 
 - Each step: a **dry-run row-count diff** matching the verified counts (2,890 / ~41,225 / 10,665)
   before execution, run inside a transaction.
-- A **per-step scoped dump** of exactly the affected rows captured first (individually reversible), in
-  addition to the P0 whole-table backup.
+- **Concrete, op-specific rollback (SF-1)** -- a scoped row dump is NOT a valid reversal for an
+  in-place `horizon_value` UPDATE:
+  - Op 2 (DELETE): scoped dump of the deleted rows; reversal = re-insert.
+  - Ops 1 and 3 (re-stamp UPDATEs): capture `(id, old horizon_value)` for every affected row first;
+    reversal = inverse `UPDATE long_forecasts SET horizon_value=<old> WHERE id=<captured id>` (NOT a
+    re-insert, which would PK-collide / duplicate since the row still exists with the new hv).
+  - The P0 whole-table backup is the coarse backstop for all three.
+- **(N-2)** The per-step scoped dumps / id maps contain real station codes + discharge -- they live
+  **outside the repo** and are **never committed** (same as the P0 backup).
 - Keep-set still present afterward: Kyrgyz `QUARTER hv1` Mar-Sep `LR_BASE`/`LR_SM`; Kyrgyz
   `SEASON hv3/hv2/hv1` Jan/Feb/Mar; combined April `SEASON hv0`.
 - Post-state aggregate query shows no `QUARTER hv2/3/4`, no non-`LR_BASE`/`LR_SM` quarter models, no
   `SEASON hv1` April rows; `MONTH` untouched (out of scope, S3).
+- **(N-1)** After op 1, `SEASON hv0` holds **multiple April issue-days** per target year (existing
+  Tajik day-1, Kyrgyz days 16/17/21/25, plus the re-stamped Kyrgyz day-1 series) -- mechanically fine
+  (disjoint keys, 0 collisions), but confirm with the consumer audit that a SEASON skill aggregator
+  does not double-count multiple issue-days per target year (see consumer-impact follow-ups below).
 
 ### P4 - Tajik Quarter `hv0` Backfill
 
@@ -462,13 +500,15 @@ Out of scope:
     "P1": { "depends_on": ["P0"], "parallel_agents": 2 },
     "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
     "SIGNOFF": { "depends_on": ["P1"], "parallel_agents": 0, "type": "owner_modeller_decision_gate" },
-    "P3": { "depends_on": ["P0", "P1", "SIGNOFF"], "parallel_agents": 1 },
-    "P4": { "depends_on": ["P0", "P1", "P3", "SIGNOFF"], "parallel_agents": 1 },
+    "P-PIPE": { "depends_on": ["SIGNOFF"], "parallel_agents": 1, "note": "fix postprocessing_forecasts ensemble pipeline to config-lead hv; needs own planner+reviewer pass" },
+    "P3": { "depends_on": ["P0", "P1", "SIGNOFF", "P-PIPE"], "parallel_agents": 1 },
+    "P4": { "depends_on": ["P0", "P1", "P3", "SIGNOFF", "P-PIPE"], "parallel_agents": 1 },
     "P5": { "depends_on": ["P3"], "parallel_agents": 1 },
-    "P6": { "depends_on": ["P2", "P3", "P4", "P5", "SIGNOFF"], "parallel_agents": 2 }
+    "P6": { "depends_on": ["P2", "P3", "P4", "P5", "SIGNOFF", "P-PIPE"], "parallel_agents": 2 }
   }
 }
 ```
 
-Note: P2 (importer regression test) is the only phase actionable immediately; everything that mutates
-`long_forecasts` is gated behind SIGNOFF.
+Note: P2 (importer regression test) is the only phase shipped. SIGNOFF is satisfied. **P-PIPE (fix the
+postprocessing ensemble pipeline) is now the gating prerequisite** for all `long_forecasts` mutation
+(P3/P4/P6) -- without it the cleanup is regenerated by the next operational run.
