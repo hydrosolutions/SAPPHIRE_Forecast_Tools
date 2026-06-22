@@ -74,3 +74,23 @@ Please choose for each:
 
 Please reply with a choice for Dataset A and Dataset B (and, for B, whether the 12-model ensemble
 should be preserved). We will then revise the execution plan accordingly.
+
+---
+
+## DECISION (2026-06-22, service owner / modeller)
+
+- **Dataset A**: **re-stamp/re-migrate** -> move the Kyrgyz April-1 seasonal series to the correct
+  April bucket `SEASON hv0`.
+- **Dataset B**: **delete the deprecated models**; **re-stamp the currently-configured models**
+  (`LR_BASE`/`LR_SM`) into the correct quarter bucket `QUARTER hv1`. The 10-model ensemble (GBT,
+  SM_GBT*, MC_ALD, NAIVE_MEAN, ENSEMBLE_MEAN, SKILLED_MEAN, LR_SM_DT, LR_SM_ROF) is **not** preserved.
+
+Collision verification (aggregate-only, before any write):
+
+- A re-stamp `SEASON hv1`-April -> `hv0`: 2,890 rows, **0** unique-key collisions with `hv0`.
+- B re-stamp `QUARTER hv2/3/4` `LR_BASE`/`LR_SM` -> `hv1`: 10,665 rows, **0** collisions with `hv1`.
+- B delete deprecated models: ~41,225 rows; the `hv1` deprecated-model rows are **100% January**, so
+  the current Mar-Sep rolling product is untouched.
+
+Exact operations are in `doc/plans/working/longforecast_hv_convention_plan.md` (P3). Execution pending
+final SQL review + per-step scoped backups.

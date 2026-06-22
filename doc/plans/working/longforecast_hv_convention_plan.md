@@ -288,16 +288,19 @@ postprocessing-service owner + long-term modeller before any mutation of `long_f
 
 **Acceptance criteria**:
 
-- A recorded decision for **Dataset A** (`SEASON hv1` April-1 series) and **Dataset B**
-  (`QUARTER hv1`-Jan + `hv2/3/4` 12-model ensemble), including whether the 12-model ensemble is
-  preserved.
-- No `long_forecasts` write/delete occurs before this decision.
+- A recorded decision for Dataset A and Dataset B.
 
-### P3 - Local Reconciliation (quarantine by default; delete only on signed-off decision)
+**DECISION RECEIVED (2026-06-22, service owner / modeller):**
 
-**Goal**: Bring the local DB into line with the convention **without destroying non-reproducible
-history**. Default action is quarantine / scoped dump; hard delete only for datasets the owner
-explicitly signed off to delete.
+- **Dataset A** (`SEASON hv1` April-1 series): **re-stamp/re-migrate** to the correct April bucket
+  (`hv0`).
+- **Dataset B** (`QUARTER hv1`-Jan + `hv2/3/4`): **delete the deprecated models**; **re-stamp the
+  currently-configured models** (`LR_BASE`/`LR_SM`) into the correct quarter bucket (`hv1`).
+
+### P3 - Local Reconciliation (re-stamp + targeted delete, per the SIGNOFF decision)
+
+**Goal**: Apply the owner's decision: preserve configured-model history by re-stamping it to the
+correct bucket, delete only the deprecated-model rows. No blanket deletes.
 
 **Files**:
 
@@ -305,33 +308,41 @@ explicitly signed off to delete.
 - Reviewed SQL committed as run notes (aggregate summaries only; no station codes).
 - No source code files. No `sapphire/services/**`.
 
-**Depends on**: P0, P1, **SIGNOFF**. (P2 should also pass before promotion.)
+**Depends on**: P0, P1, **SIGNOFF** (satisfied). (P2 also passes.)
 
-**Agents**: 1 data-ops agent, executing **only pre-reviewed SQL** (no execution-by-prose).
+**Agents**: 1 data-ops agent, executing **only pre-reviewed SQL** (no execution-by-prose), each step
+inside a transaction, with a per-step scoped dump first.
 
-**Exact predicates (reviewed; uppercase `model_type` as stored in the DB):**
+**Exact operations (reviewed; uppercase `model_type` as stored in the DB; collision-verified):**
 
-- Whole-bucket group, provably disjoint from any keep-set:
-  `horizon_type='QUARTER' AND horizon_value IN (2,3,4)`.
-- `QUARTER hv1` stale Q1 block (keep-set is `model_type IN ('LR_BASE','LR_SM') AND extract(month from date) IN (3,4,5,6,7,8,9)`;
-  the 10 extra models and the `LR_BASE`/`LR_SM` January rows are the old Q1 block), so delete-set =
-  `horizon_type='QUARTER' AND horizon_value=1 AND extract(month from date)=1`.
-  NOTE: the config text is `LR_Base`/`LR_SM`; the DB stores `LR_BASE`/`LR_SM` -- a config-cased
-  predicate matches nothing. Verify casing in the dry-run.
-- `SEASON hv1` April-1 series: `horizon_type='SEASON' AND horizon_value=1 AND extract(month from date)=4`.
-  **This block has zero overlap with `hv0` (M1) -- it is NOT a delete-on-redundancy target.** Treat
-  per the SIGNOFF decision (quarantine / re-stamp), not as default cleanup.
+1. **Dataset A re-stamp** -- move the Kyrgyz April-1 seasonal series into the correct April bucket:
+   `UPDATE long_forecasts SET horizon_value=0 WHERE horizon_type='SEASON' AND horizon_value=1 AND extract(month from date)=4;`
+   2,890 rows; **0** unique-key collisions with existing `SEASON hv0` (verified). Leaves the correct
+   `SEASON hv1` March rows untouched.
+2. **Dataset B delete deprecated models** -- across all quarter buckets:
+   `DELETE FROM long_forecasts WHERE horizon_type='QUARTER' AND model_type NOT IN ('LR_BASE','LR_SM');`
+   ~41,225 rows. Safe for the current rolling product: in `hv1` the deprecated-model rows are **100%
+   January** (verified), so the Mar-Sep `LR_BASE`/`LR_SM` rolling product is untouched.
+3. **Dataset B re-stamp configured models** -- consolidate the LR quarter history into the correct
+   Kyrgyz bucket:
+   `UPDATE long_forecasts SET horizon_value=1 WHERE horizon_type='QUARTER' AND horizon_value IN (2,3,4) AND model_type IN ('LR_BASE','LR_SM');`
+   10,665 rows; **0** unique-key collisions with existing `QUARTER hv1` (verified). The `hv1`-January
+   `LR_BASE`/`LR_SM` rows are already in the correct bucket and need no move.
+
+End state: `QUARTER` retains only `hv1` (all `LR_BASE`/`LR_SM`: the rolling Mar-Sep product + the
+re-stamped Jan/Apr/Jul/Oct LR history); `hv2/3/4` are emptied. `SEASON hv1` keeps only the correct
+March rows; the April series lives in `hv0`. (Tajik `QUARTER hv0` arrives in P4.)
 
 **Acceptance criteria**:
 
-- For every mutation: a **dry-run row-count diff** (pre/post aggregate counts) is produced and matches
-  the reviewed predicate before execution.
-- Before any removal, a **per-row scoped dump** of exactly the affected rows is captured (individually
-  reversible), in addition to the P0 whole-table backup.
-- Keep-set verified present first: Kyrgyz `QUARTER hv1` Mar-Sep `LR_BASE`/`LR_SM`; Kyrgyz
-  `SEASON hv3/hv2` Jan/Feb and the correct `SEASON hv1` March rows; combined April `SEASON hv0`.
-- `MONTH` rows are untouched (out of scope, S3).
-- Mutations run inside a transaction; quarantined data is recoverable.
+- Each step: a **dry-run row-count diff** matching the verified counts (2,890 / ~41,225 / 10,665)
+  before execution, run inside a transaction.
+- A **per-step scoped dump** of exactly the affected rows captured first (individually reversible), in
+  addition to the P0 whole-table backup.
+- Keep-set still present afterward: Kyrgyz `QUARTER hv1` Mar-Sep `LR_BASE`/`LR_SM`; Kyrgyz
+  `SEASON hv3/hv2/hv1` Jan/Feb/Mar; combined April `SEASON hv0`.
+- Post-state aggregate query shows no `QUARTER hv2/3/4`, no non-`LR_BASE`/`LR_SM` quarter models, no
+  `SEASON hv1` April rows; `MONTH` untouched (out of scope, S3).
 
 ### P4 - Tajik Quarter `hv0` Backfill
 
