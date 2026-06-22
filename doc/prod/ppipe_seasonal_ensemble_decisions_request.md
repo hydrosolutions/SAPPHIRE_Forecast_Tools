@@ -69,3 +69,29 @@ mapping. We can propose a concrete contract if you prefer; just confirm the conf
 Once you answer Decision 1 (and 2 if B) and Decision 3, we will rewrite the P-PIPE phase scope +
 acceptance and proceed via the usual plan -> review -> implement loop. Aggregate-only DB verification;
 sentinel station codes in all artifacts.
+
+---
+
+## ANSWERS (2026-06-22, modeller / owner)
+
+- **Decision 1 = B**: **four distinct seasonal ensemble products**, one per issue (Jan/Feb/Mar/Apr ->
+  `hv3/2/1/0`), computed independently per issue. This is the larger change: issue identity must be
+  threaded through the reader projection (`_SEASONAL_FC_COLS`), the ensemble groupby, the dedup keys,
+  and a per-row issue->lead mapping in the writer.
+- **Decision 2 = yes**: **each lead gets its own skill** -- seasonal skill gains an issue/lead
+  dimension; the skill->ensemble join must key on lead (a 3-month-ahead January ensemble is weighted
+  with January-lead skill, not the April-lead skill).
+- **Decision 3 = regenerate** ("re-run them with the proper settings"): rebuild the historical
+  ensembles via `recalculate_skill_metrics.py`, then clean up the obsolete old-convention rows.
+  **No new cron job needed** -- the recurring recalc is already scheduled
+  (`bin/bimonthly_long_term_skill_metrics_recalculation.sh` covers QUARTERLY/SEASONAL via
+  `run_skill_metrics_recalc.sh`; plus `bin/yearly_skill_metrics_recalculation.sh`). The one-time deep
+  history (back to 2000, since the cron default window is ~`current_year-20` = 2006) is a **single
+  manual recalc run** with `SAPPHIRE_RECALC_START_YEAR=2000` per deployment. Sequence: P-PIPE code ->
+  deploy -> recalc (start 2000) writes new-convention rows -> aggregate verify -> then clean up the
+  obsolete old-hv rows.
+- **Decision 4 = confirmed**: postprocessing may read the long-term config JSONs to resolve the lead +
+  issue-month -> seasonal-config mapping.
+
+Scope is therefore the **B branch** (the larger one). P-PIPE will be re-planned in detail (expanded
+seasonal issue-threading + per-lead skill + the regenerate-then-clean sequence) before implementation.
