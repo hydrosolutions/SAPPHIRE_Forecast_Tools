@@ -28,6 +28,12 @@ from src import data_reader, ensemble_calculator, file_writer, gap_detector
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
 
+from iEasyHydroForecast.long_term_horizon_resolver import (
+    seasonal_config_name,
+    seasonal_horizon_value,
+    supported_long_term_modes,
+)
+
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -53,6 +59,18 @@ logger.addHandler(console_handler)
 # endregion
 
 timing_stats = TimingStats()
+
+
+def _supported_seasonal_issue_leads() -> list[int]:
+    """Return unique supported seasonal issue leads for this deployment."""
+    modes = set(supported_long_term_modes())
+    leads = []
+    for issue_month in (1, 2, 3, 4):
+        if seasonal_config_name(issue_month) in modes:
+            lead = seasonal_horizon_value(issue_month)
+            if lead not in leads:
+                leads.append(lead)
+    return leads
 
 
 def _read_station_codes():
@@ -300,7 +318,20 @@ def postprocessing_maintenance_long_term():
         with timer(timing_stats, "seasonal gap-fill"):
             logger.info("\n\n------ Seasonal gap-fill --------------------------")
             lookback_s = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_SEASONS", "1"))
-            s_combined = data_reader.read_seasonal_combined_forecasts(codes=codes)
+            seasonal_issue_leads = _supported_seasonal_issue_leads()
+            s_combined_frames = []
+            for issue_lead in seasonal_issue_leads:
+                combined_for_lead = data_reader.read_seasonal_combined_forecasts(
+                    codes=codes,
+                    horizon_value=issue_lead,
+                )
+                if not combined_for_lead.empty:
+                    s_combined_frames.append(combined_for_lead)
+            s_combined = (
+                pd.concat(s_combined_frames, ignore_index=True)
+                if s_combined_frames
+                else pd.DataFrame()
+            )
             if not s_combined.empty:
                 s_gaps = gap_detector.detect_missing_seasonal_ensembles(
                     s_combined,
@@ -310,11 +341,40 @@ def postprocessing_maintenance_long_term():
                 if not s_gaps.empty:
                     s_skill = data_reader.read_skill_metrics("season", codes=codes)
                     if not s_skill.empty:
-                        s_years = s_gaps["season_year"].unique()
-                        s_fc = data_reader.read_seasonal_forecasts(
-                            codes,
-                            int(s_years.min()),
-                            int(s_years.max()),
+                        s_fc_frames = []
+                        for issue_lead, lead_gaps in s_gaps.groupby("season_in_year"):
+                            s_years = lead_gaps["season_year"].unique()
+                            fc_for_lead = data_reader.read_seasonal_forecasts(
+                                codes,
+                                int(s_years.min()),
+                                int(s_years.max()),
+                                horizon_value=int(issue_lead),
+                            )
+                            if fc_for_lead.empty:
+                                continue
+
+                            lead_gap_set = set(
+                                lead_gaps[["season_year", "season_in_year", "code"]]
+                                .drop_duplicates()
+                                .itertuples(index=False, name=None)
+                            )
+                            fc_for_lead = fc_for_lead[
+                                fc_for_lead.apply(
+                                    lambda r, _gap_set=lead_gap_set: (
+                                        r["season_year"],
+                                        r["season_in_year"],
+                                        str(r["code"]),
+                                    )
+                                    in _gap_set,
+                                    axis=1,
+                                )
+                            ].copy()
+                            if not fc_for_lead.empty:
+                                s_fc_frames.append(fc_for_lead)
+                        s_fc = (
+                            pd.concat(s_fc_frames, ignore_index=True)
+                            if s_fc_frames
+                            else pd.DataFrame()
                         )
                         if not s_fc.empty:
                             s_joint = ensemble_calculator.create_seasonal_ensemble_forecasts(
@@ -327,6 +387,28 @@ def postprocessing_maintenance_long_term():
                                 "Naive Mean",
                             }
                             s_new = s_joint[s_joint["model_short"].isin(s_ens_models)].copy()
+                            s_gap_keys = set(
+                                s_gaps[
+                                    [
+                                        "season_year",
+                                        "season_in_year",
+                                        "code",
+                                        "model_short",
+                                    ]
+                                ].itertuples(index=False, name=None)
+                            )
+                            s_new = s_new[
+                                s_new.apply(
+                                    lambda r: (
+                                        r["season_year"],
+                                        r["season_in_year"],
+                                        str(r["code"]),
+                                        r["model_short"],
+                                    )
+                                    in s_gap_keys,
+                                    axis=1,
+                                )
+                            ]
                             s_merged = pd.concat(
                                 [s_combined, s_new],
                                 ignore_index=True,

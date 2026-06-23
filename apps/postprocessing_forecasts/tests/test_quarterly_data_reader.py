@@ -3,6 +3,7 @@
 Phase 4b Step 2.
 """
 
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,29 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src import data_reader
+
+
+@pytest.fixture(autouse=True)
+def long_term_horizon_config(monkeypatch, tmp_path):
+    """Provide sentinel long-term resolver config for reader tests."""
+    config_dir = tmp_path / "long_term"
+    config_dir.mkdir()
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "long_term")
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes",
+        "quarter,seasonal_january,seasonal_february,seasonal_march,seasonal_april",
+    )
+    for name, lead in {
+        "quarter": 1,
+        "seasonal_january": 3,
+        "seasonal_february": 2,
+        "seasonal_march": 1,
+        "seasonal_april": 0,
+    }.items():
+        (config_dir / f"{name}.json").write_text(json.dumps({"operational_month_lead_time": lead}))
+    return config_dir
+
 
 # ===================================================================
 # read_skill_metrics() extended dispatch
@@ -116,9 +140,16 @@ class TestReadQuarterlyForecasts:
         )
         with (
             patch.object(data_reader, "read_monthly_forecasts", return_value=monthly),
-            patch.object(data_reader, "_read_long_forecasts_api", return_value=pd.DataFrame()),
+            patch.object(
+                data_reader,
+                "_read_long_forecasts_api",
+                return_value=pd.DataFrame(),
+            ) as read_api,
         ):
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
+        kwargs = read_api.call_args.kwargs
+        assert kwargs["horizon_type"] == "quarter"
+        assert kwargs["horizon_value"] == 1
         assert not result.empty
         assert "quarter_in_year" in result.columns
         assert "model_short" in result.columns
@@ -130,6 +161,26 @@ class TestReadQuarterlyForecasts:
         ):
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
         assert result.empty
+
+    def test_quarter_read_uses_resolved_lead_zero(self, long_term_horizon_config):
+        """Quarter direct API read follows a lead-0 deployment config."""
+        (long_term_horizon_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 0})
+        )
+        with (
+            patch.object(data_reader, "read_monthly_forecasts", return_value=pd.DataFrame()),
+            patch.object(
+                data_reader,
+                "_read_long_forecasts_api",
+                return_value=pd.DataFrame(),
+            ) as read_api,
+        ):
+            result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
+
+        assert result.empty
+        kwargs = read_api.call_args.kwargs
+        assert kwargs["horizon_type"] == "quarter"
+        assert kwargs["horizon_value"] == 0
 
     def test_direct_preferred_over_aggregated(self):
         """When same model in both sources, direct wins."""
@@ -165,7 +216,7 @@ class TestReadQuarterlyForecasts:
             }
         )
 
-        def mock_read_api(codes, start_year, end_year, horizon_type="month"):
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             if horizon_type == "quarter":
                 return direct_api
             return pd.DataFrame()
@@ -260,10 +311,15 @@ class TestReadSeasonalForecasts:
             }
         )
 
-        with patch.object(data_reader, "_read_long_forecasts_api", return_value=raw_api):
-            result = data_reader.read_seasonal_forecasts(["19999"], 2024, 2024)
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            return_value=raw_api,
+        ) as read_api:
+            result = data_reader.read_seasonal_forecasts(["19999"], 2024, 2024, horizon_value=3)
 
         assert len(result) == 4
+        assert read_api.call_args.kwargs["horizon_value"] == 3
         assert set(result["season_year"]) == {2024}
         assert set(result["season_in_year"]) == {0, 1, 2, 3}
         assert set(result["horizon_value"]) == {0, 1, 2, 3}
@@ -319,17 +375,25 @@ class TestReadLatestQuarterlyForecasts:
             }
         )
 
-        def mock_read_api(codes, start_year, end_year, horizon_type="month"):
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             if horizon_type == "month":
                 return raw_monthly
             return pd.DataFrame()  # No direct quarterly data
 
-        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            side_effect=mock_read_api,
+        ) as read_api:
             import datetime as dt
 
             result = data_reader.read_latest_quarterly_forecasts(
                 ["S1"], forecast_date=dt.date(2024, 7, 1)
             )
+        quarter_call = [
+            call for call in read_api.call_args_list if call.kwargs.get("horizon_type") == "quarter"
+        ][0]
+        assert quarter_call.kwargs["horizon_value"] == 1
         assert not result.empty
         # Should be Q2 (latest quarter with data)
         assert all(result["quarter_in_year"] == 2)
@@ -361,15 +425,20 @@ class TestReadLatestSeasonalForecasts:
             }
         )
 
-        def mock_read_api(codes, start_year, end_year, horizon_type="month"):
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             if horizon_type == "season":
                 return raw_api
             return pd.DataFrame()
 
-        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            side_effect=mock_read_api,
+        ) as read_api:
             result = data_reader.read_latest_seasonal_forecasts(
-                ["S1"], forecast_date=dt.date(2024, 10, 1)
+                ["S1"], forecast_date=dt.date(2024, 10, 1), horizon_value=3
             )
+        assert read_api.call_args.kwargs["horizon_value"] == 3
         assert not result.empty
         # Should only have 2024 season (latest)
         assert all(result["season_year"] == 2024)
@@ -398,7 +467,7 @@ class TestReadLatestSeasonalForecasts:
             }
         )
 
-        def mock_read_api(codes, start_year, end_year, horizon_type="month"):
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             if horizon_type == "season":
                 return raw_api
             return pd.DataFrame()
@@ -411,7 +480,7 @@ class TestReadLatestSeasonalForecasts:
         assert result.iloc[0]["model_short"] == "LR"
 
     def test_empty_api_returns_empty(self):
-        def mock_read_api(codes, start_year, end_year, horizon_type="month"):
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             return pd.DataFrame()
 
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
@@ -480,15 +549,25 @@ class TestReadQuarterlyCombinedForecasts:
                 "forecasted_discharge": [100.0],
             }
         )
-        with patch.object(data_reader, "_read_long_combined_forecasts_api", return_value=mock_df):
+        with patch.object(
+            data_reader,
+            "_read_long_combined_forecasts_api",
+            return_value=mock_df,
+        ) as read_api:
             result = data_reader.read_quarterly_combined_forecasts()
+        assert read_api.call_args.kwargs["horizon_value"] == 1
         assert len(result) == 1
 
 
 class TestReadSeasonalCombinedForecasts:
     def test_returns_empty_when_api_unavailable(self):
-        with patch.object(data_reader, "_read_long_combined_forecasts_api", return_value=None):
-            result = data_reader.read_seasonal_combined_forecasts()
+        with patch.object(
+            data_reader,
+            "_read_long_combined_forecasts_api",
+            return_value=None,
+        ) as read_api:
+            result = data_reader.read_seasonal_combined_forecasts(horizon_value=0)
+        assert read_api.call_args.kwargs["horizon_value"] == 0
         assert result.empty
 
 

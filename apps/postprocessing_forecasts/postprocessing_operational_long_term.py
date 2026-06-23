@@ -26,6 +26,12 @@ from src import data_reader, ensemble_calculator, file_writer
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
 
+from iEasyHydroForecast.long_term_horizon_resolver import (
+    seasonal_config_name,
+    seasonal_horizon_value,
+    supported_long_term_modes,
+)
+
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -51,6 +57,16 @@ logger.addHandler(console_handler)
 # endregion
 
 timing_stats = TimingStats()
+
+
+def _seasonal_issue_leads_for_date(forecast_date: dt.date) -> list[int]:
+    """Return supported seasonal issue leads relevant to this run date."""
+    issue_month = forecast_date.month
+    if issue_month not in (1, 2, 3, 4):
+        return []
+    if seasonal_config_name(issue_month) not in supported_long_term_modes():
+        return []
+    return [seasonal_horizon_value(issue_month)]
 
 
 def _read_station_codes():
@@ -188,16 +204,39 @@ def postprocessing_operational_long_term():
             logger.info("\n\n------ Seasonal ensemble processing --------------")
             seasonal_skill = data_reader.read_skill_metrics("season", codes=codes)
             if not seasonal_skill.empty:
-                seasonal_fc = data_reader.read_latest_seasonal_forecasts(
-                    codes,
-                    forecast_date=forecast_date,
+                seasonal_frames = []
+                seasonal_existing = []
+                for issue_lead in _seasonal_issue_leads_for_date(forecast_date):
+                    seasonal_fc_for_lead = data_reader.read_latest_seasonal_forecasts(
+                        codes,
+                        forecast_date=forecast_date,
+                        horizon_value=issue_lead,
+                    )
+                    if not seasonal_fc_for_lead.empty:
+                        seasonal_frames.append(seasonal_fc_for_lead)
+
+                    existing_for_lead = data_reader.read_seasonal_combined_forecasts(
+                        codes=codes,
+                        horizon_value=issue_lead,
+                    )
+                    if not existing_for_lead.empty:
+                        seasonal_existing.append(existing_for_lead)
+
+                seasonal_fc = (
+                    pd.concat(seasonal_frames, ignore_index=True)
+                    if seasonal_frames
+                    else pd.DataFrame()
                 )
                 if not seasonal_fc.empty:
                     seasonal_joint = ensemble_calculator.create_seasonal_ensemble_forecasts(
                         seasonal_fc,
                         seasonal_skill,
                     )
-                    existing_s = data_reader.read_seasonal_combined_forecasts(codes=codes)
+                    existing_s = (
+                        pd.concat(seasonal_existing, ignore_index=True)
+                        if seasonal_existing
+                        else pd.DataFrame()
+                    )
                     if not existing_s.empty:
                         seasonal_joint = pd.concat(
                             [existing_s, seasonal_joint],

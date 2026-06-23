@@ -24,6 +24,8 @@ import os
 import sys
 from logging.handlers import TimedRotatingFileHandler
 
+import pandas as pd
+
 # Local libraries
 script_dir = os.path.dirname(os.path.abspath(__file__))
 forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
@@ -35,6 +37,12 @@ from src import data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
 from src.horizon_config import ShortTermHorizonConfig
 from src.postprocessing_tools import TimingStats, timer
+
+from iEasyHydroForecast.long_term_horizon_resolver import (
+    seasonal_config_name,
+    seasonal_horizon_value,
+    supported_long_term_modes,
+)
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
@@ -92,6 +100,18 @@ VALID_MODES = [
     "SEASONAL",
     "ALL",
 ]
+
+
+def _supported_seasonal_issue_leads() -> list[int]:
+    """Return unique supported seasonal issue leads for this deployment."""
+    modes = set(supported_long_term_modes())
+    leads = []
+    for issue_month in (1, 2, 3, 4):
+        if seasonal_config_name(issue_month) in modes:
+            lead = seasonal_horizon_value(issue_month)
+            if lead not in leads:
+                leads.append(lead)
+    return leads
 
 
 def _read_station_codes(config):
@@ -343,7 +363,21 @@ def recalculate_skill_metrics():
             with timer(timing_stats, "reading seasonal data"):
                 logger.info("\n\n------ Reading seasonal data (aggregated from monthly) -------")
                 seasonal_obs = data_reader.read_seasonal_observations(codes, start_year, end_year)
-                seasonal_fc = data_reader.read_seasonal_forecasts(codes, start_year, end_year)
+                seasonal_frames = []
+                for issue_lead in _supported_seasonal_issue_leads():
+                    seasonal_fc_for_lead = data_reader.read_seasonal_forecasts(
+                        codes,
+                        start_year,
+                        end_year,
+                        horizon_value=issue_lead,
+                    )
+                    if not seasonal_fc_for_lead.empty:
+                        seasonal_frames.append(seasonal_fc_for_lead)
+                seasonal_fc = (
+                    pd.concat(seasonal_frames, ignore_index=True)
+                    if seasonal_frames
+                    else pd.DataFrame()
+                )
 
             with timer(timing_stats, "calculating skill metrics seasonal"):
                 logger.info("\n\n------ Calculating skill metrics seasonal ------")

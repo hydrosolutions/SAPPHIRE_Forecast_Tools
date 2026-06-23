@@ -15,6 +15,8 @@ import os
 import pandas as pd
 from src.postprocessing_tools import count_quantile_crossings
 
+from iEasyHydroForecast.long_term_horizon_resolver import quarter_horizon_value
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -2662,7 +2664,13 @@ def read_quarterly_forecasts(
         aggregated = pd.DataFrame()
 
     # Source 2: direct quarterly forecasts from API
-    raw_q = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="quarter")
+    raw_q = _read_long_forecasts_api(
+        codes,
+        start_year,
+        end_year,
+        horizon_type="quarter",
+        horizon_value=quarter_horizon_value(),
+    )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
         # Filter out ensemble models — only raw model output
@@ -2705,6 +2713,7 @@ def read_seasonal_forecasts(
     codes: list[str],
     start_year: int,
     end_year: int,
+    horizon_value: int | None = None,
 ) -> pd.DataFrame:
     """Read seasonal forecasts directly from the API.
 
@@ -2716,6 +2725,7 @@ def read_seasonal_forecasts(
         codes: Station codes to read.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        horizon_value: Optional seasonal issue lead to read.
 
     Returns:
         DataFrame with columns: [code, season_year, season_in_year,
@@ -2731,7 +2741,13 @@ def read_seasonal_forecasts(
         ]
     )
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="season")
+    raw = _read_long_forecasts_api(
+        codes,
+        start_year,
+        end_year,
+        horizon_type="season",
+        horizon_value=horizon_value,
+    )
     if raw is None or raw.empty:
         logger.info("No seasonal forecast data from API for %d-%d", start_year, end_year)
         return empty
@@ -2804,7 +2820,13 @@ def read_latest_quarterly_forecasts(
         aggregated = pd.DataFrame()
 
     # Source 2: direct quarterly forecasts from API
-    raw_q = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="quarter")
+    raw_q = _read_long_forecasts_api(
+        codes,
+        start_year,
+        end_year,
+        horizon_type="quarter",
+        horizon_value=quarter_horizon_value(),
+    )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
         if "model_short" in direct.columns:
@@ -2857,6 +2879,7 @@ def read_latest_quarterly_forecasts(
 def read_latest_seasonal_forecasts(
     codes: list[str],
     forecast_date: dt.date | None = None,
+    horizon_value: int | None = None,
 ) -> pd.DataFrame:
     """Read the most recent seasonal forecasts directly from the API.
 
@@ -2865,6 +2888,7 @@ def read_latest_seasonal_forecasts(
     Args:
         codes: Station codes to read.
         forecast_date: Reference date for lookback window.
+        horizon_value: Optional seasonal issue lead to read.
 
     Returns:
         DataFrame with seasonal forecasts for the most recent season.
@@ -2875,7 +2899,13 @@ def read_latest_seasonal_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year, horizon_type="season")
+    raw = _read_long_forecasts_api(
+        codes,
+        start_year,
+        end_year,
+        horizon_type="season",
+        horizon_value=horizon_value,
+    )
     if raw is None or raw.empty:
         logger.warning("No recent seasonal forecast data from API")
         return pd.DataFrame(columns=_SEASONAL_FC_COLS)
@@ -2932,7 +2962,11 @@ def read_quarterly_combined_forecasts(
     Returns:
         DataFrame with combined quarterly forecasts, or empty DataFrame.
     """
-    df = _read_long_combined_forecasts_api("quarter", codes)
+    df = _read_long_combined_forecasts_api(
+        "quarter",
+        codes,
+        horizon_value=quarter_horizon_value(),
+    )
     if df is not None and not df.empty:
         logger.info("Read %d quarterly combined forecast rows from API", len(df))
         return df
@@ -2942,6 +2976,7 @@ def read_quarterly_combined_forecasts(
 
 def read_seasonal_combined_forecasts(
     codes: list[str] | None = None,
+    horizon_value: int | None = None,
 ) -> pd.DataFrame:
     """Read seasonal combined forecasts from API.
 
@@ -2951,11 +2986,12 @@ def read_seasonal_combined_forecasts(
         codes: Optional list of station codes to filter. When provided,
             only forecasts for those codes are returned. When None,
             all codes are returned.
+        horizon_value: Optional seasonal issue lead to read.
 
     Returns:
         DataFrame with combined seasonal forecasts, or empty DataFrame.
     """
-    df = _read_long_combined_forecasts_api("season", codes)
+    df = _read_long_combined_forecasts_api("season", codes, horizon_value=horizon_value)
     if df is not None and not df.empty:
         logger.info("Read %d seasonal combined forecast rows from API", len(df))
         return df
