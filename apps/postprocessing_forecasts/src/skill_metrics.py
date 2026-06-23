@@ -2064,8 +2064,9 @@ def calculate_seasonal_skill_metrics(
 ) -> tuple:
     """Calculate seasonal skill metrics for long-term forecasts.
 
-    Same pattern as quarterly but grouped by season_year.
-    season_in_year is always 1 (single season per year).
+    Same pattern as quarterly but grouped by season_year. For seasonal
+    forecasts, season_in_year carries the issue lead (Jan/Feb/Mar/Apr =
+    3/2/1/0) while observations are shared by target season.
 
     Args:
         observations: [code, season_year, season_in_year,
@@ -2081,7 +2082,7 @@ def calculate_seasonal_skill_metrics(
         observations,
         forecasts,
         period_col="season_in_year",
-        time_group_cols=["season_year", "code"],
+        time_group_cols=["season_year", "season_in_year", "code"],
         merge_cols=["code", "season_year"],
         timing_stats=timing_stats,
     )

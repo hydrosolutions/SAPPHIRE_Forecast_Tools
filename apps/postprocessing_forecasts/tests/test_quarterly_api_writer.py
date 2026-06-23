@@ -146,6 +146,41 @@ class TestSkillMetricsQuarterSeason:
         records = self.mock_client.write_skill_metrics.call_args[0][0]
         assert records[0]["date"] == "2025-04-01"
 
+    def test_season_skill_records_keep_each_lead(self, monkeypatch):
+        """Seasonal skill uses season_in_year as API horizon_in_year."""
+        monkeypatch.setenv("SAPPHIRE_SEASON_START_MONTH", "4")
+        monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "9")
+        self.mock_client.write_skill_metrics.return_value = 4
+        data = pd.DataFrame(
+            {
+                "season_in_year": [3, 2, 1, 0],
+                "code": ["PP3_SENTINEL"] * 4,
+                "model_short": ["LR"] * 4,
+                "sdivsigma": [1.5, 1.0, 0.5, 0.0],
+                "nse": [-2.3, -0.5, 0.6, 1.0],
+                "delta": [5.0] * 4,
+                "accuracy": [0.0, 0.0, 0.0, 1.0],
+                "mae": [30.0, 20.0, 10.0, 0.0],
+                "n_pairs": [3] * 4,
+            }
+        )
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_skill_metrics_to_api(data, "season", 2025)
+
+        assert result is True
+        records = self.mock_client.write_skill_metrics.call_args[0][0]
+        assert len(records) == 4
+        assert {record["horizon_in_year"] for record in records} == {0, 1, 2, 3}
+        assert {record["date"] for record in records} == {"2025-04-01"}
+        upsert_keys = {
+            (record["code"], record["model_type"], record["date"], record["horizon_in_year"])
+            for record in records
+        }
+        assert len(upsert_keys) == 4
+
 
 # ===================================================================
 # Quarterly ensemble writer

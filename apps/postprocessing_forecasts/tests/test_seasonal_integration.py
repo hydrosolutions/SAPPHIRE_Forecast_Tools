@@ -301,6 +301,103 @@ class TestSeasonalSkillMetricsEdgeCases:
         assert model_rows.empty
 
 
+class TestSeasonalSkillMetricsPerLead:
+    """PP3: seasonal skill keeps issue lead in season_in_year."""
+
+    def test_four_issue_leads_produce_distinct_skill_rows(self):
+        code = "PP3_SENTINEL"
+        model = "LR"
+        observed_by_year = {
+            2021: 100.0,
+            2022: 120.0,
+            2023: 140.0,
+        }
+        lead_error = {
+            3: 30.0,  # January issue
+            2: 20.0,  # February issue
+            1: 10.0,  # March issue
+            0: 0.0,  # April issue
+        }
+        obs = pd.DataFrame(
+            {
+                "code": [code] * len(observed_by_year),
+                "season_year": list(observed_by_year),
+                "season_in_year": [1] * len(observed_by_year),
+                "discharge_avg": list(observed_by_year.values()),
+                "delta": [5.0] * len(observed_by_year),
+            }
+        )
+        fc_rows = []
+        for season_year, observed in observed_by_year.items():
+            for lead, error in lead_error.items():
+                q50 = observed + error
+                fc_rows.append(
+                    {
+                        "code": code,
+                        "season_year": season_year,
+                        "season_in_year": lead,
+                        "model_short": model,
+                        "q05": q50 - 20.0,
+                        "q10": q50 - 15.0,
+                        "q25": q50 - 5.0,
+                        "q50": q50,
+                        "q75": q50 + 5.0,
+                        "q90": q50 + 15.0,
+                        "q95": q50 + 20.0,
+                    }
+                )
+        fcst = pd.DataFrame(fc_rows)
+
+        skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        model_rows = skill_stats[
+            (skill_stats["code"] == code) & (skill_stats["model_short"] == model)
+        ]
+
+        assert set(model_rows["season_in_year"]) == {0, 1, 2, 3}
+        assert len(model_rows) == 4
+        assert set(model_rows["n_pairs"]) == {3}
+
+        mae_by_lead = dict(zip(model_rows["season_in_year"], model_rows["mae"], strict=True))
+        assert mae_by_lead == {0: 0.0, 1: 10.0, 2: 20.0, 3: 30.0}
+        assert model_rows["nse"].nunique(dropna=True) == 4
+
+    def test_single_issue_lead_zero_still_works(self):
+        code = "PP3_SINGLE_SENTINEL"
+        obs = pd.DataFrame(
+            {
+                "code": [code, code, code],
+                "season_year": [2021, 2022, 2023],
+                "season_in_year": [1, 1, 1],
+                "discharge_avg": [100.0, 120.0, 140.0],
+                "delta": [5.0, 5.0, 5.0],
+            }
+        )
+        fcst = pd.DataFrame(
+            {
+                "code": [code, code, code],
+                "season_year": [2021, 2022, 2023],
+                "season_in_year": [0, 0, 0],
+                "model_short": ["LR", "LR", "LR"],
+                "q05": [80.0, 100.0, 120.0],
+                "q10": [85.0, 105.0, 125.0],
+                "q25": [95.0, 115.0, 135.0],
+                "q50": [100.0, 120.0, 140.0],
+                "q75": [105.0, 125.0, 145.0],
+                "q90": [115.0, 135.0, 155.0],
+                "q95": [120.0, 140.0, 160.0],
+            }
+        )
+
+        skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        model_rows = skill_stats[
+            (skill_stats["code"] == code) & (skill_stats["model_short"] == "LR")
+        ]
+
+        assert len(model_rows) == 1
+        assert model_rows.iloc[0]["season_in_year"] == 0
+        assert model_rows.iloc[0]["mae"] == 0.0
+
+
 # ===================================================================
 # C. Data Reader Gaps
 # ===================================================================
