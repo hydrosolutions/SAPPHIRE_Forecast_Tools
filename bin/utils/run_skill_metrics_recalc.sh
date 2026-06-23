@@ -34,7 +34,7 @@ run_skill_metrics_recalc_once() {
     local timestamp="$3"
     local container_name="$4"
 
-    # Reject empty mode — the helper must not fall back to ambient env.
+    # Reject empty mode - the helper must not fall back to ambient env.
     if [ -z "$mode" ]; then
         echo "ERROR: run_skill_metrics_recalc_once requires a non-empty mode as the first argument" >&2
         return 2
@@ -43,18 +43,23 @@ run_skill_metrics_recalc_once() {
     local SERVICE_LOG="${log_dir}/${container_name}_${timestamp}.log"
 
     # macOS Docker compatibility
-    local DOCKER_HOST_OVERRIDE=""
+    local DOCKER_HOST_OVERRIDE_ARGS=()
     if [[ "$(uname)" == "Darwin" ]]; then
         if [[ "$IEASYHYDROHF_HOST" == *"localhost"* ]]; then
             local DOCKER_IEASYHYDROHF_HOST="${IEASYHYDROHF_HOST//localhost/host.docker.internal}"
             echo "macOS detected: overriding IEASYHYDROHF_HOST for Docker container"
             echo "  Original: $IEASYHYDROHF_HOST"
             echo "  Docker:   $DOCKER_IEASYHYDROHF_HOST"
-            DOCKER_HOST_OVERRIDE="-e IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}"
+            DOCKER_HOST_OVERRIDE_ARGS=(-e "IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}")
         fi
     fi
 
-    # Image resolution — mirrors the outer script's IMAGE_ID. The image-existence
+    local RECALC_START_YEAR_OVERRIDE_ARGS=()
+    if [ -n "${SAPPHIRE_RECALC_START_YEAR:-}" ]; then
+        RECALC_START_YEAR_OVERRIDE_ARGS=(-e "SAPPHIRE_RECALC_START_YEAR=${SAPPHIRE_RECALC_START_YEAR}")
+    fi
+
+    # Image resolution - mirrors the outer script's IMAGE_ID. The image-existence
     # check and `docker pull` stay in the outer script (called once per
     # invocation, not once per mode).
     local IMAGE_ID="mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
@@ -69,20 +74,22 @@ run_skill_metrics_recalc_once() {
     fi
 
     # Run the skill metrics recalculation container
+    # shellcheck disable=SC2154
     docker run \
         --name "$container_name" \
         --network host \
-        -e ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir} \
-        -e ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path} \
+        -e "ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}" \
+        -e "ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}" \
         -e SAPPHIRE_OPDEV_ENV=True \
         -e IN_DOCKER=True \
-        -e SAPPHIRE_PREDICTION_MODE=${mode} \
-        ${DOCKER_HOST_OVERRIDE} \
-        -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
-        -v ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data \
+        -e "SAPPHIRE_PREDICTION_MODE=${mode}" \
+        "${RECALC_START_YEAR_OVERRIDE_ARGS[@]}" \
+        "${DOCKER_HOST_OVERRIDE_ARGS[@]}" \
+        -v "${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config" \
+        -v "${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data" \
         --memory=8g \
         --memory-swap=12g \
-        ${IMAGE_ID} \
+        "${IMAGE_ID}" \
         uv run recalculate_skill_metrics.py \
         2>&1 | tee "$SERVICE_LOG"
 
