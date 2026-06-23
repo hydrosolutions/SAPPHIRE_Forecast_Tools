@@ -38,6 +38,8 @@ _SEASONAL_FC_COLS = [
     "code",
     "season_year",
     "season_in_year",
+    "horizon_value",
+    "date",
     "model_short",
     "q05",
     "q10",
@@ -1028,6 +1030,7 @@ def _read_long_forecasts_api(
     start_year: int,
     end_year: int,
     horizon_type: str = "month",
+    horizon_value: int | None = None,
 ) -> pd.DataFrame:
     """Read long-term forecasts from postprocessing API with pagination.
 
@@ -1038,6 +1041,8 @@ def _read_long_forecasts_api(
         horizon_type: Horizon type filter passed to the API (e.g. ``"month"``
             or ``"season"``). Defaults to ``"month"`` to preserve existing
             behaviour for all current callers.
+        horizon_value: Optional lead/horizon-value filter. When omitted, the
+            request is unchanged.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping")
@@ -1064,14 +1069,17 @@ def _read_long_forecasts_api(
             skip = 0
             batch_size = 1000
             while True:
-                df_batch = client.read_long_term_forecasts(
-                    horizon_type=horizon_type,
-                    code=code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    skip=skip,
-                    limit=batch_size,
-                )
+                kwargs = {
+                    "horizon_type": horizon_type,
+                    "code": code,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "skip": skip,
+                    "limit": batch_size,
+                }
+                if horizon_value is not None:
+                    kwargs["horizon_value"] = horizon_value
+                df_batch = client.read_long_term_forecasts(**kwargs)
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -2711,8 +2719,8 @@ def read_seasonal_forecasts(
 
     Returns:
         DataFrame with columns: [code, season_year, season_in_year,
-        model_short, q05-q95, forecasted_discharge, valid_from,
-        valid_to].
+        horizon_value, date, model_short, q05-q95,
+        forecasted_discharge, valid_from, valid_to].
     """
     empty = pd.DataFrame(
         columns=[
@@ -2741,9 +2749,10 @@ def read_seasonal_forecasts(
 
     # Select canonical output columns
     df = df[[c for c in _SEASONAL_FC_COLS if c in df.columns]]
+    df = _deduplicate_seasonal_forecasts(df)
 
     # Normalize valid_from/valid_to to strings for consistency
-    for col in ("valid_from", "valid_to"):
+    for col in ("valid_from", "valid_to", "date"):
         if col in df.columns:
             df[col] = df[col].astype(str)
 
@@ -2884,9 +2893,10 @@ def read_latest_seasonal_forecasts(
 
     # Select canonical output columns
     df = df[[c for c in _SEASONAL_FC_COLS if c in df.columns]]
+    df = _deduplicate_seasonal_forecasts(df)
 
     # Normalize valid_from/valid_to to strings
-    for col in ("valid_from", "valid_to"):
+    for col in ("valid_from", "valid_to", "date"):
         if col in df.columns:
             df[col] = df[col].astype(str)
 
@@ -2956,6 +2966,7 @@ def read_seasonal_combined_forecasts(
 def _read_long_combined_forecasts_api(
     horizon_type: str,
     codes: list[str] | None = None,
+    horizon_value: int | None = None,
 ) -> pd.DataFrame | None:
     """Read long-term combined forecasts from API for a given horizon type.
 
@@ -2985,12 +2996,15 @@ def _read_long_combined_forecasts_api(
             for code in codes:
                 skip = 0
                 while True:
-                    df_batch = client.read_long_term_forecasts(
-                        horizon_type=horizon_type,
-                        code=code,
-                        skip=skip,
-                        limit=batch_size,
-                    )
+                    kwargs = {
+                        "horizon_type": horizon_type,
+                        "code": code,
+                        "skip": skip,
+                        "limit": batch_size,
+                    }
+                    if horizon_value is not None:
+                        kwargs["horizon_value"] = horizon_value
+                    df_batch = client.read_long_term_forecasts(**kwargs)
                     if df_batch is None or df_batch.empty:
                         break
                     frames.append(df_batch)
@@ -3004,9 +3018,14 @@ def _read_long_combined_forecasts_api(
             all_records = []
             skip = 0
             while True:
-                df_batch = client.read_long_term_forecasts(
-                    horizon_type=horizon_type, skip=skip, limit=batch_size
-                )
+                kwargs = {
+                    "horizon_type": horizon_type,
+                    "skip": skip,
+                    "limit": batch_size,
+                }
+                if horizon_value is not None:
+                    kwargs["horizon_value"] = horizon_value
+                df_batch = client.read_long_term_forecasts(**kwargs)
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -3061,7 +3080,13 @@ def _normalize_combined_forecasts(
             lambda r: get_season_year(r["valid_from"].year, r["valid_from"].month),
             axis=1,
         )
-        df["season_in_year"] = 1
+        if "horizon_value" in df.columns:
+            lead = pd.to_numeric(df["horizon_value"], errors="coerce")
+            df["season_in_year"] = lead.astype("Int64") if lead.isna().any() else lead.astype(int)
+        else:
+            df["season_in_year"] = 1
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     # Add forecasted_discharge from q/q50
     if "forecasted_discharge" not in df.columns:
@@ -3074,9 +3099,22 @@ def _normalize_combined_forecasts(
     drop_cols = [
         "id",
         "horizon_type",
-        "horizon_value",
         "model_type_description",
     ]
+    if horizon_type != "season":
+        drop_cols.append("horizon_value")
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 
     return df
+
+
+def _deduplicate_seasonal_forecasts(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicate seasonal issue/model rows without folding leads."""
+    if df.empty:
+        return df
+
+    dedup_cols = ["code", "season_year", "season_in_year", "date", "model_short"]
+    available = [c for c in dedup_cols if c in df.columns]
+    if len(available) < 4:
+        return df
+    return df.drop_duplicates(subset=available, keep="last")
