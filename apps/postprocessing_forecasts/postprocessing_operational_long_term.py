@@ -203,7 +203,7 @@ def postprocessing_operational_long_term():
                             [existing_s, seasonal_joint],
                             ignore_index=True,
                         )
-                        dedup = ["season_year", "code", "model_short"]
+                        dedup = ["season_year", "season_in_year", "code", "model_short"]
                         available = [c for c in dedup if c in seasonal_joint.columns]
                         seasonal_joint = seasonal_joint.drop_duplicates(
                             subset=available,

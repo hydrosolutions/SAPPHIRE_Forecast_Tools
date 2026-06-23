@@ -333,6 +333,7 @@ def postprocessing_maintenance_long_term():
                             )
                             s_dedup = [
                                 "season_year",
+                                "season_in_year",
                                 "code",
                                 "model_short",
                             ]

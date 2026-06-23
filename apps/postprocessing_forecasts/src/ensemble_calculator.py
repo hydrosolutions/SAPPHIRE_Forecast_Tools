@@ -554,7 +554,7 @@ def create_seasonal_ensemble_forecasts(
         forecasts,
         skill_stats,
         period_col="season_in_year",
-        time_group_cols=["season_year", "code"],
+        time_group_cols=["season_year", "season_in_year", "code"],
     )
 
 
@@ -571,7 +571,6 @@ def _create_aggregated_ensemble_forecasts(
     """
     from src.skill_metrics import (
         _QUANTILE_COLS,
-        _append_to_joint,
         filter_for_highly_skilled_forecasts,
     )
 
@@ -636,7 +635,7 @@ def _create_aggregated_ensemble_forecasts(
 
         if not em_avg.empty:
             em_avg["flag"] = 0
-            joint = _append_to_joint(joint, em_avg)
+            joint = _append_aggregated_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted) ---
     joint = _add_skilled_mean_aggregated_ens(
@@ -669,8 +668,6 @@ def _add_skilled_mean_aggregated_ens(
     time_group_cols,
 ):
     """Add Skilled Mean rows for quarterly/seasonal ensemble creation."""
-    from src.skill_metrics import _append_to_joint
-
     filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
         return joint
@@ -733,7 +730,7 @@ def _add_skilled_mean_aggregated_ens(
 
     if not sm_avg.empty:
         sm_avg["flag"] = 0
-        joint = _append_to_joint(joint, sm_avg)
+        joint = _append_aggregated_to_joint(joint, sm_avg)
 
     return joint
 
@@ -746,8 +743,6 @@ def _add_naive_mean_aggregated_ens(
     time_group_cols,
 ):
     """Add Naive Mean rows for quarterly/seasonal ensemble creation."""
-    from src.skill_metrics import _append_to_joint
-
     pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.dropna(subset=["forecasted_discharge"]).copy()
     if pool.empty:
@@ -777,6 +772,22 @@ def _add_naive_mean_aggregated_ens(
 
     if not naive_avg.empty:
         naive_avg["flag"] = 0
-        joint = _append_to_joint(joint, naive_avg)
+        joint = _append_aggregated_to_joint(joint, naive_avg)
 
     return joint
+
+
+def _append_aggregated_to_joint(
+    joint_forecasts: pd.DataFrame,
+    ensemble_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Append quarter/season ensemble rows without dropping period keys."""
+    if ensemble_df.empty:
+        return joint_forecasts
+    if "composition" not in joint_forecasts.columns:
+        joint_forecasts = joint_forecasts.copy()
+        joint_forecasts["composition"] = ""
+    cols = [c for c in ensemble_df.columns if c in joint_forecasts.columns]
+    if not cols:
+        return joint_forecasts
+    return pd.concat([joint_forecasts, ensemble_df[cols]], ignore_index=True)

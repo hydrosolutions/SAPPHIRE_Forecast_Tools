@@ -319,6 +319,64 @@ class TestSeasonalEnsembleEM:
         expected = (100.0 + 120.0) / 2
         assert np.isclose(em.iloc[0]["forecasted_discharge"], expected)
 
+    def test_four_issue_leads_produce_independent_ensembles(self):
+        leads = [3, 2, 1, 0]
+        issue_dates = {
+            3: "2025-01-01",
+            2: "2025-02-01",
+            1: "2025-03-01",
+            0: "2025-04-01",
+        }
+        forecast_rows = []
+        skill_rows = []
+        for lead in leads:
+            for model_short, offset, mae in [("LR", 0.0, 2.0), ("TFT", 20.0, 3.0)]:
+                forecast_rows.append(
+                    {
+                        "code": "PP4_S_SENTINEL",
+                        "season_year": 2025,
+                        "season_in_year": lead,
+                        "date": issue_dates[lead],
+                        "valid_from": "2025-04-01",
+                        "valid_to": "2025-09-30",
+                        "model_short": model_short,
+                        "forecasted_discharge": 100.0 + lead + offset,
+                        "q05": 80.0 + lead + offset,
+                        "q10": 85.0 + lead + offset,
+                        "q25": 90.0 + lead + offset,
+                        "q50": 100.0 + lead + offset,
+                        "q75": 110.0 + lead + offset,
+                        "q90": 115.0 + lead + offset,
+                        "q95": 120.0 + lead + offset,
+                    }
+                )
+                skill_rows.append(
+                    (
+                        lead,
+                        "PP4_S_SENTINEL",
+                        model_short,
+                        0.3,
+                        0.95,
+                        5.0,
+                        0.90,
+                        mae,
+                        10,
+                    )
+                )
+
+        result = create_seasonal_ensemble_forecasts(
+            pd.DataFrame(forecast_rows),
+            _make_seasonal_skill(skill_rows),
+        )
+
+        for model_short in {"EM", "Naive Mean", "Skilled Mean"}:
+            rows = result[result["model_short"] == model_short]
+            assert len(rows) == 4
+            assert set(rows["season_in_year"]) == {0, 1, 2, 3}
+            assert dict(zip(rows["season_in_year"], rows["date"], strict=True)) == issue_dates
+            assert set(rows["valid_from"]) == {"2025-04-01"}
+            assert set(rows["valid_to"]) == {"2025-09-30"}
+
 
 class TestSeasonalEnsembleNaiveMean:
     def test_naive_mean_created(self):
