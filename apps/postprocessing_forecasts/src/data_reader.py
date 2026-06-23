@@ -14,6 +14,10 @@ import os
 
 import pandas as pd
 from long_term_horizon_resolver import quarter_horizon_value
+from src.model_names import (
+    AGGREGATED_SUPPORTED_MODELS,
+    canonical_model_short_series,
+)
 from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
@@ -30,11 +34,6 @@ try:
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
 
-
-# Ensemble model names may already be present in stored quarter/season
-# rows. Keep them in reader output; only deprecated raw models are filtered.
-_ENSEMBLE_MODELS = frozenset({"EM", "Skilled Mean", "Naive Mean"})
-_AGGREGATED_SUPPORTED_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
 
 _SEASONAL_FC_COLS = [
     "code",
@@ -78,8 +77,8 @@ def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFra
     if df.empty or "model_short" not in df.columns:
         return df
 
-    allowed = _AGGREGATED_SUPPORTED_RAW_MODELS | _ENSEMBLE_MODELS
-    return df[df["model_short"].isin(allowed)].copy()
+    model_keys = canonical_model_short_series(df["model_short"])
+    return df[model_keys.isin(AGGREGATED_SUPPORTED_MODELS)].copy()
 
 
 def read_skill_metrics(

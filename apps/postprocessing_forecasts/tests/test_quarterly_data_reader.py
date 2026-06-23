@@ -15,6 +15,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src import data_reader
 
+DEPRECATED_MODEL_FORMS = [
+    "GBT",
+    "LR_SM_DT",
+    "LR_SM_ROF",
+    "MC_ALD",
+    "SM_GBT",
+    "SM_GBT_LR",
+    "SM_GBT_NORM",
+    "SM_GBT_Norm",
+]
+
 
 @pytest.fixture(autouse=True)
 def long_term_horizon_config(monkeypatch, tmp_path):
@@ -279,6 +290,52 @@ class TestReadQuarterlyForecasts:
         assert set(result["model_short"]) == {"LR_Base", "LR_SM", "EM"}
         assert not {"GBT", "SM_GBT_Norm"} & set(result["model_short"])
 
+    def test_filter_accepts_db_form_lr_and_ensemble_names(self):
+        direct_api = pd.DataFrame(
+            {
+                "code": ["S1"] * 8,
+                "valid_from": pd.to_datetime(["2024-01-01"] * 8),
+                "valid_to": ["2024-03-31"] * 8,
+                "model_type": [
+                    "LR_BASE",
+                    "LR_SM",
+                    "ENSEMBLE_MEAN",
+                    "NAIVE_MEAN",
+                    "SKILLED_MEAN",
+                    "GBT",
+                    "LR_SM_DT",
+                    "SM_GBT_NORM",
+                ],
+                "q05": [10, 15, 12, 13, 14, 900, 901, 902],
+                "q10": [15, 20, 17, 18, 19, 925, 926, 927],
+                "q25": [20, 25, 22, 23, 24, 950, 951, 952],
+                "q50": [30, 35, 32, 33, 34, 1000, 1001, 1002],
+                "q75": [40, 45, 42, 43, 44, 1050, 1051, 1052],
+                "q90": [50, 55, 52, 53, 54, 1075, 1076, 1077],
+                "q95": [60, 65, 62, 63, 64, 1100, 1101, 1102],
+            }
+        )
+
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return direct_api
+            return pd.DataFrame()
+
+        with (
+            patch.object(data_reader, "read_monthly_forecasts", return_value=pd.DataFrame()),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api),
+        ):
+            result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
+
+        assert set(result["model_short"]) == {
+            "LR_BASE",
+            "LR_SM",
+            "ENSEMBLE_MEAN",
+            "NAIVE_MEAN",
+            "SKILLED_MEAN",
+        }
+        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
+
     def test_monthly_reader_keeps_deprecated_models(self):
         raw_api = pd.DataFrame(
             {
@@ -352,6 +409,44 @@ class TestReadSeasonalForecasts:
             result = data_reader.read_seasonal_forecasts(["S1"], 2024, 2024)
         assert set(result["model_short"]) == {"LR_Base", "LR_SM", "EM", "Skilled Mean"}
         assert "GBT" not in set(result["model_short"])
+
+    def test_db_form_deprecated_models_filtered_and_ensemble_rows_kept(self):
+        raw_api = pd.DataFrame(
+            {
+                "code": ["S1"] * 8,
+                "valid_from": pd.to_datetime(["2024-04-01"] * 8),
+                "valid_to": ["2024-09-30"] * 8,
+                "model_type": [
+                    "LR_BASE",
+                    "LR_SM",
+                    "ENSEMBLE_MEAN",
+                    "NAIVE_MEAN",
+                    "SKILLED_MEAN",
+                    "GBT",
+                    "LR_SM_ROF",
+                    "SM_GBT_NORM",
+                ],
+                "q50": [30, 35, 40, 41, 42, 999, 998, 997],
+                "q05": [10, 15, 20, 21, 22, 900, 899, 898],
+                "q10": [15, 20, 25, 26, 27, 925, 924, 923],
+                "q25": [20, 25, 30, 31, 32, 950, 949, 948],
+                "q75": [40, 45, 50, 51, 52, 1050, 1049, 1048],
+                "q90": [50, 55, 60, 61, 62, 1075, 1074, 1073],
+                "q95": [60, 65, 70, 71, 72, 1100, 1099, 1098],
+            }
+        )
+
+        with patch.object(data_reader, "_read_long_forecasts_api", return_value=raw_api):
+            result = data_reader.read_seasonal_forecasts(["S1"], 2024, 2024)
+
+        assert set(result["model_short"]) == {
+            "LR_BASE",
+            "LR_SM",
+            "ENSEMBLE_MEAN",
+            "NAIVE_MEAN",
+            "SKILLED_MEAN",
+        }
+        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
 
     def test_preserves_four_issue_dates_and_leads(self):
         """Jan-Apr issue rows for one target season survive distinctly."""
@@ -512,6 +607,53 @@ class TestReadLatestQuarterlyForecasts:
         assert set(result["model_short"]) == {"LR_Base", "LR_SM"}
         assert not {"GBT", "LR_SM_DT"} & set(result["model_short"])
 
+    def test_latest_accepts_db_form_lr_and_ensemble_names(self):
+        import datetime as dt
+
+        raw_quarter = pd.DataFrame(
+            {
+                "code": ["S1"] * 8,
+                "valid_from": pd.to_datetime(["2024-04-01"] * 8),
+                "valid_to": pd.to_datetime(["2024-06-30"] * 8),
+                "model_type": [
+                    "LR_BASE",
+                    "LR_SM",
+                    "ENSEMBLE_MEAN",
+                    "NAIVE_MEAN",
+                    "SKILLED_MEAN",
+                    "MC_ALD",
+                    "SM_GBT",
+                    "SM_GBT_LR",
+                ],
+                "q50": [50, 60, 55, 56, 57, 1000, 1001, 1002],
+                "q05": [30, 40, 35, 36, 37, 900, 901, 902],
+                "q10": [35, 45, 40, 41, 42, 925, 926, 927],
+                "q25": [40, 50, 45, 46, 47, 950, 951, 952],
+                "q75": [60, 70, 65, 66, 67, 1050, 1051, 1052],
+                "q90": [70, 80, 75, 76, 77, 1075, 1076, 1077],
+                "q95": [80, 90, 85, 86, 87, 1100, 1101, 1102],
+            }
+        )
+
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return raw_quarter
+            return pd.DataFrame()
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
+            result = data_reader.read_latest_quarterly_forecasts(
+                ["S1"], forecast_date=dt.date(2024, 7, 1)
+            )
+
+        assert set(result["model_short"]) == {
+            "LR_BASE",
+            "LR_SM",
+            "ENSEMBLE_MEAN",
+            "NAIVE_MEAN",
+            "SKILLED_MEAN",
+        }
+        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
+
 
 class TestReadLatestSeasonalForecasts:
     def test_returns_latest_season(self):
@@ -587,6 +729,53 @@ class TestReadLatestSeasonalForecasts:
             )
         assert set(result["model_short"]) == {"LR_Base", "EM"}
         assert "GBT" not in set(result["model_short"])
+
+    def test_latest_accepts_db_form_lr_and_ensemble_names(self):
+        import datetime as dt
+
+        raw_api = pd.DataFrame(
+            {
+                "code": ["S1"] * 8,
+                "valid_from": pd.to_datetime(["2024-04-01"] * 8),
+                "valid_to": ["2024-09-30"] * 8,
+                "model_type": [
+                    "LR_BASE",
+                    "LR_SM",
+                    "ENSEMBLE_MEAN",
+                    "NAIVE_MEAN",
+                    "SKILLED_MEAN",
+                    "GBT",
+                    "LR_SM_DT",
+                    "SM_GBT_NORM",
+                ],
+                "q05": [10, 15, 20, 21, 22, 900, 901, 902],
+                "q10": [15, 20, 25, 26, 27, 925, 926, 927],
+                "q25": [20, 25, 30, 31, 32, 950, 951, 952],
+                "q50": [30, 35, 40, 41, 42, 1000, 1001, 1002],
+                "q75": [40, 45, 50, 51, 52, 1050, 1051, 1052],
+                "q90": [50, 55, 60, 61, 62, 1075, 1076, 1077],
+                "q95": [60, 65, 70, 71, 72, 1100, 1101, 1102],
+            }
+        )
+
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "season":
+                return raw_api
+            return pd.DataFrame()
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
+            result = data_reader.read_latest_seasonal_forecasts(
+                ["S1"], forecast_date=dt.date(2024, 10, 1)
+            )
+
+        assert set(result["model_short"]) == {
+            "LR_BASE",
+            "LR_SM",
+            "ENSEMBLE_MEAN",
+            "NAIVE_MEAN",
+            "SKILLED_MEAN",
+        }
+        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
 
     def test_empty_api_returns_empty(self):
         def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):

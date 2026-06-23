@@ -226,6 +226,30 @@ class TestQuarterlyEnsembleEM:
         assert np.isclose(em.iloc[0]["q95"], 130.0)
         assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
 
+    def test_em_accepts_db_form_lr_model_names(self):
+        skill = _make_quarterly_skill(
+            [
+                (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2025, 1, "LR_BASE", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
+
     def test_em_not_created_single_model(self):
         """Single model should not produce EM."""
         skill = _make_quarterly_skill(
@@ -429,6 +453,30 @@ class TestSeasonalEnsembleEM:
         assert np.isclose(em.iloc[0]["q50"], 110.0)
         assert np.isclose(em.iloc[0]["q95"], 130.0)
         assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+
+    def test_em_accepts_db_form_lr_model_names(self):
+        skill = _make_seasonal_skill(
+            [
+                (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2025, 1, "LR_BASE", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_seasonal_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
 
 
 class TestSeasonalEnsembleNaiveMean:

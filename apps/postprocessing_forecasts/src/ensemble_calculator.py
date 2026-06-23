@@ -9,11 +9,10 @@ import logging
 
 import numpy as np
 import pandas as pd
+from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
-
-_AGGREGATED_EM_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +603,8 @@ def _create_aggregated_ensemble_forecasts(
     if "code" in skill_filtered.columns:
         skill_filtered["code"] = skill_filtered["code"].astype(str)
 
-    qualifying = joint[joint["model_short"].isin(_AGGREGATED_EM_RAW_MODELS)].copy()
+    model_keys = canonical_model_short_series(joint["model_short"])
+    qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
     n_models = qualifying["model_short"].nunique()

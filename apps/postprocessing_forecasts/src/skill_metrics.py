@@ -11,11 +11,10 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
+from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
-
-_AGGREGATED_EM_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
 
 
 # ---------------------------------------------------------------------------
@@ -2201,7 +2200,8 @@ def _calculate_aggregated_skill_metrics(
     # --- 4. Ensemble Mean (EM) ---
     joint_forecasts = forecasts.copy()
 
-    em_merged = merged[merged["model_short"].isin(_AGGREGATED_EM_RAW_MODELS)].copy()
+    model_keys = canonical_model_short_series(merged["model_short"])
+    em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
 
     n_models = em_merged["model_short"].nunique()
