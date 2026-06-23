@@ -16,7 +16,6 @@ import types
 from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 
 # ---------------------------------------------------------------------------
 # Bootstrap: mock heavy dashboard dependencies before importing the module.
@@ -95,6 +94,45 @@ def _make_forecasts_all(issue_date_str, valid_from_str):
             "date": [pd.Timestamp(issue_date_str)],
             "valid_from": [pd.Timestamp(valid_from_str)],
             "month_in_year": [pd.Timestamp(valid_from_str).month],
+        }
+    )
+
+
+def _make_site(code="19999", reservoir=True):
+    site = MagicMock()
+    site.code = code
+    site.station_label = f"{code} - Test"
+    site.basin_ru = "Test Basin"
+    site.punkt_name_ru = "Тест вдхр" if reservoir else "Тест"
+    return site
+
+
+def _make_bulletin_record(code="19999"):
+    return {
+        "code": code,
+        "model_type": "LR_Base",
+        "forecasted_discharge": 100.0,
+        "fc_lower": 90.0,
+        "fc_upper": 110.0,
+        "delta": 1.0,
+        "sdivsigma": 2.0,
+        "mae": 3.0,
+        "accuracy": 90.0,
+    }
+
+
+def _make_long_forecast_record(code="19999", lead=0):
+    return pd.DataFrame(
+        {
+            "code": [code],
+            "date": [pd.Timestamp("2026-04-22")],
+            "valid_from": [pd.Timestamp("2026-04-01")],
+            "valid_to": [pd.Timestamp("2026-09-30")],
+            "model_short": ["LR_Base"],
+            "forecasted_discharge": [100.0],
+            "Q25": [90.0],
+            "Q75": [110.0],
+            "season_in_year": [lead],
         }
     )
 
@@ -230,3 +268,37 @@ class TestResolveBulletinHeaderDate:
         result = resolve_bulletin_header_date("month", last_date, forecasts_all)
 
         assert result.month == 6
+
+
+class TestBulletinLongTermLeads:
+    def test_month_load_uses_resolved_quarter_default(self, monkeypatch):
+        site = _make_site()
+        fake_db = MagicMock()
+        fake_db._read_data.return_value = pd.DataFrame([_make_bulletin_record()])
+        fake_db.get_long_forecasts_quarter.return_value = _make_long_forecast_record()
+        monkeypatch.setattr(bulletin_manager, "db", fake_db)
+        monkeypatch.setattr(
+            bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock()
+        )
+
+        bulletin_manager._load_bulletin_from_api("month", 2026, 4, [site])
+
+        fake_db.get_long_forecasts_quarter.assert_called_once_with(site.code)
+
+    def test_season_load_passes_saved_issue_lead(self, monkeypatch):
+        site = _make_site(reservoir=False)
+        fake_db = MagicMock()
+        fake_db._read_data.return_value = pd.DataFrame([_make_bulletin_record()])
+        fake_db.get_long_forecasts_season.return_value = _make_long_forecast_record(
+            lead=0
+        )
+        monkeypatch.setattr(bulletin_manager, "db", fake_db)
+        monkeypatch.setattr(
+            bulletin_manager, "hydrate_season_hydrograph_stats", MagicMock()
+        )
+
+        bulletin_manager._load_bulletin_from_api("season", 2026, 0, [site])
+
+        fake_db.get_long_forecasts_season.assert_called_once_with(
+            site.code, horizon_value=0
+        )
