@@ -1079,6 +1079,12 @@ _ENSEMBLE_JOINT_COLS = (
         "year",
         "month",
         "month_in_year",
+        # Aggregated (quarter/season) period keys — required so EM/Naive/
+        # Skilled Mean rows keep their period column on append. Without
+        # these the write-side NaN guard drops every ensemble row.
+        "quarter_in_year",
+        "season_year",
+        "season_in_year",
         "forecasted_discharge",
         "model_short",
         "composition",
@@ -2083,7 +2089,11 @@ def calculate_seasonal_skill_metrics(
         observations,
         forecasts,
         period_col="season_in_year",
-        time_group_cols=["season_year", "season_in_year", "code"],
+        # Seasonal forecasts at a given lead can be (re-)issued on several
+        # dates; group by `date` so each issue forms its own ensemble (one
+        # EM per issue = clean 2-model mean) instead of collapsing distinct
+        # issue dates into a single blended row.
+        time_group_cols=["season_year", "season_in_year", "code", "date"],
         merge_cols=["code", "season_year"],
         timing_stats=timing_stats,
     )
@@ -2152,6 +2162,12 @@ def _calculate_aggregated_skill_metrics(
     if merged.empty:
         return empty_stats, empty_joint, timing_stats
 
+    # Restrict the ensemble grouping to columns actually present. Seasonal
+    # callers pass `date` so each issue date forms its own ensemble; date-less
+    # frames (quarter, legacy CSV) fall back to period-level grouping
+    # unchanged.
+    time_group_cols = [c for c in time_group_cols if c in merged.columns]
+
     # --- 2. Point metrics per group ---
     skill_stats = (
         merged.groupby(metric_group_cols)[["discharge_avg", "forecasted_discharge", "delta"]]
@@ -2216,7 +2232,7 @@ def _calculate_aggregated_skill_metrics(
             if qcol in em_merged.columns:
                 em_agg_dict[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in em_merged.columns:
+            if dcol in em_merged.columns and dcol not in time_group_cols:
                 em_agg_dict[dcol] = "first"
 
         em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
@@ -2348,7 +2364,7 @@ def _add_naive_mean_aggregated(
         if qcol in pool.columns:
             agg_dict[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             agg_dict[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(agg_dict).reset_index()
@@ -2495,7 +2511,7 @@ def _add_skilled_mean_aggregated(
             lambda x, _c=qcol: _weighted_mean_col(x, _c),
         )
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in sm_merged.columns:
+        if dcol in sm_merged.columns and dcol not in time_group_cols:
             sm_agg_dict[dcol] = (dcol, "first")
 
     sm_avg = sm_merged.groupby(time_group_cols).agg(**sm_agg_dict).reset_index()

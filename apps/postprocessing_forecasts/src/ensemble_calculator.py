@@ -555,7 +555,10 @@ def create_seasonal_ensemble_forecasts(
         forecasts,
         skill_stats,
         period_col="season_in_year",
-        time_group_cols=["season_year", "season_in_year", "code"],
+        # Group by `date` so each (re-)issued seasonal forecast forms its own
+        # ensemble (one EM per issue = clean 2-model mean) rather than
+        # collapsing distinct issue dates into one blended row.
+        time_group_cols=["season_year", "season_in_year", "code", "date"],
     )
 
 
@@ -590,6 +593,11 @@ def _create_aggregated_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
+    # Restrict grouping to columns actually present. Seasonal callers pass
+    # `date` (one ensemble per issue date); date-less frames fall back to
+    # period-level grouping unchanged.
+    time_group_cols = [c for c in time_group_cols if c in joint.columns]
+
     # --- EM (two-LR average; not skill-gated for quarter/season) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
 
@@ -620,7 +628,7 @@ def _create_aggregated_ensemble_forecasts(
             if qcol in qualifying.columns:
                 em_agg[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in qualifying.columns:
+            if dcol in qualifying.columns and dcol not in time_group_cols:
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
@@ -716,7 +724,7 @@ def _add_skilled_mean_aggregated_ens(
         if qcol in pool.columns:
             sm_agg[qcol] = (qcol, lambda x, _c=qcol: _weighted_mean(x, _c))
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = pool.groupby(time_group_cols).agg(**sm_agg).reset_index()
@@ -757,7 +765,7 @@ def _add_naive_mean_aggregated_ens(
         if qcol in pool.columns:
             naive_agg[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(naive_agg).reset_index()
