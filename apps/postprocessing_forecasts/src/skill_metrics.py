@@ -1073,6 +1073,11 @@ _QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 _QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
 
 # Columns carried through when appending ensemble rows to joint_forecasts
+# Aggregated ensemble model rows the recalc regenerates from the raw models.
+# Pre-existing copies of these must be dropped from recalc input so they are
+# neither scored as raw models nor written twice (duplicate-key collision).
+_AGGREGATED_BASELINES = ("EM", "Naive Mean", "Skilled Mean")
+
 _ENSEMBLE_JOINT_COLS = (
     [
         "code",
@@ -2133,6 +2138,16 @@ def _calculate_aggregated_skill_metrics(
 
     if observations.empty or forecasts.empty:
         return empty_stats, empty_joint, timing_stats
+
+    # The recalc regenerates EM / Naive Mean / Skilled Mean from the raw
+    # models. Drop any pre-existing copies in the source so we neither score
+    # them as raw models nor emit a duplicate write-key when the freshly
+    # computed ensemble collides with a stored one. Other ensemble types
+    # (e.g. NE) are left untouched.
+    if "model_short" in forecasts.columns:
+        forecasts = forecasts[~forecasts["model_short"].isin(_AGGREGATED_BASELINES)].copy()
+        if forecasts.empty:
+            return empty_stats, empty_joint, timing_stats
 
     # --- 1. Merge forecasts with observations ---
     # Build the set of observation columns we need, ensuring no duplicates.

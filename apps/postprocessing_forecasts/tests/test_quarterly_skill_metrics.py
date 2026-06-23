@@ -328,6 +328,40 @@ class TestQuarterlyMetricsEnsembles:
         assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
         assert not em_skill.empty
 
+    def test_preexisting_baseline_rows_replaced_not_duplicated(self):
+        """Stored EM/Naive/Skilled rows in the input are dropped, not doubled.
+
+        The recalc regenerates the aggregated ensembles, so a source that
+        already contains them must not yield two rows for the same key
+        (which would violate the long_forecasts unique constraint on write).
+        """
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2020, 1, "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2020, 1, "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+                ("S1", 2021, 1, "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2021, 1, "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+                # Pre-existing stored ensemble row with a stale value.
+                ("S1", 2020, 1, "Naive Mean", 900, 905, 915, 999, 925, 935, 940),
+            ]
+        )
+
+        _, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
+
+        key = ["code", "year", "quarter_in_year", "model_short"]
+        assert not joint.duplicated(key).any()
+        nm = joint[joint["model_short"] == "Naive Mean"]
+        # One recomputed Naive Mean per (year, quarter), the stale one gone.
+        assert len(nm) == 2
+        assert 999.0 not in set(nm["q50"])
+        assert np.allclose(sorted(nm["q50"]), [120.0, 120.0])
+
 
 class TestQuarterlyMetricsEdgeCases:
     def test_empty_observations(self):
