@@ -69,7 +69,7 @@ def _monthly_obs(n_years=3, codes=("S1",)):
     return pd.DataFrame(rows)
 
 
-def _monthly_fc(n_years=3, codes=("S1",), models=("LR", "TFT")):
+def _monthly_fc(n_years=3, codes=("S1",), models=("LR_Base", "LR_SM")):
     """Create monthly forecasts for multiple models/years."""
     rows = []
     for code in codes:
@@ -77,7 +77,7 @@ def _monthly_fc(n_years=3, codes=("S1",), models=("LR", "TFT")):
             for month in range(1, 13):
                 for model in models:
                     base = 50 + month * 5 + (year - 2020) * 2
-                    offset = 2 if model == "LR" else -1
+                    offset = 2 if model == "LR_Base" else -1
                     q50 = float(base + offset)
                     rows.append(
                         {
@@ -108,7 +108,7 @@ class TestQuarterlyRecalcWorkflow:
 
     def test_full_pipeline(self):
         monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
 
         # Aggregate
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
@@ -126,8 +126,8 @@ class TestQuarterlyRecalcWorkflow:
 
         # Verify models present
         models = skill_stats["model_short"].unique()
-        assert "LR" in models
-        assert "TFT" in models
+        assert "LR_Base" in models
+        assert "LR_SM" in models
 
         # Verify ensembles (multi-model → Naive Mean should exist)
         assert "Naive Mean" in models
@@ -139,7 +139,7 @@ class TestQuarterlyRecalcWorkflow:
     def test_skill_then_ensemble_creation(self):
         """Skill metrics → create ensembles from pre-calculated stats."""
         monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
 
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
         qfc = aggregate_monthly_fc_to_quarterly(monthly_fc)
@@ -152,8 +152,8 @@ class TestQuarterlyRecalcWorkflow:
 
         result_models = set(result["model_short"].unique())
         # Should contain original models + ensembles
-        assert "LR" in result_models
-        assert "TFT" in result_models
+        assert "LR_Base" in result_models
+        assert "LR_SM" in result_models
         assert "Naive Mean" in result_models
 
 
@@ -168,7 +168,7 @@ class TestSeasonalRecalcWorkflow:
         monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
 
         monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)
@@ -217,7 +217,7 @@ class TestCrossYearSeasonWorkflow:
         monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "3")
 
         monthly_obs = _monthly_obs(n_years=4)
-        monthly_fc = _monthly_fc(n_years=4, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=4, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)
@@ -266,7 +266,7 @@ class TestQuarterlyOperationalWorkflow:
             {
                 "quarter_in_year": [1, 1],
                 "code": ["S1", "S1"],
-                "model_short": ["LR", "TFT"],
+                "model_short": ["LR_Base", "LR_SM"],
                 "sdivsigma": [0.3, 0.4],
                 "nse": [0.95, 0.88],
                 "delta": [5.0, 5.0],
@@ -282,7 +282,7 @@ class TestQuarterlyOperationalWorkflow:
                 "code": ["S1", "S1"],
                 "year": [2025, 2025],
                 "quarter_in_year": [1, 1],
-                "model_short": ["LR", "TFT"],
+                "model_short": ["LR_Base", "LR_SM"],
                 "forecasted_discharge": [100.0, 120.0],
                 "q05": [80, 90],
                 "q10": [85, 95],
@@ -311,7 +311,7 @@ class TestSeasonalOperationalWorkflow:
             {
                 "season_in_year": [1, 1],
                 "code": ["S1", "S1"],
-                "model_short": ["LR", "TFT"],
+                "model_short": ["LR_Base", "LR_SM"],
                 "sdivsigma": [0.3, 0.4],
                 "nse": [0.95, 0.88],
                 "delta": [5.0, 5.0],
@@ -326,7 +326,7 @@ class TestSeasonalOperationalWorkflow:
                 "code": ["S1", "S1"],
                 "season_year": [2025, 2025],
                 "season_in_year": [1, 1],
-                "model_short": ["LR", "TFT"],
+                "model_short": ["LR_Base", "LR_SM"],
                 "forecasted_discharge": [100.0, 120.0],
                 "q05": [80, 90],
                 "q10": [85, 95],

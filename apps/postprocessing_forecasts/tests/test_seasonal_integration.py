@@ -96,18 +96,18 @@ def _two_model_seasonal_skill():
     """Two highly skilled models for station S1, season 1."""
     return _make_seasonal_skill(
         [
-            (1, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-            (1, "S1", "TFT", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
+            (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
+            (1, "S1", "LR_SM", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
         ]
     )
 
 
 def _two_model_seasonal_fcst():
-    """Forecasts for LR and TFT, station S1, season_year 2025."""
+    """Forecasts for LR_Base and LR_SM, station S1, season_year 2025."""
     return _make_seasonal_fcst(
         [
-            ("S1", 2025, 1, "LR", 100.0, 80, 85, 90, 100, 110, 115, 120),
-            ("S1", 2025, 1, "TFT", 120.0, 90, 95, 100, 120, 130, 135, 140),
+            ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+            ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
         ]
     )
 
@@ -130,7 +130,7 @@ def _monthly_obs(n_years=3, codes=("S1",), start_month=1, end_month=12):
     return pd.DataFrame(rows)
 
 
-def _monthly_fc(n_years=3, codes=("S1",), models=("LR", "TFT")):
+def _monthly_fc(n_years=3, codes=("S1",), models=("LR_Base", "LR_SM")):
     """Create monthly forecasts for multiple models/years."""
     rows = []
     for code in codes:
@@ -138,7 +138,7 @@ def _monthly_fc(n_years=3, codes=("S1",), models=("LR", "TFT")):
             for month in range(1, 13):
                 for model in models:
                     base = 50 + month * 5 + (year - 2020) * 2
-                    offset = 2 if model == "LR" else -1
+                    offset = 2 if model == "LR_Base" else -1
                     q50 = float(base + offset)
                     rows.append(
                         {
@@ -212,10 +212,10 @@ class TestSeasonalEnsembleSkilled:
         fcst = _two_model_seasonal_fcst()
         result = create_seasonal_ensemble_forecasts(fcst, skill)
         sm = result[result["model_short"] == "Skilled Mean"]
-        # LR: MAE=2.0, TFT: MAE=3.0
-        # LR has lower MAE -> higher weight -> result closer to LR (100)
+        # LR_Base: MAE=2.0, LR_SM: MAE=3.0
+        # LR_Base has lower MAE -> higher weight -> result closer to 100
         discharge = sm.iloc[0]["forecasted_discharge"]
-        assert discharge < 110.0  # closer to LR's 100 than simple mean 110
+        assert discharge < 110.0  # closer to 100 than simple mean 110
 
     def test_em_composition_string(self):
         """EM composition should contain contributing model names."""
@@ -225,19 +225,19 @@ class TestSeasonalEnsembleSkilled:
         em = result[result["model_short"] == "EM"]
         assert not em.empty
         comp = str(em.iloc[0]["composition"])
-        assert "LR" in comp
-        assert "TFT" in comp
+        assert "LR_Base" in comp
+        assert "LR_SM" in comp
 
     def test_em_not_created_single_model(self):
         """Single model should not produce EM for seasonal."""
         skill = _make_seasonal_skill(
             [
-                (1, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
+                (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
             ]
         )
         fcst = _make_seasonal_fcst(
             [
-                ("S1", 2025, 1, "LR", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
             ]
         )
         result = create_seasonal_ensemble_forecasts(fcst, skill)
@@ -437,7 +437,7 @@ class TestSeasonalDataReaderNonEmpty:
                         "2024-09-30",
                     ]
                 ),
-                "model_type": ["M1"] * 6,
+                "model_type": ["LR_Base"] * 6,
                 "q50": [100.0, 110, 120, 130, 140, 150],
                 "q05": [80, 90, 100, 110, 120, 130],
                 "q10": [85, 95, 105, 115, 125, 135],
@@ -510,7 +510,7 @@ class TestSeasonalDataReaderNonEmpty:
                         "2024-03-31",
                     ]
                 ),
-                "model_type": ["M1"] * 6,
+                "model_type": ["LR_Base"] * 6,
                 "q50": [200.0, 180, 160, 140, 150, 170],
                 "q05": [180, 160, 140, 120, 130, 150],
                 "q10": [185, 165, 145, 125, 135, 155],
@@ -610,7 +610,7 @@ class TestSeasonalCrossYearPipeline:
         monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "3")
 
         monthly_obs = _monthly_obs(n_years=4)
-        monthly_fc = _monthly_fc(n_years=4, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=4, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)
@@ -670,8 +670,8 @@ class TestSeasonalCrossYearPipeline:
         result = create_seasonal_ensemble_forecasts(sfc, skill_stats)
         assert not result.empty
         result_models = set(result["model_short"].unique())
-        assert "LR" in result_models
-        assert "TFT" in result_models
+        assert "LR_Base" in result_models
+        assert "LR_SM" in result_models
         assert "Naive Mean" in result_models
 
     def test_custom_season_end_to_end(self, monkeypatch):
@@ -680,7 +680,7 @@ class TestSeasonalCrossYearPipeline:
         monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "8")
 
         monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR", "TFT"))
+        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)
@@ -731,6 +731,6 @@ class TestSeasonalCrossYearPipeline:
         result = create_seasonal_ensemble_forecasts(sfc, skill_stats)
         assert not result.empty
         result_models = set(result["model_short"].unique())
-        assert "LR" in result_models
-        assert "TFT" in result_models
+        assert "LR_Base" in result_models
+        assert "LR_SM" in result_models
         assert "Naive Mean" in result_models

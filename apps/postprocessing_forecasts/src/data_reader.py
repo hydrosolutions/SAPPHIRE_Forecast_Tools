@@ -31,9 +31,10 @@ except ImportError:
     SAPPHIRE_API_AVAILABLE = False
 
 
-# Ensemble model names to filter from raw API reads (these are derived,
-# not raw model output).
+# Ensemble model names may already be present in stored quarter/season
+# rows. Keep them in reader output; only deprecated raw models are filtered.
 _ENSEMBLE_MODELS = frozenset({"EM", "Skilled Mean", "Naive Mean"})
+_AGGREGATED_SUPPORTED_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
 
 _SEASONAL_FC_COLS = [
     "code",
@@ -70,6 +71,15 @@ _QUARTERLY_FC_COLS = [
     "valid_from",
     "valid_to",
 ]
+
+
+def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep supported quarter/season raw models plus existing ensemble rows."""
+    if df.empty or "model_short" not in df.columns:
+        return df
+
+    allowed = _AGGREGATED_SUPPORTED_RAW_MODELS | _ENSEMBLE_MODELS
+    return df[df["model_short"].isin(allowed)].copy()
 
 
 def read_skill_metrics(
@@ -2632,9 +2642,9 @@ def read_quarterly_forecasts(
        (``horizon_type="quarter"``).
 
     When a model appears in both sources for the same quarter, the
-    direct quarterly forecast takes precedence.  Ensemble models
-    (EM, Skilled Mean, Naive Mean) are filtered out of the direct
-    path — only raw model output is returned.
+    direct quarterly forecast takes precedence.  Raw model rows are
+    restricted to the supported two-model set (LR_Base, LR_SM) after
+    combining monthly-aggregated and direct quarterly sources.
 
     Args:
         codes: Station codes to read.
@@ -2672,9 +2682,6 @@ def read_quarterly_forecasts(
     )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
-        # Filter out ensemble models — only raw model output
-        if "model_short" in direct.columns:
-            direct = direct[~direct["model_short"].isin(_ENSEMBLE_MODELS)].copy()
     else:
         direct = pd.DataFrame()
 
@@ -2694,6 +2701,10 @@ def read_quarterly_forecasts(
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    combined = _filter_supported_aggregated_forecast_models(combined)
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
@@ -2717,8 +2728,8 @@ def read_seasonal_forecasts(
     """Read seasonal forecasts directly from the API.
 
     Reads forecasts stored with horizon_type="season" in the
-    postprocessing API.  Ensemble models (EM, Skilled Mean,
-    Naive Mean) are filtered out — only raw model output is returned.
+    postprocessing API. Raw model rows are restricted to the supported
+    two-model set (LR_Base, LR_SM); existing ensemble rows are kept.
 
     Args:
         codes: Station codes to read.
@@ -2755,10 +2766,7 @@ def read_seasonal_forecasts(
     if df.empty:
         return empty
 
-    # Filter out ensemble models — only raw model output
-    if "model_short" in df.columns:
-        df = df[~df["model_short"].isin(_ENSEMBLE_MODELS)].copy()
-
+    df = _filter_supported_aggregated_forecast_models(df)
     if df.empty:
         return empty
 
@@ -2790,6 +2798,8 @@ def read_latest_quarterly_forecasts(
     2. Direct quarterly forecasts from the API.
 
     When a model appears in both sources, the direct forecast wins.
+    Raw model rows are restricted to LR_Base and LR_SM after combining
+    the two sources; existing ensemble rows are kept.
 
     Args:
         codes: Station codes to read.
@@ -2828,8 +2838,6 @@ def read_latest_quarterly_forecasts(
     )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
-        if "model_short" in direct.columns:
-            direct = direct[~direct["model_short"].isin(_ENSEMBLE_MODELS)].copy()
     else:
         direct = pd.DataFrame()
 
@@ -2848,6 +2856,10 @@ def read_latest_quarterly_forecasts(
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
+    if combined.empty:
+        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+
+    combined = _filter_supported_aggregated_forecast_models(combined)
     if combined.empty:
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
@@ -2883,6 +2895,8 @@ def read_latest_seasonal_forecasts(
     """Read the most recent seasonal forecasts directly from the API.
 
     Uses a wide lookback (~200 days) to capture cross-year seasons.
+    Raw model rows are restricted to LR_Base and LR_SM; existing
+    ensemble rows are kept.
 
     Args:
         codes: Station codes to read.
@@ -2913,10 +2927,7 @@ def read_latest_seasonal_forecasts(
     if df.empty:
         return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 
-    # Filter out ensemble models — only raw model output
-    if "model_short" in df.columns:
-        df = df[~df["model_short"].isin(_ENSEMBLE_MODELS)].copy()
-
+    df = _filter_supported_aggregated_forecast_models(df)
     if df.empty:
         return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 

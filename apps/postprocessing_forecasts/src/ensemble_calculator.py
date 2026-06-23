@@ -13,6 +13,8 @@ from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_tar
 
 logger = logging.getLogger(__name__)
 
+_AGGREGATED_EM_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -589,26 +591,23 @@ def _create_aggregated_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
-    # --- EM (threshold-filtered average) ---
+    # --- EM (two-LR average; not skill-gated for quarter/season) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
-    merge_keys = [period_col, "code", "model_short"]
 
     # Normalize types for merge
-    for df in (joint, skill_filtered):
-        if period_col in df.columns:
-            df[period_col] = pd.to_numeric(df[period_col], errors="coerce")
-        if "code" in df.columns:
-            df["code"] = df["code"].astype(str)
+    if period_col in joint.columns:
+        joint[period_col] = pd.to_numeric(joint[period_col], errors="coerce")
+    if "code" in joint.columns:
+        joint["code"] = joint["code"].astype(str)
+    if period_col in skill_filtered.columns:
+        skill_filtered[period_col] = pd.to_numeric(skill_filtered[period_col], errors="coerce")
+    if "code" in skill_filtered.columns:
+        skill_filtered["code"] = skill_filtered["code"].astype(str)
 
-    qualifying = joint.merge(
-        skill_filtered[merge_keys].drop_duplicates(),
-        on=merge_keys,
-        how="inner",
-    )
-    qualifying = qualifying[~qualifying["model_short"].isin(baselines)].copy()
+    qualifying = joint[joint["model_short"].isin(_AGGREGATED_EM_RAW_MODELS)].copy()
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
-    n_models = joint[~joint["model_short"].isin(baselines)]["model_short"].nunique()
+    n_models = qualifying["model_short"].nunique()
 
     if n_models > 1 and not qualifying.empty:
         em_agg = {

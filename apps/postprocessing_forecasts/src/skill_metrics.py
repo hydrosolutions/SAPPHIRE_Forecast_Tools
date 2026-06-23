@@ -15,6 +15,8 @@ from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_tar
 
 logger = logging.getLogger(__name__)
 
+_AGGREGATED_EM_RAW_MODELS = frozenset({"LR_Base", "LR_SM"})
+
 
 # ---------------------------------------------------------------------------
 # Metric registry — single source of truth for all point metrics
@@ -2199,19 +2201,11 @@ def _calculate_aggregated_skill_metrics(
     # --- 4. Ensemble Mean (EM) ---
     joint_forecasts = forecasts.copy()
 
-    skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    em_merged = merged[merged["model_short"].isin(_AGGREGATED_EM_RAW_MODELS)].copy()
+    em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
 
-    skilled_merged = merged.merge(
-        skill_stats_filtered[metric_group_cols].drop_duplicates(),
-        on=metric_group_cols,
-        how="inner",
-    )
-    baselines = {"EM", "Naive Mean", "Skilled Mean"}
-    skilled_merged = skilled_merged[~skilled_merged["model_short"].isin(baselines)].copy()
-    skilled_merged = skilled_merged.dropna(subset=["forecasted_discharge"]).copy()
-
-    n_models = forecasts["model_short"].nunique()
-    if n_models > 1 and not skilled_merged.empty:
+    n_models = em_merged["model_short"].nunique()
+    if n_models > 1 and not em_merged.empty:
         em_agg_dict = {
             "forecasted_discharge": "mean",
             "model_short": composition_agg,
@@ -2219,13 +2213,13 @@ def _calculate_aggregated_skill_metrics(
         if period_col not in time_group_cols:
             em_agg_dict[period_col] = "first"
         for qcol in _QUANTILE_COLS:
-            if qcol in skilled_merged.columns:
+            if qcol in em_merged.columns:
                 em_agg_dict[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in skilled_merged.columns:
+            if dcol in em_merged.columns:
                 em_agg_dict[dcol] = "first"
 
-        em_avg = skilled_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
+        em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
         em_avg = enforce_quantile_monotonicity(
             em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
         )

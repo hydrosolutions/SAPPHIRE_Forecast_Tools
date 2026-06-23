@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.skill_metrics import (
     calculate_quarterly_skill_metrics,
     calculate_seasonal_skill_metrics,
+    filter_for_highly_skilled_forecasts,
 )
 
 EXPECTED_METRIC_COLS = {
@@ -217,6 +218,49 @@ class TestQuarterlyMetricsEnsembles:
             models = joint["model_short"].unique()
             assert "Naive Mean" in models
 
+    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 120.0),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2020, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
+        filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert filtered_raw.empty
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
+        assert not em_skill.empty
+        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert pd.notna(em_skill.iloc[0]["crps"])
+
 
 class TestQuarterlyMetricsEdgeCases:
     def test_empty_observations(self):
@@ -338,6 +382,49 @@ class TestSeasonalMetricsEnsembles:
         skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
         naive_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert not naive_rows.empty
+
+    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_seasonal_obs(
+            [
+                ("S1", 2020, 100.0),
+                ("S1", 2021, 110.0),
+                ("S1", 2022, 120.0),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2020, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
+        filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert filtered_raw.empty
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
+        assert not em_skill.empty
+        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert pd.notna(em_skill.iloc[0]["crps"])
 
 
 class TestQFallbackQuarterly:
