@@ -11,7 +11,7 @@ from src import processing
 from src.gettext_config import _
 from src.snow_window import snow_display_window
 
-from iEasyHydroForecast.long_term_horizon_resolver import (
+from long_term_horizon_resolver import (
     quarter_horizon_value,
     seasonal_config_name,
     seasonal_horizon_value,

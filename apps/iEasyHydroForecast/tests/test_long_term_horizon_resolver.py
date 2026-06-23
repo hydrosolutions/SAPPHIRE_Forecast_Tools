@@ -1,8 +1,7 @@
 import json
 
+import long_term_horizon_resolver as resolver
 import pytest
-
-from iEasyHydroForecast import long_term_horizon_resolver as resolver
 
 
 def _write_config(tmp_path, config_name: str, payload: dict) -> None:

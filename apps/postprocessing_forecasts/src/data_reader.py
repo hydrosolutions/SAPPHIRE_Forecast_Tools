@@ -13,9 +13,8 @@ import logging
 import os
 
 import pandas as pd
+from long_term_horizon_resolver import quarter_horizon_value
 from src.postprocessing_tools import count_quantile_crossings
-
-from iEasyHydroForecast.long_term_horizon_resolver import quarter_horizon_value
 
 logger = logging.getLogger(__name__)
 

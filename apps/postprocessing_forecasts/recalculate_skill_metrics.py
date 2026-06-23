@@ -33,16 +33,15 @@ sys.path.append(forecast_dir)
 
 import setup_library as sl
 import tag_library as tl
-from src import data_reader, file_writer, skill_metrics
-from src import postprocessing_tools as pt
-from src.horizon_config import ShortTermHorizonConfig
-from src.postprocessing_tools import TimingStats, timer
-
-from iEasyHydroForecast.long_term_horizon_resolver import (
+from long_term_horizon_resolver import (
     seasonal_config_name,
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from src import data_reader, file_writer, skill_metrics
+from src import postprocessing_tools as pt
+from src.horizon_config import ShortTermHorizonConfig
+from src.postprocessing_tools import TimingStats, timer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)

@@ -24,15 +24,14 @@ forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 sys.path.append(forecast_dir)
 
 import setup_library as sl
-from src import data_reader, ensemble_calculator, file_writer, gap_detector
-from src import postprocessing_tools as pt
-from src.postprocessing_tools import TimingStats, timer
-
-from iEasyHydroForecast.long_term_horizon_resolver import (
+from long_term_horizon_resolver import (
     seasonal_config_name,
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from src import data_reader, ensemble_calculator, file_writer, gap_detector
+from src import postprocessing_tools as pt
+from src.postprocessing_tools import TimingStats, timer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)

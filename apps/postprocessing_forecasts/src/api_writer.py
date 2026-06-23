@@ -13,8 +13,7 @@ import os
 
 import pandas as pd
 import tag_library as tl
-
-from iEasyHydroForecast.long_term_horizon_resolver import quarter_horizon_value
+from long_term_horizon_resolver import quarter_horizon_value
 
 logger = logging.getLogger(__name__)
 
