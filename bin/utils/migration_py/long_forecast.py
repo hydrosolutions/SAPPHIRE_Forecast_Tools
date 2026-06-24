@@ -259,7 +259,7 @@ def _load_mode_config(config_dir: Path, mode_name: str) -> dict:
     if not isinstance(horizon_type, str) or not horizon_type:
         horizon_type = "month"
     horizon_type = horizon_type.lower()
-    _ALLOWED_HORIZON_TYPES = {"month"}
+    _ALLOWED_HORIZON_TYPES = {"month", "quarter", "season"}
     if horizon_type not in _ALLOWED_HORIZON_TYPES:
         raise ValueError(
             f"long-term config {config_path.name}: "
@@ -390,6 +390,45 @@ def _build_record(
     return rec
 
 
+def _normalize_cutoff_map_key(
+    horizon_type_raw: object,
+    horizon_value_raw: object,
+    code_raw: object,
+) -> tuple[str, int, str]:
+    horizon_type = str(horizon_type_raw or "").strip().lower()
+    horizon_value = _parse_int(str(horizon_value_raw) if horizon_value_raw is not None else None)
+    code = _parse_code(str(code_raw) if code_raw is not None else None)
+    if not horizon_type or horizon_value is None or not code:
+        raise ValueError(
+            f"invalid cutoff-map key: {horizon_type_raw!r}, {horizon_value_raw!r}, {code_raw!r}"
+        )
+    return (horizon_type, horizon_value, code)
+
+
+def _load_cutoff_map(path: Path | None) -> dict[tuple[str, int, str], str]:
+    """Load a per-code cutoff map keyed by normalized importer lookup values."""
+    if path is None:
+        return {}
+
+    with path.open(encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if not isinstance(raw, dict):
+        raise ValueError("cutoff map must be a JSON object")
+
+    cutoff_map: dict[tuple[str, int, str], str] = {}
+    for raw_key, raw_cutoff in raw.items():
+        parts = str(raw_key).split("\t")
+        if len(parts) != 3:
+            raise ValueError("cutoff map keys must be '<horizon_type>\\t<horizon_value>\\t<code>'")
+        cutoff = _parse_iso_date(str(raw_cutoff) if raw_cutoff is not None else None)
+        if cutoff is None:
+            raise ValueError(f"invalid cutoff date for key {raw_key!r}: {raw_cutoff!r}")
+        cutoff_map[_normalize_cutoff_map_key(parts[0], parts[1], parts[2])] = cutoff
+
+    return cutoff_map
+
+
 def _read_filtered_records(
     csv_path: Path,
     model_name: str,
@@ -397,6 +436,7 @@ def _read_filtered_records(
     *,
     cutoff: str | None,
     station_filter: str | None,
+    cutoff_map: dict[tuple[str, int, str], str] | None = None,
 ) -> tuple[list[dict], dict[str, int], set[str], str | None, str | None]:
     """Read CSV and return (records, counters, distinct_codes, date_min, date_max).
 
@@ -406,8 +446,11 @@ def _read_filtered_records(
             ``Q_<model>`` and ensemble column lookups.
         mode_config: dict with ``horizon_value`` and ``horizon_type``.
         cutoff: optional ISO date; rows with ``date >= cutoff`` are dropped.
+            Used only when ``cutoff_map`` is absent.
         station_filter: optional single station code; rows whose ``code``
             does not match are dropped.
+        cutoff_map: optional per-``(horizon_type, horizon_value, code)`` cutoff
+            map. Missing entries mean no cutoff for that row.
 
     Returns:
         Tuple ``(records, counters, distinct_codes, date_min, date_max)``.
@@ -458,8 +501,17 @@ def _read_filtered_records(
                 counters["skipped_station"] += 1
                 continue
 
-            # Cutoff filter (strictly less than cutoff).
-            if cutoff is not None and date_str >= cutoff:
+            row_cutoff = cutoff
+            if cutoff_map is not None:
+                row_key = (
+                    mode_config["horizon_type"],
+                    int(mode_config["horizon_value"]),
+                    code_raw,
+                )
+                row_cutoff = cutoff_map.get(row_key)
+
+            # Cutoff filter (strictly less than the row-specific cutoff).
+            if row_cutoff is not None and date_str >= row_cutoff:
                 counters["skipped_cutoff"] += 1
                 continue
 
@@ -554,6 +606,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--cutoff",
         default=None,
         help="ISO date; rows with date >= cutoff are dropped (pre-cutoff mode).",
+    )
+    p.add_argument(
+        "--cutoff-map",
+        type=Path,
+        default=None,
+        help=(
+            "JSON map of per-(horizon_type, horizon_value, code) cutoff dates. "
+            "Overrides --cutoff when provided."
+        ),
     )
     p.add_argument(
         "--station-filter",
@@ -664,10 +725,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no source data for this deployment: config dir {config_dir} not found")
         return 0
 
-    # MODE is decided by the wrapper from the psql query; we just receive
-    # the cutoff (or None) and pass it through.
+    # MODE is decided by the wrapper from the psql query; we receive either
+    # the preferred per-code cutoff map or the legacy scalar cutoff.
     cutoff: str | None = args.cutoff
-    target_mode = "pre-cutoff" if cutoff else "full-import"
+    try:
+        cutoff_map = _load_cutoff_map(args.cutoff_map) if args.cutoff_map else None
+    except ValueError as exc:
+        print(f"ERROR: cannot load cutoff map {args.cutoff_map}: {exc}", file=sys.stderr)
+        return 1
+    target_mode = "pre-cutoff" if cutoff or cutoff_map else "full-import"
+    cutoff_display = cutoff if cutoff else ("cutoff-map" if cutoff_map else None)
 
     # ---- Mode discovery + filter ----
     all_modes = _discover_modes(config_dir)
@@ -741,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
                     mode_config,
                     cutoff=cutoff,
                     station_filter=args.station_filter,
+                    cutoff_map=cutoff_map,
                 )
             except ValueError as exc:
                 print(
@@ -768,7 +836,7 @@ def main(argv: list[str] | None = None) -> int:
     _print_dry_run_inventory(
         mode=target_mode,
         target_mode=target_mode,
-        cutoff=cutoff,
+        cutoff=cutoff_display,
         discovered_modes=filtered_modes,
         per_mode_summary=per_mode_summary,
         distinct_codes_total=distinct_codes_total,
