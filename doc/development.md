@@ -103,10 +103,15 @@ We use [uv](https://docs.astral.sh/uv/) for managing Python environments and dep
 Once uv is installed, you can create a new virtual environment and install dependencies by navigating to a module directory (which contains a `pyproject.toml` file) and running:
 
 ``` bash
-uv sync --python 3.12
+uv sync --all-extras --python 3.12
 ```
 
 This will create a `.venv` directory with Python 3.12 and install all dependencies specified in `pyproject.toml`. Each module has its own `pyproject.toml` defining its dependencies. For development, Python 3.12 is used across all modules.
+
+Use `--all-extras` so the optional dev/test dependencies are installed as well —
+the pipeline's validation steps and `run_locally.sh` expect them. The error
+message `run_locally.sh` prints for a missing or stale venv points you to this
+exact command (`cd apps/<module> && uv sync --all-extras`).
 
 ### Bash
 
@@ -213,12 +218,26 @@ Each module has a `pyproject.toml` file that specifies its dependencies. You can
 
 ``` bash
 cd apps/module_name
-uv sync
+uv sync --all-extras
 ```
 
-This will create a virtual environment (if one doesn't exist) and install all dependencies specified in `pyproject.toml`.
+This will create a virtual environment (if one doesn't exist) and install all dependencies (including the dev/test extras) specified in `pyproject.toml`.
 
 You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
+
+### Keeping an existing install up to date
+
+The steps above are for a first-time setup. If you already have a working local
+install and need to bring it back in sync after a stretch of upstream changes —
+re-syncing every module venv, resetting the services database so its schema
+matches the new code, and re-running the `run_locally.sh` pipelines — follow the
+dedicated runbook: [`doc/dev/update_dev_deployment.md`](dev/update_dev_deployment.md).
+
+In short: pull the latest code, re-run `uv sync --all-extras` in every module,
+then reset the services database with `bash bin/reset_sapphire_db.sh` (the
+services create their schema with `Base.metadata.create_all()` rather than
+Alembic migrations, so new columns only appear after the DB volumes are
+recreated).
 
 # 2. Development instructions specific to the tools
 
@@ -680,7 +699,7 @@ The `run_operation_forecasting_CM.R` script operates as follows:
 
 11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps.
 
-12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`.
+12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_19999.csv` and `decad_19999.csv`.
 
 To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `codes` using the hydrological model defined in `fun_mod_mapping`.
 
@@ -743,18 +762,18 @@ To set up the environment for running the forecast using the conceptual model yo
 
     | date       | P     | code  |
     |------------|-------|-------|
-    | 27.08.2023 | 15.37 | 15194 |
-    | 28.08.2023 | 21.26 | 15194 |
+    | 27.08.2023 | 15.37 | 19999 |
+    | 28.08.2023 | 21.26 | 19999 |
     | ...        | ...   | ...   |
-    | 09.09.2024 | 0.04  | 15194 |
+    | 09.09.2024 | 0.04  | 19999 |
 
 
     | date       | T     | code  |
     |------------|-------|-------|
-    | 27.08.2023 | 8.39  | 15194 |
-    | 28.08.2023 | 4.39  | 15194 |
+    | 27.08.2023 | 8.39  | 19999 |
+    | 28.08.2023 | 4.39  | 19999 |
     | ...        | ...   | ...   |
-    | 09.09.2024 | 7.00  | 15194 |
+    | 09.09.2024 | 7.00  | 19999 |
 
     Ensemble member forcing: The ensemble member forcing must have columns for date, T (temperature in degree Celcius) or P (precipitation in mm/d), and ensemble_member. The basin code is specified in the filename as code_T_ensemble_forecast.csv code_P_ensemble_forecast.csv. The ensemble_member must be a number from 1 to 50. The file path has to be specified in the .env file.
 
@@ -772,10 +791,10 @@ To set up the environment for running the forecast using the conceptual model yo
 
     | code  | date       | discharge |
     |-------|------------|-----------|
-    | 15194 | 01.01.2000 | 1.9       |
-    | 15194 | 02.01.2000 | 1.9       |
+    | 19999 | 01.01.2000 | 1.9       |
+    | 19999 | 02.01.2000 | 1.9       |
     | ...   | ...        | ...       |
-    | 15013 | 04.01.2000 | 1.9       |
+    | 19997 | 04.01.2000 | 1.9       |
 
 3. Basin Info and Parameter
 
@@ -789,7 +808,7 @@ To set up the environment for running the forecast using the conceptual model yo
 
     - **BasinCode**: An integer representing the unique code for the basin.
 
-      - Example: `15194`
+      - Example: `19999`
 
     - **BasinName**: A string representing the name of the basin.
 
@@ -853,7 +872,7 @@ To set up the environment for running the forecast using the conceptual model yo
   "StatePert": ["Rout", "Prod", "UH1", "UH2"],
   "eps": 0.65,
   "lag_days": 180,
-  "codes": [15194,16936],
+  "codes": [19999,19998],
   "start_ini": "2010-01-01",
   "end_ini": "2024-01-01",
   "start_hindcast": "2015-12-31",
@@ -871,8 +890,8 @@ Below is a detailed explanation of each key in the configuration file.
       - **Type:** Dictionary
       - **Description:** Maps numerical basin codes to specific model functions that will be used in the simulation. Each code corresponds to a different hydrological model.
       - **Example:**
-        - `"15194": "RunModel_CemaNeigeGR4J_Glacier"`: This maps the code `15194` to the `RunModel_CemaNeigeGR4J_Glacier` function.
-        - `"16936": "RunModel_CemaNeigeGR6J"`: This maps the code `16936` to the `RunModel_CemaNeigeGR6J` function.
+        - `"19999": "RunModel_CemaNeigeGR4J_Glacier"`: This maps the code `19999` to the `RunModel_CemaNeigeGR4J_Glacier` function.
+        - `"19998": "RunModel_CemaNeigeGR6J"`: This maps the code `19998` to the `RunModel_CemaNeigeGR6J` function.
    - `Nb_ens`
       - **Type:** List of integers
       - **Description:** Defines the number of ensemble members used from the ECMWF IFS ensemble forecast. The list includes the range of ensemble member numbers from `1` to `50`.
@@ -900,7 +919,7 @@ Below is a detailed explanation of each key in the configuration file.
    - `codes`
      - **Type:** List of integers
      - **Description:** Lists the numerical codes corresponding to the basin code for which a forecast is produced. These codes must match those provided in the `fun_mod_mapping`.
-     - **Example:** `[15194, 16936]` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier` and `RunModel_CemaNeigeGR6J`.
+     - **Example:** `[19999, 19998]` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier` and `RunModel_CemaNeigeGR6J`.
    - `start_ini`
      - **Type:** String (Date in `YYYY-MM-DD` format)
      - **Description:** Defines the start date of the initialization period for the simulation. Needed for the very first time the model is run for the speicifc basin to get the first initial condition for the operational run. Used only in the script `run_initial.R`
