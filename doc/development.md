@@ -234,10 +234,10 @@ matches the new code, and re-running the `run_locally.sh` pipelines — follow t
 dedicated runbook: [`doc/dev/update_dev_deployment.md`](dev/update_dev_deployment.md).
 
 In short: pull the latest code, re-run `uv sync --all-extras` in every module,
-then reset the services database with `bash bin/reset_sapphire_db.sh` (the
-services create their schema with `Base.metadata.create_all()` rather than
-Alembic migrations, so new columns only appear after the DB volumes are
-recreated).
+then rebuild/start the services so Alembic migrations run at startup
+(`docker compose up -d --build`). Additive schema migrations apply in place; use
+`bash bin/reset_sapphire_db.sh` as the conservative catch-all after a long gap or
+when migration state is uncertain.
 
 # 2. Development instructions specific to the tools
 

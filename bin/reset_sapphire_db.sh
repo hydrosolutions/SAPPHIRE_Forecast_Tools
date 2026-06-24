@@ -7,9 +7,9 @@
 # Orchestrates a full DB reset cycle: stop services -> destroy volumes ->
 # rebuild images -> start services -> wait for health -> run data migration.
 #
-# Since SAPPHIRE services use Base.metadata.create_all() (not Alembic),
-# schema changes to existing tables require destroying the DB volumes and
-# re-creating from scratch.
+# SAPPHIRE services manage schema with Alembic migrations at container startup.
+# This script is a conservative full reset for long gaps, uncertain migration
+# state, or when you want to recreate volumes and re-run the CSV data import.
 #
 # Usage:
 #   bash bin/reset_sapphire_db.sh                       # Full reset (both DBs)

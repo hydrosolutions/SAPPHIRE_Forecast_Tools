@@ -22,10 +22,13 @@ Three things go stale after upstream changes and must be refreshed in order:
    against an old client (symptoms: import errors, `422` responses from the
    APIs). All modules pin the **same** client commit, so there is no per-module
    divergence to chase.
-2. **The services database schema** — the FastAPI services create their schema
-   with `Base.metadata.create_all()`, **not** Alembic migrations. New columns
-   only appear if you drop and recreate the DB volumes. Pulling new code is not
-   enough.
+2. **The services database schema** — the DB-backed FastAPI services apply
+   Alembic migrations at container startup (`alembic upgrade head`). Additive
+   schema changes that ship with migrations apply in place when you rebuild/start
+   the services (`docker compose up -d --build`), so a volume drop and ~3 hour
+   re-import is not required for those. A full `reset_sapphire_db.sh` volume
+   reset remains the conservative catch-all after a long gap or when migration
+   state is uncertain.
 3. **`run_locally.sh` does not create venvs** — it only *checks* for
    `apps/<module>/.venv/bin/python` and aborts if one is missing. Syncing is on
    you.
@@ -36,7 +39,7 @@ Three things go stale after upstream changes and must be refreshed in order:
 
 ```bash
 cd ~/Documents/GitHub/SAPPHIRE_forecast_tools   # adjust to your clone path
-git checkout develop_two_model_ensemble          # or the branch you were told to use
+git checkout maxat_sapphire_2                    # or the branch you were told to use
 git pull
 ```
 
@@ -53,7 +56,7 @@ git log --oneline -5
 
 Run this from the repo root. It re-syncs all modules the pipeline touches,
 including `iEasyHydroForecast` (the shared library) and `validate_pipeline`
-(used for the post-run API checks):
+(synced as hygiene; both have caused venv-rot before):
 
 ```bash
 for m in preprocessing_runoff preprocessing_gateway linear_regression \
@@ -79,16 +82,17 @@ Notes:
 
 ## Step 2 — Bring the services up and reset the database
 
-The pipeline reads observations from the **preprocessing** API and writes
-forecasts/skill metrics to the **postprocessing** API. They must be running and
-healthy, and the schema must match the new code.
+The pipeline reads observations from the preprocessing API and writes
+forecasts/skill metrics to the postprocessing API. They must be running and
+healthy. Startup migrations usually handle additive schema changes; the reset
+below is the conservative catch-all after a long gap or uncertain migration
+state.
 
 ```bash
 # Start the services if they aren't already up
 cd sapphire && docker compose up -d && cd ..
 
-# Reset the DB so the schema matches the new client/code.
-# This: stop -> drop volumes -> rebuild -> start -> health-check -> migrate -> verify
+# Conservative full reset: stop -> drop volumes -> rebuild -> start -> health-check -> data migrate -> verify
 bash bin/reset_sapphire_db.sh
 ```
 
@@ -102,11 +106,11 @@ Useful flags for `reset_sapphire_db.sh`:
 | `--skip-migration` | Recreate volumes but don't run the data migration |
 | `-y` | Don't prompt for confirmation |
 
-> **Heads up — the migration is slow.** Restoring the postprocessing DB
+> **Heads up — the data migration is slow.** Restoring the postprocessing DB
 > (months 1–9 + seasonal forecasts) can take **~3 hours**. If you only need
-> short-term pentad/decade work right now, you can scope the reset
-> (`--preprocessing-only` plus a lighter postprocessing migration) — but a full
-> reset is the safe default after a long gap.
+> short-term pentad/decade work right now, use `--preprocessing-only`, or use
+> `--skip-migration` when you only need fresh empty volumes/service schema. A
+> full reset with migration is the safe default after a long gap.
 
 Verify the gateway is ready before moving on:
 
@@ -114,9 +118,11 @@ Verify the gateway is ready before moving on:
 curl http://localhost:8000/health/ready
 ```
 
-> **If the services are down or unhealthy**, modules silently fall back to CSV
-> output and your forecasts never reach the database — dashboards then show
-> stale data. Always confirm `health/ready` returns OK before a real run.
+> **If the services are down or unhealthy**, some operational API reads log a
+> warning and fall back to CSV, which is easy to miss in a long log; dashboards
+> can then show stale data. This fallback is not universal: the initialize/hindcast
+> path hard-fails when API sync is enabled. Always confirm `health/ready` returns
+> OK before a real run.
 
 ---
 
