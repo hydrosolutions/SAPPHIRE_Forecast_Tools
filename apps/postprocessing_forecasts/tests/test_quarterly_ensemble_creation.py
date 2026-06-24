@@ -348,6 +348,33 @@ class TestQuarterlyEnsembleEdgeCases:
         assert "EM" not in models
         assert "Naive Mean" not in models
 
+    def test_preexisting_baseline_replaced_not_duplicated(self):
+        """Stored ensembles in the input are dropped, not re-emitted.
+
+        Operational generation must match the maintenance recalc: a source
+        that already contains EM/Naive Mean/Skilled Mean must not yield two
+        rows for the same key (which would violate the long_forecasts unique
+        constraint on write).
+        """
+        skill = _two_model_quarterly_skill()
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                # Pre-existing stored ensemble row with a stale value.
+                ("S1", 2025, 1, "Naive Mean", 999.0, 900, 905, 915, 999, 925, 935, 940),
+            ]
+        )
+
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+
+        key = ["code", "year", "quarter_in_year", "model_short"]
+        assert not result.duplicated(key).any()
+        nm = result[result["model_short"] == "Naive Mean"]
+        # One recomputed Naive Mean (mean of the two raw models), stale gone.
+        assert len(nm) == 1
+        assert np.isclose(nm.iloc[0]["forecasted_discharge"], 110.0)
+
 
 # ===================================================================
 # Seasonal ensemble creation

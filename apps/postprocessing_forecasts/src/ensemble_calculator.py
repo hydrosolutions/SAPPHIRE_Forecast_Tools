@@ -593,6 +593,14 @@ def _create_aggregated_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
+    # Drop any pre-existing aggregated ensembles so operational generation
+    # matches the maintenance recalc: regenerate EM / Naive Mean / Skilled Mean
+    # from the raw models rather than re-emitting stored copies, which would
+    # duplicate the long_forecasts unique key on write. Other ensembles
+    # (e.g. NE) are left untouched.
+    if "model_short" in joint.columns:
+        joint = joint[~joint["model_short"].isin(baselines)].copy()
+
     # Restrict grouping to columns actually present. Seasonal callers pass
     # `date` (one ensemble per issue date); date-less frames fall back to
     # period-level grouping unchanged.
