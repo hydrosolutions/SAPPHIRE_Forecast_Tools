@@ -266,3 +266,4 @@ doc/dev/review_checklist_server_20*.md
 doc/dev/server_commands_*.md
 doc/dev/lt_forecast_db_dump_*.md
 .claude/worktrees/
+/doc/plans/working/forecast_skill_eval_figures
