@@ -25,7 +25,7 @@ Three things go stale after upstream changes and must be refreshed in order:
 2. **The services database schema** — the DB-backed FastAPI services apply
    Alembic migrations at container startup (`alembic upgrade head`). Additive
    schema changes that ship with migrations apply in place when you rebuild/start
-   the services (`docker compose up -d --build`), so a volume drop and ~3 hour
+   the services from the repo root with `--env-file`, so a volume drop and ~3 hour
    re-import is not required for those. A full `reset_sapphire_db.sh` volume
    reset remains the conservative catch-all after a long gap or when migration
    state is uncertain.
@@ -88,13 +88,35 @@ healthy. Startup migrations usually handle additive schema changes; the reset
 below is the conservative catch-all after a long gap or uncertain migration
 state.
 
-```bash
-# Start the services if they aren't already up
-cd sapphire && docker compose up -d && cd ..
+> **Two different env files.** When no `--env-file` is given, Compose and the
+> reset script load `sapphire/.env` by default. That is the **services** env
+> (the keys listed in `sapphire/.env.example`), distinct from the apps/pipeline
+> data env (`.env_sandro_kghm`) you pass to `run_locally.sh`, unless your file
+> is a combined superset that also carries the `.env.example` keys. Point
+> `--env-file` at a file that contains the services keys. See
+> [`sapphire/README.md`](../../sapphire/README.md) for the full variable
+> walkthrough.
 
-# Conservative full reset: stop -> drop volumes -> rebuild -> start -> health-check -> data migrate -> verify
-bash bin/reset_sapphire_db.sh
+```bash
+# Start the API services (run from repo root). --env-file points at YOUR
+# services env file; -p sapphire pins the project so volume names are stable.
+# The dashboard (no arm64 image) and auth services are intentionally omitted.
+docker compose -f sapphire/docker-compose.yml --env-file /path/to/.env_sandro_kghm -p sapphire up -d \
+  preprocessing-db postprocessing-db user-db \
+  preprocessing-api postprocessing-api user-api api-gateway
+
+# Conservative full reset (run from repo root). Pass the same services env file.
+bash bin/reset_sapphire_db.sh --env-file /path/to/.env_sandro_kghm
 ```
+
+The reset script hard-fails fast if the env file is missing any required core
+service key from `sapphire/.env.example`. This happens before anything is
+stopped or dropped, so a bad env file costs nothing.
+
+Pinning `-p sapphire` makes volume naming deterministic and fixes the previous
+fragility of hardcoded volume names. Any volumes you previously created under a
+different `COMPOSE_PROJECT_NAME` are orphaned and need manual cleanup with
+`docker volume ls` / `docker volume rm`.
 
 Useful flags for `reset_sapphire_db.sh`:
 
@@ -201,8 +223,12 @@ for m in preprocessing_runoff preprocessing_gateway linear_regression \
 done
 
 # 2. Services up + DB reset
-cd sapphire && docker compose up -d && cd ..
-bash bin/reset_sapphire_db.sh
+#    --env-file points at YOUR services env (sapphire/.env.example keys).
+#    -p sapphire pins deterministic volume names; no dashboard or auth services.
+docker compose -f sapphire/docker-compose.yml --env-file /path/to/.env_sandro_kghm -p sapphire up -d \
+  preprocessing-db postprocessing-db user-db \
+  preprocessing-api postprocessing-api user-api api-gateway
+bash bin/reset_sapphire_db.sh --env-file /path/to/.env_sandro_kghm
 curl http://localhost:8000/health/ready
 
 # 3. Validate
