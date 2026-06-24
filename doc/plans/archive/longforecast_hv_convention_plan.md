@@ -358,10 +358,12 @@ inside a transaction, with a per-step scoped dump first.
    `UPDATE long_forecasts SET horizon_value=0 WHERE horizon_type='SEASON' AND horizon_value=1 AND extract(month from date)=4;`
    2,890 rows; **0** unique-key collisions with existing `SEASON hv0` (verified). Leaves the correct
    `SEASON hv1` March rows untouched.
-2. **Dataset B delete deprecated models** -- across all quarter buckets:
-   `DELETE FROM long_forecasts WHERE horizon_type='QUARTER' AND model_type NOT IN ('LR_BASE','LR_SM');`
-   ~41,225 rows. Safe for the current rolling product: in `hv1` the deprecated-model rows are **100%
-   January** (verified), so the Mar-Sep `LR_BASE`/`LR_SM` rolling product is untouched.
+2. **Dataset B deprecated-model cleanup (superseded SQL footgun -- do NOT run)** -- the old blanket
+   **do NOT run:** `DELETE FROM long_forecasts WHERE horizon_type='QUARTER' AND model_type NOT IN ('LR_BASE','LR_SM');`
+   was reviewed before P-PIPE regeneration and is unsafe after regenerated `ENSEMBLE_MEAN`,
+   `NAIVE_MEAN`, and `SKILLED_MEAN` rows exist. Re-derive old-signature-scoped cleanup predicates
+   post-regen per `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md`; keep SQL literals
+   uppercase (`ENSEMBLE_MEAN`, `LR_BASE`, `LR_SM`, `NAIVE_MEAN`, `SKILLED_MEAN`).
 3. **Dataset B re-stamp configured models** -- consolidate the LR quarter history into the correct
    Kyrgyz bucket:
    `UPDATE long_forecasts SET horizon_value=1 WHERE horizon_type='QUARTER' AND horizon_value IN (2,3,4) AND model_type IN ('LR_BASE','LR_SM');`

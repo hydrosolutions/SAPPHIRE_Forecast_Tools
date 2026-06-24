@@ -64,6 +64,11 @@ Use deployment-local sentinel codes selected by the operator:
 Replace these placeholders only in private operational notes or command history,
 not in committed documentation.
 
+**SQL literal rule:** SQL examples and ad-hoc SQL must use DB enum names, never
+API values: `ENSEMBLE_MEAN`, `LR_BASE`, `LR_SM`, `NAIVE_MEAN`,
+`SKILLED_MEAN`. Do not filter `model_type` with API values such as `EM` or
+`LR_Base`, or with lowercase `LR_SM` variants in SQL.
+
 ## Ordered Sequence
 
 ### 1. Merge and Deploy P-PIPE
@@ -101,9 +106,27 @@ not in committed documentation.
 
 Run both modes per deployment with `SAPPHIRE_RECALC_START_YEAR=2000`.
 
+Set the deployment env file path first:
+
+```bash
+export ENV_FILE_PATH=/data/<data_folder>/config/<env_file>
+```
+
+Backup first. `DB_BACKUP_DIR` must already exist before running the backup
+helper.
+
+```bash
+bash bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d "$DB_BACKUP_DIR" -r 30
+```
+
 Direct runtime form:
 
 ```bash
+set -a
+. "$ENV_FILE_PATH"
+set +a
+export ieasyhydroforecast_env_file_path="$ENV_FILE_PATH"
+
 SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=QUARTERLY uv run recalculate_skill_metrics.py
 SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=SEASONAL uv run recalculate_skill_metrics.py
 ```
@@ -112,7 +135,7 @@ Containerized form (same path the cron uses; loops MONTHLY/QUARTERLY/SEASONAL, s
 one run covers both long-term modes):
 
 ```bash
-SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh
+SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh "$ENV_FILE_PATH"
 ```
 
 This driver sources `bin/utils/run_skill_metrics_recalc.sh` and calls its
@@ -143,6 +166,15 @@ Tajik expectations:
 - Quarter rows exist at `horizon_type='QUARTER'` and `horizon_value=0`.
 - Seasonal rows exist at `horizon_type='SEASON'` and `horizon_value=0`.
 
+Run SQL through the postprocessing DB container:
+
+```bash
+docker exec -i sapphire-postprocessing-db psql -U postgres -d postprocessing_db
+```
+
+If a deployment intentionally uses a different DB user, confirm that privately
+before substituting it; do not commit connection details.
+
 Aggregate query template:
 
 ```sql
@@ -164,13 +196,53 @@ ORDER BY horizon_type, horizon_value, model_type;
 Compare the aggregate result against the deployment's expected full-history date
 range. Do not publish row-level data or discharge values.
 
+Expected bucket presence query template (Kyrgyz values shown; for Tajik replace
+the `expected_buckets` values with `('QUARTER',0),('SEASON',0)`):
+
+```sql
+WITH expected_buckets(horizon_type, horizon_value) AS (
+  VALUES
+    ('QUARTER', 1),
+    ('SEASON', 3),
+    ('SEASON', 2),
+    ('SEASON', 1),
+    ('SEASON', 0)
+),
+actual AS (
+  SELECT
+    horizon_type,
+    horizon_value,
+    COUNT(*) AS row_count
+  FROM long_forecasts
+  WHERE code = 'KG_SENTINEL_CODE'
+    AND model_type IN ('ENSEMBLE_MEAN', 'NAIVE_MEAN', 'SKILLED_MEAN')
+    AND horizon_type IN ('QUARTER', 'SEASON')
+  GROUP BY horizon_type, horizon_value
+)
+SELECT
+  e.horizon_type,
+  e.horizon_value,
+  COALESCE(a.row_count, 0) AS row_count
+FROM expected_buckets e
+LEFT JOIN actual a USING (horizon_type, horizon_value)
+ORDER BY e.horizon_type, e.horizon_value;
+```
+
+**Per-bucket acceptance (quantified — do not accept "looks populated"):** every
+expected bucket must have `row_count > 0`; **and** from the aggregate query
+above, `MIN(date) <= <SAPPHIRE_RECALC_START_YEAR>-01-01` and
+`MAX(date) >= <current operational issue date>` (the latest issue date from the
+deployment's most recent successful operational long-term run). A bucket with
+`row_count = 0`, or coverage that does not span this window, **fails** — a
+partial-history recalc must not pass to cleanup.
+
 Also confirm that EM forecasts were persisted (not just EM skill) and that each
 EM equals the clean two-model mean at its exact key. With the PR #383 fix, every
 recalc-written EM (composition populated) must satisfy
 `q = mean(LR_BASE.q, LR_SM.q)` joined on
 `(horizon_type, horizon_value, code, date, valid_from, valid_to)`. Expect
-`mismatch = 0`; for season this holds **per issue date** (one EM row per date,
-not one blended row per lead).
+`em_pairs > 0 AND mismatch = 0`; for season this holds **per issue date** (one
+EM row per date, not one blended row per lead).
 
 ```sql
 WITH j AS (
@@ -196,6 +268,8 @@ FROM j;
 A non-zero `mismatch` on composition-populated rows means the deployed image is
 stale (pre-fix). Pre-existing rows with empty `composition` are old-convention
 artifacts and are excluded here; they are handled by the cleanup gate below.
+The cleanup gate requires `em_pairs > 0 AND mismatch = 0`; `mismatch = 0` alone
+is not sufficient because it can also mean the join found no EM/LR pairs.
 
 ### 4. Cleanup Gate
 

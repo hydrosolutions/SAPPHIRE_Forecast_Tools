@@ -101,25 +101,37 @@ Full image-deploy mechanics: [`update_deployment_checklist.md`](update_deploymen
 
 ### Phase 2 — Env / config preflight  ⛔ STOP GATE
 
-The recalc step (Phase 3) imports the long-term horizon resolver, which **raises
-and aborts** if any of its three env vars is unset or empty. Verify all of the
-following on the server **before** Phase 3.
+The recalc step (Phase 3) imports the long-term horizon resolver for the
+SEASONAL/ALL branch, which **raises and aborts** if any resolver env var is unset
+or empty. `ieasyhydroforecast_ml_long_term_supported_modes` gates SEASONAL/ALL
+only; QUARTERLY does not reach the resolver. Verify all of the following on the
+server **before** Phase 3.
 
-**Resolver env vars** (`apps/iEasyHydroForecast/long_term_horizon_resolver.py`):
+**Required recalc / resolver env vars**:
 
 | Env var | Holds |
 |---------|-------|
+| `ieasyhydroforecast_env_file_path` | deployment `.env` file path loaded by direct-form recalc |
 | `ieasyforecast_configuration_path` | config root directory |
 | `ieasyhydroforecast_ml_long_term_configuration` | sub-dir with the long-term config JSONs |
-| `ieasyhydroforecast_ml_long_term_supported_modes` | comma-separated modes (e.g. `quarter,seasonal_january,…`) |
+| `ieasyhydroforecast_ml_long_term_supported_modes` | comma-separated modes for SEASONAL/ALL resolver use (e.g. `quarter,seasonal_january,…`) |
 
 ```bash
-# all three must print a non-empty value:
-for v in ieasyforecast_configuration_path \
-         ieasyhydroforecast_ml_long_term_configuration \
-         ieasyhydroforecast_ml_long_term_supported_modes; do
-  printf '%s=%s\n' "$v" "$(printenv "$v")"
-done
+# Verify the values the CONTAINER will see: load the deployment .env first, then
+# check. A bare printenv of your interactive shell would miss .env-only vars
+# (the recalc loads this same .env via read_configuration / load_environment).
+ENV_FILE_PATH=<deployment .env>
+(
+  set -a; . "$ENV_FILE_PATH"; set +a
+  export ieasyhydroforecast_env_file_path="$ENV_FILE_PATH"
+  for v in ieasyhydroforecast_env_file_path \
+           ieasyforecast_configuration_path \
+           ieasyhydroforecast_ml_long_term_configuration \
+           ieasyhydroforecast_ml_long_term_supported_modes; do
+    [ -n "$(printenv "$v")" ] || echo "MISSING $v"
+    printf '%s=%s\n' "$v" "$(printenv "$v")"
+  done
+)
 ```
 
 **Config-lead sanity** — confirm each mode JSON carries the expected
@@ -157,19 +169,40 @@ One-time full-history recalc for **both** long-term modes. This persists correct
 per-issue/per-lead EM and skill over all history. (The scheduled bimonthly recalc
 also self-heals going forward; this one-time run lands it immediately.)
 
+**Backup first.** `DB_BACKUP_DIR` must already exist before running the backup
+helper.
+
+```bash
+bash bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d "$DB_BACKUP_DIR" -r 30
+```
+
+Run aggregate SQL checks through the postprocessing DB container:
+
+```bash
+docker exec -i sapphire-postprocessing-db psql -U postgres -d postprocessing_db
+```
+
+If a deployment intentionally uses a different DB user, confirm that privately
+before substituting it; do not commit connection details.
+
 **Containerized form (recommended on servers — same path the cron uses).** The
 maintained wrapper runs the recalc in-container and forwards
 `SAPPHIRE_RECALC_START_YEAR`. It loops MONTHLY/QUARTERLY/SEASONAL, so one run
 covers both long-term modes (the extra MONTHLY pass is harmless):
 
 ```bash
-SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh
+SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh "$ENV_FILE_PATH"
 ```
 
 **Direct form (one mode at a time, runs the script on the host).** Only this form
 selects the mode via `SAPPHIRE_PREDICTION_MODE`:
 
 ```bash
+set -a
+. "$ENV_FILE_PATH"
+set +a
+export ieasyhydroforecast_env_file_path="$ENV_FILE_PATH"
+
 SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=QUARTERLY uv run recalculate_skill_metrics.py
 SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=SEASONAL  uv run recalculate_skill_metrics.py
 ```
@@ -195,14 +228,32 @@ Detailed recalc rationale: [`ppipe_ensemble_hv_deploy_runbook.md`](ppipe_ensembl
 Run the **aggregate-only** verification queries from
 [`ppipe_ensemble_hv_deploy_runbook.md`](ppipe_ensemble_hv_deploy_runbook.md)
 (§ verification). Use sentinel codes (e.g. `19999`) in any ad-hoc query — never
-paste real station codes. Confirm:
+paste real station codes. Reference the EM query there; do not fork a second
+copy here.
 
-1. **Buckets exist for this deployment:**
+**SQL literal rule:** SQL examples and ad-hoc SQL must use DB enum names, never
+API values: `ENSEMBLE_MEAN`, `LR_BASE`, `LR_SM`, `NAIVE_MEAN`,
+`SKILLED_MEAN`. Do not filter `model_type` with API values such as `EM` or
+`LR_Base`, or with lowercase `LR_SM` variants in SQL.
+
+Confirm:
+
+1. **Buckets exist and span full history for this deployment** (use the
+   bucket-presence + aggregate queries in the P-PIPE runbook):
    - taj: `QUARTER hv=0`, `SEASON hv=0`
    - kyg: `QUARTER hv=1`, `SEASON hv ∈ {3,2,1,0}`
-2. **`EM = mean(LR_BASE, LR_SM)`** join check returns `mismatch = 0` (holds
-   per issue date for season). A non-zero mismatch on composition-populated rows
-   means the deployed image is still the pre-fix one — revisit Phase 1.
+
+   Each expected bucket must have `row_count > 0`, **and** from the aggregate
+   query `MIN(date) ≤ <SAPPHIRE_RECALC_START_YEAR>-01-01` and
+   `MAX(date) ≥ <current operational issue date>` (latest issue date from the
+   deployment's most recent successful operational long-term run). A missing
+   bucket or a date range that doesn't span this window **fails** the gate — a
+   partial-history recalc must not pass.
+2. **`EM = mean(LR_BASE, LR_SM)`** join check returns
+   `em_pairs > 0 AND mismatch = 0` (holds per issue date for season). A non-zero
+   mismatch on composition-populated rows means the deployed image is still the
+   pre-fix one — revisit Phase 1. `mismatch = 0` alone is not sufficient; it can
+   also mean the join found no EM/LR pairs.
    *(Model labels in the DB are uppercase: `LR_BASE`, `LR_SM`, `ENSEMBLE_MEAN`.)*
 3. **Seasonal bulletin renders** (change d): in the dashboard, generate a seasonal
    bulletin and confirm the Excel file is written (this exercises
