@@ -249,6 +249,11 @@ temp_luigi.cfg
 
 /apps/logs
 
+# Forecast skill evaluation artifacts (generated run output; contain operational
+# data — station codes, forecast/observed discharge values — and are large,
+# reproducible outputs). Never commit.
+apps/forecast_skill_eval/artifacts/
+
 # Sensitive deployment docs (contain server IPs and connection details)
 doc/prod/ssh_tunnel_tajhm_ieh_hf.md
 doc/prod/ssh_tunnel_tajhm_handover.md
