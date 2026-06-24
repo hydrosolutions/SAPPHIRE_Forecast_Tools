@@ -1,11 +1,16 @@
 import calendar
+
 import pandas as pd
 import panel as pn
-
-from src.gettext_config import _
-from dashboard.logger import setup_logger
-from dashboard.utils import hydrate_month_hydrograph_stats, hydrate_season_hydrograph_stats, rehydrate_sites_hydrograph_stats
 from src import db  # _read_data, _save_data, _delete_data live here
+from src.gettext_config import _
+
+from dashboard.logger import setup_logger
+from dashboard.utils import (
+    hydrate_month_hydrograph_stats,
+    hydrate_season_hydrograph_stats,
+    rehydrate_sites_hydrograph_stats,
+)
 
 logger = setup_logger()
 
@@ -165,7 +170,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 hydrate_month_hydrograph_stats(site, forecast_horizon, db)
                 site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
                 if 'вдхр' in (site.punkt_name_ru or ''):
-                    q_df = db.get_long_forecasts_quarter(site.code, horizon_value=1)
+                    q_df = db.get_long_forecasts_quarter(site.code)
                     if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
                         filtered_q = q_df[q_df["code"] == site.code]
                         if not filtered_q.empty:
@@ -183,7 +188,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 else:
                     site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
             elif horizon_type == 'season':
-                s_df = db.get_long_forecasts_season(site.code)
+                s_df = db.get_long_forecasts_season(site.code, horizon_value=forecast_horizon)
                 if (
                     not s_df.empty
                     and "code" in s_df.columns
@@ -390,7 +395,7 @@ class BulletinManager:
             )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_site.code, horizon_value=1)
+                q_df = db.get_long_forecasts_quarter(selected_site.code)
                 if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
                     filtered_q = q_df[q_df["code"] == selected_site.code]
                     if not filtered_q.empty:
@@ -492,7 +497,7 @@ class BulletinManager:
             )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_site.code, horizon_value=1)
+                q_df = db.get_long_forecasts_quarter(selected_site.code)
                 if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
                     filtered_q = q_df[q_df["code"] == selected_site.code]
                     if not filtered_q.empty:

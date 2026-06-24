@@ -161,6 +161,22 @@ def _setup_mocks(mock_data, mock_skill):
     }
 
 
+def _set_long_term_env(monkeypatch, tmp_path, modes):
+    config_dir = tmp_path / "long_term"
+    config_dir.mkdir()
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "long_term")
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", ",".join(modes))
+    for name, lead in {
+        "seasonal_january": 3,
+        "seasonal_february": 2,
+        "seasonal_march": 1,
+        "seasonal_april": 0,
+    }.items():
+        if name in modes:
+            (config_dir / f"{name}.json").write_text(f'{{"operational_month_lead_time": {lead}}}')
+
+
 class TestRecalcWorkflow:
     """Tests for the yearly recalculation entry point."""
 
@@ -381,6 +397,7 @@ class TestRecalcMonthly:
                 spec.loader.exec_module(module)
 
                 module._read_station_codes = MagicMock(return_value=["10001"])
+                module._supported_seasonal_issue_leads = MagicMock(return_value=[])
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.recalculate_skill_metrics()
@@ -528,3 +545,93 @@ class TestRecalcMonthly:
                 # Should still exit 0 (empty is not an error)
                 assert exc_info.value.code == 0
                 mocks["skill_metrics"].calculate_monthly_skill_metrics.assert_called_once()
+
+
+class TestRecalcSeasonalLeadSelection:
+    def test_seasonal_recalc_reads_each_supported_issue_lead(
+        self, mock_data, mock_skill, monkeypatch, tmp_path
+    ):
+        _set_long_term_env(
+            monkeypatch,
+            tmp_path,
+            [
+                "seasonal_january",
+                "seasonal_february",
+                "seasonal_march",
+                "seasonal_april",
+            ],
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "SEASONAL",
+                "SAPPHIRE_RECALC_START_YEAR": "2024",
+                "SAPPHIRE_RECALC_END_YEAR": "2024",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["data_reader"].read_seasonal_observations.return_value = pd.DataFrame(
+                    {"code": ["10001"], "season_year": [2024], "discharge_avg": [10.0]}
+                )
+                mocks["data_reader"].read_seasonal_forecasts.side_effect = [
+                    pd.DataFrame(
+                        {
+                            "code": ["10001"],
+                            "season_year": [2024],
+                            "season_in_year": [lead],
+                            "model_short": ["LR"],
+                            "q50": [10.0],
+                        }
+                    )
+                    for lead in [3, 2, 1, 0]
+                ]
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+                calls = mocks["data_reader"].read_seasonal_forecasts.call_args_list
+                assert [call.kwargs["horizon_value"] for call in calls] == [3, 2, 1, 0]
+
+    def test_seasonal_recalc_reads_only_april_issue_for_single_issue_deployment(
+        self, mock_data, mock_skill, monkeypatch, tmp_path
+    ):
+        _set_long_term_env(monkeypatch, tmp_path, ["seasonal_april"])
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "SEASONAL",
+                "SAPPHIRE_RECALC_START_YEAR": "2024",
+                "SAPPHIRE_RECALC_END_YEAR": "2024",
+            },
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["data_reader"].read_seasonal_observations.return_value = pd.DataFrame(
+                    {"code": ["10001"], "season_year": [2024], "discharge_avg": [10.0]}
+                )
+                mocks["data_reader"].read_seasonal_forecasts.return_value = pd.DataFrame(
+                    {
+                        "code": ["10001"],
+                        "season_year": [2024],
+                        "season_in_year": [0],
+                        "model_short": ["LR"],
+                        "q50": [10.0],
+                    }
+                )
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+                calls = mocks["data_reader"].read_seasonal_forecasts.call_args_list
+                assert [call.kwargs["horizon_value"] for call in calls] == [0]

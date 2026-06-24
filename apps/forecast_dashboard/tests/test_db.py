@@ -3,6 +3,7 @@
 Tests pure helpers directly, and API-calling functions with mocked HTTP.
 """
 
+import json
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -10,8 +11,35 @@ import numpy as np
 import pandas as pd
 import pytest
 import requests
-from src import db
-from src import vizualization
+from src import db, vizualization
+
+
+@pytest.fixture(autouse=True)
+def _long_term_resolver_env(monkeypatch, tmp_path):
+    config_dir = tmp_path / "long_term_configs"
+    config_dir.mkdir()
+    leads = {
+        "quarter": 1,
+        "seasonal_january": 3,
+        "seasonal_february": 2,
+        "seasonal_march": 1,
+        "seasonal_april": 0,
+    }
+    for name, lead in leads.items():
+        (config_dir / f"{name}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead})
+        )
+
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_configuration",
+        "long_term_configs",
+    )
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes",
+        ",".join(leads),
+    )
+    return config_dir
 
 # ── _convert_na_to_nan ─────────────────────────────────────────────────────
 
@@ -883,6 +911,36 @@ _SEASON_FORECAST_RECORD = {
 
 
 class TestGetLongForecastsQuarter:
+    @pytest.mark.parametrize(("lead", "expected_name"), [(0, "tajik"), (1, "kyrgyz")])
+    def test_default_horizon_value_comes_from_deployment_config(
+        self, lead, expected_name, monkeypatch, tmp_path
+    ):
+        config_dir = tmp_path / expected_name
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": lead})
+        )
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_configuration",
+            expected_name,
+        )
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes",
+            "quarter",
+        )
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db.get_long_forecasts_quarter(station="99001")
+
+        assert seen_params[0]["horizon_value"] == lead
+
     def test_renames_and_latest_dedup(self, monkeypatch):
         """Two rows same (code, model_short) — only latest date survives."""
         older = {**_QUARTER_FORECAST_RECORD, "date": "2026-03-01"}
@@ -961,16 +1019,19 @@ class TestGetLongForecastsSeason:
         assert result.empty
         assert "forecasted_discharge" in result.columns
 
-    def test_season_in_year_is_single_bucket(self, monkeypatch):
+    def test_season_in_year_comes_from_api_horizon_value(self, monkeypatch):
         def mock_get(url, **kwargs):
-            return _make_mock_response([_SEASON_FORECAST_RECORD_19999])
+            assert kwargs["params"]["horizon_value"] == 0
+            return _make_mock_response(
+                [{**_SEASON_FORECAST_RECORD_19999, "horizon_value": 0}]
+            )
 
         monkeypatch.setattr(requests, "get", mock_get)
 
-        result = db.get_long_forecasts_season(station="19999")
+        result = db.get_long_forecasts_season(station="19999", horizon_value=0)
 
         assert "season_in_year" in result.columns
-        assert result["season_in_year"].iloc[0] == 1
+        assert result["season_in_year"].iloc[0] == 0
 
     def test_empty_api_response_declares_season_key(self, monkeypatch):
         def mock_get(url, **kwargs):
@@ -1228,6 +1289,71 @@ class TestGetDataSeason:
         assert base["delta"] == 1.0
         assert sm["delta"] == 3.0
         assert sm["sdivsigma"] == 3.5
+
+    def test_all_four_season_leads_retain_their_own_skill(self, monkeypatch):
+        """Forecast rows for Jan/Feb/Mar/Apr issues keep per-lead skill metrics."""
+        leads = [3, 2, 1, 0]
+        forecasts = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "date": pd.Timestamp(f"2026-0{4 - lead}-22"),
+                    "Date": pd.Timestamp(f"2026-0{4 - lead}-22"),
+                    "year": 2026,
+                    "model_short": "LR_Base",
+                    "model_long": "Linear regression base",
+                    "forecasted_discharge": 300.0 + lead,
+                    "flag": 0,
+                    "Q5": 270.0,
+                    "Q25": 280.0,
+                    "Q75": 320.0,
+                    "Q95": 330.0,
+                    "E[Q]": 300.0,
+                    "valid_from": pd.Timestamp("2026-04-01"),
+                    "month_in_year": 4,
+                    "season_in_year": lead,
+                }
+                for lead in leads
+            ]
+        )
+        skills = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "season_in_year": lead,
+                    "model_short": "LR_Base",
+                    "model_long": "Linear regression base",
+                    "delta": float(lead) + 0.25,
+                    "sdivsigma": float(lead) + 0.5,
+                    "mae": float(lead) + 0.75,
+                    "accuracy": 90.0 + lead,
+                }
+                for lead in leads
+            ]
+        )
+
+        monkeypatch.setattr("src.db.get_long_forecasts_season", lambda station: forecasts)
+        monkeypatch.setattr("src.db.get_forecast_stats", lambda horizon, station: skills)
+        monkeypatch.setattr("src.db.get_hydrograph_day_all", lambda station: pd.DataFrame())
+        monkeypatch.setattr("src.db.get_rain", lambda station: pd.DataFrame())
+        monkeypatch.setattr("src.db.get_temp", lambda station: pd.DataFrame())
+        monkeypatch.setattr("src.db.get_snow_data", lambda *args, **kwargs: {})
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "season",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        by_lead = data["forecasts_all"].set_index("season_in_year")
+        assert sorted(by_lead.index.tolist()) == [0, 1, 2, 3]
+        for lead in leads:
+            row = by_lead.loc[lead]
+            assert row["delta"] == float(lead) + 0.25
+            assert row["sdivsigma"] == float(lead) + 0.5
+            assert row["mae"] == float(lead) + 0.75
+            assert row["accuracy"] == 90.0 + lead
 
     def test_no_skill_metrics_still_returns_forecasts(self, monkeypatch):
         """Empty season skill metrics do not block forecast rows."""

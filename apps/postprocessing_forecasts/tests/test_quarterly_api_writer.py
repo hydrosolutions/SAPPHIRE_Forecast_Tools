@@ -3,6 +3,7 @@
 Phase 4b Step 5.
 """
 
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,17 @@ from src.api_writer import (
     _write_seasonal_ensemble_to_api,
     _write_skill_metrics_to_api,
 )
+
+
+def _write_quarter_config(tmp_path, monkeypatch, lead):
+    config_dir = tmp_path / "long_term"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "quarter.json").write_text(json.dumps({"operational_month_lead_time": lead}))
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyforecast_config_file_station_selection", "missing.json")
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "long_term")
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
 
 # ===================================================================
 # Horizon mapping
@@ -146,6 +158,41 @@ class TestSkillMetricsQuarterSeason:
         records = self.mock_client.write_skill_metrics.call_args[0][0]
         assert records[0]["date"] == "2025-04-01"
 
+    def test_season_skill_records_keep_each_lead(self, monkeypatch):
+        """Seasonal skill uses season_in_year as API horizon_in_year."""
+        monkeypatch.setenv("SAPPHIRE_SEASON_START_MONTH", "4")
+        monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "9")
+        self.mock_client.write_skill_metrics.return_value = 4
+        data = pd.DataFrame(
+            {
+                "season_in_year": [3, 2, 1, 0],
+                "code": ["PP3_SENTINEL"] * 4,
+                "model_short": ["LR"] * 4,
+                "sdivsigma": [1.5, 1.0, 0.5, 0.0],
+                "nse": [-2.3, -0.5, 0.6, 1.0],
+                "delta": [5.0] * 4,
+                "accuracy": [0.0, 0.0, 0.0, 1.0],
+                "mae": [30.0, 20.0, 10.0, 0.0],
+                "n_pairs": [3] * 4,
+            }
+        )
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_skill_metrics_to_api(data, "season", 2025)
+
+        assert result is True
+        records = self.mock_client.write_skill_metrics.call_args[0][0]
+        assert len(records) == 4
+        assert {record["horizon_in_year"] for record in records} == {0, 1, 2, 3}
+        assert {record["date"] for record in records} == {"2025-04-01"}
+        upsert_keys = {
+            (record["code"], record["model_type"], record["date"], record["horizon_in_year"])
+            for record in records
+        }
+        assert len(upsert_keys) == 4
+
 
 # ===================================================================
 # Quarterly ensemble writer
@@ -154,8 +201,9 @@ class TestSkillMetricsQuarterSeason:
 
 class TestQuarterlyEnsembleWriter:
     @pytest.fixture(autouse=True)
-    def _mock_api(self, monkeypatch):
+    def _mock_api(self, monkeypatch, tmp_path):
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        _write_quarter_config(tmp_path, monkeypatch, lead=1)
         self.mock_client = MagicMock()
         self.mock_client.readiness_check.return_value = True
         self.mock_client.write_long_forecasts.return_value = 2
@@ -199,7 +247,35 @@ class TestQuarterlyEnsembleWriter:
         records = self.mock_client.write_long_forecasts.call_args[0][0]
         assert records[0]["valid_from"] == "2025-04-01"
         assert records[0]["valid_to"] == "2025-06-30"
-        assert records[0]["horizon_value"] == 2
+        assert records[0]["horizon_value"] == 1
+
+    @pytest.mark.parametrize("lead", [1, 0])
+    def test_horizon_value_uses_resolver_config_lead(self, monkeypatch, tmp_path, lead):
+        _write_quarter_config(tmp_path, monkeypatch, lead=lead)
+        data = pd.DataFrame(
+            {
+                "code": ["PP4_Q_SENTINEL", "PP4_Q_SENTINEL"],
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 2],
+                "model_short": ["EM", "EM"],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+        self.mock_client.write_long_forecasts.return_value = 2
+
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_quarterly_ensemble_to_api(data)
+
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert {record["horizon_value"] for record in records} == {lead}
+        assert {record["valid_from"] for record in records} == {
+            "2025-01-01",
+            "2025-04-01",
+        }
 
     def test_empty_data_returns_false(self):
         result = _write_quarterly_ensemble_to_api(pd.DataFrame())
@@ -240,6 +316,48 @@ class TestSeasonalEnsembleWriter:
         records = self.mock_client.write_long_forecasts.call_args[0][0]
         assert records[0]["horizon_type"] == "season"
         assert records[0]["horizon_value"] == 1
+
+    def test_four_issue_rows_keep_lead_date_and_target_season(self):
+        data = pd.DataFrame(
+            {
+                "code": ["PP4_S_SENTINEL"] * 4,
+                "season_year": [2025] * 4,
+                "season_in_year": [3, 2, 1, 0],
+                "date": [
+                    "2025-01-01",
+                    "2025-02-01",
+                    "2025-03-01",
+                    "2025-04-01",
+                ],
+                "model_short": ["EM", "Naive Mean", "Skilled Mean", "EM"],
+                "forecasted_discharge": [100.0, 110.0, 120.0, 130.0],
+            }
+        )
+        self.mock_client.write_long_forecasts.return_value = 4
+
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_seasonal_ensemble_to_api(data)
+
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        natural_keys = {
+            (
+                record["horizon_value"],
+                record["date"],
+                record["valid_from"],
+                record["valid_to"],
+            )
+            for record in records
+        }
+        assert natural_keys == {
+            (3, "2025-01-01", "2025-04-01", "2025-09-30"),
+            (2, "2025-02-01", "2025-04-01", "2025-09-30"),
+            (1, "2025-03-01", "2025-04-01", "2025-09-30"),
+            (0, "2025-04-01", "2025-04-01", "2025-09-30"),
+        }
 
     def test_valid_from_valid_to_default_season(self):
         """Default season Apr-Sep → valid_from=Apr 1, valid_to=Sep 30."""
