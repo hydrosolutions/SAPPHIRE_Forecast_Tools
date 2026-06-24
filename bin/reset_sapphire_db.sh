@@ -7,9 +7,9 @@
 # Orchestrates a full DB reset cycle: stop services -> destroy volumes ->
 # rebuild images -> start services -> wait for health -> run data migration.
 #
-# Since SAPPHIRE services use Base.metadata.create_all() (not Alembic),
-# schema changes to existing tables require destroying the DB volumes and
-# re-creating from scratch.
+# SAPPHIRE services manage schema with Alembic migrations at container startup.
+# This script is a conservative full reset for long gaps, uncertain migration
+# state, or when you want to recreate volumes and re-run the CSV data import.
 #
 # Usage:
 #   bash bin/reset_sapphire_db.sh                       # Full reset (both DBs)
@@ -17,12 +17,14 @@
 #   bash bin/reset_sapphire_db.sh --preprocessing-only  # Preprocessing DB only
 #   bash bin/reset_sapphire_db.sh --skip-migration      # Reset DB, skip import
 #   bash bin/reset_sapphire_db.sh --skip-rebuild        # Skip docker build
+#   bash bin/reset_sapphire_db.sh --env-file PATH       # Use alternate env file
 #   bash bin/reset_sapphire_db.sh -y                    # Skip confirmation
 #
 # Prerequisites:
 #   - Docker daemon running
 #   - Run from repository root (parent of sapphire/)
 #   - docker-compose.yml has correct bind-mount paths for CSV data
+#   - Env file contains all required core service keys (see sapphire/.env.example)
 # =============================================================================
 
 set -euo pipefail
@@ -42,7 +44,10 @@ NC='\033[0m'
 # ---------------------------------------------------------------------------
 COMPOSE_DIR="sapphire"
 COMPOSE_FILE="${COMPOSE_DIR}/docker-compose.yml"
+ENV_FILE="${COMPOSE_DIR}/.env"
 HEALTH_URL="http://localhost:8000/health/ready"
+PREPROCESSING_READY_URL="http://localhost:8002/health/ready"
+POSTPROCESSING_READY_URL="http://localhost:8003/health/ready"
 HEALTH_TIMEOUT=120  # seconds
 
 # Container names
@@ -53,12 +58,45 @@ POSTPROCESSING_API="sapphire-postprocessing-api"
 PREPROCESSING_VOL="sapphire_preprocessing-data"
 POSTPROCESSING_VOL="sapphire_postprocessing-data"
 
+# Services started by reset (intentionally excludes dashboard, auth-api, auth-db)
+START_SERVICES=(
+    "preprocessing-db"
+    "postprocessing-db"
+    "user-db"
+    "preprocessing-api"
+    "postprocessing-api"
+    "user-api"
+    "api-gateway"
+)
+
+REQUIRED_ENV_KEYS=(
+    "POSTGRES_USER"
+    "POSTGRES_PASSWORD"
+    "PREPROCESSING_DB"
+    "POSTPROCESSING_DB"
+    "USER_DB"
+    "AUTH_DB"
+    "PREPROCESSING_DATABASE_URL"
+    "POSTPROCESSING_DATABASE_URL"
+    "USER_DATABASE_URL"
+    "AUTH_DATABASE_URL"
+    "JWT_SECRET_KEY"
+    "PREPROCESSING_API_URL"
+    "POSTPROCESSING_API_URL"
+    "USER_API_URL"
+    "AUTH_API_URL"
+    "INTERMEDIATE_DATA_PATH"
+    "CONFIG_PATH"
+    "CONFIG_FOLDER"
+)
+
 # Flags
 PREPROCESSING_ONLY=false
 POSTPROCESSING_ONLY=false
 SKIP_MIGRATION=false
 SKIP_REBUILD=false
 AUTO_YES=false
+MIGRATION_FAILED=false
 
 # Phase tracking
 PHASE_RESULTS=()
@@ -115,6 +153,10 @@ record_phase() {
     PHASE_RESULTS+=("${status}|${phase}")
 }
 
+compose_cmd() {
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" -p sapphire "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Precondition checks
 # ---------------------------------------------------------------------------
@@ -136,6 +178,76 @@ check_repo_root() {
     log OK "Repository root detected"
 }
 
+env_key_has_value() {
+    local key="$1"
+    awk -v wanted="$key" '
+        /^[[:space:]]*(#|$)/ { next }
+        {
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            sub(/^export[[:space:]]+/, "", line)
+            if (line !~ /=/) {
+                next
+            }
+            name = line
+            sub(/=.*/, "", name)
+            sub(/[[:space:]]+$/, "", name)
+            if (name != wanted) {
+                next
+            }
+            value = line
+            sub(/^[^=]*=/, "", value)
+            sub(/^[[:space:]]+/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+            if (value !~ /^#/ && length(value) > 0) {
+                found = 1
+            }
+        }
+        END { exit found ? 0 : 1 }
+    ' "${ENV_FILE}"
+}
+
+check_required_env() {
+    if [ ! -f "${ENV_FILE}" ]; then
+        log ERROR "Env file not found: ${ENV_FILE}"
+        log ERROR "Create it from sapphire/.env.example or pass --env-file PATH."
+        exit 1
+    fi
+
+    local missing=()
+    local key
+    for key in "${REQUIRED_ENV_KEYS[@]}"; do
+        if ! env_key_has_value "$key"; then
+            missing+=("$key")
+        fi
+    done
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        log ERROR "Required env keys are missing or empty in ${ENV_FILE}:"
+        for key in "${missing[@]}"; do
+            log ERROR "  - ${key}"
+        done
+        log ERROR "Populate the core service keys from sapphire/.env.example."
+        exit 1
+    fi
+
+    log OK "Required env keys present in ${ENV_FILE}"
+}
+
+check_compose_preflight() {
+    banner "Preflight Checks"
+
+    check_required_env
+
+    log INFO "Validating Compose config for core services..."
+    if compose_cmd config preprocessing-db postprocessing-db user-db api-gateway --quiet; then
+        log OK "Compose config valid for core services"
+    else
+        log ERROR "Compose config validation failed for core services"
+        exit 1
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Phase 1: Stop services
 # ---------------------------------------------------------------------------
@@ -144,7 +256,7 @@ phase_stop() {
     banner "Phase 1: Stop Services"
 
     log INFO "Stopping all SAPPHIRE services..."
-    if docker compose -f "${COMPOSE_FILE}" down 2>&1 | while IFS= read -r line; do
+    if compose_cmd down 2>&1 | while IFS= read -r line; do
         log INFO "  ${line}"
     done; then
         log OK "Services stopped"
@@ -216,7 +328,7 @@ phase_rebuild() {
     local start elapsed
     start=$(get_timestamp)
 
-    if docker compose -f "${COMPOSE_FILE}" build --no-cache "${services[@]}" 2>&1 | \
+    if compose_cmd build --no-cache "${services[@]}" 2>&1 | \
         while IFS= read -r line; do
             # Show only key lines to avoid flooding output
             case "$line" in
@@ -243,8 +355,8 @@ phase_rebuild() {
 phase_start() {
     banner "Phase 4: Start Services"
 
-    log INFO "Starting services..."
-    if docker compose -f "${COMPOSE_FILE}" up -d 2>&1 | while IFS= read -r line; do
+    log INFO "Starting services: ${START_SERVICES[*]}"
+    if compose_cmd up -d "${START_SERVICES[@]}" 2>&1 | while IFS= read -r line; do
         log INFO "  ${line}"
     done; then
         log OK "Services started"
@@ -263,7 +375,33 @@ phase_start() {
 phase_health() {
     banner "Phase 5: Health Check"
 
-    log INFO "Waiting for ${HEALTH_URL} (timeout: ${HEALTH_TIMEOUT}s)..."
+    local any_failed=false
+
+    if [ "$POSTPROCESSING_ONLY" != true ]; then
+        if ! wait_for_ready "${PREPROCESSING_READY_URL}" "preprocessing API"; then
+            any_failed=true
+        fi
+    fi
+
+    if [ "$PREPROCESSING_ONLY" != true ]; then
+        if ! wait_for_ready "${POSTPROCESSING_READY_URL}" "postprocessing API"; then
+            any_failed=true
+        fi
+    fi
+
+    if [ "$any_failed" = true ]; then
+        record_phase "Health check" "FAIL"
+        return 1
+    fi
+
+    record_phase "Health check" "PASS"
+}
+
+wait_for_ready() {
+    local url="$1"
+    local description="$2"
+
+    log INFO "Waiting for ${description} readiness at ${url} (timeout: ${HEALTH_TIMEOUT}s)..."
 
     local start elapsed
     start=$(get_timestamp)
@@ -271,21 +409,19 @@ phase_health() {
     while true; do
         elapsed=$(( $(get_timestamp) - start ))
         if (( elapsed >= HEALTH_TIMEOUT )); then
-            log ERROR "Health check timed out after ${HEALTH_TIMEOUT}s"
-            log ERROR "Check logs: docker compose -f ${COMPOSE_FILE} logs"
-            record_phase "Health check" "FAIL"
+            log ERROR "${description} readiness timed out after ${HEALTH_TIMEOUT}s"
+            log ERROR "Check logs: docker compose -f ${COMPOSE_FILE} --env-file ${ENV_FILE} -p sapphire logs"
             return 1
         fi
 
-        if curl -sf "${HEALTH_URL}" >/dev/null 2>&1; then
-            log OK "Services healthy after $(format_duration $elapsed)"
-            record_phase "Health check" "PASS"
+        if curl -sf "${url}" >/dev/null 2>&1; then
+            log OK "${description} ready after $(format_duration $elapsed)"
             return 0
         fi
 
         # Show progress every 10 seconds
         if (( elapsed % 10 == 0 && elapsed > 0 )); then
-            log INFO "  Still waiting... (${elapsed}s / ${HEALTH_TIMEOUT}s)"
+            log INFO "  Still waiting for ${description}... (${elapsed}s / ${HEALTH_TIMEOUT}s)"
         fi
         sleep 2
     done
@@ -306,6 +442,7 @@ run_migration() {
     # Check container is running
     if ! docker ps --format '{{.Names}}' | grep -qx "$container"; then
         log ERROR "Container '${container}' is not running"
+        MIGRATION_FAILED=true
         return 1
     fi
 
@@ -319,6 +456,7 @@ run_migration() {
         else
             log WARN "  FAILED: ${cmd}"
             any_failed=true
+            MIGRATION_FAILED=true
         fi
     done
 
@@ -341,6 +479,13 @@ phase_preprocessing_migration() {
 
     banner "Phase 6: Preprocessing Migration"
 
+    if ! wait_for_ready "${PREPROCESSING_READY_URL}" "preprocessing API"; then
+        log WARN "Preprocessing API not ready; skipping preprocessing migration"
+        MIGRATION_FAILED=true
+        record_phase "Preprocessing migration" "WARN"
+        return 0
+    fi
+
     local commands=(
         "python -u app/data_migrator.py --type runoff"
         "python -u app/data_migrator.py --type hydrograph"
@@ -354,6 +499,7 @@ phase_preprocessing_migration() {
         log WARN "Some preprocessing migrations failed (continuing)"
         record_phase "Preprocessing migration" "WARN"
     fi
+    return 0
 }
 
 phase_postprocessing_migration() {
@@ -369,6 +515,13 @@ phase_postprocessing_migration() {
 
     banner "Phase 7: Postprocessing Migration"
 
+    if ! wait_for_ready "${POSTPROCESSING_READY_URL}" "postprocessing API"; then
+        log WARN "Postprocessing API not ready; skipping postprocessing migration"
+        MIGRATION_FAILED=true
+        record_phase "Postprocessing migration" "WARN"
+        return 0
+    fi
+
     local commands=(
         "python -u app/data_migrator.py --type skillmetric --batch-size 1"
         "python -u app/data_migrator.py --type lrforecast"
@@ -383,6 +536,7 @@ phase_postprocessing_migration() {
         log WARN "Some postprocessing migrations failed (continuing)"
         record_phase "Postprocessing migration" "WARN"
     fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -473,6 +627,11 @@ print_summary() {
         fi
     done
 
+    if [ "$MIGRATION_FAILED" = true ]; then
+        log ERROR "One or more migration commands failed; review migration output above."
+        return 1
+    fi
+
     log OK "Database reset complete"
     return 0
 }
@@ -492,14 +651,19 @@ Flags:
   --postprocessing-only  Only reset postprocessing DB
   --skip-migration       Reset DB but skip data import
   --skip-rebuild         Skip docker compose build
+  --env-file PATH        Use env file for Compose and required-key preflight
   -y, --yes              Skip confirmation prompt
   --help                 Show this help message
+
+The env file must contain non-empty core service keys. Missing keys fail before
+any destructive action. See sapphire/.env.example.
 
 Examples:
   bash bin/reset_sapphire_db.sh                        # Full reset
   bash bin/reset_sapphire_db.sh --postprocessing-only  # Postprocessing only
   bash bin/reset_sapphire_db.sh --skip-migration -y    # Reset without import
   bash bin/reset_sapphire_db.sh --skip-rebuild         # Skip rebuild step
+  bash bin/reset_sapphire_db.sh --env-file /path/to/.env
 USAGE
 }
 
@@ -515,6 +679,15 @@ main() {
             --postprocessing-only)  POSTPROCESSING_ONLY=true ;;
             --skip-migration)       SKIP_MIGRATION=true ;;
             --skip-rebuild)         SKIP_REBUILD=true ;;
+            --env-file)
+                if [ $# -lt 2 ]; then
+                    echo "Missing value for --env-file"
+                    print_usage
+                    exit 1
+                fi
+                ENV_FILE="$2"
+                shift
+                ;;
             -y|--yes)               AUTO_YES=true ;;
             --help|-h)              print_usage; exit 0 ;;
             *)
@@ -537,8 +710,9 @@ main() {
     banner "SAPPHIRE Database Reset"
 
     # Precondition checks
-    check_docker
     check_repo_root
+    check_docker
+    check_compose_preflight
 
     # Describe what will happen
     echo ""
@@ -551,6 +725,9 @@ main() {
 
     log WARN "This will destroy and recreate the ${scope} database(s)."
     log WARN "User and auth databases will NOT be affected."
+    log INFO "Compose project: sapphire"
+    log INFO "Env file: ${ENV_FILE}"
+    log INFO "Services started by reset: ${START_SERVICES[*]}"
 
     if [ "$SKIP_MIGRATION" = true ]; then
         log INFO "Data migration will be skipped (--skip-migration)."

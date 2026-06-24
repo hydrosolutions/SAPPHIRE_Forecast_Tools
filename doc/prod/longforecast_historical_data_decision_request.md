@@ -92,7 +92,7 @@ Collision verification (aggregate-only, before any write):
 - B delete deprecated models: ~41,225 rows; the `hv1` deprecated-model rows are **100% January**, so
   the current Mar-Sep rolling product is untouched.
 
-Exact operations are in `doc/plans/working/longforecast_hv_convention_plan.md` (P3). Execution pending
+Exact operations are in `doc/plans/archive/longforecast_hv_convention_plan.md` (P3). Execution pending
 final SQL review + per-step scoped backups.
 
 ---

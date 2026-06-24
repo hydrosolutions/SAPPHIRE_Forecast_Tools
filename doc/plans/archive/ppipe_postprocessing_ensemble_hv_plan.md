@@ -10,7 +10,7 @@ contract evidence only. If an implementation phase discovers that a service sche
 change, stop and raise a coordination blocker.
 
 P-PIPE is a hard prerequisite for the data cleanup phases in
-`doc/plans/working/longforecast_hv_convention_plan.md`. Cleanup P3/P4 must not run until P-PIPE is
+`doc/plans/archive/longforecast_hv_convention_plan.md`. Cleanup P3/P4 must not run until P-PIPE is
 coded, reviewed, deployed, the one-time full-history quarterly/seasonal recalc has written
 new-convention rows for each deployment, aggregate verification passes, and obsolete old-hv rows are
 then cleaned.
@@ -125,7 +125,7 @@ Must-fix + targeted Should-fixes, folded in here:
 
 ## Cross-plan cleanup reconciliation (MF-A) -- supersedes longforecast P3 ensemble handling
 
-The cleanup in `doc/plans/working/longforecast_hv_convention_plan.md` P3 was designed pre-regen and now
+The cleanup in `doc/plans/archive/longforecast_hv_convention_plan.md` P3 was designed pre-regen and now
 **conflicts** with the PP0 regenerate decision:
 
 - P3 step 2 `DELETE ... horizon_type='QUARTER' AND model_type NOT IN ('LR_BASE','LR_SM')` would delete
@@ -396,7 +396,7 @@ implementation agent starts.
 **Files**:
 
 - `doc/prod/ppipe_seasonal_ensemble_decisions_request.md`
-- `doc/plans/working/ppipe_postprocessing_ensemble_hv_plan.md`
+- `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md`
 - No code files.
 - No `sapphire/services/**`.
 
@@ -601,7 +601,7 @@ the new convention, and only then unblock cleanup P3/P4.
 
 - Code files changed in PP1-PP6.
 - Deployment/run notes if reviewer requests them.
-- `doc/plans/working/longforecast_hv_convention_plan.md` may be updated only to record the P-PIPE
+- `doc/plans/archive/longforecast_hv_convention_plan.md` may be updated only to record the P-PIPE
   completion gate; no DB SQL changes in this implementation phase.
 - No `sapphire/services/**`.
 
@@ -642,7 +642,7 @@ the new convention, and only then unblock cleanup P3/P4.
    The current `bin/utils/run_skill_metrics_recalc.sh:72-87` helper does not pass it.
 6. Run aggregate-only acceptance queries for raw LR versus EM / Naive Mean / Skilled Mean buckets; do
    not expose real station codes or discharge values in plan artifacts.
-7. Proceed to cleanup P3/P4 from `doc/plans/working/longforecast_hv_convention_plan.md` only after
+7. Proceed to cleanup P3/P4 from `doc/plans/archive/longforecast_hv_convention_plan.md` only after
    owner sign-off and reviewed dry-run counts.
 
 ## Dependency Graph
@@ -667,7 +667,7 @@ the new convention, and only then unblock cleanup P3/P4.
         "owner_signoff_reviewed_dry_run_counts"
       ],
       "parallel_agents": 1,
-      "external_plan": "doc/plans/working/longforecast_hv_convention_plan.md#P3"
+      "external_plan": "doc/plans/archive/longforecast_hv_convention_plan.md#P3"
     },
     "longforecast_cleanup_P4": {
       "depends_on": [
@@ -677,7 +677,7 @@ the new convention, and only then unblock cleanup P3/P4.
         "owner_signoff_reviewed_dry_run_counts"
       ],
       "parallel_agents": 1,
-      "external_plan": "doc/plans/working/longforecast_hv_convention_plan.md#P4"
+      "external_plan": "doc/plans/archive/longforecast_hv_convention_plan.md#P4"
     }
   }
 }

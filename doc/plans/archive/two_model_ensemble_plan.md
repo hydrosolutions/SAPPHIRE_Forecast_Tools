@@ -224,7 +224,7 @@ This follow-on supersedes and clarifies the older Dataset B understanding:
   regenerated under that policy.
 - The P-PIPE plan already blocks old-hv cleanup until code is deployed,
   full-history recalc runs, and aggregate verification passes:
-  `doc/plans/working/ppipe_postprocessing_ensemble_hv_plan.md:126-159`.
+  `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md:126-159`.
 - The P-PIPE runbook currently says not to move raw `LR_BASE` / `LR_SM` rows as
   part of P-PIPE: `doc/prod/ppipe_ensemble_hv_deploy_runbook.md:9-19`. This
   follow-on is a separate cleanup policy: delete deprecated non-LR

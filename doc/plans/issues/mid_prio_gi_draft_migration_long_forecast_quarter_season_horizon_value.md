@@ -15,7 +15,7 @@ the postprocessing *service* (sapphire/services) needs no change
 > its own planner+reviewer pass.
 **Depends on**: MIG-007 (importer accepts `quarter`/`season`)
 **See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer);
-`doc/plans/working/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive
+`doc/plans/archive/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive
 cleanup as written); `doc/prod/longforecast_historical_data_decision_request.md` (owner/modeller
 decision needed before any `long_forecasts` mutation)
 

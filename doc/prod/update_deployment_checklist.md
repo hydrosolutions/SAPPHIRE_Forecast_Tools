@@ -4,6 +4,8 @@ This checklist guides you through a **routine update** of an existing SAPPHIRE F
 
 > **First-time deployment?** Use `doc/prod/first_deploy_checklist.md` instead. That doc covers the one-time steps (SSH tunnel setup, initial schema preparation, `RunInitializeWorkflow`, historical backfill) that are *not* part of a routine update.
 >
+> **Deploying long-term (quarter/season) forecast changes?** Use [`doc/prod/long_term_deploy_runbook.md`](long_term_deploy_runbook.md) for the ordered long-term flow (image scope, env/config preflight, full-history recalc, verification, deprecated-model cleanup). It references this checklist for the image-deploy mechanics.
+>
 
 ## Operator setup — set these once per session [Required]
 

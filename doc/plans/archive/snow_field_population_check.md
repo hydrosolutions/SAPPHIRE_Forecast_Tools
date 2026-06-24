@@ -104,7 +104,7 @@ fields per `(snow_type, code, date)`, plus a backfill wrapper at
 
 Gateway plan Phase 3 verified end-to-end success at 954s for year 2026
 across SWE/HS/RoF (evidence at
-`doc/plans/working/snow_stat_population_e2e_evidence.md`). The
+`doc/plans/archive/snow_stat_population_e2e_evidence.md`). The
 historical backfill is running in background at the time of this
 update and will populate years 2010-2025.
 

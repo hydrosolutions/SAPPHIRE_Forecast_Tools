@@ -52,7 +52,7 @@ Within that filtered window, the plot overlays statistical and comparison fields
 
 The data fetch range for snow is `PREVIOUS_YEAR-01-01` through `CURRENT_YEAR-12-31` (`apps/forecast_dashboard/src/db.py:255`-`db.py:263`). On June 1, 2026, a September-start current hydrological-year window (`2025-09-01` to `2026-08-31`) is inside that range. The previous hydrological-year window (`2024-09-01` to `2025-08-31`) is not fully inside that range, but the current plot does not separately fetch or render a prior hydrological-year date range; it renders the backend `last_year`/`previous` value on the current window's dates.
 
-Phase 0/Phase 1 evidence kept the snow fetch window at `PREVIOUS_YEAR-01-01` to `CURRENT_YEAR-12-31` (`doc/plans/working/snow_field_population_check.md:88`), while the later snow display plan warned that a September-to-August display can ask for dates not fetched by `db.py` if the window extends beyond `CURRENT_YEAR-12-31` (`doc/plans/issues/high_prio_gi_draft_dashboard_snow_percentile_display.md:223`).
+Phase 0/Phase 1 evidence kept the snow fetch window at `PREVIOUS_YEAR-01-01` to `CURRENT_YEAR-12-31` (`doc/plans/archive/snow_field_population_check.md:88`), while the later snow display plan warned that a September-to-August display can ask for dates not fetched by `db.py` if the window extends beyond `CURRENT_YEAR-12-31` (`doc/plans/issues/high_prio_gi_draft_dashboard_snow_percentile_display.md:223`).
 
 ## The Gap
 
@@ -101,4 +101,4 @@ There is also a secondary future-date fetch gap. For a September-start display o
 - Snow climatology day-of-year grouping: `apps/preprocessing_gateway/dg_utils.py:484`-`dg_utils.py:490`, `apps/preprocessing_gateway/dg_utils.py:593`-`dg_utils.py:599`
 - Operator env location checked: `$HOME/Documents/GitHub/kyg_data_forecast_tools/config/.env_bea_kghm:93`-`:94`
 - Upstream dashboard plan date-window note: `doc/plans/issues/high_prio_gi_draft_dashboard_snow_percentile_display.md:223`
-- Snow field population DATE_WINDOW_DECISION: `doc/plans/working/snow_field_population_check.md:88`
+- Snow field population DATE_WINDOW_DECISION: `doc/plans/archive/snow_field_population_check.md:88`
