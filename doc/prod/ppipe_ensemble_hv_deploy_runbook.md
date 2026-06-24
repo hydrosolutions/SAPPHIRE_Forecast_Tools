@@ -6,6 +6,12 @@ per-deployment, aggregate-only, and uses sentinel station codes only. Do not put
 real station codes, discharge values, row payloads, or delete statements in this
 document.
 
+> **Part of the consolidated long-term deploy.** For the full end-to-end
+> long-term (quarter/season) server deploy — image scope, env preflight,
+> regeneration, verification, and cleanup in order — start from
+> [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md). This document is
+> the detailed P-PIPE sub-runbook it references for Phase 4 verification.
+
 ## Update 2026-06-23 — Two-Model EM Correctness Fixes (PR #383)
 
 PR #383 (`develop_two_model_ensemble`) fixes three defects in the quarter/season
@@ -102,15 +108,18 @@ SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=QUARTERLY uv run recalc
 SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=SEASONAL uv run recalculate_skill_metrics.py
 ```
 
-Docker helper form:
+Containerized form (same path the cron uses; loops MONTHLY/QUARTERLY/SEASONAL, so
+one run covers both long-term modes):
 
 ```bash
-SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=QUARTERLY bin/utils/run_skill_metrics_recalc.sh
-SAPPHIRE_RECALC_START_YEAR=2000 SAPPHIRE_PREDICTION_MODE=SEASONAL bin/utils/run_skill_metrics_recalc.sh
+SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh
 ```
 
-The helper now forwards non-empty `SAPPHIRE_RECALC_START_YEAR` into `docker run`.
-If bypassing the helper, pass the equivalent explicit container environment:
+This driver sources `bin/utils/run_skill_metrics_recalc.sh` and calls its
+`run_skill_metrics_recalc_once <mode> …` function per mode, forwarding non-empty
+`SAPPHIRE_RECALC_START_YEAR` into `docker run`. Note: `run_skill_metrics_recalc.sh`
+is a **sourced function library**, not a standalone command — do not run it
+directly. If you build your own `docker run`, pass the explicit container env:
 
 ```bash
 -e SAPPHIRE_RECALC_START_YEAR=2000
