@@ -9,7 +9,7 @@
 **ID note**: This is MIG-007, not MIG-006. MIG-006 remains reserved for a possible scoped ML reaggregation follow-up and has no committed index row.
 **Related**:
 - `doc/prod/backfill_ml_fromfile.md` - documents the backfill workflow where this importer limitation surfaced.
-- `doc/plans/working/longforecast_importer_multihorizon_gapfill_plan.md` - implementation plan and phase evidence for this issue.
+- `doc/plans/archive/longforecast_importer_multihorizon_gapfill_plan.md` - implementation plan and phase evidence for this issue.
 - `high_prio_gi_draft_update_migration_p5_long_forecast.md` - original month-focused long-forecast importer.
 - **MIG-003** (`high_prio_gi_draft_migration_horizon_type_case_coercion.md`) - dependency: merged uppercase PG enum-label fix (`450ad7f`, PR #362). MIG-007 must preserve the `horizon_type::text='MONTH|QUARTER|SEASON'` lesson while removing month-only assumptions.
 - **LTF-006** (`high_prio_gi_draft_ltf_gbt_base_modeltype_gap.md`) - adjacent `GBT_Base` model-type 422, explicitly out of scope here.

@@ -194,9 +194,9 @@ Only after the aggregate verification passes may the cleanup owner re-derive
 obsolete old-convention cleanup predicates.
 
 The authoritative cleanup ordering is the cross-plan reconciliation section in
-`doc/plans/working/ppipe_postprocessing_ensemble_hv_plan.md`. That section
+`doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md`. That section
 supersedes the old ensemble handling in
-`doc/plans/working/longforecast_hv_convention_plan.md` P3.
+`doc/plans/archive/longforecast_hv_convention_plan.md` P3.
 
 Cleanup requirements:
 

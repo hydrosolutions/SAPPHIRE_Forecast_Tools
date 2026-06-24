@@ -237,7 +237,7 @@ prepare idempotent aggregate verification queries.
 
 **Files**:
 
-- `doc/plans/working/longforecast_hv_convention_plan.md` for the planning record.
+- `doc/plans/archive/longforecast_hv_convention_plan.md` for the planning record.
 - DB backup artifacts outside git, per deployment operator practice.
 - No `sapphire/services/**` files.
 
@@ -332,7 +332,7 @@ postprocessing-service owner + long-term modeller before any mutation of `long_f
 > NOT run it as written. The ensemble cleanup is now **re-derived post-regen, scoped to the
 > old-convention signature** (season: `hv1` with `date==valid_from/target-start`; quarter: `hv2/3/4`
 > orphans + old calendar-`hv1`), per
-> `doc/plans/working/ppipe_postprocessing_ensemble_hv_plan.md` ("Cross-plan cleanup reconciliation").
+> `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md` ("Cross-plan cleanup reconciliation").
 > The pre-regen counts below (2,890 / ~41,225 / 10,665) are **stale** and must be re-measured against
 > the post-regen state. The **raw `LR_BASE`/`LR_SM` re-stamp (step 3) still stands** as a cleanup op
 > (P-PIPE never moves raw LR). Sequencing: P-PIPE ships -> deploy -> full-history recalc -> verify ->
