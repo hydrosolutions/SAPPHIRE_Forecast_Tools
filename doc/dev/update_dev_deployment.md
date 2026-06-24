@@ -146,6 +146,70 @@ curl http://localhost:8000/health/ready
 > path hard-fails when API sync is enabled. Always confirm `health/ready` returns
 > OK before a real run.
 
+### Verify the reset and services
+
+These checks confirm the reset tooling and service health. They are optional but
+recommended after a reset. (The pipeline itself is validated separately in
+Steps 3–4.)
+
+**1. The preflight fails safely on an incomplete env.** This proves the script
+aborts *before* touching anything when the env is bad — nothing is stopped or
+dropped. The preflight runs before the confirmation prompt, so this is safe even
+without `-y`:
+
+```bash
+printf 'POSTGRES_USER=postgres\n' > /tmp/incomplete.env
+bash bin/reset_sapphire_db.sh --env-file /tmp/incomplete.env
+echo "exit code: $?"
+```
+
+Expected: it lists the missing required keys and exits non-zero, and the output
+never reaches the `Phase 1: Stop Services` banner. Confirm nothing was touched:
+
+```bash
+docker volume ls | grep sapphire        # your sapphire_*-data volumes still listed
+```
+
+**2. The services are healthy.** Probe the gateway and both DB-backed APIs
+directly:
+
+```bash
+curl -sf http://localhost:8000/health/ready && echo " gateway OK"
+curl -sf http://localhost:8002/health/ready && echo " preprocessing OK"
+curl -sf http://localhost:8003/health/ready && echo " postprocessing OK"
+```
+
+Expected: all three succeed.
+
+**3. The dashboard and auth services were not started** (Design-A expectation):
+
+```bash
+docker compose -f sapphire/docker-compose.yml -p sapphire ps --services --filter status=running
+```
+
+Expected: `preprocessing-db postprocessing-db user-db preprocessing-api
+postprocessing-api user-api api-gateway` — no `dashboard`, `auth-api`, or
+`auth-db`.
+
+**4. A real reset reports success cleanly.** After a full
+`bash bin/reset_sapphire_db.sh --env-file /path/to/.env_sandro_kghm` run:
+
+- The `RESET SUMMARY` table shows `PASS` for the infrastructure phases.
+- `Database reset complete` is printed and the script exits `0` (`echo $?`).
+- If any migration command failed, the script instead exits **non-zero** and does
+  **not** print `Database reset complete` — the signal to check the migration
+  output above.
+
+**5. Scoped / fast variants behave (optional sanity).**
+
+```bash
+bash bin/reset_sapphire_db.sh --env-file /path/to/.env_sandro_kghm --skip-migration -y   # recreates volumes, no ~3h import
+bash bin/reset_sapphire_db.sh --env-file /path/to/.env_sandro_kghm --preprocessing-only -y
+```
+
+Expected: the summary shows `SKIP` for the skipped migration/DB phases and `PASS`
+for the rest.
+
 ---
 
 ## Step 3 — Dry-run validation (do this before any real run)
