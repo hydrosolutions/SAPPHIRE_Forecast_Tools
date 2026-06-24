@@ -560,6 +560,19 @@ sentinel code `19999`; never paste real station codes into committed files.
   **`GBT_Base`** (long-term, tracked as **LTF-006**). Run the §4 model-name pre-flight before
   long-term writes; exclude/skip unmappable names.
 
+### 13.8 Long-forecast importer pre-cutoff trap on per-station canary writes
+- The importer's MODE detection is **per `(horizon_type, horizon_value, code)`**: if a target key
+  already has rows it switches from `full-import` to `pre-cutoff` (imports only *older-than-existing*).
+  So a **per-station canary write first** (`--mode <m> --model LR_Base --station-filter <code>`)
+  creates a cutoff for that station, and the subsequent **full mode-write then skips that whole
+  station — including the model you did *not* canary** (the cutoff is keyed by station, not model).
+  On kyg this left one station with `LR_Base` but no `LR_SM` at `SEASON hv0`, so no EM was computed
+  for it.
+  - **Avoid:** for a single configured mode, skip the per-station canary — run **dry-run → full
+    mode-write** directly (the full write itself surfaces a 422 via `failed>0`, so it is its own gate).
+  - **If already canaried:** `DELETE` that station's rows for the bucket, re-run the full mode-write
+    (now `full-import`s the station), then re-run the skill recalc.
+
 ### Open hardening items (deployment-agnostic, not Tajik-blocking)
 - API bulk forecast write should be dedup-safe (INFRA-013 class).
 - `ml_raw_to_export.py` should skip unknown/deprecated models, not raise.
