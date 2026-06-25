@@ -124,7 +124,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PREPG-003**~~ | ~~Snow operational API write discards all data — wall-clock-anchored window vs DG lag~~ | | Closed (Not a Bug) | [`archive/high_prio_gi_draft_prepg_snow_api_operational_window.md`](issues/archive/high_prio_gi_draft_prepg_snow_api_operational_window.md) | — |
 | ~~**PREPG-005**~~ | ~~Meteo API write discards all forecast rows — `date <= today` upper bound~~ | **High** | Complete | [`archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md`](issues/archive/high_prio_gi_draft_prepg_meteo_forecast_not_in_api.md) | — |
 | **PREPG-006** | Migrate snow norm computation from CSV to API | **Medium** | Draft | [`mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md`](issues/mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md) | PREPG-001, API must have historical snow data |
-| **PREPG-007** | Snow visualization population gaps: self-healing curve and Jan-1 snow norms | **High** | Draft | [`high_prio_gi_draft_prepg_snow_population_self_heal.md`](issues/high_prio_gi_draft_prepg_snow_population_self_heal.md) | — |
+| **PREPG-007** | Snow visualization population gaps: self-healing curve and Jan-1 snow norms | **High** | Review | [`review_gi_draft_prepg_snow_population_self_heal.md`](issues/review_gi_draft_prepg_snow_population_self_heal.md) | — |
 | **PREPG-008** | Snow climatology leap-year day-of-year alignment bug | **Medium** | Draft | [`mid_prio_gi_draft_prepg_snow_climatology_leapyear_dayofyear.md`](issues/mid_prio_gi_draft_prepg_snow_climatology_leapyear_dayofyear.md) | — |
 
 ### Preprocessing Runoff (`prepq`)

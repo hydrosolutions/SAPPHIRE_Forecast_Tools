@@ -1,6 +1,6 @@
 # PREPG-007: Snow visualization population gaps - self-healing curve and Jan 1 snow norms
 
-**Status**: Draft (2026-06-25)
+**Status**: Review (2026-06-25) — P1+P2 implemented, awaiting review
 **Module**: `apps/preprocessing_gateway` + deployment cron/docs
 **Priority**: **High** (user-facing defect on a deployed forecast dashboard)
 **Labels**: `preprocessing_gateway`, `snow-data`, `operational`, `dashboard`, `maintenance`
