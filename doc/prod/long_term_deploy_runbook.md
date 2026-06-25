@@ -27,6 +27,14 @@ two deployments differ — see the parameter table below.
 > update" failure was a **deployment `.env` misconfiguration** (the var was unset
 > / pointed at a missing template), surfacing as `os.path.join(None, …)`. It is
 > therefore an **env-preflight item (Phase 2)**, not a code change to ship.
+>
+> **Concrete form (kyg, 2026-06-24):** the `.env` defined the var under the
+> *old* name `ieasyforecast_template_seasonal_bulletin_file` (`seasonal`), while
+> `bulletins.py` reads `...season...` (renamed in `e82c951e`). `os.getenv`
+> returned `None` → the join failed. The fix is a one-line `.env` **rename**
+> (value unchanged; the template file itself was present). **Check this on every
+> deployment** — taj and uzb `.env`s likely carry the same stale `seasonal` key:
+> `grep -E 'template_(season|seasonal)_bulletin_file' <env>`.
 
 ---
 
@@ -255,10 +263,22 @@ Confirm:
    pre-fix one — revisit Phase 1. `mismatch = 0` alone is not sufficient; it can
    also mean the join found no EM/LR pairs.
    *(Model labels in the DB are uppercase: `LR_BASE`, `LR_SM`, `ENSEMBLE_MEAN`.)*
-3. **Seasonal bulletin renders** (change d): in the dashboard, generate a seasonal
-   bulletin and confirm the Excel file is written (this exercises
-   `ieasyforecast_template_season_bulletin_file` end-to-end). Also smoke-check the
-   monthly/decad/pentad bulletins haven't regressed.
+3. **Seasonal bulletin renders** (change d): first **recreate the dashboard** so it
+   reloads the corrected `.env` — do this **through the deployment's env path**, not
+   a bare `docker restart`. A plain restart reuses the container's baked env and
+   leaves `ieasyhydroforecast_url_pentad` empty (it is *derived* in
+   `bin/utils/common_functions.sh` from the env-file suffix, then exported before
+   `up`), so the dashboard crash-loops with `ERROR: Empty host value`. Recreate via:
+   ```bash
+   set +u +o pipefail          # read_configuration trips set -u on $-in-secret .env values
+   source bin/utils/common_functions.sh
+   export ieasyhydroforecast_env_file_path="<env>"
+   read_configuration "<env>"
+   docker compose --env-file "<env>" -f sapphire/docker-compose.yml up -d --force-recreate --no-deps dashboard
+   ```
+   Then in the dashboard, generate a seasonal bulletin and confirm the Excel file is
+   written (this exercises `ieasyforecast_template_season_bulletin_file` end-to-end).
+   Also smoke-check the monthly/decad/pentad bulletins haven't regressed.
 
 Do not start Phase 5 until 1–3 pass.
 
