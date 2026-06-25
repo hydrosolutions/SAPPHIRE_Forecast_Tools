@@ -706,7 +706,12 @@ def _read_existing_snow_fields(
             for _, row in api_df.iterrows():
                 d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
                 values = {}
-                for field in ("norm", *SNOW_PRESERVED_STAT_FIELDS):
+                for field in (
+                    "value",
+                    "norm",
+                    *SNOW_PRESERVED_STAT_FIELDS,
+                    *(f"value{i}" for i in range(1, 15)),
+                ):
                     field_val = row.get(field)
                     if pd.notna(field_val):
                         values[field] = float(field_val)
@@ -744,7 +749,7 @@ def write_snow_to_api(
 
     Supports different sync modes:
     - operational (default): write yesterday+today (2-day window)
-    - maintenance: write the last 30 days
+    - maintenance: write the last 365 days
     - initial: write all data
 
     Args:
@@ -818,7 +823,7 @@ def write_snow_to_api(
         # Include yesterday, today, and any forecast dates beyond today
         data_to_write = data[data["date"] >= yesterday]
     elif sync_mode == "maintenance":
-        cutoff = ref - pd.Timedelta(days=30)
+        cutoff = ref - pd.Timedelta(days=365)
         data_to_write = data[data["date"] >= cutoff]
     elif sync_mode == "initial":
         data_to_write = data
@@ -903,10 +908,31 @@ def write_snow_to_api(
         elif "norm" in existing_fields:
             local_norm = round(existing_fields["norm"], 3)
 
-        local_value = (
+        incoming_value = (
             round(float(row[main_value_col]), 3)
             if main_value_col and pd.notna(row.get(main_value_col))
             else None
+        )
+        incoming_band_values = {}
+        for band_num, col_name in value_columns.items():
+            if band_num <= 14:
+                incoming_band_values[band_num] = (
+                    round(float(row[col_name]), 3) if pd.notna(row.get(col_name)) else None
+                )
+
+        if incoming_value is None and all(
+            band_value is None for band_value in incoming_band_values.values()
+        ):
+            continue
+
+        local_value = (
+            incoming_value
+            if incoming_value is not None
+            else (
+                _format_existing_snow_field("value", existing_fields["value"])
+                if "value" in existing_fields
+                else None
+            )
         )
 
         record = {
@@ -939,11 +965,16 @@ def write_snow_to_api(
             else None
         )
 
-        # Add elevation band values (value1-value14)
-        for band_num, col_name in value_columns.items():
-            if band_num <= 14:
-                record[f"value{band_num}"] = (
-                    round(float(row[col_name]), 3) if pd.notna(row.get(col_name)) else None
+        # Add or preserve elevation band values (value1-value14).
+        for band_num in range(1, 15):
+            field_name = f"value{band_num}"
+            incoming_band_value = incoming_band_values.get(band_num)
+            if incoming_band_value is not None:
+                record[field_name] = incoming_band_value
+            elif field_name in existing_fields:
+                record[field_name] = _format_existing_snow_field(
+                    field_name,
+                    existing_fields[field_name],
                 )
 
         records.append(record)
