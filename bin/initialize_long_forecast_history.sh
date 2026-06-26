@@ -38,17 +38,12 @@
 #   profile with no configured long-term modes), the wrapper exits 0 with a
 #   logged "no source data for this deployment" message — NOT an error.
 #
-# MODE detection: queries the target postprocessing-db via docker exec
-# psql (long_forecasts lives in the postprocessing DB, not preprocessing).
-# Empty (count=0 OR min_date IS NULL) -> full-import; populated ->
-# pre-cutoff (cutoff = MIN(date)).
-#
-# When --mode <name> is set, the query is scoped to that mode's
-# horizon_value (parsed from the mode's config JSON), giving a true
-# per-mode cutoff. Without --mode the query is global across all month
-# rows and the fail-closed gate (--allow-global-cutoff) protects against
-# applying one cutoff to every mode (which would under-import any mode
-# whose target horizon_value rows are empty).
+# MODE detection: queries the target postprocessing-db via docker exec psql
+# (long_forecasts lives in the postprocessing DB, not preprocessing). The
+# primary path builds a grouped cutoff map keyed by
+# (horizon_type, horizon_value, code). Missing map entries are treated as an
+# empty target for that key. If grouped map generation fails, the retained
+# legacy scalar cutoff path is gated by --allow-global-cutoff.
 #
 # Idempotency: the postprocessing service upserts on the full natural key
 # (horizon_type, horizon_value, code, date, model_type, valid_from,
@@ -279,13 +274,9 @@ parse_args() {
                 shift 2
                 ;;
             --allow-global-cutoff)
-                # Opt-in to apply a single conservative cutoff (the global
-                # MIN(date) across ALL horizon_value rows) to every mode in
-                # this run. Default: refuse if any month rows exist when
-                # the run spans multiple modes (review feedback — header
-                # contract advertised per-mode cutoffs which weren't being
-                # computed). Operators wanting per-mode cutoffs should use
-                # --mode <single_mode> per mode separately.
+                # Opt in to the retained legacy scalar fallback only. The
+                # primary grouped cutoff-map path is code-scoped and does not
+                # require this flag.
                 ALLOW_GLOBAL_CUTOFF=true
                 shift
                 ;;
@@ -304,20 +295,95 @@ parse_args() {
 }
 
 # ---------------------------------------------------------------------------
-# Query the target postprocessing-db for MODE detection.
-# Echoes "count<TAB>min_date_or_empty" on stdout (e.g. "0\t" or "100\t2024-01-15").
+# Query the target postprocessing-db for grouped cutoff-map data.
+# Echoes "horizon_type<TAB>horizon_value<TAB>code<TAB>min_date" rows.
 # Returns non-zero if the docker exec fails.
 #
 # NOTE: long_forecasts is in the postprocessing DB (NOT preprocessing). The
-# query is unscoped by horizon_value here. This is the GLOBAL query, used
-# only when --mode is not set. When --mode is set, main() runs a separate
-# per-mode psql query scoped to that mode's horizon_value (see the
-# per-mode branch in main).
+# query is grouped by horizon_type, horizon_value, and code so missing codes
+# are not filtered by a populated canary code in the same horizon.
 # ---------------------------------------------------------------------------
-query_target_state() {
+query_cutoff_map_state() {
+    local sql="SELECT horizon_type::text, horizon_value::text, code, COALESCE(MIN(date)::text, '') FROM long_forecasts"
+    if [[ -n "${MODE_FILTER:-}" ]]; then
+        sql="${sql} WHERE horizon_type::text='${MODE_HORIZON_ENUM}' AND horizon_value=${MODE_HORIZON_VALUE}"
+    fi
+    sql="${sql} GROUP BY horizon_type, horizon_value, code ORDER BY horizon_type::text, horizon_value, code;"
+
     docker exec sapphire-postprocessing-db psql \
         -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-        -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type::text='MONTH';"
+        -c "$sql"
+}
+
+query_legacy_scalar_target_state() {
+    local sql="SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts"
+    if [[ -n "${MODE_FILTER:-}" ]]; then
+        sql="${sql} WHERE horizon_type::text='${MODE_HORIZON_ENUM}' AND horizon_value=${MODE_HORIZON_VALUE}"
+    fi
+    sql="${sql};"
+
+    docker exec sapphire-postprocessing-db psql \
+        -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
+        -c "$sql"
+}
+
+write_cutoff_map_json() {
+    local raw_tsv="$1"
+    local map_json="$2"
+    python3 - "$raw_tsv" "$map_json" <<'PYEOF'
+import datetime
+import json
+import sys
+
+
+def parse_code(raw):
+    s = (raw or "").strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    if "." in s:
+        try:
+            f = float(s)
+        except ValueError:
+            return s
+        if f.is_integer():
+            return str(int(f))
+    return s
+
+
+def parse_date(raw):
+    s = (raw or "").strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    head = s.split("T", 1)[0].split(" ", 1)[0]
+    datetime.date.fromisoformat(head)
+    return head
+
+
+raw_tsv, map_json = sys.argv[1:3]
+cutoff_map = {}
+with open(raw_tsv, encoding="utf-8") as f:
+    for line_no, line in enumerate(f, start=1):
+        line = line.rstrip("\r\n")
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 4:
+            raise SystemExit(f"invalid grouped target row {line_no}: expected 4 tab fields")
+        horizon_type_raw, horizon_value_raw, code_raw, cutoff_raw = parts
+        horizon_type = horizon_type_raw.strip().lower()
+        horizon_value = int(float(horizon_value_raw.strip()))
+        code = parse_code(code_raw)
+        cutoff = parse_date(cutoff_raw)
+        if not horizon_type or not code or not cutoff:
+            raise SystemExit(f"invalid grouped target row {line_no}: empty normalized key/cutoff")
+        cutoff_map[f"{horizon_type}\t{horizon_value}\t{code}"] = cutoff
+
+with open(map_json, "w", encoding="utf-8") as f:
+    json.dump(cutoff_map, f, sort_keys=True)
+
+min_date = min(cutoff_map.values()) if cutoff_map else ""
+print(f"{len(cutoff_map)}\t{min_date}")
+PYEOF
 }
 
 # ---------------------------------------------------------------------------
@@ -421,17 +487,30 @@ main() {
     # -------------------------------------------------------------------------
     # MODE detection — query target postprocessing-db.
     #
-    # Per-mode query (review feedback round 3): when --mode <name> is set,
-    # the query is scoped to that mode's horizon_value (parsed from the
-    # mode's config JSON). Without --mode, the query is global across all
-    # 'month' horizon_value rows; the fail-closed gate below then requires
-    # the operator to opt in via --allow-global-cutoff before proceeding.
+    # The preferred path builds a grouped cutoff map. When --mode <name> is
+    # set, the query is scoped to that mode's derived horizon enum label and
+    # horizon_value. If the grouped path fails, fall back to the retained
+    # scalar cutoff path and apply the --allow-global-cutoff gate below.
     # -------------------------------------------------------------------------
     local TARGET_MODE="full-import"
     local CUTOFF=""
+    local CUTOFF_MAP_HOST=""
+    local CUTOFF_MAP_CONTAINER=""
     local TARGET_COUNT=0
     local TARGET_MIN_DATE=""
+    local LEGACY_SCALAR_FALLBACK=false
     local MODE_HORIZON_VALUE=""   # populated only when --mode is used
+    local MODE_HORIZON_ENUM=""    # PG enum label derived from mode config
+
+    # Acquire a temp workspace (mode 0o700, trap-cleaned on EXIT INT TERM).
+    # The cutoff-map artifact can contain real station codes, so keep it in
+    # the redacted temp workspace and never print its contents.
+    local TMPDIR_LF
+    local tmp_workspace_path_file="${LOG_DIR}/.long_forecast_tmp_path_${TIMESTAMP}"
+    umh_acquire_temp_workspace long_forecast > "$tmp_workspace_path_file"
+    IFS= read -r TMPDIR_LF < "$tmp_workspace_path_file"
+    rm -f "$tmp_workspace_path_file"
+    umh_log_redacted "Temp workspace: ${TMPDIR_LF}"
 
     if [[ -n "$MODE_FILTER" ]]; then
         # Per-mode detection: load horizon_value from the mode's config JSON
@@ -443,127 +522,132 @@ main() {
         fi
         # NOTE: keep this in sync with migration_py.long_forecast
         # ._load_mode_config — both parsers read 'operational_month_lead_time'
-        # and validate the same enum set ({"month"} for horizon_type). If the
-        # Python helper's validation rules change, mirror them here so the
+        # and normalize horizon_type before validating the same enum set. If
+        # the Python helper's validation rules change, mirror them here so the
         # host-side per-mode query reflects the same semantics.
-        local hv_out
-        if ! hv_out=$(python3 - "$mode_config" <<'PYEOF' 2>&1
+        local mode_config_out
+        if ! mode_config_out=$(python3 - "$mode_config" <<'PYEOF' 2>&1
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 hv = cfg.get("operational_month_lead_time")
 if hv is None:
     sys.exit("config is missing 'operational_month_lead_time'")
-print(int(hv))
+horizon_type = cfg.get("horizon_type", "month")
+if not isinstance(horizon_type, str) or not horizon_type:
+    horizon_type = "month"
+print(f"{int(hv)}\t{horizon_type.lower()}")
 PYEOF
         ); then
-            umh_log_redacted "ERROR: failed to read horizon_value from ${mode_config}: ${hv_out}"
+            umh_log_redacted "ERROR: failed to read mode horizon config from ${mode_config}: ${mode_config_out}"
             exit 1
         fi
-        MODE_HORIZON_VALUE="$hv_out"
-        umh_log_redacted "Per-mode detection: --mode=${MODE_FILTER} -> horizon_value=${MODE_HORIZON_VALUE}"
+        local mode_horizon_type=""
+        IFS=$'\t' read -r MODE_HORIZON_VALUE mode_horizon_type <<< "$mode_config_out"
+        case "$mode_horizon_type" in
+            month)
+                MODE_HORIZON_ENUM="MONTH"
+                ;;
+            quarter)
+                MODE_HORIZON_ENUM="QUARTER"
+                ;;
+            season)
+                MODE_HORIZON_ENUM="SEASON"
+                ;;
+            *)
+                umh_log_redacted "ERROR: --mode '${MODE_FILTER}' has unsupported horizon_type '${mode_horizon_type}' in ${mode_config}"
+                umh_log_redacted "ERROR: supported horizon_type values are: month, quarter, season"
+                exit 1
+                ;;
+        esac
+        umh_log_redacted "Per-mode detection: --mode=${MODE_FILTER} -> horizon_value=${MODE_HORIZON_VALUE} horizon_type_enum=${MODE_HORIZON_ENUM}"
 
-        if docker ps --filter "name=sapphire-postprocessing-db" --quiet | grep -q .; then
-            local query_out
-            if query_out="$(docker exec sapphire-postprocessing-db psql \
-                -U postgres -d postprocessing_db -P pager=off -t -A -F $'\t' \
-                -c "SELECT COUNT(*), COALESCE(MIN(date)::text, '') FROM long_forecasts WHERE horizon_type::text='MONTH' AND horizon_value=${MODE_HORIZON_VALUE};" 2>&1)"; then
-                TARGET_COUNT="${query_out%%$'\t'*}"
-                TARGET_MIN_DATE="${query_out#*$'\t'}"
-                TARGET_COUNT="${TARGET_COUNT//[$'\r\n ']/}"
-                TARGET_MIN_DATE="${TARGET_MIN_DATE//[$'\r\n ']/}"
-                umh_log_redacted "Per-mode target state: count=${TARGET_COUNT} min_date=${TARGET_MIN_DATE:-<null>}"
-                if [[ "$TARGET_COUNT" != "0" && -n "$TARGET_MIN_DATE" ]]; then
-                    TARGET_MODE="pre-cutoff"
-                    CUTOFF="$TARGET_MIN_DATE"
-                fi
-            else
-                umh_log_redacted "WARN: per-mode target query failed (${query_out}); assuming full-import"
-            fi
-        else
-            umh_log_redacted "WARN: sapphire-postprocessing-db not running; assuming full-import"
-        fi
-    else
-        # Multi-mode run: global query. The fail-closed gate below enforces
-        # operator opt-in before applying the global cutoff to every mode.
-        if docker ps --filter "name=sapphire-postprocessing-db" --quiet | grep -q .; then
-            local query_out
-            if query_out="$(query_target_state 2>&1)"; then
-                TARGET_COUNT="${query_out%%$'\t'*}"
-                TARGET_MIN_DATE="${query_out#*$'\t'}"
-                TARGET_COUNT="${TARGET_COUNT//[$'\r\n ']/}"
-                TARGET_MIN_DATE="${TARGET_MIN_DATE//[$'\r\n ']/}"
-                umh_log_redacted "Global target state: count=${TARGET_COUNT} min_date=${TARGET_MIN_DATE:-<null>}"
-                if [[ "$TARGET_COUNT" != "0" && -n "$TARGET_MIN_DATE" ]]; then
-                    TARGET_MODE="pre-cutoff"
-                    CUTOFF="$TARGET_MIN_DATE"
-                fi
-            else
-                umh_log_redacted "WARN: target query failed (${query_out}); assuming full-import"
-            fi
-        else
-            umh_log_redacted "WARN: sapphire-postprocessing-db not running; assuming full-import"
-        fi
     fi
 
-    umh_log_redacted "MODE=${TARGET_MODE}$( [[ -n "$CUTOFF" ]] && echo " (cutoff=${CUTOFF})" || echo " (target empty)")"
+    if docker ps --filter "name=sapphire-postprocessing-db" --quiet | grep -q .; then
+        local query_out
+        if query_out="$(query_cutoff_map_state 2>&1)"; then
+            local raw_cutoff_tsv="${TMPDIR_LF}/long_forecast_cutoff_map.tsv"
+            local cutoff_map_json="${TMPDIR_LF}/long_forecast_cutoff_map.json"
+            printf '%s\n' "$query_out" > "$raw_cutoff_tsv"
 
-    # Fail-closed gate (review feedback): the query is global only when no
-    # --mode filter is set. Applying one global cutoff to every mode can
-    # skip valid data when, for example, month_1 already has target rows
-    # but month_2 is still empty. Refuse to proceed unless the operator
-    # opts in via --allow-global-cutoff.
+            local map_summary
+            if map_summary="$(write_cutoff_map_json "$raw_cutoff_tsv" "$cutoff_map_json" 2>&1)"; then
+                TARGET_COUNT="${map_summary%%$'\t'*}"
+                TARGET_MIN_DATE="${map_summary#*$'\t'}"
+                TARGET_COUNT="${TARGET_COUNT//[$'\r\n ']/}"
+                TARGET_MIN_DATE="${TARGET_MIN_DATE//[$'\r\n ']/}"
+                if [[ "$TARGET_COUNT" != "0" ]]; then
+                    TARGET_MODE="pre-cutoff"
+                    CUTOFF_MAP_HOST="$cutoff_map_json"
+                    CUTOFF_MAP_CONTAINER="/cutoff_map/$(basename "$cutoff_map_json")"
+                fi
+                umh_log_redacted "Target cutoff map: entries=${TARGET_COUNT} min_date=${TARGET_MIN_DATE:-<null>}"
+            else
+                umh_log_redacted "WARN: cutoff-map normalization failed (${map_summary}); trying legacy scalar fallback"
+                LEGACY_SCALAR_FALLBACK=true
+            fi
+        else
+            umh_log_redacted "WARN: grouped cutoff-map query failed (${query_out}); trying legacy scalar fallback"
+            LEGACY_SCALAR_FALLBACK=true
+        fi
+
+        if [[ "$LEGACY_SCALAR_FALLBACK" == true ]]; then
+            local legacy_out
+            if legacy_out="$(query_legacy_scalar_target_state 2>&1)"; then
+                TARGET_COUNT="${legacy_out%%$'\t'*}"
+                TARGET_MIN_DATE="${legacy_out#*$'\t'}"
+                TARGET_COUNT="${TARGET_COUNT//[$'\r\n ']/}"
+                TARGET_MIN_DATE="${TARGET_MIN_DATE//[$'\r\n ']/}"
+                umh_log_redacted "Legacy scalar target state: count=${TARGET_COUNT} min_date=${TARGET_MIN_DATE:-<null>}"
+                if [[ "$TARGET_COUNT" != "0" && -n "$TARGET_MIN_DATE" ]]; then
+                    TARGET_MODE="pre-cutoff"
+                    CUTOFF="$TARGET_MIN_DATE"
+                fi
+            else
+                umh_log_redacted "ERROR: grouped cutoff-map query failed and legacy scalar fallback also failed (${legacy_out})"
+                exit 1
+            fi
+        fi
+    else
+        umh_log_redacted "WARN: sapphire-postprocessing-db not running; assuming full-import"
+    fi
+
+    if [[ -n "$CUTOFF_MAP_HOST" ]]; then
+        umh_log_redacted "MODE=${TARGET_MODE} (cutoff_map_entries=${TARGET_COUNT})"
+    else
+        umh_log_redacted "MODE=${TARGET_MODE}$( [[ -n "$CUTOFF" ]] && echo " (legacy cutoff=${CUTOFF})" || echo " (target empty)")"
+    fi
+
+    # Fail-closed gate for the legacy scalar fallback only. The primary
+    # cutoff-map path is code-scoped and needs no operator opt-in.
     #
-    # Single-mode runs (--mode <name>) are exempt because the query above
-    # scoped the cutoff to that mode's horizon_value.
-    #
-    # Dry-run runs (--dry-run) are also exempt because no POSTs happen;
-    # dry-run is meant to be the operator's first diagnostic step, so
-    # blocking it would break the runbook's "dry-run first" workflow.
-    # A prominent WARNING is logged so the operator sees the gate would
-    # have fired on a real run.
-    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$ALLOW_GLOBAL_CUTOFF" != true && "$DRY_RUN" != true ]]; then
+    # Dry-run runs (--dry-run) keep their preview exemption on the retained
+    # legacy path, but real runs must opt in via --allow-global-cutoff.
+    if [[ "$TARGET_MODE" == "pre-cutoff" && "$LEGACY_SCALAR_FALLBACK" == true && "$ALLOW_GLOBAL_CUTOFF" != true && "$DRY_RUN" != true ]]; then
         # Shell-quote the script + env file paths so the suggested commands
         # survive copy-paste even when either contains spaces or other
         # metacharacters (round-3 review feedback).
         local script_q env_q
         printf -v script_q '%q' "$0"
         printf -v env_q '%q' "$ENV_FILE"
-        umh_log_redacted "ERROR: target long_forecasts table has rows (count=${TARGET_COUNT}) but"
-        umh_log_redacted "this wrapper would apply ONE global cutoff to every mode it processes."
-        umh_log_redacted "That can skip valid data because different modes have independent"
-        umh_log_redacted "horizon_value scopes (month_1 / month_2 / quarter / seasonal_*)."
+        umh_log_redacted "ERROR: cutoff-map generation failed and target long_forecasts has rows (count=${TARGET_COUNT})."
+        umh_log_redacted "Falling back to one scalar cutoff can skip valid data for missing stations."
         umh_log_redacted ""
         umh_log_redacted "Resolution — pick ONE:"
-        umh_log_redacted "  (a) Run per-mode separately (recommended for partially-populated targets):"
-        umh_log_redacted "        bash ${script_q} ${env_q} --mode month_1"
-        umh_log_redacted "        bash ${script_q} ${env_q} --mode month_2"
-        umh_log_redacted "        ..."
-        umh_log_redacted "  (b) Accept the conservative global cutoff (skips rows >= ${CUTOFF}"
-        umh_log_redacted "      in EVERY mode — may under-populate empty horizon_value modes):"
+        umh_log_redacted "  (a) Fix the cutoff-map query/normalization failure and rerun."
+        umh_log_redacted "  (b) Accept the conservative legacy scalar cutoff (skips rows >= ${CUTOFF}):"
         umh_log_redacted "        bash ${script_q} ${env_q} --allow-global-cutoff"
         umh_log_redacted ""
         umh_log_redacted "Note: --dry-run is exempt from this gate; rerun with --dry-run to preview."
         exit 1
     fi
-    # Dry-run exemption WARNING is only meaningful when the operator did NOT
-    # already opt in via --allow-global-cutoff. With both --dry-run AND
-    # --allow-global-cutoff set, the opt-in WARNING below is the right
-    # diagnostic (and the dry-run-exemption text would lie about the missing
-    # opt-in). Round-3 review feedback.
-    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$DRY_RUN" == true && "$ALLOW_GLOBAL_CUTOFF" != true ]]; then
-        umh_log_redacted "WARNING (dry-run exemption): target has rows + no --mode + no --allow-global-cutoff."
-        umh_log_redacted "  A real run with these args would abort. Inventory below previews the global-cutoff effect."
+    if [[ "$TARGET_MODE" == "pre-cutoff" && "$LEGACY_SCALAR_FALLBACK" == true && "$DRY_RUN" == true && "$ALLOW_GLOBAL_CUTOFF" != true ]]; then
+        umh_log_redacted "WARNING (dry-run exemption): cutoff-map failed + target has rows + no --allow-global-cutoff."
+        umh_log_redacted "  A real run with these args would abort. Inventory below previews the legacy scalar cutoff effect."
     fi
-    if [[ "$TARGET_MODE" == "pre-cutoff" && -z "$MODE_FILTER" && "$ALLOW_GLOBAL_CUTOFF" == true ]]; then
-        umh_log_redacted "WARNING: applying global cutoff (${CUTOFF}) to every mode (operator opted in via --allow-global-cutoff)."
+    if [[ "$TARGET_MODE" == "pre-cutoff" && "$LEGACY_SCALAR_FALLBACK" == true && "$ALLOW_GLOBAL_CUTOFF" == true ]]; then
+        umh_log_redacted "WARNING: applying legacy scalar cutoff (${CUTOFF}) because operator opted in via --allow-global-cutoff."
     fi
-
-    # -------------------------------------------------------------------------
-    # Acquire a temp workspace (mode 0o700, trap-cleaned on EXIT INT TERM).
-    # -------------------------------------------------------------------------
-    local TMPDIR_LF
-    TMPDIR_LF="$(umh_acquire_temp_workspace long_forecast)"
-    umh_log_redacted "Temp workspace: ${TMPDIR_LF}"
 
     # -------------------------------------------------------------------------
     # Run the Python helper inside the prepgateway image.
@@ -580,6 +664,13 @@ PYEOF
     local CUTOFF_ARGS=()
     if [[ -n "$CUTOFF" ]]; then
         CUTOFF_ARGS=("--cutoff" "$CUTOFF")
+    fi
+
+    local CUTOFF_MAP_MOUNT_ARGS=()
+    local CUTOFF_MAP_ARGS=()
+    if [[ -n "$CUTOFF_MAP_HOST" ]]; then
+        CUTOFF_MAP_MOUNT_ARGS=(-v "${TMPDIR_LF}:/cutoff_map:ro")
+        CUTOFF_MAP_ARGS=("--cutoff-map" "$CUTOFF_MAP_CONTAINER")
     fi
 
     local STATION_ARGS=()
@@ -621,6 +712,7 @@ PYEOF
     docker run --rm --network host \
         -v "${CONFIG_HOST}:/config/long_term_configs:ro" \
         -v "${DATA_HOST}:/intermediate_data:ro" \
+        "${CUTOFF_MAP_MOUNT_ARGS[@]}" \
         -v "${HELPER_DIR}/migration_py:/opt/migration_py:ro" \
         -e "PYTHONPATH=/opt" \
         "$IMAGE" \
@@ -630,6 +722,7 @@ PYEOF
             --api-url "${API_URL}" \
             --batch-size "${BATCH_SIZE}" \
             "${CUTOFF_ARGS[@]}" \
+            "${CUTOFF_MAP_ARGS[@]}" \
             "${STATION_ARGS[@]}" \
             "${MODE_ARGS[@]}" \
             "${MODEL_ARGS[@]}" \

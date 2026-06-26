@@ -163,8 +163,8 @@ class TestWriteSnowToApi:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_nan_values_are_none(self, mock_client_class):
-        """Test that NaN values are converted to None."""
+    def test_nan_values_skip_empty_rows(self, mock_client_class):
+        """NaN-only snow rows are skipped instead of writing empty records."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -180,16 +180,14 @@ class TestWriteSnowToApi:
             data = pd.DataFrame(
                 {
                     "date": [today],
-                    "code": [12345],
+                    "code": ["19999"],
                     "SWE": [np.nan],
                 }
             )
 
             result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
-            assert result is True
-
-            call_args = mock_client.write_snow.call_args[0][0]
-            assert call_args[0]["value"] is None
+            assert result is False
+            mock_client.write_snow.assert_not_called()
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -236,14 +234,14 @@ class TestWriteSnowToApi:
 
 
 # =============================================================================
-# Tests for _write_snow_to_api (maintenance mode - writes last 30 days)
+# Tests for _write_snow_to_api (maintenance mode - writes last 365 days)
 # =============================================================================
 
 
 class TestWriteSnowToApiMaintenance:
     """Tests for dg_utils.write_snow_to_api in maintenance mode.
 
-    Maintenance mode writes the last 30 days of data relative to
+    Maintenance mode writes the last 365 days of data relative to
     reference_date (used by snow_data_renalysis).
     """
 
@@ -301,8 +299,8 @@ class TestWriteSnowToApiMaintenance:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_writes_last_30_days_only(self, mock_client_class):
-        """Only the last 30 days of data should be written (maintenance behavior)."""
+    def test_writes_last_365_days_only(self, mock_client_class):
+        """Only the last 365 days of data should be written (maintenance behavior)."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -310,17 +308,17 @@ class TestWriteSnowToApiMaintenance:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 30
+            mock_client.write_snow.return_value = 366
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
-            # Data spanning 60 days ending 2024-03-01
-            dates = pd.date_range(end="2024-03-01", periods=60, freq="D")
+            # Data spanning 500 days ending 2024-03-01
+            dates = pd.date_range(end="2024-03-01", periods=500, freq="D")
             data = pd.DataFrame(
                 {
                     "date": dates,
-                    "code": [12345] * 60,
-                    "SWE": np.random.uniform(50, 200, 60),
+                    "code": ["19999"] * 500,
+                    "SWE": np.arange(500, dtype=float),
                 }
             )
 
@@ -335,7 +333,9 @@ class TestWriteSnowToApiMaintenance:
 
             mock_client.write_snow.assert_called_once()
             call_args = mock_client.write_snow.call_args[0][0]
-            assert len(call_args) == 31  # 30 days + cutoff day
+            assert len(call_args) == 366  # 365 days + cutoff day
+            assert min(r["date"] for r in call_args) == "2023-03-02"
+            assert max(r["date"] for r in call_args) == "2024-03-01"
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -1802,8 +1802,8 @@ class TestSnowSyncMode:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_maintenance_mode_writes_last_30_days(self, mock_client_class):
-        """Maintenance mode should write the last 30 days."""
+    def test_maintenance_mode_writes_last_365_days(self, mock_client_class):
+        """Maintenance mode should write the last 365 days."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1811,17 +1811,17 @@ class TestSnowSyncMode:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 31
+            mock_client.write_snow.return_value = 366
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
-            dates = pd.date_range(end=today, periods=60, freq="D")
+            dates = pd.date_range(end=today, periods=500, freq="D")
             data = pd.DataFrame(
                 {
                     "date": dates,
-                    "code": [12345] * 60,
-                    "SWE": range(60),
+                    "code": ["19999"] * 500,
+                    "SWE": range(500),
                 }
             )
 
@@ -1829,7 +1829,7 @@ class TestSnowSyncMode:
             assert result is True
 
             records = mock_client.write_snow.call_args[0][0]
-            assert len(records) == 31  # last 30 days + cutoff day
+            assert len(records) == 366  # last 365 days + cutoff day
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -2082,6 +2082,133 @@ class TestSnowNormPreservation:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
+    def test_maintenance_old_row_preserves_stat_bands(self, mock_client_class):
+        """Maintenance writes old rows without clobbering existing stat bands."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            reference_date = pd.Timestamp("2024-05-10")
+            old_date = reference_date - pd.Timedelta(days=100)
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame(
+                {
+                    "date": pd.to_datetime([old_date]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [10.0],
+                    "norm": [20.0],
+                    "count": [11],
+                    "mean": [21.0],
+                    "std": [2.0],
+                    "min": [5.0],
+                    "max": [35.0],
+                    "q05": [6.0],
+                    "q25": [15.0],
+                    "q50": [22.0],
+                    "q75": [28.0],
+                    "q95": [34.0],
+                    "previous": [18.0],
+                    "current": [10.0],
+                }
+            )
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime([old_date]),
+                    "code": ["19999"],
+                    "SWE": [12.3456],
+                }
+            )
+
+            result = dg_utils.write_snow_to_api(
+                data,
+                "SWE",
+                "test_hru",
+                mode="maintenance",
+                reference_date=reference_date,
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 1
+            record = records[0]
+            assert record["date"] == old_date.strftime("%Y-%m-%d")
+            assert record["code"] == "19999"
+            assert record["value"] == 12.346
+            assert record["current"] == 12.346
+            assert record["norm"] == 20.0
+            assert record["count"] == 11
+            assert record["mean"] == 21.0
+            assert record["std"] == 2.0
+            assert record["min"] == 5.0
+            assert record["max"] == 35.0
+            assert record["q05"] == 6.0
+            assert record["q25"] == 15.0
+            assert record["q50"] == 22.0
+            assert record["q75"] == 28.0
+            assert record["q95"] == 34.0
+            assert record["previous"] == 18.0
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_maintenance_value_only_row_preserves_elevation_bands(self, mock_client_class):
+        """Value-only maintenance updates do not null existing elevation bands."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            reference_date = pd.Timestamp("2024-05-10")
+            old_date = reference_date - pd.Timedelta(days=100)
+            existing_bands = {f"value{i}": float(i) for i in range(1, 15)}
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame(
+                {
+                    "date": pd.to_datetime([old_date]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [10.0],
+                    **{field: [value] for field, value in existing_bands.items()},
+                }
+            )
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime([old_date]),
+                    "code": ["19999"],
+                    "SWE": [22.0],
+                }
+            )
+
+            result = dg_utils.write_snow_to_api(
+                data,
+                "SWE",
+                "test_hru",
+                mode="maintenance",
+                reference_date=reference_date,
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 1
+            record = records[0]
+            assert record["value"] == 22.0
+            assert record["current"] == 22.0
+            for field, value in existing_bands.items():
+                assert record[field] == value
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
     def test_local_norm_takes_precedence(self, mock_client_class):
         """Incoming data has norm → overrides existing API norm."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
@@ -2195,18 +2322,18 @@ class TestSnowNormPreservation:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 31
+            mock_client.write_snow.return_value = 366
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
             # Data ends at 2024-02-15, well in the past
             ref_date = pd.Timestamp("2024-02-15")
-            dates = pd.date_range(end="2024-02-15", periods=60, freq="D")
+            dates = pd.date_range(end="2024-02-15", periods=500, freq="D")
             data = pd.DataFrame(
                 {
                     "date": dates,
-                    "code": [12345] * 60,
-                    "SWE": range(60),
+                    "code": ["19999"] * 500,
+                    "SWE": range(500),
                 }
             )
 
@@ -2220,10 +2347,10 @@ class TestSnowNormPreservation:
             assert result is True
 
             records = mock_client.write_snow.call_args[0][0]
-            # 30-day window from Feb 15 → Jan 16 to Feb 15 = 31 days
-            assert len(records) == 31
+            # 365-day window from Feb 15 -> Feb 15 to Feb 15 = 366 days
+            assert len(records) == 366
             record_dates = sorted(r["date"] for r in records)
-            assert record_dates[0] == "2024-01-16"
+            assert record_dates[0] == "2023-02-15"
             assert record_dates[-1] == "2024-02-15"
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)

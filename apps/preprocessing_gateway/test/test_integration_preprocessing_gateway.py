@@ -45,7 +45,7 @@ TestCrossScriptDataFlow (5 tests)
     (QM → extend_era5 → snow) end-to-end.
 
 TestSyncModes (5 tests)
-    Operational writes yesterday+today, maintenance writes ~30 days,
+    Operational writes yesterday+today, maintenance writes ~365 days,
     initial writes all data, reanalysis write skipped in
     operational mode, reanalysis write active in maintenance mode.
 
@@ -1210,7 +1210,7 @@ class TestSnowPipelineIntegration:
 
     def test_snow_operational_vs_maintenance_filtering(self, gateway_env, mock_api_client):
         """Operational writes yesterday onward (including forecast);
-        maintenance writes 30 days."""
+        maintenance writes 365 days."""
         env = gateway_env
         today = datetime.today()
         dates = [(today - timedelta(days=d)).strftime("%d.%m.%Y") for d in range(60, -1, -1)]

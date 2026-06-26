@@ -793,11 +793,11 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
   # (consolidated Luigi wrapper). Full-history safety net.
   0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
-  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on August 31
+  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on January 1
   # (consolidated Luigi wrapper). Supersedes legacy
   # bin/yearly_snow_norm_recalculation.sh (kept for manual / debugging
   # use only).
-  0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
+  0 2 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds

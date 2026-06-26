@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.ensemble_calculator import (
+    create_monthly_ensemble_forecasts,
     create_quarterly_ensemble_forecasts,
     create_seasonal_ensemble_forecasts,
 )
@@ -119,18 +120,18 @@ def _two_model_quarterly_skill():
     """Two highly skilled models for station S1, quarter 1."""
     return _make_quarterly_skill(
         [
-            (1, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-            (1, "S1", "TFT", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
+            (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
+            (1, "S1", "LR_SM", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
         ]
     )
 
 
 def _two_model_quarterly_fcst():
-    """Forecasts for LR and TFT, station S1, Q1 2025."""
+    """Forecasts for LR_Base and LR_SM, station S1, Q1 2025."""
     return _make_quarterly_fcst(
         [
-            ("S1", 2025, 1, "LR", 100.0, 80, 85, 90, 100, 110, 115, 120),
-            ("S1", 2025, 1, "TFT", 120.0, 90, 95, 100, 120, 130, 135, 140),
+            ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+            ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
         ]
     )
 
@@ -139,18 +140,18 @@ def _two_model_seasonal_skill():
     """Two highly skilled models for station S1, season 1."""
     return _make_seasonal_skill(
         [
-            (1, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-            (1, "S1", "TFT", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
+            (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
+            (1, "S1", "LR_SM", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
         ]
     )
 
 
 def _two_model_seasonal_fcst():
-    """Forecasts for LR and TFT, station S1, season_year 2025."""
+    """Forecasts for LR_Base and LR_SM, station S1, season_year 2025."""
     return _make_seasonal_fcst(
         [
-            ("S1", 2025, 1, "LR", 100.0, 80, 85, 90, 100, 110, 115, 120),
-            ("S1", 2025, 1, "TFT", 120.0, 90, 95, 100, 120, 130, 135, 140),
+            ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+            ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
         ]
     )
 
@@ -196,19 +197,69 @@ class TestQuarterlyEnsembleEM:
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         em = result[result["model_short"] == "EM"]
         comp = str(em.iloc[0]["composition"])
-        assert "LR" in comp
-        assert "TFT" in comp
+        assert "LR_Base" in comp
+        assert "LR_SM" in comp
+
+    def test_em_uses_lr_mean_when_lr_skills_fail_thresholds(self):
+        skill = _make_quarterly_skill(
+            [
+                (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q05"], 85.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert np.isclose(em.iloc[0]["q95"], 130.0)
+        assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+
+    def test_em_accepts_db_form_lr_model_names(self):
+        skill = _make_quarterly_skill(
+            [
+                (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2025, 1, "LR_BASE", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
 
     def test_em_not_created_single_model(self):
         """Single model should not produce EM."""
         skill = _make_quarterly_skill(
             [
-                (1, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
+                (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
             ]
         )
         fcst = _make_quarterly_fcst(
             [
-                ("S1", 2025, 1, "LR", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
             ]
         )
         result = create_quarterly_ensemble_forecasts(fcst, skill)
@@ -225,15 +276,15 @@ class TestQuarterlyEnsembleSkilledMean:
         assert not sm.empty
 
     def test_skilled_mean_weighted(self):
-        """Skilled Mean should use 1/MAE weighting (LR gets higher weight)."""
+        """Skilled Mean should use 1/MAE weighting (LR_Base gets higher weight)."""
         skill = _two_model_quarterly_skill()
         fcst = _two_model_quarterly_fcst()
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         sm = result[result["model_short"] == "Skilled Mean"]
-        # LR: MAE=2.0, TFT: MAE=3.0
-        # LR has lower MAE → higher weight → result closer to LR (100)
+        # LR_Base: MAE=2.0, LR_SM: MAE=3.0
+        # LR_Base has lower MAE -> higher weight -> result closer to 100
         discharge = sm.iloc[0]["forecasted_discharge"]
-        assert discharge < 110.0  # closer to LR's 100 than simple mean 110
+        assert discharge < 110.0  # closer to 100 than simple mean 110
 
 
 class TestQuarterlyEnsembleNaiveMean:
@@ -297,6 +348,33 @@ class TestQuarterlyEnsembleEdgeCases:
         assert "EM" not in models
         assert "Naive Mean" not in models
 
+    def test_preexisting_baseline_replaced_not_duplicated(self):
+        """Stored ensembles in the input are dropped, not re-emitted.
+
+        Operational generation must match the maintenance recalc: a source
+        that already contains EM/Naive Mean/Skilled Mean must not yield two
+        rows for the same key (which would violate the long_forecasts unique
+        constraint on write).
+        """
+        skill = _two_model_quarterly_skill()
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                # Pre-existing stored ensemble row with a stale value.
+                ("S1", 2025, 1, "Naive Mean", 999.0, 900, 905, 915, 999, 925, 935, 940),
+            ]
+        )
+
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+
+        key = ["code", "year", "quarter_in_year", "model_short"]
+        assert not result.duplicated(key).any()
+        nm = result[result["model_short"] == "Naive Mean"]
+        # One recomputed Naive Mean (mean of the two raw models), stale gone.
+        assert len(nm) == 1
+        assert np.isclose(nm.iloc[0]["forecasted_discharge"], 110.0)
+
 
 # ===================================================================
 # Seasonal ensemble creation
@@ -318,6 +396,114 @@ class TestSeasonalEnsembleEM:
         em = result[result["model_short"] == "EM"]
         expected = (100.0 + 120.0) / 2
         assert np.isclose(em.iloc[0]["forecasted_discharge"], expected)
+
+    def test_four_issue_leads_produce_independent_ensembles(self):
+        leads = [3, 2, 1, 0]
+        issue_dates = {
+            3: "2025-01-01",
+            2: "2025-02-01",
+            1: "2025-03-01",
+            0: "2025-04-01",
+        }
+        forecast_rows = []
+        skill_rows = []
+        for lead in leads:
+            for model_short, offset, mae in [("LR_Base", 0.0, 2.0), ("LR_SM", 20.0, 3.0)]:
+                forecast_rows.append(
+                    {
+                        "code": "PP4_S_SENTINEL",
+                        "season_year": 2025,
+                        "season_in_year": lead,
+                        "date": issue_dates[lead],
+                        "valid_from": "2025-04-01",
+                        "valid_to": "2025-09-30",
+                        "model_short": model_short,
+                        "forecasted_discharge": 100.0 + lead + offset,
+                        "q05": 80.0 + lead + offset,
+                        "q10": 85.0 + lead + offset,
+                        "q25": 90.0 + lead + offset,
+                        "q50": 100.0 + lead + offset,
+                        "q75": 110.0 + lead + offset,
+                        "q90": 115.0 + lead + offset,
+                        "q95": 120.0 + lead + offset,
+                    }
+                )
+                skill_rows.append(
+                    (
+                        lead,
+                        "PP4_S_SENTINEL",
+                        model_short,
+                        0.3,
+                        0.95,
+                        5.0,
+                        0.90,
+                        mae,
+                        10,
+                    )
+                )
+
+        result = create_seasonal_ensemble_forecasts(
+            pd.DataFrame(forecast_rows),
+            _make_seasonal_skill(skill_rows),
+        )
+
+        for model_short in {"EM", "Naive Mean", "Skilled Mean"}:
+            rows = result[result["model_short"] == model_short]
+            assert len(rows) == 4
+            assert set(rows["season_in_year"]) == {0, 1, 2, 3}
+            assert dict(zip(rows["season_in_year"], rows["date"], strict=True)) == issue_dates
+            assert set(rows["valid_from"]) == {"2025-04-01"}
+            assert set(rows["valid_to"]) == {"2025-09-30"}
+
+    def test_em_uses_lr_mean_when_lr_skills_fail_thresholds(self):
+        skill = _make_seasonal_skill(
+            [
+                (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2025, 1, "LR_Base", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_seasonal_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q05"], 85.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert np.isclose(em.iloc[0]["q95"], 130.0)
+        assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+
+    def test_em_accepts_db_form_lr_model_names(self):
+        skill = _make_seasonal_skill(
+            [
+                (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
+                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2025, 1, "LR_BASE", 100.0, 80, 85, 90, 100, 110, 115, 120),
+                ("S1", 2025, 1, "LR_SM", 120.0, 90, 95, 100, 120, 130, 135, 140),
+                ("S1", 2025, 1, "GBT", 1000.0, 900, 925, 950, 1000, 1050, 1075, 1100),
+            ]
+        )
+
+        result = create_seasonal_ensemble_forecasts(fcst, skill)
+        em = result[result["model_short"] == "EM"]
+
+        assert len(em) == 1
+        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
+        assert np.isclose(em.iloc[0]["q50"], 110.0)
+        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
 
 
 class TestSeasonalEnsembleNaiveMean:
@@ -376,3 +562,46 @@ class TestSeasonalEnsembleEdgeCases:
         )
         result = create_seasonal_ensemble_forecasts(fcst, skill)
         assert len(result) == len(fcst)
+
+
+# ===================================================================
+# Monthly regression
+# ===================================================================
+
+
+class TestMonthlyEnsembleRegression:
+    def test_monthly_em_remains_skill_gated(self):
+        forecasts = pd.DataFrame(
+            {
+                "code": ["S1", "S1"],
+                "year": [2025, 2025],
+                "month": [1, 1],
+                "month_in_year": [1, 1],
+                "model_short": ["LR_Base", "LR_SM"],
+                "forecasted_discharge": [100.0, 120.0],
+                "q05": [80.0, 90.0],
+                "q10": [85.0, 95.0],
+                "q25": [90.0, 100.0],
+                "q50": [100.0, 120.0],
+                "q75": [110.0, 130.0],
+                "q90": [115.0, 135.0],
+                "q95": [120.0, 140.0],
+            }
+        )
+        skill = pd.DataFrame(
+            {
+                "month_in_year": [1, 1],
+                "code": ["S1", "S1"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "sdivsigma": [0.3, 0.9],
+                "nse": [0.95, -1.0],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.90, 0.10],
+                "mae": [2.0, 30.0],
+                "n_pairs": [10, 10],
+            }
+        )
+
+        result = create_monthly_ensemble_forecasts(forecasts, skill)
+
+        assert result[result["model_short"] == "EM"].empty

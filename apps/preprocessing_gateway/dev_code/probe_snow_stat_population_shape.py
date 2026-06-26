@@ -12,7 +12,7 @@ if not (_probe_code.startswith("199") or _allow_real):
     )
     sys.exit(2)
 
-"""Phase 0 spike for snow-stat population. Read-only. Reads `PROBE_CODE` and `SNOW_PROBE_API_BASE` from env. See `doc/plans/working/snow_stat_population_decisions.md` for the companion artifact."""
+"""Phase 0 spike for snow-stat population. Read-only. Reads `PROBE_CODE` and `SNOW_PROBE_API_BASE` from env. See `doc/plans/archive/snow_stat_population_decisions.md` for the companion artifact."""
 
 import pandas as pd
 import requests

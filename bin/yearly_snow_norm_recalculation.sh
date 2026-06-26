@@ -5,8 +5,8 @@
 # and dashboard-facing statistics (SWE, HS, RoF) from historical reanalysis
 # CSVs, then writes them to the SAPPHIRE preprocessing API.
 #
-# Designed to run once a year (e.g., end of August) after the snow
-# reanalysis files have been updated for the previous season.
+# Designed to run once a year on January 1 to populate current-calendar-year
+# snow norms and statistics from completed historical snow reanalysis files.
 #
 # Usage:
 #   bash bin/yearly_snow_norm_recalculation.sh <env_file_path>
@@ -20,8 +20,8 @@
 # 3. Write full-year norm and statistic records to the preprocessing API
 # 4. Log all output to a timestamped log file
 #
-# Crontab example (run snow norm/stat recalculation Aug 25 at 02:00):
-#   0 2 25 8 * /path/to/bin/yearly_snow_norm_recalculation.sh /path/to/config/.env
+# Crontab example (run snow norm/stat recalculation Jan 1 at 02:00):
+#   0 2 1 1 * /path/to/bin/yearly_snow_norm_recalculation.sh /path/to/config/.env
 #
 # Author: Beatrice Marti
 

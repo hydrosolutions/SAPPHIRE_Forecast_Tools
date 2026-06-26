@@ -82,6 +82,7 @@ class TestSeasonalGapDetection:
         combined = pd.DataFrame(
             {
                 "season_year": [2025, 2025, 2025],
+                "season_in_year": [1, 1, 1],
                 "code": ["S1", "S1", "S2"],
                 "model_short": ["LR", "EM", "LR"],
                 "forecasted_discharge": [100, 100, 80],
@@ -95,6 +96,7 @@ class TestSeasonalGapDetection:
         combined = pd.DataFrame(
             {
                 "season_year": [2025, 2025],
+                "season_in_year": [1, 1],
                 "code": ["S1", "S1"],
                 "model_short": ["LR", "EM"],
                 "forecasted_discharge": [100, 100],
@@ -108,6 +110,7 @@ class TestSeasonalGapDetection:
         combined = pd.DataFrame(
             {
                 "season_year": [2025, 2025, 2023, 2023],
+                "season_in_year": [1, 1, 1, 1],
                 "code": ["S1", "S1", "S1", "S1"],
                 "model_short": ["LR", "EM", "LR", "LR"],
                 "forecasted_discharge": [100, 100, 80, 80],
@@ -121,3 +124,24 @@ class TestSeasonalGapDetection:
         gaps = detect_missing_seasonal_ensembles(pd.DataFrame())
         assert gaps.empty
         assert "season_year" in gaps.columns
+        assert "season_in_year" in gaps.columns
+
+    def test_detects_one_missing_issue_lead_out_of_four(self):
+        combined = pd.DataFrame(
+            {
+                "season_year": [2025] * 7,
+                "season_in_year": [3, 3, 2, 2, 1, 1, 0],
+                "code": ["PP4_S_SENTINEL"] * 7,
+                "model_short": ["LR", "EM", "LR", "EM", "LR", "EM", "LR"],
+                "forecasted_discharge": [100, 100, 110, 110, 120, 120, 130],
+            }
+        )
+
+        gaps = detect_missing_seasonal_ensembles(combined)
+
+        assert len(gaps) == 1
+        gap = gaps.iloc[0]
+        assert gap["season_year"] == 2025
+        assert gap["season_in_year"] == 0
+        assert gap["code"] == "PP4_S_SENTINEL"
+        assert gap["model_short"] == "EM"

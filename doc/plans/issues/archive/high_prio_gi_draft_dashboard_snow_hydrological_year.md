@@ -9,7 +9,7 @@ The dashboard already reads `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD` and pas
 1. `bin/utils/common_functions.sh:280` and `:291` have the same cosmetic cleanup exit-1 bug when `$ieasyhydroforecast_ssh_tunnel_pid` is unbound under `set -u`. Out of scope; file separately.
 2. Future true hydrological-year `previous` / `current` semantics would touch `apps/preprocessing_gateway/recalculate_snow_norms.py` and `apps/preprocessing_gateway/dg_utils.py`. This plan keeps calendar-date semantics.
 3. Daily runoff/hydrograph plots remain calendar-year aligned. Future hydrological-year wording there is a separate product decision.
-4. This supersedes `doc/plans/working/snow_field_population_check.md:88` `DATE_WINDOW_DECISION: KEEP`. The fetch range is now display-window-derived per D-Q2; the earlier evidence file remains historical.
+4. This supersedes `doc/plans/archive/snow_field_population_check.md:88` `DATE_WINDOW_DECISION: KEEP`. The fetch range is now display-window-derived per D-Q2; the earlier evidence file remains historical.
 
 ## Decisions
 
@@ -39,9 +39,9 @@ The dashboard already reads `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD` and pas
 
 ## Phase 0 - Design Decisions Artifact
 
-**Goal:** Create `doc/plans/working/snow_hydrological_year_decisions.md` recording D1-D4 and D-Q1-D-Q5.
+**Goal:** Create `doc/plans/archive/snow_hydrological_year_decisions.md` recording D1-D4 and D-Q1-D-Q5.
 
-**Files:** `doc/plans/working/snow_hydrological_year_decisions.md`
+**Files:** `doc/plans/archive/snow_hydrological_year_decisions.md`
 
 **Depends on:** None
 

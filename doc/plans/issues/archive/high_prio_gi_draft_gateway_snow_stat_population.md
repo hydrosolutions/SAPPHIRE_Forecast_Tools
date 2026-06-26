@@ -57,7 +57,7 @@ RATIONALE: The dashboard reads historical date windows, and Phase 0 already show
 **Goal:** Create the decision artifact and a read-only dev spike that verifies the API/data shape needed by later phases.
 
 **Files:**
-- `doc/plans/working/snow_stat_population_decisions.md`
+- `doc/plans/archive/snow_stat_population_decisions.md`
 - `apps/preprocessing_gateway/dev_code/probe_snow_stat_population_shape.py`
 - If `apps/preprocessing_gateway/dev_code/` does not exist, the agent creates it, following the pattern in `apps/preprocessing_runoff/dev_code/`.
 
@@ -160,7 +160,7 @@ RATIONALE: The dashboard reads historical date windows, and Phase 0 already show
 **Goal:** Run the unified recalc against the local stack and capture evidence that the dashboard Phase 0 gate can proceed.
 
 **Files:**
-- `doc/plans/working/snow_stat_population_e2e_evidence.md`
+- `doc/plans/archive/snow_stat_population_e2e_evidence.md`
 
 **Depends on:** Phase 2
 

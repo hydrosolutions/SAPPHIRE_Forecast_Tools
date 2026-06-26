@@ -24,7 +24,7 @@ Confirm against a real `/snow/` response whether `{mean, min, max, q05, q25, q50
 
 **Files**
 
-- `doc/plans/working/snow_field_population_check.md`
+- `doc/plans/archive/snow_field_population_check.md`
 
 **Depends on**
 
@@ -84,7 +84,7 @@ PY
 
 **Artifact Gate**
 
-The final line of `doc/plans/working/snow_field_population_check.md` must be exactly one of:
+The final line of `doc/plans/archive/snow_field_population_check.md` must be exactly one of:
 
 - `DECISION: proceed_to_phase_1`
 - `DECISION: run_phase_0_5_first`
@@ -94,7 +94,7 @@ The orchestrator must read this marker before dispatching follow-up work. Dispat
 
 **Acceptance Criteria**
 
-- `doc/plans/working/snow_field_population_check.md` records API base used, snow types checked, date window, row counts, per-field non-null counts, whether `plot_daily_snow_data()` needs data past `CURRENT_YEAR-12-31`, and an explicit go/no-go decision.
+- `doc/plans/archive/snow_field_population_check.md` records API base used, snow types checked, date window, row counts, per-field non-null counts, whether `plot_daily_snow_data()` needs data past `CURRENT_YEAR-12-31`, and an explicit go/no-go decision.
 - No application code is changed.
 - The note ends with exactly one machine-readable marker: `DECISION: proceed_to_phase_1`, `DECISION: run_phase_0_5_first`, or `DECISION: stop_and_escalate`.
 
@@ -501,7 +501,7 @@ Do NOT change any existing function signatures, data flow logic, or control flow
 
 ## Dependency Graph
 
-The graph below uses only the `CLAUDE.md` schema keys. Conditional dispatch is controlled by the Phase 0 artifact marker in `doc/plans/working/snow_field_population_check.md`: dispatch P0.5 only when the marker is `DECISION: run_phase_0_5_first`; dispatch P1 directly when the marker is `DECISION: proceed_to_phase_1`; stop all implementation when the marker is `DECISION: stop_and_escalate`. If P0.5 runs, the orchestrator must complete and verify it before dispatching P1 even though both are shown as depending on P0 for schema compatibility.
+The graph below uses only the `CLAUDE.md` schema keys. Conditional dispatch is controlled by the Phase 0 artifact marker in `doc/plans/archive/snow_field_population_check.md`: dispatch P0.5 only when the marker is `DECISION: run_phase_0_5_first`; dispatch P1 directly when the marker is `DECISION: proceed_to_phase_1`; stop all implementation when the marker is `DECISION: stop_and_escalate`. If P0.5 runs, the orchestrator must complete and verify it before dispatching P1 even though both are shown as depending on P0 for schema compatibility.
 
 ```json
 {
@@ -523,7 +523,7 @@ The graph below uses only the `CLAUDE.md` schema keys. Conditional dispatch is c
 
 | Phase | Test files added/modified | Headline assertions |
 |---|---|---|
-| P0 | `doc/plans/working/snow_field_population_check.md` | Written row counts, non-null counts, date-window decision, and final `DECISION:` marker |
+| P0 | `doc/plans/archive/snow_field_population_check.md` | Written row counts, non-null counts, date-window decision, and final `DECISION:` marker |
 | P0.5 | `apps/forecast_dashboard/tests/test_db.py` | Missing stat fields computed only when partially populated and enough history exists |
 | P1 | `apps/forecast_dashboard/tests/test_db.py` | Snow stat fields preserved, renamed, elevation bands dropped, HS stat columns scaled |
 | P2 | `apps/forecast_dashboard/tests/test_snow_plot.py` | Overlay contains min-max, percentile bands, mean/norm, last-year, current-year, forecast |
@@ -533,7 +533,7 @@ The graph below uses only the `CLAUDE.md` schema keys. Conditional dispatch is c
 
 ## Risks & Rollback
 
-- **P0**: API base or station may be wrong. Roll back by deleting only `doc/plans/working/snow_field_population_check.md` and rerun with corrected environment.
+- **P0**: API base or station may be wrong. Roll back by deleting only `doc/plans/archive/snow_field_population_check.md` and rerun with corrected environment.
 - **P0.5**: Client-side stats could diverge from service semantics. Roll back by reverting `apps/forecast_dashboard/src/db.py` fallback and its tests.
 - **P1**: Column rename mismatch could break `plot_daily_snow_data()`. Roll back `db.py` snow-contract changes and `test_db.py` additions.
 - **P2**: HoloViews overlay ordering or labels could break tests or visual readability. Roll back `vizualization.py` snow plot changes and `test_snow_plot.py`.

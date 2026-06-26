@@ -32,6 +32,22 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    from iEasyHydroForecast.long_term_horizon_resolver import (
+        quarter_horizon_value,
+        seasonal_config_name,
+        seasonal_horizon_value,
+        supported_long_term_modes,
+    )
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from iEasyHydroForecast.long_term_horizon_resolver import (
+        quarter_horizon_value,
+        seasonal_config_name,
+        seasonal_horizon_value,
+        supported_long_term_modes,
+    )
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -75,6 +91,8 @@ LT_QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 
 # Discharge column name in long-term forecasts.
 LT_DISCHARGE_COL = "q"
+
+SEASONAL_ISSUE_MONTHS = (1, 2, 3, 4)
 
 # Default threshold (days) for data freshness checks.
 _FRESHNESS_THRESHOLD_DEFAULT = 3
@@ -518,8 +536,69 @@ def run_tier1_long_term(
             horizon="month",
         )
     )
+    quarter_hv = quarter_horizon_value()
+    results.append(
+        check_presence(
+            post_client,
+            "read_long_term_forecasts",
+            f"Long-term forecasts (quarter hv{quarter_hv})",
+            module="postprocessing_forecasts",
+            horizon_type="quarter",
+            horizon_value=quarter_hv,
+            start_date=fd,
+            end_date=fd,
+        )
+    )
+    results.append(
+        check_presence(
+            post_client,
+            "read_skill_metrics",
+            "Quarterly skill metrics",
+            module="postprocessing_forecasts",
+            horizon="quarter",
+        )
+    )
+
+    season_issue_month, season_hv = _resolved_seasonal_presence_horizon_value(forecast_date)
+    results.append(
+        check_presence(
+            post_client,
+            "read_long_term_forecasts",
+            f"Long-term forecasts (season issue {season_issue_month} hv{season_hv})",
+            module="postprocessing_forecasts",
+            horizon_type="season",
+            horizon_value=season_hv,
+            start_date=fd,
+            end_date=fd,
+        )
+    )
+    results.append(
+        check_presence(
+            post_client,
+            "read_skill_metrics",
+            "Seasonal skill metrics",
+            module="postprocessing_forecasts",
+            horizon="season",
+        )
+    )
 
     return results
+
+
+def _resolved_seasonal_presence_horizon_value(forecast_date: date) -> tuple[int, int]:
+    """Return the configured seasonal issue month and deployment lead for a run."""
+    modes = set(supported_long_term_modes())
+    supported = [
+        issue_month
+        for issue_month in SEASONAL_ISSUE_MONTHS
+        if seasonal_config_name(issue_month) in modes
+    ]
+    if not supported:
+        raise ValueError("No seasonal long-term modes are supported by this deployment.")
+
+    eligible = [issue_month for issue_month in supported if issue_month <= forecast_date.month]
+    issue_month = max(eligible or supported)
+    return issue_month, seasonal_horizon_value(issue_month)
 
 
 # ---------------------------------------------------------------------------

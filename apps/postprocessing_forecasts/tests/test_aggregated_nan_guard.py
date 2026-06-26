@@ -6,6 +6,7 @@ dropped before writing to the API, with a WARNING logged for the
 dropped count and sample codes.
 """
 
+import json
 import logging
 import os
 import sys
@@ -31,8 +32,15 @@ class TestAggregatedNanGuardQuarterly:
     """NaN guard tests for quarterly ensemble API writer."""
 
     @pytest.fixture(autouse=True)
-    def _mock_api(self, monkeypatch):
+    def _mock_api(self, monkeypatch, tmp_path):
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        config_dir = tmp_path / "long_term"
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(json.dumps({"operational_month_lead_time": 1}))
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv("ieasyforecast_config_file_station_selection", "missing.json")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "long_term")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
         self.mock_client = MagicMock()
         self.mock_client.readiness_check.return_value = True
         self.mock_client.write_long_forecasts.return_value = 2
