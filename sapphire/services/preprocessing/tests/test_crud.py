@@ -5,6 +5,7 @@ Tests the SQLAlchemy CRUD functions directly (no HTTP layer) using
 SQLite in-memory databases.
 """
 
+import random
 from datetime import date
 
 import pytest
@@ -339,6 +340,107 @@ class TestSnowCRUD:
     def test_empty_results(self, db_session):
         results = crud.get_snow(db_session, code="NONEXISTENT")
         assert results == []
+
+
+# -------------------------------------------------------------------
+# Snow pagination stable ordering (PREPG-009)
+# -------------------------------------------------------------------
+
+class TestSnowPaginationOrdering:
+    """Regression tests for PREPG-009.
+
+    get_snow() must apply a stable ORDER BY (snow_type, code, date, id)
+    before offset/limit so that whole-table pagination is complete,
+    non-overlapping, and stable across repeated calls. Without the
+    ORDER BY, OFFSET/LIMIT over a large snow table returns a
+    nondeterministic, potentially incomplete subset.
+    """
+
+    @staticmethod
+    def _expected_key(row):
+        # SnowType is a str-Enum; .value gives the stable string form.
+        snow_type = getattr(row.snow_type, "value", row.snow_type)
+        return (snow_type, row.code, row.date, row.id)
+
+    def _seed_shuffled_snow(self, db_session):
+        """Seed > 1 page of snow rows across multiple codes and years,
+        inserting them in deliberately shuffled order.
+
+        Returns the total number of seeded rows.
+        """
+        # Dummy placeholder station codes only (no real station codes).
+        codes = ["19999", "29999", "39999"]
+        years = [2020, 2021, 2022, 2023]
+        days = list(range(1, 9))
+        # 3 codes * 4 years * 8 days = 96 rows; with page_size=10 this
+        # spans many pages, well past a single page.
+
+        items = []
+        for code in codes:
+            for year in years:
+                for day in days:
+                    items.append(
+                        make_snow(
+                            snow_type="SWE",
+                            code=code,
+                            date=date(year, 1, day),
+                            value=float(year * 100 + day),
+                            norm=float(year),
+                        )
+                    )
+
+        # Deterministic shuffle so insertion order does NOT match the
+        # expected domain order (snow_type, code, date, id).
+        random.Random(1234).shuffle(items)
+
+        crud.create_snow(db_session, SnowBulkCreate(data=items))
+        return len(items)
+
+    def _paginate_all(self, db_session, page_size):
+        """Walk every page via get_snow(skip, limit) and concatenate."""
+        all_rows = []
+        skip = 0
+        while True:
+            page = crud.get_snow(db_session, skip=skip, limit=page_size)
+            if not page:
+                break
+            # A page may never exceed the requested limit.
+            assert len(page) <= page_size
+            all_rows.extend(page)
+            if len(page) < page_size:
+                break
+            skip += page_size
+        return all_rows
+
+    def test_pagination_complete_nonoverlapping_ordered(self, db_session):
+        total = self._seed_shuffled_snow(db_session)
+        page_size = 10
+        assert total > page_size  # sanity: more than one page
+
+        rows = self._paginate_all(db_session, page_size)
+
+        ids = [r.id for r in rows]
+        # Complete: every seeded row returned exactly once.
+        assert len(ids) == total
+        # Non-overlapping: no row appears in more than one page.
+        assert len(set(ids)) == total
+        # The id set matches every row actually stored.
+        stored_ids = {r.id for r in db_session.query(Snow).all()}
+        assert set(ids) == stored_ids
+
+        # Ordered by (snow_type, code, date, id).
+        keys = [self._expected_key(r) for r in rows]
+        assert keys == sorted(keys)
+
+    def test_pagination_stable_across_repeated_calls(self, db_session):
+        self._seed_shuffled_snow(db_session)
+        page_size = 10
+
+        first = [r.id for r in self._paginate_all(db_session, page_size)]
+        second = [r.id for r in self._paginate_all(db_session, page_size)]
+
+        # Repeated paginated calls return the same ordered sequence.
+        assert first == second
 
 
 # -------------------------------------------------------------------
