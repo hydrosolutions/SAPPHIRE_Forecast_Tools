@@ -9,7 +9,7 @@
 # API instead of just yesterday+today:
 #   - Quantile_Mapping_OP.py:    last 30 days of meteo (P, T)
 #   - extend_era5_reanalysis.py: last 365 days of reanalysis + dashboard norms
-#   - snow_data_operational.py:  last 30 days of snow (SWE, HS, RoF)
+#   - snow_data_operational.py:  last 365 days of snow (SWE, HS, RoF)
 #
 # CSVs are always written in full regardless of sync mode.
 #
@@ -98,7 +98,7 @@ fi
 # SAPPHIRE_SYNC_MODE=maintenance triggers:
 #   - Meteo (QM):        write last 30 days to API
 #   - Reanalysis (ERA5): write last 365 days to API (skipped in operational)
-#   - Snow:              write last 30 days to API
+#   - Snow:              write last 365 days to API
 # The container CMD chains all three scripts:
 #   Quantile_Mapping_OP.py && extend_era5_reanalysis.py && snow_data_operational.py
 docker run \

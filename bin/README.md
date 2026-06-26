@@ -120,7 +120,7 @@ docker compose -f bin/docker-compose-luigi.yml run --rm pentadal
 # Run daily maintenance
 docker compose -f bin/docker-compose-luigi.yml run --rm daily-maintenance
 
-# Run periodic maintenance (long_term, skill_recalc, snow_norms, or monthly_norms)
+# Run periodic maintenance (long_term, skill_recalc, or snow_norms)
 MAINTENANCE_TASK_TYPE=skill_recalc \
   docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
 ```
@@ -227,8 +227,8 @@ See `doc/deployment.md` for the full recommended crontab. Summary:
 | 19:00 | `run_daily_maintenance.sh` | Daily maintenance (all steps) |
 | 22:00 1st odd months | `run_periodic_maintenance.sh long_term` | Long-term postprocessing |
 | 01:00 Dec 31 | `run_periodic_maintenance.sh skill_recalc` | Yearly skill recalculation |
-| 02:00 Aug 31 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
-| 03:00 Jan 1  | `run_periodic_maintenance.sh monthly_norms` | Yearly monthly discharge norm recalculation from iEH HF SDK |
+| 02:00 Jan 1 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
+| 03:00 Jan 1 | `yearly_runoff_hydrograph_aggregation.sh` | Yearly runoff hydrograph aggregation for monthly and seasonal dashboard views |
 
 Log files use timestamped names (`sapphire_*_YYYYMMDD.log`) with automatic
 cleanup of logs older than 7 days.

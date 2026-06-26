@@ -74,8 +74,8 @@ class TestSnowWriteEdgeCases:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_all_nan_value_column(self, mock_client_class):
-        """All-NaN value column produces records with value=None."""
+    def test_all_nan_value_column_skips_empty_rows(self, mock_client_class):
+        """All-NaN value column skips rows with no incoming snow values."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -83,7 +83,7 @@ class TestSnowWriteEdgeCases:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 2
+            mock_client.write_snow.return_value = 0
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
@@ -91,24 +91,20 @@ class TestSnowWriteEdgeCases:
             data = pd.DataFrame(
                 {
                     "date": [today, today],
-                    "code": [12345, 67890],
+                    "code": ["19999", "19999"],
                     "SWE": [np.nan, np.nan],
                 }
             )
 
             result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
-            assert result is True
-
-            records = mock_client.write_snow.call_args[0][0]
-            assert len(records) == 2
-            assert records[0]["value"] is None
-            assert records[1]["value"] is None
+            assert result is False
+            mock_client.write_snow.assert_not_called()
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
     def test_mixed_nan_valid_values(self, mock_client_class):
-        """Mixed NaN/valid values produce correct None/float split."""
+        """Mixed NaN/valid values write valid rows and skip empty rows."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -124,7 +120,7 @@ class TestSnowWriteEdgeCases:
             data = pd.DataFrame(
                 {
                     "date": [today, today, today],
-                    "code": [11111, 22222, 33333],
+                    "code": ["19999", "19999", "19999"],
                     "SWE": [100.0, np.nan, 200.0],
                 }
             )
@@ -133,9 +129,9 @@ class TestSnowWriteEdgeCases:
             assert result is True
 
             records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 2
             assert records[0]["value"] == 100.0
-            assert records[1]["value"] is None
-            assert records[2]["value"] == 200.0
+            assert records[1]["value"] == 200.0
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -563,8 +559,8 @@ class TestDateBoundaryEdgeCases:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_maintenance_30_day_window_spanning_year_boundary(self, mock_client_class):
-        """Maintenance mode: 30-day window from Jan 15 goes back to Dec 16."""
+    def test_maintenance_365_day_window_spanning_year_boundary(self, mock_client_class):
+        """Maintenance mode includes ref-365d and excludes ref-366d."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -572,16 +568,16 @@ class TestDateBoundaryEdgeCases:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 31
+            mock_client.write_snow.return_value = 366
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
-            # Data spans Nov 1 to Jan 15
-            dates = pd.date_range("2023-11-01", "2024-01-15", freq="D")
+            # Data spans Jan 14, 2023 to Jan 15, 2024.
+            dates = pd.date_range("2023-01-14", "2024-01-15", freq="D")
             data = pd.DataFrame(
                 {
                     "date": dates,
-                    "code": [12345] * len(dates),
+                    "code": ["19999"] * len(dates),
                     "SWE": [100.0] * len(dates),
                 }
             )
@@ -595,9 +591,10 @@ class TestDateBoundaryEdgeCases:
             )
 
             records = mock_client.write_snow.call_args[0][0]
-            # Cutoff: Jan 15 - 30 days = Dec 16
+            # Cutoff: Jan 15, 2024 - 365 days = Jan 15, 2023.
             record_dates = [r["date"] for r in records]
-            assert min(record_dates) == "2023-12-16"
+            assert "2023-01-14" not in record_dates
+            assert min(record_dates) == "2023-01-15"
             assert max(record_dates) == "2024-01-15"
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
