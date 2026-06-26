@@ -323,3 +323,57 @@ class TestNumerifyValueCells:
         """Empty section_cells list must not raise."""
         _, ws, gen = self._fresh()
         gen._numerify_value_cells(7, [])  # must not raise
+
+    # ── NaN guard ────────────────────────────────────────────────────────
+
+    def test_nan_string_in_value_column_left_untouched(self):
+        """'nan' in a value column must not raise and the cell is left as-is.
+
+        Before the fix, float('nan') parsed successfully and then
+        int(round(nan)) raised ValueError.  The guard skips NaN just like
+        unparseable strings.
+        """
+        _, ws, gen = self._fresh()
+        section_cells = _make_section_cells(ws, STANDARD_COL_MAP)
+        ws["C7"] = "nan"
+        gen._numerify_value_cells(7, section_cells)
+        # Cell must be left unchanged — no conversion, no error
+        assert ws["C7"].value == "nan"
+
+
+# ---------------------------------------------------------------------------
+# Tests for round_discharge_to_comma_separated_string
+# ---------------------------------------------------------------------------
+
+class TestRoundDischargeToCommaSeparatedString:
+    """Unit tests for the round_discharge_to_comma_separated_string helper."""
+
+    def test_nan_returns_empty_string(self):
+        """float('nan') must return '' (blank cell), never the string 'nan'."""
+        result = bulletins.round_discharge_to_comma_separated_string(float("nan"))
+        assert result == ""
+
+    def test_negative_returns_space(self):
+        """Negative value returns a single space (existing behaviour unchanged)."""
+        result = bulletins.round_discharge_to_comma_separated_string(-1.0)
+        assert result == " "
+
+    def test_zero_returns_zero_string(self):
+        """Zero value returns '0' (existing behaviour unchanged)."""
+        result = bulletins.round_discharge_to_comma_separated_string(0.0)
+        assert result == "0"
+
+    def test_small_value_two_decimals(self):
+        """Value in (0, 10) formatted to 2 decimal places with comma separator."""
+        result = bulletins.round_discharge_to_comma_separated_string(1.23)
+        assert result == "1,23"
+
+    def test_medium_value_one_decimal(self):
+        """Value in [10, 100) formatted to 1 decimal place with comma separator."""
+        result = bulletins.round_discharge_to_comma_separated_string(12.3)
+        assert result == "12,3"
+
+    def test_large_value_zero_decimals(self):
+        """Value >= 100 formatted to 0 decimal places."""
+        result = bulletins.round_discharge_to_comma_separated_string(100.1)
+        assert result == "100"

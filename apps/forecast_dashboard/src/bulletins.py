@@ -233,6 +233,9 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
                 num = float(normalized)
             except ValueError:
                 continue
+            # NaN must not reach int(round(...)); treat like unparseable input.
+            if math.isnan(num):
+                continue
             decimals = len(text.split(",", 1)[1]) if "," in text else 0
             if decimals == 0:
                 cell.value = int(round(num))
@@ -478,6 +481,10 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         if not isinstance(value, float):
             raise TypeError('Input value must be a float')
 
+        # NaN discharges must render as a blank cell, never the string 'nan'.
+        if math.isnan(value):
+            return ''
+
         # Return an empty string if the input value is negative
         if value < 0.0:
             string = " "
@@ -614,6 +621,127 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         final_bulletin.save(final_path)
         final_bulletin.close()
 
+def _assign_basin_numbers(ordered_sites):
+    """Stamp each site with ``_bulletin_basin_no`` — an int that increments on
+    each new distinct ``basin_ru`` (by first appearance, starting at 1).
+
+    The list is expected to be already grouped by basin (sites of the same
+    basin are contiguous), as produced by
+    ``oder_sites_list_according_to_bulletin_order``.
+
+    Args:
+        ordered_sites: A list of site objects, each with a ``basin_ru``
+            attribute.  Modified in place.
+
+    Returns:
+        The same list with ``_bulletin_basin_no`` set on every element.
+    """
+    current_basin = object()  # sentinel — cannot match any real basin_ru
+    basin_no = 0
+    for obj in ordered_sites:
+        if obj.basin_ru != current_basin:
+            basin_no += 1
+            current_basin = obj.basin_ru
+        obj._bulletin_basin_no = basin_no
+    return ordered_sites
+
+
+def _merge_basin_columns(ws, no_col, basin_col, start_row, end_row):
+    """Merge ``no_col`` and ``basin_col`` cells for runs of equal basin names.
+
+    Scans rows ``start_row`` through ``end_row`` (inclusive) in ``basin_col``.
+    For each maximal run of *adjacent* rows whose ``basin_col`` value is
+    non-empty **and** equal, the ``no_col`` and ``basin_col`` cells across the
+    run are merged (when the run is longer than one row) and center+middle
+    alignment is applied to the top cell of the run.  Single-row runs are
+    left un-merged but still get center alignment.
+
+    Empty ``basin_col`` cells break a run so that separator/header rows are
+    handled safely.
+
+    If a target range is already merged the existing merge is unmerged first
+    to avoid openpyxl raising on a double-merge.
+
+    Args:
+        ws: An openpyxl ``Worksheet``.
+        no_col: Column index (1-based) of the ``№`` column.
+        basin_col: Column index (1-based) of the basin-name column.
+        start_row: First data row (1-based, inclusive).
+        end_row: Last data row (1-based, inclusive).
+    """
+    from openpyxl.styles import Alignment
+
+    center_middle = Alignment(horizontal="center", vertical="center")
+
+    def _unmerge_if_merged(ws, row1, col1, row2, col2):
+        """Unmerge any existing merged range that overlaps the given rectangle."""
+        to_remove = [
+            mr for mr in list(ws.merged_cells.ranges)
+            if not (mr.max_row < row1 or mr.min_row > row2
+                    or mr.max_col < col1 or mr.min_col > col2)
+        ]
+        for mr in to_remove:
+            ws.unmerge_cells(str(mr))
+
+    # Collect runs: list of (run_start_row, run_end_row, basin_value)
+    runs = []
+    run_start = None
+    run_value = None
+
+    for row in range(start_row, end_row + 1):
+        cell_val = ws.cell(row=row, column=basin_col).value
+        if cell_val is None or str(cell_val).strip() == "":
+            # Empty cell — close any open run
+            if run_start is not None:
+                runs.append((run_start, row - 1, run_value))
+                run_start = None
+                run_value = None
+        elif cell_val == run_value:
+            # Continuing a run — do nothing
+            pass
+        else:
+            # New non-empty value — close previous run, start new one
+            if run_start is not None:
+                runs.append((run_start, row - 1, run_value))
+            run_start = row
+            run_value = cell_val
+
+    # Close the last open run
+    if run_start is not None:
+        runs.append((run_start, end_row, run_value))
+
+    for r_start, r_end, _ in runs:
+        for col in (no_col, basin_col):
+            if r_end > r_start:
+                # Multi-row run: unmerge defensively, then merge
+                _unmerge_if_merged(ws, r_start, col, r_end, col)
+                ws.merge_cells(
+                    start_row=r_start, start_column=col,
+                    end_row=r_end, end_column=col,
+                )
+            # Apply alignment to the top cell of the run (merged or single)
+            ws.cell(row=r_start, column=col).alignment = center_middle
+
+
+def _merge_basin_columns_in_file(path, no_col=1, basin_col=2):
+    """Open ``path``, run ``_merge_basin_columns`` over every worksheet across
+    its full used row range, then save.
+
+    Args:
+        path: Absolute path to an ``.xlsx`` file.
+        no_col: 1-based column index for the ``№`` column (default 1 = col A).
+        basin_col: 1-based column index for the basin-name column (default 2 = B).
+    """
+    wb = openpyxl.load_workbook(path)
+    for ws in wb.worksheets:
+        max_row = ws.max_row or 0
+        if max_row < 1:
+            continue
+        _merge_basin_columns(ws, no_col, basin_col, 1, max_row)
+    wb.save(path)
+    wb.close()
+
+
 def oder_sites_list_according_to_bulletin_order(sites_list):
         """Order the sites_list according to the order in the attribute bulletin_order of each site"""
         # Get the basin and bulletin order for each site
@@ -665,6 +793,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         raise ValueError(f"horizon must be 'pentad', 'decad', 'month', or 'season', got '{sapphire_forecast_horizon}'")
     print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
 
+    # Gate all TJ-specific basin-numbering logic on the organization env var.
+    # Read once here; all branches below use this boolean.
+    is_tj = os.getenv("ieasyhydroforecast_organization") == "tjhm"
 
     print('DEBUG: write_to_excel: Initializing report generator ...')
 
@@ -1021,10 +1152,29 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         non_reservoirs = oder_sites_list_according_to_bulletin_order(non_reservoirs)
         reservoirs = oder_sites_list_according_to_bulletin_order(reservoirs)
 
-        # Section 0: non-reservoirs with HEADER tag — monthly attributes
-        sec0_tags = [
-            Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
-                tag_settings=tag_settings, header=True),
+        # When is_tj: stamp basin numbers so DATA tags can emit them.
+        if is_tj:
+            _assign_basin_numbers(non_reservoirs)
+            _assign_basin_numbers(reservoirs)
+
+        # Section 0: non-reservoirs.
+        # Non-TJ: BASIN_NAME as header=True (banner row).
+        # TJ: BASIN_NAME + BASIN_NO as data=True (two leading data columns; no banner row).
+        if is_tj:
+            sec0_basin_tags = [
+                Tag(name='BASIN_NO',
+                    get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                    tag_settings=tag_settings, data=True),
+                Tag(name='BASIN_NAME',
+                    get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                    tag_settings=tag_settings, data=True),
+            ]
+        else:
+            sec0_basin_tags = [
+                Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                    tag_settings=tag_settings, header=True),
+            ]
+        sec0_tags = sec0_basin_tags + [
             Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
                 tag_settings=tag_settings, data=True),
             Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
@@ -1049,8 +1199,17 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
 
-        # Section 1: reservoirs monthly — same monthly attributes
-        sec1_tags = [
+        # Section 1: reservoirs monthly — same monthly attributes.
+        # TJ: add BASIN_NO + BASIN_NAME data tags.
+        sec1_basin_tags = ([
+            Tag(name='BASIN_NO',
+                get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                tag_settings=tag_settings, data=True),
+            Tag(name='BASIN_NAME',
+                get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                tag_settings=tag_settings, data=True),
+        ] if is_tj else [])
+        sec1_tags = sec1_basin_tags + [
             Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
                 tag_settings=tag_settings, data=True),
             Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
@@ -1075,8 +1234,17 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
 
-        # Section 2: reservoirs quarterly — _q-suffixed attributes
-        sec2_tags = [
+        # Section 2: reservoirs quarterly — _q-suffixed attributes.
+        # TJ: add BASIN_NO + BASIN_NAME data tags.
+        sec2_basin_tags = ([
+            Tag(name='BASIN_NO',
+                get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                tag_settings=tag_settings, data=True),
+            Tag(name='BASIN_NAME',
+                get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                tag_settings=tag_settings, data=True),
+        ] if is_tj else [])
+        sec2_tags = sec2_basin_tags + [
             Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
                 tag_settings=tag_settings, data=True),
             Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
@@ -1118,6 +1286,17 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
         seen_names.update({"VNORM", "PERC_NORM", "PERC_PREVYEAR"})
+        # Ensure TJ-only tags are always present in the registry, even when not
+        # produced by any section, so validate() does not raise for them.
+        if is_tj:
+            for _tj_name in ("BASIN_NO", "BASIN_NAME"):
+                if _tj_name not in seen_names:
+                    union_tags.append(
+                        Tag(name=_tj_name,
+                            get_value_fn=lambda obj, **kwargs: '',
+                            tag_settings=tag_settings, data=True)
+                    )
+                    seen_names.add(_tj_name)
         for t in all_section_tags:
             if t.name not in seen_names:
                 union_tags.append(t)
@@ -1134,7 +1313,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
             reports_directory_path=report_settings.report_output_path,
             tag_settings=tag_settings,
-            requires_header=True,
+            requires_header=not is_tj,
             tags_per_section=[sec0_tags, sec1_tags, sec2_tags],
         )
         report_generator.validate()
@@ -1146,6 +1325,10 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             ],
             output_filename=bulletin_file_name,
         )
+        if is_tj:
+            output_path = os.path.join(
+                report_settings.report_output_path, bulletin_file_name)
+            _merge_basin_columns_in_file(output_path)
         return
 
     elif sapphire_forecast_horizon == 'season':
@@ -1161,10 +1344,29 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         non_reservoirs = oder_sites_list_according_to_bulletin_order(non_reservoirs)
         reservoirs = oder_sites_list_according_to_bulletin_order(reservoirs)
 
-        # Section 0: non-reservoirs with HEADER tag — seasonal attributes
-        sec0_tags = [
-            Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
-                tag_settings=tag_settings, header=True),
+        # When is_tj: stamp basin numbers so DATA tags can emit them.
+        if is_tj:
+            _assign_basin_numbers(non_reservoirs)
+            _assign_basin_numbers(reservoirs)
+
+        # Section 0: non-reservoirs.
+        # Non-TJ: BASIN_NAME as header=True (banner row).
+        # TJ: BASIN_NAME + BASIN_NO as data=True (two leading data columns; no banner row).
+        if is_tj:
+            sec0_basin_tags = [
+                Tag(name='BASIN_NO',
+                    get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                    tag_settings=tag_settings, data=True),
+                Tag(name='BASIN_NAME',
+                    get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                    tag_settings=tag_settings, data=True),
+            ]
+        else:
+            sec0_basin_tags = [
+                Tag(name='BASIN_NAME', get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                    tag_settings=tag_settings, header=True),
+            ]
+        sec0_tags = sec0_basin_tags + [
             Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
                 tag_settings=tag_settings, data=True),
             Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
@@ -1189,8 +1391,17 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
 
-        # Section 1: reservoirs — same seasonal attributes (reuse same attr names)
-        sec1_tags = [
+        # Section 1: reservoirs — same seasonal attributes.
+        # TJ: add BASIN_NO + BASIN_NAME data tags.
+        sec1_basin_tags = ([
+            Tag(name='BASIN_NO',
+                get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                tag_settings=tag_settings, data=True),
+            Tag(name='BASIN_NAME',
+                get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                tag_settings=tag_settings, data=True),
+        ] if is_tj else [])
+        sec1_tags = sec1_basin_tags + [
             Tag(name='RIVER_NAME', get_value_fn=lambda obj, **kwargs: obj.river_name_ru,
                 tag_settings=tag_settings, data=True),
             Tag(name='PUNKT_NAME', get_value_fn=lambda obj, **kwargs: obj.punkt_name_ru,
@@ -1229,6 +1440,16 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 tag_settings=tag_settings, data=True),
         ]
         seen_names.update({"VNORM", "PERC_NORM", "PERC_PREVYEAR"})
+        # Ensure TJ-only tags are always present in the registry so validate() does not raise.
+        if is_tj:
+            for _tj_name in ("BASIN_NO", "BASIN_NAME"):
+                if _tj_name not in seen_names:
+                    union_tags.append(
+                        Tag(name=_tj_name,
+                            get_value_fn=lambda obj, **kwargs: '',
+                            tag_settings=tag_settings, data=True)
+                    )
+                    seen_names.add(_tj_name)
         for t in all_section_tags:
             if t.name not in seen_names:
                 union_tags.append(t)
@@ -1245,7 +1466,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
             reports_directory_path=report_settings.report_output_path,
             tag_settings=tag_settings,
-            requires_header=True,
+            requires_header=not is_tj,
             tags_per_section=[sec0_tags, sec1_tags],
         )
         report_generator.validate()
@@ -1256,6 +1477,10 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             ],
             output_filename=bulletin_file_name,
         )
+        if is_tj:
+            output_path = os.path.join(
+                report_settings.report_output_path, bulletin_file_name)
+            _merge_basin_columns_in_file(output_path)
         return
 
     # From bulletin_sites get site lists for each unique basin
@@ -1285,22 +1510,78 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_{basin}_short_term_forecast_bulletin.xlsx"
         temp_bulletin_file_name = f"_temp_{bulletin_file_name}"
 
-        # Generate the report
-        report_generator = DefaultReportGenerator(
-            tags=tag_list,
-            template=template_file_name,
-            templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
-            reports_directory_path=report_settings.report_output_path,
-            tag_settings=tag_settings,
-            requires_header=True
-        )
+        if is_tj:
+            # TJ path: render through MultiSectionReportGenerator (single
+            # header-less section) so BASIN_NO / BASIN_RU data tags are
+            # filled.  Basin numbers are positional within this file's site
+            # list (a per-basin file gets number 1 for all its rows; the
+            # all_basins file gets sequential numbering).
+            _assign_basin_numbers(sites)
 
-        report_generator.validate()
+            # Build the TJ-specific basin data tags.
+            tj_basin_tags = [
+                Tag(name='BASIN_NO',
+                    get_value_fn=lambda obj, **kwargs: getattr(obj, '_bulletin_basin_no', ''),
+                    tag_settings=tag_settings, data=True),
+                Tag(name='BASIN_RU',
+                    get_value_fn=lambda obj, **kwargs: obj.basin_ru,
+                    tag_settings=tag_settings, data=True),
+            ]
 
-        report_generator.generate_report(
-            list_objects=sites,
-            output_filename=temp_bulletin_file_name
-        )
+            # Build section tags: TJ basin tags + existing per-site data tags.
+            section_tags = tj_basin_tags + [
+                t for t in tag_list
+                if getattr(t, 'data', False)
+                and t.name not in {'BASIN_NO', 'BASIN_RU'}
+            ]
+
+            # Build union tag registry: general (non-data, non-header) tags
+            # from tag_list + the section tags + TJ basin tags (for registry).
+            union_names: set[str] = set()
+            union_tags_tj = []
+            for t in tag_list:
+                if (not getattr(t, 'data', False) and not getattr(t, 'header', False)
+                        and t.name not in union_names):
+                    union_tags_tj.append(t)
+                    union_names.add(t.name)
+            # Seed registry with sentinel entries for all section tag names.
+            for t in section_tags:
+                if t.name not in union_names:
+                    union_tags_tj.append(t)
+                    union_names.add(t.name)
+
+            report_generator = MultiSectionReportGenerator(
+                tags=union_tags_tj,
+                template=template_file_name,
+                templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
+                reports_directory_path=report_settings.report_output_path,
+                tag_settings=tag_settings,
+                requires_header=False,
+                tags_per_section=[section_tags],
+            )
+            report_generator.validate()
+            report_generator.generate_report_multi(
+                list_objects_per_section=[sites],
+                output_filename=temp_bulletin_file_name,
+            )
+            _merge_basin_columns_in_file(
+                os.path.join(report_settings.report_output_path, temp_bulletin_file_name)
+            )
+        else:
+            # Non-TJ path: unchanged DefaultReportGenerator behaviour.
+            report_generator = DefaultReportGenerator(
+                tags=tag_list,
+                template=template_file_name,
+                templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
+                reports_directory_path=report_settings.report_output_path,
+                tag_settings=tag_settings,
+                requires_header=True
+            )
+            report_generator.validate()
+            report_generator.generate_report(
+                list_objects=sites,
+                output_filename=temp_bulletin_file_name
+            )
 
         copy_worksheet(
             report_settings, temp_bulletin_file_name, bulletin_file_name,
