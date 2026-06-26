@@ -126,6 +126,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PREPG-006** | Migrate snow norm computation from CSV to API | **Medium** | Draft | [`mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md`](issues/mid_prio_gi_draft_prepg_snow_norms_csv_to_api.md) | PREPG-001, API must have historical snow data |
 | **PREPG-007** | Snow visualization population gaps: self-healing curve and Jan-1 snow norms | **High** | Review | [`review_gi_draft_prepg_snow_population_self_heal.md`](issues/review_gi_draft_prepg_snow_population_self_heal.md) | — |
 | **PREPG-008** | Snow climatology leap-year day-of-year alignment bug | **Medium** | Draft | [`mid_prio_gi_draft_prepg_snow_climatology_leapyear_dayofyear.md`](issues/mid_prio_gi_draft_prepg_snow_climatology_leapyear_dayofyear.md) | — |
+| **PREPG-009** | Snow climatology API pagination nondeterminism corrupts norms and stats | **High** | Draft | [`high_prio_gi_draft_prepg_snow_stats_pagination_nondeterminism.md`](issues/high_prio_gi_draft_prepg_snow_stats_pagination_nondeterminism.md) | Colleague review before service merge |
 
 ### Preprocessing Runoff (`prepq`)
 

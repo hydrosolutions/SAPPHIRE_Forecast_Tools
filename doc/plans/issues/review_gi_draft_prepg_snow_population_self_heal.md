@@ -299,6 +299,19 @@ No implementation agent required. Operator/orchestrator action after deploy.
 
 Scope:
 
+> **Preconditions (learned during local validation):**
+> - **Archive must be fully loaded first.** Run the snow recalc only after the full historical snow
+>   archive is present in the DB — not merely after the 365-day maintenance sync (which loads only the
+>   recent window). Recalc against a partially-loaded archive yields starved per-day-of-year
+>   climatology counts and missing/seamed bands (observed: HS/SWE early-January `count` of 2-5 instead
+>   of the full ~26). Verify completeness first, e.g.
+>   `SELECT snow_type, count(DISTINCT EXTRACT(YEAR FROM date)) FROM snow WHERE value IS NOT NULL AND
+>   EXTRACT(DOY FROM date) BETWEEN 1 AND 10 GROUP BY snow_type;`.
+> - **Band correctness depends on PREPG-009.** The recalc's climatology read paginates `get_snow()`,
+>   which is nondeterministic until PREPG-009 (stable `ORDER BY` in `crud.get_snow`) is deployed.
+>   Without it, bands flicker/are incomplete regardless of archive completeness. Run/verify this
+>   remediation only after PREPG-009 is deployed to the target environment.
+
 - Before remediation, take a database backup: snow-table `pg_dump` or a volume snapshot.
 - Before remediation, capture a SQL count snapshot for each `snow_type` over
   `2025-09-01 ... 2026-08-31`, counting non-null `value`, `current`, `norm`, `previous`, `q50`, and
