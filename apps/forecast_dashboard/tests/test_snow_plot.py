@@ -197,7 +197,36 @@ def test_snow_plot_labels_use_calendar_year_wording_when_start_is_jan_1():
 
     labels = _labels(plot, hv.Curve)
     assert "Last year legend entry" in labels
-    assert "Current year, 3 day mean: 16.0 cm" in labels
+    assert "Current year" in labels
+
+
+def test_snow_plot_current_season_label_has_no_mean_annotation():
+    # Calendar-year (non-hydrological) display: label is plain "Current year"
+    # with no ", 3 day mean: <value> <unit>" suffix.
+    calendar_plot = _plot_for_display_window(
+        _snow_frame(),
+        date_picker="2026-01-04",
+        display_start_month=1,
+        display_start_day=1,
+    )
+    calendar_labels = _labels(calendar_plot, hv.Curve)
+    assert "Current year" in calendar_labels
+    assert all("3 day mean" not in label for label in calendar_labels)
+    assert all("10 day mean" not in label for label in calendar_labels)
+
+    # Hydrological-year (season) display: label is the bare season string.
+    season_plot = _plot_for_display_window(
+        _snow_frame(overrides={
+            "date": pd.date_range("2025-12-11", periods=5, freq="D"),
+        }),
+        date_picker="2025-12-15",
+        display_start_month=9,
+        display_start_day=1,
+    )
+    season_labels = _labels(season_plot, hv.Curve)
+    assert "Current season 2025/26" in season_labels
+    assert all("3 day mean" not in label for label in season_labels)
+    assert all("10 day mean" not in label for label in season_labels)
 
 
 def test_snow_plot_labels_use_season_wording_when_start_is_sept_1():
