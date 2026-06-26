@@ -188,6 +188,14 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 else:
                     site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
             elif horizon_type == 'season':
+                # The frozen bulletin record (site.forecasts) holds the same
+                # forecast bounds the API and UI show. Use it for the seasonal
+                # Q_MIN/Q_MAX (mirrors the month branch) so the Excel matches.
+                # get_long_forecasts_season is re-fetched ONLY to derive the
+                # season window (valid_from/valid_to -> seconds_in_season),
+                # because the bulletin record does not carry those. Passing the
+                # bulletin's horizon_value as the forecast issue-lead would
+                # otherwise resolve to a stale (older-lead) forecast.
                 s_df = db.get_long_forecasts_season(site.code, horizon_value=forecast_horizon)
                 if (
                     not s_df.empty
@@ -199,6 +207,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                         filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
                 else:
                     filtered_s = pd.DataFrame()
+                vf = vt = None
                 if (
                     not filtered_s.empty
                     and "valid_from" in filtered_s.columns
@@ -209,9 +218,12 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                     seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
                 else:
                     seconds_in_season = 0
-                filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+                season_df = site.forecasts.copy()
+                if vf is not None:
+                    season_df["valid_from"] = vf
+                    season_df["valid_to"] = vt
                 hydrate_season_hydrograph_stats(site, db)
-                site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
+                site.get_seasonal_forecast_attributes_for_site(_, season_df, seconds_in_season)
             else:
                 site.get_forecast_attributes_for_site(_, site.forecasts)
             bulletin_sites.append(site)
