@@ -6,11 +6,17 @@ from functools import wraps
 import numpy as np
 import pandas as pd
 import requests
-
+from dashboard.logger import setup_logger
 from src import processing
 from src.gettext_config import _
 from src.snow_window import snow_display_window
-from dashboard.logger import setup_logger
+
+from long_term_horizon_resolver import (
+    quarter_horizon_value,
+    seasonal_config_name,
+    seasonal_horizon_value,
+    supported_long_term_modes,
+)
 
 logger = setup_logger()
 
@@ -36,6 +42,8 @@ SNOW_RENAME_MAP = {
     "q95": "95%",
 }
 
+SEASONAL_ISSUE_MONTHS = (1, 2, 3, 4)
+
 # Neural Ensemble config
 NE_BASE_MODELS = ["TFT", "TiDE", "TSMixer"]
 NE_QUANTILE_COLS = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
@@ -58,6 +66,40 @@ def _horizon_in_year_col(horizon: str) -> str:
 
 def _resolve_station(station) -> str:
     return station if isinstance(station, str) else station.value.split()[0]
+
+
+def _resolve_quarter_horizon_value(horizon_value: int | None = None) -> int:
+    if horizon_value is not None:
+        return int(horizon_value)
+    return quarter_horizon_value()
+
+
+def _supported_seasonal_issue_months() -> list[int]:
+    modes = set(supported_long_term_modes())
+    return [
+        issue_month
+        for issue_month in SEASONAL_ISSUE_MONTHS
+        if seasonal_config_name(issue_month) in modes
+    ]
+
+
+def _default_seasonal_issue_month(ref_date: date | None = None) -> int:
+    supported = _supported_seasonal_issue_months()
+    if not supported:
+        raise ValueError("No seasonal long-term modes are supported by this deployment.")
+
+    month = (ref_date or date.today()).month
+    eligible = [issue_month for issue_month in supported if issue_month <= month]
+    return max(eligible or supported)
+
+
+def _resolve_seasonal_horizon_value(
+    issue_month: int | None = None,
+    horizon_value: int | None = None,
+) -> int:
+    if horizon_value is not None:
+        return int(horizon_value)
+    return seasonal_horizon_value(issue_month or _default_seasonal_issue_month())
 
 
 def _timed(func):
@@ -597,12 +639,13 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
 
 
 @_timed
-def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
+def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame:
     """Fetch long-term quarterly forecasts and reshape to match monthly format."""
     code = _resolve_station(station) if station else None
+    resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)
     params = {
         "horizon_type": "quarter",
-        "horizon_value": horizon_value,
+        "horizon_value": resolved_horizon_value,
         "start_date": f"{PREVIOUS_YEAR}-12-20",
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
@@ -645,11 +688,17 @@ def get_long_forecasts_quarter(station=None, horizon_value=1) -> pd.DataFrame:
 
 
 @_timed
-def get_long_forecasts_season(station=None) -> pd.DataFrame:
+def get_long_forecasts_season(
+    station=None,
+    issue_month: int | None = None,
+    horizon_value: int | None = None,
+) -> pd.DataFrame:
     """Fetch long-term seasonal forecasts and reshape to match monthly format."""
     code = _resolve_station(station) if station else None
+    resolved_horizon_value = _resolve_seasonal_horizon_value(issue_month, horizon_value)
     params = {
         "horizon_type": "season",
+        "horizon_value": resolved_horizon_value,
         "start_date": f"{PREVIOUS_YEAR}-12-20",
         "end_date": f"{CURRENT_YEAR}-12-31",
         "limit": 1000,
@@ -675,17 +724,23 @@ def get_long_forecasts_season(station=None) -> pd.DataFrame:
         "q05": "Q5", "q10": "Q10", "q25": "Q25",
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
+    df["season_in_year"] = pd.to_numeric(df["horizon_value"], errors="coerce").astype("Int64")
     df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
-    df["season_in_year"] = 1
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
-    # Keep only the latest-by-date row per (code, model_short)
-    if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
+    # Keep only the latest-by-date row per (code, season lead, model_short)
+    if (
+        not df.empty
+        and "date" in df.columns
+        and "code" in df.columns
+        and "season_in_year" in df.columns
+        and "model_short" in df.columns
+    ):
         df = (
             df.sort_values("date", ascending=False)
-              .drop_duplicates(subset=["code", "model_short"], keep="first")
+              .drop_duplicates(subset=["code", "season_in_year", "model_short"], keep="first")
               .reset_index(drop=True)
         )
     return _convert_na_to_nan(df.sort_values("Date"))
@@ -702,8 +757,11 @@ def get_data(
     snow_display_start_month: int = 1,
     snow_display_start_day: int = 1,
 ) -> dict:
-    add_labels = lambda df: processing.add_labels_to_hydrograph(df, all_stations)
-    i18n_models = lambda df: processing.internationalize_forecast_model_names(_, df)
+    def add_labels(df):
+        return processing.add_labels_to_hydrograph(df, all_stations)
+
+    def i18n_models(df):
+        return processing.internationalize_forecast_model_names(_, df)
 
     if horizon == "month":
         return _get_data_monthly(
@@ -803,23 +861,26 @@ def _get_data_monthly(
             suffixes=("", "_stats"),
         )
 
-    long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station, horizon_value=1)))
-    quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
+    long_forecasts_quarter = pd.DataFrame()
+    quarter_forecast_stats = pd.DataFrame()
     quarter_hin = _horizon_in_year_col("quarter")
     quarter_merge_keys = ["code", quarter_hin, "model_short"]
-    can_merge_quarter = (
-        not long_forecasts_quarter.empty
-        and not quarter_forecast_stats.empty
-        and all(k in long_forecasts_quarter.columns for k in quarter_merge_keys)
-        and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
-    )
-    if can_merge_quarter:
-        long_forecasts_quarter = long_forecasts_quarter.merge(
-            quarter_forecast_stats,
-            on=quarter_merge_keys,
-            how="left",
-            suffixes=("", "_stats"),
+    if "quarter" in supported_modes:
+        long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station)))
+        quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
+        can_merge_quarter = (
+            not long_forecasts_quarter.empty
+            and not quarter_forecast_stats.empty
+            and all(k in long_forecasts_quarter.columns for k in quarter_merge_keys)
+            and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
         )
+        if can_merge_quarter:
+            long_forecasts_quarter = long_forecasts_quarter.merge(
+                quarter_forecast_stats,
+                on=quarter_merge_keys,
+                how="left",
+                suffixes=("", "_stats"),
+            )
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),

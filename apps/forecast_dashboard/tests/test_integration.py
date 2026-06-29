@@ -69,10 +69,12 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
         if not records:
             raise RuntimeError("No long-forecast (month) records found for bulletin stations")
         latest = max(records, key=lambda r: r["date"])
-        max_date = dt.datetime.strptime(latest["date"][:10], "%Y-%m-%d").date()
-        last_date = max_date + dt.timedelta(days=1)
-        target_month = pd.to_datetime(latest["valid_from"]).month
-        return last_date, int(target_month), last_date.year
+        # The monthly bulletin Excel file and the API bulletin records are keyed by
+        # the TARGET month (valid_from), not the issue date. A forecast issued late
+        # in month M targets month M+1, so deriving month_str/year from the issue
+        # date would open the previous month's bulletin file. Use valid_from.
+        target_from = pd.to_datetime(latest["valid_from"]).date()
+        return target_from, int(target_from.month), target_from.year
 
     if horizon == "season":
         resp = requests.get(
@@ -1405,6 +1407,29 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
         print(f"#### [{horizon}] API returned {len(api_records)} bulletin record(s):")
         for rec in api_records:
             print(rec)
+        # The local postgres backend is shared between the taj and kyg deployments,
+        # so /bulletin/ (scoped only by horizon/year/horizon_value) can return
+        # foreign-deployment records (a station from another deployment) for the same period.
+        # Scope to the station codes actually present in this deployment's UI
+        # bulletin before comparing — otherwise len(api_records) exceeds the UI rows.
+        expected_bulletin_codes = {
+            str(f_value[0]).split()[0] for f_value in forecast_bulletin_values
+        }
+        foreign_records = [
+            rec for rec in api_records
+            if str(rec.get("code", "")) not in expected_bulletin_codes
+        ]
+        if foreign_records:
+            print(
+                f"#### [{horizon}] Dropping {len(foreign_records)} foreign-deployment "
+                f"bulletin record(s) not in UI bulletin codes "
+                f"{sorted(expected_bulletin_codes)}: "
+                f"{sorted(str(r.get('code', '')) for r in foreign_records)}"
+            )
+        api_records = [
+            rec for rec in api_records
+            if str(rec.get("code", "")) in expected_bulletin_codes
+        ]
         time.sleep(SLEEP)
 
         if horizon == "season" and not api_records:

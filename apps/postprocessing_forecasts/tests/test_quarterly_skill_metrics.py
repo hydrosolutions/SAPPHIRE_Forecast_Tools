@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.skill_metrics import (
     calculate_quarterly_skill_metrics,
     calculate_seasonal_skill_metrics,
+    filter_for_highly_skilled_forecasts,
 )
 
 EXPECTED_METRIC_COLS = {
@@ -92,6 +93,32 @@ def _make_seasonal_fcst(rows):
         columns=[
             "code",
             "season_year",
+            "model_short",
+            "q05",
+            "q10",
+            "q25",
+            "q50",
+            "q75",
+            "q90",
+            "q95",
+        ],
+    )
+    df["season_in_year"] = 1
+    return df
+
+
+def _make_seasonal_fcst_dated(rows):
+    """(code, season_year, date, model_short, q05..q95) with season_in_year=1.
+
+    Use when several issue dates share a (season_year, lead) so the
+    per-date ensemble behaviour can be exercised.
+    """
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "code",
+            "season_year",
+            "date",
             "model_short",
             "q05",
             "q10",
@@ -217,6 +244,124 @@ class TestQuarterlyMetricsEnsembles:
             models = joint["model_short"].unique()
             assert "Naive Mean" in models
 
+    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 120.0),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2020, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
+        filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert filtered_raw.empty
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
+        # EM rows must keep their period key so the write-side NaN guard
+        # (api_writer drops rows with null year/quarter_in_year) persists them.
+        assert "quarter_in_year" in em_joint.columns
+        assert em_joint["quarter_in_year"].notna().all()
+        assert set(em_joint["quarter_in_year"].astype(int)) == {1}
+        assert not em_skill.empty
+        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert pd.notna(em_skill.iloc[0]["crps"])
+
+    def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 120.0),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2020, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
+        assert not em_skill.empty
+
+    def test_preexisting_baseline_rows_replaced_not_duplicated(self):
+        """Stored EM/Naive/Skilled rows in the input are dropped, not doubled.
+
+        The recalc regenerates the aggregated ensembles, so a source that
+        already contains them must not yield two rows for the same key
+        (which would violate the long_forecasts unique constraint on write).
+        """
+        obs = _make_quarterly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2021, 1, 110.0),
+            ]
+        )
+        fcst = _make_quarterly_fcst(
+            [
+                ("S1", 2020, 1, "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2020, 1, "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+                ("S1", 2021, 1, "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2021, 1, "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+                # Pre-existing stored ensemble row with a stale value.
+                ("S1", 2020, 1, "Naive Mean", 900, 905, 915, 999, 925, 935, 940),
+            ]
+        )
+
+        _, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
+
+        key = ["code", "year", "quarter_in_year", "model_short"]
+        assert not joint.duplicated(key).any()
+        nm = joint[joint["model_short"] == "Naive Mean"]
+        # One recomputed Naive Mean per (year, quarter), the stale one gone.
+        assert len(nm) == 2
+        assert 999.0 not in set(nm["q50"])
+        assert np.allclose(sorted(nm["q50"]), [120.0, 120.0])
+
 
 class TestQuarterlyMetricsEdgeCases:
     def test_empty_observations(self):
@@ -338,6 +483,139 @@ class TestSeasonalMetricsEnsembles:
         skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
         naive_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert not naive_rows.empty
+
+    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_seasonal_obs(
+            [
+                ("S1", 2020, 100.0),
+                ("S1", 2021, 110.0),
+                ("S1", 2022, 120.0),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2020, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
+        filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert filtered_raw.empty
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
+        # EM rows must keep their season keys so the write-side NaN guard
+        # (api_writer drops rows with null season_year/season_in_year)
+        # persists them.
+        assert {"season_year", "season_in_year"} <= set(em_joint.columns)
+        assert em_joint["season_year"].notna().all()
+        assert em_joint["season_in_year"].notna().all()
+        assert not em_skill.empty
+        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert pd.notna(em_skill.iloc[0]["crps"])
+
+    def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
+        for key, value in {
+            "ieasyhydroforecast_efficiency_threshold": "0.6",
+            "ieasyhydroforecast_nse_threshold": "0.8",
+            "ieasyhydroforecast_accuracy_threshold": "0.8",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        obs = _make_seasonal_obs(
+            [
+                ("S1", 2020, 100.0),
+                ("S1", 2021, 110.0),
+                ("S1", 2022, 120.0),
+            ]
+        )
+        fcst = _make_seasonal_fcst(
+            [
+                ("S1", 2020, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2021, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2022, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2020, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2022, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+            ]
+        )
+
+        skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
+        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+
+        assert len(em_joint) == 3
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
+        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
+        assert not em_skill.empty
+
+    def test_em_per_issue_date_not_collapsed(self):
+        """Each seasonal issue date yields its own clean 2-model EM.
+
+        When a (season_year, lead) is (re-)issued on several dates, the EM
+        must be computed per issue date — mean(LR_Base, LR_SM) for that
+        date — rather than averaged across dates into one blended row.
+        """
+        obs = _make_seasonal_obs(
+            [
+                ("S1", 2020, 100.0),
+                ("S1", 2021, 110.0),
+            ]
+        )
+        # Two issue dates per season_year, same lead. Per-date EM q50 is
+        # 150 (=(100+200)/2) for date d1 and 130 (=(120+140)/2) for date d2.
+        # A date-collapsing EM would instead produce a single 140 per year.
+        fcst = _make_seasonal_fcst_dated(
+            [
+                ("S1", 2020, "2020-03-25", "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2020, "2020-03-25", "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2020, "2020-04-01", "LR_Base", 100, 105, 115, 120, 125, 135, 140),
+                ("S1", 2020, "2020-04-01", "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+                ("S1", 2021, "2021-03-25", "LR_Base", 80, 85, 95, 100, 105, 115, 120),
+                ("S1", 2021, "2021-03-25", "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2021, "2021-04-01", "LR_Base", 100, 105, 115, 120, 125, 135, 140),
+                ("S1", 2021, "2021-04-01", "LR_SM", 120, 125, 135, 140, 145, 155, 160),
+            ]
+        )
+
+        _, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        em = joint[joint["model_short"] == "EM"].copy()
+
+        # One EM row per issue date (2 years x 2 dates), not one per year.
+        assert len(em) == 4
+        assert "date" in em.columns
+        assert em["date"].notna().all()
+        # Each EM is the clean 2-model mean for its own date.
+        by_date = em.groupby("date")["q50"].first().to_dict()
+        assert by_date["2020-03-25"] == pytest.approx(150.0)
+        assert by_date["2020-04-01"] == pytest.approx(130.0)
+        assert by_date["2021-03-25"] == pytest.approx(150.0)
+        assert by_date["2021-04-01"] == pytest.approx(130.0)
+        # forecasted_discharge (point) tracks the same per-date mean.
+        fd = em.groupby("date")["forecasted_discharge"].first().to_dict()
+        assert fd["2020-03-25"] == pytest.approx(150.0)
+        assert fd["2020-04-01"] == pytest.approx(130.0)
+        assert set(em["composition"]) == {"LR_Base, LR_SM"}
 
 
 class TestQFallbackQuarterly:

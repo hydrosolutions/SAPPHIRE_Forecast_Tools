@@ -33,6 +33,32 @@ def mock_post_client():
     return client
 
 
+@pytest.fixture(autouse=True)
+def _long_term_resolver_env(monkeypatch, tmp_path):
+    config_dir = tmp_path / "long_term_configs"
+    config_dir.mkdir()
+    leads = {
+        "quarter": 1,
+        "seasonal_january": 3,
+        "seasonal_february": 2,
+        "seasonal_march": 1,
+        "seasonal_april": 0,
+    }
+    for name, lead in leads.items():
+        (config_dir / f"{name}.json").write_text(json.dumps({"operational_month_lead_time": lead}))
+
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_configuration",
+        "long_term_configs",
+    )
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes",
+        ",".join(leads),
+    )
+    return config_dir
+
+
 @pytest.fixture()
 def sample_runoff_df():
     """Sample runoff DataFrame with two stations."""
@@ -402,6 +428,53 @@ class TestModuleAttribution:
         by_name = {r.name: r.module for r in results}
         assert by_name["Long-term forecasts (month)"] == ("long_term_forecasting")
         assert by_name["Monthly skill metrics"] == "postprocessing_forecasts"
+        assert by_name["Long-term forecasts (quarter hv1)"] == "postprocessing_forecasts"
+        assert by_name["Quarterly skill metrics"] == "postprocessing_forecasts"
+        assert by_name["Long-term forecasts (season issue 2 hv2)"] == "postprocessing_forecasts"
+        assert by_name["Seasonal skill metrics"] == "postprocessing_forecasts"
+
+    def test_tier1_long_term_fails_when_quarter_bucket_empty(self, mock_post_client):
+        single_row = pd.DataFrame({"code": ["15001"], "date": ["2026-02-23"]})
+
+        def read_long_term_forecasts(**kwargs):
+            if kwargs.get("horizon_type") == "quarter":
+                return pd.DataFrame()
+            return single_row
+
+        mock_post_client.read_long_term_forecasts.side_effect = read_long_term_forecasts
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+        by_name = {r.name: r for r in results}
+
+        assert by_name["Long-term forecasts (quarter hv1)"].status == "FAIL"
+        assert "no records" in by_name["Long-term forecasts (quarter hv1)"].detail
+
+    def test_tier1_long_term_fails_when_season_bucket_empty(self, mock_post_client):
+        single_row = pd.DataFrame({"code": ["15001"], "date": ["2026-02-23"]})
+
+        def read_long_term_forecasts(**kwargs):
+            if kwargs.get("horizon_type") == "season" and kwargs.get("horizon_value") == 2:
+                return pd.DataFrame()
+            return single_row
+
+        mock_post_client.read_long_term_forecasts.side_effect = read_long_term_forecasts
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+        by_name = {r.name: r for r in results}
+
+        assert by_name["Long-term forecasts (season issue 2 hv2)"].status == "FAIL"
+        assert "no records" in by_name["Long-term forecasts (season issue 2 hv2)"].detail
+
+    def test_tier1_long_term_passes_when_quarter_and_season_buckets_present(self, mock_post_client):
+        single_row = pd.DataFrame({"code": ["15001"], "date": ["2026-02-23"]})
+        mock_post_client.read_long_term_forecasts.return_value = single_row
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+        assert all(r.status == "PASS" for r in results)
 
     def test_module_shown_in_output(self, capsys):
         """Module attribution appears in printed output."""

@@ -13,6 +13,7 @@ import os
 
 import pandas as pd
 import tag_library as tl
+from long_term_horizon_resolver import quarter_horizon_value
 
 logger = logging.getLogger(__name__)
 
@@ -1005,7 +1006,14 @@ def _write_aggregated_forecasts_to_api(
         if horizon_type == "quarter":
             nan_check_cols = [c for c in ["year", "quarter_in_year"] if c in data.columns]
         else:  # season
-            nan_check_cols = ["season_year"] if "season_year" in data.columns else ["year"]
+            nan_check_cols = [
+                c
+                for c in [
+                    "season_year" if "season_year" in data.columns else "year",
+                    period_col,
+                ]
+                if c in data.columns
+            ]
 
         if nan_check_cols:
             data_before_nan_drop = data  # keep reference for diagnostics
@@ -1048,7 +1056,7 @@ def _write_aggregated_forecasts_to_api(
                 valid_from = f"{year}-{start_month:02d}-01"
                 last_day = calendar.monthrange(year, end_month)[1]
                 valid_to = f"{year}-{end_month:02d}-{last_day:02d}"
-                horizon_value = quarter
+                horizon_value = quarter_horizon_value()
             else:  # season
                 season_year = int(row.get("season_year", row.get("year")))
                 season_months = get_season_months()
@@ -1064,7 +1072,7 @@ def _write_aggregated_forecasts_to_api(
                     end_year = season_year + 1
                     last_day = calendar.monthrange(end_year, end_m)[1]
                     valid_to = f"{end_year}-{end_m:02d}-{last_day:02d}"
-                horizon_value = 1
+                horizon_value = int(row[period_col])
 
             # Use existing valid_from/valid_to if present
             if pd.notna(row.get("valid_from")):
@@ -1072,11 +1080,15 @@ def _write_aggregated_forecasts_to_api(
             if pd.notna(row.get("valid_to")):
                 valid_to = str(row["valid_to"])[:10]
 
+            record_date = valid_from
+            if horizon_type == "season" and pd.notna(row.get("date")):
+                record_date = str(row["date"])[:10]
+
             record = {
                 "horizon_type": horizon_type,
                 "horizon_value": horizon_value,
                 "code": code,
-                "date": valid_from,
+                "date": record_date,
                 "model_type": model_type,
                 "valid_from": valid_from,
                 "valid_to": valid_to,

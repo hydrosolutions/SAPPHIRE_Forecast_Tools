@@ -452,13 +452,13 @@ def detect_missing_seasonal_ensembles(
     if ensemble_models is None:
         ensemble_models = {"EM"}
 
-    cols = ["season_year", "code", "model_short"]
+    cols = ["season_year", "season_in_year", "code", "model_short"]
     empty = pd.DataFrame(columns=cols)
 
     if combined_forecasts.empty:
         return empty
 
-    required = {"season_year", "code", "model_short"}
+    required = {"season_year", "season_in_year", "code", "model_short"}
     if not required.issubset(combined_forecasts.columns):
         logger.warning(
             "Seasonal combined forecasts missing columns: %s",
@@ -468,8 +468,10 @@ def detect_missing_seasonal_ensembles(
 
     df = combined_forecasts.copy()
     df["season_year"] = pd.to_numeric(df["season_year"], errors="coerce")
-    df = df.dropna(subset=["season_year"])
+    df["season_in_year"] = pd.to_numeric(df["season_in_year"], errors="coerce")
+    df = df.dropna(subset=["season_year", "season_in_year"])
     df["season_year"] = df["season_year"].astype(int)
+    df["season_in_year"] = df["season_in_year"].astype(int)
 
     if df.empty:
         return empty
@@ -482,21 +484,20 @@ def detect_missing_seasonal_ensembles(
     if recent.empty:
         return empty
 
-    all_pairs = recent[["season_year", "code"]].drop_duplicates()
+    key_cols = ["season_year", "season_in_year", "code"]
+    all_pairs = recent[key_cols].drop_duplicates()
 
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent["model_short"] == model][
-            ["season_year", "code"]
-        ].drop_duplicates()
+        model_pairs = recent[recent["model_short"] == model][key_cols].drop_duplicates()
 
         merged = all_pairs.merge(
             model_pairs,
-            on=["season_year", "code"],
+            on=key_cols,
             how="left",
             indicator=True,
         )
-        gaps = merged[merged["_merge"] == "left_only"][["season_year", "code"]].copy()
+        gaps = merged[merged["_merge"] == "left_only"][key_cols].copy()
         if not gaps.empty:
             gaps["model_short"] = model
             missing_parts.append(gaps)

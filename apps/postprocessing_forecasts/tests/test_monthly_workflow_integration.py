@@ -277,6 +277,10 @@ def monthly_integration_env(tmp_path):
     # Create directories
     (tmp_path / "logs").mkdir(exist_ok=True)
     os.makedirs(os.path.join(data_dir, "forecast_logs"), exist_ok=True)
+    long_term_config_dir = os.path.join(config_dst, "long_term")
+    os.makedirs(long_term_config_dir, exist_ok=True)
+    with open(os.path.join(long_term_config_dir, "quarter.json"), "w") as f:
+        f.write('{"operational_month_lead_time": 1}')
 
     env_overrides = {
         "ieasyforecast_intermediate_data_path": data_dir,
@@ -312,6 +316,8 @@ def monthly_integration_env(tmp_path):
         "ieasyforecast_hydrograph_day_file": "hydrograph_day.csv",
         "SAPPHIRE_RECALC_START_YEAR": "2021",
         "SAPPHIRE_RECALC_END_YEAR": "2025",
+        "ieasyhydroforecast_ml_long_term_configuration": "long_term",
+        "ieasyhydroforecast_ml_long_term_supported_modes": "quarter",
     }
     with patch.dict(os.environ, env_overrides):
         yield tmp_path, data_dir
@@ -595,6 +601,10 @@ class TestMonthlyAllModeIntegration:
                 with (
                     patch.object(dr, "_read_daily_runoff_api", return_value=daily),
                     patch.object(dr, "_read_long_forecasts_api", return_value=forecasts),
+                    patch.object(dr, "read_quarterly_observations", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_quarterly_forecasts", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_seasonal_observations", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_seasonal_forecasts", return_value=pd.DataFrame()),
                 ):
                     module, spec = _import_recalc()
                     with patch("os.getcwd", return_value=str(tmp_path)):
@@ -661,6 +671,10 @@ class TestMonthlyAllModeIntegration:
                 with (
                     patch.object(dr, "_read_daily_runoff_api", return_value=daily),
                     patch.object(dr, "_read_long_forecasts_api", return_value=forecasts),
+                    patch.object(dr, "read_quarterly_observations", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_quarterly_forecasts", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_seasonal_observations", return_value=pd.DataFrame()),
+                    patch.object(dr, "read_seasonal_forecasts", return_value=pd.DataFrame()),
                 ):
                     module, spec = _import_recalc()
                     with patch("os.getcwd", return_value=str(tmp_path)):

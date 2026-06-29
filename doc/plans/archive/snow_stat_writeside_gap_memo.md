@@ -267,7 +267,7 @@ no service-side changes are expected. The implementation work falls entirely in
 ## 9. References
 
 - Phase 0 evidence:
-  `doc/plans/working/snow_field_population_check.md`
+  `doc/plans/archive/snow_field_population_check.md`
 - Dashboard plan (Phase 0 context and future phases):
   `doc/plans/issues/high_prio_gi_draft_dashboard_snow_percentile_display.md`
 - `Snow` model:

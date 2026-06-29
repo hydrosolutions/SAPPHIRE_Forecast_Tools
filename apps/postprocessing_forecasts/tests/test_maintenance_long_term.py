@@ -102,6 +102,7 @@ def _import_module(mocks_dict):
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module._supported_seasonal_issue_leads = MagicMock(return_value=[])
     return module
 
 
@@ -349,6 +350,152 @@ class TestMaintenanceLongTerm:
             em_rows = saved_df[saved_df["model_short"] == "EM"]
             assert len(em_rows) == 1
             assert em_rows.iloc[0]["forecasted_discharge"] == 105.0
+
+    def test_seasonal_gap_fill_processes_single_missing_issue_without_collapsing_leads(
+        self,
+        combined_with_models,
+        gap_tuples,
+        forecasts_for_gaps,
+        ensemble_result,
+        skill_stats,
+    ):
+        """Seasonal gap-fill reads and fills only the missing issue lead."""
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
+        mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
+        mock_file_writer.save_monthly_forecast_data.return_value = None
+        mock_file_writer.save_seasonal_forecast_data.return_value = None
+
+        seasonal_combined_by_lead = {
+            3: pd.DataFrame(
+                {
+                    "season_year": [2024],
+                    "season_in_year": [3],
+                    "code": ["10001"],
+                    "model_short": ["EM"],
+                    "forecasted_discharge": [103.0],
+                }
+            ),
+            2: pd.DataFrame(
+                {
+                    "season_year": [2024],
+                    "season_in_year": [2],
+                    "code": ["10001"],
+                    "model_short": ["LR"],
+                    "forecasted_discharge": [102.0],
+                }
+            ),
+            1: pd.DataFrame(
+                {
+                    "season_year": [2024],
+                    "season_in_year": [1],
+                    "code": ["10001"],
+                    "model_short": ["EM"],
+                    "forecasted_discharge": [101.0],
+                }
+            ),
+            0: pd.DataFrame(
+                {
+                    "season_year": [2024],
+                    "season_in_year": [0],
+                    "code": ["10001"],
+                    "model_short": ["EM"],
+                    "forecasted_discharge": [100.0],
+                }
+            ),
+        }
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "season":
+                return pd.DataFrame(
+                    {
+                        "season_in_year": [2],
+                        "code": ["10001"],
+                        "model_short": ["LR"],
+                        "sdivsigma": [0.3],
+                        "nse": [0.8],
+                    }
+                )
+            return skill_stats
+
+        def read_seasonal_combined_forecasts(codes=None, horizon_value=None):
+            return seasonal_combined_by_lead[horizon_value]
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_seasonal_combined_forecasts.side_effect = (
+            read_seasonal_combined_forecasts
+        )
+        mock_gap_detector.detect_missing_seasonal_ensembles.return_value = pd.DataFrame(
+            {
+                "season_year": [2024],
+                "season_in_year": [2],
+                "code": ["10001"],
+                "model_short": ["EM"],
+            }
+        )
+        mock_data_reader.read_seasonal_forecasts.return_value = pd.DataFrame(
+            {
+                "season_year": [2024],
+                "season_in_year": [2],
+                "code": ["10001"],
+                "model_short": ["LR"],
+                "q50": [102.0],
+            }
+        )
+        mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
+        mock_ensemble_calc.create_seasonal_ensemble_forecasts.return_value = pd.DataFrame(
+            {
+                "season_year": [2024, 2024],
+                "season_in_year": [2, 3],
+                "code": ["10001", "10001"],
+                "model_short": ["EM", "EM"],
+                "forecasted_discharge": [102.0, 999.0],
+            }
+        )
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["10001"])
+            module._supported_seasonal_issue_leads = MagicMock(return_value=[3, 2, 1, 0])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+            assert [
+                call.kwargs["horizon_value"]
+                for call in mock_data_reader.read_seasonal_combined_forecasts.call_args_list
+            ] == [3, 2, 1, 0]
+            mock_data_reader.read_seasonal_forecasts.assert_called_once()
+            assert mock_data_reader.read_seasonal_forecasts.call_args.kwargs["horizon_value"] == 2
+
+            saved = mock_file_writer.save_seasonal_forecast_data.call_args.args[0]
+            assert set(saved["season_in_year"]) == {0, 1, 2, 3}
+            filled = saved[(saved["season_in_year"] == 2) & (saved["model_short"] == "EM")]
+            assert len(filled) == 1
+            assert filled.iloc[0]["forecasted_discharge"] == 102.0
+            assert not (
+                (saved["season_in_year"] == 3) & (saved["forecasted_discharge"] == 999.0)
+            ).any()
 
     def test_deduplication_works(
         self,

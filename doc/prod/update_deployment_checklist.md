@@ -4,6 +4,8 @@ This checklist guides you through a **routine update** of an existing SAPPHIRE F
 
 > **First-time deployment?** Use `doc/prod/first_deploy_checklist.md` instead. That doc covers the one-time steps (SSH tunnel setup, initial schema preparation, `RunInitializeWorkflow`, historical backfill) that are *not* part of a routine update.
 >
+> **Deploying long-term (quarter/season) forecast changes?** Use [`doc/prod/long_term_deploy_runbook.md`](long_term_deploy_runbook.md) for the ordered long-term flow (image scope, env/config preflight, full-history recalc, verification, deprecated-model cleanup). It references this checklist for the image-deploy mechanics.
+>
 
 ## Operator setup — set these once per session [Required]
 
@@ -720,10 +722,10 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # dashboard tiles fresh; this is the annual deep recalc).
   0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
-  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on August 31.
+  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on January 1.
   # Consolidated Luigi wrapper. Supersedes legacy bin/yearly_snow_norm_recalculation.sh
   # (kept on origin for manual / debugging use only).
-  0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
+  0 2 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds

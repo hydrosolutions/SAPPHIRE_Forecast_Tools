@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
+from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -1072,12 +1073,23 @@ _QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 _QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
 
 # Columns carried through when appending ensemble rows to joint_forecasts
+# Aggregated ensemble model rows the recalc regenerates from the raw models.
+# Pre-existing copies of these must be dropped from recalc input so they are
+# neither scored as raw models nor written twice (duplicate-key collision).
+_AGGREGATED_BASELINES = ("EM", "Naive Mean", "Skilled Mean")
+
 _ENSEMBLE_JOINT_COLS = (
     [
         "code",
         "year",
         "month",
         "month_in_year",
+        # Aggregated (quarter/season) period keys — required so EM/Naive/
+        # Skilled Mean rows keep their period column on append. Without
+        # these the write-side NaN guard drops every ensemble row.
+        "quarter_in_year",
+        "season_year",
+        "season_in_year",
         "forecasted_discharge",
         "model_short",
         "composition",
@@ -2064,8 +2076,9 @@ def calculate_seasonal_skill_metrics(
 ) -> tuple:
     """Calculate seasonal skill metrics for long-term forecasts.
 
-    Same pattern as quarterly but grouped by season_year.
-    season_in_year is always 1 (single season per year).
+    Same pattern as quarterly but grouped by season_year. For seasonal
+    forecasts, season_in_year carries the issue lead (Jan/Feb/Mar/Apr =
+    3/2/1/0) while observations are shared by target season.
 
     Args:
         observations: [code, season_year, season_in_year,
@@ -2081,7 +2094,11 @@ def calculate_seasonal_skill_metrics(
         observations,
         forecasts,
         period_col="season_in_year",
-        time_group_cols=["season_year", "code"],
+        # Seasonal forecasts at a given lead can be (re-)issued on several
+        # dates; group by `date` so each issue forms its own ensemble (one
+        # EM per issue = clean 2-model mean) instead of collapsing distinct
+        # issue dates into a single blended row.
+        time_group_cols=["season_year", "season_in_year", "code", "date"],
         merge_cols=["code", "season_year"],
         timing_stats=timing_stats,
     )
@@ -2122,6 +2139,16 @@ def _calculate_aggregated_skill_metrics(
     if observations.empty or forecasts.empty:
         return empty_stats, empty_joint, timing_stats
 
+    # The recalc regenerates EM / Naive Mean / Skilled Mean from the raw
+    # models. Drop any pre-existing copies in the source so we neither score
+    # them as raw models nor emit a duplicate write-key when the freshly
+    # computed ensemble collides with a stored one. Other ensemble types
+    # (e.g. NE) are left untouched.
+    if "model_short" in forecasts.columns:
+        forecasts = forecasts[~forecasts["model_short"].isin(_AGGREGATED_BASELINES)].copy()
+        if forecasts.empty:
+            return empty_stats, empty_joint, timing_stats
+
     # --- 1. Merge forecasts with observations ---
     # Build the set of observation columns we need, ensuring no duplicates.
     # period_col may already be in merge_cols (e.g. quarter_in_year).
@@ -2149,6 +2176,12 @@ def _calculate_aggregated_skill_metrics(
 
     if merged.empty:
         return empty_stats, empty_joint, timing_stats
+
+    # Restrict the ensemble grouping to columns actually present. Seasonal
+    # callers pass `date` so each issue date forms its own ensemble; date-less
+    # frames (quarter, legacy CSV) fall back to period-level grouping
+    # unchanged.
+    time_group_cols = [c for c in time_group_cols if c in merged.columns]
 
     # --- 2. Point metrics per group ---
     skill_stats = (
@@ -2198,19 +2231,12 @@ def _calculate_aggregated_skill_metrics(
     # --- 4. Ensemble Mean (EM) ---
     joint_forecasts = forecasts.copy()
 
-    skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    model_keys = canonical_model_short_series(merged["model_short"])
+    em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
+    em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
 
-    skilled_merged = merged.merge(
-        skill_stats_filtered[metric_group_cols].drop_duplicates(),
-        on=metric_group_cols,
-        how="inner",
-    )
-    baselines = {"EM", "Naive Mean", "Skilled Mean"}
-    skilled_merged = skilled_merged[~skilled_merged["model_short"].isin(baselines)].copy()
-    skilled_merged = skilled_merged.dropna(subset=["forecasted_discharge"]).copy()
-
-    n_models = forecasts["model_short"].nunique()
-    if n_models > 1 and not skilled_merged.empty:
+    n_models = em_merged["model_short"].nunique()
+    if n_models > 1 and not em_merged.empty:
         em_agg_dict = {
             "forecasted_discharge": "mean",
             "model_short": composition_agg,
@@ -2218,13 +2244,13 @@ def _calculate_aggregated_skill_metrics(
         if period_col not in time_group_cols:
             em_agg_dict[period_col] = "first"
         for qcol in _QUANTILE_COLS:
-            if qcol in skilled_merged.columns:
+            if qcol in em_merged.columns:
                 em_agg_dict[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in skilled_merged.columns:
+            if dcol in em_merged.columns and dcol not in time_group_cols:
                 em_agg_dict[dcol] = "first"
 
-        em_avg = skilled_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
+        em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
         em_avg = enforce_quantile_monotonicity(
             em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
         )
@@ -2353,7 +2379,7 @@ def _add_naive_mean_aggregated(
         if qcol in pool.columns:
             agg_dict[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             agg_dict[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(agg_dict).reset_index()
@@ -2500,7 +2526,7 @@ def _add_skilled_mean_aggregated(
             lambda x, _c=qcol: _weighted_mean_col(x, _c),
         )
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in sm_merged.columns:
+        if dcol in sm_merged.columns and dcol not in time_group_cols:
             sm_agg_dict[dcol] = (dcol, "first")
 
     sm_avg = sm_merged.groupby(time_group_cols).agg(**sm_agg_dict).reset_index()

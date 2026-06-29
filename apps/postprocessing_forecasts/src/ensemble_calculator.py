@@ -9,6 +9,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -554,7 +555,10 @@ def create_seasonal_ensemble_forecasts(
         forecasts,
         skill_stats,
         period_col="season_in_year",
-        time_group_cols=["season_year", "code"],
+        # Group by `date` so each (re-)issued seasonal forecast forms its own
+        # ensemble (one EM per issue = clean 2-model mean) rather than
+        # collapsing distinct issue dates into one blended row.
+        time_group_cols=["season_year", "season_in_year", "code", "date"],
     )
 
 
@@ -571,7 +575,6 @@ def _create_aggregated_ensemble_forecasts(
     """
     from src.skill_metrics import (
         _QUANTILE_COLS,
-        _append_to_joint,
         filter_for_highly_skilled_forecasts,
     )
 
@@ -590,26 +593,37 @@ def _create_aggregated_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
-    # --- EM (threshold-filtered average) ---
+    # Drop any pre-existing aggregated ensembles so operational generation
+    # matches the maintenance recalc: regenerate EM / Naive Mean / Skilled Mean
+    # from the raw models rather than re-emitting stored copies, which would
+    # duplicate the long_forecasts unique key on write. Other ensembles
+    # (e.g. NE) are left untouched.
+    if "model_short" in joint.columns:
+        joint = joint[~joint["model_short"].isin(baselines)].copy()
+
+    # Restrict grouping to columns actually present. Seasonal callers pass
+    # `date` (one ensemble per issue date); date-less frames fall back to
+    # period-level grouping unchanged.
+    time_group_cols = [c for c in time_group_cols if c in joint.columns]
+
+    # --- EM (two-LR average; not skill-gated for quarter/season) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
-    merge_keys = [period_col, "code", "model_short"]
 
     # Normalize types for merge
-    for df in (joint, skill_filtered):
-        if period_col in df.columns:
-            df[period_col] = pd.to_numeric(df[period_col], errors="coerce")
-        if "code" in df.columns:
-            df["code"] = df["code"].astype(str)
+    if period_col in joint.columns:
+        joint[period_col] = pd.to_numeric(joint[period_col], errors="coerce")
+    if "code" in joint.columns:
+        joint["code"] = joint["code"].astype(str)
+    if period_col in skill_filtered.columns:
+        skill_filtered[period_col] = pd.to_numeric(skill_filtered[period_col], errors="coerce")
+    if "code" in skill_filtered.columns:
+        skill_filtered["code"] = skill_filtered["code"].astype(str)
 
-    qualifying = joint.merge(
-        skill_filtered[merge_keys].drop_duplicates(),
-        on=merge_keys,
-        how="inner",
-    )
-    qualifying = qualifying[~qualifying["model_short"].isin(baselines)].copy()
+    model_keys = canonical_model_short_series(joint["model_short"])
+    qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
-    n_models = joint[~joint["model_short"].isin(baselines)]["model_short"].nunique()
+    n_models = qualifying["model_short"].nunique()
 
     if n_models > 1 and not qualifying.empty:
         em_agg = {
@@ -622,7 +636,7 @@ def _create_aggregated_ensemble_forecasts(
             if qcol in qualifying.columns:
                 em_agg[qcol] = "mean"
         for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in qualifying.columns:
+            if dcol in qualifying.columns and dcol not in time_group_cols:
                 em_agg[dcol] = "first"
 
         em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
@@ -636,7 +650,7 @@ def _create_aggregated_ensemble_forecasts(
 
         if not em_avg.empty:
             em_avg["flag"] = 0
-            joint = _append_to_joint(joint, em_avg)
+            joint = _append_aggregated_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted) ---
     joint = _add_skilled_mean_aggregated_ens(
@@ -669,8 +683,6 @@ def _add_skilled_mean_aggregated_ens(
     time_group_cols,
 ):
     """Add Skilled Mean rows for quarterly/seasonal ensemble creation."""
-    from src.skill_metrics import _append_to_joint
-
     filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
         return joint
@@ -720,7 +732,7 @@ def _add_skilled_mean_aggregated_ens(
         if qcol in pool.columns:
             sm_agg[qcol] = (qcol, lambda x, _c=qcol: _weighted_mean(x, _c))
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = pool.groupby(time_group_cols).agg(**sm_agg).reset_index()
@@ -733,7 +745,7 @@ def _add_skilled_mean_aggregated_ens(
 
     if not sm_avg.empty:
         sm_avg["flag"] = 0
-        joint = _append_to_joint(joint, sm_avg)
+        joint = _append_aggregated_to_joint(joint, sm_avg)
 
     return joint
 
@@ -746,8 +758,6 @@ def _add_naive_mean_aggregated_ens(
     time_group_cols,
 ):
     """Add Naive Mean rows for quarterly/seasonal ensemble creation."""
-    from src.skill_metrics import _append_to_joint
-
     pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.dropna(subset=["forecasted_discharge"]).copy()
     if pool.empty:
@@ -763,7 +773,7 @@ def _add_naive_mean_aggregated_ens(
         if qcol in pool.columns:
             naive_agg[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
+        if dcol in pool.columns and dcol not in time_group_cols:
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(time_group_cols).agg(naive_agg).reset_index()
@@ -777,6 +787,22 @@ def _add_naive_mean_aggregated_ens(
 
     if not naive_avg.empty:
         naive_avg["flag"] = 0
-        joint = _append_to_joint(joint, naive_avg)
+        joint = _append_aggregated_to_joint(joint, naive_avg)
 
     return joint
+
+
+def _append_aggregated_to_joint(
+    joint_forecasts: pd.DataFrame,
+    ensemble_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Append quarter/season ensemble rows without dropping period keys."""
+    if ensemble_df.empty:
+        return joint_forecasts
+    if "composition" not in joint_forecasts.columns:
+        joint_forecasts = joint_forecasts.copy()
+        joint_forecasts["composition"] = ""
+    cols = [c for c in ensemble_df.columns if c in joint_forecasts.columns]
+    if not cols:
+        return joint_forecasts
+    return pd.concat([joint_forecasts, ensemble_df[cols]], ignore_index=True)
