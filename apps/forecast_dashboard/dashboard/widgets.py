@@ -343,10 +343,10 @@ def get_period_warning(horizon, forecast_period, forecast_year, today=None):
     else:
         return None
     try:
-        same = (int(forecast_year), int(forecast_period)) == (today.year, int(current))
+        outdated = (int(forecast_year), int(forecast_period)) < (today.year, int(current))
     except (TypeError, ValueError):
         return None
-    if same:
+    if not outdated:
         return None
     return get_pane_alert(
         f"The displayed {horizon} forecast is for {horizon} {forecast_period} of "

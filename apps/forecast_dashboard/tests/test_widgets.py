@@ -686,6 +686,68 @@ class TestGetPeriodWarning:
         )
         assert result is None, "Expected None for an unknown horizon"
 
+    # ------------------------------------------------------------------
+    # month: forecast targets the NEXT month → not outdated → None
+    # (the exact bug scenario: monthly forecasts are issued for next month)
+    # ------------------------------------------------------------------
+    def test_month_next_month_returns_none(self):
+        """Month-7 forecast issued in June (current month 6) → None.
+
+        A forecast for a future period is the freshest forecast, not outdated.
+        """
+        today = datetime.date(2026, 6, 25)
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=7,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed month (7) is in the future "
+            "relative to the current month (6)"
+        )
+
+    # ------------------------------------------------------------------
+    # pentad: forecast targets a future pentad → not outdated → None
+    # ------------------------------------------------------------------
+    def test_pentad_future_period_returns_none(self):
+        """Pentad-33 forecast shown on a day in pentad-32 → None (future period)."""
+        today = datetime.date(2026, 6, 8)
+        expected_current = int(widgets.tl.get_pentad_in_year(today))
+        assert expected_current == 32, (
+            f"Test pre-condition: expected pentad 32 for 2026-06-08, got {expected_current}"
+        )
+        result = widgets.get_period_warning(
+            horizon="pentad",
+            forecast_period=33,
+            forecast_year=2026,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed pentad (33) is in the future "
+            "relative to the current pentad (32)"
+        )
+
+    # ------------------------------------------------------------------
+    # month: December → next-January-of-next-year future case (year rollover)
+    # ------------------------------------------------------------------
+    def test_month_december_to_january_rollover_returns_none(self):
+        """Month-1 of 2027 forecast shown in December 2026 → None (future, rollover)."""
+        today = datetime.date(2026, 12, 20)
+        assert today.month == 12, (
+            f"Test pre-condition: expected current month 12, got {today.month}"
+        )
+        result = widgets.get_period_warning(
+            horizon="month",
+            forecast_period=1,
+            forecast_year=2027,
+            today=today,
+        )
+        assert result is None, (
+            "Expected no alert when displayed period (Jan 2027) is in the future "
+            "relative to the current period (Dec 2026)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestCreateDatePicker — empty / NaN / populated DataFrame
