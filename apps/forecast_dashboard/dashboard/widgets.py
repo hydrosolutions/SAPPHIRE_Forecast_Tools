@@ -309,7 +309,7 @@ def create_message_pane(data):
 
 def get_pane_alert(msg):
     return pn.pane.Alert(
-        "⚠️ Warning: " + msg,
+        "⚠️ " + _("Warning:") + " " + msg,
         alert_type="warning",
         sizing_mode="stretch_width"
     )
@@ -349,9 +349,17 @@ def get_period_warning(horizon, forecast_period, forecast_year, today=None):
     if not outdated:
         return None
     return get_pane_alert(
-        f"The displayed {horizon} forecast is for {horizon} {forecast_period} of "
-        f"{forecast_year}, but the current {horizon} is {current} of {today.year}. "
-        f"This forecast may be outdated."
+        _(
+            "The displayed %(horizon)s forecast is for %(horizon)s %(period)s of "
+            "%(year)s, but the current %(horizon)s is %(current)s of %(today_year)s. "
+            "This forecast may be outdated."
+        ) % {
+            "horizon": _(horizon),
+            "period": forecast_period,
+            "year": forecast_year,
+            "current": current,
+            "today_year": today.year,
+        }
     )
 
 
@@ -383,10 +391,16 @@ def get_predictors_warning(station, data):
             return
         else:
             print(f"{year_col} is NaN/empty")
-            return get_pane_alert(f"No discharge record available today for {station.value}")
+            return get_pane_alert(
+                _("No discharge record available today for %(station)s")
+                % {"station": station.value}
+            )
     else:
         print("No record for today and given station")
-        return get_pane_alert(f"No discharge record available today for {station.value}")
+        return get_pane_alert(
+            _("No discharge record available today for %(station)s")
+            % {"station": station.value}
+        )
 
 def create_predictors_warning(station, data):
     col = pn.Column()
@@ -405,13 +419,15 @@ def get_forecast_warning(station, data, date_picker_value):
         or "station_labels" not in forecasts_all.columns
     ):
         return get_pane_alert(
-            f"No forecast data available for {station.value} on {date_picker_value}."
+            _("No forecast data available for %(station)s on %(date)s.")
+            % {"station": station.value, "date": date_picker_value}
         )
 
     station_rows = forecasts_all[forecasts_all["station_labels"] == station.value]
     if station_rows.empty:
         return get_pane_alert(
-            f"No forecast data available for {station.value} on {date_picker_value}."
+            _("No forecast data available for %(station)s on %(date)s.")
+            % {"station": station.value, "date": date_picker_value}
         )
 
     expected_models = set(station_rows["model_short"].dropna().unique())
@@ -428,11 +444,16 @@ def get_forecast_warning(station, data, date_picker_value):
         if not present_models:
             # No model has a forecast for this date — don't enumerate every model.
             return get_pane_alert(
-                f"No forecast data available for {station.value} on {date_picker_value}."
+                _("No forecast data available for %(station)s on %(date)s.")
+                % {"station": station.value, "date": date_picker_value}
             )
         return get_pane_alert(
-            f"No forecast data available for models {', '.join(missing_models)}"
-            f" at {station.value} on {date_picker_value}."
+            _("No forecast data available for models %(models)s at %(station)s on %(date)s.")
+            % {
+                "models": ", ".join(missing_models),
+                "station": station.value,
+                "date": date_picker_value,
+            }
         )
     return
 
