@@ -275,17 +275,40 @@ def get_lr_forecast(
 
 
 def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[SkillMetric]:
-    """Create or update multiple skill metrics in bulk (upsert based on horizon_type, code, model_type, date, horizon_in_year)"""
+    """Create or update multiple skill metrics in bulk.
+
+    Upsert key: (horizon_type, code, model_type, date, horizon_in_year, horizon_value).
+
+    PP-038 NULL-tuple hazard: SQLite and Postgres both evaluate
+    (a, NULL) IN ((a, NULL)) as NULL (never TRUE), so a NULL horizon_value
+    in the match tuple would cause every non-month row to miss its existing
+    row and insert a duplicate on every recalc.  horizon_value is coalesced
+    to 0 immediately after model_dump() so the tuple never contains NULL.
+    """
     try:
         incoming = [item.model_dump() for item in bulk_data.data]
-        keys = {(i["horizon_type"], i["code"], i["model_type"], i["date"], i["horizon_in_year"]) for i in incoming}
 
+        # Coalesce horizon_value None → 0 on every incoming row before any key
+        # construction or DB insert.  Non-month horizons (pentad/decade/quarter/
+        # season) send None; month sends an explicit lead integer (0–3).
+        for i in incoming:
+            if i.get("horizon_value") is None:
+                i["horizon_value"] = 0
+
+        # Spot 1: build the set of keys for the IN-filter query
+        keys = {
+            (i["horizon_type"], i["code"], i["model_type"], i["date"], i["horizon_in_year"], i["horizon_value"])
+            for i in incoming
+        }
+
+        # Spot 2: fetch existing rows and key them by the full 6-tuple
         existing_map = {
-            (r.horizon_type, r.code, r.model_type, r.date, r.horizon_in_year): r
+            (r.horizon_type, r.code, r.model_type, r.date, r.horizon_in_year, r.horizon_value): r
             for r in db.query(SkillMetric).filter(
+                # Spot 3: tuple-IN filter now includes horizon_value
                 tuple_(
                     SkillMetric.horizon_type, SkillMetric.code, SkillMetric.model_type,
-                    SkillMetric.date, SkillMetric.horizon_in_year
+                    SkillMetric.date, SkillMetric.horizon_in_year, SkillMetric.horizon_value
                 ).in_(keys)
             ).all()
         }
@@ -293,7 +316,8 @@ def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[S
         db_skill_metrics = []
         changed = []
         for data in incoming:
-            key = (data["horizon_type"], data["code"], data["model_type"], data["date"], data["horizon_in_year"])
+            # Spot 4: per-row lookup key includes horizon_value
+            key = (data["horizon_type"], data["code"], data["model_type"], data["date"], data["horizon_in_year"], data["horizon_value"])
             existing = existing_map.get(key)
 
             if existing:
