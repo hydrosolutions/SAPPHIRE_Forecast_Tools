@@ -25,6 +25,8 @@ from forecast_skill_eval.observed_truth import ObservedTruthProvider
 from forecast_skill_eval.periods import LONG_TERM_HORIZONS, SHORT_TERM_HORIZONS, normalize_horizon
 from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
+ISSUE_DAY_FILTER_HORIZONS: tuple[str, ...] = ("month",)
+
 PAIR_COLUMNS = (
     "horizon",
     "code",
@@ -72,6 +74,8 @@ def build_pairs(
     code_filters = tuple(config.station_filter or (None,))
     model_filters = tuple(config.model_filter or (None,))
 
+    operational_issue_days = config.operational_issue_days
+
     ledger = ExclusionLedger()
     hydrograph_reader = _memoized_reader(read_hydrograph_norms)
     runoff_reader = _memoized_reader(read_runoff_observed)
@@ -105,7 +109,7 @@ def build_pairs(
 
     rows: list[dict[str, object]] = []
     for forecast in forecasts.to_dict("records"):
-        instance = _forecast_instance(forecast, normalized_horizon, ledger)
+        instance = _forecast_instance(forecast, normalized_horizon, ledger, operational_issue_days)
         if instance is None:
             continue
         regime_decision = derive_regime(
@@ -303,10 +307,11 @@ def _forecast_instance(
     row: dict[str, object],
     horizon: str,
     ledger: ExclusionLedger,
+    operational_issue_days: tuple[int, ...] = (),
 ) -> _ForecastInstance | None:
     if horizon in SHORT_TERM_HORIZONS:
         return _short_instance(row)
-    return _long_instance(row, ledger)
+    return _long_instance(row, ledger, horizon, operational_issue_days)
 
 
 def _short_instance(row: dict[str, object]) -> _ForecastInstance:
@@ -324,6 +329,8 @@ def _short_instance(row: dict[str, object]) -> _ForecastInstance:
 def _long_instance(
     row: dict[str, object],
     ledger: ExclusionLedger,
+    horizon: str = "",
+    operational_issue_days: tuple[int, ...] = (),
 ) -> _ForecastInstance | None:
     instance = _ForecastInstance(
         code=_string_or_none(row.get("code")),
@@ -334,6 +341,17 @@ def _long_instance(
         issue_date=_plain_value(row.get("date")),
         forecast_value=_finite_float_or_none(row.get("point_value")),
     )
+    if horizon in ISSUE_DAY_FILTER_HORIZONS and operational_issue_days:
+        issue_day = _issue_day_or_none(row.get("date"))
+        if issue_day is None or issue_day not in operational_issue_days:
+            ledger.add(
+                stage="pair",
+                reason="forecast_non_operational_issue_day",
+                code=instance.code,
+                period_key=instance.period_key,
+                year=instance.year,
+            )
+            return None
     if _bool_or_none(row.get("is_calendar_aligned")) is not True:
         ledger.add(
             stage="pair",
@@ -483,6 +501,13 @@ def _date_or_none(value: object) -> date | None:
     if pd.isna(parsed):
         return None
     return parsed.date()
+
+
+def _issue_day_or_none(value: object) -> int | None:
+    parsed = _date_or_none(value)
+    if parsed is None:
+        return None
+    return parsed.day
 
 
 def _plain_value(value: object) -> object | None:

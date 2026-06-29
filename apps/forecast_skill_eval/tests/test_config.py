@@ -10,6 +10,7 @@ from forecast_skill_eval.config import (
     DEFAULT_HINDCAST_FLAGS,
     DEFAULT_NAN_EXCLUDE_FLAGS,
     DEFAULT_OPERATIONAL_FLAGS,
+    DEFAULT_OPERATIONAL_ISSUE_DAYS,
     DEFAULT_PROVENANCE,
     ForecastSkillEvalConfig,
 )
@@ -97,3 +98,35 @@ def test_config_overrides_are_normalized_and_copied(tmp_path: Path) -> None:
 def test_invalid_config_inputs_are_rejected(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         ForecastSkillEvalConfig(**kwargs)
+
+
+def test_operational_issue_days_default_is_empty() -> None:
+    config = ForecastSkillEvalConfig()
+    assert config.operational_issue_days == ()
+    assert DEFAULT_OPERATIONAL_ISSUE_DAYS == ()
+
+
+def test_operational_issue_days_normalized_to_sorted_unique_ints() -> None:
+    config = ForecastSkillEvalConfig(operational_issue_days=[25, 1, 10, 1])
+    assert config.operational_issue_days == (1, 10, 25)
+
+
+def test_operational_issue_days_empty_sequence_disables_filtering() -> None:
+    config = ForecastSkillEvalConfig(operational_issue_days=[])
+    assert config.operational_issue_days == ()
+
+
+@pytest.mark.parametrize(
+    "days",
+    [
+        [0],
+        [32],
+        [1, 0],
+        [31, 32],
+        ["1"],
+        [1.5],
+    ],
+)
+def test_operational_issue_days_rejects_invalid(days: list[object]) -> None:
+    with pytest.raises(ValueError):
+        ForecastSkillEvalConfig(operational_issue_days=days)

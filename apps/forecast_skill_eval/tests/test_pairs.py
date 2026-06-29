@@ -535,12 +535,14 @@ def test_regime_falls_back_to_issue_date_when_flag_does_not_distinguish(
 def test_long_term_calendar_join_and_rolling_window_exclusion(
     fake_client_factory,
 ) -> None:
+    # Default issue-day filter is empty (alignment-only), so any calendar-aligned
+    # issue date passes; only the rolling-window check drives the exclusion here.
     client = fake_client_factory(
         long_forecasts_rows=[
             {
                 "horizon": "month",
                 "code": STATION_CODE,
-                "date": "2023-12-15",
+                "date": "2023-12-25",  # day 25: operational, calendar-aligned → pair
                 "valid_from": "2024-04-01",
                 "valid_to": "2024-04-30",
                 "horizon_value": 2,
@@ -550,7 +552,7 @@ def test_long_term_calendar_join_and_rolling_window_exclusion(
             {
                 "horizon": "month",
                 "code": STATION_CODE,
-                "date": "2023-12-20",
+                "date": "2023-12-10",  # day 10: operational, rolling window → excluded
                 "valid_from": "2024-04-10",
                 "valid_to": "2024-05-09",
                 "horizon_value": 2,
@@ -580,7 +582,7 @@ def test_long_term_calendar_join_and_rolling_window_exclusion(
     assert row["period_key"] == 4
     assert row["year"] == 2024
     assert row["lead"] == 2
-    assert row["issue_date"] == "2023-12-15"
+    assert row["issue_date"] == "2023-12-25"
     assert row["regime"] == "hindcast"
     assert row["norm_provenance"] == "official"
     assert row["contingency"] == "TP"
@@ -628,3 +630,144 @@ def test_pair_exclusions_loo_and_memoized_norm_readers(fake_client_factory) -> N
 
 def _call_count(client, method_name: str) -> int:
     return [name for name, _kwargs in client.calls].count(method_name)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for long-term forecast fixtures
+# ---------------------------------------------------------------------------
+
+
+def _long_forecast(
+    *,
+    horizon: str = "month",
+    issue_date: str = "2024-01-25",
+    valid_from: str = "2024-04-01",
+    valid_to: str = "2024-04-30",
+    horizon_value: int = 1,
+    model: str = "model-a",
+    value: float = 7.0,
+) -> dict[str, object]:
+    return {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "date": issue_date,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "horizon_value": horizon_value,
+        "model_type": model,
+        "q": value,
+    }
+
+
+def _april_hydrograph_norm() -> dict[str, object]:
+    return {
+        "horizon": "month",
+        "code": STATION_CODE,
+        "horizon_in_year": 4,
+        "norm": 10.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Issue-day filter tests
+# ---------------------------------------------------------------------------
+
+
+def test_month_forecast_on_non_operational_day_is_excluded(
+    fake_client_factory,
+) -> None:
+    # Opt-in: pass the set explicitly to exercise the issue-day filter.
+    # The default is empty (no filtering); this test covers the non-default path.
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(issue_date="2024-02-05"),  # day 5: not in {1, 10, 25}
+        ],
+        runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        operational_issue_days=[1, 10, 25],
+    )
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert pairs.empty
+    assert (
+        ledger.counts_by_stage_reason().get(("pair", "forecast_non_operational_issue_day"), 0) == 1
+    )
+
+
+def test_month_forecast_on_operational_day_creates_pair(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(issue_date="2024-01-25"),  # day 25: operational
+        ],
+        runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert len(pairs) == 1
+    assert ("pair", "forecast_non_operational_issue_day") not in ledger.counts_by_stage_reason()
+
+
+def test_empty_operational_issue_days_disables_issue_day_filter(
+    fake_client_factory,
+) -> None:
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(issue_date="2024-02-05"),  # day 5: not operational, but filter off
+        ],
+        runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        operational_issue_days=[],
+    )
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert len(pairs) == 1
+    assert ("pair", "forecast_non_operational_issue_day") not in ledger.counts_by_stage_reason()
+
+
+def test_issue_day_filter_does_not_apply_to_quarter(
+    fake_client_factory,
+) -> None:
+    # Q2: April–June; issue date on day 5 (not operational) must not trigger the
+    # issue-day filter because the filter only applies to the "month" horizon.
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(
+                horizon="quarter",
+                issue_date="2024-02-05",  # day 5: not operational
+                valid_from="2024-04-01",
+                valid_to="2024-06-30",
+            ),
+        ],
+        runoff_rows=[
+            *_daily_rows(year=2024, month=4, value=7.0),
+            *_daily_rows(year=2024, month=5, value=7.0),
+            *_daily_rows(year=2024, month=6, value=7.0),
+        ],
+        hydrograph_rows=[
+            {
+                "horizon": "quarter",
+                "code": STATION_CODE,
+                "horizon_in_year": 2,
+                "norm": 10.0,
+                "count": 30,
+            }
+        ],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    _pairs, ledger = build_pairs(config, client, "quarter")
+
+    assert ("pair", "forecast_non_operational_issue_day") not in ledger.counts_by_stage_reason()

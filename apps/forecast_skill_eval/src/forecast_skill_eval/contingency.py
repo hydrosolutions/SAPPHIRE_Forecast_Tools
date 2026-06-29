@@ -91,22 +91,24 @@ def _count_scopes(
             if not pooled:
                 group_columns.append("code")
 
-            frames.append(
-                _count_frame(horizon_frame, group_columns, basin, provenance, regime, pooled)
-            )
             if str(horizon) in LONG_TERM_HORIZONS:
-                lead_frame = horizon_frame[horizon_frame["lead"].notna()]
-                if not lead_frame.empty:
-                    frames.append(
-                        _count_frame(
-                            lead_frame,
-                            [*group_columns, "lead"],
-                            basin,
-                            provenance,
-                            regime,
-                            pooled,
-                        )
+                # Long-term: emit per-lead rows only.  NaN lead is its own group
+                # (dropna=False inside _count_frame preserves it).
+                frames.append(
+                    _count_frame(
+                        horizon_frame,
+                        [*group_columns, "lead"],
+                        basin,
+                        provenance,
+                        regime,
+                        pooled,
                     )
+                )
+            else:
+                # Short-term: single lead-agnostic row (lead column is always NaN).
+                frames.append(
+                    _count_frame(horizon_frame, group_columns, basin, provenance, regime, pooled)
+                )
     return frames
 
 

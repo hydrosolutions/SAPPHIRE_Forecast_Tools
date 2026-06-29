@@ -59,6 +59,8 @@ def test_operational_proxy_uses_lr_intersection_for_short_term_matching() -> Non
 
 
 def test_operational_proxy_uses_lr_base_and_lead_for_long_term_matching() -> None:
+    # After Fix 2, long-term baselines carry a concrete lead (not NaN);
+    # matching is on lead=1 (the only shared lead between candidate and LR_Base).
     pairs = pd.DataFrame(
         [
             _pair("month", "candidate", STATION_CODE, 4, 2024, "official", "TP", lead=1),
@@ -70,11 +72,11 @@ def test_operational_proxy_uses_lr_base_and_lead_for_long_term_matching() -> Non
 
     baseline = build_operational_proxy_baseline(pairs)
 
-    candidate = _one_row(baseline, code=STATION_CODE, model="candidate")
+    candidate = _one_row(baseline, code=STATION_CODE, model="candidate", lead=1)
     assert int(candidate["n_matched"]) == 1
     assert _cells(candidate) == {"TP": 1, "FP": 0, "FN": 0, "TN": 0, "n_pairs": 1}
 
-    proxy = _one_row(baseline, code=STATION_CODE, model="LR_Base")
+    proxy = _one_row(baseline, code=STATION_CODE, model="LR_Base", lead=1)
     assert proxy["is_proxy"] is True
     assert int(proxy["n_matched"]) == 1
     assert _cells(proxy) == {"TP": 0, "FP": 0, "FN": 0, "TN": 1, "n_pairs": 1}
@@ -125,6 +127,7 @@ def _one_row(
     *,
     code: str,
     model: str,
+    lead: int | None = None,
 ) -> pd.Series:
     selected = frame[
         (frame["code"] == code)
@@ -132,7 +135,7 @@ def _one_row(
         & (frame["model"] == model)
         & (frame["regime"] == "all")
         & (frame["norm_provenance"] == "all")
-        & (frame["lead"].isna())
+        & (frame["lead"].isna() if lead is None else frame["lead"].eq(lead))
     ]
     assert len(selected) == 1
     return selected.iloc[0]

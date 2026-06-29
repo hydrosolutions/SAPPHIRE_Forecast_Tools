@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -284,7 +285,7 @@ def _complete_quarter_means(month_means: pd.DataFrame) -> pd.DataFrame:
         observed_value=("observed_value", "mean"),
         complete_months=("month", "nunique"),
     )
-    complete = grouped.loc[grouped["complete_months"].eq(3)].copy()
+    complete = grouped.loc[grouped["complete_months"].ge(2)].copy()
     if complete.empty:
         return _empty_quarter_frame()
     return complete[["code", "year", "quarter", "observed_value"]].reset_index(drop=True)
@@ -322,7 +323,8 @@ def _complete_season_means(
         observed_value=("observed_value", "mean"),
         complete_months=("month", "nunique"),
     )
-    complete = grouped.loc[grouped["complete_months"].eq(len(season_months))].copy()
+    min_months = max(1, math.ceil(0.5 * len(season_months)))
+    complete = grouped.loc[grouped["complete_months"].ge(min_months)].copy()
     if complete.empty:
         return _empty_season_frame()
     return complete[["code", "year", "observed_value"]].reset_index(drop=True)

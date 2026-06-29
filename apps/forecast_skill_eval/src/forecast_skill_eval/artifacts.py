@@ -286,7 +286,7 @@ def _headline_pooled_rows(metrics: pd.DataFrame) -> pd.DataFrame:
     if metrics.empty or not required.issubset(metrics.columns):
         return pd.DataFrame()
 
-    pooled = metrics[metrics["code"].eq(POOLED_CODE) & metrics["lead"].isna()].copy()
+    pooled = metrics[metrics["code"].eq(POOLED_CODE)].copy()
     if pooled.empty:
         return pooled
     return pooled.sort_values(

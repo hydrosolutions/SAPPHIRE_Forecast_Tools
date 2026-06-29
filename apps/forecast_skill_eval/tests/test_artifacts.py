@@ -78,6 +78,83 @@ def test_artifacts_are_written_with_readable_summary_and_config(tmp_path: Path) 
     assert "calculated" in summary
 
 
+# --- Fix 2: headline section populated for long-term per-lead pooled rows ---
+
+
+def test_headline_section_populated_for_long_term_per_lead_rows(tmp_path: Path) -> None:
+    """After Fix 2, long-term pooled rows carry a concrete lead (not NaN).
+    The headline section must still be populated for these rows.
+    """
+    config = ForecastSkillEvalConfig(
+        threshold=0.75,
+        horizons=["month"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+        provenance_by_horizon={"month": "official"},
+    )
+    # Construct metrics that simulate Fix 2 output: per-lead pooled rows, no lead=None.
+    metrics = pd.DataFrame(
+        [
+            {
+                "horizon": "month",
+                "model": "model-b",
+                "regime": "all",
+                "code": "POOLED",
+                "basin": "all",
+                "norm_provenance": "all",
+                "lead": 1,  # concrete lead — not None
+                "TP": 1,
+                "FP": 0,
+                "FN": 1,
+                "TN": 0,
+                "n_pairs": 2,
+                "pod": 0.5,
+                "far": 0.0,
+                "base_rate": 0.5,
+                "hss": 0.0,
+                "hss_undefined": False,
+                "pss": 0.0,
+                "pss_undefined": False,
+            },
+            {
+                "horizon": "month",
+                "model": "model-b",
+                "regime": "all",
+                "code": STATION_CODE,
+                "basin": "other",
+                "norm_provenance": "all",
+                "lead": 1,
+                "TP": 1,
+                "FP": 0,
+                "FN": 1,
+                "TN": 0,
+                "n_pairs": 2,
+                "pod": 0.5,
+                "far": 0.0,
+                "base_rate": 0.5,
+                "hss": 0.0,
+                "hss_undefined": False,
+                "pss": 0.0,
+                "pss_undefined": False,
+            },
+        ]
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=metrics,
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("month", n_pairs=2),),
+    )
+
+    artifact_dir = write_artifacts(config, bundle, run_id="lt-lead-run")
+    summary = (artifact_dir / "summary.md").read_text()
+
+    assert "## Headline Pooled Metrics" in summary
+    assert "No pooled metrics available." not in summary
+    assert "| month |" in summary
+
+
 def _pairs() -> pd.DataFrame:
     return pd.DataFrame(
         [

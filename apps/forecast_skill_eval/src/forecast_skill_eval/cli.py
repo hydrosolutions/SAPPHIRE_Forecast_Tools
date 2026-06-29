@@ -20,6 +20,7 @@ from forecast_skill_eval.config import (
     DEFAULT_HORIZONS,
     DEFAULT_NAN_EXCLUDE_FLAGS,
     DEFAULT_OPERATIONAL_FLAGS,
+    DEFAULT_OPERATIONAL_ISSUE_DAYS,
     ForecastSkillEvalConfig,
 )
 from forecast_skill_eval.orchestrator import run
@@ -114,6 +115,12 @@ def _parser() -> argparse.ArgumentParser:
         default=list(DEFAULT_ERROR_FLAGS),
         metavar="FLAG",
     )
+    parser.add_argument(
+        "--operational-issue-days",
+        nargs="+",
+        default=list(DEFAULT_OPERATIONAL_ISSUE_DAYS),
+        metavar="DAY",
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -135,6 +142,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         hindcast_flags=_split_int_values(args.hindcast_flags),
         nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
         error_flags=_split_int_values(args.error_flags),
+        operational_issue_days=_split_int_values(args.operational_issue_days),
     )
 
 

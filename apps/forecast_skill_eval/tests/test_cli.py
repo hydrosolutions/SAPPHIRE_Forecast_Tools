@@ -124,6 +124,20 @@ def test_cli_skips_with_message_when_api_client_is_unavailable(
     assert "SAPPHIRE API client is unavailable" in captured.err
 
 
+def test_operational_issue_days_cli_arg_parses_into_config() -> None:
+    parser = cli._parser()
+    args = parser.parse_args(["--operational-issue-days", "1", "10", "25"])
+    config = cli._config_from_args(args)
+    assert config.operational_issue_days == (1, 10, 25)
+
+
+def test_operational_issue_days_cli_default_is_empty() -> None:
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.operational_issue_days == ()
+
+
 def test_build_client_delegates_to_real_sapphire_clients(monkeypatch) -> None:
     constructed: list[tuple[str, str]] = []
 

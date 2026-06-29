@@ -31,7 +31,7 @@ def test_orchestrates_short_long_mix_and_records_empty_horizon(
             {
                 "horizon": "month",
                 "code": STATION_CODE,
-                "date": "2023-12-15",
+                "date": "2023-12-25",  # day 25: operational issue day
                 "valid_from": "2024-04-01",
                 "valid_to": "2024-04-30",
                 "horizon_value": 2,

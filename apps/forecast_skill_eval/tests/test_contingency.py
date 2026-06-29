@@ -78,6 +78,7 @@ def test_counts_include_regime_rollups_station_and_pooled() -> None:
 
 
 def test_long_term_counts_include_per_lead_breakdown() -> None:
+    # Long-term horizons emit per-lead rows only; the lead-agnostic row is gone.
     pairs = pd.DataFrame(
         [
             _pair("month", "model-b", STATION_CODE, "official", "TP", lead=1),
@@ -89,15 +90,89 @@ def test_long_term_counts_include_per_lead_breakdown() -> None:
 
     counts = count_contingencies(pairs)
 
-    all_leads = _one_row(counts, code=STATION_CODE, provenance="all")
-    assert pd.isna(all_leads["lead"])
-    assert _cells(all_leads) == {"TP": 1, "FP": 1, "FN": 1, "TN": 1, "n_pairs": 4}
+    # No lead-agnostic row for long-term horizons.
+    lead_agnostic = counts[
+        counts["code"].eq(STATION_CODE)
+        & counts["norm_provenance"].eq("all")
+        & counts["lead"].isna()
+    ]
+    assert lead_agnostic.empty
 
     lead_one = _one_row(counts, code=STATION_CODE, provenance="all", lead=1)
     assert _cells(lead_one) == {"TP": 1, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 2}
 
     lead_two = _one_row(counts, code="POOLED", provenance="official", lead=2)
     assert _cells(lead_two) == {"TP": 0, "FP": 1, "FN": 0, "TN": 1, "n_pairs": 2}
+
+
+# --- Fix 2: long-term per-lead stratification ---
+
+
+def test_long_term_emits_per_lead_rows_only_not_lead_agnostic() -> None:
+    # month horizon with two distinct leads must produce per-lead rows
+    # and NO lead-agnostic (lead=NaN) row.
+    pairs = pd.DataFrame(
+        [
+            _pair("month", "model-b", STATION_CODE, "official", "TP", lead=0),
+            _pair("month", "model-b", STATION_CODE, "official", "FP", lead=0),
+            _pair("month", "model-b", STATION_CODE, "official", "FN", lead=1),
+            _pair("month", "model-b", STATION_CODE, "official", "TN", lead=1),
+        ]
+    )
+
+    counts = count_contingencies(pairs)
+
+    # Per-lead rows exist and are correct.
+    lead_zero = _one_row(counts, code=STATION_CODE, provenance="all", lead=0)
+    assert _cells(lead_zero) == {"TP": 1, "FP": 1, "FN": 0, "TN": 0, "n_pairs": 2}
+
+    lead_one = _one_row(counts, code=STATION_CODE, provenance="all", lead=1)
+    assert _cells(lead_one) == {"TP": 0, "FP": 0, "FN": 1, "TN": 1, "n_pairs": 2}
+
+    # No lead-agnostic row for long-term horizons.
+    lead_agnostic = counts[
+        counts["code"].eq(STATION_CODE)
+        & counts["norm_provenance"].eq("all")
+        & counts["lead"].isna()
+    ]
+    assert lead_agnostic.empty, "Long-term horizons must not produce lead-agnostic rows"
+
+
+def test_long_term_nan_lead_counts_as_its_own_group() -> None:
+    # month horizon with NaN-lead records alongside a concrete lead;
+    # NaN-lead records must not be merged into the concrete-lead group.
+    pairs = pd.DataFrame(
+        [
+            _pair("month", "model-b", STATION_CODE, "official", "TP", lead=None),
+            _pair("month", "model-b", STATION_CODE, "official", "FN", lead=1),
+        ]
+    )
+
+    counts = count_contingencies(pairs)
+
+    # NaN-lead group is its own row with only its own records.
+    nan_lead = _one_row(counts, code=STATION_CODE, provenance="all", lead=None)
+    assert _cells(nan_lead) == {"TP": 1, "FP": 0, "FN": 0, "TN": 0, "n_pairs": 1}
+
+    # Concrete-lead group has only its own record.
+    lead_one = _one_row(counts, code=STATION_CODE, provenance="all", lead=1)
+    assert _cells(lead_one) == {"TP": 0, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 1}
+
+
+def test_short_term_still_emits_lead_agnostic_row() -> None:
+    # day horizon (short-term) must continue emitting the single lead-agnostic row.
+    pairs = pd.DataFrame(
+        [
+            _pair("day", "model-a", STATION_CODE, "official", "TP"),
+            _pair("day", "model-a", STATION_CODE, "official", "FN"),
+        ]
+    )
+
+    counts = count_contingencies(pairs)
+
+    station_row = _one_row(counts, code=STATION_CODE, provenance="all")
+    assert pd.isna(station_row["lead"])
+    assert _cells(station_row) == {"TP": 1, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 2}
 
 
 def test_operational_proxy_baseline_builds_and_carries_basin() -> None:

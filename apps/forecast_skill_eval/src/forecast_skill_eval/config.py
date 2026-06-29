@@ -33,6 +33,14 @@ DEFAULT_BASINS_BY_PREFIX: Final = {
     "16": "syr_darya",
     "17": "amu_darya",
 }
+# Empty tuple = alignment-only filtering (the recommended default).
+# `is_calendar_aligned` already separates the operational calendar-month product
+# from the erroneous rolling-31-day product, so no additional day-of-month guard
+# is needed by default.  A non-empty set opts into exact day-of-month filtering
+# for the "month" horizon; this is NOT org-general (Tajik/Uzbek issue-day
+# configurations differ and are unverified) and is intended as a future
+# config-driven per-org/per-lead tolerance filter only.
+DEFAULT_OPERATIONAL_ISSUE_DAYS: Final = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,7 @@ class ForecastSkillEvalConfig:
     hindcast_flags: Sequence[int] = DEFAULT_HINDCAST_FLAGS
     nan_exclude_flags: Sequence[int] = DEFAULT_NAN_EXCLUDE_FLAGS
     error_flags: Sequence[int] = DEFAULT_ERROR_FLAGS
+    operational_issue_days: Sequence[int] = DEFAULT_OPERATIONAL_ISSUE_DAYS
 
     def __post_init__(self) -> None:
         if not self.base_url:
@@ -103,6 +112,11 @@ class ForecastSkillEvalConfig:
         object.__setattr__(self, "hindcast_flags", flag_sets.hindcast_flags)
         object.__setattr__(self, "nan_exclude_flags", flag_sets.nan_exclude_flags)
         object.__setattr__(self, "error_flags", flag_sets.error_flags)
+        object.__setattr__(
+            self,
+            "operational_issue_days",
+            _normalize_operational_issue_days(self.operational_issue_days),
+        )
 
 
 def _freeze_optional_strings(values: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -146,3 +160,16 @@ def _parse_date(value: str | None, field_name: str) -> date | None:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} must use ISO date format YYYY-MM-DD") from exc
+
+
+def _normalize_operational_issue_days(days: Sequence[object]) -> tuple[int, ...]:
+    if not days:
+        return ()
+    normalized: list[int] = []
+    for day in days:
+        if not isinstance(day, int):
+            raise ValueError(f"operational_issue_days values must be integers, got {day!r}")
+        if not 1 <= day <= 31:
+            raise ValueError(f"operational_issue_days values must be in 1..31, got {day}")
+        normalized.append(day)
+    return tuple(sorted(set(normalized)))
