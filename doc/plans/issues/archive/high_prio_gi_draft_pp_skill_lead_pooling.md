@@ -1,6 +1,31 @@
-# High prio — postprocessing monthly skill pools forecast issuances across leads
+# High prio — postprocessing long-term skill (month/quarter/season) pools forecast issuances across leads
 
-**Status:** draft — needs coordination with the postprocessing_forecasts /
+**Status:** ARCHIVED / largely resolved (2026-06-29). The finding below was written
+against `develop_forecast_skill_eval`, which was *behind* `origin/maxat_sapphire_2`
+and did not yet contain the merged **P-PIPE** series. P-PIPE already implements
+per-lead **season** skill (the high-severity case) — `long_term_horizon_resolver`,
+lead-aware readers/writers, and `calculate_seasonal_skill_metrics` grouping by
+`season_in_year` (= the lead), persisting distinct rows via the existing
+`horizon_in_year` unique-key slot, **with no schema change**. The line-number
+evidence below reflects the pre-P-PIPE develop code and is stale.
+
+**Resolution:**
+- maxat→develop merged (commit `7d0e7f47`); develop now has P-PIPE.
+- Season per-lead skill: **done** (P-PIPE). Quarter: single configured lead, left
+  as-is (operational decision). Min-`n_pairs` floor added — drop skill rows with
+  `n_pairs < 2` (commit `0f62c1ad`), fixing the n=1 pathology in the shipped season
+  path. Per-lead baselines: already per-lead (no change). Dashboard headline: shows
+  the single operationally-current lead (no change needed).
+- **Month** remains lead-pooled and is the one genuine remaining gap. Unlike season
+  it has no free unique-key slot (`horizon_in_year` = calendar month), so it needs
+  the `SkillMetric.horizon_value` schema column + service coordination. Tracked in a
+  **separate new issue draft** (month skill schema change). NOT low priority.
+
+Original finding follows (historical; line numbers pre-P-PIPE).
+
+---
+
+**Status (original):** draft — needs coordination with the postprocessing_forecasts /
 services owner before any code change. `apps/postprocessing_forecasts/` and
 `sapphire/services/` are colleague-managed (see CLAUDE.md Ownership Boundaries).
 This file documents the finding and the proposed fix; it does **not** change any
@@ -8,70 +33,109 @@ colleague-owned code.
 
 ## Summary
 
-The operational monthly skill metric in `postprocessing_forecasts` pools
-multiple forecast **issuances** for the same target month into one skill number.
-For Kyrgyz hydromet a monthly forecast is issued **twice** per target month — on
-the 25th of the previous month (lead 1) and again as an in-month update on the
-10th of the target month (lead 0) — and these two distinct products are scored
-together. Tajik hydromet issues once per target month and is unaffected.
+The operational long-term skill metrics in `postprocessing_forecasts` pool
+multiple forecast **issuances** (different leads / issue dates) for the same
+target period into one skill number. This affects **month, quarter, and season**
+— each is grouped by `[period, code, model_short]` with no lead dimension, so
+distinct-lead products are averaged together.
 
-This was surfaced while auditing the new `apps/forecast_skill_eval` app against
-the canonical postprocessing implementation. The eval app has been fixed to
-stratify long-term skill by lead (commit on branch
-`develop_forecast_skill_eval`); the same pooling remains in the postprocessing
-skill path and should be addressed for parity.
+For Kyrgyz hydromet a monthly forecast is issued at several leads (e.g. the 10th
+in-month update at lead 0 and the 25th prior-month forecast at lead 1+); quarter
+and season targets are likewise forecast from multiple issue dates (the local
+daily pipeline runs modes month_1/month_2/month_3/quarter). Each lead is a
+distinct product with materially different skill.
+
+Surfaced while auditing `apps/forecast_skill_eval` against the canonical
+postprocessing implementation. The eval app stratifies long-term skill by lead
+(branch `develop_forecast_skill_eval`); postprocessing does not, and should be
+aligned for parity. A follow-up read-only audit confirmed quarter and season are
+affected too (this file's open question 3 — now answered: **yes**).
 
 ## Evidence (read-only)
 
-- `apps/postprocessing_forecasts/src/skill_metrics.py:1169` — monthly forecasts
-  are merged to observations on `code` / `year` / `month` only. Two issuances for
-  one target month both survive the merge as separate rows.
-- `apps/postprocessing_forecasts/src/skill_metrics.py:1192` and `:1208` — point
-  metrics are then grouped by `["month_in_year", "code", "model_short"]`. `lead`
-  / `horizon_value` is **not** in the grouping key, even though `horizon_value`
-  is carried in the merged frame (`:1086`).
-- Net effect: for a (month, station, model) with two issuances, both
-  contingency outcomes land in the same group and are averaged into a single
-  HSS/PSS — mixing a ~5-day-lead update with a ~5-week-lead prior-month forecast,
-  which have materially different skill.
+Grouping keys, all lead-free:
 
-`horizon_value` currently means lead time (months ahead from issue to target
-period start) — see `apps/long_term_forecasting/readme.md` and the writer in
-`apps/long_term_forecasting/lt_utils.py` / `run_forecast.py`. So it is the
-correct field to stratify on.
+| horizon | skill groupby key | includes lead? | evidence |
+| --- | --- | --- | --- |
+| month | `["month_in_year", "code", "model_short"]` | no | `skill_metrics.py:1194`, `:1208`; merge on code/year/month at `:1169` |
+| quarter | `["quarter_in_year", "code", "model_short"]` | no | `skill_metrics.py:2045`, `:2113`, `:2155` |
+| season | `["season_in_year", "code", "model_short"]` | no | `skill_metrics.py:2080`, `:2113`, `:2155` |
+
+`horizon_value` (= lead, months ahead from issue to target start) is carried in
+the merged monthly frame (`skill_metrics.py:1086`) but never in the group key.
+
+**Where the lead is lost (quarter/season):** monthly forecasts are aggregated to
+quarter/season **before** skill calc (`recalculate_skill_metrics.py:296`, `:343`).
+The quarter aggregation groups by `["code","year","quarter_in_year","model_short"]`,
+dropping `date`/`horizon_value` (`aggregation.py:251`); direct quarter rows are
+deduped on the same lead-free key (`data_reader.py:2677`); the canonical
+quarter/season output columns omit `date` and `horizon_value` (`data_reader.py:37`)
+and the normalizer explicitly drops `horizon_value` (`data_reader.py:3073`). So a
+late per-lead grouping is impossible — the lead must be preserved **upstream**.
+
+**DB severity (read-only aggregates, local `long_forecasts`, 2006–2026, ensembles
+excluded):**
+
+| horizon | target×model periods | periods with >=2 issue dates | periods with >=2 leads | leads min/median/max |
+| --- | ---: | ---: | ---: | --- |
+| quarter | 54,232 | 6,509 | 9,376 | 1 / 1 / 2 |
+| season | 2,944 | 2,324 | 2,310 | 1 / 4 / 4 |
+
+Raw current-key pooling estimate:
+
+| horizon | current raw keys | keys pooling >=2 leads | median raw pairs (current) | median per-lead raw pairs |
+| --- | ---: | ---: | ---: | ---: |
+| quarter | 2,574 | 1,575 | 21 | 18 |
+| season | 180 | 146 | 93.5 | 21 |
+
+Quarter is moderate-to-high severity; **season is high** — most current keys pool
+multiple leads, often four. (Saved recalc medians: quarter `n_pairs`≈17 over 2,928
+rows; season ≈3 over 955 rows.)
 
 ## Why it matters
 
-- The published operational monthly skill conflates two forecast products; the
-  headline number is not interpretable as the skill of either issuance.
-- It biases the base rate and effective sample size (kyg months counted twice).
-- It diverges from the corrected `forecast_skill_eval` behavior, so the two
-  skill products will disagree until postprocessing is aligned.
+- Published long-term skill conflates different-lead products; the headline is
+  not interpretable as the skill of any single issuance.
+- Biases effective sample size / base rate (target periods counted multiple times).
+- Diverges from the corrected `forecast_skill_eval`, which stores `lead` from
+  `horizon_value` (`forecast_skill_eval/pairs.py:340`) and emits long-term
+  contingency rows per lead (`forecast_skill_eval/contingency.py:94`).
 
 ## Proposed change (to discuss with the owner)
 
-Add `horizon_value` (lead) to the monthly skill grouping key so each issuance is
-scored as its own product:
+**Apps-side (`postprocessing_forecasts`, colleague-managed — coordinate):**
+1. Preserve `horizon_value` through the quarter/season readers and forecast
+   aggregation (stop dropping it at `aggregation.py:251`, `data_reader.py:37/3073`).
+   For monthly-derived quarter/season forecasts, aggregate by issue/lead too, not
+   only target period.
+2. Extend the skill group keys to include the lead:
+   `[period_col, "horizon_value", "code", "model_short"]` for month/quarter/season
+   (`skill_metrics.py:1194/1208`, `:2045/2080/2113/2155`).
+3. Keep `date` as diagnostic/provenance; add it to the key only if same-lead
+   multiple issue dates should be distinct products.
 
-- `skill_metrics.py:1192` / `:1208` — group by
-  `["month_in_year", "code", "model_short", "horizon_value"]`.
-- Decide the downstream contract: does the postprocessing API skill-metric
-  schema carry a lead/horizon_value dimension, or is one canonical issuance
-  (e.g. the latest / smallest-lead) selected for the operational headline? This
-  is an API-contract question and must be agreed before implementation.
-- Mirror the same treatment for quarter/season if they share the pooling path.
+**Service/API contract (`sapphire/services/postprocessing`, colleague-owned —
+required for persistence):** per-lead skill rows cannot be stored today — the
+`SkillMetric` model has `date` and `horizon_in_year` but **no `horizon_value`**
+(`models.py:201`, `schemas.py:161`), and the unique constraint lacks it
+(`models.py:228`); `_write_skill_metrics_to_api` writes `horizon_in_year`, not the
+lead (`api_writer.py:629`). Without the schema change, per-lead rows collide on
+the unique key and overwrite each other on write. So persisting per-lead skill
+needs: add `horizon_value` to the skill-metric model, schema, write/read API, and
+unique constraint.
 
-## Open questions for the owner
+## Decision needed from the owner
 
-1. Should the operational monthly skill expose per-lead rows, or report a single
-   canonical issuance (latest available) per target month?
-2. Does the skill-metric DB schema / API response need a lead dimension to carry
-   this, or is it resolved before write?
-3. Are quarter/season skill computations affected by the same pooling?
+1. Expose per-lead skill rows, or report one canonical issuance (e.g.
+   smallest-lead / latest) per target period for the operational headline?
+2. Approve the `SkillMetric` schema + unique-constraint change to carry
+   `horizon_value` (gates the apps-side fix for all three long-term horizons).
 
 ## Cross-references
 
-- Eval-side fix + audit: `doc/plans/working/forecast_skill_eval_postproc_consistency_prompt.md`
-  and the audit verdict table (kyg two-issuance / taj one-issuance cadence).
+- Quarter/season audit prompt + findings:
+  `doc/plans/working/forecast_skill_eval_quarter_season_issue_date_prompt.md`.
+- Eval-side fix + audit:
+  `doc/plans/working/forecast_skill_eval_postproc_consistency_prompt.md`.
 - Coverage-threshold parity already aligned eval → postproc
-  (`QUARTER_MIN_MONTHS=2`, `SEASON_MIN_COVERAGE=0.5`) in the same eval commit.
+  (`QUARTER_MIN_MONTHS=2`, `SEASON_MIN_COVERAGE=0.5`) in the eval commit `5c3fa045`.
