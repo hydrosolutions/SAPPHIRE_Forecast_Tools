@@ -164,6 +164,7 @@ class SkillMetricBase(BaseModel):
     model_type: ModelType
     date: DateType
     horizon_in_year: int
+    horizon_value: int | None = None  # PP-038: lead for month skill; sentinel 0 for all other horizons
     composition: str | None = None
 
     sdivsigma: float | None = None

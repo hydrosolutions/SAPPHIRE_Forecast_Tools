@@ -391,6 +391,133 @@ class TestMonthlySkillMetricCRUD:
 
 
 # -------------------------------------------------------------------
+# SkillMetric horizon_value CRUD (PP-038 Phase 1)
+# -------------------------------------------------------------------
+
+class TestSkillMetricHorizonValueCRUD:
+    """Tests for the horizon_value column on SkillMetric (PP-038 Phase 1).
+
+    Verifies that:
+    - Two rows differing only in horizon_value both persist as distinct rows.
+    - Re-upserting the same (…, horizon_value=1) row twice leaves exactly one row.
+    - A legacy payload that omits horizon_value validates and is coalesced to 0;
+      re-upserting it stays at count 1 (no NULL-tuple duplicate).
+    - The NULL-tuple hazard is avoided: the match key never contains NULL.
+
+    Note on SQLite vs Postgres NULL semantics:
+      SQLite: (a, NULL) IN ((a, NULL)) evaluates to NULL (never TRUE).
+      Postgres: same semantics — tuple-IN with NULL element never matches.
+      Both databases are guarded by coalescing horizon_value to 0 before building
+      the match tuple, ensuring all key elements are concrete integers.
+    """
+
+    def test_two_distinct_horizon_values_both_persist(self, db_session):
+        """Rows differing only in horizon_value are stored as two separate rows."""
+        item0 = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.80, horizon_value=0,
+        )
+        item1 = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.70, horizon_value=1,
+        )
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item0, item1])
+        )
+        assert db_session.query(SkillMetric).count() == 2
+        # Both horizon values are stored
+        hvs = {r.horizon_value for r in db_session.query(SkillMetric).all()}
+        assert hvs == {0, 1}
+
+    def test_re_upsert_same_horizon_value_stays_at_count_one(self, db_session):
+        """Re-upserting the identical (…, horizon_value=1) row updates, not inserts."""
+        item = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.70, horizon_value=1,
+        )
+        # First insert
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item])
+        )
+        # Second upsert with updated nse — same key including horizon_value=1
+        item_updated = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.95, horizon_value=1,
+        )
+        results = crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item_updated])
+        )
+
+        assert len(results) == 1
+        assert results[0].nse == 0.95
+        # Must still be exactly one row — upsert, not a second insert
+        assert db_session.query(SkillMetric).count() == 1
+
+    def test_legacy_payload_omitting_horizon_value_coalesced_to_zero(
+        self, db_session
+    ):
+        """A pentad-style payload without horizon_value validates, coalesces to 0,
+        and re-upserting stays at count 1 (no NULL-tuple duplicate insert).
+        """
+        # make_skill_metric without horizon_value → schema default None → coalesced to 0
+        item = make_skill_metric(
+            horizon_type="pentad", horizon_in_year=33,
+            model_type="LR", nse=0.60,
+            # horizon_value intentionally omitted → defaults to None in schema
+        )
+        assert item.horizon_value is None  # verify schema default
+
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item])
+        )
+        assert db_session.query(SkillMetric).count() == 1
+
+        # Fetch and confirm horizon_value was coalesced to 0, not stored as NULL
+        row = db_session.query(SkillMetric).one()
+        assert row.horizon_value == 0
+
+        # Re-upsert the same logical row — must stay at count 1
+        item_v2 = make_skill_metric(
+            horizon_type="pentad", horizon_in_year=33,
+            model_type="LR", nse=0.75,
+        )
+        results = crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item_v2])
+        )
+        assert len(results) == 1
+        assert results[0].nse == 0.75
+        # The NULL-tuple hazard would produce count == 2 here if not fixed
+        assert db_session.query(SkillMetric).count() == 1
+
+    def test_horizon_value_zero_explicit_matches_coalesced_zero(self, db_session):
+        """Explicit horizon_value=0 and omitted horizon_value (coalesced to 0)
+        resolve to the same match key and upsert correctly.
+        """
+        # Insert with explicit 0
+        item_explicit = make_skill_metric(
+            horizon_type="pentad", horizon_in_year=33,
+            model_type="LR", nse=0.50, horizon_value=0,
+        )
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item_explicit])
+        )
+        assert db_session.query(SkillMetric).count() == 1
+
+        # Re-upsert with omitted horizon_value (coalesces to 0) — same key
+        item_implicit = make_skill_metric(
+            horizon_type="pentad", horizon_in_year=33,
+            model_type="LR", nse=0.88,
+            # horizon_value omitted → None → coalesced to 0
+        )
+        results = crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item_implicit])
+        )
+        assert len(results) == 1
+        assert results[0].nse == 0.88
+        assert db_session.query(SkillMetric).count() == 1
+
+
+# -------------------------------------------------------------------
 # Bulletin CRUD
 # -------------------------------------------------------------------
 

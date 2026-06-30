@@ -575,6 +575,102 @@ class TestGetForecastStatsAll:
         assert "pentad_in_year" not in result.columns
 
 
+# ── PP-038: get_forecast_stats month per-lead dedup ───────────────────────
+
+
+def _skill_metric_record_with_lead(horizon_in_year, model_type, horizon_value, delta=1.0):
+    """Skill metric record that includes horizon_value (post-PP-038 API response)."""
+    return {
+        "id": 200 + int(delta * 10) + horizon_value,
+        "horizon_type": "month",
+        "horizon_in_year": horizon_in_year,
+        "code": "19999",
+        "model_type": model_type,
+        "model_type_description": model_type,
+        "date": "2026-03-15",
+        "horizon_value": horizon_value,
+        "sdivsigma": 0.5 + delta,
+        "nse": 0.8,
+        "delta": delta,
+        "accuracy": 90.0 + delta,
+        "mae": 1.0 + delta,
+        "n_pairs": 12,
+        "crps": None,
+        "pbias": None,
+        "kgelf": None,
+        "nse_log": None,
+        "fhv": None,
+        "flv": None,
+    }
+
+
+class TestGetForecastStatsPP038:
+    """PP-038: get_forecast_stats preserves per-lead rows when horizon_value is present.
+
+    After PP-038, the API returns multiple rows per (month_in_year, code, model_short)
+    — one per lead (horizon_value 0, 1, 2, 3).  get_forecast_stats must NOT collapse
+    them to one row.
+    """
+
+    def test_month_per_lead_rows_preserved(self, monkeypatch):
+        """Two rows differing only in horizon_value survive the dedup.
+
+        This guards the regression where drop_duplicates on
+        (code, month_in_year, model_short) collapses 4 leads to 1.
+        """
+        records = [
+            _skill_metric_record_with_lead(3, "GBT", 0, delta=1.0),
+            _skill_metric_record_with_lead(3, "GBT", 1, delta=1.5),
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        # Both leads must survive — not collapsed to one
+        assert len(result) == 2, (
+            f"Expected 2 rows (one per lead), got {len(result)}: {result[['month_in_year','model_short','horizon_value']].to_dict('records') if not result.empty else '(empty)'}"
+        )
+        assert "horizon_value" in result.columns
+        assert set(result["horizon_value"].unique()) == {0, 1}
+
+    def test_month_same_lead_dedup_keeps_latest_date(self, monkeypatch):
+        """Two rows with the same lead but different recalc dates → keep the later date."""
+        records = [
+            {**_skill_metric_record_with_lead(4, "GBT", 0, delta=1.0), "date": "2026-03-01"},
+            {**_skill_metric_record_with_lead(4, "GBT", 0, delta=2.0), "date": "2026-03-15"},
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        assert len(result) == 1
+        assert result["delta"].iloc[0] == 2.0
+
+    def test_non_month_horizons_unchanged(self, monkeypatch):
+        """Quarter and season records without horizon_value field still deduplicate correctly."""
+        records = [
+            _skill_metric_record_19999("quarter", 2, "LR_Base", 1.0),
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("quarter", "19999")
+
+        assert len(result) == 1
+        assert "quarter_in_year" in result.columns
+
+
 # ── _get_data_monthly / get_data ──────────────────────────────────────────
 
 

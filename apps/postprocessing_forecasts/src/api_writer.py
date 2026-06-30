@@ -583,14 +583,28 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
             season_start = get_season_months()[0]
             df_rec["_date"] = dt_module.date(year, season_start, 1).strftime("%Y-%m-%d")
 
+        # --- Normalize horizon_value ---
+        # Month skill DataFrames (Phase 2a) carry the actual forecast lead in
+        # horizon_value.  Other horizons have no such column.  Always emit a
+        # concrete int (sentinel 0 for non-month) so the crud upsert tuple
+        # never contains NULL — a NULL in a tuple_ IN comparison evaluates to
+        # NULL (never TRUE), causing pile-up duplicate inserts for every recalc
+        # run across ALL horizons (cross-horizon NULL-tuple hazard).
+        if "horizon_value" in df_rec.columns:
+            df_rec["horizon_value"] = df_rec["horizon_value"].fillna(0).astype(int)
+        else:
+            df_rec["horizon_value"] = 0
+
         # --- Deduplicate on DB upsert key ---
         # The DB unique constraint is (horizon_type, code, model_type, date,
-        # horizon_in_year).  composition is NOT part of the constraint.
-        # Monthly/quarterly/seasonal ensemble baselines (EM, Naive Mean,
-        # Skilled Mean) produce multiple rows per key with different
-        # composition values due to the CRPS merge fan-out.  Retain the row
-        # with a non-None composition (the true ensemble record).
-        upsert_key = ["code", "model_type", "_date", horizon_in_year_col]
+        # horizon_in_year, horizon_value).  composition is NOT part of the
+        # constraint.  Monthly/quarterly/seasonal ensemble baselines (EM,
+        # Naive Mean, Skilled Mean) produce multiple rows per key with
+        # different composition values due to the CRPS merge fan-out.  Retain
+        # the row with a non-None composition (the true ensemble record).
+        # horizon_value is included so that distinct month leads (0, 1, 2, 3)
+        # are NOT collapsed — each lead is a distinct upsert key.
+        upsert_key = ["code", "model_type", "_date", horizon_in_year_col, "horizon_value"]
         n_before = len(df_rec)
         df_rec = df_rec.sort_values("_composition", na_position="first")
         df_rec = df_rec.drop_duplicates(subset=upsert_key, keep="last")
@@ -634,6 +648,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
                 "model_type": df_rec["model_type"],
                 "date": df_rec["_date"],
                 "horizon_in_year": df_rec[horizon_in_year_col].astype(int),
+                "horizon_value": df_rec["horizon_value"],
                 "composition": df_rec["_composition"],
                 **metric_cols,
             }
