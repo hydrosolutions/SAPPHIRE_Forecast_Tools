@@ -29,6 +29,44 @@ Error semantics (positive class = limit-plan event):
 
 ---
 
+## Metric definitions
+
+All metrics come from the 2×2 contingency table for the binary event
+(positive class = **below-norm / limit-plan event**):
+
+|                       | Observed below-norm | Observed fine |
+|-----------------------|---------------------|---------------|
+| **Forecast below-norm** | TP (hit)          | FP (false alarm) |
+| **Forecast fine**       | FN (miss)         | TN (correct)  |
+
+- **POD — Probability of Detection** = `TP / (TP + FN)`. Fraction of *genuine*
+  below-norm events the forecast caught (1 = all, 0 = none). The miss rate is
+  `FN rate = 1 − POD` — the operationally costly error (missed shortage).
+- **FAR — False Alarm Ratio** = `FP / (TP + FP)`. Of all the times the forecast
+  raised the alarm (predicted below-norm), the fraction that were wrong (water
+  was actually fine). 0 = no false alarms. (Not the same as POFD = `FP/(FP+TN)`,
+  which conditions on the non-events.)
+- **POFD — Probability of False Detection** = `FP / (FP + TN)`. Fraction of
+  *non-events* wrongly flagged.
+- **CSI — Critical Success Index** = `TP / (TP + FP + FN)`. Hits over hits +
+  both error types (ignores correct negatives).
+- **Frequency bias** = `(TP + FP) / (TP + FN)`. >1 = over-forecasts the event,
+  <1 = under-forecasts.
+- **HSS — Heidke Skill Score** = accuracy relative to random chance, corrected
+  for the base rate:
+  `HSS = 2(TP·TN − FP·FN) / [(TP+FN)(FN+TN) + (TP+FP)(FP+TN)]`.
+  1 = perfect, **0 = no better than chance / climatology**, <0 = worse than
+  chance. Because of the base-rate correction, always saying "no event"
+  (climatology) scores HSS 0, so any model with HSS > 0 genuinely beats
+  climatology.
+- **PSS — Peirce (Hanssen–Kuipers) Skill Score** = `POD − POFD`. −1 to 1; how
+  well the forecast separates events from non-events. Unlike HSS it is
+  independent of the base rate and cannot be hedged by over/under-forecasting.
+- **POD CI 95%** = Wilson 95 % confidence interval on POD (robust for
+  proportions near 0/1 and small n). Narrow = reliable; wide = few pairs.
+
+---
+
 ## Coverage and data quality
 
 | Horizon | n_pairs (all regimes) | Regimes | Station codes |
