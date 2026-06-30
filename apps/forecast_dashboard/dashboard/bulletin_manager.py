@@ -371,6 +371,18 @@ class BulletinManager:
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
+    def _month_hydration_params(self):
+        """Target (month_in_year, year, days_in_month) for the monthly bulletin.
+
+        The monthly forecast targets the month AFTER it is issued, so the norm
+        and month length must be resolved for the target month/year (the
+        month-in-year of the latest forecast row), not the current calendar
+        month. Mirrors the loader in _load_bulletin_from_api.
+        """
+        _last_date, target_month, target_year = self.dm.get_bulletin_metadata("month")
+        days_in_month = calendar.monthrange(target_year, target_month)[1]
+        return target_month, target_year, days_in_month
+
     # Function to handle adding the current selection to the bulletin
     def _on_add(self, event=None) -> None:
         if self.cfg.viz.app_state.pipeline_running:
@@ -397,11 +409,8 @@ class BulletinManager:
         # Add forecast attributes to site object
         horizon = self.wm.horizon_selector.value
         if horizon == "month":
-            import calendar
-            from datetime import date as _date
-            now = _date.today()
-            days_in_month = calendar.monthrange(now.year, now.month)[1]
-            hydrate_month_hydrograph_stats(selected_site, now.month, db)
+            target_month, _target_year, days_in_month = self._month_hydration_params()
+            hydrate_month_hydrograph_stats(selected_site, target_month, db)
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
@@ -499,11 +508,8 @@ class BulletinManager:
         selected_site.forecasts = selected_rows.reset_index(drop=True)
         horizon = self.wm.horizon_selector.value
         if horizon == "month":
-            import calendar
-            from datetime import date as _date
-            now = _date.today()
-            days_in_month = calendar.monthrange(now.year, now.month)[1]
-            hydrate_month_hydrograph_stats(selected_site, now.month, db)
+            target_month, _target_year, days_in_month = self._month_hydration_params()
+            hydrate_month_hydrograph_stats(selected_site, target_month, db)
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
