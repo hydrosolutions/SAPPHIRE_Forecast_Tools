@@ -147,12 +147,12 @@ def _make_gen(ws):
 
 
 # Standard column layout that matches the template (Q_MIN=C=3, Q_MAX=E=5,
-# NORM=I=9, VNORM=J=10, PERC_NORM=K=11, PERC_PREVYEAR=L=12).
+# NORM=I=9, Q_LAST_YEAR=J=10, PERC_NORM=K=11, PERC_PREVYEAR=L=12).
 STANDARD_COL_MAP = {
     "Q_MIN": 3,    # C
     "Q_MAX": 5,    # E
     "NORM": 9,     # I
-    "VNORM": 10,   # J
+    "Q_LAST_YEAR": 10,   # J
     "PERC_NORM": 11,   # K
     "PERC_PREVYEAR": 12,  # L
 }
@@ -215,7 +215,7 @@ class TestWritePercFormulas:
         section_cells = _make_section_cells(ws, col_map_no_norm)
         gen._write_perc_formulas(7, section_cells)
         assert ws["K7"].value is None  # untouched
-        # L should still be written (VNORM is present)
+        # L should still be written (Q_LAST_YEAR is present)
         assert ws["L7"].value == '=IFERROR(ROUND((C7+E7)/2/J7*100,0),"")'
 
     def test_perc_prevyear_absent_l_untouched_no_exception(self):
@@ -229,11 +229,13 @@ class TestWritePercFormulas:
         # L column cell should be None (never written)
         assert ws["L7"].value is None
 
-    def test_vnorm_absent_l_untouched_no_exception(self):
-        """When VNORM is absent, L stays None."""
+    def test_q_last_year_absent_l_untouched_no_exception(self):
+        """When Q_LAST_YEAR is absent, L stays None."""
         _, ws, gen = self._fresh()
-        col_map_no_vnorm = {k: v for k, v in STANDARD_COL_MAP.items() if k != "VNORM"}
-        section_cells = _make_section_cells(ws, col_map_no_vnorm)
+        col_map_no_q_last_year = {
+            k: v for k, v in STANDARD_COL_MAP.items() if k != "Q_LAST_YEAR"
+        }
+        section_cells = _make_section_cells(ws, col_map_no_q_last_year)
         gen._write_perc_formulas(7, section_cells)
         assert ws["L7"].value is None
 

@@ -180,7 +180,8 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
         for one data row, deriving column letters from the section's tags.
 
         K = midpoint of the forecast interval (Q_MIN..Q_MAX) as % of NORM.
-        L = the same midpoint as % of the previous year's discharge (VNORM).
+        L = the same midpoint as % of the previous year's actual discharge
+            (Q_LAST_YEAR), not the norm volume.
         IFERROR yields a blank cell when a denominator is empty/zero. Overwrites
         whatever the PERC_NORM / PERC_PREVYEAR tags wrote into K / L.
         """
@@ -192,16 +193,16 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
         qmin = cols.get("Q_MIN")
         qmax = cols.get("Q_MAX")
         norm = cols.get("NORM")
-        vnorm = cols.get("VNORM")
+        q_last_year = cols.get("Q_LAST_YEAR")
         k_col = cols.get("PERC_NORM")
         l_col = cols.get("PERC_PREVYEAR")
         if k_col and qmin and qmax and norm:
             self.sheet[f"{k_col}{row}"] = (
                 f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{norm}{row}*100,0),"")'
             )
-        if l_col and qmin and qmax and vnorm:
+        if l_col and qmin and qmax and q_last_year:
             self.sheet[f"{l_col}{row}"] = (
-                f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{vnorm}{row}*100,0),"")'
+                f'=IFERROR(ROUND(({qmin}{row}+{qmax}{row})/2/{q_last_year}{row}*100,0),"")'
             )
 
     def _numerify_value_cells(self, row, section_cells):
