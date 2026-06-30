@@ -1362,7 +1362,17 @@ def calculate_monthly_skill_metrics(
     )
 
     # --- 5. Naive Mean baseline ---
-    return _add_naive_mean(skill_stats, merged, observations, timing_stats, joint_forecasts)
+    skill_out, joint_out, ts_out = _add_naive_mean(
+        skill_stats, merged, observations, timing_stats, joint_forecasts
+    )
+
+    # --- 6. Drop rows with n_pairs < 2 ---
+    # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
+    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
+    # meaningless. Filter applies to ALL rows — raw models and baselines.
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+
+    return skill_out, joint_out, ts_out
 
 
 def _add_naive_mean(
@@ -2330,7 +2340,7 @@ def _calculate_aggregated_skill_metrics(
     )
 
     # --- 5. Naive Mean ---
-    return _add_naive_mean_aggregated(
+    skill_out, joint_out, ts_out = _add_naive_mean_aggregated(
         skill_stats,
         merged,
         observations,
@@ -2341,6 +2351,14 @@ def _calculate_aggregated_skill_metrics(
         timing_stats,
         joint_forecasts,
     )
+
+    # --- 6. Drop rows with n_pairs < 2 ---
+    # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
+    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
+    # meaningless. Filter applies to ALL rows — raw models and baselines.
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+
+    return skill_out, joint_out, ts_out
 
 
 def _add_naive_mean_aggregated(

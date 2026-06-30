@@ -805,8 +805,15 @@ class TestMonthlyEdgeCases:
         exit_code = _run_monthly_recalc(tmp_path, data_dir, empty_daily, empty_forecasts)
         assert exit_code == 0
 
-    def test_single_year_data_valid_output(self, monthly_integration_env):
-        """1 year of data -> n_pairs=1, delta=0, MAE valid."""
+    def test_single_year_data_produces_no_skill_rows(self, monthly_integration_env):
+        """1 year of data -> n_pairs=1 for every group -> all rows dropped.
+
+        The n_pairs<2 floor filter silently drops any skill row whose
+        n_pairs is less than 2.  With a single year every (month, station,
+        model) group contributes exactly one obs-forecast pair (n_pairs=1),
+        so the entire output frame must be empty after filtering.
+        Pipeline still exits 0 — absence of skill rows is not an error.
+        """
         tmp_path, data_dir = monthly_integration_env
 
         # Build data for single year only
@@ -880,95 +887,94 @@ class TestMonthlyEdgeCases:
         assert exit_code == 0
 
         skill = _read_output_csv(data_dir, "skill_metrics_monthly.csv")
-        assert not skill.empty, "Single-year should still produce output"
-
-        # Check n_pairs = 1 for base models
-        for model in MODELS:
-            model_rows = skill[skill["model_short"] == model]
-            for _, row in model_rows.iterrows():
-                assert row["n_pairs"] == 1, (
-                    f"Single year: n_pairs should be 1, got {row['n_pairs']}"
-                )
-
-        # Delta should be 0 (std undefined with 1 point -> fillna(0))
-        lr_rows = skill[skill["model_short"] == "LR_Base"]
-        for _, row in lr_rows.iterrows():
-            assert row["delta"] == pytest.approx(0.0, abs=0.01), (
-                f"Single year: delta should be 0, got {row['delta']}"
-            )
+        # n_pairs=1 floor: all rows dropped → empty output
+        assert skill.empty or len(skill) == 0, (
+            f"Expected empty skill output for single-year data "
+            f"(all groups n_pairs=1 → dropped), but got {len(skill)} row(s)"
+        )
 
     def test_partial_station_coverage(self, monthly_integration_env):
-        """Station A has 12 months, B has 6 -> correct per-station rows."""
+        """Station A has 12 months, B has 6 → correct per-station rows.
+
+        Two years (2022 + 2023) are used so every (month, station, model)
+        group has n_pairs=2 and survives the n_pairs<2 floor filter.
+        Station 99001 covers all 12 months; station 99002 covers Jan-Jun only.
+        """
         tmp_path, data_dir = monthly_integration_env
 
-        # Station 99001: full year, Station 99002: only Jan-Jun
+        # Two years to ensure n_pairs >= 2 per group.
+        two_years = [2022, 2023]
+
+        # Station 99001: full year (12 months), Station 99002: only Jan-Jun
         rows = []
-        for station, end_month in [("99001", 12), ("99002", 6)]:
-            obs_val = _obs(station, 2023)
-            start = date(2023, 1, 1)
-            if end_month == 12:
-                end = date(2023, 12, 31)
-            else:
-                end = date(2023, end_month + 1, 1) - pd.Timedelta(days=1)
-            dates = pd.date_range(start, end, freq="D")
-            for d in dates:
-                rows.append(
-                    {
-                        "code": station,
-                        "date": d.strftime("%Y-%m-%d"),
-                        "discharge_avg": obs_val,
-                    }
-                )
+        for year in two_years:
+            for station, end_month in [("99001", 12), ("99002", 6)]:
+                obs_val = _obs(station, year)
+                start = date(year, 1, 1)
+                if end_month == 12:
+                    end = date(year, 12, 31)
+                else:
+                    end = date(year, end_month + 1, 1) - pd.Timedelta(days=1)
+                dates = pd.date_range(start, end, freq="D")
+                for d in dates:
+                    rows.append(
+                        {
+                            "code": station,
+                            "date": d.strftime("%Y-%m-%d"),
+                            "discharge_avg": obs_val,
+                        }
+                    )
         daily = pd.DataFrame(rows)
 
         records = []
-        for station, months_range in [
-            ("99001", range(1, 13)),
-            ("99002", range(1, 7)),
-        ]:
-            for month in months_range:
-                for model in MODELS:
-                    q50 = _fc(station, 2023, model)
-                    first_day = date(2023, month, 1)
-                    if month == 12:
-                        last_day = date(2023, 12, 31)
-                    else:
-                        last_day = date(2023, month + 1, 1) - pd.Timedelta(days=1)
-                    records.append(
-                        {
-                            "horizon_type": "month",
-                            "horizon_value": month,
-                            "code": station,
-                            "date": str(date(2023, month, 1)),
-                            "model_type": model,
-                            "valid_from": str(first_day),
-                            "valid_to": str(last_day),
-                            "flag": 0,
-                            "composition": "",
-                            "q": q50,
-                            "q_obs": None,
-                            "q_xgb": None,
-                            "q_lgbm": None,
-                            "q_catboost": None,
-                            "q_loc": None,
-                            "q05": round(q50 * 0.70, 3),
-                            "q10": round(q50 * 0.75, 3),
-                            "q25": round(q50 * 0.85, 3),
-                            "q50": q50,
-                            "q75": round(q50 * 1.15, 3),
-                            "q90": round(q50 * 1.25, 3),
-                            "q95": round(q50 * 1.30, 3),
-                            "id": 1,
-                            "model_type_description": model,
-                        }
-                    )
+        for year in two_years:
+            for station, months_range in [
+                ("99001", range(1, 13)),
+                ("99002", range(1, 7)),
+            ]:
+                for month in months_range:
+                    for model in MODELS:
+                        q50 = _fc(station, year, model)
+                        first_day = date(year, month, 1)
+                        if month == 12:
+                            last_day = date(year, 12, 31)
+                        else:
+                            last_day = date(year, month + 1, 1) - pd.Timedelta(days=1)
+                        records.append(
+                            {
+                                "horizon_type": "month",
+                                "horizon_value": month,
+                                "code": station,
+                                "date": str(date(year, month, 1)),
+                                "model_type": model,
+                                "valid_from": str(first_day),
+                                "valid_to": str(last_day),
+                                "flag": 0,
+                                "composition": "",
+                                "q": q50,
+                                "q_obs": None,
+                                "q_xgb": None,
+                                "q_lgbm": None,
+                                "q_catboost": None,
+                                "q_loc": None,
+                                "q05": round(q50 * 0.70, 3),
+                                "q10": round(q50 * 0.75, 3),
+                                "q25": round(q50 * 0.85, 3),
+                                "q50": q50,
+                                "q75": round(q50 * 1.15, 3),
+                                "q90": round(q50 * 1.25, 3),
+                                "q95": round(q50 * 1.30, 3),
+                                "id": 1,
+                                "model_type_description": model,
+                            }
+                        )
         forecasts = pd.DataFrame(records)
 
         with patch.dict(
             os.environ,
             {
-                "SAPPHIRE_RECALC_START_YEAR": "2023",
-                "SAPPHIRE_RECALC_END_YEAR": "2023",
+                "SAPPHIRE_RECALC_START_YEAR": str(min(two_years)),
+                "SAPPHIRE_RECALC_END_YEAR": str(max(two_years)),
             },
         ):
             exit_code = _run_monthly_recalc(tmp_path, data_dir, daily, forecasts)
@@ -977,11 +983,11 @@ class TestMonthlyEdgeCases:
         skill = _read_output_csv(data_dir, "skill_metrics_monthly.csv")
         assert not skill.empty
 
-        # 99001 should have 12 month entries per model
+        # 99001 should have 12 month entries per model (all months, n_pairs=2)
         s1_lr = skill[(skill["code"].astype(str) == "99001") & (skill["model_short"] == "LR_Base")]
         assert len(s1_lr) == 12, f"99001/LR_Base should have 12 rows, got {len(s1_lr)}"
 
-        # 99002 should have 6 month entries per model
+        # 99002 should have 6 month entries per model (Jan-Jun only, n_pairs=2)
         s2_lr = skill[(skill["code"].astype(str) == "99002") & (skill["model_short"] == "LR_Base")]
         assert len(s2_lr) == 6, f"99002/LR_Base should have 6 rows, got {len(s2_lr)}"
 
