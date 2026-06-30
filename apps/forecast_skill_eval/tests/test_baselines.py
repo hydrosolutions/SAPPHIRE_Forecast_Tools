@@ -5,6 +5,7 @@ import pandas as pd
 from forecast_skill_eval.baselines import (
     build_climatology_baseline,
     build_operational_proxy_baseline,
+    build_persistence_baseline,
 )
 
 STATION_CODE = "19999"
@@ -143,3 +144,267 @@ def _one_row(
 
 def _cells(row: pd.Series) -> dict[str, int]:
     return {label: int(row[label]) for label in ("TP", "FP", "FN", "TN", "n_pairs")}
+
+
+# ---------------------------------------------------------------------------
+# Persistence baseline (Phase 2B)
+# ---------------------------------------------------------------------------
+
+
+def _pair_with_observed(
+    horizon: str,
+    model: str,
+    code: str,
+    period_key: int,
+    year: int,
+    provenance: str,
+    contingency_label: str,
+    observed_value: float,
+    norm: float,
+    *,
+    lead: int | None = None,
+    regime: str = "operational",
+    fc_class: str = "below",
+    obs_class: str = "below",
+    season: str = "irrigation",
+) -> dict[str, object]:
+    """Build a full pair row including observed_value, norm, and classification."""
+    return {
+        "horizon": horizon,
+        "code": code,
+        "basin": "other",
+        "period_key": period_key,
+        "year": year,
+        "model": model,
+        "regime": regime,
+        "lead": lead,
+        "norm_provenance": provenance,
+        "contingency": contingency_label,
+        "observed_value": observed_value,
+        "norm": norm,
+        "fc_class": fc_class,
+        "obs_class": obs_class,
+        "forecast_value": observed_value,  # placeholder; will be overridden
+        "season": season,
+        "issue_date": "2024-01-01",
+    }
+
+
+def test_persistence_baseline_prior_below_norm_predicts_below_norm_tp() -> None:
+    """When lag-1 observed < 0.80×norm and current observed is also below → TP."""
+    # period_key=2: prior is (code, horizon, 1, 2024) with value 6.0
+    # norm=10.0 → threshold=8.0; 6.0 < 8.0 → persistence predicts "below"
+    # current obs_class="below" → TP
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TP",
+                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+            ),
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TP",
+                observed_value=7.0, norm=10.0, fc_class="below", obs_class="below",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    assert not baseline.empty
+    assert "persistence" in set(baseline["baseline"])
+    # Find the POOLED row for period_key=2 (the one that can have a lag-1)
+    model_rows = baseline[baseline["comparison_model"] == "model-a"]
+    assert not model_rows.empty
+    # period_key=2 can use period_key=1 as lag-1 (value=6.0 < 8.0 → "below" → TP)
+    # period_key=1 has no lag-1 in the data → excluded
+    # So we get n_matched = 1 (only period_key=2 is scoreable)
+    pooled = model_rows[
+        (model_rows["code"] == "POOLED")
+        & (model_rows["norm_provenance"] == "all")
+        & (model_rows["regime"] == "all")
+    ]
+    assert len(pooled) >= 1
+    row = pooled.iloc[0]
+    assert int(row["TP"]) >= 1  # at least one TP (period_key=2 with below-norm persistence)
+
+
+def test_persistence_baseline_prior_above_norm_predicts_normal_fn() -> None:
+    """When lag-1 observed >= 0.80×norm but current is below → FN (missed event)."""
+    # period_key=1 observed=9.0 → above 8.0 threshold → persistence predicts "normal"
+    # period_key=2 current obs_class="below" → FN
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "FN",
+                observed_value=5.0, norm=10.0, fc_class="normal", obs_class="below",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    assert not baseline.empty
+    pooled = baseline[
+        (baseline["code"] == "POOLED")
+        & (baseline["norm_provenance"] == "all")
+        & (baseline["regime"] == "all")
+        & (baseline["comparison_model"] == "model-a")
+    ]
+    assert len(pooled) >= 1
+    row = pooled.iloc[0]
+    # lag-1 value=9.0 >= 0.80×10.0=8.0 → persistence="normal"; obs="below" → FN
+    assert int(row["FN"]) >= 1
+
+
+def test_persistence_baseline_first_period_excluded_when_no_lag1_available() -> None:
+    """Pairs at period_key=1 with no prior-year observed must be excluded (no lag-1)."""
+    # Only period_key=1 exists; no lag-1 in the data → all pairs excluded
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TP",
+                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    # Period_key=1 has no lag-1 → baseline should be empty
+    assert baseline.empty
+
+
+def test_persistence_baseline_emits_persistence_label() -> None:
+    """build_persistence_baseline rows must carry baseline='persistence'."""
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    assert not baseline.empty
+    assert set(baseline["baseline"]) == {"persistence"}
+
+
+def test_persistence_baseline_appears_in_baselines_csv_schema() -> None:
+    """BASELINE_COLUMNS must include the same key columns as climatology."""
+    from forecast_skill_eval.baselines import BASELINE_COLUMNS
+
+    required = ("baseline", "comparison_model", "is_proxy", "n_matched", "TP", "FP", "FN", "TN")
+    for col in required:
+        assert col in BASELINE_COLUMNS, f"Expected {col!r} in BASELINE_COLUMNS"
+
+
+def test_persistence_baseline_month_lag1_uses_prior_month() -> None:
+    """For month horizon, period_key=2's lag-1 is period_key=1 of the same year."""
+    # month=1 observed=6.0; month=2 uses 6.0 as persistence forecast
+    # norm=10.0 → threshold=8.0; 6.0 < 8.0 → below → TP if obs=below
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "month", "model-a", STATION_CODE, 1, 2024, "official", "TP",
+                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+            ),
+            _pair_with_observed(
+                "month", "model-a", STATION_CODE, 2, 2024, "official", "TP",
+                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    assert not baseline.empty
+    # Should have at least one row (period_key=2 can use period_key=1 as lag-1)
+    pooled = baseline[
+        (baseline["code"] == "POOLED")
+        & (baseline["norm_provenance"] == "all")
+        & (baseline["regime"] == "all")
+        & (baseline["comparison_model"] == "model-a")
+    ]
+    assert not pooled.empty
+
+
+def test_persistence_baseline_cross_year_lag1() -> None:
+    """period_key=1 can use prior year's last period as lag-1 if available."""
+    # prior year Dec (month=12 of year 2023); current Jan (month=1, 2024)
+    pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "month", "model-a", STATION_CODE, 12, 2023, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+            _pair_with_observed(
+                "month", "model-a", STATION_CODE, 1, 2024, "official", "FN",
+                observed_value=5.0, norm=10.0, fc_class="normal", obs_class="below",
+            ),
+        ]
+    )
+
+    baseline = build_persistence_baseline(pairs)
+
+    # month=1 of 2024 can use month=12 of 2023 as lag-1 (9.0 >= 8.0 → "normal")
+    # obs_class="below" → FN
+    assert not baseline.empty
+    pooled = baseline[
+        (baseline["code"] == "POOLED")
+        & (baseline["norm_provenance"] == "all")
+        & (baseline["regime"] == "all")
+        & (baseline["comparison_model"] == "model-a")
+    ]
+    assert not pooled.empty
+    row = pooled.iloc[0]
+    # lag-1 value=9.0 → normal; obs=below → FN
+    assert int(row["FN"]) >= 1
+
+
+def test_persistence_baseline_wired_in_orchestrator() -> None:
+    """The orchestrator ResultsBundle must include persistence rows in baselines."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+
+    from forecast_skill_eval.config import ForecastSkillEvalConfig
+    from forecast_skill_eval.ledger import ExclusionLedger
+    from forecast_skill_eval.orchestrator import run
+
+    # Build a minimal pairs df that has lag-1 coverage for at least one pair.
+    # period_key=2 can use period_key=1 as lag-1, so persistence is computable.
+    mock_pairs = pd.DataFrame(
+        [
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+            _pair_with_observed(
+                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TN",
+                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+            ),
+        ]
+    )
+
+    config = ForecastSkillEvalConfig(horizons=["pentad"])
+    fake_ledger = ExclusionLedger()
+
+    with patch("forecast_skill_eval.orchestrator.build_pairs") as mock_build_pairs:
+        mock_build_pairs.return_value = (mock_pairs, fake_ledger)
+        client = MagicMock()
+        result = run(config, client, "test-run")
+
+    baseline_labels = set(result.baselines.get("baseline", pd.Series([])).unique())
+    assert "persistence" in baseline_labels, (
+        f"Expected 'persistence' in baselines but got: {baseline_labels}"
+    )

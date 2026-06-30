@@ -68,6 +68,7 @@ class ForecastSkillEvalConfig:
     nan_exclude_flags: Sequence[int] = DEFAULT_NAN_EXCLUDE_FLAGS
     error_flags: Sequence[int] = DEFAULT_ERROR_FLAGS
     operational_issue_days: Sequence[int] = DEFAULT_OPERATIONAL_ISSUE_DAYS
+    season_filter: str = "all"
 
     def __post_init__(self) -> None:
         if not self.base_url:
@@ -117,6 +118,7 @@ class ForecastSkillEvalConfig:
             "operational_issue_days",
             _normalize_operational_issue_days(self.operational_issue_days),
         )
+        _validate_season_filter(self.season_filter)
 
 
 def _freeze_optional_strings(values: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -173,3 +175,13 @@ def _normalize_operational_issue_days(days: Sequence[object]) -> tuple[int, ...]
             raise ValueError(f"operational_issue_days values must be in 1..31, got {day}")
         normalized.append(day)
     return tuple(sorted(set(normalized)))
+
+
+_VALID_SEASON_FILTERS: Final = ("all", "irrigation", "non_irrigation")
+
+
+def _validate_season_filter(value: str) -> None:
+    if value not in _VALID_SEASON_FILTERS:
+        raise ValueError(
+            f"season_filter must be one of {_VALID_SEASON_FILTERS!r}, got {value!r}"
+        )

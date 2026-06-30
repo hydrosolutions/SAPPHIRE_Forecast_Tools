@@ -8,6 +8,7 @@ import pandas as pd
 from forecast_skill_eval.baselines import (
     build_climatology_baseline,
     build_operational_proxy_baseline,
+    build_persistence_baseline,
 )
 from forecast_skill_eval.config import ForecastSkillEvalConfig
 from forecast_skill_eval.contingency import count_contingencies
@@ -103,6 +104,7 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         [
             build_climatology_baseline(all_pairs),
             build_operational_proxy_baseline(all_pairs),
+            build_persistence_baseline(all_pairs, threshold=float(config.threshold)),
         ]
     )
     return ResultsBundle(

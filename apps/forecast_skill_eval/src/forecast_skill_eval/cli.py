@@ -23,7 +23,7 @@ from forecast_skill_eval.config import (
     DEFAULT_OPERATIONAL_ISSUE_DAYS,
     ForecastSkillEvalConfig,
 )
-from forecast_skill_eval.orchestrator import run
+from forecast_skill_eval.orchestrator import ResultsBundle, run
 
 API_UNAVAILABLE_MESSAGE = "SAPPHIRE API client is unavailable; skipping forecast skill evaluation."
 
@@ -73,6 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     client = _build_client(config)
     bundle = run(config, client, run_id)
+    bundle = _apply_season_filter(bundle, config.season_filter)
     artifact_dir = write_artifacts(config, bundle, run_id)
     print(artifact_dir)
     return 0
@@ -121,6 +122,16 @@ def _parser() -> argparse.ArgumentParser:
         default=list(DEFAULT_OPERATIONAL_ISSUE_DAYS),
         metavar="DAY",
     )
+    parser.add_argument(
+        "--season",
+        choices=["all", "irrigation", "non_irrigation"],
+        default="all",
+        dest="season_filter",
+        help=(
+            "Season filter for output rows: 'all' emits all season strata, "
+            "'irrigation' restricts to Apr–Sep, 'non_irrigation' restricts to Oct–Mar."
+        ),
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -143,6 +154,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
         error_flags=_split_int_values(args.error_flags),
         operational_issue_days=_split_int_values(args.operational_issue_days),
+        season_filter=args.season_filter,
     )
 
 
@@ -194,6 +206,34 @@ def _build_client(config: ForecastSkillEvalConfig) -> _SapphireClientBundle:
 
 def _default_run_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _apply_season_filter(bundle: ResultsBundle, season_filter: str) -> ResultsBundle:
+    """Return a copy of the bundle with contingency and baselines filtered by season.
+
+    When ``season_filter`` is ``"all"`` the bundle is returned unchanged.  Otherwise
+    only rows whose ``season`` column matches the requested value are kept.  Frames
+    that lack a ``season`` column are passed through unmodified.
+    """
+    if season_filter == "all":
+        return bundle
+
+    def _filter(frame: object) -> object:
+        import pandas as pd
+
+        if not isinstance(frame, pd.DataFrame):
+            return frame
+        if frame.empty or "season" not in frame.columns:
+            return frame
+        return frame[frame["season"] == season_filter].reset_index(drop=True)
+
+    return ResultsBundle(
+        pairs=bundle.pairs,
+        contingency_metrics=_filter(bundle.contingency_metrics),
+        baselines=_filter(bundle.baselines),
+        exclusion_ledger=bundle.exclusion_ledger,
+        horizon_summary=bundle.horizon_summary,
+    )
 
 
 def _stderr() -> Any:

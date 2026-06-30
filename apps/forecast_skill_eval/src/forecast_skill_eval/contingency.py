@@ -14,6 +14,7 @@ OUTPUT_COLUMNS: Final = (
     "horizon",
     "model",
     "regime",
+    "season",
     "code",
     "basin",
     "norm_provenance",
@@ -23,6 +24,7 @@ OUTPUT_COLUMNS: Final = (
 POOLED_CODE: Final = "POOLED"
 ALL_PROVENANCE: Final = "all"
 ALL_BASIN: Final = "all"
+ALL_SEASON: Final = "all"
 
 _REQUIRED_COLUMNS: Final = (
     "horizon",
@@ -58,13 +60,18 @@ def count_contingencies(pairs: pd.DataFrame) -> pd.DataFrame:
     working["basin"] = working["basin"].map(_basin_label)
     working["norm_provenance"] = working["norm_provenance"].map(_provenance_label)
     working["regime"] = working["regime"].map(_regime_label)
+    # ``season`` is optional — pairs built before Phase-2A lack this column.
+    # Treat all such rows as season="all" so no season stratification is emitted.
+    if "season" not in working.columns:
+        working["season"] = ALL_SEASON
     _validate_contingencies(working)
 
     frames: list[pd.DataFrame] = []
     for basin, basin_frame in _basin_slices(working):
         for provenance, provenance_frame in _provenance_slices(basin_frame):
             for regime, regime_frame in _regime_slices(provenance_frame):
-                frames.extend(_count_scopes(regime_frame, basin, provenance, regime))
+                for season, season_frame in _season_slices(regime_frame):
+                    frames.extend(_count_scopes(season_frame, basin, provenance, regime, season))
 
     if not frames:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
@@ -72,7 +79,7 @@ def count_contingencies(pairs: pd.DataFrame) -> pd.DataFrame:
     result = pd.concat(frames, ignore_index=True)
     result = result.loc[:, OUTPUT_COLUMNS]
     return result.sort_values(
-        ["horizon", "model", "regime", "code", "basin", "norm_provenance", "lead"],
+        ["horizon", "model", "regime", "season", "code", "basin", "norm_provenance", "lead"],
         kind="stable",
         na_position="first",
     ).reset_index(drop=True)
@@ -83,6 +90,7 @@ def _count_scopes(
     basin: str,
     provenance: str,
     regime: str,
+    season: str,
 ) -> list[pd.DataFrame]:
     frames: list[pd.DataFrame] = []
     for horizon, horizon_frame in frame.groupby("horizon", dropna=False, sort=True):
@@ -101,13 +109,16 @@ def _count_scopes(
                         basin,
                         provenance,
                         regime,
+                        season,
                         pooled,
                     )
                 )
             else:
                 # Short-term: single lead-agnostic row (lead column is always NaN).
                 frames.append(
-                    _count_frame(horizon_frame, group_columns, basin, provenance, regime, pooled)
+                    _count_frame(
+                        horizon_frame, group_columns, basin, provenance, regime, season, pooled
+                    )
                 )
     return frames
 
@@ -118,6 +129,7 @@ def _count_frame(
     basin: str,
     provenance: str,
     regime: str,
+    season: str,
     pooled: bool,
 ) -> pd.DataFrame:
     grouped = frame.groupby([*group_columns, "contingency"], dropna=False).size()
@@ -136,6 +148,7 @@ def _count_frame(
     wide["basin"] = basin
     wide["norm_provenance"] = provenance
     wide["regime"] = regime
+    wide["season"] = season
     wide["n_pairs"] = wide.loc[:, list(CONTINGENCY_LABELS)].sum(axis=1).astype("int64")
     return wide
 
@@ -161,6 +174,17 @@ def _regime_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
     )
     for regime in regimes:
         yield regime, frame[frame["regime"] == regime]
+
+
+def _season_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
+    yield ALL_SEASON, frame
+    seasons = sorted(
+        str(value)
+        for value in frame["season"].dropna().unique()
+        if str(value) != ALL_SEASON
+    )
+    for season in seasons:
+        yield season, frame[frame["season"] == season]
 
 
 def _provenance_label(value: object) -> str:
