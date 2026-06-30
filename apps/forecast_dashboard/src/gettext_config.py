@@ -11,6 +11,7 @@ class TranslationManager(param.Parameterized):
         super().__init__(**params)
         self.locale_dir = 'locale'  # Default locale directory
         self.translations = {}
+        self.ptranslations = {}
         self.load_translation_forecast_dashboard()
 
     def gettext(self, message):
@@ -18,15 +19,25 @@ class TranslationManager(param.Parameterized):
         trans_func = self.translations.get(self.language, lambda x: x)
         return trans_func(message)
 
+    def pgettext(self, context, message):
+        # Context-aware lookup (e.g. grammatical case). Falls back to the
+        # bare message when no translation/context is available.
+        trans_func = self.ptranslations.get(self.language)
+        if trans_func is None:
+            return message
+        return trans_func(context, message)
+
     @param.depends('language', watch=True)
     def load_translation_forecast_dashboard(self):
         print(f"Loading translation for language: {self.language}")
         try:
             trans = gettext.translation('forecast_dashboard', localedir=self.locale_dir, languages=[self.language])
             self.translations[self.language] = trans.gettext
+            self.ptranslations[self.language] = trans.pgettext
         except FileNotFoundError:
             print(f"Translation file not found for language {self.language}")
             self.translations[self.language] = lambda x: x
+            self.ptranslations[self.language] = lambda context, message: message
 
     def set_locale_dir(self, locale_dir):
         self.locale_dir = locale_dir
@@ -37,6 +48,10 @@ translation_manager = TranslationManager()
 # Define a global translation function
 def _(message):
     return translation_manager.gettext(message)
+
+
+def p_(context, message):
+    return translation_manager.pgettext(context, message)
 
 
 

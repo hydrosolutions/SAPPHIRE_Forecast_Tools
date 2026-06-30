@@ -5,7 +5,7 @@ import datetime as dt
 import calendar
 
 from src.file_downloader import FileDownloader
-from src.gettext_config import _
+from src.gettext_config import _, p_
 from dashboard.config import import_tag_library
 
 
@@ -587,28 +587,57 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
     if last_date is None:
         return ""
 
+    # Stable English month names used as gettext msgids (independent of any
+    # system locale set on the `calendar` module). pgettext resolves the
+    # correctly-cased translation per locale; English falls back to these.
+    months_en = (
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+
+    def month_name(n, case):
+        # case is "genitive" (pentad/decade and the produced-at date) or
+        # "nominative" (the month horizon target month).
+        return p_(case, months_en[n])
+
     production_date = last_date - _dt.timedelta(days=1)
-    produced_at = production_date.strftime("%b %-d, %Y")
-    month_year = last_date.strftime("%B %Y")
 
     if horizon == "pentad":
         from forecast_library import get_pentad_from_pentad_in_year
         pim = get_pentad_from_pentad_in_year(forecast_horizon)
-        body = f"{_('pentad')}: {pim} {_('of')} {month_year} ({forecast_horizon})"
+        body = _("pentad: %(pim)s of %(month)s %(year)s (%(num)s)") % {
+            "pim": pim,
+            "month": month_name(last_date.month, "genitive"),
+            "year": last_date.year,
+            "num": forecast_horizon,
+        }
     elif horizon == "decade":
         from forecast_library import get_decad_from_decad_in_year
         dim = get_decad_from_decad_in_year(forecast_horizon)
-        body = f"{_('decade')}: {dim} {_('of')} {month_year} ({forecast_horizon})"
+        body = _("decade: %(dim)s of %(month)s %(year)s (%(num)s)") % {
+            "dim": dim,
+            "month": month_name(last_date.month, "genitive"),
+            "year": last_date.year,
+            "num": forecast_horizon,
+        }
     elif horizon == "month":
         target_month_num = (production_date.month % 12) + 1
-        target_month_year = f"{calendar.month_name[target_month_num]} {production_date.year}"
-        body = f"{_('month')}: {target_month_year}"
+        body = _("month: %(month)s %(year)s") % {
+            "month": month_name(target_month_num, "nominative"),
+            "year": production_date.year,
+        }
     elif horizon == "season":
-        body = f"{_('season')}: April-September"
+        body = _("season: April–September")
     else:
         return ""
 
-    return f"{body}, {_('produced at')} {produced_at}"
+    produced = _(", produced on %(prod)s") % {
+        "prod": production_date.strftime("%b %-d, %Y"),
+        "day": production_date.day,
+        "month": month_name(production_date.month, "genitive"),
+        "year": production_date.year,
+    }
+    return body + produced
 
 
 def create_horizon_info_pane():

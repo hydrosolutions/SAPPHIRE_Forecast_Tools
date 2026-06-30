@@ -805,3 +805,130 @@ class TestCreateDatePicker:
         assert picker.value == expected, (
             f"Expected value={expected}, got {picker.value}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestFormatHorizonInfo — header label for the active forecast horizon
+# ---------------------------------------------------------------------------
+
+from forecast_library import (
+    get_pentad_from_pentad_in_year,
+    get_decad_from_decad_in_year,
+)
+
+
+class TestFormatHorizonInfo:
+    """format_horizon_info builds the per-horizon header label.
+
+    English output (the gettext msgids) must be produced byte-for-byte in
+    the test env, where `_`/`p_` fall back to the identity message.
+    """
+
+    # ------------------------------------------------------------------
+    # English output (identity translation): exact strings per horizon
+    # ------------------------------------------------------------------
+    def test_pentad_english_output(self):
+        """Pentad header renders the in-year pentad, genitive month and produced-at."""
+        last_date = datetime.date(2026, 6, 26)
+        pim = get_pentad_from_pentad_in_year(36)
+        expected = f"pentad: {pim} of June 2026 (36), produced on Jun 25, 2026"
+
+        result = widgets.format_horizon_info("pentad", 36, 2026, last_date)
+
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_decade_english_output(self):
+        """Decade header renders the in-year decad, month and produced-at."""
+        last_date = datetime.date(2026, 6, 21)
+        dim = get_decad_from_decad_in_year(18)
+        expected = f"decade: {dim} of June 2026 (18), produced on Jun 20, 2026"
+
+        result = widgets.format_horizon_info("decade", 18, 2026, last_date)
+
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_month_english_output(self):
+        """Month header targets the month after production, with produced-at."""
+        last_date = datetime.date(2026, 7, 1)
+        expected = "month: July 2026, produced on Jun 30, 2026"
+
+        result = widgets.format_horizon_info("month", 7, 2026, last_date)
+
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_season_english_output(self):
+        """Season header is a fixed April-September label with produced-at."""
+        last_date = datetime.date(2026, 4, 22)
+        expected = "season: April–September, produced on Apr 21, 2026"
+
+        result = widgets.format_horizon_info("season", 1, 2026, last_date)
+
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_none_last_date_returns_empty(self):
+        """A None last_date yields an empty header (nothing to describe)."""
+        result = widgets.format_horizon_info("pentad", 36, 2026, None)
+
+        assert result == "", f"Expected empty string, got {result!r}"
+
+    def test_unknown_horizon_returns_empty(self):
+        """An unrecognised horizon yields an empty header."""
+        last_date = datetime.date(2026, 6, 26)
+
+        result = widgets.format_horizon_info("biweekly", 5, 2026, last_date)
+
+        assert result == "", f"Expected empty string, got {result!r}"
+
+    # ------------------------------------------------------------------
+    # Case-selection wiring: prove body/produced-at use the right pgettext case
+    # ------------------------------------------------------------------
+    def _fake_pgettext(self, monkeypatch):
+        """Monkeypatch widgets.p_ so its (context, message) call is observable."""
+        monkeypatch.setattr(widgets, "p_", lambda context, message: f"{context}:{message}")
+
+    def test_pentad_body_uses_genitive_month(self, monkeypatch):
+        """The pentad body resolves its month in the genitive case."""
+        self._fake_pgettext(monkeypatch)
+
+        result = widgets.format_horizon_info("pentad", 36, 2026, datetime.date(2026, 6, 26))
+
+        assert "genitive:June" in result, (
+            f"Pentad body should request the genitive month; got: {result!r}"
+        )
+
+    def test_month_body_uses_nominative_target_month(self, monkeypatch):
+        """The month body resolves its target month in the nominative case."""
+        self._fake_pgettext(monkeypatch)
+
+        # production_date is 2026-06-30 → target month is July (nominative)
+        result = widgets.format_horizon_info("month", 7, 2026, datetime.date(2026, 7, 1))
+
+        assert "nominative:July" in result, (
+            f"Month body should request the nominative target month; got: {result!r}"
+        )
+
+    def test_produced_at_uses_genitive_month(self, monkeypatch):
+        """The produced-at clause resolves the production month in the genitive case.
+
+        The English msgid for the produced-at clause references only %(prod)s, so
+        under the identity fallback the genitive month never reaches the output.
+        To observe the wiring the way a real locale (e.g. ru_KG) would, `_` is
+        patched to a template that consumes %(month)s — mirroring the Russian
+        msgstr `", составлен %(day)s %(month)s %(year)s г."`. The function passes
+        the genitive production month under the "month" key, so it must appear.
+        """
+        self._fake_pgettext(monkeypatch)
+        # Emulate the Russian produced-at template, which references %(month)s.
+        monkeypatch.setattr(
+            widgets,
+            "_",
+            lambda s: ", produced %(month)s" if s == ", produced on %(prod)s" else s,
+        )
+
+        # last_date 2026-07-01 → production_date 2026-06-30 → production month June
+        result = widgets.format_horizon_info("month", 7, 2026, datetime.date(2026, 7, 1))
+
+        assert "genitive:June" in result, (
+            f"Produced-at clause should request the genitive production month; "
+            f"got: {result!r}"
+        )
