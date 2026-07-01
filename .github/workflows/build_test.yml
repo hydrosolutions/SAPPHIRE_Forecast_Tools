@@ -36,7 +36,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
@@ -70,7 +70,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -107,7 +107,7 @@ jobs:
     name: Build Python 3.12 + uv base image
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Build Docker image
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -127,7 +127,7 @@ jobs:
     name: Test pipeline
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -152,7 +152,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -174,7 +174,7 @@ jobs:
   #   name: Build conceptual model module
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v6
+  #       uses: actions/checkout@v7
   #     - name: Detect Docker group ID
   #       run: |
   #         DOCKER_GID=$(getent group docker | cut -d: -f3 || stat -c "%g" /var/run/docker.sock)
@@ -195,7 +195,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
@@ -226,7 +226,7 @@ jobs:
     name: Build preprocessing runoff module
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Build base image first (required as dependency)
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -245,7 +245,7 @@ jobs:
 
     steps:
     - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
@@ -273,7 +273,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -293,7 +293,7 @@ jobs:
     name: Test machine learning
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -331,7 +331,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -351,7 +351,7 @@ jobs:
     name: Test long-term forecasting
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -389,7 +389,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -409,7 +409,7 @@ jobs:
     name: Test forecast dashboard
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -434,7 +434,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -454,7 +454,7 @@ jobs:
     name: Test postprocessing
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -479,7 +479,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
@@ -499,7 +499,7 @@ jobs:
     name: Test linear regression
     steps:
       - name: Check out the current branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -524,7 +524,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build base image first (required as dependency)
         run: |
