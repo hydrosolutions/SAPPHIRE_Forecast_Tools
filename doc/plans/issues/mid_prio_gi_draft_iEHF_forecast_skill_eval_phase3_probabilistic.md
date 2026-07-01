@@ -31,15 +31,17 @@ The existing point-forecast contingency path is not modified. Models without usa
 - The predictive distribution survives the reader stage (the client returns `pd.DataFrame(records)` with all columns) but is dropped at `pairs.py` because `_ForecastInstance` has no quantile field.
 - **All line numbers in this plan are indicative only.** Implementing agents MUST locate edit points by **symbol name** (function/class/constant), not by line range — several cited ranges were found to drift (e.g. `read_forecasts` *defines* at `api_readers.py:37`, not `:64`; `run` starts at `orchestrator.py:48`; `baselines.py` builds **three** baselines including `build_operational_proxy_baseline`).
 
-### Quantile availability per source — **TO BE VERIFIED (P0), not confirmed**
+### Quantile availability per source — **VERIFIED (P0 done, 2026-07-01, local dev DB)**
 
-The following table is a **schema-level hypothesis** drawn from `models.py` / reader code. It is **not** data-verified. All quantile columns are nullable and populated model-dependently. P0 must confirm both *schema* and *populated fraction* before any short-term probabilistic number is trusted or reported.
+Confirmed by direct query of the postprocessing DB (`docker exec ... psql`), populated-band fraction per `(horizon_type, model_type)`. Band availability is strongly **model-dependent** — the review's caution was correct; gating by band-presence is mandatory.
 
-| Source (reader)         | Table            | Hypothesised quantile columns                | Probabilistic-capable? (pending P0)                          |
-| ----------------------- | ---------------- | -------------------------------------------- | ------------------------------------------------------------ |
-| `read_long_forecasts`   | `long_forecasts` | `q05,q10,q25,q50,q75,q90,q95` (+ `q,q_obs`)  | Likely yes — full 7-node band (GBT, LR_Base, SM_*, …)        |
-| `read_forecasts` (short)| `forecasts`      | `q05,q25,q75,q95` (point = `forecasted_discharge`, hypothesised = q50) | **Partial & model-dependent.** Known evidence that quantiles are frequently NULL: `machine_learning/scr/utils_ml_forecast.py` writes `q05 = float(row['Q5']) if pd.notna(...) else None`; `machine_learning/test/test_api_integration.py` asserts `record['q05'] is None`; `postprocessing_maintenance.py` detects EM/NE/stale short-term rows via `q05 IS NULL`. Ensemble-mean/combined rows carry **no band**. 5-node grid at best; **no q10/q90 → coverage_80 unavailable**. |
-| `read_lr_forecasts`     | `lr_forecasts`   | NONE (parametric `q_mean`, `q_std_sigma`)    | Point-only. Note: LR reads through `forecast_type="short"`, so gating cannot key on `forecast_type` alone — see Design Decision 5. |
+| Source (reader)          | Table            | Grid (confirmed columns)                          | Verified band population → scorable models |
+| ------------------------ | ---------------- | ------------------------------------------------- | ------------------------------------------ |
+| `read_forecasts` (short) | `forecasts`      | **4-node** `q05,q25,q75,q95` (point = `forecasted_discharge`; **no q10/q90/q50**) | pentad/decade: TFT/TiDE/TSMixer/NeuralEnsemble **98–99%**, EM **80–90%**; day 50–67% (thin). → **coverage_80 (q10/q90) UNAVAILABLE short-term**; coverage_90 (q05/q95) + coverage_50 (q25/q75) OK. |
+| `read_long_forecasts`    | `long_forecasts` | **7-node** `q05,q10,q25,q50,q75,q90,q95` (+ `q,q_obs`) | **Scorable:** EM 94–100%, MC_ALD 100%, NAIVE_MEAN 98–100%, LR_BASE/LR_SM 91–98% (month ~51%). **NOT scorable (0% band):** GBT, SM_GBT, SM_GBT_LR, SM_GBT_NORM. Partial: SKILLED_MEAN 16–47%, LR_SM_ROF month ~40%. coverage_80 available (has q10/q90). |
+| `read_lr_forecasts`      | `lr_forecasts`   | **Parametric** `q_mean`, `q_std_sigma` (Gaussian; NO quantile grid) | Point-only in v1. A closed-form Gaussian-CRPS path is a possible follow-up. LR reads via `forecast_type="short"`, so gating must key on band-presence, not `forecast_type` — see Design Decision 5. |
+
+**P0 verdict:** feature is feasible for the headline models (EM at all horizons; MC_ALD/LR_BASE long-term). Model-gating by finite-node count cleanly excludes the 0%-band models. Two forced refinements: (a) `coverage_80` is long-term-only; (b) short-term q50 is absent — insert `forecasted_discharge` as the q50 node (P0 item 3: confirm it is the median, not the mean, per model — still open, low-risk since it only affects the central node).
 
 ---
 
@@ -140,8 +142,8 @@ Forecast quality is currently reported only through deterministic contingency me
 
 ### Ordered Steps (phased per repo protocol)
 
-**P0 — VERIFY (HARD GATE; planner/explorer, no production code).**
-Confirm, against a **live/dev DB or captured OpenAPI response** (via the colleague, the OpenAPI schema, or a saved response — `sapphire_api_client` is not installed locally, the sanctioned dependency-gated skip):
+**P0 — VERIFY (HARD GATE) — ✅ DONE 2026-07-01** (local dev DB, see the verified table in Context above; only item 3 — whether short-term `forecasted_discharge` is the median vs mean per model — remains open, low-risk).
+Confirmed, against the **local dev postprocessing DB** (`docker exec sapphire-postprocessing-db psql`):
 1. Which quantile columns each table actually exposes.
 2. The **populated-band fraction per `(horizon, model_type)`** — i.e. the share of rows with non-NULL `q05…q95`. This is the gate: short-term probabilistic scoring is only trusted/reported for `(horizon, model_type)` combos above an agreed populated-fraction threshold; combos below it are declared point-only in the report.
 3. Whether short-term `forecasted_discharge` is the **median** or a **mean** per model (affects inserting it as the q50 node).
