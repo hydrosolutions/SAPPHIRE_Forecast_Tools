@@ -120,7 +120,7 @@ _SNOW_CONTRACT_COLUMNS = [
 ]
 
 
-def _snow_record(snow_type="HS", value=1.0):
+def _snow_record(snow_type="HS", value=1.0, **overrides):
     record = {
         "id": 1,
         "snow_type": snow_type,
@@ -140,6 +140,7 @@ def _snow_record(snow_type="HS", value=1.0):
         "current": 12.0,
     }
     record.update({f"value{i}": float(i) for i in range(1, 15)})
+    record.update(overrides)
     return record
 
 
@@ -210,6 +211,25 @@ class TestSnowData:
 
         assert {"5%", "25%", "50%", "75%", "95%"}.issubset(result.columns)
         assert {"q05", "q25", "q50", "q75", "q95"}.isdisjoint(result.columns)
+
+    def test_get_snow_single_sorts_rows_by_date(self, monkeypatch):
+        def mock_get(url, **kwargs):
+            return _make_mock_response([
+                _snow_record(id=3, date="2026-02-03", value=3.0),
+                _snow_record(id=1, date="2026-02-01", value=1.0),
+                _snow_record(id=2, date="2026-02-02", value=2.0),
+            ])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db._get_snow_single("19999", "HS", "HS")
+
+        assert result["date"].tolist() == [
+            pd.Timestamp("2026-02-01"),
+            pd.Timestamp("2026-02-02"),
+            pd.Timestamp("2026-02-03"),
+        ]
+        assert result["HS"].tolist() == [1.0, 2.0, 3.0]
 
     def test_get_snow_data_hs_converts_all_stat_columns_to_cm(self, monkeypatch):
         records_by_type = {

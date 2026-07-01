@@ -332,6 +332,8 @@ def _get_snow_single(
             },
         })
 
+    sort_columns = ["date", *(["id"] if "id" in df.columns else [])]
+    df.sort_values(sort_columns, inplace=True, kind="mergesort")
     df.rename(columns={"value": col_name, **SNOW_RENAME_MAP}, inplace=True)
     df.drop(columns=["snow_type", *SNOW_VALUE_COLS, "id"], inplace=True, errors="ignore")
     for column in contract_columns:
