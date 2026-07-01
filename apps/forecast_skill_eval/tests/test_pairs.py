@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import pandas as pd
@@ -771,3 +772,171 @@ def test_issue_day_filter_does_not_apply_to_quarter(
     _pairs, ledger = build_pairs(config, client, "quarter")
 
     assert ("pair", "forecast_non_operational_issue_day") not in ledger.counts_by_stage_reason()
+
+
+# ---------------------------------------------------------------------------
+# Quantile-band ingestion through pairs (P1 — additive plumbing)
+# ---------------------------------------------------------------------------
+
+
+def _short_forecast_with_quantiles(
+    period_key: int,
+    value: float,
+    *,
+    model_type: str = "TFT",
+    year: int = 2024,
+    issue_date: str = "2024-01-01",
+    horizon: str = "pentad",
+    code: str = STATION_CODE,
+) -> dict[str, object]:
+    """Short forecast row that includes the 4-node quantile band."""
+    return {
+        "horizon": horizon,
+        "code": code,
+        "date": issue_date,
+        "target": f"{year}-01-{period_key:02d}",
+        "horizon_in_year": period_key,
+        "model_type": model_type,
+        "forecasted_discharge": value,
+        "q05": value * 0.5,
+        "q25": value * 0.8,
+        "q75": value * 1.2,
+        "q95": value * 1.5,
+    }
+
+
+def _long_forecast_with_quantiles(
+    *,
+    horizon: str = "month",
+    issue_date: str = "2024-01-25",
+    valid_from: str = "2024-04-01",
+    valid_to: str = "2024-04-30",
+    horizon_value: int = 1,
+    model: str = "model-a",
+    value: float = 7.0,
+) -> dict[str, object]:
+    """Long forecast row that includes the full 7-node quantile band."""
+    return {
+        "horizon": horizon,
+        "code": STATION_CODE,
+        "date": issue_date,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "horizon_value": horizon_value,
+        "model_type": model,
+        "q": value,
+        "q05": value * 0.5,
+        "q10": value * 0.65,
+        "q25": value * 0.8,
+        "q50": value,
+        "q75": value * 1.2,
+        "q90": value * 1.35,
+        "q95": value * 1.5,
+    }
+
+
+def test_short_pairs_carry_five_node_quantile_band(fake_client_factory) -> None:
+    """Short-term pairs: fc_q05/q25/q50/q75/q95 populated; q10/q90 NaN; grid_id=short5."""
+    # 6.0 < 0.8 * 10.0 (norm) = 8.0 → "below" for both fc and obs → TP
+    value = 6.0
+    client = fake_client_factory(
+        forecasts_rows=[_short_forecast_with_quantiles(1, value)],
+        runoff_rows=[_observed(1, 2024, value, horizon="pentad")],
+        hydrograph_rows=[_norm(1, horizon="pentad")],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "pentad")
+
+    assert len(pairs) == 1
+    row = pairs.iloc[0]
+    # Existing columns unchanged
+    assert row["forecast_value"] == pytest.approx(value)
+    assert row["contingency"] == "TP"
+    # Quantile columns present and correct
+    assert row["fc_grid_id"] == "short5"
+    assert row["fc_q05"] == pytest.approx(value * 0.5)
+    assert row["fc_q25"] == pytest.approx(value * 0.8)
+    assert row["fc_q50"] == pytest.approx(value)  # from forecasted_discharge
+    assert row["fc_q75"] == pytest.approx(value * 1.2)
+    assert row["fc_q95"] == pytest.approx(value * 1.5)
+    assert math.isnan(row["fc_q10"])
+    assert math.isnan(row["fc_q90"])
+    assert ledger.entries == ()
+
+
+def test_long_pairs_carry_seven_node_quantile_band(fake_client_factory) -> None:
+    """Long-term pairs: all 7 fc_q* columns populated; grid_id=long7."""
+    value = 7.0
+    client = fake_client_factory(
+        long_forecasts_rows=[_long_forecast_with_quantiles(value=value)],
+        runoff_rows=_daily_rows(year=2024, month=4, value=value),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert len(pairs) == 1
+    row = pairs.iloc[0]
+    # Existing columns unchanged
+    assert row["forecast_value"] == pytest.approx(value)
+    # Quantile columns
+    assert row["fc_grid_id"] == "long7"
+    assert row["fc_q05"] == pytest.approx(value * 0.5)
+    assert row["fc_q10"] == pytest.approx(value * 0.65)
+    assert row["fc_q25"] == pytest.approx(value * 0.8)
+    assert row["fc_q50"] == pytest.approx(value)
+    assert row["fc_q75"] == pytest.approx(value * 1.2)
+    assert row["fc_q90"] == pytest.approx(value * 1.35)
+    assert row["fc_q95"] == pytest.approx(value * 1.5)
+
+
+def test_lr_pairs_carry_all_nan_quantile_columns(fake_client_factory) -> None:
+    """LR pairs: all fc_q* columns NaN; fc_grid_id empty string."""
+    client = fake_client_factory(
+        lr_forecasts_rows=[_lr_forecast(1, 7.0)],
+        runoff_rows=[_observed(1, 2024, 7.0, horizon="pentad")],
+        hydrograph_rows=[_norm(1, horizon="pentad")],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "pentad")
+
+    lr_pairs = pairs[pairs["model"].eq("LR")]
+    assert len(lr_pairs) == 1
+    row = lr_pairs.iloc[0]
+    # Existing columns unchanged
+    assert row["forecast_value"] == pytest.approx(7.0)
+    assert row["contingency"] == "TP"
+    # All quantile columns NaN; grid_id empty
+    assert row["fc_grid_id"] == ""
+    for col in ("fc_q05", "fc_q10", "fc_q25", "fc_q50", "fc_q75", "fc_q90", "fc_q95"):
+        assert math.isnan(row[col]), f"Expected NaN for {col} on LR row"
+
+
+def test_pairs_quantile_columns_do_not_alter_existing_columns(fake_client_factory) -> None:
+    """Regression: adding quantile band columns to source rows must not change
+    forecast_value, contingency, or any pre-existing pair column.
+
+    value=9.0 ≥ 0.8*10.0=8.0 → fc_class="normal"; obs=7.0 < 8.0 → obs_class="below" → FN.
+    """
+    value = 9.0
+    client = fake_client_factory(
+        forecasts_rows=[_short_forecast_with_quantiles(1, value)],
+        runoff_rows=[_observed(1, 2024, 7.0, horizon="pentad")],
+        hydrograph_rows=[_norm(1, horizon="pentad")],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "pentad")
+
+    assert len(pairs) == 1
+    row = pairs.iloc[0]
+    assert row["forecast_value"] == pytest.approx(value)
+    assert row["observed_value"] == pytest.approx(7.0)
+    assert row["norm"] == pytest.approx(10.0)
+    assert row["fc_class"] == "normal"  # 9.0 ≥ threshold → normal
+    assert row["obs_class"] == "below"  # 7.0 < threshold → below
+    assert row["contingency"] == "FN"
+    assert ledger.entries == ()

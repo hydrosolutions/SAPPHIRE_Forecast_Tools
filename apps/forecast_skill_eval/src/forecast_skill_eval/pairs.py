@@ -48,6 +48,14 @@ PAIR_COLUMNS = (
     "fc_class",
     "obs_class",
     "contingency",
+    "fc_q05",
+    "fc_q10",
+    "fc_q25",
+    "fc_q50",
+    "fc_q75",
+    "fc_q90",
+    "fc_q95",
+    "fc_grid_id",
 )
 
 Reader = Callable[..., ReaderResult | pd.DataFrame]
@@ -62,6 +70,8 @@ class _ForecastInstance:
     lead: int | None
     issue_date: object | None
     forecast_value: float | None
+    quantiles: Mapping[float, float] | None = None
+    grid_id: str = ""
 
 
 def build_pairs(
@@ -327,6 +337,8 @@ def _short_instance(row: dict[str, object]) -> _ForecastInstance:
         lead=None,
         issue_date=_plain_value(row.get("date")),
         forecast_value=_finite_float_or_none(row.get("point_value")),
+        quantiles=row.get("quantiles"),
+        grid_id=str(row.get("fc_grid_id") or ""),
     )
 
 
@@ -344,6 +356,8 @@ def _long_instance(
         lead=_int_or_none(row.get("horizon_value")),
         issue_date=_plain_value(row.get("date")),
         forecast_value=_finite_float_or_none(row.get("point_value")),
+        quantiles=row.get("quantiles"),
+        grid_id=str(row.get("fc_grid_id") or ""),
     )
     if horizon in ISSUE_DAY_FILTER_HORIZONS and operational_issue_days:
         issue_day = _issue_day_or_none(row.get("date"))
@@ -380,6 +394,7 @@ def _pair_row(
     fc_class: ClassLabel,
     obs_class: ClassLabel,
 ) -> dict[str, object]:
+    q: dict[float, float] = instance.quantiles if isinstance(instance.quantiles, dict) else {}
     return {
         "horizon": horizon,
         "code": instance.code,
@@ -398,6 +413,14 @@ def _pair_row(
         "fc_class": fc_class,
         "obs_class": obs_class,
         "contingency": contingency(fc_class, obs_class),
+        "fc_q05": q.get(0.05, np.nan),
+        "fc_q10": q.get(0.10, np.nan),
+        "fc_q25": q.get(0.25, np.nan),
+        "fc_q50": q.get(0.50, np.nan),
+        "fc_q75": q.get(0.75, np.nan),
+        "fc_q90": q.get(0.90, np.nan),
+        "fc_q95": q.get(0.95, np.nan),
+        "fc_grid_id": instance.grid_id,
     }
 
 
