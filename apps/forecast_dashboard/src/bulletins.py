@@ -104,6 +104,31 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
         self.sections: "list[dict]" = []
         self._header_section_idx: "int | None" = None
 
+    def _insert_rows(self, row_idx, count, copy_style=True, fill_formulae=True):
+        """Insert rows and also shift the heights of rows below the insertion
+        point.
+
+        The parent ``_insert_rows`` shifts cell content and merged ranges down
+        but leaves ``row_dimensions`` (row heights) pinned to the old row
+        indices. In multi-section bulletins the sections below (e.g. the
+        reservoir title and reservoir tables, rendered first because sections
+        are processed in reverse) then end up with mismatched heights — the
+        title lands on a short default-height row ("squeezed") and data rows
+        inherit heights that belonged to other rows. Snapshot the explicit
+        heights of the rows that will move, let the parent do the insert, then
+        re-apply the saved heights at their shifted positions.
+        """
+        moved = {
+            r: dim.height
+            for r, dim in self.sheet.row_dimensions.items()
+            if r > row_idx and dim.height is not None
+        }
+        super()._insert_rows(
+            row_idx, count, copy_style=copy_style, fill_formulae=fill_formulae
+        )
+        for r, h in moved.items():
+            self.sheet.row_dimensions[r + count].height = h
+
     # ------------------------------------------------------------------
     # Validation overrides
     # ------------------------------------------------------------------
