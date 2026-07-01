@@ -736,6 +736,77 @@ day-scale probabilistic scores exist only for TFT / TiDE / TSMixer (short5).
 
 ---
 
+## Value metrics — magnitude accuracy & decision value
+
+The contingency and probabilistic sections score *whether the decision was
+right* and *whether the uncertainty is trustworthy*. This section scores the two
+things left: **how accurate the magnitude is** (continuous/volume) and **how
+much the decision is worth** (economic value). Numbers are from the flagged run
+(`SAPPHIRE_SKILL_VALUE`, `artifacts/value_2026-07-01/`), **EM, operational,
+canonical provenance** (long-term = smallest lead).
+
+### Continuous / volume accuracy
+
+- **KGE-2009** (Kling–Gupta) and **NSE** (Nash–Sutcliffe): 1 = perfect, and both
+  are meaningful **per station** (they compare a series against its own
+  variance).
+- **Relative volume error (rve)** = `(ΣΣfc − Σobs)/Σobs`: systematic
+  over/under-forecast of total water — the number that matters for allocation
+  and reservoir/hydropower planning.
+
+| Horizon | KGE (per-station median) | NSE (per-station median) | rel. volume error | n stations |
+|---------|:------------------------:|:------------------------:|:-----------------:|:----------:|
+| pentad | **0.96** | 0.97 | +0.5 % | 51 |
+| decade | 0.95 | 0.95 | +1.3 % | 50 |
+| month L0 | **0.97** | 0.98 | +0.9 % | 53 |
+| quarter L1 | 0.78 | 0.75 | +0.9 % | 53 |
+| season L0 | **0.41** | 0.23 | +0.1 % | 51 |
+
+**Key findings:**
+
+- **EM tracks each station's flow very well at pentad/decade/month** (per-station
+  median KGE 0.95–0.97, NSE 0.95–0.98) and is **essentially volume-unbiased at
+  every horizon** (rve within ±1.5 %). For water-accounting, EM neither
+  systematically over- nor under-allocates.
+- **Skill falls off at seasonal range** (per-station KGE 0.41, NSE 0.23) — the
+  same short-good / long-weak gradient as every other metric family.
+- **CRITICAL reporting caveat — do not use pooled KGE/NSE.** Aggregated across
+  all stations, KGE/NSE are badly **inflated** because between-station variance
+  (small creeks vs large rivers) dominates the denominator: pooled season NSE is
+  **0.97** vs the honest per-station median of **0.23**. The table above uses the
+  **per-station median**; the dashboard's Value view shows the full per-station
+  distribution. (rve and the REV below are not affected — rve is relative and
+  REV is derived from the contingency table.)
+
+### Relative economic value (cost–loss)
+
+The **potential economic value** `V(α)` (Richardson 2000 / Wilks) of the
+below-norm decision, for a consumer whose cost-of-action / loss-of-inaction
+ratio is `α`. Its analytic peak is `V_max = H − F` (hit rate − false-alarm rate,
+the Peirce skill score) at `α = base rate`:
+
+| Horizon | V_max (peak value) | at α* (base rate) |
+|---------|:------------------:|:-----------------:|
+| pentad | **0.87** | 0.44 |
+| decade | 0.84 | 0.49 |
+| month L0 | **0.85** | 0.21 |
+| quarter L1 | 0.36 | 0.10 |
+| season L0 | 0.36 | 0.22 |
+
+- **The below-norm forecast delivers high decision value at pentad/decade/month**
+  (V_max 0.84–0.87 — a consumer captures ~85 % of the value a perfect forecast
+  would, at their optimal cost-loss ratio), and **moderate value at
+  quarter/season** (0.36). The full `V(α)` curve per model is in the dashboard;
+  it is not clamped, so a skill-negative model/α shows `V < 0` (acting on it
+  loses money vs climatology).
+
+Together the value metrics confirm the operational message from the other
+sections — **rely on pentad/decade/month EM for the irrigation decision; treat
+quarter/season as risk-screening** — and add that EM is volume-unbiased, which
+matters directly for allocation and hydropower.
+
+---
+
 ## Caveats and limitations
 
 1. **DAY horizon is thin and exploratory.** n_pairs 215–809 across models;
