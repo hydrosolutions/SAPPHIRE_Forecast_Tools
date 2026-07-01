@@ -34,8 +34,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from forecast_skill_eval.classifier import contingency as _contingency
-
 # ---------------------------------------------------------------------------
 # Public API constants
 # ---------------------------------------------------------------------------
@@ -326,53 +324,99 @@ def reclassify_pairs_for_event(
         # below_norm: return pairs unchanged — fc_class / obs_class already set.
         return pairs.copy()
 
-    rows: list[dict[str, object]] = []
-    for row in pairs.to_dict("records"):
-        code = str(row.get("code", ""))
-        horizon = str(row.get("horizon", ""))
-        try:
-            period_key = int(row["period_key"])
-        except (TypeError, ValueError, KeyError):
-            continue
+    orig_cols = list(pairs.columns)
 
-        key = (code, horizon, period_key)
-        period_thresholds = thresholds.get(key)
-        if period_thresholds is None:
-            continue
+    # Build a small lookup DataFrame: one row per (code, horizon, period_key) that
+    # has a threshold for this event's percentile level.
+    thresh_rows: list[tuple[str, str, int, float]] = []
+    for (c, h, pk), pd_thresholds in thresholds.items():
+        tv = pd_thresholds.get(event.percentile)
+        if tv is not None:
+            thresh_rows.append((str(c), str(h), int(pk), float(tv)))
 
-        threshold_value = period_thresholds.get(event.percentile)
-        if threshold_value is None:
-            continue
+    if not thresh_rows:
+        return pd.DataFrame(columns=orig_cols)
 
-        fc_val = row.get("forecast_value")
-        obs_val = row.get("observed_value")
-        if fc_val is None or obs_val is None:
-            continue
+    thresh_df = pd.DataFrame(thresh_rows, columns=["_code", "_horizon", "_pk_int", "_threshold"])
 
-        try:
-            fc_f = float(fc_val)
-            obs_f = float(obs_val)
-        except (TypeError, ValueError):
-            continue
+    # Cast period_key to int; coerce failures → NaN → drop (mirrors the try/except
+    # in the row-wise loop that catches TypeError, ValueError, KeyError).
+    df = pairs.copy()
+    pk_numeric = pd.to_numeric(df["period_key"], errors="coerce")
+    valid_pk = pk_numeric.notna()
+    if not valid_pk.all():
+        df = df[valid_pk].copy()
+        pk_numeric = pk_numeric[valid_pk]
+    if df.empty:
+        return pd.DataFrame(columns=orig_cols)
 
-        if event.direction == "below":
-            fc_class: str = "below" if fc_f < threshold_value else "normal"
-            obs_class: str = "below" if obs_f < threshold_value else "normal"
-        else:
-            # direction == "above": positive class = value exceeds threshold
-            fc_class = "below" if fc_f > threshold_value else "normal"
-            obs_class = "below" if obs_f > threshold_value else "normal"
+    df["_pk_int"] = pk_numeric.astype("int64")
+    df["_code"] = df["code"].astype(str)
+    df["_horizon"] = df["horizon"].astype(str)
 
-        new_row = dict(row)
-        new_row["fc_class"] = fc_class
-        new_row["obs_class"] = obs_class
-        new_row["contingency"] = _contingency(fc_class, obs_class)
-        rows.append(new_row)
+    # Inner join: drops rows whose (code, horizon, period_key) has no threshold.
+    df = df.merge(thresh_df, on=["_code", "_horizon", "_pk_int"], how="inner")
+    if df.empty:
+        return pd.DataFrame(columns=orig_cols)
 
-    if not rows:
-        return pd.DataFrame(columns=list(pairs.columns))
+    # Cast forecast_value / observed_value to float.
+    # NaN floats (np.nan) are KEPT — the original loop calls float(nan) which
+    # succeeds, and nan comparisons return False (→ "normal").  Only drop rows
+    # that are Python None (TypeError) or a non-castable non-float in an object
+    # column (ValueError), mirroring the row-wise None-check + try/except.
+    fc_vals = pd.to_numeric(df["forecast_value"], errors="coerce")
+    obs_vals = pd.to_numeric(df["observed_value"], errors="coerce")
 
-    return pd.DataFrame(rows, columns=list(pairs.columns))
+    if not pd.api.types.is_numeric_dtype(df["forecast_value"]) or not pd.api.types.is_numeric_dtype(
+        df["observed_value"]
+    ):
+        # At least one object-dtype column present: drop Python None and
+        # non-castable strings.  Float NaN stored as object is valid → keep.
+        def _non_castable(col: pd.Series) -> pd.Series:
+            if pd.api.types.is_numeric_dtype(col):
+                return pd.Series(False, index=col.index)
+            return col.apply(
+                lambda x: x is None
+                or (not isinstance(x, (int, float)) and pd.isna(pd.to_numeric(x, errors="coerce")))
+            )
+
+        drop = _non_castable(df["forecast_value"]) | _non_castable(df["observed_value"])
+        if drop.any():
+            df = df[~drop].copy()
+            fc_vals = fc_vals[~drop]
+            obs_vals = obs_vals[~drop]
+        if df.empty:
+            return pd.DataFrame(columns=orig_cols)
+
+    threshold_arr = df["_threshold"].to_numpy(dtype=float)
+    fc_arr = fc_vals.to_numpy(dtype=float)
+    obs_arr = obs_vals.to_numpy(dtype=float)
+
+    # Classify — strict < / > so equality at threshold → "normal".
+    # NaN comparisons return False → "normal", matching the original.
+    if event.direction == "below":
+        fc_class = np.where(fc_arr < threshold_arr, "below", "normal")
+        obs_class = np.where(obs_arr < threshold_arr, "below", "normal")
+    else:
+        # direction == "above": positive class = value exceeds threshold
+        fc_class = np.where(fc_arr > threshold_arr, "below", "normal")
+        obs_class = np.where(obs_arr > threshold_arr, "below", "normal")
+
+    # Vectorized contingency — mirrors classifier.contingency exactly.
+    fc_b = fc_class == "below"
+    obs_b = obs_class == "below"
+    contingency_arr = np.where(
+        fc_b & obs_b,
+        "TP",
+        np.where(fc_b & ~obs_b, "FP", np.where(~fc_b & obs_b, "FN", "TN")),
+    )
+
+    df = df.copy()
+    df["fc_class"] = fc_class
+    df["obs_class"] = obs_class
+    df["contingency"] = contingency_arr
+
+    return df[orig_cols].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -424,46 +468,85 @@ def reclassify_pairs_for_rp_event(
             "Use reclassify_pairs_for_event for percentile / norm-based events."
         )
 
-    rows: list[dict[str, object]] = []
-    for row in pairs.to_dict("records"):
-        code = str(row.get("code", ""))
-        horizon = str(row.get("horizon", ""))
-        try:
-            period_key = int(row["period_key"])
-        except (TypeError, ValueError, KeyError):
-            continue
+    orig_cols = list(pairs.columns)
 
-        key = (code, horizon, period_key)
-        group_levels = return_levels.get(key)
-        if group_levels is None:
-            continue
+    # Build a small lookup DataFrame: one row per (code, horizon, period_key) that
+    # has a return level for this event's return_period.
+    level_rows: list[tuple[str, str, int, float]] = []
+    for (c, h, pk), group_levels in return_levels.items():
+        lv = group_levels.get(event.return_period)
+        if lv is not None:
+            level_rows.append((str(c), str(h), int(pk), float(lv)))
 
-        level = group_levels.get(event.return_period)
-        if level is None:
-            continue
+    if not level_rows:
+        return pd.DataFrame(columns=orig_cols)
 
-        fc_val = row.get("forecast_value")
-        obs_val = row.get("observed_value")
-        if fc_val is None or obs_val is None:
-            continue
+    level_df = pd.DataFrame(level_rows, columns=["_code", "_horizon", "_pk_int", "_level"])
 
-        try:
-            fc_f = float(fc_val)
-            obs_f = float(obs_val)
-        except (TypeError, ValueError):
-            continue
+    # Cast period_key to int; coerce failures → NaN → drop.
+    df = pairs.copy()
+    pk_numeric = pd.to_numeric(df["period_key"], errors="coerce")
+    valid_pk = pk_numeric.notna()
+    if not valid_pk.all():
+        df = df[valid_pk].copy()
+        pk_numeric = pk_numeric[valid_pk]
+    if df.empty:
+        return pd.DataFrame(columns=orig_cols)
 
-        # direction "above": positive class = value exceeds the return level
-        fc_class: str = "below" if fc_f > level else "normal"
-        obs_class: str = "below" if obs_f > level else "normal"
+    df["_pk_int"] = pk_numeric.astype("int64")
+    df["_code"] = df["code"].astype(str)
+    df["_horizon"] = df["horizon"].astype(str)
 
-        new_row = dict(row)
-        new_row["fc_class"] = fc_class
-        new_row["obs_class"] = obs_class
-        new_row["contingency"] = _contingency(fc_class, obs_class)
-        rows.append(new_row)
+    # Inner join: drops rows whose (code, horizon, period_key) has no return level.
+    df = df.merge(level_df, on=["_code", "_horizon", "_pk_int"], how="inner")
+    if df.empty:
+        return pd.DataFrame(columns=orig_cols)
 
-    if not rows:
-        return pd.DataFrame(columns=list(pairs.columns))
+    # Cast forecast_value / observed_value to float; same NaN-keep semantics
+    # as reclassify_pairs_for_event — NaN floats pass through as "normal".
+    fc_vals = pd.to_numeric(df["forecast_value"], errors="coerce")
+    obs_vals = pd.to_numeric(df["observed_value"], errors="coerce")
 
-    return pd.DataFrame(rows, columns=list(pairs.columns))
+    if not pd.api.types.is_numeric_dtype(df["forecast_value"]) or not pd.api.types.is_numeric_dtype(
+        df["observed_value"]
+    ):
+
+        def _non_castable_rp(col: pd.Series) -> pd.Series:
+            if pd.api.types.is_numeric_dtype(col):
+                return pd.Series(False, index=col.index)
+            return col.apply(
+                lambda x: x is None
+                or (not isinstance(x, (int, float)) and pd.isna(pd.to_numeric(x, errors="coerce")))
+            )
+
+        drop = _non_castable_rp(df["forecast_value"]) | _non_castable_rp(df["observed_value"])
+        if drop.any():
+            df = df[~drop].copy()
+            fc_vals = fc_vals[~drop]
+            obs_vals = obs_vals[~drop]
+        if df.empty:
+            return pd.DataFrame(columns=orig_cols)
+
+    level_arr = df["_level"].to_numpy(dtype=float)
+    fc_arr = fc_vals.to_numpy(dtype=float)
+    obs_arr = obs_vals.to_numpy(dtype=float)
+
+    # direction "above": positive class = value exceeds the return level (strict >).
+    fc_class = np.where(fc_arr > level_arr, "below", "normal")
+    obs_class = np.where(obs_arr > level_arr, "below", "normal")
+
+    # Vectorized contingency.
+    fc_b = fc_class == "below"
+    obs_b = obs_class == "below"
+    contingency_arr = np.where(
+        fc_b & obs_b,
+        "TP",
+        np.where(fc_b & ~obs_b, "FP", np.where(~fc_b & obs_b, "FN", "TN")),
+    )
+
+    df = df.copy()
+    df["fc_class"] = fc_class
+    df["obs_class"] = obs_class
+    df["contingency"] = contingency_arr
+
+    return df[orig_cols].reset_index(drop=True)

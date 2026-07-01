@@ -846,3 +846,363 @@ def test_reclassify_rp_event_preserves_all_pair_columns() -> None:
     result = reclassify_pairs_for_rp_event(pairs, event, return_levels)
 
     assert set(pairs.columns) == set(result.columns)
+
+
+# ===========================================================================
+# Block 9 — Equivalence tests: vectorized vs reference row-wise implementation
+# ===========================================================================
+
+# Reference row-wise implementations kept inline so the equivalence assertion
+# is self-contained and does not depend on the production code path under test.
+
+
+def _reference_reclassify_pairs_for_event(pairs, event, thresholds):
+    """Verbatim copy of the original row-wise loop for equivalence checking."""
+    from forecast_skill_eval.classifier import contingency as _contingency_ref
+
+    if pairs.empty:
+        return pairs.copy()
+    if event.percentile is None and event.return_period is None:
+        return pairs.copy()
+    rows = []
+    for row in pairs.to_dict("records"):
+        code = str(row.get("code", ""))
+        horizon = str(row.get("horizon", ""))
+        try:
+            period_key = int(row["period_key"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        key = (code, horizon, period_key)
+        period_thresholds = thresholds.get(key)
+        if period_thresholds is None:
+            continue
+        threshold_value = period_thresholds.get(event.percentile)
+        if threshold_value is None:
+            continue
+        fc_val = row.get("forecast_value")
+        obs_val = row.get("observed_value")
+        if fc_val is None or obs_val is None:
+            continue
+        try:
+            fc_f = float(fc_val)
+            obs_f = float(obs_val)
+        except (TypeError, ValueError):
+            continue
+        if event.direction == "below":
+            fc_class = "below" if fc_f < threshold_value else "normal"
+            obs_class = "below" if obs_f < threshold_value else "normal"
+        else:
+            fc_class = "below" if fc_f > threshold_value else "normal"
+            obs_class = "below" if obs_f > threshold_value else "normal"
+        new_row = dict(row)
+        new_row["fc_class"] = fc_class
+        new_row["obs_class"] = obs_class
+        new_row["contingency"] = _contingency_ref(fc_class, obs_class)
+        rows.append(new_row)
+    if not rows:
+        return pd.DataFrame(columns=list(pairs.columns))
+    return pd.DataFrame(rows, columns=list(pairs.columns))
+
+
+def _reference_reclassify_pairs_for_rp_event(pairs, event, return_levels):
+    """Verbatim copy of the original row-wise rp loop for equivalence checking."""
+    from forecast_skill_eval.classifier import contingency as _contingency_ref
+
+    if pairs.empty:
+        return pairs.copy()
+    if event.return_period is None:
+        raise ValueError("not an rp event")
+    rows = []
+    for row in pairs.to_dict("records"):
+        code = str(row.get("code", ""))
+        horizon = str(row.get("horizon", ""))
+        try:
+            period_key = int(row["period_key"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        key = (code, horizon, period_key)
+        group_levels = return_levels.get(key)
+        if group_levels is None:
+            continue
+        level = group_levels.get(event.return_period)
+        if level is None:
+            continue
+        fc_val = row.get("forecast_value")
+        obs_val = row.get("observed_value")
+        if fc_val is None or obs_val is None:
+            continue
+        try:
+            fc_f = float(fc_val)
+            obs_f = float(obs_val)
+        except (TypeError, ValueError):
+            continue
+        fc_class = "below" if fc_f > level else "normal"
+        obs_class = "below" if obs_f > level else "normal"
+        new_row = dict(row)
+        new_row["fc_class"] = fc_class
+        new_row["obs_class"] = obs_class
+        new_row["contingency"] = _contingency_ref(fc_class, obs_class)
+        rows.append(new_row)
+    if not rows:
+        return pd.DataFrame(columns=list(pairs.columns))
+    return pd.DataFrame(rows, columns=list(pairs.columns))
+
+
+def _equiv_pairs() -> pd.DataFrame:
+    """Craft a fixture covering every drop/classify branch.
+
+    All period_key values are int so dtype is consistent across both
+    implementations (no mixed-type column to confuse dtype inference).
+    Fake codes 19999 / 29999 — no real station identifiers.
+
+    NaN forecast/observed values are KEPT by both implementations (the original
+    loop calls float(nan) which succeeds; nan comparisons return False → "normal").
+    Only Python None or non-castable strings in object columns are dropped.
+    """
+    COLS = [
+        "code",
+        "horizon",
+        "basin",
+        "period_key",
+        "year",
+        "model",
+        "regime",
+        "season",
+        "lead",
+        "issue_date",
+        "forecast_value",
+        "observed_value",
+        "norm",
+        "norm_provenance",
+        "fc_class",
+        "obs_class",
+        "contingency",
+    ]
+
+    def row(code, period_key, fc, obs):
+        return {
+            "code": code,
+            "horizon": "pentad",
+            "basin": "test",
+            "period_key": period_key,
+            "year": 2010,
+            "model": "LR",
+            "regime": "hindcast",
+            "season": "all",
+            "lead": None,
+            "issue_date": None,
+            "forecast_value": fc,
+            "observed_value": obs,
+            "norm": 100.0,
+            "norm_provenance": "calculated",
+            "fc_class": "normal",
+            "obs_class": "normal",
+            "contingency": "TN",
+        }
+
+    # Threshold for (19999, pentad, 1) at p90 = 50.0 (direction="above")
+    # Threshold for (19999, pentad, 3) at p5  = 20.0 (direction="below")
+    rows = [
+        # --- direction="above" (high_p90), threshold=50.0 ---
+        row("19999", 1, fc=60.0, obs=70.0),  # both > 50  → TP
+        row("19999", 1, fc=30.0, obs=30.0),  # both < 50  → TN
+        row("19999", 1, fc=60.0, obs=30.0),  # fc>50, obs<50 → FP
+        row("19999", 1, fc=30.0, obs=60.0),  # fc<50, obs>50 → FN
+        row("19999", 1, fc=50.0, obs=70.0),  # fc==50 (not >) → normal → FN (strict >)
+        row("19999", 1, fc=70.0, obs=50.0),  # obs==50 (not >) → normal → FP (strict >)
+        # --- no threshold for period_key=2 → all dropped ---
+        row("19999", 2, fc=60.0, obs=60.0),
+        row("19999", 2, fc=30.0, obs=30.0),
+        # --- NaN forecast (float64) → KEPT; nan > 50 = False → fc "normal" → FN ---
+        row("19999", 1, fc=float("nan"), obs=60.0),
+        # --- NaN observed (float64) → KEPT; nan > 50 = False → obs "normal" → FP ---
+        row("19999", 1, fc=60.0, obs=float("nan")),
+        # --- code 29999 has no threshold → dropped ---
+        row("29999", 1, fc=60.0, obs=60.0),
+        # --- direction="below" (low_p5), period_key=3, threshold=20.0 ---
+        row("19999", 3, fc=10.0, obs=10.0),  # both < 20  → TP
+        row("19999", 3, fc=30.0, obs=30.0),  # both > 20  → TN
+        row("19999", 3, fc=20.0, obs=10.0),  # fc==20 (not <) → normal → FN (strict <)
+        row("19999", 3, fc=10.0, obs=20.0),  # obs==20 (not <) → normal → FP (strict <)
+    ]
+    return pd.DataFrame(rows, columns=COLS)
+
+
+def test_reclassify_equivalence_percentile_events_above() -> None:
+    """Vectorized reclassify_pairs_for_event matches reference for direction='above'.
+
+    Surviving rows: period_key==1 only (8 rows: 6 clean + 2 NaN-float rows kept).
+    NaN float forecast/observed are NOT dropped — they classify as "normal"
+    because float(nan) succeeds and nan > threshold returns False.
+    """
+    from forecast_skill_eval.events import EventDef, reclassify_pairs_for_event
+
+    pairs = _equiv_pairs()
+    thresholds = {
+        ("19999", "pentad", 1): {90.0: 50.0},
+        ("19999", "pentad", 3): {5.0: 20.0},
+    }
+    event = EventDef(name="high_p90", direction="above", percentile=90.0)
+
+    expected = _reference_reclassify_pairs_for_event(pairs, event, thresholds)
+    actual = reclassify_pairs_for_event(pairs, event, thresholds)
+
+    # 6 clean period_key=1 rows + 2 NaN-float rows (kept, classified as "normal")
+    # period_key=2 (no threshold) and code=29999 (no threshold) → dropped
+    # period_key=3 rows: threshold dict has only p5=20.0, not p90 → dropped
+    assert len(actual) == 8, f"expected 8 surviving rows, got {len(actual)}"
+    pd.testing.assert_frame_equal(
+        actual.reset_index(drop=True),
+        expected.reset_index(drop=True),
+        check_dtype=False,
+        check_like=False,
+    )
+    # Spot-check contingency labels (rows in fixture order):
+    # TP, TN, FP, FN, FN(fc=50 at thresh), FP(obs=50 at thresh),
+    # FN(nan fc → normal, obs>50 → below), FP(fc>50 → below, nan obs → normal)
+    assert list(actual["contingency"]) == ["TP", "TN", "FP", "FN", "FN", "FP", "FN", "FP"]
+    assert list(actual["fc_class"]) == [
+        "below",
+        "normal",
+        "below",
+        "normal",
+        "normal",
+        "below",
+        "normal",
+        "below",
+    ]
+    assert list(actual["obs_class"]) == [
+        "below",
+        "normal",
+        "normal",
+        "below",
+        "below",
+        "normal",
+        "below",
+        "normal",
+    ]
+
+
+def test_reclassify_equivalence_percentile_events_below() -> None:
+    """Vectorized reclassify_pairs_for_event matches reference for direction='below'."""
+    from forecast_skill_eval.events import EventDef, reclassify_pairs_for_event
+
+    pairs = _equiv_pairs()
+    thresholds = {
+        ("19999", "pentad", 1): {90.0: 50.0},
+        ("19999", "pentad", 3): {5.0: 20.0},
+    }
+    event = EventDef(name="low_p5", direction="below", percentile=5.0)
+
+    expected = _reference_reclassify_pairs_for_event(pairs, event, thresholds)
+    actual = reclassify_pairs_for_event(pairs, event, thresholds)
+
+    # Only period_key==3 rows survive (4 rows).
+    # period_key=1 rows: threshold dict has only p90=50.0, not p5 → dropped.
+    # period_key=2: no threshold → dropped. code=29999: no threshold → dropped.
+    assert len(actual) == 4, f"expected 4 surviving rows, got {len(actual)}"
+    pd.testing.assert_frame_equal(
+        actual.reset_index(drop=True),
+        expected.reset_index(drop=True),
+        check_dtype=False,
+        check_like=False,
+    )
+    # TP, TN, FN (fc==20 at threshold → normal), FP (obs==20 → normal)
+    assert list(actual["contingency"]) == ["TP", "TN", "FN", "FP"]
+    assert list(actual["fc_class"]) == ["below", "normal", "normal", "below"]
+    assert list(actual["obs_class"]) == ["below", "normal", "below", "normal"]
+
+
+def test_reclassify_equivalence_bad_period_key_dropped() -> None:
+    """A non-castable period_key value causes that row to be dropped silently."""
+    from forecast_skill_eval.events import EventDef, reclassify_pairs_for_event
+
+    # Use object-dtype period_key with one bad value; all-int rows should survive.
+    rows = [
+        {
+            "code": "19999",
+            "horizon": "pentad",
+            "basin": "t",
+            "period_key": 1,
+            "year": 2010,
+            "model": "LR",
+            "regime": "h",
+            "season": "all",
+            "lead": None,
+            "issue_date": None,
+            "forecast_value": 60.0,
+            "observed_value": 60.0,
+            "norm": 100.0,
+            "norm_provenance": "c",
+            "fc_class": "normal",
+            "obs_class": "normal",
+            "contingency": "TN",
+        },
+        {
+            "code": "19999",
+            "horizon": "pentad",
+            "basin": "t",
+            "period_key": "bad",
+            "year": 2011,
+            "model": "LR",
+            "regime": "h",
+            "season": "all",
+            "lead": None,
+            "issue_date": None,
+            "forecast_value": 60.0,
+            "observed_value": 60.0,
+            "norm": 100.0,
+            "norm_provenance": "c",
+            "fc_class": "normal",
+            "obs_class": "normal",
+            "contingency": "TN",
+        },
+    ]
+    pairs = pd.DataFrame(rows)
+    thresholds = {("19999", "pentad", 1): {90.0: 50.0}}
+    event = EventDef(name="high_p90", direction="above", percentile=90.0)
+
+    result = reclassify_pairs_for_event(pairs, event, thresholds)
+
+    assert len(result) == 1, "bad period_key row must be dropped"
+    assert result.iloc[0]["contingency"] == "TP"
+
+
+def test_reclassify_equivalence_rp_event() -> None:
+    """Vectorized reclassify_pairs_for_rp_event matches reference row-wise output."""
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_rp_event
+
+    # 20-year pairs; return level for rp5 is well-defined
+    pairs = _rp_pairs(n_years=20, base=10.0, step=5.0)
+
+    from forecast_skill_eval.events import compute_return_levels
+
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
+    rp5_level = return_levels[(STATION_CODE, "pentad", 1)][5.0]
+
+    # Mix: half clearly above, half clearly below
+    above = pairs.copy()
+    above["forecast_value"] = rp5_level + 100.0
+    above["observed_value"] = rp5_level + 100.0
+
+    below = pairs.copy()
+    below["forecast_value"] = rp5_level - 100.0
+    below["observed_value"] = rp5_level - 100.0
+
+    mixed = pd.concat([above, below], ignore_index=True)
+
+    event = event_by_name("rp5")
+
+    expected = _reference_reclassify_pairs_for_rp_event(mixed, event, return_levels)
+    actual = reclassify_pairs_for_rp_event(mixed, event, return_levels)
+
+    assert len(actual) == len(expected)
+    pd.testing.assert_frame_equal(
+        actual.reset_index(drop=True),
+        expected.reset_index(drop=True),
+        check_dtype=False,
+        check_like=False,
+    )
+    # Above-level half → TP; below-level half → TN
+    assert (actual.iloc[: len(above)]["contingency"] == "TP").all()
+    assert (actual.iloc[len(above) :]["contingency"] == "TN").all()
