@@ -24,7 +24,7 @@ import pandas as pd
 import streamlit as st
 
 from forecast_skill_eval.dashboard.data import (
-    distinct_values,
+    available_options,
     filter_metrics,
     load_metrics,
     per_station,
@@ -146,33 +146,48 @@ df_all = _load(str(csv_path))
 with st.sidebar:
     st.header("Filters")
 
-    horizon_choices = distinct_values(df_all, "horizon")
+    # Build selections incrementally so each widget only shows values that
+    # exist in the data given all earlier choices (cascading filters).
+    selections: dict[str, object] = {}
+
+    # 1. Horizon — no upstream constraint yet.
+    horizon_choices = available_options(df_all, "horizon", selections)
     horizon = st.selectbox("Horizon", horizon_choices, index=0)
+    selections["horizon"] = horizon
 
-    event_choices = distinct_values(df_all, "event")
+    # 2. Event
+    event_choices = available_options(df_all, "event", selections)
     event = st.selectbox("Event type", event_choices, index=0)
+    selections["event"] = event
 
-    season_choices = distinct_values(df_all, "season")
+    # 3. Season
+    season_choices = available_options(df_all, "season", selections)
     season = st.selectbox("Season", season_choices, index=0)
+    selections["season"] = season
 
-    regime_choices = distinct_values(df_all, "regime")
+    # 4. Regime
+    regime_choices = available_options(df_all, "regime", selections)
     regime = st.selectbox("Regime", regime_choices, index=0)
+    selections["regime"] = regime
 
-    norm_choices = distinct_values(df_all, "norm_provenance")
+    # 5. Norm provenance — depends on horizon (e.g. 'official' only for month).
+    norm_choices = available_options(df_all, "norm_provenance", selections)
     norm_provenance = st.selectbox("Norm provenance", norm_choices, index=0)
+    selections["norm_provenance"] = norm_provenance
 
-    # Lead: None = short-term (NaN in CSV); integers for long-term.
-    lead_values_raw = df_all["lead"].dropna().unique()
-    lead_int_choices = sorted([int(v) for v in lead_values_raw])
-    use_lead = st.checkbox(
-        "Filter by lead (long-term only)",
-        value=False,
-    )
+    # 6. Lead — auto-detected from the narrowed subset.
+    #    available_options returns non-NaN leads only; empty → short-term.
+    lead_opts = available_options(df_all, "lead", selections)
     lead: int | None = None
-    if use_lead and lead_int_choices:
+    if not lead_opts:
+        st.caption("Short-term horizon — no lead dimension.")
+    else:
+        lead_int_choices = [int(v) for v in lead_opts]  # sorted by available_options
         lead = st.selectbox("Lead", lead_int_choices, index=0)
+    selections["lead"] = lead
 
-    model_choices = distinct_values(df_all, "model")
+    # 7. Model — cascaded from all upstream filters (incl. lead).
+    model_choices = available_options(df_all, "model", selections)
     selected_models = st.multiselect(
         "Model(s) — leave empty for all",
         model_choices,

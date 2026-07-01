@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from forecast_skill_eval.dashboard.data import (
+    available_options,
     distinct_values,
     filter_metrics,
     load_metrics,
@@ -426,3 +427,151 @@ class TestDistinctValues:
         df = _make_df(_base_row(model="LR"), _base_row(model="LR"))
         result = distinct_values(df, "model")
         assert result == ["LR"]
+
+
+# ---------------------------------------------------------------------------
+# available_options
+# ---------------------------------------------------------------------------
+
+
+class TestAvailableOptions:
+    """Tests for the cascading-filter helper.
+
+    Uses synthetic codes 19999 / 29999 only — no real station codes.
+    """
+
+    @pytest.fixture()
+    def df_cascade(self) -> pd.DataFrame:
+        """Two horizon families with different norm_provenance/lead combos."""
+        return _make_df(
+            # Short-term family: pentad, norm_provenance in {all, calculated}
+            _base_row(
+                horizon="pentad",
+                norm_provenance="all",
+                lead=float("nan"),
+                model="LR",
+                code="19999",
+            ),
+            _base_row(
+                horizon="pentad",
+                norm_provenance="calculated",
+                lead=float("nan"),
+                model="LR",
+                code="19999",
+            ),
+            # Long-term family: month, norm_provenance in {all, official}
+            _base_row(
+                horizon="month",
+                norm_provenance="all",
+                lead=0.0,
+                model="LR_Base",
+                code="19999",
+            ),
+            _base_row(
+                horizon="month",
+                norm_provenance="official",
+                lead=1.0,
+                model="LR_Base",
+                code="29999",
+            ),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Basic behaviour                                                      #
+    # ------------------------------------------------------------------ #
+
+    def test_no_selections_returns_all_values(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "horizon", {})
+        assert result == ["month", "pentad"]
+
+    def test_single_upstream_filter_applied(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "norm_provenance", {"horizon": "pentad"})
+        assert result == ["all", "calculated"]
+        assert "official" not in result
+
+    def test_official_only_for_month(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "norm_provenance", {"horizon": "month"})
+        assert "official" in result
+        assert "calculated" not in result
+
+    def test_multiple_upstream_selections_cascade(self, df_cascade: pd.DataFrame):
+        """Narrowing by horizon AND norm_provenance restricts model choices."""
+        result = available_options(
+            df_cascade,
+            "model",
+            {"horizon": "month", "norm_provenance": "official"},
+        )
+        assert result == ["LR_Base"]
+
+    # ------------------------------------------------------------------ #
+    # column-in-selections is ignored                                     #
+    # ------------------------------------------------------------------ #
+
+    def test_column_itself_is_skipped_in_selections(self, df_cascade: pd.DataFrame):
+        """If the queried column appears in selections it must be ignored."""
+        # Asking for norm_provenance options WITH norm_provenance already in
+        # selections — the entry for the queried column is skipped so the
+        # result is the full set given the OTHER constraints.
+        result = available_options(
+            df_cascade,
+            "norm_provenance",
+            {"horizon": "pentad", "norm_provenance": "calculated"},
+        )
+        # Both 'all' and 'calculated' exist for pentad regardless of the
+        # stale norm_provenance entry in selections.
+        assert "all" in result
+        assert "calculated" in result
+
+    # ------------------------------------------------------------------ #
+    # None values in selections are skipped                               #
+    # ------------------------------------------------------------------ #
+
+    def test_none_value_in_selections_skipped(self, df_cascade: pd.DataFrame):
+        """A None value means 'no constraint' — must not filter anything."""
+        result = available_options(
+            df_cascade,
+            "norm_provenance",
+            {"horizon": "pentad", "lead": None},
+        )
+        assert result == ["all", "calculated"]
+
+    # ------------------------------------------------------------------ #
+    # Lead (NaN) handling                                                 #
+    # ------------------------------------------------------------------ #
+
+    def test_lead_returns_empty_for_short_term_horizon(self, df_cascade: pd.DataFrame):
+        """For pentad, all lead values are NaN — available_options returns []."""
+        result = available_options(df_cascade, "lead", {"horizon": "pentad"})
+        assert result == []
+
+    def test_lead_returns_sorted_ints_for_long_term_horizon(self, df_cascade: pd.DataFrame):
+        """For month, non-NaN leads are returned in sorted order."""
+        result = available_options(df_cascade, "lead", {"horizon": "month"})
+        assert result == [0.0, 1.0]
+
+    # ------------------------------------------------------------------ #
+    # Edge cases                                                          #
+    # ------------------------------------------------------------------ #
+
+    def test_no_matching_rows_returns_empty_list(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "model", {"horizon": "nonexistent"})
+        assert result == []
+
+    def test_result_is_sorted(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "horizon", {})
+        assert result == sorted(result)
+
+    def test_result_excludes_nulls(self, df_cascade: pd.DataFrame):
+        """NaN in the target column must not appear in the output."""
+        result = available_options(df_cascade, "lead", {"horizon": "month"})
+        for v in result:
+            assert v == v  # NaN != NaN; this passes only for non-NaN values
+
+    def test_empty_df_returns_empty_list(self):
+        df = _make_df(_base_row()).iloc[0:0]  # empty frame with correct columns
+        result = available_options(df, "horizon", {})
+        assert result == []
+
+    def test_returns_list_not_array(self, df_cascade: pd.DataFrame):
+        result = available_options(df_cascade, "horizon", {})
+        assert isinstance(result, list)

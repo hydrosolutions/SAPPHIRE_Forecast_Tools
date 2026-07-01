@@ -181,6 +181,39 @@ def distinct_values(df: pd.DataFrame, column: str) -> list:
         return vals
 
 
+def available_options(df: pd.DataFrame, column: str, selections: dict[str, object]) -> list:
+    """Distinct sorted values of *column* in df filtered by upstream selections.
+
+    For each ``(k, v)`` in *selections*: if ``k == column`` or ``v is None``
+    the entry is skipped; otherwise rows where ``df[k] != v`` are dropped.
+    This guarantees that every value returned for *column* corresponds to at
+    least one real row given the choices already made — enabling cascading
+    sidebar widgets where no combination can yield an empty table.
+
+    Args:
+        df: Full (unfiltered) metrics DataFrame produced by :func:`load_metrics`.
+        column: The column whose valid options are to be returned.
+        selections: Mapping of column name → currently selected value for every
+            upstream filter widget.  ``None`` values are treated as "no
+            constraint" and are skipped.
+
+    Returns:
+        Sorted list of unique non-null values of *column* after applying all
+        applicable upstream selections.  Falls back to unsorted on
+        ``TypeError`` (mixed types), matching :func:`distinct_values`.
+    """
+    mask = pd.Series(True, index=df.index)
+    for k, v in selections.items():
+        if k == column or v is None:
+            continue
+        mask &= df[k] == v
+    vals = df.loc[mask, column].dropna().unique().tolist()
+    try:
+        return sorted(vals)
+    except TypeError:
+        return vals
+
+
 def metric_display_value(value: float, undefined: bool | float) -> str:
     """Format a metric for display, returning 'n/a' when undefined.
 

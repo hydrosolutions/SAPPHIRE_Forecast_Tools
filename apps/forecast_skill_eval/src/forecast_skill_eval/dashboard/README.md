@@ -20,13 +20,16 @@ The dashboard is **read-only**: it never writes files, never exports data.
 From the repository root:
 
 ```
-uv run --project apps/forecast_skill_eval --with streamlit streamlit run apps/forecast_skill_eval/src/forecast_skill_eval/dashboard/app.py
+uv run --project apps/forecast_skill_eval --with streamlit --with matplotlib streamlit run apps/forecast_skill_eval/src/forecast_skill_eval/dashboard/app.py
 ```
+
+`streamlit` and `matplotlib` are dev-only tools (not pinned runtime deps), so
+they are supplied ad hoc via `--with`.
 
 To point at a different CSV, set the environment variable before the command:
 
 ```
 SKILL_EVAL_METRICS_CSV=/path/to/contingency_metrics.csv \
-    uv run --project apps/forecast_skill_eval --with streamlit \
+    uv run --project apps/forecast_skill_eval --with streamlit --with matplotlib \
     streamlit run apps/forecast_skill_eval/src/forecast_skill_eval/dashboard/app.py
 ```
