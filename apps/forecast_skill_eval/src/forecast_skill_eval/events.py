@@ -192,23 +192,22 @@ def compute_return_levels(
     pairs: pd.DataFrame,
     return_periods: tuple[float, ...],
     min_years: int,
-) -> dict[tuple[str, str], dict[float, float]]:
-    """Compute GEV return levels per ``(code, horizon)`` from annual maxima.
+) -> dict[tuple[str, str, int], dict[float, float]]:
+    """Compute GEV return levels per ``(code, horizon, period_key)``.
 
-    For each station and horizon the function takes the **annual maxima** of
-    ``observed_value`` (de-duplicated across models and period keys so no
-    observation is counted more than once per year), fits a Generalised
+    For each station, horizon, and calendar period the function takes the
+    per-period realizations of ``observed_value`` (de-duplicated across models
+    so no observation is counted more than once per year), fits a Generalised
     Extreme Value (GEV) distribution via maximum-likelihood estimation, and
     computes the return level for each requested return period as the
     ``1 - 1/T`` quantile.
 
-    **Feasibility note**: a return period ``T`` exceeds the record length
-    ``n_years`` whenever ``T > n_years`` — this constitutes extrapolation
-    beyond the observed range.  Return levels are still computed (GEV theory
-    allows it), but callers and reports *must* caveat results where
-    ``T > n_years``.  With ~26 years of archive, 5-yr and 10-yr return levels
-    are within the observed range; 30-yr is marginal; 100-yr is extrapolation
-    and should be treated as illustrative only.
+    **Interpretation note**: low return periods (T = 5, 10) approximate the
+    ``(1 − 1/T)``-th empirical percentile — so rp10 ≈ 90th percentile of the
+    per-period distribution — and are well-supported when ``n_years ≥ T``.
+    High return periods (T = 30, 100) are parametric extrapolations beyond the
+    observed range whenever ``T > n_years`` and should be treated as
+    illustrative only.
 
     Groups with fewer than *min_years* distinct years are skipped.  A
     degenerate (constant) observed series or a failed GEV fit yields no
@@ -219,13 +218,14 @@ def compute_return_levels(
             ``period_key``, ``year``, and ``observed_value`` columns.
         return_periods: Return periods in years (e.g. ``(5.0, 10.0, 30.0,
             100.0)``).
-        min_years: Minimum number of distinct years with annual maxima
-            required.  Groups with fewer years are omitted.
+        min_years: Minimum number of distinct years with observations required.
+            Groups with fewer years are omitted.
 
     Returns:
-        Mapping from ``(code, horizon)`` to a dict of
-        ``{return_period: return_level}``.  Absent entries mean the station
-        did not meet the *min_years* gate or the GEV fit failed.
+        Mapping from ``(code, horizon, period_key)`` to a dict of
+        ``{return_period: return_level}``.  Absent entries mean the
+        station/period did not meet the *min_years* gate or the GEV fit
+        failed.
     """
     required = {"code", "horizon", "period_key", "year", "observed_value"}
     if pairs.empty or not required.issubset(pairs.columns):
@@ -233,7 +233,7 @@ def compute_return_levels(
 
     # De-duplicate: one observed value per (code, horizon, period_key, year)
     # across models so multiple model rows for the same observation don't
-    # inflate the annual-max distribution.
+    # inflate the per-period distribution.
     obs = (
         pairs[["code", "horizon", "period_key", "year", "observed_value"]]
         .drop_duplicates(subset=["code", "horizon", "period_key", "year"])
@@ -242,27 +242,24 @@ def compute_return_levels(
     if obs.empty:
         return {}
 
-    # Aggregate to annual maxima per (code, horizon, year)
-    annual_max = obs.groupby(["code", "horizon", "year"])["observed_value"].max().reset_index()
+    result: dict[tuple[str, str, int], dict[float, float]] = {}
 
-    result: dict[tuple[str, str], dict[float, float]] = {}
-
-    for (code, horizon), group in annual_max.groupby(["code", "horizon"]):
+    for (code, horizon, period_key), group in obs.groupby(["code", "horizon", "period_key"]):
         n_years = group["year"].nunique()
         if n_years < min_years:
             continue
 
-        maxima = group["observed_value"].to_numpy(dtype=float)
-        maxima = maxima[np.isfinite(maxima)]
-        if len(maxima) < min_years:
+        values = group["observed_value"].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if len(values) < min_years:
             continue
 
         # Skip degenerate (constant) series — GEV fit is undefined
-        if float(np.ptp(maxima)) == 0.0:
+        if float(np.ptp(values)) == 0.0:
             continue
 
         try:
-            gev_params = stats.genextreme.fit(maxima)
+            gev_params = stats.genextreme.fit(values)
         except Exception:
             continue
 
@@ -276,7 +273,7 @@ def compute_return_levels(
                 pass
 
         if levels:
-            result[(str(code), str(horizon))] = levels
+            result[(str(code), str(horizon), int(period_key))] = levels
 
     return result
 
@@ -386,27 +383,29 @@ def reclassify_pairs_for_event(
 def reclassify_pairs_for_rp_event(
     pairs: pd.DataFrame,
     event: EventDef,
-    return_levels: dict[tuple[str, str], dict[float, float]],
+    return_levels: dict[tuple[str, str, int], dict[float, float]],
 ) -> pd.DataFrame:
     """Return a copy of *pairs* reclassified for the given return-period event.
 
     Recomputes ``fc_class``, ``obs_class``, and ``contingency`` based on
-    whether each value exceeds the GEV return level for its ``(code, horizon)``
-    group.  ``"below"`` is used as the positive class (= event occurred):
+    whether each value exceeds the GEV return level for its
+    ``(code, horizon, period_key)`` group.  ``"below"`` is used as the
+    positive class (= event occurred):
 
     - Positive (event): value *>* return level → ``fc_class = "below"``.
     - Negative (no event): value *≤* return level → ``fc_class = "normal"``.
 
-    Rows where no return level is available (station did not meet the
+    Rows where no return level is available (station/period did not meet the
     ``min_years`` gate or GEV fit failed) are silently dropped.
 
     Args:
         pairs: Original pair DataFrame with ``fc_class``, ``obs_class``,
-            ``contingency``, ``forecast_value``, and ``observed_value`` columns.
+            ``contingency``, ``forecast_value``, ``observed_value``, and
+            ``period_key`` columns.
         event: The event definition.  Must be a return-period event
             (``event.return_period`` must not be ``None``).
-        return_levels: Per-``(code, horizon)`` return-level mappings as
-            returned by :func:`compute_return_levels`.
+        return_levels: Per-``(code, horizon, period_key)`` return-level
+            mappings as returned by :func:`compute_return_levels`.
 
     Returns:
         Reclassified DataFrame with updated ``fc_class``, ``obs_class``, and
@@ -429,8 +428,12 @@ def reclassify_pairs_for_rp_event(
     for row in pairs.to_dict("records"):
         code = str(row.get("code", ""))
         horizon = str(row.get("horizon", ""))
+        try:
+            period_key = int(row["period_key"])
+        except (TypeError, ValueError, KeyError):
+            continue
 
-        key = (code, horizon)
+        key = (code, horizon, period_key)
         group_levels = return_levels.get(key)
         if group_levels is None:
             continue

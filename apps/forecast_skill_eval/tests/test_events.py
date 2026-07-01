@@ -623,7 +623,7 @@ def test_compute_return_levels_levels_increase_with_return_period() -> None:
     return_periods = (5.0, 10.0, 30.0, 100.0)
     levels = compute_return_levels(pairs, return_periods=return_periods, min_years=10)
 
-    key = (STATION_CODE, "pentad")
+    key = (STATION_CODE, "pentad", 1)
     assert key in levels, "Station must have estimable return levels with 20 years of data"
 
     rp5 = levels[key][5.0]
@@ -643,7 +643,7 @@ def test_compute_return_levels_min_years_gate_excludes_short_record() -> None:
     pairs = _rp_pairs(n_years=5)  # 5 years — below min_years=10
     levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
 
-    assert (STATION_CODE, "pentad") not in levels
+    assert (STATION_CODE, "pentad", 1) not in levels
 
 
 def test_compute_return_levels_meets_min_years_exactly() -> None:
@@ -653,7 +653,7 @@ def test_compute_return_levels_meets_min_years_exactly() -> None:
     pairs = _rp_pairs(n_years=10)  # exactly min_years=10
     levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
 
-    assert (STATION_CODE, "pentad") in levels
+    assert (STATION_CODE, "pentad", 1) in levels
 
 
 def test_compute_return_levels_degenerate_constant_series_no_raise() -> None:
@@ -665,7 +665,7 @@ def test_compute_return_levels_degenerate_constant_series_no_raise() -> None:
     # No assertion error expected — function must return gracefully
     levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
 
-    assert (STATION_CODE, "pentad") not in levels
+    assert (STATION_CODE, "pentad", 1) not in levels
 
 
 def test_compute_return_levels_empty_pairs_returns_empty() -> None:
@@ -689,10 +689,55 @@ def test_compute_return_levels_deduplicates_across_models() -> None:
     levels_single = compute_return_levels(single, return_periods=(5.0,), min_years=10)
     levels_doubled = compute_return_levels(doubled, return_periods=(5.0,), min_years=10)
 
-    key = (STATION_CODE, "pentad")
+    key = (STATION_CODE, "pentad", 1)
     assert key in levels_single
     assert key in levels_doubled
     assert abs(levels_single[key][5.0] - levels_doubled[key][5.0]) < 1e-6
+
+
+def test_compute_return_levels_per_period_keys_are_independent() -> None:
+    """Return levels for different period_keys must be keyed and estimated independently.
+
+    Period A (low values) and period B (high values) must produce separate
+    entries, and period A's return level must not contaminate period B's.
+    """
+    from forecast_skill_eval.events import compute_return_levels
+
+    # period_key=1: low values 10..29; period_key=2: high values 100..119
+    rows_p1 = []
+    rows_p2 = []
+    for i in range(20):
+        base_row = {
+            "horizon": "pentad",
+            "code": STATION_CODE,
+            "basin": "other",
+            "year": 2000 + i,
+            "model": "model-a",
+            "regime": "hindcast",
+            "season": "all",
+            "lead": None,
+            "issue_date": None,
+            "forecast_value": 0.0,
+            "norm": 50.0,
+            "norm_provenance": "calculated",
+            "fc_class": "normal",
+            "obs_class": "normal",
+            "contingency": "TN",
+        }
+        rows_p1.append({**base_row, "period_key": 1, "observed_value": 10.0 + i})
+        rows_p2.append({**base_row, "period_key": 2, "observed_value": 100.0 + i})
+
+    pairs = pd.concat([pd.DataFrame(rows_p1), pd.DataFrame(rows_p2)], ignore_index=True)
+    levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
+
+    key_p1 = (STATION_CODE, "pentad", 1)
+    key_p2 = (STATION_CODE, "pentad", 2)
+    assert key_p1 in levels, "period_key=1 must have its own return level"
+    assert key_p2 in levels, "period_key=2 must have its own return level"
+    # Period A (low) rp5 must be well below period B (high) rp5
+    assert levels[key_p1][5.0] < levels[key_p2][5.0], (
+        "Period A (low values) return level must be lower than period B (high values)"
+    )
 
 
 # ===========================================================================
@@ -712,7 +757,7 @@ def test_reclassify_rp_event_positive_when_above_level() -> None:
     pairs = _rp_pairs(n_years=20, base=10.0, step=5.0)
     return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
 
-    key = (STATION_CODE, "pentad")
+    key = (STATION_CODE, "pentad", 1)
     assert key in return_levels
     rp5_level = return_levels[key][5.0]
 
@@ -741,7 +786,7 @@ def test_reclassify_rp_event_negative_when_below_level() -> None:
     pairs = _rp_pairs(n_years=20, base=10.0, step=5.0)
     return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
 
-    key = (STATION_CODE, "pentad")
+    key = (STATION_CODE, "pentad", 1)
     rp5_level = return_levels[key][5.0]
 
     # Build a pair with a forecast clearly below the return level
