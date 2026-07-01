@@ -524,3 +524,280 @@ def test_config_events_filter_normalised_to_tuple() -> None:
     config = ForecastSkillEvalConfig(events_filter=["below_norm", "low_p10"])
 
     assert isinstance(config.events_filter, tuple)
+
+
+# ===========================================================================
+# Block 6 — Return-period event definitions (Phase-2D)
+# ===========================================================================
+
+
+def _rp_pairs(
+    *,
+    code: str = STATION_CODE,
+    second_code: str = "29999",
+    horizon: str = "pentad",
+    n_years: int = 20,
+    base: float = 10.0,
+    step: float = 5.0,
+) -> pd.DataFrame:
+    """Build pairs with linearly increasing observed values for GEV fitting.
+
+    Values are ``base + i * step`` for year *i*, giving a clear trend that
+    produces well-ordered return levels across the requested return periods.
+    """
+    rows = []
+    for i in range(n_years):
+        val = base + i * step
+        year = 2000 + i
+        rows.append(
+            {
+                "horizon": horizon,
+                "code": code,
+                "basin": "other",
+                "period_key": 1,
+                "year": year,
+                "model": "model-a",
+                "regime": "hindcast",
+                "season": "irrigation",
+                "lead": None,
+                "issue_date": None,
+                "forecast_value": val,
+                "observed_value": val,
+                "norm": 50.0,
+                "norm_provenance": "calculated",
+                "fc_class": "normal",
+                "obs_class": "normal",
+                "contingency": "TN",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_return_period_events_not_in_default_set() -> None:
+    """rp5/rp10/rp30/rp100 must not appear in ALL_EVENT_NAMES (the default set)."""
+    from forecast_skill_eval.events import ALL_EVENT_NAMES
+
+    for name in ("rp5", "rp10", "rp30", "rp100"):
+        assert name not in ALL_EVENT_NAMES, f"{name!r} must not be a default event"
+
+
+def test_return_period_events_valid_in_config() -> None:
+    """rp5/rp10/rp30/rp100 must be accepted by ForecastSkillEvalConfig.events_filter."""
+    from forecast_skill_eval.config import ForecastSkillEvalConfig
+
+    config = ForecastSkillEvalConfig(events_filter=("rp5", "rp10", "rp30", "rp100"))
+
+    assert set(config.events_filter) == {"rp5", "rp10", "rp30", "rp100"}
+
+
+def test_return_period_events_valid_set_covers_rp_names() -> None:
+    """VALID_EVENTS must include the four return-period event names."""
+    from forecast_skill_eval.events import VALID_EVENTS
+
+    for name in ("rp5", "rp10", "rp30", "rp100"):
+        assert name in VALID_EVENTS
+
+
+def test_event_by_name_resolves_rp_events() -> None:
+    """event_by_name must return the correct EventDef for each rp event."""
+    from forecast_skill_eval.events import event_by_name
+
+    for name, T in (("rp5", 5.0), ("rp10", 10.0), ("rp30", 30.0), ("rp100", 100.0)):
+        ev = event_by_name(name)
+        assert ev.name == name
+        assert ev.return_period == T
+        assert ev.direction == "above"
+        assert ev.percentile is None
+
+
+# ===========================================================================
+# Block 7 — compute_return_levels
+# ===========================================================================
+
+
+def test_compute_return_levels_levels_increase_with_return_period() -> None:
+    """Return levels must be non-decreasing: rp5 <= rp10 <= rp30 <= rp100."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    pairs = _rp_pairs(n_years=20)
+    return_periods = (5.0, 10.0, 30.0, 100.0)
+    levels = compute_return_levels(pairs, return_periods=return_periods, min_years=10)
+
+    key = (STATION_CODE, "pentad")
+    assert key in levels, "Station must have estimable return levels with 20 years of data"
+
+    rp5 = levels[key][5.0]
+    rp10 = levels[key][10.0]
+    rp30 = levels[key][30.0]
+    rp100 = levels[key][100.0]
+
+    assert rp5 <= rp10, f"rp5={rp5} must be <= rp10={rp10}"
+    assert rp10 <= rp30, f"rp10={rp10} must be <= rp30={rp30}"
+    assert rp30 <= rp100, f"rp30={rp30} must be <= rp100={rp100}"
+
+
+def test_compute_return_levels_min_years_gate_excludes_short_record() -> None:
+    """Stations with fewer distinct years than min_years must be excluded."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    pairs = _rp_pairs(n_years=5)  # 5 years — below min_years=10
+    levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
+
+    assert (STATION_CODE, "pentad") not in levels
+
+
+def test_compute_return_levels_meets_min_years_exactly() -> None:
+    """Exactly min_years distinct years must produce an entry."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    pairs = _rp_pairs(n_years=10)  # exactly min_years=10
+    levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
+
+    assert (STATION_CODE, "pentad") in levels
+
+
+def test_compute_return_levels_degenerate_constant_series_no_raise() -> None:
+    """A constant observed series must not raise — yields no entry."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    # All observed values identical: GEV fit is degenerate
+    pairs = _rp_pairs(n_years=20, base=42.0, step=0.0)
+    # No assertion error expected — function must return gracefully
+    levels = compute_return_levels(pairs, return_periods=(5.0, 10.0), min_years=10)
+
+    assert (STATION_CODE, "pentad") not in levels
+
+
+def test_compute_return_levels_empty_pairs_returns_empty() -> None:
+    """An empty pairs DataFrame must return an empty mapping."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    levels = compute_return_levels(pd.DataFrame(), return_periods=(5.0, 10.0), min_years=10)
+
+    assert levels == {}
+
+
+def test_compute_return_levels_deduplicates_across_models() -> None:
+    """Duplicate model rows for the same (code, horizon, period_key, year) count once."""
+    from forecast_skill_eval.events import compute_return_levels
+
+    single = _rp_pairs(n_years=20)
+    doubled = pd.concat(
+        [single.assign(model="model-a"), single.assign(model="model-b")], ignore_index=True
+    )
+
+    levels_single = compute_return_levels(single, return_periods=(5.0,), min_years=10)
+    levels_doubled = compute_return_levels(doubled, return_periods=(5.0,), min_years=10)
+
+    key = (STATION_CODE, "pentad")
+    assert key in levels_single
+    assert key in levels_doubled
+    assert abs(levels_single[key][5.0] - levels_doubled[key][5.0]) < 1e-6
+
+
+# ===========================================================================
+# Block 8 — reclassify_pairs_for_rp_event
+# ===========================================================================
+
+
+def test_reclassify_rp_event_positive_when_above_level() -> None:
+    """A value exceeding the return level must yield fc_class='below' (positive)."""
+    from forecast_skill_eval.events import (
+        compute_return_levels,
+        event_by_name,
+        reclassify_pairs_for_rp_event,
+    )
+
+    # 20 years of increasing values; rp5 level should be around the upper range
+    pairs = _rp_pairs(n_years=20, base=10.0, step=5.0)
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
+
+    key = (STATION_CODE, "pentad")
+    assert key in return_levels
+    rp5_level = return_levels[key][5.0]
+
+    # Build a pair with a forecast clearly above the return level
+    extreme_pairs = pairs.copy()
+    extreme_pairs["forecast_value"] = rp5_level + 100.0
+    extreme_pairs["observed_value"] = rp5_level + 100.0
+
+    event = event_by_name("rp5")
+    result = reclassify_pairs_for_rp_event(extreme_pairs, event, return_levels)
+
+    assert not result.empty
+    assert (result["fc_class"] == "below").all()
+    assert (result["obs_class"] == "below").all()
+    assert (result["contingency"] == "TP").all()
+
+
+def test_reclassify_rp_event_negative_when_below_level() -> None:
+    """A value below the return level must yield fc_class='normal' (negative)."""
+    from forecast_skill_eval.events import (
+        compute_return_levels,
+        event_by_name,
+        reclassify_pairs_for_rp_event,
+    )
+
+    pairs = _rp_pairs(n_years=20, base=10.0, step=5.0)
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
+
+    key = (STATION_CODE, "pentad")
+    rp5_level = return_levels[key][5.0]
+
+    # Build a pair with a forecast clearly below the return level
+    low_pairs = pairs.copy()
+    low_pairs["forecast_value"] = rp5_level - 1000.0
+    low_pairs["observed_value"] = rp5_level - 1000.0
+
+    event = event_by_name("rp5")
+    result = reclassify_pairs_for_rp_event(low_pairs, event, return_levels)
+
+    assert not result.empty
+    assert (result["fc_class"] == "normal").all()
+    assert (result["obs_class"] == "normal").all()
+    assert (result["contingency"] == "TN").all()
+
+
+def test_reclassify_rp_event_drops_rows_with_missing_level() -> None:
+    """Rows for a station with no estimable return level must be dropped."""
+    from forecast_skill_eval.events import (
+        event_by_name,
+        reclassify_pairs_for_rp_event,
+    )
+
+    # Empty return_levels: no station has an estimable level
+    pairs = _rp_pairs(n_years=5)
+    event = event_by_name("rp5")
+    result = reclassify_pairs_for_rp_event(pairs, event, return_levels={})
+
+    assert result.empty
+
+
+def test_reclassify_rp_event_raises_for_non_rp_event() -> None:
+    """reclassify_pairs_for_rp_event must raise ValueError for a percentile event."""
+    from forecast_skill_eval.events import (
+        event_by_name,
+        reclassify_pairs_for_rp_event,
+    )
+
+    pairs = _rp_pairs(n_years=5)
+    event = event_by_name("high_p90")
+    with pytest.raises(ValueError, match="return_period"):
+        reclassify_pairs_for_rp_event(pairs, event, return_levels={})
+
+
+def test_reclassify_rp_event_preserves_all_pair_columns() -> None:
+    """Reclassified pairs must carry all original columns."""
+    from forecast_skill_eval.events import (
+        compute_return_levels,
+        event_by_name,
+        reclassify_pairs_for_rp_event,
+    )
+
+    pairs = _rp_pairs(n_years=20)
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=10)
+
+    event = event_by_name("rp5")
+    result = reclassify_pairs_for_rp_event(pairs, event, return_levels)
+
+    assert set(pairs.columns) == set(result.columns)
