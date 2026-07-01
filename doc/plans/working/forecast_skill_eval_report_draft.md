@@ -657,6 +657,85 @@ events for a credible skill statement.
 
 ---
 
+## Probabilistic forecast verification (predictive distribution)
+
+All sections above score the **point** forecast (a single value, yes/no
+decision). But the models emit a full **predictive distribution** — a quantile
+band `q05…q95` — which the deterministic scores ignore. This section scores the
+*distribution* itself: is the forecast's stated uncertainty **trustworthy**
+(calibration), how **tight** is it (sharpness), and does the whole distribution
+beat climatology (CRPS)? This is what risk-based consumers (reservoir /
+hydropower / flood operators) actually act on.
+
+**Metrics** (see the Metric-definitions box for the deterministic ones):
+
+- **CRPS** (Continuous Ranked Probability Score) — generalises MAE to a full
+  distribution; lower is better. **CRPSS** = `1 − CRPS/CRPS_climatology` (>0 beats
+  climatology). The climatology reference uses the **identical grid estimator**,
+  so CRPSS is unbiased. CRPS integrates the pinball loss with an explicit
+  **tail penalty**, so an over-confident narrow band that misses is *not*
+  rewarded.
+- **Coverage / reliability** — does the nominal *P*% interval actually contain
+  the observation *P*% of the time? `coverage_90` (q05–q95), `coverage_80`
+  (q10–q90, **long-term only** — the short-term grid has no q10/q90), with a
+  Wilson CI; `reliability = |coverage − nominal|` (0 = perfectly calibrated).
+- **Sharpness (norm-normalised)** — interval width relative to the norm; only
+  meaningful *given* calibration.
+- **Brier / Brier skill score** — scores the forecast *probability* of the
+  below-norm event (from the band) rather than the binary flag.
+
+Numbers are from the flagged run (`SAPPHIRE_SKILL_PROB`,
+`artifacts/prob_2026-07-01/`), **EM, operational, POOLED, canonical provenance,
+season = all** (long-term = smallest lead). Only models that emit a usable band
+are scored; **GBT / SM_GBT\* long-term models carry no band and stay point-only**.
+
+| Horizon | Grid | n | CRPSS | Coverage 90 % | Coverage 80 % | Reliability | Sharpness (norm) | Brier SS |
+|---------|------|---:|:-----:|:-------------:|:-------------:|:-----------:|:----------------:|:--------:|
+| pentad | short5 | 11 335 | **0.68** | 0.92 | — | 0.02 | 0.25 | **0.82** |
+| decade | short5 | 5 059 | 0.59 | 0.87 | — | 0.03 | 0.24 | 0.79 |
+| month L0 | long7 | 6 387 | 0.62 | 0.92 | 0.86 | 0.02 | 0.28 | 0.79 |
+| quarter L1 | long7 | 1 887 | 0.28 | 0.91 | 0.83 | 0.01 | 0.58 | 0.39 |
+| season L0 | long7 | 1 331 | 0.23 | 0.82 | 0.71 | 0.08 | 0.59 | 0.30 |
+
+*(Coverage 90 ideal = 0.90; Coverage 80 ideal = 0.80; Reliability = |coverage −
+nominal|, lower is better; CRPSS / Brier SS > 0 beats climatology.)*
+
+**Day horizon:** EM emits no ensemble band at day, so EM is absent here;
+day-scale probabilistic scores exist only for TFT / TiDE / TSMixer (short5).
+
+### Key findings
+
+- **The forecasts are well calibrated.** EM's 90 % bands actually contain
+  87–92 % of observations at pentad/decade/month/quarter (reliability 0.01–0.03)
+  — the stated uncertainty is trustworthy, not over- or under-confident. Only
+  the **season** horizon is mildly under-covered (0.82 vs 0.90). This is the
+  headline probabilistic result: operators can take the EM interval at face
+  value at short-to-medium range.
+- **The full distribution beats climatology at every horizon** (CRPSS
+  0.23–0.68), strongest at pentad (0.68), month (0.62), decade (0.59); weaker
+  but positive at quarter/season (0.23–0.28) — the same short-good / long-weak
+  gradient as the point scores.
+- **Sharpness matches confidence to horizon.** Bands are tight relative to the
+  norm at pentad/decade/month (~0.24–0.28) and appropriately wide at
+  quarter/season (~0.58–0.59) — the models widen their intervals where skill is
+  genuinely lower rather than staying falsely narrow.
+- **Probabilistic below-norm skill (Brier SS)** is strong at pentad/decade/month
+  (0.79–0.82) and drops at quarter/season (0.30–0.39), consistent with the
+  deterministic contingency results.
+
+**Caveats specific to probabilistic scores:**
+
+- **Cross-grid CRPS is not comparable.** Short-term (4-node `short5`, no q10/q90,
+  q50 = point) and long-term (7-node `long7`) CRPS are computed over different
+  node sets; raw `crps` is never ranked across grids (the dashboard restricts
+  CRPSS/sharpness rankings to a single grid). CRPSS, being a dimensionless skill
+  ratio, is compared only in spirit — the table tags the grid per row.
+- **`coverage_80` is long-term-only** (the short-term grid lacks q10/q90).
+- Only band-bearing models are scored; per-model / per-station probabilistic
+  detail is explorable in the dashboard's **Probabilistic** view.
+
+---
+
 ## Caveats and limitations
 
 1. **DAY horizon is thin and exploratory.** n_pairs 215–809 across models;
