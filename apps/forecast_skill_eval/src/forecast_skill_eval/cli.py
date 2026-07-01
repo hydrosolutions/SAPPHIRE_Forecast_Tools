@@ -16,6 +16,7 @@ from forecast_skill_eval.artifacts import write_artifacts
 from forecast_skill_eval.config import (
     DEFAULT_BASE_URL,
     DEFAULT_ERROR_FLAGS,
+    DEFAULT_EVENTS,
     DEFAULT_HINDCAST_FLAGS,
     DEFAULT_HORIZONS,
     DEFAULT_NAN_EXCLUDE_FLAGS,
@@ -23,7 +24,7 @@ from forecast_skill_eval.config import (
     DEFAULT_OPERATIONAL_ISSUE_DAYS,
     ForecastSkillEvalConfig,
 )
-from forecast_skill_eval.orchestrator import run
+from forecast_skill_eval.orchestrator import ResultsBundle, run
 
 API_UNAVAILABLE_MESSAGE = "SAPPHIRE API client is unavailable; skipping forecast skill evaluation."
 
@@ -73,6 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     client = _build_client(config)
     bundle = run(config, client, run_id)
+    bundle = _apply_season_filter(bundle, config.season_filter)
     artifact_dir = write_artifacts(config, bundle, run_id)
     print(artifact_dir)
     return 0
@@ -121,6 +123,28 @@ def _parser() -> argparse.ArgumentParser:
         default=list(DEFAULT_OPERATIONAL_ISSUE_DAYS),
         metavar="DAY",
     )
+    parser.add_argument(
+        "--events",
+        nargs="+",
+        default=list(DEFAULT_EVENTS),
+        dest="events_filter",
+        metavar="EVENT",
+        help=(
+            "Binary events to evaluate. "
+            "Valid values: below_norm low_p10 low_p5 high_p90 high_p95. "
+            "Default: all five events."
+        ),
+    )
+    parser.add_argument(
+        "--season",
+        choices=["all", "irrigation", "non_irrigation"],
+        default="all",
+        dest="season_filter",
+        help=(
+            "Season filter for output rows: 'all' emits all season strata, "
+            "'irrigation' restricts to Apr–Sep, 'non_irrigation' restricts to Oct–Mar."
+        ),
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -143,6 +167,8 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
         error_flags=_split_int_values(args.error_flags),
         operational_issue_days=_split_int_values(args.operational_issue_days),
+        events_filter=_split_values(args.events_filter),
+        season_filter=args.season_filter,
     )
 
 
@@ -194,6 +220,36 @@ def _build_client(config: ForecastSkillEvalConfig) -> _SapphireClientBundle:
 
 def _default_run_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _apply_season_filter(bundle: ResultsBundle, season_filter: str) -> ResultsBundle:
+    """Return a copy of the bundle with contingency and baselines filtered by season.
+
+    When ``season_filter`` is ``"all"`` the bundle is returned unchanged.  Otherwise
+    only rows whose ``season`` column matches the requested value are kept.  Frames
+    that lack a ``season`` column are passed through unmodified.
+    """
+    if season_filter == "all":
+        return bundle
+
+    def _filter(frame: object) -> object:
+        import pandas as pd
+
+        if not isinstance(frame, pd.DataFrame):
+            return frame
+        if frame.empty or "season" not in frame.columns:
+            return frame
+        return frame[frame["season"] == season_filter].reset_index(drop=True)
+
+    return ResultsBundle(
+        pairs=bundle.pairs,
+        contingency_metrics=_filter(bundle.contingency_metrics),
+        baselines=_filter(bundle.baselines),
+        exclusion_ledger=bundle.exclusion_ledger,
+        horizon_summary=bundle.horizon_summary,
+        prob_metrics=_filter(bundle.prob_metrics),
+        prob_reliability=_filter(bundle.prob_reliability),
+    )
 
 
 def _stderr() -> Any:

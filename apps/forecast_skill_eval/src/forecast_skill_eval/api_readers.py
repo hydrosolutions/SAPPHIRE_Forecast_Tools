@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,30 @@ except ImportError:
 
 DEFAULT_PAGE_SIZE = 500
 ForecastType = Literal["short", "long"]
+
+QUANTILE_LEVELS: Final = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
+
+# Per forecast_type: canonical level → source column name.
+# NOTE: maps SHORT vs LONG columns; does NOT gate LR — LR also reads as "short"
+# and is excluded by band-presence (Design Decision 5).
+QUANTILE_SOURCE_MAP: Final[dict[ForecastType, dict[float, str]]] = {
+    "short": {
+        0.05: "q05",
+        0.25: "q25",
+        0.50: "forecasted_discharge",
+        0.75: "q75",
+        0.95: "q95",
+    },
+    "long": {
+        0.05: "q05",
+        0.10: "q10",
+        0.25: "q25",
+        0.50: "q50",
+        0.75: "q75",
+        0.90: "q90",
+        0.95: "q95",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -61,7 +85,9 @@ def read_forecasts(
         limit=limit,
     )
     data, dropped_sentinels = _drop_short_term_sentinels(data, normalized_horizon)
-    return ReaderResult(_add_point_values(data, forecast_type="short"), dropped_sentinels)
+    enriched = _add_point_values(data, forecast_type="short")
+    enriched = _add_quantile_band(enriched, forecast_type="short")
+    return ReaderResult(enriched, dropped_sentinels)
 
 
 def read_lr_forecasts(
@@ -94,7 +120,9 @@ def read_lr_forecasts(
     )
     data = _normalize_lr_forecasts(data)
     data, dropped_sentinels = _drop_short_term_sentinels(data, normalized_horizon)
-    return ReaderResult(_add_point_values(data, forecast_type="short"), dropped_sentinels)
+    enriched = _add_point_values(data, forecast_type="short")
+    enriched = _add_quantile_band(enriched, forecast_type="short")
+    return ReaderResult(enriched, dropped_sentinels)
 
 
 def read_long_forecasts(
@@ -124,7 +152,9 @@ def read_long_forecasts(
         limit=limit,
     )
     data = _add_long_calendar_periods(data, normalized_horizon)
-    return ReaderResult(_add_point_values(data, forecast_type="long"))
+    enriched = _add_point_values(data, forecast_type="long")
+    enriched = _add_quantile_band(enriched, forecast_type="long")
+    return ReaderResult(enriched)
 
 
 def read_hydrograph_norms(
@@ -195,6 +225,33 @@ def select_point_value(row: Mapping[str, Any], forecast_type: ForecastType) -> t
     return float(np.nan), missing_note
 
 
+def select_quantile_band(
+    row: Mapping[str, Any], forecast_type: ForecastType
+) -> tuple[dict[float, float], str, str]:
+    """Return ({level: value} for finite source quantiles, note, grid_id).
+
+    Missing/NaN nodes are dropped.  Rows with <2 finite nodes return
+    ({}, 'no_quantile_band', '').  grid_id is 'long7' / 'short5' / '' when
+    band-less.
+    """
+    column_map = QUANTILE_SOURCE_MAP.get(forecast_type, {})
+    band: dict[float, float] = {}
+    for level, col in column_map.items():
+        val = row.get(col)
+        if val is None:
+            continue
+        try:
+            fval = float(val)
+            if np.isfinite(fval):
+                band[level] = fval
+        except (TypeError, ValueError):
+            pass
+    if len(band) < 2:
+        return {}, "no_quantile_band", ""
+    grid_id = "long7" if forecast_type == "long" else "short5"
+    return band, "", grid_id
+
+
 def _read_all_pages(
     read_page: Callable[[int, int], pd.DataFrame],
     *,
@@ -256,6 +313,25 @@ def _add_point_values(data: pd.DataFrame, forecast_type: ForecastType) -> pd.Dat
     selections = [select_point_value(row, forecast_type) for row in enriched.to_dict("records")]
     enriched["point_value"] = [selection[0] for selection in selections]
     enriched["point_value_note"] = [selection[1] for selection in selections]
+    return enriched
+
+
+def _add_quantile_band(data: pd.DataFrame, forecast_type: ForecastType) -> pd.DataFrame:
+    """Add 'quantiles' ({level:value}), 'quantiles_note', and 'fc_grid_id' columns.
+
+    Empty frame → typed empty columns.  Additive: does not touch
+    point_value / point_value_note / any existing column.
+    """
+    enriched = data.copy()
+    if enriched.empty:
+        enriched["quantiles"] = pd.Series(dtype="object")
+        enriched["quantiles_note"] = pd.Series(dtype="object")
+        enriched["fc_grid_id"] = pd.Series(dtype="object")
+        return enriched
+    selections = [select_quantile_band(row, forecast_type) for row in enriched.to_dict("records")]
+    enriched["quantiles"] = [sel[0] for sel in selections]
+    enriched["quantiles_note"] = [sel[1] for sel in selections]
+    enriched["fc_grid_id"] = [sel[2] for sel in selections]
     return enriched
 
 

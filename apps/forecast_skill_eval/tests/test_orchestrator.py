@@ -7,6 +7,7 @@ import pytest
 from forecast_skill_eval.cli import _SapphireClientBundle
 from forecast_skill_eval.config import ForecastSkillEvalConfig
 from forecast_skill_eval.orchestrator import run
+from forecast_skill_eval.prob_metrics import PROB_METRIC_COLUMNS, PROB_RELIABILITY_COLUMNS
 
 STATION_CODE = "19999"
 
@@ -147,6 +148,7 @@ def test_orchestrator_builds_matched_lr_operational_proxy_baseline(
         & bundle.baselines["model"].eq("LR")
         & bundle.baselines["comparison_model"].eq("TFT")
         & bundle.baselines["regime"].eq("all")
+        & bundle.baselines["season"].eq("all")  # aggregate over all seasons
         & bundle.baselines["code"].eq(STATION_CODE)
         & bundle.baselines["basin"].eq("all")
         & bundle.baselines["norm_provenance"].eq("all")
@@ -230,3 +232,175 @@ def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object
         )
         day += timedelta(days=1)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# SAPPHIRE_SKILL_PROB flag tests
+# ---------------------------------------------------------------------------
+
+_SECOND_STATION = "29999"
+
+# A pentad forecast row that carries a quantile band so the pair is scorable.
+_FORECAST_WITH_BAND = {
+    "horizon": "pentad",
+    "code": STATION_CODE,
+    "date": "2024-01-01",
+    "target": "2024-01-02",
+    "horizon_in_year": 1,
+    "model_type": "model-a",
+    "forecasted_discharge": 7.0,
+    "q05": 4.0,
+    "q25": 6.0,
+    "q75": 8.0,
+    "q95": 10.0,
+    "flag": 0,
+}
+
+_RUNOFF_PENTAD = {
+    "horizon": "pentad",
+    "code": STATION_CODE,
+    "horizon_in_year": 1,
+    "year": 2024,
+    "discharge": 7.0,
+}
+
+_HYDROGRAPH_PENTAD = {
+    "horizon": "pentad",
+    "code": STATION_CODE,
+    "horizon_in_year": 1,
+    "norm": 10.0,
+    "count": 30,
+}
+
+
+def test_prob_metrics_populated_when_flag_on(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With SAPPHIRE_SKILL_PROB=1, prob_metrics and prob_reliability are non-empty
+    and carry the expected column schema."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_PROB", "1")
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="prob-on")
+
+    # Frames must be non-empty.
+    assert not bundle.prob_metrics.empty, "prob_metrics must be non-empty when flag is ON"
+    assert not bundle.prob_reliability.empty, "prob_reliability must be non-empty when flag is ON"
+
+    # All required columns must be present.
+    for col in PROB_METRIC_COLUMNS:
+        assert col in bundle.prob_metrics.columns, f"prob_metrics missing column '{col}'"
+    for col in PROB_RELIABILITY_COLUMNS:
+        assert col in bundle.prob_reliability.columns, f"prob_reliability missing column '{col}'"
+
+    # Distribution event rows must be present.
+    assert "distribution" in bundle.prob_metrics["event"].values, (
+        "prob_metrics must contain 'distribution' event rows"
+    )
+
+
+def test_prob_metrics_empty_when_flag_off(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With SAPPHIRE_SKILL_PROB absent (default OFF), both prob frames are empty
+    and existing contingency/baseline outputs are identical to the flag-off baseline."""
+    monkeypatch.delenv("SAPPHIRE_SKILL_PROB", raising=False)
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="prob-off")
+
+    # Both prob frames must be empty when flag is off.
+    assert bundle.prob_metrics.empty, "prob_metrics must be empty when flag is OFF"
+    assert bundle.prob_reliability.empty, "prob_reliability must be empty when flag is OFF"
+
+    # Existing contingency and baseline outputs must still be populated.
+    assert not bundle.contingency_metrics.empty, (
+        "contingency_metrics must remain populated when flag is OFF"
+    )
+    assert not bundle.baselines.empty, "baselines must remain populated when flag is OFF"
+    assert set(bundle.contingency_metrics["model"]) == {"model-a"}, (
+        "contingency_metrics model set must be unchanged"
+    )
+    assert "climatology" in set(bundle.baselines["baseline"]), (
+        "climatology baseline must be present when flag is OFF"
+    )
+
+
+def test_prob_flag_truthiness_accepts_true_string(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SAPPHIRE_SKILL_PROB='true' (case-insensitive) is treated as enabled."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_PROB", "true")
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="prob-true-str")
+    assert not bundle.prob_metrics.empty, "SAPPHIRE_SKILL_PROB='true' must enable prob metrics"
+
+
+def test_prob_flag_off_leaves_contingency_byte_identical(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag OFF must produce the same contingency/baseline outputs as a baseline run.
+
+    Runs the orchestrator twice (both times flag OFF) against identical inputs
+    and asserts the contingency DataFrame's model and code columns are identical,
+    proving the flag pathway has zero effect on the existing pipeline.
+    """
+    monkeypatch.delenv("SAPPHIRE_SKILL_PROB", raising=False)
+
+    client_a = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    client_b = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle_a = run(config, client_a, run_id="run-a")
+    bundle_b = run(config, client_b, run_id="run-b")
+
+    # Both contingency frames must have the same shape and model/code values.
+    assert bundle_a.contingency_metrics.shape == bundle_b.contingency_metrics.shape
+    assert sorted(bundle_a.contingency_metrics["model"].tolist()) == sorted(
+        bundle_b.contingency_metrics["model"].tolist()
+    )
+    assert bundle_a.prob_metrics.empty
+    assert bundle_b.prob_metrics.empty

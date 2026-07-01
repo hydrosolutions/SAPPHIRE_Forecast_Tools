@@ -138,6 +138,104 @@ def test_operational_issue_days_cli_default_is_empty() -> None:
     assert config.operational_issue_days == ()
 
 
+def test_apply_season_filter_passes_prob_frames_through(tmp_path: Path) -> None:
+    """_apply_season_filter must slice prob_metrics / prob_reliability on 'season'
+    the same way it slices contingency_metrics and baselines."""
+    import math
+
+    from forecast_skill_eval.cli import _apply_season_filter
+    from forecast_skill_eval.ledger import ExclusionLedger
+    from forecast_skill_eval.orchestrator import ResultsBundle
+    from forecast_skill_eval.prob_metrics import PROB_METRIC_COLUMNS, PROB_RELIABILITY_COLUMNS
+
+    prob_row: dict[str, object] = {col: math.nan for col in PROB_METRIC_COLUMNS}
+    prob_row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "irrigation",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "event": "distribution",
+            "fc_grid_id": "short5",
+            "n_pairs": 2,
+        }
+    )
+    prob_row_non_irr: dict[str, object] = {**prob_row, "season": "non_irrigation"}
+    prob_metrics = pd.DataFrame([prob_row, prob_row_non_irr])
+
+    rel_row: dict[str, object] = {col: math.nan for col in PROB_RELIABILITY_COLUMNS}
+    rel_row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "irrigation",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "fc_grid_id": "short5",
+            "nominal_level": 0.90,
+            "observed_frequency": 0.88,
+            "n": 2,
+        }
+    )
+    rel_row_non_irr: dict[str, object] = {**rel_row, "season": "non_irrigation"}
+    prob_reliability = pd.DataFrame([rel_row, rel_row_non_irr])
+
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(),
+        prob_metrics=prob_metrics,
+        prob_reliability=prob_reliability,
+    )
+
+    filtered = _apply_season_filter(bundle, "irrigation")
+
+    assert list(filtered.prob_metrics["season"]) == ["irrigation"], (
+        "prob_metrics must be filtered to irrigation season"
+    )
+    assert list(filtered.prob_reliability["season"]) == ["irrigation"], (
+        "prob_reliability must be filtered to irrigation season"
+    )
+
+
+def test_apply_season_filter_all_passes_prob_frames_unchanged() -> None:
+    """_apply_season_filter with season='all' must return the bundle unchanged."""
+    import math
+
+    from forecast_skill_eval.cli import _apply_season_filter
+    from forecast_skill_eval.ledger import ExclusionLedger
+    from forecast_skill_eval.orchestrator import ResultsBundle
+    from forecast_skill_eval.prob_metrics import PROB_METRIC_COLUMNS
+
+    prob_row: dict[str, object] = {col: math.nan for col in PROB_METRIC_COLUMNS}
+    prob_row.update({"season": "irrigation", "horizon": "pentad", "model": "m", "code": "POOLED"})
+    prob_metrics = pd.DataFrame([prob_row])
+
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(),
+        prob_metrics=prob_metrics,
+        prob_reliability=pd.DataFrame(),
+    )
+
+    filtered = _apply_season_filter(bundle, "all")
+
+    # With "all", the bundle is returned unchanged — same object.
+    assert filtered is bundle, "_apply_season_filter('all') must return the bundle unchanged"
+
+
 def test_build_client_delegates_to_real_sapphire_clients(monkeypatch) -> None:
     constructed: list[tuple[str, str]] = []
 

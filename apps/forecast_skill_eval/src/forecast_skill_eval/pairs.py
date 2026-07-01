@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import Any
+from datetime import date, datetime, timedelta
+from typing import Any, Final
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,9 @@ from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, deri
 
 ISSUE_DAY_FILTER_HORIZONS: tuple[str, ...] = ("month",)
 
+# Months that belong to the irrigation season (April through September).
+_IRRIGATION_MONTHS: Final = frozenset({4, 5, 6, 7, 8, 9})
+
 PAIR_COLUMNS = (
     "horizon",
     "code",
@@ -35,6 +38,7 @@ PAIR_COLUMNS = (
     "year",
     "model",
     "regime",
+    "season",
     "lead",
     "issue_date",
     "forecast_value",
@@ -44,6 +48,14 @@ PAIR_COLUMNS = (
     "fc_class",
     "obs_class",
     "contingency",
+    "fc_q05",
+    "fc_q10",
+    "fc_q25",
+    "fc_q50",
+    "fc_q75",
+    "fc_q90",
+    "fc_q95",
+    "fc_grid_id",
 )
 
 Reader = Callable[..., ReaderResult | pd.DataFrame]
@@ -58,6 +70,8 @@ class _ForecastInstance:
     lead: int | None
     issue_date: object | None
     forecast_value: float | None
+    quantiles: Mapping[float, float] | None = None
+    grid_id: str = ""
 
 
 def build_pairs(
@@ -323,6 +337,8 @@ def _short_instance(row: dict[str, object]) -> _ForecastInstance:
         lead=None,
         issue_date=_plain_value(row.get("date")),
         forecast_value=_finite_float_or_none(row.get("point_value")),
+        quantiles=row.get("quantiles"),
+        grid_id=str(row.get("fc_grid_id") or ""),
     )
 
 
@@ -340,6 +356,8 @@ def _long_instance(
         lead=_int_or_none(row.get("horizon_value")),
         issue_date=_plain_value(row.get("date")),
         forecast_value=_finite_float_or_none(row.get("point_value")),
+        quantiles=row.get("quantiles"),
+        grid_id=str(row.get("fc_grid_id") or ""),
     )
     if horizon in ISSUE_DAY_FILTER_HORIZONS and operational_issue_days:
         issue_day = _issue_day_or_none(row.get("date"))
@@ -376,6 +394,7 @@ def _pair_row(
     fc_class: ClassLabel,
     obs_class: ClassLabel,
 ) -> dict[str, object]:
+    q: dict[float, float] = instance.quantiles if isinstance(instance.quantiles, dict) else {}
     return {
         "horizon": horizon,
         "code": instance.code,
@@ -384,6 +403,7 @@ def _pair_row(
         "year": instance.year,
         "model": instance.model,
         "regime": regime,
+        "season": _season_label(horizon, instance.period_key, instance.year),
         "lead": instance.lead,
         "issue_date": instance.issue_date,
         "forecast_value": instance.forecast_value,
@@ -393,6 +413,14 @@ def _pair_row(
         "fc_class": fc_class,
         "obs_class": obs_class,
         "contingency": contingency(fc_class, obs_class),
+        "fc_q05": q.get(0.05, np.nan),
+        "fc_q10": q.get(0.10, np.nan),
+        "fc_q25": q.get(0.25, np.nan),
+        "fc_q50": q.get(0.50, np.nan),
+        "fc_q75": q.get(0.75, np.nan),
+        "fc_q90": q.get(0.90, np.nan),
+        "fc_q95": q.get(0.95, np.nan),
+        "fc_grid_id": instance.grid_id,
     }
 
 
@@ -524,3 +552,48 @@ def _bool_or_none(value: object) -> bool | None:
     if value is None or pd.isna(value):
         return None
     return bool(value)
+
+
+def _season_label(horizon: str, period_key: int | None, year: int | None) -> str:
+    """Return 'irrigation' (Apr–Sep) or 'non_irrigation' for the target period.
+
+    Derives the target calendar month from the horizon type and period key.
+    Returns 'non_irrigation' for any horizon/period_key that cannot be resolved.
+    """
+    if period_key is None or year is None:
+        return "non_irrigation"
+    month = _target_month(horizon, int(period_key), int(year))
+    if month is None:
+        return "non_irrigation"
+    return "irrigation" if month in _IRRIGATION_MONTHS else "non_irrigation"
+
+
+def _target_month(horizon: str, period_key: int, year: int) -> int | None:
+    """Map horizon + period_key + year to the calendar month (1–12) of the target.
+
+    Returns None when the mapping cannot be determined.
+    """
+    if horizon == "month":
+        return period_key if 1 <= period_key <= 12 else None
+    if horizon == "quarter":
+        # Q1=Jan–Mar(1), Q2=Apr–Jun(4), Q3=Jul–Sep(7), Q4=Oct–Dec(10)
+        return {1: 1, 2: 4, 3: 7, 4: 10}.get(period_key)
+    if horizon == "season":
+        # The Apr–Sep season is always in the irrigation window.
+        return 4
+    if horizon == "day":
+        # period_key is the day-of-year index (1-based).
+        try:
+            target = date(year, 1, 1) + timedelta(days=period_key - 1)
+            return target.month
+        except (ValueError, OverflowError):
+            return None
+    if horizon == "pentad":
+        # SAPPHIRE uses 6 pentads per calendar month (72 per year).
+        month = (period_key - 1) // 6 + 1
+        return month if 1 <= month <= 12 else None
+    if horizon == "decade":
+        # SAPPHIRE uses 3 decades per calendar month (36 per year).
+        month = (period_key - 1) // 3 + 1
+        return month if 1 <= month <= 12 else None
+    return None

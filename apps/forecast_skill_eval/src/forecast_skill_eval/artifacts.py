@@ -46,6 +46,16 @@ def write_artifacts(
         artifact_dir / "exclusion_ledger",
         parquet_available=parquet_available,
     )
+    if not bundle.prob_metrics.empty:
+        _write_table(
+            bundle.prob_metrics, artifact_dir / "prob_metrics", parquet_available=parquet_available
+        )
+    if not bundle.prob_reliability.empty:
+        _write_table(
+            bundle.prob_reliability,
+            artifact_dir / "prob_reliability",
+            parquet_available=parquet_available,
+        )
     (artifact_dir / "run_config.json").write_text(
         json.dumps(_config_record(config), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -127,6 +137,7 @@ def _summary_markdown(config: ForecastSkillEvalConfig, bundle: ResultsBundle) ->
     lines.extend(_headline_section(bundle.contingency_metrics))
     lines.extend(_station_distribution_section(bundle.contingency_metrics))
     lines.extend(_norm_provenance_section(config, bundle.pairs))
+    lines.extend(_prob_metrics_section(bundle.prob_metrics))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -182,21 +193,22 @@ def _headline_section(metrics: pd.DataFrame) -> list[str]:
         lines.extend(["No pooled metrics available.", ""])
         return lines
 
+    distributions = _station_pod_distributions(metrics)
     lines.extend(
         [
-            "| horizon | model | regime | norm_provenance | lead | n_pairs | "
+            "| horizon | event | model | regime | norm_provenance | lead | n_pairs | "
             "base_rate | POD | FAR | FN_count | HSS | HSS_undefined | PSS | "
             "PSS_undefined | station_pod_min | station_pod_median | "
             "station_pod_max | flags |",
-            "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | "
+            "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | "
             "---: | --- | ---: | --- | ---: | ---: | ---: | --- |",
         ]
     )
     for row in pooled.to_dict("records"):
-        distribution = _station_pod_distribution(metrics, row)
+        distribution = distributions.get(_distribution_key(row), {})
         lines.append(
             "| "
-            f"{row['horizon']} | {row['model']} | {row['regime']} | "
+            f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
             f"{row['norm_provenance']} | "
             f"{_format_lead(row.get('lead'))} | {_format_count(row.get('n_pairs'))} | "
             f"{_format_metric(row.get('base_rate'))} | "
@@ -222,18 +234,19 @@ def _station_distribution_section(metrics: pd.DataFrame) -> list[str]:
         lines.extend(["No station POD distribution available.", ""])
         return lines
 
+    distributions = _station_pod_distributions(metrics)
     lines.extend(
         [
-            "| horizon | model | regime | norm_provenance | lead | min_pod | "
+            "| horizon | event | model | regime | norm_provenance | lead | min_pod | "
             "median_pod | max_pod |",
-            "| --- | --- | --- | --- | --- | ---: | ---: | ---: |",
+            "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
         ]
     )
     for row in pooled.to_dict("records"):
-        distribution = _station_pod_distribution(metrics, row)
+        distribution = distributions.get(_distribution_key(row), {})
         lines.append(
             "| "
-            f"{row['horizon']} | {row['model']} | {row['regime']} | "
+            f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
             f"{row['norm_provenance']} | "
             f"{_format_lead(row.get('lead'))} | "
             f"{_format_metric(distribution.get('min'))} | "
@@ -289,10 +302,88 @@ def _headline_pooled_rows(metrics: pd.DataFrame) -> pd.DataFrame:
     pooled = metrics[metrics["code"].eq(POOLED_CODE)].copy()
     if pooled.empty:
         return pooled
-    return pooled.sort_values(
-        ["horizon", "model", "regime", "norm_provenance"],
-        kind="stable",
-    ).reset_index(drop=True)
+    # ``event`` is optional — metrics built before Phase-2C lack this column.
+    # When present, sort by it so each event's pooled row is retained and
+    # ordered deterministically; when absent, behaviour is unchanged.
+    sort_keys = ["horizon", "model", "regime", "norm_provenance"]
+    if "event" in pooled.columns:
+        sort_keys.append("event")
+    return pooled.sort_values(sort_keys, kind="stable").reset_index(drop=True)
+
+
+def _station_pod_distributions(
+    metrics: pd.DataFrame,
+) -> dict[tuple, dict[str, Any]]:
+    """Precompute per-station POD distributions for all group keys in one pass.
+
+    Returns a mapping from ``(horizon, model, regime, norm_provenance,
+    lead_key, event_key)`` to ``{"min", "median", "max"}``.  *lead_key* is
+    ``None`` for NaN/missing leads (short-term rows) and the raw lead value
+    otherwise.  *event_key* defaults to ``"below_norm"`` when the frame has
+    no ``event`` column, matching ``_event_value`` behaviour.
+
+    This replaces the O(n²) pattern of calling ``_station_pod_distribution``
+    once per pooled row inside the section builders with a single vectorised
+    groupby pass — O(n) in the number of rows.
+    """
+    required = {"horizon", "model", "regime", "code", "norm_provenance", "lead", "pod"}
+    if metrics.empty or not required.issubset(metrics.columns):
+        return {}
+
+    station_rows = metrics[metrics["code"].ne(POOLED_CODE)].copy()
+    if station_rows.empty:
+        return {}
+
+    station_rows["_pod_num"] = pd.to_numeric(station_rows["pod"], errors="coerce")
+    station_rows = station_rows[station_rows["_pod_num"].notna()]
+    if station_rows.empty:
+        return {}
+
+    # Replace NaN leads with a string sentinel so groupby does not drop them.
+    _NAN_LEAD = "__nan__"
+    station_rows["_lead_grp"] = station_rows["lead"].apply(
+        lambda v: _NAN_LEAD if _is_missing(v) else v
+    )
+    if "event" in station_rows.columns:
+        station_rows["_event_grp"] = station_rows["event"].apply(
+            lambda v: "below_norm" if _is_missing(v) else str(v)
+        )
+    else:
+        station_rows["_event_grp"] = "below_norm"
+
+    grp_cols = ["horizon", "model", "regime", "norm_provenance", "_lead_grp", "_event_grp"]
+    agg = station_rows.groupby(grp_cols, sort=False)["_pod_num"].agg(["min", "median", "max"])
+
+    result: dict[tuple, dict[str, Any]] = {}
+    for grp_key, stats_row in agg.iterrows():
+        h, model, regime, norm_prov, lead_grp, event_key = grp_key
+        lead_key = None if lead_grp == _NAN_LEAD else lead_grp
+        dict_key = (h, model, regime, norm_prov, lead_key, event_key)
+        result[dict_key] = {
+            "min": stats_row["min"],
+            "median": stats_row["median"],
+            "max": stats_row["max"],
+        }
+
+    return result
+
+
+def _distribution_key(row: dict[str, object]) -> tuple:
+    """Build the lookup key matching ``_station_pod_distributions``'s dict.
+
+    Lead is normalised to ``None`` for missing/NaN values (matching the
+    ``_matching_lead`` semantics).  Event defaults to ``"below_norm"`` via
+    ``_event_value`` when the column is absent.
+    """
+    lead = row.get("lead")
+    return (
+        row["horizon"],
+        row["model"],
+        row["regime"],
+        row["norm_provenance"],
+        None if _is_missing(lead) else lead,
+        _event_value(row),
+    )
 
 
 def _station_pod_distribution(
@@ -303,18 +394,37 @@ def _station_pod_distribution(
     if metrics.empty or not required.issubset(metrics.columns):
         return {}
 
-    station_rows = metrics[
+    predicate = (
         metrics["horizon"].eq(pooled_row["horizon"])
         & metrics["model"].eq(pooled_row["model"])
         & metrics["regime"].eq(pooled_row["regime"])
         & metrics["code"].ne(POOLED_CODE)
         & metrics["norm_provenance"].eq(pooled_row["norm_provenance"])
         & _matching_lead(metrics["lead"], pooled_row.get("lead"))
-    ]
+    )
+    # When the metrics frame carries an ``event`` column, a pooled row's station
+    # distribution must only pool station rows for the SAME event.  Without this
+    # guard, Phase-2C's five events would be merged into one distribution.
+    if "event" in metrics.columns:
+        predicate &= metrics["event"].eq(_event_value(pooled_row))
+    station_rows = metrics[predicate]
     pods = pd.to_numeric(station_rows["pod"], errors="coerce").dropna()
     if pods.empty:
         return {}
     return {"min": pods.min(), "median": pods.median(), "max": pods.max()}
+
+
+def _event_value(row: dict[str, object]) -> str:
+    """Return the row's event label, defaulting to ``below_norm`` when absent.
+
+    Metrics frames produced before Phase-2C have no ``event`` column; those rows
+    represent the original below-norm decision, so they are treated as a single
+    implicit ``below_norm`` group.
+    """
+    value = row.get("event")
+    if _is_missing(value):
+        return "below_norm"
+    return str(value)
 
 
 def _matching_lead(values: pd.Series, lead: object) -> pd.Series:
@@ -372,6 +482,52 @@ def _format_text(value: object) -> str:
         return "unknown"
     text = str(value)
     return text if text else "unknown"
+
+
+def _prob_metrics_section(prob_metrics: pd.DataFrame) -> list[str]:
+    """Summarise probabilistic metric coverage when SAPPHIRE_SKILL_PROB is on.
+
+    When the frame is empty (flag off or no scorable bands) a single status
+    line is emitted so the section always appears in the document.
+
+    Args:
+        prob_metrics: ``prob_metrics`` frame from the ``ResultsBundle``.
+
+    Returns:
+        Markdown lines for the ``## Probabilistic Metrics`` section.
+    """
+    lines = ["## Probabilistic Metrics", ""]
+    if prob_metrics.empty:
+        lines.extend(
+            [
+                "Probabilistic metrics not computed "
+                "(SAPPHIRE_SKILL_PROB not enabled or no scorable bands).",
+                "",
+            ]
+        )
+        return lines
+
+    if "event" in prob_metrics.columns:
+        n_dist = int((prob_metrics["event"] == "distribution").sum())
+        n_brier = int((prob_metrics["event"] == "below_norm").sum())
+    else:
+        n_dist = len(prob_metrics)
+        n_brier = 0
+
+    grid_ids: list[str] = []
+    if "fc_grid_id" in prob_metrics.columns:
+        grid_ids = sorted(str(v) for v in prob_metrics["fc_grid_id"].dropna().unique() if str(v))
+
+    lines.append(f"Distribution score rows: {n_dist}")
+    lines.append(f"Below-norm Brier rows: {n_brier}")
+    if grid_ids:
+        lines.append(f"Forecast grids scored: {', '.join(grid_ids)}")
+    lines.append(
+        "Artifacts: `prob_metrics.csv` / `prob_metrics.parquet`, "
+        "`prob_reliability.csv` / `prob_reliability.parquet`."
+    )
+    lines.append("")
+    return lines
 
 
 def _is_missing(value: object) -> bool:
