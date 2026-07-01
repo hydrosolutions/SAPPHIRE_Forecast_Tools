@@ -182,6 +182,7 @@ def _headline_section(metrics: pd.DataFrame) -> list[str]:
         lines.extend(["No pooled metrics available.", ""])
         return lines
 
+    distributions = _station_pod_distributions(metrics)
     lines.extend(
         [
             "| horizon | event | model | regime | norm_provenance | lead | n_pairs | "
@@ -193,7 +194,7 @@ def _headline_section(metrics: pd.DataFrame) -> list[str]:
         ]
     )
     for row in pooled.to_dict("records"):
-        distribution = _station_pod_distribution(metrics, row)
+        distribution = distributions.get(_distribution_key(row), {})
         lines.append(
             "| "
             f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
@@ -222,6 +223,7 @@ def _station_distribution_section(metrics: pd.DataFrame) -> list[str]:
         lines.extend(["No station POD distribution available.", ""])
         return lines
 
+    distributions = _station_pod_distributions(metrics)
     lines.extend(
         [
             "| horizon | event | model | regime | norm_provenance | lead | min_pod | "
@@ -230,7 +232,7 @@ def _station_distribution_section(metrics: pd.DataFrame) -> list[str]:
         ]
     )
     for row in pooled.to_dict("records"):
-        distribution = _station_pod_distribution(metrics, row)
+        distribution = distributions.get(_distribution_key(row), {})
         lines.append(
             "| "
             f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
@@ -296,6 +298,81 @@ def _headline_pooled_rows(metrics: pd.DataFrame) -> pd.DataFrame:
     if "event" in pooled.columns:
         sort_keys.append("event")
     return pooled.sort_values(sort_keys, kind="stable").reset_index(drop=True)
+
+
+def _station_pod_distributions(
+    metrics: pd.DataFrame,
+) -> dict[tuple, dict[str, Any]]:
+    """Precompute per-station POD distributions for all group keys in one pass.
+
+    Returns a mapping from ``(horizon, model, regime, norm_provenance,
+    lead_key, event_key)`` to ``{"min", "median", "max"}``.  *lead_key* is
+    ``None`` for NaN/missing leads (short-term rows) and the raw lead value
+    otherwise.  *event_key* defaults to ``"below_norm"`` when the frame has
+    no ``event`` column, matching ``_event_value`` behaviour.
+
+    This replaces the O(n²) pattern of calling ``_station_pod_distribution``
+    once per pooled row inside the section builders with a single vectorised
+    groupby pass — O(n) in the number of rows.
+    """
+    required = {"horizon", "model", "regime", "code", "norm_provenance", "lead", "pod"}
+    if metrics.empty or not required.issubset(metrics.columns):
+        return {}
+
+    station_rows = metrics[metrics["code"].ne(POOLED_CODE)].copy()
+    if station_rows.empty:
+        return {}
+
+    station_rows["_pod_num"] = pd.to_numeric(station_rows["pod"], errors="coerce")
+    station_rows = station_rows[station_rows["_pod_num"].notna()]
+    if station_rows.empty:
+        return {}
+
+    # Replace NaN leads with a string sentinel so groupby does not drop them.
+    _NAN_LEAD = "__nan__"
+    station_rows["_lead_grp"] = station_rows["lead"].apply(
+        lambda v: _NAN_LEAD if _is_missing(v) else v
+    )
+    if "event" in station_rows.columns:
+        station_rows["_event_grp"] = station_rows["event"].apply(
+            lambda v: "below_norm" if _is_missing(v) else str(v)
+        )
+    else:
+        station_rows["_event_grp"] = "below_norm"
+
+    grp_cols = ["horizon", "model", "regime", "norm_provenance", "_lead_grp", "_event_grp"]
+    agg = station_rows.groupby(grp_cols, sort=False)["_pod_num"].agg(["min", "median", "max"])
+
+    result: dict[tuple, dict[str, Any]] = {}
+    for grp_key, stats_row in agg.iterrows():
+        h, model, regime, norm_prov, lead_grp, event_key = grp_key
+        lead_key = None if lead_grp == _NAN_LEAD else lead_grp
+        dict_key = (h, model, regime, norm_prov, lead_key, event_key)
+        result[dict_key] = {
+            "min": stats_row["min"],
+            "median": stats_row["median"],
+            "max": stats_row["max"],
+        }
+
+    return result
+
+
+def _distribution_key(row: dict[str, object]) -> tuple:
+    """Build the lookup key matching ``_station_pod_distributions``'s dict.
+
+    Lead is normalised to ``None`` for missing/NaN values (matching the
+    ``_matching_lead`` semantics).  Event defaults to ``"below_norm"`` via
+    ``_event_value`` when the column is absent.
+    """
+    lead = row.get("lead")
+    return (
+        row["horizon"],
+        row["model"],
+        row["regime"],
+        row["norm_provenance"],
+        None if _is_missing(lead) else lead,
+        _event_value(row),
+    )
 
 
 def _station_pod_distribution(
