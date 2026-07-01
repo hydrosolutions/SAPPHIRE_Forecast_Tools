@@ -12,7 +12,20 @@ from forecast_skill_eval.baselines import (
     build_persistence_baseline,
 )
 from forecast_skill_eval.config import ForecastSkillEvalConfig
-from forecast_skill_eval.contingency import OUTPUT_COLUMNS, count_contingencies
+from forecast_skill_eval.contingency import OUTPUT_COLUMNS, POOLED_CODE, count_contingencies
+from forecast_skill_eval.continuous_metrics import (
+    CONTINUOUS_METRIC_COLUMNS,
+    MIN_PAIRS_FOR_VARIANCE_METRICS,
+    SEASONAL_VOLUME_COLUMNS,
+    SEASONAL_VOLUME_SUMMARY_COLUMNS,
+    compute_continuous_metrics,
+    compute_seasonal_volume,
+)
+from forecast_skill_eval.economic_value import (
+    ECONOMIC_VALUE_COLUMNS,
+    ECONOMIC_VALUE_SUMMARY_COLUMNS,
+    compute_economic_value,
+)
 from forecast_skill_eval.events import (
     ALL_EVENTS,
     compute_percentile_thresholds,
@@ -60,6 +73,23 @@ class ResultsBundle:
     )
     prob_reliability: pd.DataFrame = field(
         default_factory=lambda: pd.DataFrame(columns=PROB_RELIABILITY_COLUMNS)
+    )
+    # NEW -- Phase-4 value metrics, defaulted so existing constructors keep
+    # working (gated by SAPPHIRE_SKILL_VALUE, mirroring SAPPHIRE_SKILL_PROB):
+    continuous_metrics: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=CONTINUOUS_METRIC_COLUMNS)
+    )
+    seasonal_volume: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=SEASONAL_VOLUME_COLUMNS)
+    )
+    seasonal_volume_summary: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=SEASONAL_VOLUME_SUMMARY_COLUMNS)
+    )
+    economic_value: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=ECONOMIC_VALUE_COLUMNS)
+    )
+    economic_value_summary: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=ECONOMIC_VALUE_SUMMARY_COLUMNS)
     )
 
 
@@ -154,6 +184,21 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         prob_metrics = pd.DataFrame(columns=PROB_METRIC_COLUMNS)
         prob_reliability = pd.DataFrame(columns=PROB_RELIABILITY_COLUMNS)
 
+    if os.environ.get("SAPPHIRE_SKILL_VALUE", "").lower() in {"1", "true"}:
+        continuous_metrics = compute_continuous_metrics(all_pairs)
+        seasonal_volume, seasonal_volume_summary = compute_seasonal_volume(
+            all_pairs, ledger=merged_ledger
+        )
+        economic_value, economic_value_summary = compute_economic_value(contingency)
+        for code in _starved_value_groups(continuous_metrics):
+            merged_ledger.add(stage="value", reason="min_pairs_gate", code=code)
+    else:
+        continuous_metrics = pd.DataFrame(columns=CONTINUOUS_METRIC_COLUMNS)
+        seasonal_volume = pd.DataFrame(columns=SEASONAL_VOLUME_COLUMNS)
+        seasonal_volume_summary = pd.DataFrame(columns=SEASONAL_VOLUME_SUMMARY_COLUMNS)
+        economic_value = pd.DataFrame(columns=ECONOMIC_VALUE_COLUMNS)
+        economic_value_summary = pd.DataFrame(columns=ECONOMIC_VALUE_SUMMARY_COLUMNS)
+
     return ResultsBundle(
         pairs=all_pairs,
         contingency_metrics=contingency,
@@ -162,6 +207,11 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         horizon_summary=tuple(coverage),
         prob_metrics=prob_metrics,
         prob_reliability=prob_reliability,
+        continuous_metrics=continuous_metrics,
+        seasonal_volume=seasonal_volume,
+        seasonal_volume_summary=seasonal_volume_summary,
+        economic_value=economic_value,
+        economic_value_summary=economic_value_summary,
     )
 
 
@@ -224,6 +274,30 @@ def _concat_baselines(frames: list[pd.DataFrame]) -> pd.DataFrame:
     if non_empty:
         return pd.concat(non_empty, ignore_index=True)
     return frames[0].copy()
+
+
+def _starved_value_groups(continuous_metrics: pd.DataFrame) -> list[str]:
+    """Return unique per-station codes whose continuous groups are variance-starved.
+
+    A group is variance-starved when its pair count is below
+    ``MIN_PAIRS_FOR_VARIANCE_METRICS`` (so ``kge*``/``nse`` are suppressed to
+    ``NaN``).  One ledger entry per unique station ``code`` is logged; the POOLED
+    aggregate row is excluded to keep the ledger concise.
+
+    Args:
+        continuous_metrics: Reduced continuous-metrics frame.
+
+    Returns:
+        Sorted list of station codes with at least one starved group.
+    """
+    if continuous_metrics.empty or "n_pairs" not in continuous_metrics.columns:
+        return []
+    n_pairs = pd.to_numeric(continuous_metrics["n_pairs"], errors="coerce")
+    starved = continuous_metrics[n_pairs < MIN_PAIRS_FOR_VARIANCE_METRICS]
+    if starved.empty:
+        return []
+    codes = starved.loc[starved["code"].ne(POOLED_CODE), "code"].dropna().unique()
+    return sorted(str(code) for code in codes)
 
 
 def _bandless_groups(pairs: pd.DataFrame) -> list[tuple[str, str]]:

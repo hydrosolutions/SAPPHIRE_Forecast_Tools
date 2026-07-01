@@ -236,6 +236,76 @@ def test_apply_season_filter_all_passes_prob_frames_unchanged() -> None:
     assert filtered is bundle, "_apply_season_filter('all') must return the bundle unchanged"
 
 
+def test_apply_season_filter_threads_value_frames_non_empty() -> None:
+    """_apply_season_filter must thread all five Phase-4 value frames through the
+    reconstruction. Season-keyed frames are sliced; season-less frames pass through
+    untouched — and every frame must survive non-empty (guards a dropped field)."""
+    import math
+
+    from forecast_skill_eval.cli import _apply_season_filter
+    from forecast_skill_eval.continuous_metrics import (
+        CONTINUOUS_METRIC_COLUMNS,
+        SEASONAL_VOLUME_COLUMNS,
+        SEASONAL_VOLUME_SUMMARY_COLUMNS,
+    )
+    from forecast_skill_eval.economic_value import (
+        ECONOMIC_VALUE_COLUMNS,
+        ECONOMIC_VALUE_SUMMARY_COLUMNS,
+    )
+    from forecast_skill_eval.ledger import ExclusionLedger
+    from forecast_skill_eval.orchestrator import ResultsBundle
+
+    def _row(columns: tuple[str, ...], season: str | None) -> dict[str, object]:
+        row: dict[str, object] = {col: math.nan for col in columns}
+        row.update({"horizon": "pentad", "model": "model-a", "code": "POOLED"})
+        if season is not None:
+            row["season"] = season
+        return row
+
+    # Season-keyed frames: one irrigation + one non_irrigation row each.
+    continuous = pd.DataFrame(
+        [
+            _row(CONTINUOUS_METRIC_COLUMNS, "irrigation"),
+            _row(CONTINUOUS_METRIC_COLUMNS, "non_irrigation"),
+        ]
+    )
+    economic = pd.DataFrame(
+        [_row(ECONOMIC_VALUE_COLUMNS, "irrigation"), _row(ECONOMIC_VALUE_COLUMNS, "non_irrigation")]
+    )
+    economic_summary = pd.DataFrame(
+        [
+            _row(ECONOMIC_VALUE_SUMMARY_COLUMNS, "irrigation"),
+            _row(ECONOMIC_VALUE_SUMMARY_COLUMNS, "non_irrigation"),
+        ]
+    )
+    # Season-less frames: must pass through untouched (no "season" column).
+    seasonal = pd.DataFrame([_row(SEASONAL_VOLUME_COLUMNS, None)])
+    seasonal_summary = pd.DataFrame([_row(SEASONAL_VOLUME_SUMMARY_COLUMNS, None)])
+
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(),
+        continuous_metrics=continuous,
+        seasonal_volume=seasonal,
+        seasonal_volume_summary=seasonal_summary,
+        economic_value=economic,
+        economic_value_summary=economic_summary,
+    )
+
+    filtered = _apply_season_filter(bundle, "irrigation")
+
+    # Season-keyed frames sliced to irrigation, still non-empty.
+    assert list(filtered.continuous_metrics["season"]) == ["irrigation"]
+    assert list(filtered.economic_value["season"]) == ["irrigation"]
+    assert list(filtered.economic_value_summary["season"]) == ["irrigation"]
+    # Season-less frames threaded through non-empty (not reset to the empty default).
+    assert not filtered.seasonal_volume.empty
+    assert not filtered.seasonal_volume_summary.empty
+
+
 def test_build_client_delegates_to_real_sapphire_clients(monkeypatch) -> None:
     constructed: list[tuple[str, str]] = []
 
