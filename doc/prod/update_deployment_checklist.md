@@ -574,13 +574,37 @@ The stack is defined in `sapphire/docker-compose.yml` and includes:
   ```
   This is the retrofit counterpart to `first_deploy_checklist.md` §1.3.
 
-- [ ] **Start the microservices stack**
+- [ ] **Start the microservices stack** — use the wrapper, which loads the
+  deployment config first.
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools
-  docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
+  bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
   ```
-  Alternatively, the wrapper `bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}` performs
-  the same bring-up.
+
+  > **⚠️ Do NOT bring the stack up with a bare `docker compose --env-file … up -d`.**
+  > Several compose variables — `ieasyhydroforecast_data_ref_dir`,
+  > `ieasyhydroforecast_container_data_ref_dir`, `ieasyhydroforecast_url_pentad`,
+  > … — are **derived and exported by `read_configuration`** (in
+  > `bin/utils/common_functions.sh`), **not** literal keys in the `.env`. A bare
+  > compose command cannot set them, so they resolve to **blank strings**. That
+  > turns the dashboard's volume mount
+  > `${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin`
+  > into a literal **`/bin:/bin`**, mounting the **host's** bash over the
+  > container's libc and crash-looping the dashboard with
+  > `bash: libc.so.6: version 'GLIBC_2.38' not found (required by bash)` — a
+  > failure that looks identical to a broken image but is purely this config trap.
+  >
+  > If you must call `docker compose` directly (e.g. to (re)start a single
+  > service), **load the config into your shell first**:
+  > ```bash
+  > source bin/utils/common_functions.sh
+  > read_configuration ${ENV_FILE_PATH}
+  > docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d --force-recreate dashboard
+  > ```
+  > **Watch the output**: if you see
+  > `WARN The "ieasyhydroforecast_data_ref_dir" variable is not set. Defaulting to a blank string.`,
+  > the config was NOT loaded — stop and fix that first, or the dashboard mount
+  > will be `/bin:/bin`.
 
 - [ ] **Wait for the api-gateway to be live and ready**
   ```bash
@@ -789,10 +813,10 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 > cron command below will succeed.** Every cron command reads/writes through
 > the api-gateway at `http://localhost:8000`; without the stack up, each
 > command fails immediately with `Connection refused`. If you have not
-> already brought the stack up in §2.4.5, do so now:
+> already brought the stack up in §2.4.5, do so now (use the wrapper — it runs
+> `read_configuration` first; a bare `docker compose up` leaves the dashboard's
+> derived mount vars blank and crash-loops it on `/bin:/bin` — see §2.4.5):
 > ```bash
-> docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
-> # or, equivalently:
 > bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
 > ```
 > Verify before proceeding:
@@ -1239,9 +1263,11 @@ The four Postgres DBs were backed up in §1.5 via `bin/backup_sapphire_db.sh` to
 Use the revisions you recorded in `$BACKUP_DIR/alembic_pre_update.txt` (§2.4.6).
 Bring the microservices stack up briefly to run the downgrade:
 
-- [ ] Start the microservices stack (needed so `alembic` can connect to its DB):
+- [ ] Start the microservices stack (needed so `alembic` can connect to its DB).
+  Use the config-loading wrapper (a bare `docker compose up` blank-mounts the
+  dashboard — see §2.4.5):
   ```bash
-  docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
+  bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
   curl -sf http://localhost:8000/health/ready && echo "READY"
   ```
 
@@ -1282,7 +1308,8 @@ need to be (re)started.
   ```bash
   curl -sf http://localhost:8000/health/ready && echo "READY"
   ```
-  If not running, start it: `docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d`.
+  If not running, start it with the config-loading wrapper (not a bare
+  `docker compose up` — see §2.4.5): `bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}`.
 
 - [ ] Start Luigi daemon:
   ```bash
