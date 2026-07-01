@@ -587,6 +587,76 @@ an empirical percentile, so it is unaffected.)
 
 ---
 
+## Return-period detection (flood / hydropower)
+
+Return periods restate the high-flow question in the language flood and
+hydropower operators use — not "above the 90th percentile" but "a 5-, 10-, 30-,
+or 100-year event". Return levels are estimated **per station and per
+period-of-year** by fitting a GEV (`scipy.stats.genextreme`) to each period's
+annual realisations and taking the `1 − 1/T` quantile; an event is a period
+whose runoff exceeds its own `T`-year return level. By construction the low
+return periods approximate the percentile events (rp10 ≈ 90th percentile —
+cross-check: pentad rp10 POD 0.81 / HSS 0.80 vs `high_p90` 0.76 / 0.75); the
+value of the EVT framing is the explicit rarity scale and the (extrapolated)
+rarer levels.
+
+Rows are **EM, operational, POOLED, basin = all, season = all, canonical
+provenance** (long-term = smallest lead), phase-2c re-run. `pos_events` =
+observed return-level exceedances (TP + FN) — the effective sample per cell.
+
+| Horizon | RP | base rate | POD [95 % CI] | FAR | HSS | pos_events |
+|---------|----|:---------:|:-------------:|:---:|:---:|:----------:|
+| pentad | rp5 | 0.12 | 0.87 [0.86, 0.89] | 0.16 | **0.83** | 1 389 |
+| pentad | rp10 | 0.07 | 0.81 [0.78, 0.83] | 0.19 | 0.80 | 726 |
+| pentad | rp30 | 0.03 | 0.69 [0.64, 0.75] | 0.18 | 0.74 | 281 |
+| pentad | rp100 | 0.003 | 0.51 [0.36, 0.67] | 0.66 | 0.41 | 37 |
+| decade | rp5 | 0.11 | 0.82 [0.79, 0.85] | 0.20 | 0.79 | 545 |
+| decade | rp10 | 0.06 | 0.72 [0.66, 0.76] | 0.19 | 0.75 | 292 |
+| decade | rp30 | 0.02 | 0.57 [0.48, 0.66] | 0.29 | 0.63 | 105 |
+| decade | rp100 | 0.002 | 0.11 [0.02, 0.44] | 0.95 | 0.07 | 9 |
+| month | rp5 | 0.19 | 0.86 [0.84, 0.88] | 0.08 | **0.87** | 1 194 |
+| month | rp10 | 0.09 | 0.84 [0.81, 0.86] | 0.12 | 0.84 | 594 |
+| month | rp30 | 0.03 | 0.22 [0.17, 0.28] | 0.29 | 0.33 | 199 |
+| month | rp100 | 0.005 | 0.12 [0.05, 0.27] | 0.71 | 0.16 | 34 |
+| quarter | rp5 | 0.21 | 0.49 [0.44, 0.54] | 0.27 | 0.50 | 386 |
+| quarter | rp10 | 0.11 | 0.27 [0.21, 0.33] | 0.34 | 0.34 | 206 |
+| quarter | rp30 | 0.05 | 0.10 [0.06, 0.18] | 0.59 | 0.15 | 88 |
+| quarter | rp100 | 0.005 | 0.10 [0.02, 0.40] | 0.89 | 0.10 | 10 |
+| season | rp5 | 0.16 | 0.30 [0.24, 0.36] | 0.44 | 0.31 | 213 |
+| season | rp10 | 0.09 | 0.17 [0.11, 0.25] | 0.50 | 0.22 | 113 |
+| season | rp30 | 0.05 | 0.05 [0.02, 0.14] | 0.77 | 0.07 | 59 |
+| season | rp100 | 0.01 | 0.07 [0.01, 0.30] | 0.83 | 0.09 | 15 |
+
+(n_pairs per horizon: pentad 11 238, decade 5 032, month 6 315, quarter 1 866,
+season 1 323.)
+
+### Key findings
+
+- **Frequent return-period floods (5- and 10-year) are detected well at the
+  operationally relevant short horizons.** Pentad and decade catch 72–87 % of
+  rp5/rp10 exceedances (HSS 0.75–0.83); **month L0 is strongest** (rp5 HSS 0.87,
+  rp10 0.84). This is directly useful for hydropower / reservoir-inflow
+  anticipation at 5-day to 1-month lead.
+- **Skill falls off steeply with rarity.** By rp30 the effective sample shrinks
+  (105–281 events at pentad/decade) and HSS drops; at rp100 there are only
+  9–37 events per horizon — POD swings wildly and FAR is high. **Treat rp100
+  (and rp30 beyond pentad) as illustrative extrapolation, not verified skill.**
+- **Longer aggregation horizons detect rare high-flow poorly.** Quarter and
+  season HSS collapse from rp5 (0.50 / 0.31) to rp30 (0.15 / 0.07): a seasonal
+  forecast cannot anticipate a specific rare high-flow period.
+- **Consistency check passed:** rp10 ≈ `high_p90` at every horizon, confirming
+  the per-period return levels are internally consistent with the empirical
+  percentile events.
+
+**Feasibility caveat (archive-limited):** return levels are fitted on ~26
+annual values per period, so rp5/rp10 are interpolation (reliable), rp30 is a
+stretch, and **rp100 is beyond reliable estimation** — it extrapolates far past
+the data and its handful of events carry very wide CIs. The tool computes all
+four for completeness; only rp5/rp10 (and rp30 at pentad/decade) carry enough
+events for a credible skill statement.
+
+---
+
 ## Caveats and limitations
 
 1. **DAY horizon is thin and exploratory.** n_pairs 215–809 across models;
