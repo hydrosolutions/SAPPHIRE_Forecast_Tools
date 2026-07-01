@@ -377,9 +377,9 @@ These documents contain context and specifications referenced by issues above.
 
 *Last updated: 2026-06-19 — Added ML-016 (standalone run_locally.sh machine_learning crashes on empty SAPPHIRE_PREDICTION_MODE) + ML-017 (single missing ERA5 day → NaN cascade across all short-term ML; prepg interior-gap + ML covariate guard; found in local review tjhm+kghm). Earlier: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*
 
-### Issue iEHF-PROB: forecast_skill_eval Phase-3 — probabilistic forecast verification
-**Status**: Draft
+### Issue iEHF-SKILL-EVAL: forecast_skill_eval Phase-2 + Phase-3 — **Complete (PR #397, merged 2026-07-01)**
+**Status**: Complete
 **Priority**: Medium
-**File**: `issues/mid_prio_gi_draft_iEHF_forecast_skill_eval_phase3_probabilistic.md`
+**Files**: `issues/archive/mid_prio_gi_draft_iEHF_forecast_skill_eval_phase2.md`, `issues/archive/mid_prio_gi_draft_iEHF_forecast_skill_eval_phase3_probabilistic.md`
 
-Score the predictive distribution (CRPS/CRPSS, interval coverage/reliability, sharpness, Brier) by ingesting q05..q95; additive, feature-flagged (`SAPPHIRE_SKILL_PROB`), P0 verifies quantile availability first.
+Phase-2: seasonal disaggregation, persistence baseline, low/high percentile events, return-period (GEV) detection, per-station + interactive-Altair dashboard. Phase-3: probabilistic verification (CRPS/CRPSS, interval coverage/reliability, sharpness, Brier) by ingesting q05..q95, feature-flagged `SAPPHIRE_SKILL_PROB` (default-off). 506 tests. Follow-ups in the same module (not yet done): vectorize the row-wise event reclassify (perf); Phase-4 metrics (continuous/volume, Relative Economic Value/cost-loss, forecast-revision consistency, warning lead time).
