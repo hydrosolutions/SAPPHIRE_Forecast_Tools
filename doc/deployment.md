@@ -872,6 +872,18 @@ Add the following to the crontab file:
 # the cron user. See doc/operations/backup_restore.md for setup and restore drills.
 0 1 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/backup_sapphire_db.sh --env-file /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_backup_$(date +\%Y\%m\%d).log 2>&1
 #
+# Weekly Docker cleanup at 00:30 UTC Sundays: prune dangling images and build
+# cache so /var/lib/docker does not grow unbounded across deploys (each deploy
+# pulls fresh :local images and rebuilds microservices, orphaning old layers).
+# Volume-safe: never removes named volumes (the four Postgres DBs) or tagged
+# images. Do NOT add `-a` to image prune or `--volumes` to any prune here.
+30 0 * * 0 docker image prune -f && docker builder prune -f >> /home/ubuntu/logs/sapphire_docker_prune_$(date +\%Y\%m\%d).log 2>&1
+#
+# Weekly prune at 01:30 UTC Sundays of stale pre-update DB backup dirs (>30
+# days). The daily backup's own retention only prunes the top-level dumps it
+# writes, not the pre_update_*/ subdirs created before each deployment update.
+30 1 * * 0 find /var/backups/sapphire -maxdepth 1 -type d -name 'pre_update_*' -mtime +30 -exec rm -rf {} + >> /home/ubuntu/logs/sapphire_backup_prune_$(date +\%Y\%m\%d).log 2>&1
+#
 # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
 0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_gateway_$(date +\%Y\%m\%d).log 2>&1
 #

@@ -62,6 +62,25 @@ docker ps
 
 The last command must succeed without `sudo` for the deploy user, and without `permission denied` errors.
 
+- [ ] Configure Docker log rotation so container logs cannot grow unbounded.
+  Without this, the per-container `*-json.log` files under
+  `/var/lib/docker/containers/` grow without limit and will eventually fill the
+  disk. Create `/etc/docker/daemon.json`:
+  ```json
+  {
+    "log-driver": "json-file",
+    "log-opts": { "max-size": "10m", "max-file": "3" }
+  }
+  ```
+  Then restart Docker and confirm the driver is active:
+  ```bash
+  sudo systemctl restart docker
+  docker info --format '{{.LoggingDriver}}'   # expect: json-file
+  ```
+  The limits apply only to containers created *after* the restart, so configure
+  this before the stack is first brought up (section 7 onward). Retrofitting an
+  existing deployment is covered in `doc/prod/update_deployment_checklist.md`.
+
 ### 1.4 Clone the repository
 
 - [ ] Clone the repository into a predictable directory (commonly `/data/SAPPHIRE_Forecast_Tools`):
