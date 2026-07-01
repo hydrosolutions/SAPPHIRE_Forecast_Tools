@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -20,6 +21,16 @@ from forecast_skill_eval.events import (
 from forecast_skill_eval.ledger import ExclusionLedger
 from forecast_skill_eval.metrics import METRIC_COLUMNS, add_metrics
 from forecast_skill_eval.pairs import PAIR_COLUMNS, build_pairs
+from forecast_skill_eval.prob_baselines import (
+    precompute_climatology_crps,
+    precompute_persistence_crps,
+)
+from forecast_skill_eval.prob_metrics import (
+    PROB_METRIC_COLUMNS,
+    PROB_RELIABILITY_COLUMNS,
+    build_prob_reliability,
+    compute_probabilistic_metrics,
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,13 @@ class ResultsBundle:
     baselines: pd.DataFrame
     exclusion_ledger: ExclusionLedger
     horizon_summary: tuple[HorizonCoverage, ...]
+    # NEW -- defaulted so existing constructors keep working (SAPPHIRE_SKILL_PROB):
+    prob_metrics: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=PROB_METRIC_COLUMNS)
+    )
+    prob_reliability: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=PROB_RELIABILITY_COLUMNS)
+    )
 
 
 def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBundle:
@@ -113,12 +131,37 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
             build_persistence_baseline(all_pairs, threshold=float(config.threshold)),
         ]
     )
+
+    if os.environ.get("SAPPHIRE_SKILL_PROB", "").lower() in {"1", "true"}:
+        clim_ref = precompute_climatology_crps(all_pairs)
+        persist_ref = precompute_persistence_crps(all_pairs)
+        prob_metrics = compute_probabilistic_metrics(
+            all_pairs,
+            thresholds,
+            clim_ref,
+            config.events_filter,
+            threshold=float(config.threshold),
+            persist_ref=persist_ref,
+        )
+        prob_reliability = build_prob_reliability(all_pairs)
+        for code, _horizon in _bandless_groups(all_pairs):
+            merged_ledger.add(
+                stage="probabilistic",
+                reason="no_quantile_band",
+                code=code,
+            )
+    else:
+        prob_metrics = pd.DataFrame(columns=PROB_METRIC_COLUMNS)
+        prob_reliability = pd.DataFrame(columns=PROB_RELIABILITY_COLUMNS)
+
     return ResultsBundle(
         pairs=all_pairs,
         contingency_metrics=contingency,
         baselines=baselines,
         exclusion_ledger=merged_ledger,
         horizon_summary=tuple(coverage),
+        prob_metrics=prob_metrics,
+        prob_reliability=prob_reliability,
     )
 
 
@@ -181,3 +224,26 @@ def _concat_baselines(frames: list[pd.DataFrame]) -> pd.DataFrame:
     if non_empty:
         return pd.concat(non_empty, ignore_index=True)
     return frames[0].copy()
+
+
+def _bandless_groups(pairs: pd.DataFrame) -> list[tuple[str, str]]:
+    """Return unique (code, horizon) tuples where no quantile band is available.
+
+    A pair is band-less when ``fc_grid_id`` is absent, empty, or NaN.  One
+    ledger entry per unique (code, horizon) combination is logged — not one
+    per pair — to keep the ledger concise.
+
+    Args:
+        pairs: All-horizons pair DataFrame.
+
+    Returns:
+        List of ``(code, horizon)`` tuples with no quantile band.
+    """
+    if pairs.empty or "fc_grid_id" not in pairs.columns:
+        return []
+    bandless_mask = pairs["fc_grid_id"].eq("") | pairs["fc_grid_id"].isna()
+    bandless = pairs.loc[bandless_mask]
+    if bandless.empty:
+        return []
+    groups = bandless.groupby(["code", "horizon"], sort=True).groups.keys()
+    return list(groups)

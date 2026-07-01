@@ -247,6 +247,8 @@ def _apply_season_filter(bundle: ResultsBundle, season_filter: str) -> ResultsBu
         baselines=_filter(bundle.baselines),
         exclusion_ledger=bundle.exclusion_ledger,
         horizon_summary=bundle.horizon_summary,
+        prob_metrics=_filter(bundle.prob_metrics),
+        prob_reliability=_filter(bundle.prob_reliability),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ from forecast_skill_eval.contingency import count_contingencies
 from forecast_skill_eval.ledger import ExclusionLedger
 from forecast_skill_eval.metrics import add_metrics
 from forecast_skill_eval.orchestrator import HorizonCoverage, ResultsBundle
+from forecast_skill_eval.prob_metrics import PROB_METRIC_COLUMNS, PROB_RELIABILITY_COLUMNS
 
 STATION_CODE = "19999"
 
@@ -575,3 +577,153 @@ def _baselines() -> pd.DataFrame:
             }
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Probabilistic artifact tests
+# ---------------------------------------------------------------------------
+
+
+def _prob_metrics_frame() -> pd.DataFrame:
+    """Minimal non-empty prob_metrics DataFrame with required columns."""
+    row: dict[str, object] = {col: math.nan for col in PROB_METRIC_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "event": "distribution",
+            "fc_grid_id": "short5",
+            "n_pairs": 3,
+            "crps": 1.5,
+            "crpss": 0.2,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _prob_reliability_frame() -> pd.DataFrame:
+    """Minimal non-empty prob_reliability DataFrame with required columns."""
+    row: dict[str, object] = {
+        "horizon": "pentad",
+        "model": "model-a",
+        "regime": "all",
+        "season": "all",
+        "code": "POOLED",
+        "basin": "all",
+        "norm_provenance": "all",
+        "lead": None,
+        "fc_grid_id": "short5",
+        "nominal_level": 0.90,
+        "observed_frequency": 0.88,
+        "n": 3,
+    }
+    return pd.DataFrame([row])
+
+
+def _bundle_with_prob(tmp_path: Path) -> tuple[ForecastSkillEvalConfig, ResultsBundle]:
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("pentad", n_pairs=3),),
+        prob_metrics=_prob_metrics_frame(),
+        prob_reliability=_prob_reliability_frame(),
+    )
+    return config, bundle
+
+
+def _bundle_without_prob(tmp_path: Path) -> tuple[ForecastSkillEvalConfig, ResultsBundle]:
+    """Bundle with empty prob frames (flag-off default)."""
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("pentad", n_pairs=0),),
+        # Default empty frames — flag OFF
+    )
+    return config, bundle
+
+
+def test_prob_artifacts_written_when_frames_non_empty(tmp_path: Path) -> None:
+    """With non-empty prob frames, prob_metrics.csv and prob_reliability.csv are written."""
+    config, bundle = _bundle_with_prob(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="prob-on")
+
+    assert (artifact_dir / "prob_metrics.csv").exists(), "prob_metrics.csv must be written"
+    assert (artifact_dir / "prob_reliability.csv").exists(), "prob_reliability.csv must be written"
+
+    written_metrics = pd.read_csv(artifact_dir / "prob_metrics.csv")
+    assert list(written_metrics.columns) == list(PROB_METRIC_COLUMNS)
+    assert len(written_metrics) == 1
+
+    written_reliability = pd.read_csv(artifact_dir / "prob_reliability.csv")
+    assert list(written_reliability.columns) == list(PROB_RELIABILITY_COLUMNS)
+    assert len(written_reliability) == 1
+
+
+def test_prob_artifacts_not_written_when_frames_empty(tmp_path: Path) -> None:
+    """With empty prob frames (flag OFF), no prob CSV files are created."""
+    config, bundle = _bundle_without_prob(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="prob-off")
+
+    assert not (artifact_dir / "prob_metrics.csv").exists(), (
+        "prob_metrics.csv must NOT be written when frame is empty"
+    )
+    assert not (artifact_dir / "prob_reliability.csv").exists(), (
+        "prob_reliability.csv must NOT be written when frame is empty"
+    )
+
+
+def test_existing_artifacts_unaffected_by_prob_flag(tmp_path: Path) -> None:
+    """Standard artifacts (pairs, contingency, baselines, ledger) are written
+    regardless of whether prob frames are empty or not."""
+    config, bundle = _bundle_without_prob(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="prob-off-std")
+
+    for name in ("pairs", "contingency_metrics", "baselines", "exclusion_ledger"):
+        assert (artifact_dir / f"{name}.csv").exists(), (
+            f"{name}.csv must be written even when prob flag is off"
+        )
+    assert (artifact_dir / "run_config.json").exists()
+    assert (artifact_dir / "summary.md").exists()
+
+
+def test_summary_includes_prob_section_when_frame_non_empty(tmp_path: Path) -> None:
+    """summary.md must include the Probabilistic Metrics section listing row counts
+    and artifact names when prob_metrics is non-empty."""
+    config, bundle = _bundle_with_prob(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="prob-summary")
+    summary = (artifact_dir / "summary.md").read_text()
+
+    assert "## Probabilistic Metrics" in summary
+    assert "Distribution score rows: 1" in summary
+    assert "prob_metrics.csv" in summary
+
+
+def test_summary_prob_section_shows_not_computed_when_empty(tmp_path: Path) -> None:
+    """summary.md must indicate that probabilistic metrics were not computed when
+    the prob frames are empty (flag OFF)."""
+    config, bundle = _bundle_without_prob(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="prob-off-summary")
+    summary = (artifact_dir / "summary.md").read_text()
+
+    assert "## Probabilistic Metrics" in summary
+    assert "not computed" in summary

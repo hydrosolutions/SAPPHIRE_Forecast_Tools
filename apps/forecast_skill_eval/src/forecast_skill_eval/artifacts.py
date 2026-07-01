@@ -46,6 +46,16 @@ def write_artifacts(
         artifact_dir / "exclusion_ledger",
         parquet_available=parquet_available,
     )
+    if not bundle.prob_metrics.empty:
+        _write_table(
+            bundle.prob_metrics, artifact_dir / "prob_metrics", parquet_available=parquet_available
+        )
+    if not bundle.prob_reliability.empty:
+        _write_table(
+            bundle.prob_reliability,
+            artifact_dir / "prob_reliability",
+            parquet_available=parquet_available,
+        )
     (artifact_dir / "run_config.json").write_text(
         json.dumps(_config_record(config), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -127,6 +137,7 @@ def _summary_markdown(config: ForecastSkillEvalConfig, bundle: ResultsBundle) ->
     lines.extend(_headline_section(bundle.contingency_metrics))
     lines.extend(_station_distribution_section(bundle.contingency_metrics))
     lines.extend(_norm_provenance_section(config, bundle.pairs))
+    lines.extend(_prob_metrics_section(bundle.prob_metrics))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -471,6 +482,52 @@ def _format_text(value: object) -> str:
         return "unknown"
     text = str(value)
     return text if text else "unknown"
+
+
+def _prob_metrics_section(prob_metrics: pd.DataFrame) -> list[str]:
+    """Summarise probabilistic metric coverage when SAPPHIRE_SKILL_PROB is on.
+
+    When the frame is empty (flag off or no scorable bands) a single status
+    line is emitted so the section always appears in the document.
+
+    Args:
+        prob_metrics: ``prob_metrics`` frame from the ``ResultsBundle``.
+
+    Returns:
+        Markdown lines for the ``## Probabilistic Metrics`` section.
+    """
+    lines = ["## Probabilistic Metrics", ""]
+    if prob_metrics.empty:
+        lines.extend(
+            [
+                "Probabilistic metrics not computed "
+                "(SAPPHIRE_SKILL_PROB not enabled or no scorable bands).",
+                "",
+            ]
+        )
+        return lines
+
+    if "event" in prob_metrics.columns:
+        n_dist = int((prob_metrics["event"] == "distribution").sum())
+        n_brier = int((prob_metrics["event"] == "below_norm").sum())
+    else:
+        n_dist = len(prob_metrics)
+        n_brier = 0
+
+    grid_ids: list[str] = []
+    if "fc_grid_id" in prob_metrics.columns:
+        grid_ids = sorted(str(v) for v in prob_metrics["fc_grid_id"].dropna().unique() if str(v))
+
+    lines.append(f"Distribution score rows: {n_dist}")
+    lines.append(f"Below-norm Brier rows: {n_brier}")
+    if grid_ids:
+        lines.append(f"Forecast grids scored: {', '.join(grid_ids)}")
+    lines.append(
+        "Artifacts: `prob_metrics.csv` / `prob_metrics.parquet`, "
+        "`prob_reliability.csv` / `prob_reliability.parquet`."
+    )
+    lines.append("")
+    return lines
 
 
 def _is_missing(value: object) -> bool:
