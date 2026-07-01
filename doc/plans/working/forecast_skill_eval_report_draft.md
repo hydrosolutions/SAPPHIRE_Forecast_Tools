@@ -494,6 +494,99 @@ firm allocation triggers.
 
 ---
 
+## Percentile-based extreme-event detection (low- and high-flow)
+
+The irrigation decision above uses the fixed **0.80 × norm** threshold. This
+section generalises the evaluation to **empirical-percentile events** — a
+distinct use case from the limit-plan decision — covering both tails of the
+flow distribution:
+
+- **Low-flow (drought):** observed/forecast runoff **below** the 10th
+  (`low_p10`) and 5th (`low_p5`) percentile — severe and extreme shortage,
+  relevant to drought response beyond the routine limit plan.
+- **High-flow (flood / hydropower / reservoir):** runoff **above** the 90th
+  (`high_p90`) and 95th (`high_p95`) percentile — a separate operational
+  concern (flood warning, reservoir filling, hydropower scheduling).
+
+Percentile thresholds are **empirical, computed per station and per
+period-of-year** from the observed archive (same `min_years ≥ 10` gate as the
+norm), so each station/period carries its own seasonal thresholds. The
+contingency machinery is identical to the below-norm case: positive class =
+event occurred (below the threshold for low-flow, above it for high-flow).
+
+Numbers below are from the phase-2c re-run
+(`apps/forecast_skill_eval/artifacts/rerun_2026-07-01_phase2c_events/`), which
+adds the four percentile events and **reproduces the below-norm numbers above
+identically**. Rows are **EM, operational, POOLED, basin = all, season = all,
+canonical provenance**; long-term horizons use the smallest lead (month /
+season L0, quarter L1).
+
+### Table — EM operational, POOLED, canonical provenance, season = all
+
+| Horizon | Event | base rate | POD | FAR | HSS | POD 95 % CI | n |
+|---------|-------|:---------:|:---:|:---:|:---:|:-----------:|---:|
+| pentad | low_p5 | 0.14 | 0.77 | 0.25 | 0.72 | [0.75, 0.79] | 11 238 |
+| pentad | low_p10 | 0.22 | 0.83 | 0.18 | 0.78 | [0.82, 0.85] | 11 238 |
+| pentad | high_p90 | 0.07 | 0.76 | 0.22 | 0.75 | [0.73, 0.79] | 11 238 |
+| pentad | high_p95 | 0.05 | 0.67 | 0.25 | 0.70 | [0.63, 0.71] | 11 238 |
+| decade | low_p5 | 0.17 | 0.78 | 0.29 | 0.68 | [0.75, 0.81] | 5 032 |
+| decade | low_p10 | 0.26 | 0.86 | 0.20 | 0.76 | [0.84, 0.88] | 5 032 |
+| decade | high_p90 | 0.06 | 0.70 | 0.26 | 0.70 | [0.65, 0.75] | 5 032 |
+| decade | high_p95 | 0.03 | 0.68 | 0.36 | 0.65 | [0.60, 0.74] | 5 032 |
+| month L0 | low_p5 | 0.06 | 0.58 | 0.26 | 0.63 | [0.53, 0.63] | 6 315 |
+| month L0 | low_p10 | 0.10 | 0.64 | 0.21 | 0.68 | [0.60, 0.68] | 6 315 |
+| month L0 | high_p90 | 0.11 | **0.78** | 0.11 | **0.82** | [0.75, 0.81] | 6 315 |
+| month L0 | high_p95 | 0.07 | 0.49 | 0.24 | 0.58 | [0.44, 0.54] | 6 315 |
+| quarter L1 | low_p5 | 0.07 | 0.21 | 0.49 | 0.27 | [0.15, 0.29] | 1 866 |
+| quarter L1 | low_p10 | 0.12 | 0.21 | 0.43 | 0.26 | [0.16, 0.27] | 1 866 |
+| quarter L1 | high_p90 | 0.11 | 0.28 | 0.39 | 0.34 | [0.22, 0.34] | 1 866 |
+| quarter L1 | high_p95 | 0.06 | 0.18 | 0.58 | 0.22 | [0.12, 0.26] | 1 866 |
+| season L0 | low_p5 | 0.10 | 0.07 | 0.53 | 0.10 | [0.04, 0.13] | 1 323 |
+| season L0 | low_p10 | 0.16 | 0.11 | 0.48 | 0.14 | [0.07, 0.16] | 1 323 |
+| season L0 | high_p90 | 0.10 | 0.25 | 0.43 | 0.31 | [0.19, 0.33] | 1 323 |
+| season L0 | high_p95 | 0.07 | 0.14 | 0.54 | 0.19 | [0.08, 0.22] | 1 323 |
+
+**Day horizon:** no percentile events are reported. The `min_years ≥ 10` gate
+cannot form daily percentile thresholds — a daily percentile needs ~10 years of
+observations for each day-of-year period, which the thin day archive
+(~1–2 years) does not provide. (The below-norm day decision uses the norm, not
+an empirical percentile, so it is unaffected.)
+
+### Key findings
+
+- **High-flow detection is genuinely skilful at pentad, decade, and month L0.**
+  EM catches 70–78 % of 90th-percentile high-flow events (HSS 0.70–0.82), with
+  **month L0 the strongest** (POD 0.78, HSS 0.82, FAR 0.11). This is the
+  principal new result: the same models that drive the irrigation decision also
+  provide usable flood / high-flow signal at short-to-medium range.
+- **Extreme tails are harder than moderate tails.** Detection drops from the
+  moderate percentile to the extreme one at every horizon — e.g. pentad
+  high_p90 0.76 → high_p95 0.67; month L0 high_p90 0.78 → high_p95 0.49. Rarer
+  events (lower base rate) are intrinsically harder to catch and carry wider
+  CIs.
+- **Low-flow percentiles track the below-norm story but are more demanding.**
+  The 10th/5th percentiles are stricter thresholds than 0.80 × norm, so POD is
+  lower than the below-norm POD at the same horizon (pentad low_p10 0.83 vs
+  below-norm 0.93; month L0 low_p10 0.64 vs 0.86). Pentad/decade still catch
+  77–86 % of moderate (10th-percentile) low-flow events.
+- **Quarter and season remain weak across all percentile events** (POD
+  0.07–0.28), consistent with the below-norm finding — long-range extreme
+  detection is risk-screening only.
+
+**Caveats specific to percentile events:**
+
+- Percentile events use a slightly smaller station set than below-norm (the
+  `min_years ≥ 10` gate on empirical percentiles drops stations with short
+  records), so n is modestly lower than the below-norm columns.
+- The most extreme events (p5 / p95) have low base rates (0.03–0.10) and
+  correspondingly wide Wilson CIs; treat single-horizon extreme numbers as
+  indicative.
+- Per-station and per-event detail (including low/high tails) is explorable in
+  the Streamlit dashboard
+  (`apps/forecast_skill_eval/src/forecast_skill_eval/dashboard/`).
+
+---
+
 ## Caveats and limitations
 
 1. **DAY horizon is thin and exploratory.** n_pairs 215–809 across models;
