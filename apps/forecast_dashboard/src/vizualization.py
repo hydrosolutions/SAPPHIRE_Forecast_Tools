@@ -3050,6 +3050,16 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
             print("max_date is nan")
     # print("forecast_table\n", forecast_table)
 
+    # Drop rows without a forecast value so the summary table matches the
+    # "No forecast data available for models ..." warning banner, which counts
+    # a model as present only when it has a non-null forecast on this date.
+    # Done after the max-date selection so a model whose latest row is null is
+    # not resurrected from an earlier date.
+    if 'forecasted_discharge' in forecast_table.columns:
+        forecast_table = forecast_table[
+            forecast_table['forecasted_discharge'].notna()
+        ].copy().reset_index(drop=True)
+
     # Drop columns not needed in the summary table
     cols_to_drop = ['code', 'date', 'Date', 'year', 'model_long', 'station_labels']
     if horizon_in_year:
