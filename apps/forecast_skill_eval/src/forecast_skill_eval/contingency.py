@@ -179,9 +179,7 @@ def _regime_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
 def _season_slices(frame: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
     yield ALL_SEASON, frame
     seasons = sorted(
-        str(value)
-        for value in frame["season"].dropna().unique()
-        if str(value) != ALL_SEASON
+        str(value) for value in frame["season"].dropna().unique() if str(value) != ALL_SEASON
     )
     for season in seasons:
         yield season, frame[frame["season"] == season]

@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Final
 
+from forecast_skill_eval.events import ALL_EVENT_NAMES, VALID_EVENTS
 from forecast_skill_eval.periods import normalize_horizon
 from forecast_skill_eval.regimes import (
     DEFAULT_ERROR_FLAGS,
@@ -41,6 +42,9 @@ DEFAULT_BASINS_BY_PREFIX: Final = {
 # configurations differ and are unverified) and is intended as a future
 # config-driven per-org/per-lead tolerance filter only.
 DEFAULT_OPERATIONAL_ISSUE_DAYS: Final = ()
+# Default event set: all five binary events.  Override via --events CLI flag or
+# the events_filter config field to restrict output to a subset.
+DEFAULT_EVENTS: Final[tuple[str, ...]] = ALL_EVENT_NAMES
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,7 @@ class ForecastSkillEvalConfig:
     nan_exclude_flags: Sequence[int] = DEFAULT_NAN_EXCLUDE_FLAGS
     error_flags: Sequence[int] = DEFAULT_ERROR_FLAGS
     operational_issue_days: Sequence[int] = DEFAULT_OPERATIONAL_ISSUE_DAYS
+    events_filter: Sequence[str] = DEFAULT_EVENTS
     season_filter: str = "all"
 
     def __post_init__(self) -> None:
@@ -117,6 +122,12 @@ class ForecastSkillEvalConfig:
             self,
             "operational_issue_days",
             _normalize_operational_issue_days(self.operational_issue_days),
+        )
+        _validate_events_filter(self.events_filter)
+        object.__setattr__(
+            self,
+            "events_filter",
+            tuple(self.events_filter),
         )
         _validate_season_filter(self.season_filter)
 
@@ -182,6 +193,20 @@ _VALID_SEASON_FILTERS: Final = ("all", "irrigation", "non_irrigation")
 
 def _validate_season_filter(value: str) -> None:
     if value not in _VALID_SEASON_FILTERS:
+        raise ValueError(f"season_filter must be one of {_VALID_SEASON_FILTERS!r}, got {value!r}")
+
+
+def _validate_events_filter(events: Sequence[str]) -> None:
+    """Validate the events_filter sequence.
+
+    Raises:
+        ValueError: If the sequence is empty or contains unrecognised event names.
+    """
+    if not events:
+        raise ValueError("events_filter must not be empty; provide at least one event name")
+    unknown = sorted(str(e) for e in events if str(e) not in VALID_EVENTS)
+    if unknown:
         raise ValueError(
-            f"season_filter must be one of {_VALID_SEASON_FILTERS!r}, got {value!r}"
+            f"events_filter contains unknown event names: {unknown}. "
+            f"Valid events: {sorted(VALID_EVENTS)}"
         )

@@ -198,12 +198,30 @@ def test_persistence_baseline_prior_below_norm_predicts_below_norm_tp() -> None:
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TP",
-                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TP",
+                observed_value=6.0,
+                norm=10.0,
+                fc_class="below",
+                obs_class="below",
             ),
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TP",
-                observed_value=7.0, norm=10.0, fc_class="below", obs_class="below",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                2,
+                2024,
+                "official",
+                "TP",
+                observed_value=7.0,
+                norm=10.0,
+                fc_class="below",
+                obs_class="below",
             ),
         ]
     )
@@ -235,12 +253,30 @@ def test_persistence_baseline_prior_above_norm_predicts_normal_fn() -> None:
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "FN",
-                observed_value=5.0, norm=10.0, fc_class="normal", obs_class="below",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                2,
+                2024,
+                "official",
+                "FN",
+                observed_value=5.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="below",
             ),
         ]
     )
@@ -266,8 +302,17 @@ def test_persistence_baseline_first_period_excluded_when_no_lag1_available() -> 
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TP",
-                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TP",
+                observed_value=6.0,
+                norm=10.0,
+                fc_class="below",
+                obs_class="below",
             ),
         ]
     )
@@ -283,12 +328,30 @@ def test_persistence_baseline_emits_persistence_label() -> None:
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                2,
+                2024,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
         ]
     )
@@ -315,12 +378,30 @@ def test_persistence_baseline_month_lag1_uses_prior_month() -> None:
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "month", "model-a", STATION_CODE, 1, 2024, "official", "TP",
-                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+                "month",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TP",
+                observed_value=6.0,
+                norm=10.0,
+                fc_class="below",
+                obs_class="below",
             ),
             _pair_with_observed(
-                "month", "model-a", STATION_CODE, 2, 2024, "official", "TP",
-                observed_value=6.0, norm=10.0, fc_class="below", obs_class="below",
+                "month",
+                "model-a",
+                STATION_CODE,
+                2,
+                2024,
+                "official",
+                "TP",
+                observed_value=6.0,
+                norm=10.0,
+                fc_class="below",
+                obs_class="below",
             ),
         ]
     )
@@ -344,12 +425,30 @@ def test_persistence_baseline_cross_year_lag1() -> None:
     pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "month", "model-a", STATION_CODE, 12, 2023, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "month",
+                "model-a",
+                STATION_CODE,
+                12,
+                2023,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
             _pair_with_observed(
-                "month", "model-a", STATION_CODE, 1, 2024, "official", "FN",
-                observed_value=5.0, norm=10.0, fc_class="normal", obs_class="below",
+                "month",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "FN",
+                observed_value=5.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="below",
             ),
         ]
     )
@@ -386,12 +485,30 @@ def test_persistence_baseline_wired_in_orchestrator() -> None:
     mock_pairs = pd.DataFrame(
         [
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 1, 2024, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                1,
+                2024,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
             _pair_with_observed(
-                "pentad", "model-a", STATION_CODE, 2, 2024, "official", "TN",
-                observed_value=9.0, norm=10.0, fc_class="normal", obs_class="normal",
+                "pentad",
+                "model-a",
+                STATION_CODE,
+                2,
+                2024,
+                "official",
+                "TN",
+                observed_value=9.0,
+                norm=10.0,
+                fc_class="normal",
+                obs_class="normal",
             ),
         ]
     )

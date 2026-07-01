@@ -67,7 +67,8 @@ def test_artifacts_are_written_with_readable_summary_and_config(tmp_path: Path) 
     assert "## Exclusion Ledger Totals" in summary
     assert "| norm | missing_norm | 1 |" in summary
     assert "## Headline Pooled Metrics" in summary
-    assert "| day | model-a | all | calculated |" in summary
+    # No ``event`` column in this pre-Phase-2C fixture → rows default to below_norm.
+    assert "| day | below_norm | model-a | all | calculated |" in summary
     assert "HSS" in summary
     assert "PSS" in summary
     assert "HSS_undefined" in summary
@@ -153,6 +154,109 @@ def test_headline_section_populated_for_long_term_per_lead_rows(tmp_path: Path) 
     assert "## Headline Pooled Metrics" in summary
     assert "No pooled metrics available." not in summary
     assert "| month |" in summary
+
+
+# --- Phase-2C: event-aware summary sections ---
+
+
+def _event_metrics_two_events() -> pd.DataFrame:
+    """Metrics with two events where the same station has different POD per event.
+
+    Station 19999 has POD=0.20 for below_norm and POD=0.90 for high_p90.  If the
+    per-station distribution pooled across events, the below_norm pooled row would
+    show a spread spanning both values; correct behaviour restricts to below_norm.
+    """
+    common = {
+        "horizon": "day",
+        "model": "model-a",
+        "regime": "all",
+        "basin": "all",
+        "norm_provenance": "all",
+        "lead": None,
+        "TP": 1,
+        "FP": 0,
+        "FN": 1,
+        "TN": 0,
+        "n_pairs": 2,
+        "far": 0.0,
+        "base_rate": 0.5,
+        "hss": 0.0,
+        "hss_undefined": False,
+        "pss": 0.0,
+        "pss_undefined": False,
+    }
+    rows = [
+        # below_norm: pooled + one station row with POD 0.20
+        {**common, "code": "POOLED", "pod": 0.20, "event": "below_norm"},
+        {**common, "code": STATION_CODE, "basin": "other", "pod": 0.20, "event": "below_norm"},
+        # high_p90: pooled + one station row with POD 0.90
+        {**common, "code": "POOLED", "pod": 0.90, "event": "high_p90"},
+        {**common, "code": STATION_CODE, "basin": "other", "pod": 0.90, "event": "high_p90"},
+    ]
+    return pd.DataFrame(rows)
+
+
+def _write_summary(tmp_path: Path, metrics: pd.DataFrame) -> str:
+    config = ForecastSkillEvalConfig(
+        horizons=["day"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=metrics,
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("day", n_pairs=2),),
+    )
+    artifact_dir = write_artifacts(config, bundle, run_id="event-run")
+    return (artifact_dir / "summary.md").read_text()
+
+
+def test_below_norm_station_pod_distribution_excludes_other_events(tmp_path: Path) -> None:
+    """The below_norm pooled row's station POD must reflect ONLY below_norm rows.
+
+    Proves bug #1 fixed: without the event guard, the below_norm distribution
+    would pool the high_p90 station POD (0.90) alongside below_norm (0.20).
+    """
+    from forecast_skill_eval.artifacts import _headline_pooled_rows, _station_pod_distribution
+
+    metrics = _event_metrics_two_events()
+    pooled = _headline_pooled_rows(metrics)
+
+    below_norm_row = pooled[pooled["event"].eq("below_norm")].iloc[0].to_dict()
+    high_p90_row = pooled[pooled["event"].eq("high_p90")].iloc[0].to_dict()
+
+    below_dist = _station_pod_distribution(metrics, below_norm_row)
+    high_dist = _station_pod_distribution(metrics, high_p90_row)
+
+    # below_norm distribution must contain only the 0.20 station POD.
+    assert below_dist == {"min": 0.20, "median": 0.20, "max": 0.20}
+    # high_p90 distribution must contain only the 0.90 station POD.
+    assert high_dist == {"min": 0.90, "median": 0.90, "max": 0.90}
+
+
+def test_summary_tables_have_event_column_and_one_row_per_event(tmp_path: Path) -> None:
+    """Headline + station-distribution tables must carry an event column and label
+    one row per event."""
+    summary = _write_summary(tmp_path, _event_metrics_two_events())
+
+    # Header carries the event column (placed right after horizon).
+    assert "| horizon | event | model | regime | norm_provenance | lead | n_pairs |" in summary
+    assert "| horizon | event | model | regime | norm_provenance | lead | min_pod |" in summary
+
+    # One labelled pooled row per event in each table.
+    assert "| day | below_norm | model-a | all | all |" in summary
+    assert "| day | high_p90 | model-a | all | all |" in summary
+
+
+def test_summary_event_rows_carry_distinct_station_pod(tmp_path: Path) -> None:
+    """Each event's per-station POD distribution must be rendered independently."""
+    summary = _write_summary(tmp_path, _event_metrics_two_events())
+
+    # below_norm station POD (0.200) and high_p90 (0.900) both appear, per event.
+    assert "0.200" in summary
+    assert "0.900" in summary
 
 
 def _pairs() -> pd.DataFrame:

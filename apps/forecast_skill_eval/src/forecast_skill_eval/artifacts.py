@@ -184,11 +184,11 @@ def _headline_section(metrics: pd.DataFrame) -> list[str]:
 
     lines.extend(
         [
-            "| horizon | model | regime | norm_provenance | lead | n_pairs | "
+            "| horizon | event | model | regime | norm_provenance | lead | n_pairs | "
             "base_rate | POD | FAR | FN_count | HSS | HSS_undefined | PSS | "
             "PSS_undefined | station_pod_min | station_pod_median | "
             "station_pod_max | flags |",
-            "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | "
+            "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | "
             "---: | --- | ---: | --- | ---: | ---: | ---: | --- |",
         ]
     )
@@ -196,7 +196,7 @@ def _headline_section(metrics: pd.DataFrame) -> list[str]:
         distribution = _station_pod_distribution(metrics, row)
         lines.append(
             "| "
-            f"{row['horizon']} | {row['model']} | {row['regime']} | "
+            f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
             f"{row['norm_provenance']} | "
             f"{_format_lead(row.get('lead'))} | {_format_count(row.get('n_pairs'))} | "
             f"{_format_metric(row.get('base_rate'))} | "
@@ -224,16 +224,16 @@ def _station_distribution_section(metrics: pd.DataFrame) -> list[str]:
 
     lines.extend(
         [
-            "| horizon | model | regime | norm_provenance | lead | min_pod | "
+            "| horizon | event | model | regime | norm_provenance | lead | min_pod | "
             "median_pod | max_pod |",
-            "| --- | --- | --- | --- | --- | ---: | ---: | ---: |",
+            "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
         ]
     )
     for row in pooled.to_dict("records"):
         distribution = _station_pod_distribution(metrics, row)
         lines.append(
             "| "
-            f"{row['horizon']} | {row['model']} | {row['regime']} | "
+            f"{row['horizon']} | {_event_value(row)} | {row['model']} | {row['regime']} | "
             f"{row['norm_provenance']} | "
             f"{_format_lead(row.get('lead'))} | "
             f"{_format_metric(distribution.get('min'))} | "
@@ -289,10 +289,13 @@ def _headline_pooled_rows(metrics: pd.DataFrame) -> pd.DataFrame:
     pooled = metrics[metrics["code"].eq(POOLED_CODE)].copy()
     if pooled.empty:
         return pooled
-    return pooled.sort_values(
-        ["horizon", "model", "regime", "norm_provenance"],
-        kind="stable",
-    ).reset_index(drop=True)
+    # ``event`` is optional — metrics built before Phase-2C lack this column.
+    # When present, sort by it so each event's pooled row is retained and
+    # ordered deterministically; when absent, behaviour is unchanged.
+    sort_keys = ["horizon", "model", "regime", "norm_provenance"]
+    if "event" in pooled.columns:
+        sort_keys.append("event")
+    return pooled.sort_values(sort_keys, kind="stable").reset_index(drop=True)
 
 
 def _station_pod_distribution(
@@ -303,18 +306,37 @@ def _station_pod_distribution(
     if metrics.empty or not required.issubset(metrics.columns):
         return {}
 
-    station_rows = metrics[
+    predicate = (
         metrics["horizon"].eq(pooled_row["horizon"])
         & metrics["model"].eq(pooled_row["model"])
         & metrics["regime"].eq(pooled_row["regime"])
         & metrics["code"].ne(POOLED_CODE)
         & metrics["norm_provenance"].eq(pooled_row["norm_provenance"])
         & _matching_lead(metrics["lead"], pooled_row.get("lead"))
-    ]
+    )
+    # When the metrics frame carries an ``event`` column, a pooled row's station
+    # distribution must only pool station rows for the SAME event.  Without this
+    # guard, Phase-2C's five events would be merged into one distribution.
+    if "event" in metrics.columns:
+        predicate &= metrics["event"].eq(_event_value(pooled_row))
+    station_rows = metrics[predicate]
     pods = pd.to_numeric(station_rows["pod"], errors="coerce").dropna()
     if pods.empty:
         return {}
     return {"min": pods.min(), "median": pods.median(), "max": pods.max()}
+
+
+def _event_value(row: dict[str, object]) -> str:
+    """Return the row's event label, defaulting to ``below_norm`` when absent.
+
+    Metrics frames produced before Phase-2C have no ``event`` column; those rows
+    represent the original below-norm decision, so they are treated as a single
+    implicit ``below_norm`` group.
+    """
+    value = row.get("event")
+    if _is_missing(value):
+        return "below_norm"
+    return str(value)
 
 
 def _matching_lead(values: pd.Series, lead: object) -> pd.Series:

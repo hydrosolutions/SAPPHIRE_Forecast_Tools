@@ -42,27 +42,27 @@ STATION_CODE = "19999"
         # day horizon: derived from day-of-year
         # 2023 is a non-leap year: Jan=31, Feb=28, Mar=31 → days 1-90; Apr 1 = day 91
         # 2024 is a leap year: Jan=31, Feb=29, Mar=31 → days 1-91; Apr 1 = day 92
-        ("day", 91, 2023, "irrigation"),   # Apr 1 in non-leap year 2023
-        ("day", 92, 2024, "irrigation"),   # Apr 1 in leap year 2024
+        ("day", 91, 2023, "irrigation"),  # Apr 1 in non-leap year 2023
+        ("day", 92, 2024, "irrigation"),  # Apr 1 in leap year 2024
         ("day", 273, 2024, "irrigation"),  # Sep 30 in leap year 2024
-        ("day", 1, 2024, "non_irrigation"),   # Jan 1
+        ("day", 1, 2024, "non_irrigation"),  # Jan 1
         ("day", 31, 2024, "non_irrigation"),  # Jan 31
         ("day", 91, 2024, "non_irrigation"),  # Mar 31 in leap year 2024
         ("day", 365, 2023, "non_irrigation"),  # Dec 31 in non-leap year
         # pentad horizon: 6 pentads per month; pentad 19=start of Apr
-        ("pentad", 19, 2024, "irrigation"),   # Apr (month 4)
-        ("pentad", 36, 2024, "irrigation"),   # Jun (month 6)
-        ("pentad", 37, 2024, "irrigation"),   # Jul (month 7)
-        ("pentad", 54, 2024, "irrigation"),   # Sep (month 9)
-        ("pentad", 1, 2024, "non_irrigation"),   # Jan
+        ("pentad", 19, 2024, "irrigation"),  # Apr (month 4)
+        ("pentad", 36, 2024, "irrigation"),  # Jun (month 6)
+        ("pentad", 37, 2024, "irrigation"),  # Jul (month 7)
+        ("pentad", 54, 2024, "irrigation"),  # Sep (month 9)
+        ("pentad", 1, 2024, "non_irrigation"),  # Jan
         ("pentad", 18, 2024, "non_irrigation"),  # Mar
         ("pentad", 55, 2024, "non_irrigation"),  # Oct
         ("pentad", 72, 2024, "non_irrigation"),  # Dec
         # decade horizon: 3 decades per month; decade 10=start of Apr
-        ("decade", 10, 2024, "irrigation"),   # Apr (month 4)
-        ("decade", 27, 2024, "irrigation"),   # Sep (month 9)
-        ("decade", 1, 2024, "non_irrigation"),   # Jan
-        ("decade", 9, 2024, "non_irrigation"),   # Mar
+        ("decade", 10, 2024, "irrigation"),  # Apr (month 4)
+        ("decade", 27, 2024, "irrigation"),  # Sep (month 9)
+        ("decade", 1, 2024, "non_irrigation"),  # Jan
+        ("decade", 9, 2024, "non_irrigation"),  # Mar
         ("decade", 28, 2024, "non_irrigation"),  # Oct
         ("decade", 36, 2024, "non_irrigation"),  # Dec
     ],
@@ -98,7 +98,7 @@ def test_pairs_dataframe_has_season_column(fake_client_factory) -> None:
                 "code": STATION_CODE,
                 "date": "2024-01-01",
                 "target": "2024-04-01",  # April → irrigation
-                "horizon_in_year": 92,   # day 92 = Apr 1 in leap year 2024
+                "horizon_in_year": 92,  # day 92 = Apr 1 in leap year 2024
                 "model_type": "model-a",
                 "forecasted_discharge": 7.0,
             }
@@ -329,9 +329,7 @@ def test_cli_season_filter_restricts_contingency_output(
     def fake_build_client(config: ForecastSkillEvalConfig) -> object:
         return object()
 
-    def fake_run(
-        config: ForecastSkillEvalConfig, client: object, run_id: str
-    ) -> ResultsBundle:
+    def fake_run(config: ForecastSkillEvalConfig, client: object, run_id: str) -> ResultsBundle:
         # Return a bundle with both season strata in contingency and baselines
         contingency = pd.DataFrame(
             [

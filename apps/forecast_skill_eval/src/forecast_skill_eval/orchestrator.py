@@ -11,9 +11,14 @@ from forecast_skill_eval.baselines import (
     build_persistence_baseline,
 )
 from forecast_skill_eval.config import ForecastSkillEvalConfig
-from forecast_skill_eval.contingency import count_contingencies
+from forecast_skill_eval.contingency import OUTPUT_COLUMNS, count_contingencies
+from forecast_skill_eval.events import (
+    ALL_EVENTS,
+    compute_percentile_thresholds,
+    reclassify_pairs_for_event,
+)
 from forecast_skill_eval.ledger import ExclusionLedger
-from forecast_skill_eval.metrics import add_metrics
+from forecast_skill_eval.metrics import METRIC_COLUMNS, add_metrics
 from forecast_skill_eval.pairs import PAIR_COLUMNS, build_pairs
 
 
@@ -99,7 +104,8 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         )
 
     all_pairs = _concat_pairs(pair_frames)
-    contingency = add_metrics(count_contingencies(all_pairs))
+    thresholds = compute_percentile_thresholds(all_pairs, config.min_years)
+    contingency = _compute_event_contingencies(all_pairs, thresholds, config.events_filter)
     baselines = _concat_baselines(
         [
             build_climatology_baseline(all_pairs),
@@ -114,6 +120,53 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         exclusion_ledger=merged_ledger,
         horizon_summary=tuple(coverage),
     )
+
+
+def _compute_event_contingencies(
+    pairs: pd.DataFrame,
+    thresholds: dict[tuple[str, str, int], dict[float, float]],
+    events_filter: tuple[str, ...],
+) -> pd.DataFrame:
+    """Compute contingency metrics for each requested event and tag with event name.
+
+    Runs :func:`count_contingencies` independently for each event in
+    *events_filter*, reclassifying pairs as needed, then concatenates the results
+    with an ``event`` column added.
+
+    The ``below_norm`` event uses the existing classification embedded in the
+    pairs DataFrame; percentile events recompute ``fc_class``/``obs_class`` from
+    the empirical thresholds.  Percentile events for which no thresholds are
+    available (stations with fewer years than ``min_years``) produce no rows
+    (those rows are silently dropped by :func:`reclassify_pairs_for_event`).
+
+    Args:
+        pairs: All-horizons pair DataFrame.
+        thresholds: Per-``(code, horizon, period_key)`` percentile thresholds.
+        events_filter: Ordered sequence of event names to include in the output.
+
+    Returns:
+        Contingency metrics DataFrame with an ``event`` column.  Columns follow
+        ``OUTPUT_COLUMNS + METRIC_COLUMNS + ("event",)``.  An empty DataFrame
+        with the same schema is returned when no events produce rows.
+    """
+    events_set = frozenset(events_filter)
+    frames: list[pd.DataFrame] = []
+
+    for event in ALL_EVENTS:
+        if event.name not in events_set:
+            continue
+        event_pairs = reclassify_pairs_for_event(pairs, event, thresholds)
+        if event_pairs.empty:
+            continue
+        ct = add_metrics(count_contingencies(event_pairs))
+        ct["event"] = event.name
+        frames.append(ct)
+
+    if not frames:
+        empty_cols = list(OUTPUT_COLUMNS) + list(METRIC_COLUMNS) + ["event"]
+        return pd.DataFrame(columns=empty_cols)
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def _concat_pairs(frames: list[pd.DataFrame]) -> pd.DataFrame:

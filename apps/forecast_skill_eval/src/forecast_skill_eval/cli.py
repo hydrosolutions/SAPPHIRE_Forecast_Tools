@@ -16,6 +16,7 @@ from forecast_skill_eval.artifacts import write_artifacts
 from forecast_skill_eval.config import (
     DEFAULT_BASE_URL,
     DEFAULT_ERROR_FLAGS,
+    DEFAULT_EVENTS,
     DEFAULT_HINDCAST_FLAGS,
     DEFAULT_HORIZONS,
     DEFAULT_NAN_EXCLUDE_FLAGS,
@@ -123,6 +124,18 @@ def _parser() -> argparse.ArgumentParser:
         metavar="DAY",
     )
     parser.add_argument(
+        "--events",
+        nargs="+",
+        default=list(DEFAULT_EVENTS),
+        dest="events_filter",
+        metavar="EVENT",
+        help=(
+            "Binary events to evaluate. "
+            "Valid values: below_norm low_p10 low_p5 high_p90 high_p95. "
+            "Default: all five events."
+        ),
+    )
+    parser.add_argument(
         "--season",
         choices=["all", "irrigation", "non_irrigation"],
         default="all",
@@ -154,6 +167,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
         error_flags=_split_int_values(args.error_flags),
         operational_issue_days=_split_int_values(args.operational_issue_days),
+        events_filter=_split_values(args.events_filter),
         season_filter=args.season_filter,
     )
 
