@@ -241,3 +241,141 @@ def metric_display_value(value: float, undefined: bool | float) -> str:
     if undefined or (isinstance(value, float) and math.isnan(value)):
         return "n/a"
     return f"{value:.3f}"
+
+
+# ---------------------------------------------------------------------------
+# Probabilistic metric column lists (for empty-frame fallbacks)
+# ---------------------------------------------------------------------------
+
+_PROB_METRIC_EMPTY_COLUMNS: list[str] = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "event",
+    "fc_grid_id",
+    "n_pairs",
+    "crps",
+    "crps_clim",
+    "crpss",
+    "crps_persist",
+    "crpss_persist",
+    "coverage_50",
+    "coverage_80",
+    "coverage_90",
+    "coverage_ci_lower",
+    "coverage_ci_upper",
+    "reliability_50",
+    "reliability_80",
+    "reliability_90",
+    "nominal_50",
+    "nominal_80",
+    "nominal_90",
+    "sharpness_iqr",
+    "sharpness_width",
+    "sharpness_width_norm",
+    "rank_mean",
+    "rank_var",
+    "rank_calibration_error",
+    "brier",
+    "brier_ss",
+]
+
+_PROB_RELIABILITY_EMPTY_COLUMNS: list[str] = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "fc_grid_id",
+    "nominal_level",
+    "observed_frequency",
+    "n",
+]
+
+
+def load_prob_metrics(metrics_csv_path: str | Path) -> pd.DataFrame:
+    """Read the sibling ``prob_metrics.csv`` next to *metrics_csv_path*.
+
+    Tolerates absence: returns an empty DataFrame with all expected columns.
+    The ``lead`` column is parsed as numeric (coerced).  ``event`` and
+    ``fc_grid_id`` are synthesised when absent (pre-feature CSVs that pre-date
+    the probabilistic phase).
+
+    Args:
+        metrics_csv_path: Path to any sibling CSV in the run directory (e.g.
+            ``contingency_metrics.csv``); ``prob_metrics.csv`` is resolved from
+            the same parent directory.
+
+    Returns:
+        DataFrame with probabilistic metric rows, or an empty typed DataFrame
+        when the sibling file does not exist.
+    """
+    try:
+        path = Path(metrics_csv_path).parent / "prob_metrics.csv"
+        df = pd.read_csv(path)
+        df["lead"] = pd.to_numeric(df["lead"], errors="coerce")
+        if "event" not in df.columns:
+            df["event"] = "distribution"
+        if "fc_grid_id" not in df.columns:
+            df["fc_grid_id"] = ""
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_PROB_METRIC_EMPTY_COLUMNS)
+
+
+def load_reliability(metrics_csv_path: str | Path) -> pd.DataFrame:
+    """Read the sibling ``prob_reliability.csv`` next to *metrics_csv_path*.
+
+    Tolerates absence: returns an empty DataFrame with all expected columns.
+    The ``lead`` column is parsed as numeric (coerced).  ``fc_grid_id`` is
+    synthesised when absent.
+
+    Args:
+        metrics_csv_path: Path to any sibling CSV in the run directory;
+            ``prob_reliability.csv`` is resolved from the same parent directory.
+
+    Returns:
+        DataFrame with reliability rows, or an empty typed DataFrame when the
+        sibling file does not exist.
+    """
+    try:
+        path = Path(metrics_csv_path).parent / "prob_reliability.csv"
+        df = pd.read_csv(path)
+        df["lead"] = pd.to_numeric(df["lead"], errors="coerce")
+        if "fc_grid_id" not in df.columns:
+            df["fc_grid_id"] = ""
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_PROB_RELIABILITY_EMPTY_COLUMNS)
+
+
+def filter_prob_by_grid(df: pd.DataFrame, fc_grid_id: str) -> pd.DataFrame:
+    """Return rows where ``fc_grid_id`` matches *fc_grid_id*.
+
+    Implements Design Decision 3: raw CRPS is never ranked across
+    ``fc_grid_id`` values (e.g. ``"long7"`` vs ``"short5"`` use different
+    quantile-grid node sets and their CRPS scores are not directly comparable).
+    Call this helper to restrict a probabilistic frame to a single grid before
+    any cross-model comparison or ranking.
+
+    Args:
+        df: Probabilistic metrics or reliability DataFrame; must have an
+            ``fc_grid_id`` column (or an empty frame is returned).
+        fc_grid_id: Grid identifier to select (e.g. ``"long7"``, ``"short5"``).
+
+    Returns:
+        Copy of *df* filtered to rows where ``fc_grid_id == fc_grid_id``; an
+        empty frame (with same columns) when no rows match or the column is
+        absent.
+    """
+    if "fc_grid_id" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["fc_grid_id"] == fc_grid_id].copy()

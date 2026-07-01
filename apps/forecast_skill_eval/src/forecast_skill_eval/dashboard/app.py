@@ -41,7 +41,10 @@ from forecast_skill_eval.dashboard.aggregates import (
 from forecast_skill_eval.dashboard.data import (
     available_options,
     filter_metrics,
+    filter_prob_by_grid,
     load_metrics,
+    load_prob_metrics,
+    load_reliability,
     per_station,
     pooled_row,
     rank_stations,
@@ -101,6 +104,26 @@ def _nan_safe(value: float) -> str:
     if isinstance(value, float) and math.isnan(value):
         return "n/a"
     return f"{value:.3f}"
+
+
+def _wilson_ci_95(p: float, n: int) -> tuple[float, float]:
+    """Return Wilson 95% CI (lower, upper) for proportion *p* with *n* trials.
+
+    Args:
+        p: Observed proportion in [0, 1].
+        n: Number of trials (must be > 0).
+
+    Returns:
+        Tuple ``(ci_lower, ci_upper)`` clamped to [0, 1], or
+        ``(NaN, NaN)`` on invalid input.
+    """
+    if n <= 0 or not math.isfinite(p):
+        return (math.nan, math.nan)
+    z = 1.96
+    denom = 1.0 + z**2 / n
+    center = (p + z**2 / (2 * n)) / denom
+    margin = z * math.sqrt(max(0.0, p * (1.0 - p) / n + z**2 / (4.0 * n**2))) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
 
 
 # ---------------------------------------------------------------------------
@@ -244,11 +267,22 @@ def _load_baselines(path: str) -> pd.DataFrame:
 
 baselines_df = _load_baselines(str(csv_path))
 
+
+@st.cache_data(show_spinner="Loading probabilistic metrics …")
+def _load_prob_metrics(path: str) -> pd.DataFrame:
+    return load_prob_metrics(path)
+
+
+@st.cache_data(show_spinner="Loading reliability …")
+def _load_reliability_csv(path: str) -> pd.DataFrame:
+    return load_reliability(path)
+
+
 # ---------------------------------------------------------------------------
 # View selector
 # ---------------------------------------------------------------------------
 
-view = st.radio("View", ["Per-station", "Aggregates (pooled)"], horizontal=True)
+view = st.radio("View", ["Per-station", "Aggregates (pooled)", "Probabilistic"], horizontal=True)
 
 # ---------------------------------------------------------------------------
 # Per-station view
@@ -760,3 +794,340 @@ elif view == "Aggregates (pooled)":
             "Where operational ≥ hindcast it may be a sample-composition artifact. "
             "Hover to inspect n_pairs — operational n << hindcast n."
         )
+
+# ---------------------------------------------------------------------------
+# Probabilistic view
+# ---------------------------------------------------------------------------
+
+elif view == "Probabilistic":
+    # Lazy-load the two probabilistic frames (cached; only executed when this
+    # view is selected so existing views are unaffected by missing files).
+    df_prob = _load_prob_metrics(str(csv_path))
+    df_rel = _load_reliability_csv(str(csv_path))
+
+    if df_prob.empty and df_rel.empty:
+        st.info(
+            "No probabilistic metrics found in this run. "
+            "Enable SAPPHIRE_SKILL_PROB=1 before running forecast_skill_eval "
+            "to generate prob_metrics.csv / prob_reliability.csv."
+        )
+        st.stop()
+
+    # Distribution-event rows drive the filter cascade.
+    df_prob_dist = (
+        df_prob[df_prob["event"] == "distribution"]
+        if "event" in df_prob.columns and not df_prob.empty
+        else df_prob
+    )
+
+    # Sidebar filters --------------------------------------------------------
+    with st.sidebar:
+        st.header("Probabilistic filters")
+
+        prob_sel: dict[str, object] = {}
+
+        prob_horizon_opts = available_options(df_prob_dist, "horizon", prob_sel)
+        prob_horizon = st.selectbox(
+            "Horizon (prob)",
+            prob_horizon_opts or ["—"],
+            index=0,
+            key="prob_horizon",
+        )
+        prob_sel["horizon"] = prob_horizon
+
+        prob_season_opts = available_options(df_prob_dist, "season", prob_sel)
+        prob_season = st.selectbox(
+            "Season (prob)",
+            prob_season_opts or ["all"],
+            index=0,
+            key="prob_season",
+        )
+        prob_sel["season"] = prob_season
+
+        prob_regime_opts = available_options(df_prob_dist, "regime", prob_sel)
+        prob_regime = st.selectbox(
+            "Regime (prob)",
+            prob_regime_opts or ["operational"],
+            index=0,
+            key="prob_regime",
+        )
+        prob_sel["regime"] = prob_regime
+
+        # Grid selector — REQUIRED for Design Decision 3:
+        # raw CRPS from different grids (long7 vs short5) use different node
+        # sets and must NEVER be ranked together.
+        all_grids = sorted(
+            str(g) for g in df_prob_dist["fc_grid_id"].dropna().unique() if str(g).strip() != ""
+        )
+        if all_grids:
+            prob_grid = st.selectbox(
+                "Forecast grid",
+                all_grids,
+                index=0,
+                key="prob_grid",
+                help=(
+                    "Raw CRPS differs by grid (e.g. long7 vs short5). "
+                    "CRPSS ranking is always restricted to one grid "
+                    "(Design Decision 3 — cross-grid CRPS is not comparable)."
+                ),
+            )
+        else:
+            prob_grid = ""
+            st.caption("No fc_grid_id values found in the data.")
+
+    # Page header ------------------------------------------------------------
+    st.subheader("Probabilistic forecast verification")
+    st.markdown(
+        f"POOLED results — horizon `{prob_horizon}` · "
+        f"season `{prob_season}` · regime `{prob_regime}`"
+    )
+
+    # ── Chart 1: Reliability / Calibration ──────────────────────────────────
+    st.subheader("Reliability / Calibration")
+
+    if df_rel.empty:
+        st.info("prob_reliability.csv not found. Enable SAPPHIRE_SKILL_PROB=1 to generate it.")
+    else:
+        _rel_mask = (
+            (df_rel["code"] == "POOLED")
+            & (df_rel["horizon"] == prob_horizon)
+            & (df_rel["season"] == prob_season)
+            & (df_rel["regime"] == prob_regime)
+        )
+        if "basin" in df_rel.columns:
+            _rel_mask &= df_rel["basin"] == "all"
+        rel_pooled = df_rel[_rel_mask].copy()
+
+        if rel_pooled.empty:
+            st.info("No reliability rows match the current filters.")
+        else:
+            # Compute |deviation| and Wilson 95% CI for the tooltip.
+            rel_pooled["deviation"] = (
+                rel_pooled["observed_frequency"] - rel_pooled["nominal_level"]
+            ).abs()
+            rel_pooled["ci_lower"] = rel_pooled.apply(
+                lambda r: _wilson_ci_95(float(r["observed_frequency"]), int(r["n"]))[0],
+                axis=1,
+            )
+            rel_pooled["ci_upper"] = rel_pooled.apply(
+                lambda r: _wilson_ci_95(float(r["observed_frequency"]), int(r["n"]))[1],
+                axis=1,
+            )
+            rel_pooled = rel_pooled.sort_values("nominal_level")
+
+            _xy_scale = alt.Scale(domain=[0.0, 1.05])
+            _diag_data = pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0]})
+            _diag = (
+                alt.Chart(_diag_data)
+                .mark_line(color="gray", strokeDash=[4, 4], opacity=0.5)
+                .encode(x=alt.X("x:Q"), y=alt.Y("y:Q"))
+            )
+            _rel_lines = (
+                alt.Chart(rel_pooled)
+                .mark_line(opacity=0.55, strokeWidth=1.5)
+                .encode(
+                    x=alt.X(
+                        "nominal_level:Q",
+                        title="Nominal level (τ)",
+                        scale=_xy_scale,
+                    ),
+                    y=alt.Y(
+                        "observed_frequency:Q",
+                        title="Observed frequency",
+                        scale=_xy_scale,
+                    ),
+                    color=alt.Color("model:N", legend=alt.Legend(title="Model")),
+                )
+            )
+            _rel_points = (
+                alt.Chart(rel_pooled)
+                .mark_point(filled=True, size=70)
+                .encode(
+                    x=alt.X(
+                        "nominal_level:Q",
+                        title="Nominal level (τ)",
+                        scale=_xy_scale,
+                    ),
+                    y=alt.Y(
+                        "observed_frequency:Q",
+                        title="Observed frequency",
+                        scale=_xy_scale,
+                    ),
+                    color=alt.Color("model:N", legend=alt.Legend(title="Model")),
+                    tooltip=[
+                        alt.Tooltip("model:N", title="Model"),
+                        alt.Tooltip("nominal_level:Q", title="Nominal (τ)", format=".2f"),
+                        alt.Tooltip(
+                            "observed_frequency:Q",
+                            title="Observed freq.",
+                            format=".3f",
+                        ),
+                        alt.Tooltip("deviation:Q", title="|deviation|", format=".3f"),
+                        alt.Tooltip("ci_lower:Q", title="CI lower (95%)", format=".3f"),
+                        alt.Tooltip("ci_upper:Q", title="CI upper (95%)", format=".3f"),
+                        alt.Tooltip("n:Q", title="n pairs"),
+                    ],
+                )
+            )
+            _rel_chart = (
+                (_diag + _rel_lines + _rel_points)
+                .properties(
+                    title=(
+                        "Reliability diagram — empirical coverage vs nominal level"
+                        " (diagonal = perfect calibration)"
+                    )
+                )
+                .interactive()
+            )
+            st.altair_chart(_rel_chart, use_container_width=True)
+            st.caption(
+                "Diagonal (gray dashed) = perfect calibration. "
+                "Points above diagonal: over-dispersed (conservative — intervals too wide). "
+                "Points below: over-confident (intervals too narrow). "
+                "Hover to inspect |deviation| and Wilson 95% CI on the coverage rate."
+            )
+
+    # ── Chart 2: CRPSS Ranking (Design Decision 3: single grid only) ────────
+    st.subheader("CRPSS ranking (vs climatology)")
+
+    if df_prob.empty:
+        st.info("prob_metrics.csv not found. Enable SAPPHIRE_SKILL_PROB=1 to generate it.")
+    elif not prob_grid:
+        st.info(
+            "No fc_grid_id values found in the data — cannot restrict CRPSS ranking. "
+            "Enable SAPPHIRE_SKILL_PROB=1 and re-run to populate the grid column."
+        )
+    else:
+        _crpss_mask = (
+            (df_prob["code"] == "POOLED")
+            & (df_prob["event"] == "distribution")
+            & (df_prob["horizon"] == prob_horizon)
+            & (df_prob["season"] == prob_season)
+            & (df_prob["regime"] == prob_regime)
+        )
+        if "basin" in df_prob.columns:
+            _crpss_mask &= df_prob["basin"] == "all"
+
+        crpss_pooled = df_prob[_crpss_mask].copy()
+        # Restrict to a single grid — Design Decision 3 (CROSS-GRID CRPS must
+        # NEVER be ranked; long7 and short5 use different quantile grids).
+        crpss_pooled = filter_prob_by_grid(crpss_pooled, prob_grid)
+        crpss_pooled = crpss_pooled.dropna(subset=["crpss"])
+
+        if crpss_pooled.empty:
+            st.info(f"No CRPSS data for grid '{prob_grid}' with the current filters.")
+        else:
+            _crpss_order = crpss_pooled.sort_values("crpss", ascending=False)["model"].tolist()
+            _crpss_bars = (
+                alt.Chart(crpss_pooled)
+                .mark_bar()
+                .encode(
+                    x=alt.X("model:N", sort=_crpss_order, title="Model"),
+                    y=alt.Y(
+                        "crpss:Q",
+                        title="CRPS skill score (vs climatology)",
+                    ),
+                    color=alt.condition(
+                        alt.datum.crpss > 0,
+                        alt.value("steelblue"),
+                        alt.value("crimson"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("model:N", title="Model"),
+                        alt.Tooltip("crpss:Q", title="CRPSS", format=".3f"),
+                        alt.Tooltip("crps:Q", title="CRPS", format=".4f"),
+                        alt.Tooltip("crps_clim:Q", title="CRPS clim", format=".4f"),
+                        alt.Tooltip("n_pairs:Q", title="n pairs"),
+                        alt.Tooltip("fc_grid_id:N", title="Grid"),
+                    ],
+                )
+                .properties(title=f"CRPSS vs climatology — grid '{prob_grid}'")
+            )
+            _crpss_zero = (
+                alt.Chart(pd.DataFrame({"y": [0.0]}))
+                .mark_rule(color="black", opacity=0.55, strokeDash=[3, 3])
+                .encode(y=alt.Y("y:Q"))
+            )
+            st.altair_chart((_crpss_bars + _crpss_zero), use_container_width=True)
+            st.caption(
+                f"Restricted to forecast grid '{prob_grid}' (Design Decision 3): "
+                "raw CRPS values from different grids (e.g. long7 vs short5) are "
+                "computed over different quantile-node sets and are not directly "
+                "comparable — ranking them together would be misleading. "
+                "Blue = beats climatology; red = worse than climatology. "
+                "Switch grid in the sidebar to inspect short-term vs long-term models."
+            )
+
+    # ── Chart 3: Sharpness (interval width) ─────────────────────────────────
+    st.subheader("Sharpness (interval width)")
+
+    if not df_prob.empty and prob_grid:
+        _sharp_mask = (
+            (df_prob["code"] == "POOLED")
+            & (df_prob["event"] == "distribution")
+            & (df_prob["horizon"] == prob_horizon)
+            & (df_prob["season"] == prob_season)
+            & (df_prob["regime"] == prob_regime)
+        )
+        if "basin" in df_prob.columns:
+            _sharp_mask &= df_prob["basin"] == "all"
+
+        sharp_pooled = df_prob[_sharp_mask].copy()
+        sharp_pooled = filter_prob_by_grid(sharp_pooled, prob_grid)
+
+        use_norm = st.checkbox("Norm-normalised width (÷ norm)", key="prob_sharp_norm")
+        _sharp_col = (
+            "sharpness_width_norm"
+            if use_norm and "sharpness_width_norm" in sharp_pooled.columns
+            else "sharpness_width"
+        )
+        _sharp_y_title = (
+            "Outer interval width / norm (q05–q95)"
+            if _sharp_col == "sharpness_width_norm"
+            else "Outer interval width (q05–q95)"
+        )
+
+        sharp_valid = sharp_pooled.dropna(subset=[_sharp_col])
+
+        if sharp_valid.empty:
+            st.info(
+                f"No valid '{_sharp_col}' data for grid '{prob_grid}' with the current filters."
+            )
+        else:
+            _sharp_order = sharp_valid.sort_values(_sharp_col, ascending=True)["model"].tolist()
+            _sharp_bars = (
+                alt.Chart(sharp_valid)
+                .mark_bar(color="steelblue")
+                .encode(
+                    x=alt.X("model:N", sort=_sharp_order, title="Model"),
+                    y=alt.Y(f"{_sharp_col}:Q", title=_sharp_y_title),
+                    tooltip=[
+                        alt.Tooltip("model:N", title="Model"),
+                        alt.Tooltip(
+                            f"{_sharp_col}:Q",
+                            title=_sharp_y_title,
+                            format=".4f",
+                        ),
+                        alt.Tooltip(
+                            "sharpness_iqr:Q",
+                            title="IQR (q25–q75)",
+                            format=".4f",
+                        ),
+                        alt.Tooltip(
+                            "coverage_90:Q",
+                            title="Coverage 90%",
+                            format=".3f",
+                        ),
+                        alt.Tooltip("n_pairs:Q", title="n pairs"),
+                        alt.Tooltip("fc_grid_id:N", title="Grid"),
+                    ],
+                )
+                .properties(title=f"Sharpness — {_sharp_y_title} — grid '{prob_grid}'")
+            )
+            st.altair_chart(_sharp_bars, use_container_width=True)
+            st.caption(
+                "Narrower = sharper (more confident intervals). "
+                "Assess sharpness together with reliability: an over-confident model "
+                "may appear sharp but has poor coverage. "
+                f"Restricted to grid '{prob_grid}'."
+            )
