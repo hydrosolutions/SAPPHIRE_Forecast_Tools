@@ -181,6 +181,70 @@ class TestPerStationAndPooled:
         assert result is not None
         assert result["pod"] == pytest.approx(0.7)
 
+    # ------------------------------------------------------------------
+    # basin-column scoping (new in this fix)
+    # ------------------------------------------------------------------
+
+    def test_per_station_basin_col_returns_only_all_basin_row(self):
+        """Each station has basin='all' and basin='other'; only 'all' returned.
+
+        Without the fix, Altair would SUM both rows → POD≈2.  With the fix,
+        per_station returns exactly one row per station (the 'all' aggregate).
+        """
+        df = _make_df(
+            _base_row(code="19999", basin="all", pod=0.25),
+            _base_row(code="19999", basin="other", pod=0.25),
+        )
+        result = per_station(df)
+        assert len(result) == 1
+        assert result["basin"].iloc[0] == "all"
+        assert result["pod"].iloc[0] == pytest.approx(0.25)
+
+    def test_per_station_no_basin_col_returns_all_non_pooled(self):
+        """Frames without a basin column work exactly as before."""
+        df = _make_df(
+            _base_row(code="19999"),
+            _base_row(code="29999"),
+            _base_row(code="POOLED"),
+        )
+        df = df.drop(columns=["basin"])
+        result = per_station(df)
+        assert "basin" not in result.columns
+        assert set(result["code"]) == {"19999", "29999"}
+        assert len(result) == 2
+
+    def test_pooled_row_prefers_basin_all_when_both_exist(self):
+        """POOLED with basin='all' (pod=0.7) beats basin='other' (pod=0.8)."""
+        df = _make_df(
+            _base_row(code="POOLED", basin="all", pod=0.7),
+            _base_row(code="POOLED", basin="other", pod=0.8),
+        )
+        result = pooled_row(df)
+        assert result is not None
+        assert result["pod"] == pytest.approx(0.7)
+        assert result["basin"] == "all"
+
+    def test_pooled_row_no_basin_col_returns_pooled(self):
+        """Frames without basin column still return the single POOLED row."""
+        df = _make_df(
+            _base_row(code="19999"),
+            _base_row(code="POOLED", pod=0.55),
+        )
+        df = df.drop(columns=["basin"])
+        result = pooled_row(df)
+        assert result is not None
+        assert result["code"] == "POOLED"
+        assert result["pod"] == pytest.approx(0.55)
+
+    def test_pooled_row_no_basin_col_returns_none_when_absent(self):
+        """No POOLED rows and no basin column → None."""
+        df = _make_df(
+            _base_row(code="19999"),
+            _base_row(code="29999"),
+        )
+        df = df.drop(columns=["basin"])
+        assert pooled_row(df) is None
+
 
 # ---------------------------------------------------------------------------
 # filter_metrics

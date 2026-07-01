@@ -116,17 +116,30 @@ def filter_metrics(
 def per_station(df: pd.DataFrame) -> pd.DataFrame:
     """Return rows where ``code != "POOLED"`` (individual station rows).
 
+    When a ``basin`` column is present, only the cross-basin aggregate rows
+    (``basin == "all"``) are returned so that per-station chart encodings
+    never double-count metrics from multiple basin-specific rows for the
+    same station.  Older CSVs without a ``basin`` column are unaffected.
+
     Args:
         df: Any filtered or unfiltered metrics DataFrame.
 
     Returns:
         Subset with only per-station rows.
     """
-    return df[df["code"] != "POOLED"].copy()
+    mask = df["code"] != "POOLED"
+    if "basin" in df.columns:
+        mask &= df["basin"] == "all"
+    return df[mask].copy()
 
 
 def pooled_row(df: pd.DataFrame) -> pd.Series | None:
     """Return the single POOLED aggregate row, or None if absent.
+
+    When a ``basin`` column is present, the cross-basin aggregate row
+    (``basin == "all"``) is preferred so that the reference line always
+    reflects the true cross-basin aggregate rather than an arbitrary
+    basin-specific POOLED value.
 
     Args:
         df: Any filtered metrics DataFrame.
@@ -135,9 +148,10 @@ def pooled_row(df: pd.DataFrame) -> pd.Series | None:
         A pandas Series for the ``code == "POOLED"`` row, or None.
     """
     pool = df[df["code"] == "POOLED"]
+    if "basin" in df.columns:
+        pool = pool[pool["basin"] == "all"]
     if pool.empty:
         return None
-    # Take the first row if multiple exist (e.g. multiple basins).
     return pool.iloc[0]
 
 
