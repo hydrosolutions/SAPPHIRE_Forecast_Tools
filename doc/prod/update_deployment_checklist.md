@@ -559,6 +559,21 @@ The stack is defined in `sapphire/docker-compose.yml` and includes:
 > bootstraps the preprocessing DB with historical site data. For routine updates,
 > the schema is already populated.
 
+- [ ] **One-time: configure Docker log rotation if not already present.** Without
+  `/etc/docker/daemon.json`, per-container `*-json.log` files grow unbounded and
+  can fill the disk over time. Check and, if missing, apply it now — the daemon
+  restart only affects containers created afterward, so doing it here (stack down
+  from §2.1) means the `up -d` below picks up the new limits cleanly:
+  ```bash
+  if [ ! -f /etc/docker/daemon.json ]; then
+    echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' \
+      | sudo tee /etc/docker/daemon.json
+    sudo systemctl restart docker
+  fi
+  docker info --format '{{.LoggingDriver}}'   # expect: json-file
+  ```
+  This is the retrofit counterpart to `first_deploy_checklist.md` §1.3.
+
 - [ ] **Start the microservices stack**
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools
@@ -679,6 +694,17 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 
   # Daily DB backup at 01:00 UTC (pg_dump-based, 3-day retention)
   0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 3 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
+
+  # Weekly Docker cleanup at 00:30 UTC Sundays: prune dangling images + build
+  # cache so /var/lib/docker does not grow unbounded across deploys. Volume-safe:
+  # never removes named volumes (the four Postgres DBs) or tagged images. Do NOT
+  # add `-a` to image prune or `--volumes` to any prune here.
+  30 0 * * 0 docker image prune -f && docker builder prune -f >> ${LOG_DIR}/sapphire_docker_prune_$(date +\%Y\%m\%d).log 2>&1
+
+  # Weekly prune at 01:30 UTC Sundays of stale pre-update DB backup dirs (>30
+  # days). The daily backup's retention only prunes top-level dumps, not the
+  # pre_update_*/ subdirs created before each deployment update (see §1.5).
+  30 1 * * 0 find /var/backups/sapphire -maxdepth 1 -type d -name 'pre_update_*' -mtime +30 -exec rm -rf {} + >> ${LOG_DIR}/sapphire_backup_prune_$(date +\%Y\%m\%d).log 2>&1
 
   # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
   0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +\%Y\%m\%d).log 2>&1
@@ -1123,11 +1149,17 @@ Docker container logs can also grow large over time.
 
 ### 4.3 Prune Docker System [Optional]
 
+> **Now largely automated.** The weekly cron added in §2.5
+> (`docker image prune -f && docker builder prune -f`, Sundays 00:30 UTC) keeps
+> dangling images and build cache from accumulating across deploys — the usual
+> cause of the disk filling on these hosts. Run the manual prune below only if
+> the disk is under pressure between weekly runs.
+
 Remove unused Docker resources:
 
-- [ ] Remove dangling images and unused containers:
+- [ ] Remove dangling images and build cache (volume-safe — never add `--volumes`):
   ```bash
-  docker system prune -f
+  docker image prune -f && docker builder prune -f
   ```
 
 - [ ] Check disk space recovered:
