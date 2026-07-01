@@ -472,14 +472,14 @@ TODO: No need to pull them manually, they are pulled automatically when testing 
   docker pull mabesa/sapphire-dashboard:local
   ```
 
-**Optional (based on deployment configuration):**
-
-If `ieasyhydroforecast_run_ML_models=true` in your .env file:
-
-- [ ] **Pull gateway preprocessing image**
+- [ ] **Pull preprocessing gateway image** (required for gateway maintenance and yearly snow norm/stat recalculation)
   ```bash
   docker pull mabesa/sapphire-prepgateway:local
   ```
+
+**Optional (based on deployment configuration):**
+
+If `ieasyhydroforecast_run_ML_models=true` in your .env file:
 
 - [ ] **Pull ML forecasting image**
   ```bash
@@ -863,6 +863,24 @@ After updating crontabs, run each cron command manually (one by one) to verify t
   cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc  ${ENV_FILE_PATH}
   cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms    ${ENV_FILE_PATH}
   ```
+
+- [ ] **Verify snow stat columns after snow norm/stat recalculation**
+
+  The dashboard snow panel uses `mean`, `q05`..`q95`, `previous`, and
+  `current`. If a hydrological display window crosses Jan 1 (for example
+  `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD=09-01`), the current calendar
+  year must have these stat fields populated; otherwise the percentile bands,
+  mean, and previous-season line stop at Jan 1 while the current-season line
+  continues.
+
+  ```bash
+  docker exec sapphire-preprocessing-db psql -U postgres -d preprocessing_db -c \
+  "select extract(year from date) y, count(*) rows, count(mean) mean, count(q05) q05, count(previous) prev, count(current) curr from snow where code='19999' and snow_type='SWE' and date between '2025-09-01' and '2026-08-31' group by 1 order by 1;"
+  ```
+
+  Replace `19999` and the date range with a non-sensitive representative
+  station/window for the deployment. Acceptance: both years in the displayed
+  snow window have non-zero `mean`, `q05`, and `prev` counts.
 
 - [ ] **Run bimonthly long-term skill metrics recalculation**
   ```bash
