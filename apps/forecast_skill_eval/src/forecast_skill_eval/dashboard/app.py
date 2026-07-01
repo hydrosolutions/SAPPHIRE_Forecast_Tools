@@ -42,6 +42,9 @@ from forecast_skill_eval.dashboard.data import (
     available_options,
     filter_metrics,
     filter_prob_by_grid,
+    load_continuous_metrics,
+    load_economic_value,
+    load_economic_value_summary,
     load_metrics,
     load_prob_metrics,
     load_reliability,
@@ -278,11 +281,30 @@ def _load_reliability_csv(path: str) -> pd.DataFrame:
     return load_reliability(path)
 
 
+@st.cache_data(show_spinner="Loading continuous metrics …")
+def _load_continuous_metrics_cached(path: str) -> pd.DataFrame:
+    return load_continuous_metrics(path)
+
+
+@st.cache_data(show_spinner="Loading economic value …")
+def _load_economic_value_cached(path: str) -> pd.DataFrame:
+    return load_economic_value(path)
+
+
+@st.cache_data(show_spinner="Loading economic value summary …")
+def _load_economic_value_summary_cached(path: str) -> pd.DataFrame:
+    return load_economic_value_summary(path)
+
+
 # ---------------------------------------------------------------------------
 # View selector
 # ---------------------------------------------------------------------------
 
-view = st.radio("View", ["Per-station", "Aggregates (pooled)", "Probabilistic"], horizontal=True)
+view = st.radio(
+    "View",
+    ["Per-station", "Aggregates (pooled)", "Probabilistic", "Value metrics"],
+    horizontal=True,
+)
 
 # ---------------------------------------------------------------------------
 # Per-station view
@@ -1130,4 +1152,369 @@ elif view == "Probabilistic":
                 "Assess sharpness together with reliability: an over-confident model "
                 "may appear sharp but has poor coverage. "
                 f"Restricted to grid '{prob_grid}'."
+            )
+
+# ---------------------------------------------------------------------------
+# Value metrics view
+# ---------------------------------------------------------------------------
+
+elif view == "Value metrics":
+    # Lazy-load frames (cached; only executed when this view is selected).
+    df_cont = _load_continuous_metrics_cached(str(csv_path))
+    df_ev = _load_economic_value_cached(str(csv_path))
+    df_evs = _load_economic_value_summary_cached(str(csv_path))
+
+    if df_cont.empty and df_ev.empty and df_evs.empty:
+        st.info(
+            "No value metrics in this run "
+            "(enable SAPPHIRE_SKILL_VALUE=1 before running forecast_skill_eval "
+            "to generate continuous_metrics.csv / economic_value.csv / "
+            "economic_value_summary.csv)."
+        )
+        st.stop()
+
+    # Cascade filter source — prefer continuous metrics; fall back to REV frame.
+    _vm_src = df_cont if not df_cont.empty else df_ev
+
+    # Sidebar cascade filters -----------------------------------------------
+    with st.sidebar:
+        st.header("Value metric filters")
+
+        vm_sel: dict[str, object] = {}
+
+        vm_horizon_opts = available_options(_vm_src, "horizon", vm_sel)
+        vm_horizon = st.selectbox(
+            "Horizon (value)",
+            vm_horizon_opts or ["—"],
+            index=0,
+            key="vm_horizon",
+        )
+        vm_sel["horizon"] = vm_horizon
+
+        vm_season_opts = available_options(_vm_src, "season", vm_sel)
+        vm_season = st.selectbox(
+            "Season (value)",
+            vm_season_opts or ["all"],
+            index=0,
+            key="vm_season",
+        )
+        vm_sel["season"] = vm_season
+
+        vm_regime_opts = available_options(_vm_src, "regime", vm_sel)
+        vm_regime = st.selectbox(
+            "Regime (value)",
+            vm_regime_opts or ["operational"],
+            index=0,
+            key="vm_regime",
+        )
+        vm_sel["regime"] = vm_regime
+
+        vm_norm_opts = available_options(_vm_src, "norm_provenance", vm_sel)
+        vm_norm = st.selectbox(
+            "Norm provenance (value)",
+            vm_norm_opts or ["all"],
+            index=0,
+            key="vm_norm",
+        )
+        vm_sel["norm_provenance"] = vm_norm
+
+        vm_lead_opts = available_options(_vm_src, "lead", vm_sel)
+        vm_lead: int | None = None
+        if not vm_lead_opts:
+            st.caption("Short-term horizon — no lead dimension.")
+        else:
+            vm_lead = st.selectbox(
+                "Lead (value)",
+                [int(v) for v in vm_lead_opts],
+                index=0,
+                key="vm_lead",
+            )
+
+    # ── Shared lead mask helpers ────────────────────────────────────────────
+
+    def _apply_lead_mask(frame: pd.DataFrame, lead: int | None) -> pd.Series[bool]:
+        if lead is None:
+            return frame["lead"].isna()
+        return frame["lead"] == float(lead)
+
+    def _pooled_mask(frame: pd.DataFrame) -> pd.Series[bool]:
+        mask = frame["code"] == "POOLED"
+        if "basin" in frame.columns:
+            mask = mask & (frame["basin"] == "all")
+        return mask
+
+    # ── A: Continuous Accuracy ──────────────────────────────────────────────
+    st.subheader("Continuous accuracy — POOLED")
+
+    if df_cont.empty:
+        st.info("continuous_metrics.csv not found. Enable SAPPHIRE_SKILL_VALUE=1 to generate it.")
+    else:
+        _cm_mask = (
+            (df_cont["horizon"] == vm_horizon)
+            & (df_cont["season"] == vm_season)
+            & (df_cont["regime"] == vm_regime)
+            & (df_cont["norm_provenance"] == vm_norm)
+            & _pooled_mask(df_cont)
+            & _apply_lead_mask(df_cont, vm_lead)
+        )
+        _df_cm = df_cont[_cm_mask].copy()
+
+        _CONT_METRICS = ["kge", "nse", "bias", "mae", "rve"]
+        _CONT_Y_TITLES = {
+            "kge": "KGE (ideal = 1)",
+            "nse": "NSE (ideal = 1)",
+            "bias": "Bias [m³/s] (ideal = 0)",
+            "mae": "MAE [m³/s]",
+            "rve": "Relative volume error (ideal = 0)",
+        }
+        _CONT_IDEALS: dict[str, float] = {"kge": 1.0, "nse": 1.0, "bias": 0.0, "rve": 0.0}
+
+        vm_metric = st.selectbox("Metric", _CONT_METRICS, index=0, key="vm_metric")
+
+        if _df_cm.empty:
+            st.info("No POOLED continuous-metric rows match the current filters.")
+        else:
+            _cm_plot = _df_cm.dropna(subset=[vm_metric]).copy()
+            if _cm_plot.empty:
+                st.info(f"`{vm_metric}` is NaN for all models (KGE/NSE require n_pairs ≥ 10).")
+            else:
+                _cm_sort = _cm_plot.sort_values(vm_metric, ascending=False)["model"].tolist()
+                # Color: KGE/NSE — blue ≥ 0, red < 0; bias/rve — dark-orange > 0, blue ≤ 0.
+                if vm_metric in ("kge", "nse"):
+                    _cm_color = alt.condition(
+                        alt.datum[vm_metric] >= 0,
+                        alt.value("steelblue"),
+                        alt.value("crimson"),
+                    )
+                elif vm_metric in ("bias", "rve"):
+                    _cm_color = alt.condition(
+                        alt.datum[vm_metric] > 0,
+                        alt.value("#d55e00"),
+                        alt.value("steelblue"),
+                    )
+                else:
+                    _cm_color = alt.value("steelblue")
+
+                _cm_bar = (
+                    alt.Chart(_cm_plot)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("model:N", sort=_cm_sort, title="Model"),
+                        y=alt.Y(f"{vm_metric}:Q", title=_CONT_Y_TITLES[vm_metric]),
+                        color=_cm_color,
+                        tooltip=[
+                            alt.Tooltip("model:N", title="Model"),
+                            alt.Tooltip(f"{vm_metric}:Q", title=vm_metric, format=".3f"),
+                            alt.Tooltip("n_pairs:Q", title="n_pairs"),
+                        ],
+                    )
+                )
+                _cm_layers: list[alt.Chart] = [_cm_bar]
+
+                if vm_metric in _CONT_IDEALS:
+                    _cm_ideal_val = _CONT_IDEALS[vm_metric]
+                    _cm_rule = (
+                        alt.Chart(pd.DataFrame({"ref": [_cm_ideal_val]}))
+                        .mark_rule(color="black", strokeDash=[4, 4], opacity=0.65, size=1.5)
+                        .encode(
+                            y=alt.Y("ref:Q"),
+                            tooltip=[alt.Tooltip("ref:Q", title="Ideal", format=".0f")],
+                        )
+                    )
+                    _cm_layers.append(_cm_rule)
+
+                st.altair_chart(
+                    alt.layer(*_cm_layers).properties(
+                        title=(f"{vm_metric.upper()} — {vm_horizon} · {vm_season} · {vm_regime}")
+                    ),
+                    use_container_width=True,
+                )
+                st.caption(
+                    "POOLED rows only. "
+                    "KGE/NSE: blue = positive skill (≥ 0), red = negative. "
+                    "Bias/rve: dark-orange = over-forecast (> 0), blue = under-forecast. "
+                    "Dashed line = ideal (KGE/NSE ideal = 1; bias/rve ideal = 0). "
+                    "KGE and NSE are suppressed (NaN) when n_pairs < 10."
+                )
+
+    # ── B: Seasonal Volume Error (Apr–Sep) ──────────────────────────────────
+    st.subheader("Seasonal volume error — Apr–Sep irrigation (POOLED)")
+
+    if df_cont.empty:
+        st.info("continuous_metrics.csv not found. Enable SAPPHIRE_SKILL_VALUE=1 to generate it.")
+    else:
+        _irr_mask = (
+            (df_cont["horizon"] == vm_horizon)
+            & (df_cont["season"] == "irrigation")
+            & (df_cont["regime"] == vm_regime)
+            & (df_cont["norm_provenance"] == vm_norm)
+            & _pooled_mask(df_cont)
+            & _apply_lead_mask(df_cont, vm_lead)
+        )
+        _df_irr = df_cont[_irr_mask].dropna(subset=["rve"]).copy()
+
+        if _df_irr.empty:
+            st.info(
+                "No irrigation-season rows for this horizon and regime. "
+                "Season='irrigation' groups are emitted for pentad, decade, and month "
+                "horizons only."
+            )
+        else:
+            _irr_color = alt.condition(
+                alt.datum.rve > 0, alt.value("#d55e00"), alt.value("steelblue")
+            )
+            _irr_sort = _df_irr.sort_values("rve", ascending=False)["model"].tolist()
+            _irr_bar = (
+                alt.Chart(_df_irr)
+                .mark_bar()
+                .encode(
+                    x=alt.X("model:N", sort=_irr_sort, title="Model"),
+                    y=alt.Y(
+                        "rve:Q",
+                        title="Relative volume error Apr–Sep (ideal = 0)",
+                    ),
+                    color=_irr_color,
+                    tooltip=[
+                        alt.Tooltip("model:N", title="Model"),
+                        alt.Tooltip("rve:Q", title="Rel. volume error", format=".3f"),
+                        alt.Tooltip("n_pairs:Q", title="n_pairs"),
+                    ],
+                )
+            )
+            _irr_zero = (
+                alt.Chart(pd.DataFrame({"y": [0.0]}))
+                .mark_rule(color="black", opacity=0.55, strokeDash=[4, 4], size=1.5)
+                .encode(y=alt.Y("y:Q"))
+            )
+            st.altair_chart(
+                alt.layer(_irr_bar, _irr_zero).properties(
+                    title=(f"Apr–Sep relative volume error — {vm_horizon} · {vm_regime}")
+                ),
+                use_container_width=True,
+            )
+            st.caption(
+                "rve = (Σ forecast − Σ observed) / Σ observed, restricted to "
+                "season='irrigation' (Apr–Sep) pairs. "
+                "Dark-orange = over-forecast, blue = under-forecast. "
+                "Ideal = 0 (dashed line). "
+                "Numerically equivalent to KGE-β − 1 over the same sample."
+            )
+
+    # ── C: Relative Economic Value ──────────────────────────────────────────
+    st.subheader("Relative Economic Value (REV)")
+
+    if df_ev.empty:
+        st.info("economic_value.csv not found. Enable SAPPHIRE_SKILL_VALUE=1 to generate it.")
+    else:
+        _ev_event_opts = (
+            sorted(df_ev["event"].dropna().unique().tolist())
+            if "event" in df_ev.columns
+            else ["below_norm"]
+        )
+        vm_ev_event = st.selectbox(
+            "REV event",
+            _ev_event_opts,
+            index=_ev_event_opts.index("below_norm") if "below_norm" in _ev_event_opts else 0,
+            key="vm_ev_event",
+        )
+
+        _ev_mask = (
+            (df_ev["horizon"] == vm_horizon)
+            & (df_ev["season"] == vm_season)
+            & (df_ev["regime"] == vm_regime)
+            & (df_ev["norm_provenance"] == vm_norm)
+            & _pooled_mask(df_ev)
+            & _apply_lead_mask(df_ev, vm_lead)
+            & (df_ev["event"] == vm_ev_event)
+        )
+        _df_ev_f = df_ev[_ev_mask].copy()
+
+        if _df_ev_f.empty or _df_ev_f["value"].isna().all():
+            st.info(
+                "No REV data for the current filters "
+                "(all values NaN — n_pairs too small or rates undefined)."
+            )
+        else:
+            _ev_line = (
+                alt.Chart(_df_ev_f)
+                .mark_line(opacity=0.85)
+                .encode(
+                    x=alt.X(
+                        "alpha:Q",
+                        title="Cost-loss ratio (α)",
+                        scale=alt.Scale(domain=[0.0, 1.0]),
+                    ),
+                    y=alt.Y("value:Q", title="Relative Economic Value V(α)"),
+                    color=alt.Color("model:N", legend=alt.Legend(title="Model")),
+                    tooltip=[
+                        alt.Tooltip("model:N", title="Model"),
+                        alt.Tooltip("alpha:Q", title="α", format=".3f"),
+                        alt.Tooltip("value:Q", title="V(α)", format=".3f"),
+                        alt.Tooltip("n_pairs:Q", title="n_pairs"),
+                    ],
+                )
+            )
+            _ev_zero = (
+                alt.Chart(pd.DataFrame({"y": [0.0]}))
+                .mark_rule(color="black", opacity=0.5, strokeDash=[3, 3], size=1.5)
+                .encode(y=alt.Y("y:Q"))
+            )
+            _ev_layers: list[alt.Chart] = [_ev_zero, _ev_line]
+
+            # V_max diamond annotation from the summary frame.
+            if not df_evs.empty:
+                _evs_mask = (
+                    (df_evs["horizon"] == vm_horizon)
+                    & (df_evs["season"] == vm_season)
+                    & (df_evs["regime"] == vm_regime)
+                    & (df_evs["norm_provenance"] == vm_norm)
+                    & _pooled_mask(df_evs)
+                    & _apply_lead_mask(df_evs, vm_lead)
+                    & (df_evs["event"] == vm_ev_event)
+                )
+                _df_evs_f = df_evs[_evs_mask].dropna(subset=["v_max", "alpha_star"]).copy()
+                if not _df_evs_f.empty:
+                    _vmax_pts = (
+                        alt.Chart(_df_evs_f)
+                        .mark_point(filled=True, size=90, shape="diamond")
+                        .encode(
+                            x=alt.X("alpha_star:Q"),
+                            y=alt.Y("v_max:Q"),
+                            color=alt.Color("model:N"),
+                            tooltip=[
+                                alt.Tooltip("model:N", title="Model"),
+                                alt.Tooltip(
+                                    "alpha_star:Q",
+                                    title="α* (= base rate)",
+                                    format=".3f",
+                                ),
+                                alt.Tooltip(
+                                    "v_max:Q",
+                                    title="V_max (= H − F)",
+                                    format=".3f",
+                                ),
+                                alt.Tooltip("n_pairs:Q", title="n_pairs"),
+                            ],
+                        )
+                    )
+                    _ev_layers.append(_vmax_pts)
+
+            st.altair_chart(
+                alt.layer(*_ev_layers)
+                .properties(
+                    title=(
+                        f"REV V(α) — {vm_horizon} · {vm_season} · {vm_regime}"
+                        f" · event '{vm_ev_event}'"
+                    )
+                )
+                .interactive(),
+                use_container_width=True,
+            )
+            st.caption(
+                "V(α) = relative economic value for a user with cost-loss ratio α = C/L. "
+                "V > 0: forecast beats a climatological decision strategy; "
+                "V < 0: skill-negative (worse than climatology). "
+                "Diamond marker = V_max (analytic peak = H − F) at α* = base rate s. "
+                "Hover the lines and diamonds for model details. "
+                "Dashed line at V = 0."
             )

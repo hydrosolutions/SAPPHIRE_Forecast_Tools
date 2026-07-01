@@ -379,3 +379,136 @@ def filter_prob_by_grid(df: pd.DataFrame, fc_grid_id: str) -> pd.DataFrame:
     if "fc_grid_id" not in df.columns:
         return df.iloc[0:0].copy()
     return df[df["fc_grid_id"] == fc_grid_id].copy()
+
+
+# ---------------------------------------------------------------------------
+# Continuous / value-metric column lists (for empty-frame fallbacks)
+# ---------------------------------------------------------------------------
+
+_CONTINUOUS_METRIC_EMPTY_COLUMNS: list[str] = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "n_pairs",
+    "bias",
+    "mae",
+    "rve",
+    "kge",
+    "kge_r",
+    "kge_alpha",
+    "kge_beta",
+    "nse",
+]
+
+_ECONOMIC_VALUE_EMPTY_COLUMNS: list[str] = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "event",
+    "n_pairs",
+    "base_rate_s",
+    "hit_rate_H",
+    "pofd_F",
+    "alpha",
+    "value",
+]
+
+_ECONOMIC_VALUE_SUMMARY_EMPTY_COLUMNS: list[str] = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "event",
+    "n_pairs",
+    "base_rate_s",
+    "hit_rate_H",
+    "pofd_F",
+    "v_max",
+    "alpha_star",
+]
+
+
+def load_continuous_metrics(metrics_csv_path: str | Path) -> pd.DataFrame:
+    """Read the sibling ``continuous_metrics.csv`` next to *metrics_csv_path*.
+
+    Tolerates absence: returns an empty DataFrame with all expected columns.
+    The ``lead`` column is parsed as numeric (coerced).
+
+    Args:
+        metrics_csv_path: Path to any sibling CSV in the run directory (e.g.
+            ``contingency_metrics.csv``); ``continuous_metrics.csv`` is
+            resolved from the same parent directory.
+
+    Returns:
+        DataFrame with continuous metric rows, or an empty typed DataFrame
+        when the sibling file does not exist.
+    """
+    try:
+        path = Path(metrics_csv_path).parent / "continuous_metrics.csv"
+        df = pd.read_csv(path)
+        df["lead"] = pd.to_numeric(df["lead"], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_CONTINUOUS_METRIC_EMPTY_COLUMNS)
+
+
+def load_economic_value(metrics_csv_path: str | Path) -> pd.DataFrame:
+    """Read the sibling ``economic_value.csv`` next to *metrics_csv_path*.
+
+    Tolerates absence: returns an empty DataFrame with all expected columns.
+    The ``lead`` column is parsed as numeric (coerced).
+
+    Args:
+        metrics_csv_path: Path to any sibling CSV in the run directory (e.g.
+            ``contingency_metrics.csv``); ``economic_value.csv`` is resolved
+            from the same parent directory.
+
+    Returns:
+        DataFrame with per-alpha REV rows, or an empty typed DataFrame when
+        the sibling file does not exist.
+    """
+    try:
+        path = Path(metrics_csv_path).parent / "economic_value.csv"
+        df = pd.read_csv(path)
+        df["lead"] = pd.to_numeric(df["lead"], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_ECONOMIC_VALUE_EMPTY_COLUMNS)
+
+
+def load_economic_value_summary(metrics_csv_path: str | Path) -> pd.DataFrame:
+    """Read the sibling ``economic_value_summary.csv`` next to *metrics_csv_path*.
+
+    Tolerates absence: returns an empty DataFrame with all expected columns.
+    The ``lead`` column is parsed as numeric (coerced).
+
+    Args:
+        metrics_csv_path: Path to any sibling CSV in the run directory (e.g.
+            ``contingency_metrics.csv``); ``economic_value_summary.csv`` is
+            resolved from the same parent directory.
+
+    Returns:
+        DataFrame with per-group REV summary rows (v_max, alpha_star), or an
+        empty typed DataFrame when the sibling file does not exist.
+    """
+    try:
+        path = Path(metrics_csv_path).parent / "economic_value_summary.csv"
+        df = pd.read_csv(path)
+        df["lead"] = pd.to_numeric(df["lead"], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_ECONOMIC_VALUE_SUMMARY_EMPTY_COLUMNS)

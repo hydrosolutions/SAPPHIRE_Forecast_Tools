@@ -727,3 +727,234 @@ def test_summary_prob_section_shows_not_computed_when_empty(tmp_path: Path) -> N
 
     assert "## Probabilistic Metrics" in summary
     assert "not computed" in summary
+
+
+# ---------------------------------------------------------------------------
+# Phase-4 value-metric artifacts (SAPPHIRE_SKILL_VALUE)
+# ---------------------------------------------------------------------------
+
+from forecast_skill_eval.continuous_metrics import (  # noqa: E402
+    CONTINUOUS_METRIC_COLUMNS,
+    SEASONAL_VOLUME_COLUMNS,
+    SEASONAL_VOLUME_SUMMARY_COLUMNS,
+)
+from forecast_skill_eval.economic_value import (  # noqa: E402
+    ECONOMIC_VALUE_COLUMNS,
+    ECONOMIC_VALUE_SUMMARY_COLUMNS,
+)
+
+
+def _continuous_metrics_frame() -> pd.DataFrame:
+    row: dict[str, object] = {col: math.nan for col in CONTINUOUS_METRIC_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "n_pairs": 12,
+            "bias": 0.5,
+            "mae": 1.0,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _seasonal_volume_frame() -> pd.DataFrame:
+    row: dict[str, object] = {col: math.nan for col in SEASONAL_VOLUME_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "code": STATION_CODE,
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "year": 2024,
+            "n_periods": 36,
+            "expected_periods": 36,
+            "season_complete": True,
+            "season_volume_m3_fc": 1.0e6,
+            "season_volume_m3_obs": 1.1e6,
+            "seasonal_volume_error": -0.09,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _seasonal_volume_summary_frame() -> pd.DataFrame:
+    row: dict[str, object] = {col: math.nan for col in SEASONAL_VOLUME_SUMMARY_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "code": STATION_CODE,
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "n_years": 1,
+            "seasonal_volume_error_mean": -0.09,
+            "seasonal_volume_error_median": -0.09,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _economic_value_frame() -> pd.DataFrame:
+    row: dict[str, object] = {col: math.nan for col in ECONOMIC_VALUE_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "event": "below_norm",
+            "n_pairs": 12,
+            "base_rate_s": 0.3,
+            "hit_rate_H": 0.7,
+            "pofd_F": 0.2,
+            "alpha": 0.3,
+            "value": 0.5,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _economic_value_summary_frame() -> pd.DataFrame:
+    row: dict[str, object] = {col: math.nan for col in ECONOMIC_VALUE_SUMMARY_COLUMNS}
+    row.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "event": "below_norm",
+            "n_pairs": 12,
+            "base_rate_s": 0.3,
+            "hit_rate_H": 0.7,
+            "pofd_F": 0.2,
+            "v_max": 0.5,
+            "alpha_star": 0.3,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _bundle_with_value(tmp_path: Path) -> tuple[ForecastSkillEvalConfig, ResultsBundle]:
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("pentad", n_pairs=12),),
+        continuous_metrics=_continuous_metrics_frame(),
+        seasonal_volume=_seasonal_volume_frame(),
+        seasonal_volume_summary=_seasonal_volume_summary_frame(),
+        economic_value=_economic_value_frame(),
+        economic_value_summary=_economic_value_summary_frame(),
+    )
+    return config, bundle
+
+
+def _bundle_without_value(tmp_path: Path) -> tuple[ForecastSkillEvalConfig, ResultsBundle]:
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+        output_dir=tmp_path,
+    )
+    bundle = ResultsBundle(
+        pairs=pd.DataFrame(),
+        contingency_metrics=pd.DataFrame(),
+        baselines=pd.DataFrame(),
+        exclusion_ledger=ExclusionLedger(),
+        horizon_summary=(HorizonCoverage("pentad", n_pairs=0),),
+        # Default empty value frames — flag OFF
+    )
+    return config, bundle
+
+
+def test_value_artifacts_written_when_frames_non_empty(tmp_path: Path) -> None:
+    """With non-empty value frames, all five value CSVs are written."""
+    config, bundle = _bundle_with_value(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="value-on")
+
+    for name in (
+        "continuous_metrics",
+        "seasonal_volume",
+        "seasonal_volume_summary",
+        "economic_value",
+        "economic_value_summary",
+    ):
+        assert (artifact_dir / f"{name}.csv").exists(), f"{name}.csv must be written"
+
+    written = pd.read_csv(artifact_dir / "continuous_metrics.csv")
+    assert list(written.columns) == list(CONTINUOUS_METRIC_COLUMNS)
+
+
+def test_value_artifacts_not_written_when_frames_empty(tmp_path: Path) -> None:
+    """With empty value frames (flag OFF), no value CSV files are created."""
+    config, bundle = _bundle_without_value(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="value-off")
+
+    for name in (
+        "continuous_metrics",
+        "seasonal_volume",
+        "seasonal_volume_summary",
+        "economic_value",
+        "economic_value_summary",
+    ):
+        assert not (artifact_dir / f"{name}.csv").exists(), (
+            f"{name}.csv must NOT be written when frame is empty"
+        )
+
+
+def test_existing_artifacts_unaffected_by_value_flag(tmp_path: Path) -> None:
+    """Standard artifacts are written regardless of the value frames."""
+    config, bundle = _bundle_without_value(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="value-off-std")
+
+    for name in ("pairs", "contingency_metrics", "baselines", "exclusion_ledger"):
+        assert (artifact_dir / f"{name}.csv").exists()
+    assert (artifact_dir / "run_config.json").exists()
+    assert (artifact_dir / "summary.md").exists()
+
+
+def test_summary_includes_value_section_when_frames_non_empty(tmp_path: Path) -> None:
+    """summary.md must include the Value Metrics section with counts and filenames."""
+    config, bundle = _bundle_with_value(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="value-summary")
+    summary = (artifact_dir / "summary.md").read_text()
+
+    assert "## Value Metrics" in summary
+    assert "Continuous-metric groups: 1" in summary
+    assert "continuous_metrics.csv" in summary
+    assert "complete seasons" in summary
+
+
+def test_summary_value_section_shows_not_computed_when_empty(tmp_path: Path) -> None:
+    """summary.md must indicate value metrics were not computed when frames empty."""
+    config, bundle = _bundle_without_value(tmp_path)
+    artifact_dir = write_artifacts(config, bundle, run_id="value-off-summary")
+    summary = (artifact_dir / "summary.md").read_text()
+
+    assert "## Value Metrics" in summary
+    assert "not computed" in summary

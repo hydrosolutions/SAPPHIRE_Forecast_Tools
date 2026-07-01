@@ -17,6 +17,9 @@ from forecast_skill_eval.dashboard.data import (
     distinct_values,
     filter_metrics,
     filter_prob_by_grid,
+    load_continuous_metrics,
+    load_economic_value,
+    load_economic_value_summary,
     load_metrics,
     load_prob_metrics,
     load_reliability,
@@ -983,3 +986,341 @@ class TestFilterProbByGrid:
         df = pd.DataFrame([_prob_metric_row()]).iloc[0:0]
         result = filter_prob_by_grid(df, "short5")
         assert result.empty
+
+
+# ---------------------------------------------------------------------------
+# Value-metric loader helpers
+# ---------------------------------------------------------------------------
+
+_CONTINUOUS_METRIC_COLS = {
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "n_pairs",
+    "bias",
+    "mae",
+    "rve",
+    "kge",
+    "kge_r",
+    "kge_alpha",
+    "kge_beta",
+    "nse",
+}
+
+_ECONOMIC_VALUE_COLS = {
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "event",
+    "n_pairs",
+    "base_rate_s",
+    "hit_rate_H",
+    "pofd_F",
+    "alpha",
+    "value",
+}
+
+_ECONOMIC_VALUE_SUMMARY_COLS = {
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+    "lead",
+    "event",
+    "n_pairs",
+    "base_rate_s",
+    "hit_rate_H",
+    "pofd_F",
+    "v_max",
+    "alpha_star",
+}
+
+
+def _continuous_metric_row(**overrides) -> dict:
+    """Minimal valid continuous_metrics row.  Uses synthetic codes only."""
+    row = {
+        "horizon": "pentad",
+        "model": "LR",
+        "regime": "operational",
+        "season": "all",
+        "code": "POOLED",
+        "basin": "all",
+        "norm_provenance": "calculated",
+        "lead": float("nan"),
+        "n_pairs": 50,
+        "bias": -5.2,
+        "mae": 12.3,
+        "rve": -0.05,
+        "kge": 0.72,
+        "kge_r": 0.85,
+        "kge_alpha": 0.92,
+        "kge_beta": 0.95,
+        "nse": 0.68,
+    }
+    row.update(overrides)
+    return row
+
+
+def _economic_value_row(**overrides) -> dict:
+    """Minimal valid economic_value row.  Uses synthetic codes only."""
+    row = {
+        "horizon": "pentad",
+        "model": "LR",
+        "regime": "operational",
+        "season": "all",
+        "code": "POOLED",
+        "basin": "all",
+        "norm_provenance": "calculated",
+        "lead": float("nan"),
+        "event": "below_norm",
+        "n_pairs": 50,
+        "base_rate_s": 0.35,
+        "hit_rate_H": 0.72,
+        "pofd_F": 0.18,
+        "alpha": 0.35,
+        "value": 0.41,
+    }
+    row.update(overrides)
+    return row
+
+
+def _economic_value_summary_row(**overrides) -> dict:
+    """Minimal valid economic_value_summary row.  Uses synthetic codes only."""
+    row = {
+        "horizon": "pentad",
+        "model": "LR",
+        "regime": "operational",
+        "season": "all",
+        "code": "POOLED",
+        "basin": "all",
+        "norm_provenance": "calculated",
+        "lead": float("nan"),
+        "event": "below_norm",
+        "n_pairs": 50,
+        "base_rate_s": 0.35,
+        "hit_rate_H": 0.72,
+        "pofd_F": 0.18,
+        "v_max": 0.54,
+        "alpha_star": 0.35,
+    }
+    row.update(overrides)
+    return row
+
+
+def _write_value_csv(tmp_path: Path, filename: str, *rows: dict) -> Path:
+    """Write rows to *filename* in *tmp_path*; return sibling contingency path."""
+    df = pd.DataFrame(list(rows))
+    (tmp_path / filename).write_text(df.to_csv(index=False))
+    contingency = tmp_path / "contingency_metrics.csv"
+    if not contingency.exists():
+        contingency.touch()
+    return contingency
+
+
+# ---------------------------------------------------------------------------
+# TestLoadContinuousMetrics
+# ---------------------------------------------------------------------------
+
+
+class TestLoadContinuousMetrics:
+    def test_reads_sibling_continuous_metrics_csv(self, tmp_path: Path):
+        """load_continuous_metrics reads continuous_metrics.csv from the same directory."""
+        contingency = _write_value_csv(tmp_path, "continuous_metrics.csv", _continuous_metric_row())
+        df = load_continuous_metrics(contingency)
+        assert len(df) == 1
+        assert df["model"].iloc[0] == "LR"
+
+    def test_tolerates_missing_file_returns_empty_typed_frame(self, tmp_path: Path):
+        """When continuous_metrics.csv is absent, an empty typed DataFrame is returned."""
+        contingency = tmp_path / "contingency_metrics.csv"
+        contingency.touch()
+
+        df = load_continuous_metrics(contingency)
+        assert df.empty
+        assert _CONTINUOUS_METRIC_COLS.issubset(set(df.columns))
+
+    def test_lead_is_numeric(self, tmp_path: Path):
+        contingency = _write_value_csv(
+            tmp_path, "continuous_metrics.csv", _continuous_metric_row(lead=2.0)
+        )
+        df = load_continuous_metrics(contingency)
+        assert pd.api.types.is_float_dtype(df["lead"])
+        assert df["lead"].iloc[0] == pytest.approx(2.0)
+
+    def test_lead_nan_preserved(self, tmp_path: Path):
+        contingency = _write_value_csv(tmp_path, "continuous_metrics.csv", _continuous_metric_row())
+        df = load_continuous_metrics(contingency)
+        assert math.isnan(df["lead"].iloc[0])
+
+    def test_multiple_rows_loaded(self, tmp_path: Path):
+        contingency = _write_value_csv(
+            tmp_path,
+            "continuous_metrics.csv",
+            _continuous_metric_row(code="19999"),
+            _continuous_metric_row(code="29999"),
+            _continuous_metric_row(code="POOLED"),
+        )
+        df = load_continuous_metrics(contingency)
+        assert len(df) == 3
+
+    def test_metric_values_preserved(self, tmp_path: Path):
+        """kge and rve round-trip without corruption."""
+        contingency = _write_value_csv(
+            tmp_path,
+            "continuous_metrics.csv",
+            _continuous_metric_row(kge=0.72, rve=-0.05),
+        )
+        df = load_continuous_metrics(contingency)
+        assert df["kge"].iloc[0] == pytest.approx(0.72)
+        assert df["rve"].iloc[0] == pytest.approx(-0.05)
+
+
+# ---------------------------------------------------------------------------
+# TestLoadEconomicValue
+# ---------------------------------------------------------------------------
+
+
+class TestLoadEconomicValue:
+    def test_reads_sibling_economic_value_csv(self, tmp_path: Path):
+        """load_economic_value reads economic_value.csv from the same directory."""
+        contingency = _write_value_csv(tmp_path, "economic_value.csv", _economic_value_row())
+        df = load_economic_value(contingency)
+        assert len(df) == 1
+        assert df["model"].iloc[0] == "LR"
+
+    def test_tolerates_missing_file_returns_empty_typed_frame(self, tmp_path: Path):
+        """When economic_value.csv is absent, an empty typed DataFrame is returned."""
+        contingency = tmp_path / "contingency_metrics.csv"
+        contingency.touch()
+
+        df = load_economic_value(contingency)
+        assert df.empty
+        assert _ECONOMIC_VALUE_COLS.issubset(set(df.columns))
+
+    def test_lead_is_numeric(self, tmp_path: Path):
+        contingency = _write_value_csv(
+            tmp_path, "economic_value.csv", _economic_value_row(lead=1.0)
+        )
+        df = load_economic_value(contingency)
+        assert pd.api.types.is_float_dtype(df["lead"])
+        assert df["lead"].iloc[0] == pytest.approx(1.0)
+
+    def test_lead_nan_preserved(self, tmp_path: Path):
+        contingency = _write_value_csv(tmp_path, "economic_value.csv", _economic_value_row())
+        df = load_economic_value(contingency)
+        assert math.isnan(df["lead"].iloc[0])
+
+    def test_alpha_and_value_columns_present(self, tmp_path: Path):
+        """alpha and value (the REV-curve columns) round-trip correctly."""
+        contingency = _write_value_csv(
+            tmp_path, "economic_value.csv", _economic_value_row(alpha=0.35, value=0.41)
+        )
+        df = load_economic_value(contingency)
+        assert df["alpha"].iloc[0] == pytest.approx(0.35)
+        assert df["value"].iloc[0] == pytest.approx(0.41)
+
+    def test_multiple_alpha_rows_loaded(self, tmp_path: Path):
+        """One group typically has ~100 alpha-point rows."""
+        contingency = _write_value_csv(
+            tmp_path,
+            "economic_value.csv",
+            _economic_value_row(alpha=0.01),
+            _economic_value_row(alpha=0.35),
+            _economic_value_row(alpha=0.99),
+        )
+        df = load_economic_value(contingency)
+        assert len(df) == 3
+
+    def test_event_column_preserved(self, tmp_path: Path):
+        """event='below_norm' round-trips without corruption."""
+        contingency = _write_value_csv(
+            tmp_path, "economic_value.csv", _economic_value_row(event="below_norm")
+        )
+        df = load_economic_value(contingency)
+        assert df["event"].iloc[0] == "below_norm"
+
+
+# ---------------------------------------------------------------------------
+# TestLoadEconomicValueSummary
+# ---------------------------------------------------------------------------
+
+
+class TestLoadEconomicValueSummary:
+    def test_reads_sibling_economic_value_summary_csv(self, tmp_path: Path):
+        """load_economic_value_summary reads economic_value_summary.csv."""
+        contingency = _write_value_csv(
+            tmp_path, "economic_value_summary.csv", _economic_value_summary_row()
+        )
+        df = load_economic_value_summary(contingency)
+        assert len(df) == 1
+        assert df["model"].iloc[0] == "LR"
+
+    def test_tolerates_missing_file_returns_empty_typed_frame(self, tmp_path: Path):
+        """When economic_value_summary.csv is absent, empty typed DataFrame returned."""
+        contingency = tmp_path / "contingency_metrics.csv"
+        contingency.touch()
+
+        df = load_economic_value_summary(contingency)
+        assert df.empty
+        assert _ECONOMIC_VALUE_SUMMARY_COLS.issubset(set(df.columns))
+
+    def test_lead_is_numeric(self, tmp_path: Path):
+        contingency = _write_value_csv(
+            tmp_path, "economic_value_summary.csv", _economic_value_summary_row(lead=0.0)
+        )
+        df = load_economic_value_summary(contingency)
+        assert pd.api.types.is_float_dtype(df["lead"])
+        assert df["lead"].iloc[0] == pytest.approx(0.0)
+
+    def test_lead_nan_preserved(self, tmp_path: Path):
+        contingency = _write_value_csv(
+            tmp_path, "economic_value_summary.csv", _economic_value_summary_row()
+        )
+        df = load_economic_value_summary(contingency)
+        assert math.isnan(df["lead"].iloc[0])
+
+    def test_v_max_and_alpha_star_preserved(self, tmp_path: Path):
+        """v_max and alpha_star round-trip correctly."""
+        contingency = _write_value_csv(
+            tmp_path,
+            "economic_value_summary.csv",
+            _economic_value_summary_row(v_max=0.54, alpha_star=0.35),
+        )
+        df = load_economic_value_summary(contingency)
+        assert df["v_max"].iloc[0] == pytest.approx(0.54)
+        assert df["alpha_star"].iloc[0] == pytest.approx(0.35)
+
+    def test_multiple_models_loaded(self, tmp_path: Path):
+        """One summary row per model-group."""
+        contingency = _write_value_csv(
+            tmp_path,
+            "economic_value_summary.csv",
+            _economic_value_summary_row(model="LR", code="19999"),
+            _economic_value_summary_row(model="GBT", code="19999"),
+            _economic_value_summary_row(model="LR", code="POOLED"),
+        )
+        df = load_economic_value_summary(contingency)
+        assert len(df) == 3
+
+    def test_v_max_nan_round_trips(self, tmp_path: Path):
+        """NaN v_max (skill-negative or gated group) is preserved."""
+        contingency = _write_value_csv(
+            tmp_path,
+            "economic_value_summary.csv",
+            _economic_value_summary_row(v_max=float("nan")),
+        )
+        df = load_economic_value_summary(contingency)
+        assert math.isnan(df["v_max"].iloc[0])

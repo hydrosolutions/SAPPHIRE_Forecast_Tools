@@ -249,6 +249,11 @@ def _apply_season_filter(bundle: ResultsBundle, season_filter: str) -> ResultsBu
         horizon_summary=bundle.horizon_summary,
         prob_metrics=_filter(bundle.prob_metrics),
         prob_reliability=_filter(bundle.prob_reliability),
+        continuous_metrics=_filter(bundle.continuous_metrics),
+        seasonal_volume=_filter(bundle.seasonal_volume),
+        seasonal_volume_summary=_filter(bundle.seasonal_volume_summary),
+        economic_value=_filter(bundle.economic_value),
+        economic_value_summary=_filter(bundle.economic_value_summary),
     )
 
 

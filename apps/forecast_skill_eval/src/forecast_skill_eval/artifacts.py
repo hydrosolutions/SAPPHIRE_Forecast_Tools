@@ -56,6 +56,15 @@ def write_artifacts(
             artifact_dir / "prob_reliability",
             parquet_available=parquet_available,
         )
+    for frame, stem in (
+        (bundle.continuous_metrics, "continuous_metrics"),
+        (bundle.seasonal_volume, "seasonal_volume"),
+        (bundle.seasonal_volume_summary, "seasonal_volume_summary"),
+        (bundle.economic_value, "economic_value"),
+        (bundle.economic_value_summary, "economic_value_summary"),
+    ):
+        if not frame.empty:
+            _write_table(frame, artifact_dir / stem, parquet_available=parquet_available)
     (artifact_dir / "run_config.json").write_text(
         json.dumps(_config_record(config), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -138,6 +147,7 @@ def _summary_markdown(config: ForecastSkillEvalConfig, bundle: ResultsBundle) ->
     lines.extend(_station_distribution_section(bundle.contingency_metrics))
     lines.extend(_norm_provenance_section(config, bundle.pairs))
     lines.extend(_prob_metrics_section(bundle.prob_metrics))
+    lines.extend(_value_metrics_section(bundle))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -525,6 +535,59 @@ def _prob_metrics_section(prob_metrics: pd.DataFrame) -> list[str]:
     lines.append(
         "Artifacts: `prob_metrics.csv` / `prob_metrics.parquet`, "
         "`prob_reliability.csv` / `prob_reliability.parquet`."
+    )
+    lines.append("")
+    return lines
+
+
+def _value_metrics_section(bundle: ResultsBundle) -> list[str]:
+    """Summarise Phase-4 value metrics when SAPPHIRE_SKILL_VALUE is on.
+
+    When every value frame is empty (flag off) a single status line is emitted
+    so the section always appears in the document.
+
+    Args:
+        bundle: Full result bundle carrying the five value frames.
+
+    Returns:
+        Markdown lines for the ``## Value Metrics`` section.
+    """
+    lines = ["## Value Metrics", ""]
+    continuous = bundle.continuous_metrics
+    seasonal = bundle.seasonal_volume
+    economic_summary = bundle.economic_value_summary
+
+    if continuous.empty and seasonal.empty and economic_summary.empty:
+        lines.extend(
+            [
+                "Value metrics not computed "
+                "(SAPPHIRE_SKILL_VALUE not enabled or no scorable groups).",
+                "",
+            ]
+        )
+        return lines
+
+    n_complete = 0
+    if not seasonal.empty and "season_complete" in seasonal.columns:
+        n_complete = int(seasonal["season_complete"].fillna(False).astype(bool).sum())
+
+    v_max_range = "n/a"
+    if not economic_summary.empty and "v_max" in economic_summary.columns:
+        v_max = pd.to_numeric(economic_summary["v_max"], errors="coerce").dropna()
+        if not v_max.empty:
+            v_max_range = f"{float(v_max.min()):.3f} .. {float(v_max.max()):.3f}"
+
+    lines.append(f"Continuous-metric groups: {len(continuous)}")
+    lines.append(f"Seasonal-volume rows: {len(seasonal)} ({n_complete} complete seasons)")
+    lines.append(f"Economic-value groups: {len(economic_summary)} (v_max range {v_max_range})")
+    lines.append(
+        "Artifacts: `continuous_metrics.csv`, `seasonal_volume.csv`, "
+        "`seasonal_volume_summary.csv`, `economic_value.csv`, "
+        "`economic_value_summary.csv` (+ `.parquet`)."
+    )
+    lines.append(
+        "Note: `V(alpha)` may be negative (skill-negative groups); "
+        "`season_complete` is a count gate, not a day gate."
     )
     lines.append("")
     return lines

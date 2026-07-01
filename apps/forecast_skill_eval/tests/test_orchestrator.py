@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pandas as pd
 import pytest
 
 from forecast_skill_eval.cli import _SapphireClientBundle
@@ -404,3 +405,148 @@ def test_prob_flag_off_leaves_contingency_byte_identical(
     )
     assert bundle_a.prob_metrics.empty
     assert bundle_b.prob_metrics.empty
+
+
+# ---------------------------------------------------------------------------
+# SAPPHIRE_SKILL_VALUE flag tests (Phase-4 value metrics)
+# ---------------------------------------------------------------------------
+
+from forecast_skill_eval.continuous_metrics import (  # noqa: E402
+    CONTINUOUS_METRIC_COLUMNS,
+    SEASONAL_VOLUME_COLUMNS,
+    SEASONAL_VOLUME_SUMMARY_COLUMNS,
+)
+from forecast_skill_eval.economic_value import (  # noqa: E402
+    ECONOMIC_VALUE_COLUMNS,
+    ECONOMIC_VALUE_SUMMARY_COLUMNS,
+)
+
+
+def test_value_metrics_populated_when_flag_on(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With SAPPHIRE_SKILL_VALUE=1, continuous_metrics and economic_value are
+    non-empty and carry the expected column schema."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_VALUE", "1")
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="value-on")
+
+    assert not bundle.continuous_metrics.empty, (
+        "continuous_metrics must be non-empty when flag is ON"
+    )
+    assert not bundle.economic_value.empty, "economic_value must be non-empty when flag is ON"
+    for col in CONTINUOUS_METRIC_COLUMNS:
+        assert col in bundle.continuous_metrics.columns, (
+            f"continuous_metrics missing column '{col}'"
+        )
+    for col in ECONOMIC_VALUE_COLUMNS:
+        assert col in bundle.economic_value.columns, f"economic_value missing column '{col}'"
+    # A single pentad pair is below the variance-metric floor → ledger records it.
+    reasons = {reason for (_stage, reason) in bundle.exclusion_ledger.counts_by_stage_reason()}
+    stages = {stage for (stage, _reason) in bundle.exclusion_ledger.counts_by_stage_reason()}
+    assert "value" in stages
+    assert "min_pairs_gate" in reasons
+
+
+def test_value_metrics_empty_when_flag_off(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With SAPPHIRE_SKILL_VALUE absent (default OFF), all five value frames are
+    empty with the correct columns and existing outputs remain populated."""
+    monkeypatch.delenv("SAPPHIRE_SKILL_VALUE", raising=False)
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="value-off")
+
+    assert bundle.continuous_metrics.empty
+    assert bundle.seasonal_volume.empty
+    assert bundle.seasonal_volume_summary.empty
+    assert bundle.economic_value.empty
+    assert bundle.economic_value_summary.empty
+    assert list(bundle.continuous_metrics.columns) == list(CONTINUOUS_METRIC_COLUMNS)
+    assert list(bundle.seasonal_volume.columns) == list(SEASONAL_VOLUME_COLUMNS)
+    assert list(bundle.seasonal_volume_summary.columns) == list(SEASONAL_VOLUME_SUMMARY_COLUMNS)
+    assert list(bundle.economic_value.columns) == list(ECONOMIC_VALUE_COLUMNS)
+    assert list(bundle.economic_value_summary.columns) == list(ECONOMIC_VALUE_SUMMARY_COLUMNS)
+
+    # Existing outputs unaffected by the (off) value flag.
+    assert not bundle.contingency_metrics.empty
+    assert not bundle.baselines.empty
+    # No value-stage ledger entries when the flag is off.
+    stages = {stage for (stage, _reason) in bundle.exclusion_ledger.counts_by_stage_reason()}
+    assert "value" not in stages
+
+
+def test_value_flag_off_leaves_contingency_byte_identical(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag OFF must leave contingency/baseline outputs identical to a baseline run."""
+    monkeypatch.delenv("SAPPHIRE_SKILL_VALUE", raising=False)
+
+    client_a = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    client_b = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle_a = run(config, client_a, run_id="value-off-a")
+    bundle_b = run(config, client_b, run_id="value-off-b")
+
+    pd.testing.assert_frame_equal(bundle_a.contingency_metrics, bundle_b.contingency_metrics)
+    pd.testing.assert_frame_equal(bundle_a.baselines, bundle_b.baselines)
+    assert bundle_a.continuous_metrics.empty
+    assert bundle_b.economic_value.empty
+
+
+def test_value_flag_truthiness_accepts_true_string(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SAPPHIRE_SKILL_VALUE='true' (case-insensitive) is treated as enabled."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_VALUE", "true")
+
+    client = fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+    )
+
+    bundle = run(config, client, run_id="value-true-str")
+    assert not bundle.continuous_metrics.empty, (
+        "SAPPHIRE_SKILL_VALUE='true' must enable value metrics"
+    )
