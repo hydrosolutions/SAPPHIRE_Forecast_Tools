@@ -22,6 +22,84 @@ from .reports import SapphireReport
 import tag_library as tl
 
 
+VALUE_TAG_NAMES = frozenset(
+    {
+        # monthly / seasonal
+        "Q_MIN",
+        "Q_MAX",
+        "V_MIN",
+        "V_MAX",
+        "NORM",
+        "VNORM",
+        "Q_LAST_YEAR",
+        # pentad / decad
+        "QEXP",
+        "LINREG_PREDICTOR",
+        "DELTA",
+        "SDIVSIGMA",
+        "FORECAST_LOWER_BOUND",
+        "FORECAST_UPPER_BOUND",
+        "HYDROGRAPH_MAX",
+        "HYDROGRAPH_MIN",
+        "QNORM",
+        "QDANGER",
+        "Q_ACT_THIS",
+        "Q_ACT_LAST",
+        "NORM_ACT",
+        "PERC_NORM",
+        "PERC_PREVYEAR_ACT",
+        "PERC_NORM_ACT",
+    }
+)
+
+
+def _numerify_cell(cell):
+    """Convert one openpyxl cell holding a comma-decimal / integer text
+    string into a real numeric cell with a matching number_format.
+
+    The tag-written string already carries the correct rounding (e.g.
+    '12,3'); it is parsed back to a number and a number format matching
+    its decimal count ('0', '0.0', '0.00') is set, so Excel shows the same
+    value (with the locale decimal separator) but stores a number.
+
+    No-op for cells that are not strings, are blank, are dashes, are
+    unparseable, or hold NaN.
+    """
+    raw = cell.value
+    if not isinstance(raw, str):
+        return
+    text = raw.strip()
+    if not text:
+        return
+    normalized = text.replace(",", ".")
+    try:
+        num = float(normalized)
+    except ValueError:
+        return
+    # NaN must not reach int(round(...)); treat like unparseable input.
+    if math.isnan(num):
+        return
+    decimals = len(text.split(",", 1)[1]) if "," in text else 0
+    if decimals == 0:
+        cell.value = int(round(num))
+        cell.number_format = "0"
+    else:
+        cell.value = num
+        cell.number_format = "0." + "0" * decimals
+
+
+def _numerify_sheet_value_cells(sheet, data_tags_info):
+    """Numerify every value column (per VALUE_TAG_NAMES) across all rows of
+    a fully rendered sheet, using the tag->column map from data_tags_info.
+    """
+    value_cols = {ci["cell"].column for ci in data_tags_info if ci["tag"].name in VALUE_TAG_NAMES}
+    if not value_cols:
+        return
+    for row in range(1, sheet.max_row + 1):
+        for col in value_cols:
+            _numerify_cell(sheet.cell(row=row, column=col))
+
+
 # Custom class
 # Overwrite the default report generator to add functinality to write to
 # specific sheets
@@ -235,40 +313,18 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
         data row from the comma-decimal text the tags wrote into real numeric
         cells, preserving the displayed precision via a number format.
 
-        The tag-written string already carries the correct rounding (e.g.
-        '12,3'); we parse it back to a number and set a number format matching
-        its decimal count ('0', '0.0', '0.00'), so Excel shows the same value
-        (with the locale decimal separator) but stores a number. Blank / dash /
+        Delegates the per-cell parsing to the shared ``_numerify_cell``
+        helper and filters columns using the shared ``VALUE_TAG_NAMES``
+        whitelist (a superset of the tag names ever passed in
+        ``section_cells`` here, so behavior is unchanged). Blank / dash /
         unparseable cells are left untouched.
         """
         from openpyxl.utils import get_column_letter
-        value_tags = {"Q_MIN", "Q_MAX", "V_MIN", "V_MAX", "NORM", "VNORM", "Q_LAST_YEAR"}
         for ci in section_cells:
-            if ci["tag"].name not in value_tags:
+            if ci["tag"].name not in VALUE_TAG_NAMES:
                 continue
             col = get_column_letter(ci["cell"].column)
-            cell = self.sheet[f"{col}{row}"]
-            raw = cell.value
-            if not isinstance(raw, str):
-                continue
-            text = raw.strip()
-            if not text:
-                continue
-            normalized = text.replace(",", ".")
-            try:
-                num = float(normalized)
-            except ValueError:
-                continue
-            # NaN must not reach int(round(...)); treat like unparseable input.
-            if math.isnan(num):
-                continue
-            decimals = len(text.split(",", 1)[1]) if "," in text else 0
-            if decimals == 0:
-                cell.value = int(round(num))
-                cell.number_format = "0"
-            else:
-                cell.value = num
-                cell.number_format = "0." + "0" * decimals
+            _numerify_cell(self.sheet[f"{col}{row}"])
 
     # ------------------------------------------------------------------
     # Header-bearing section rendering
@@ -404,6 +460,18 @@ class MultiSectionReportGenerator(DefaultReportGenerator):
 
         self._handle_general_tags()
         self.save_report(output_filename, output_path)
+
+
+class NumerifyingReportGenerator(DefaultReportGenerator):
+    """DefaultReportGenerator that converts value-column text cells into
+    real numbers just before saving, so pentad/decad bulletins don't show
+    Excel's 'number stored as text' warning. Rendering is otherwise
+    identical.
+    """
+
+    def save_report(self, name, output_path):
+        _numerify_sheet_value_cells(self.sheet, self.data_tags_info)
+        super().save_report(name, output_path)
 
 
 def round_percentage_to_integer_string(value: float) -> int:
@@ -1594,8 +1662,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 os.path.join(report_settings.report_output_path, temp_bulletin_file_name)
             )
         else:
-            # Non-TJ path: unchanged DefaultReportGenerator behaviour.
-            report_generator = DefaultReportGenerator(
+            # Non-TJ path: DefaultReportGenerator rendering, plus a save-time
+            # pass that numerifies value cells so they aren't stored as text.
+            report_generator = NumerifyingReportGenerator(
                 tags=tag_list,
                 template=template_file_name,
                 templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
