@@ -14,12 +14,19 @@ decimal-comma is normalised back to a plain dot, must equal round_3sf(value).
 
 No real station codes or discharge values are used (fake code '19999').
 
-This test MUST fail while the formatter still uses the legacy banded rounding
+These tests MUST fail while the formatter still uses the legacy banded rounding
 (e.g. 2.565 -> '2,56', 99.95 -> '99,9') and pass only once it routes through
-the shared 3sf helper. It must not be weakened.
+the shared 3sf helper. They must not be weakened.
+
+Scope note: the non-finite / None negative path (blank cell) is a property of
+the shared helper itself and is locked at the unit level in
+``iEasyHydroForecast/tests/test_round_3sf_contract.py`` (``format_discharge`` /
+``round_3sf`` return ''/None for NaN/Inf/None). It is deliberately NOT re-asserted
+here: the legacy display formatter already special-cases NaN -> '' today, so a
+display-layer NaN assertion would be green before any M1 code lands and would
+lock nothing. This file locks only the routed-value behaviour that is red now.
 """
 
-import math
 import sys
 import types
 from unittest.mock import MagicMock
@@ -143,8 +150,3 @@ def test_display_path_routes_through_round_3sf(value):
     assert displayed not in (None, "")
     parsed = float(displayed.replace(",", "."))
     assert parsed == fl.round_3sf(value)
-
-
-def test_display_path_blank_for_nan():
-    """Non-finite stored value renders as a blank cell, never 'nan'."""
-    assert display_discharge(float("nan")) == ""
