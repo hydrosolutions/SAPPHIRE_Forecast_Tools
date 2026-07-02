@@ -98,6 +98,16 @@ THRESHOLD_METRICS = {
     name: entry for name, entry in METRIC_REGISTRY.items() if entry["env_var"] is not None
 }
 
+# ---------------------------------------------------------------------------
+# Monthly skill groupby keys (PP-038: per-lead stratification)
+# These constants define the groupby keys for all monthly skill groupbys and
+# the ensemble aggregation groupby.  Threading them through every site avoids
+# missed spots and makes future changes to the key set a single-line edit.
+# ---------------------------------------------------------------------------
+
+GROUP_COLS = ["month_in_year", "horizon_value", "code", "model_short"]
+ENSEMBLE_KEY = ["year", "month", "horizon_value", "code"]
+
 
 # ---------------------------------------------------------------------------
 # Individual metric helpers
@@ -1167,7 +1177,7 @@ def calculate_monthly_skill_metrics(
     )
 
     empty_stats = pd.DataFrame(
-        columns=["month_in_year", "code", "model_short"]
+        columns=["month_in_year", "horizon_value", "code", "model_short"]
         + METRIC_ORDER
         + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
     )
@@ -1176,6 +1186,19 @@ def calculate_monthly_skill_metrics(
     # Guard: empty inputs
     if observations.empty or forecasts.empty:
         return empty_stats, empty_joint, timing_stats
+
+    # Normalise horizon_value: ensure the column exists and contains integers.
+    # Real-model rows from the DB carry horizon_value ∈ {0,1,2,3}; baseline
+    # rows (NAIVE_MEAN, SKILLED_MEAN, ENSEMBLE_MEAN) store target-month
+    # numbers (1–12) which must NOT be trusted as leads — they are derived
+    # from real-model grouping below.  Legacy inputs without the column default
+    # to 0 so all downstream groupbys continue to work unchanged.
+    if "horizon_value" not in forecasts.columns:
+        forecasts = forecasts.copy()
+        forecasts["horizon_value"] = 0
+    else:
+        forecasts = forecasts.copy()
+        forecasts["horizon_value"] = forecasts["horizon_value"].fillna(0).astype(int)
 
     # --- 1. Merge forecasts with observations on [code, year, month] ---
     merged = pd.merge(
@@ -1201,11 +1224,9 @@ def calculate_monthly_skill_metrics(
             empty_joint,
         )
 
-    # --- 2. Point metrics per (month_in_year, code, model_short) ---
+    # --- 2. Point metrics per (month_in_year, horizon_value, code, model_short) ---
     skill_stats = (
-        merged.groupby(["month_in_year", "code", "model_short"])[
-            ["discharge_avg", "forecasted_discharge", "delta"]
-        ]
+        merged.groupby(GROUP_COLS)[["discharge_avg", "forecasted_discharge", "delta"]]
         .apply(
             calculate_all_skill_metrics,
             observed_col="discharge_avg",
@@ -1217,7 +1238,7 @@ def calculate_monthly_skill_metrics(
 
     # --- 3. CRPS per group ---
     crps_records = []
-    for (miy, code, model), grp in merged.groupby(["month_in_year", "code", "model_short"]):
+    for (miy, hv, code, model), grp in merged.groupby(GROUP_COLS):
         obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
         qf_cols = [c for c in _QUANTILE_COLS if c in grp.columns]
         if len(qf_cols) == len(_QUANTILE_COLS):
@@ -1232,6 +1253,7 @@ def calculate_monthly_skill_metrics(
         crps_records.append(
             {
                 "month_in_year": miy,
+                "horizon_value": hv,
                 "code": code,
                 "model_short": model,
                 "crps": crps_val,
@@ -1244,7 +1266,7 @@ def calculate_monthly_skill_metrics(
     crps_df = pd.DataFrame(crps_records)
     skill_stats = skill_stats.merge(
         crps_df,
-        on=["month_in_year", "code", "model_short"],
+        on=GROUP_COLS,
         how="left",
     )
 
@@ -1255,7 +1277,7 @@ def calculate_monthly_skill_metrics(
         joint_forecasts["month_in_year"] = joint_forecasts["month"]
     skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
 
-    merge_keys = ["month_in_year", "code", "model_short"]
+    merge_keys = GROUP_COLS
     skilled_merged = merged.merge(
         skill_stats_filtered[merge_keys].drop_duplicates(),
         on=merge_keys,
@@ -1282,7 +1304,7 @@ def calculate_monthly_skill_metrics(
             if dcol in skilled_merged.columns:
                 em_agg_dict[dcol] = "first"
 
-        em_avg = skilled_merged.groupby(["year", "month", "code"]).agg(em_agg_dict).reset_index()
+        em_avg = skilled_merged.groupby(ENSEMBLE_KEY).agg(em_agg_dict).reset_index()
         em_avg = enforce_quantile_monotonicity(
             em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
         )
@@ -1306,9 +1328,9 @@ def calculate_monthly_skill_metrics(
                 em_with_obs = em_with_obs.drop(columns=["month_in_year_obs"])
 
             em_skill = (
-                em_with_obs.groupby(["month_in_year", "code", "model_short", "composition"])[
-                    ["discharge_avg", "forecasted_discharge", "delta"]
-                ]
+                em_with_obs.groupby(
+                    ["month_in_year", "horizon_value", "code", "model_short", "composition"]
+                )[["discharge_avg", "forecasted_discharge", "delta"]]
                 .apply(
                     calculate_all_skill_metrics,
                     observed_col="discharge_avg",
@@ -1322,9 +1344,7 @@ def calculate_monthly_skill_metrics(
             qf_cols = [c for c in _QUANTILE_COLS if c in em_with_obs.columns]
             if len(qf_cols) == len(_QUANTILE_COLS):
                 em_crps = []
-                for (miy, code, model), grp in em_with_obs.groupby(
-                    ["month_in_year", "code", "model_short"]
-                ):
+                for (miy, hv, code, model), grp in em_with_obs.groupby(GROUP_COLS):
                     obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
                     qf = grp[qf_cols].to_numpy(dtype=np.float64)
                     crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
@@ -1333,6 +1353,7 @@ def calculate_monthly_skill_metrics(
                     em_crps.append(
                         {
                             "month_in_year": miy,
+                            "horizon_value": hv,
                             "code": code,
                             "model_short": model,
                             "crps": crps_val,
@@ -1344,7 +1365,7 @@ def calculate_monthly_skill_metrics(
                 em_crps_df = pd.DataFrame(em_crps)
                 em_skill = em_skill.merge(
                     em_crps_df,
-                    on=["month_in_year", "code", "model_short"],
+                    on=GROUP_COLS,
                     how="left",
                 )
             else:
@@ -1362,7 +1383,17 @@ def calculate_monthly_skill_metrics(
     )
 
     # --- 5. Naive Mean baseline ---
-    return _add_naive_mean(skill_stats, merged, observations, timing_stats, joint_forecasts)
+    skill_out, joint_out, ts_out = _add_naive_mean(
+        skill_stats, merged, observations, timing_stats, joint_forecasts
+    )
+
+    # --- 6. Drop rows with n_pairs < 2 ---
+    # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
+    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
+    # meaningless. Filter applies to ALL rows — raw models and baselines.
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+
+    return skill_out, joint_out, ts_out
 
 
 def _add_naive_mean(
@@ -1411,7 +1442,7 @@ def _add_naive_mean(
         if dcol in pool.columns:
             agg_dict[dcol] = "first"
 
-    naive_avg = pool.groupby(["year", "month", "code"]).agg(agg_dict).reset_index()
+    naive_avg = pool.groupby(ENSEMBLE_KEY).agg(agg_dict).reset_index()
     naive_avg = enforce_quantile_monotonicity(
         naive_avg, [c for c in _QUANTILE_COLS if c in naive_avg.columns]
     )
@@ -1440,9 +1471,9 @@ def _add_naive_mean(
 
     # Compute point metrics
     naive_skill = (
-        naive_with_obs.groupby(["month_in_year", "code", "model_short", "composition"])[
-            ["discharge_avg", "forecasted_discharge", "delta"]
-        ]
+        naive_with_obs.groupby(
+            ["month_in_year", "horizon_value", "code", "model_short", "composition"]
+        )[["discharge_avg", "forecasted_discharge", "delta"]]
         .apply(
             calculate_all_skill_metrics,
             observed_col="discharge_avg",
@@ -1456,9 +1487,7 @@ def _add_naive_mean(
     qf_cols = [c for c in _QUANTILE_COLS if c in naive_with_obs.columns]
     if len(qf_cols) == len(_QUANTILE_COLS):
         crps_records = []
-        for (miy, code, model), grp in naive_with_obs.groupby(
-            ["month_in_year", "code", "model_short"]
-        ):
+        for (miy, hv, code, model), grp in naive_with_obs.groupby(GROUP_COLS):
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
@@ -1467,6 +1496,7 @@ def _add_naive_mean(
             crps_records.append(
                 {
                     "month_in_year": miy,
+                    "horizon_value": hv,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
@@ -1478,7 +1508,7 @@ def _add_naive_mean(
         crps_df = pd.DataFrame(crps_records)
         naive_skill = naive_skill.merge(
             crps_df,
-            on=["month_in_year", "code", "model_short"],
+            on=GROUP_COLS,
             how="left",
         )
     else:
@@ -1533,8 +1563,8 @@ def _add_skilled_mean(
     if filtered.empty:
         return skill_stats, joint_forecasts
 
-    # 3. Extract MAE per (month_in_year, code, model_short)
-    mae_df = filtered[["month_in_year", "code", "model_short", "mae"]].copy()
+    # 3. Extract MAE per (month_in_year, horizon_value, code, model_short)
+    mae_df = filtered[["month_in_year", "horizon_value", "code", "model_short", "mae"]].copy()
     mae_df = mae_df.dropna(subset=["mae"])
     if mae_df.empty:
         return skill_stats, joint_forecasts
@@ -1544,13 +1574,15 @@ def _add_skilled_mean(
     eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
     mae_df["weight"] = 1.0 / (mae_df["mae"] + eps)
 
-    # Get qualifying models per (month_in_year, code)
-    qualifying_keys = mae_df[["month_in_year", "code", "model_short"]].drop_duplicates()
+    # Get qualifying models per (month_in_year, horizon_value, code)
+    qualifying_keys = mae_df[
+        ["month_in_year", "horizon_value", "code", "model_short"]
+    ].drop_duplicates()
 
     # Filter merged to qualifying models only
     sm_merged = merged.merge(
         qualifying_keys,
-        on=["month_in_year", "code", "model_short"],
+        on=["month_in_year", "horizon_value", "code", "model_short"],
         how="inner",
     )
     sm_merged = sm_merged.dropna(subset=["forecasted_discharge"]).copy()
@@ -1559,8 +1591,8 @@ def _add_skilled_mean(
 
     # Attach weights from mae_df
     sm_merged = sm_merged.merge(
-        mae_df[["month_in_year", "code", "model_short", "weight"]],
-        on=["month_in_year", "code", "model_short"],
+        mae_df[["month_in_year", "horizon_value", "code", "model_short", "weight"]],
+        on=["month_in_year", "horizon_value", "code", "model_short"],
         how="left",
     )
 
@@ -1594,7 +1626,7 @@ def _add_skilled_mean(
             sm_agg_dict[dcol] = (dcol, "first")
 
     sm_avg = (
-        sm_merged.groupby(["year", "month", "code"])
+        sm_merged.groupby(ENSEMBLE_KEY)
         .agg(
             **sm_agg_dict,
         )
@@ -1623,9 +1655,9 @@ def _add_skilled_mean(
         sm_with_obs = sm_with_obs.drop(columns=["month_in_year_obs"])
 
     sm_skill = (
-        sm_with_obs.groupby(["month_in_year", "code", "model_short", "composition"])[
-            ["discharge_avg", "forecasted_discharge", "delta"]
-        ]
+        sm_with_obs.groupby(
+            ["month_in_year", "horizon_value", "code", "model_short", "composition"]
+        )[["discharge_avg", "forecasted_discharge", "delta"]]
         .apply(
             calculate_all_skill_metrics,
             observed_col="discharge_avg",
@@ -1639,9 +1671,7 @@ def _add_skilled_mean(
     qf_cols = [c for c in _QUANTILE_COLS if c in sm_with_obs.columns]
     if len(qf_cols) == len(_QUANTILE_COLS):
         sm_crps = []
-        for (miy, code, model), grp in sm_with_obs.groupby(
-            ["month_in_year", "code", "model_short"]
-        ):
+        for (miy, hv, code, model), grp in sm_with_obs.groupby(GROUP_COLS):
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
@@ -1650,6 +1680,7 @@ def _add_skilled_mean(
             sm_crps.append(
                 {
                     "month_in_year": miy,
+                    "horizon_value": hv,
                     "code": code,
                     "model_short": model,
                     "crps": crps_val,
@@ -1661,7 +1692,7 @@ def _add_skilled_mean(
         sm_crps_df = pd.DataFrame(sm_crps)
         sm_skill = sm_skill.merge(
             sm_crps_df,
-            on=["month_in_year", "code", "model_short"],
+            on=GROUP_COLS,
             how="left",
         )
     else:
@@ -2330,7 +2361,7 @@ def _calculate_aggregated_skill_metrics(
     )
 
     # --- 5. Naive Mean ---
-    return _add_naive_mean_aggregated(
+    skill_out, joint_out, ts_out = _add_naive_mean_aggregated(
         skill_stats,
         merged,
         observations,
@@ -2341,6 +2372,14 @@ def _calculate_aggregated_skill_metrics(
         timing_stats,
         joint_forecasts,
     )
+
+    # --- 6. Drop rows with n_pairs < 2 ---
+    # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
+    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
+    # meaningless. Filter applies to ALL rows — raw models and baselines.
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+
+    return skill_out, joint_out, ts_out
 
 
 def _add_naive_mean_aggregated(

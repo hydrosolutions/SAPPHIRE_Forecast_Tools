@@ -332,6 +332,8 @@ def _get_snow_single(
             },
         })
 
+    sort_columns = ["date", *(["id"] if "id" in df.columns else [])]
+    df.sort_values(sort_columns, inplace=True, kind="mergesort")
     df.rename(columns={"value": col_name, **SNOW_RENAME_MAP}, inplace=True)
     df.drop(columns=["snow_type", *SNOW_VALUE_COLS, "id"], inplace=True, errors="ignore")
     for column in contract_columns:
@@ -544,7 +546,13 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
         "model_type_description": "model_long",
     }, inplace=True)
     df.sort_values("date", inplace=True)  # keep only the latest recalculation run per key
-    df.drop_duplicates(subset=["code", _horizon_in_year_col(horizon), "model_short"], keep="last", inplace=True)
+    # PP-038: month skill metrics include per-lead rows (one per horizon_value).
+    # Include horizon_value in the dedup subset when present so that distinct
+    # leads are NOT collapsed to a single arbitrary row.
+    dedup_cols = ["code", _horizon_in_year_col(horizon), "model_short"]
+    if "horizon_value" in df.columns:
+        dedup_cols = dedup_cols + ["horizon_value"]
+    df.drop_duplicates(subset=dedup_cols, keep="last", inplace=True)
     df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
     return _convert_na_to_nan(df)
 
@@ -843,6 +851,16 @@ def _get_data_monthly(
 
     forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=1)))
     forecast_stats = i18n_models(get_forecast_stats("month", station))
+
+    # PP-038: get_forecast_stats now preserves per-lead rows (one per horizon_value).
+    # Filter to the operational lead (horizon_value=1) that matches the displayed
+    # forecasts so the tile merge is 1:1 and forecast rows are not duplicated.
+    # This mirrors season's single-lead selection via _resolve_seasonal_horizon_value.
+    if not forecast_stats.empty and "horizon_value" in forecast_stats.columns:
+        _op_lead = 1
+        _op_mask = forecast_stats["horizon_value"] == _op_lead
+        if _op_mask.any():
+            forecast_stats = forecast_stats[_op_mask].copy()
 
     # Merge skill metrics into forecasts (same pattern as pentad/decad in get_data)
     hin = "month_in_year"

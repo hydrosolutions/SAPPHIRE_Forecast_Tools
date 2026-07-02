@@ -298,7 +298,9 @@ def read_monthly_skill_metrics(
 
     Returns:
         DataFrame with columns: [month_in_year, code, model_short,
-        sdivsigma, nse, delta, accuracy, mae, n_pairs]
+        horizon_value, sdivsigma, nse, delta, accuracy, mae, n_pairs].
+        horizon_value is the forecast lead (0–3 for real models; sentinel 0
+        for baselines and pre-PP-038 legacy rows).
     """
     # API-first: try the authoritative source
     df = _read_monthly_skill_metrics_api(codes)
@@ -432,12 +434,15 @@ def _normalize_api_monthly_skill_metrics(
 ) -> pd.DataFrame:
     """Convert API column names to CSV-compatible names for monthly.
 
-    API returns: horizon_in_year, model_type, code, sdivsigma, nse,
-                 delta, accuracy, mae, n_pairs, crps, pbias, kgelf,
-                 nse_log
-    CSV expects: month_in_year, model_short, code, sdivsigma, nse,
-                 delta, accuracy, mae, n_pairs, crps, pbias, kgelf,
-                 nse_log
+    API returns: horizon_in_year, model_type, code, horizon_value,
+                 sdivsigma, nse, delta, accuracy, mae, n_pairs, crps,
+                 pbias, kgelf, nse_log
+    CSV expects: month_in_year, model_short, code, horizon_value,
+                 sdivsigma, nse, delta, accuracy, mae, n_pairs, crps,
+                 pbias, kgelf, nse_log
+
+    horizon_value is passed through unchanged (it is NOT renamed).
+    Legacy rows with horizon_value=NULL are coerced to sentinel 0.
     """
     rename_map = {
         "horizon_in_year": "month_in_year",
@@ -447,6 +452,11 @@ def _normalize_api_monthly_skill_metrics(
 
     if "code" in df.columns:
         df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    # Coerce NaN horizon_value (legacy rows with NULL from pre-PP-038 DB) to
+    # sentinel 0 so callers can safely group or filter on the column.
+    if "horizon_value" in df.columns:
+        df["horizon_value"] = df["horizon_value"].fillna(0).astype(int)
 
     return df
 
@@ -1128,6 +1138,11 @@ def _normalize_monthly_forecasts(df: pd.DataFrame) -> pd.DataFrame:
     # Ensure code is string
     if "code" in df.columns:
         df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    # Normalize horizon_value: coerce NaN (legacy / NULL rows from API) to
+    # sentinel 0 so subsequent groupby operations do not silently drop rows.
+    if "horizon_value" in df.columns:
+        df["horizon_value"] = df["horizon_value"].fillna(0).astype(int)
 
     return df
 

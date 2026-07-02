@@ -2312,35 +2312,8 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     # Get the forecasts for the selected date
     forecasts = current_year[current_year['date'] >= date_picker].copy()
 
-    # Get predictor period data — predictor data is only available for short
-    # horizons. Under month/quarter/season the caller passes an empty
-    # DataFrame, so leave predictor_snow empty (the label below already falls
-    # back to "Current year" when the mean is NaN).
-    horizon = wm.horizon_selector.value
-    linreg_predictor = processing.add_predictor_dates(horizon, linreg_predictor, station, date_picker)
-    if (
-        not linreg_predictor.empty
-        and 'predictor_start_date' in linreg_predictor.columns
-    ):
-        predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
-        predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
-        predictor_snow = current_year[(current_year['date'] >= predictor_start_date) &
-                                      (current_year['date'] <= predictor_end_date)].copy()
-    else:
-        predictor_snow = current_year.iloc[0:0].copy()
-
-    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    if horizon == "pentad":
-        current_period = _("3 day mean")
-        forecast_period = _("5 day mean")
-    else:
-        current_period = _("10 day mean")
-        forecast_period = _("10 day mean")
-
     # Plot title and labels
     title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    mean_value = predictor_snow[variable].mean()
-    decimals = config['decimals']
 
     # Forecast label
     forecast_text = _('Forecast')
@@ -2362,7 +2335,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     else:
         current_year_label = _("Current year")
         last_year_label = _("Last year legend entry")
-    current_year_text = f"{current_year_label}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else current_year_label
+    current_year_text = current_year_label
 
     # Calculate y-axis limits safely
     y_axis_cols = [
@@ -3076,6 +3049,16 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
         else:
             print("max_date is nan")
     # print("forecast_table\n", forecast_table)
+
+    # Drop rows without a forecast value so the summary table matches the
+    # "No forecast data available for models ..." warning banner, which counts
+    # a model as present only when it has a non-null forecast on this date.
+    # Done after the max-date selection so a model whose latest row is null is
+    # not resurrected from an earlier date.
+    if 'forecasted_discharge' in forecast_table.columns:
+        forecast_table = forecast_table[
+            forecast_table['forecasted_discharge'].notna()
+        ].copy().reset_index(drop=True)
 
     # Drop columns not needed in the summary table
     cols_to_drop = ['code', 'date', 'Date', 'year', 'model_long', 'station_labels']

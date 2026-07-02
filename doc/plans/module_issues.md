@@ -198,6 +198,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-028b** | Skill metrics crash/silent failure — missing `q50` column across all horizons | **High** | Review | [`review_gi_draft_pp_monthly_skill_q50_regression.md`](issues/review_gi_draft_pp_monthly_skill_q50_regression.md) | — |
 | ~~**PP-036**~~ | ~~ML pentad/decadal skill metrics starved by `horizon='day'` short-circuit in API reader~~ | | Complete | [`archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md`](issues/archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md) | — |
 | **PP-037** | Maintenance `model_short` KeyError on empty DECAD individual-model read (neural ensemble called before empty guard) | Crash fix **High** / P2–P3 **Low** | Phase 1 Complete; P2/P3 deferred | [`review_gi_draft_pp_maintenance_model_short_keyerror.md`](issues/review_gi_draft_pp_maintenance_model_short_keyerror.md) | Phase 1 (ensemble + maintenance + operational empty guards) shipped — crash resolved. Phase 2 (reader contract) and Phase 3 (stale-EM lookback scoping) deferred **low-prio**: defensive hardening / efficiency + an operational coverage decision, not crash fixes. |
+| **PP-038** | Month long-term skill metrics: stratify by forecast lead (`horizon_value` schema change) | **High** | Draft | [`high_prio_gi_draft_pp_month_skill_lead.md`](issues/high_prio_gi_draft_pp_month_skill_lead.md) | Service owner coordination (`sapphire/services/postprocessing`) |
 
 ### Forecast Dashboard (`fd`)
 
@@ -375,3 +376,10 @@ These documents contain context and specifications referenced by issues above.
 ---
 
 *Last updated: 2026-06-19 — Added ML-016 (standalone run_locally.sh machine_learning crashes on empty SAPPHIRE_PREDICTION_MODE) + ML-017 (single missing ERA5 day → NaN cascade across all short-term ML; prepg interior-gap + ML covariate guard; found in local review tjhm+kghm). Earlier: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*
+
+### Issue iEHF-SKILL-EVAL: forecast_skill_eval Phase-2 + Phase-3 — **Complete (PR #397, merged 2026-07-01)**
+**Status**: Complete
+**Priority**: Medium
+**Files**: `issues/archive/mid_prio_gi_draft_iEHF_forecast_skill_eval_phase2.md`, `issues/archive/mid_prio_gi_draft_iEHF_forecast_skill_eval_phase3_probabilistic.md`
+
+Phase-2: seasonal disaggregation, persistence baseline, low/high percentile events, return-period (GEV) detection, per-station + interactive-Altair dashboard. Phase-3: probabilistic verification (CRPS/CRPSS, interval coverage/reliability, sharpness, Brier) by ingesting q05..q95, feature-flagged `SAPPHIRE_SKILL_PROB` (default-off). 506 tests. Follow-ups in the same module (not yet done): vectorize the row-wise event reclassify (perf); Phase-4 metrics (continuous/volume, Relative Economic Value/cost-loss, forecast-revision consistency, warning lead time).

@@ -632,10 +632,12 @@ class TestMonthlyMetricsEdgeCases:
         )
 
     def test_single_year_npairs_one(self):
-        """Single year: n_pairs=1, sdivsigma/NSE=NaN, MAE still valid.
+        """Single year: n_pairs=1 → row is dropped by the n_pairs < 2 floor.
 
-        min_points=2 for sdivsigma/NSE not met with one obs-fcst pair.
-        delta=0 (single year std=NaN -> fillna(0)), accuracy=0.
+        Variance-based metrics (sdivsigma, NSE via std(ddof=1)) are already
+        NaN at n<2. Per-lead splitting can produce n_pairs=1 rows whose
+        mae/accuracy are meaningless. The floor filter drops ALL such rows
+        so they are never written to the API.
         """
         obs = _make_obs(
             [
@@ -648,13 +650,11 @@ class TestMonthlyMetricsEdgeCases:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        row = skill_stats[skill_stats["model_short"] == "M1"].iloc[0]
-        assert row["n_pairs"] == 1
-        assert row["mae"] == pytest.approx(2.0, rel=1e-6)
-        assert np.isnan(row["sdivsigma"])
-        assert np.isnan(row["nse"])
-        assert row["delta"] == pytest.approx(0.0, abs=1e-10)
-        assert row["accuracy"] == pytest.approx(0.0, abs=1e-10)
+        # n_pairs=1 row is dropped — model_short=="M1" must not appear.
+        m1_rows = skill_stats[skill_stats["model_short"] == "M1"]
+        assert m1_rows.empty, (
+            f"n_pairs=1 row must be dropped by the floor filter, but got {len(m1_rows)} row(s)"
+        )
 
     def test_no_em_when_all_models_fail_thresholds(self):
         """No EM when all models fail skill thresholds.
@@ -1335,34 +1335,39 @@ class TestPointForecastFallback:
         assert pd.notna(gbt_stats.iloc[0]["mae"]), "mae should be computed"
 
     def test_q_preferred_over_q50_when_both_present(self):
-        """When both q and q50 are populated, q should be used (authoritative point forecast)."""
+        """When both q and q50 are populated, q should be used (authoritative point forecast).
+
+        Two years are used so n_pairs=2 per group and the n_pairs<2 floor
+        does not drop the rows before we can inspect the metric values.
+        """
         obs = _make_obs(
             [
                 ("S1", 2024, 1, 10.0),
-                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 10.0),  # 2nd year: n_pairs=2 for month 1
             ]
         )
         fcst = pd.DataFrame(
             {
                 "code": ["S1", "S1"],
-                "year": [2024, 2024],
-                "month": [1, 2],
+                "year": [2024, 2025],
+                "month": [1, 1],
                 "model_short": ["MC_ALD", "MC_ALD"],
-                "q": [9.0, 11.0],  # different from q50
-                "q50": [9.5, 11.5],  # q50 is fallback only
-                "q05": [7.0, 9.0],
-                "q10": [7.5, 9.5],
-                "q25": [8.0, 10.0],
-                "q75": [11.0, 13.0],
-                "q90": [12.0, 14.0],
-                "q95": [13.0, 15.0],
+                "q": [9.0, 9.0],  # different from q50
+                "q50": [9.5, 9.5],  # q50 is fallback only
+                "q05": [7.0, 7.0],
+                "q10": [7.5, 7.5],
+                "q25": [8.0, 8.0],
+                "q75": [11.0, 11.0],
+                "q90": [12.0, 12.0],
+                "q95": [13.0, 13.0],
             }
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         mc_stats = stats[stats["model_short"] == "MC_ALD"]
-        assert mc_stats.iloc[0]["n_pairs"] > 0
-        # MAE should be computed against q values (9.0, 11.0), not q50 values (9.5, 11.5)
-        # obs = (10, 12), q = (9.0, 11.0) → errors = (1.0, 1.0) → MAE = 1.0
+        assert mc_stats.iloc[0]["n_pairs"] >= 2
+        # MAE should be computed against q values (9.0), not q50 values (9.5)
+        # obs = (10, 10), q = (9.0, 9.0) → errors = (1.0, 1.0) → MAE = 1.0
+        # obs = (10, 10), q50 = (9.5, 9.5) → errors = (0.5, 0.5) → MAE = 0.5
         assert abs(mc_stats.iloc[0]["mae"] - 1.0) < 0.01, (
             f"MAE should be ~1.0 (using q), got {mc_stats.iloc[0]['mae']}"
         )
@@ -1410,21 +1415,25 @@ class TestPointForecastFallback:
         assert "GBT" in models_with_metrics, "GBT should have metrics via q fallback"
 
     def test_q_column_absent_still_works(self):
-        """When q column is not present at all, behavior unchanged (uses q50)."""
+        """When q column is not present at all, behavior unchanged (uses q50).
+
+        Two years are used so n_pairs=2 per group and rows survive the
+        n_pairs<2 floor filter.
+        """
         obs = _make_obs(
             [
                 ("S1", 2024, 1, 10.0),
-                ("S1", 2024, 2, 12.0),
+                ("S1", 2025, 1, 11.0),  # 2nd year: n_pairs=2 for month 1
             ]
         )
         rows = [
             ("S1", 2024, 1, "MC_ALD", 7.0, 7.5, 8.0, 9.5, 11.0, 12.0, 13.0),
-            ("S1", 2024, 2, "MC_ALD", 9.0, 9.5, 10.0, 11.5, 13.0, 14.0, 15.0),
+            ("S1", 2025, 1, "MC_ALD", 7.5, 8.0, 8.5, 10.0, 11.5, 12.5, 13.5),
         ]
         fcst = _make_fcst(rows)  # no "q" column
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         mc_stats = stats[stats["model_short"] == "MC_ALD"]
-        assert mc_stats.iloc[0]["n_pairs"] > 0
+        assert mc_stats.iloc[0]["n_pairs"] >= 2
 
     def test_both_q_and_q50_nan_returns_zero_npairs(self):
         """When both q and q50 are NaN, n_pairs should be 0 (no crash)."""

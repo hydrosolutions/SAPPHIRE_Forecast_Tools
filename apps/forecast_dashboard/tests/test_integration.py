@@ -1893,14 +1893,14 @@ def test_local(snow_stats_available, page: Page):
     # checks below must hold regardless of which horizon is active.
     #
     # Horizon select uses the Russian visible label (`пентада` / `декада` /
-    # `месяц` / `season`) — Panel emits dict-options as `(value, label)` but
+    # `месяц` / `сезон`) — Panel emits dict-options as `(value, label)` but
     # Bokeh renders the *label* as the <option>'s `value` attribute, so
     # Playwright matches via `label=`.
     predictor_steps = [
         ("15013 - Джыргалан-с.Советское",                       "pentad",  "пентада"),
         ("16936 - Нарын  -  Приток в Токтогульское вдхр.**)",   "decade",  "декада"),
         ("15212 - Ак-Суу - с.Чон-Арык",                         "month",   "месяц"),
-        ("15256 - Талас -  с.Ак-Таш",                           "season",  "season"),
+        ("15256 - Талас -  с.Ак-Таш",                           "season",  "сезон"),
     ]
     for station, horizon_value, horizon_label in predictor_steps:
         code = station.split()[0]
@@ -2039,7 +2039,7 @@ def test_local(snow_stats_available, page: Page):
         },
         {
             "horizon":           "season",
-            "label":             "season",
+            "label":             "сезон",
             "is_long":           True,
             "is_month":          False,
             "bulletin_folder":   "season",

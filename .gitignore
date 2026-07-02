@@ -173,6 +173,11 @@ apps/pipeline/logs/*
 apps/preprocessing_runoff/logs/*
 apps/preprocessing_gateway/logs/*
 apps/machine_learning/logs/*
+apps/forecast_skill_eval/artifacts/*
+# forecast_skill_eval report outputs (results — contain real station codes/values; never track).
+# The figure-generation code (make_figures.py) is intentionally NOT ignored.
+doc/plans/working/forecast_skill_eval_figures/*.png
+doc/plans/working/forecast_skill_eval_results.md
 apps/postprocessing_forecasts/logs/*
 apps/reset_forecast_run_date/logs/*
 

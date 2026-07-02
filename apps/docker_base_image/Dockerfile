@@ -5,7 +5,8 @@
 # See: doc/plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md
 
 ARG PYTHON_VERSION=3.12
-FROM python:${PYTHON_VERSION}-slim-bookworm AS base
+# Pinned to a known-good digest after a 2026-07-01 upstream regression shipped a glibc-mismatched bash. Re-verify digest when bumping.
+FROM python:${PYTHON_VERSION}-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS base
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -27,6 +28,9 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv from the official image
+# uv binaries are statically linked (so uv was NOT the glibc culprit on 2026-07-01;
+# the regression was in bash, not uv). Tag is kept at :latest for now.
+# TODO: pin uv to a released version tag (e.g. ghcr.io/astral-sh/uv:0.x.y) for full reproducibility.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Upgrade pip to fix CVE vulnerability (pip 25.0.1 -> 25.3+)

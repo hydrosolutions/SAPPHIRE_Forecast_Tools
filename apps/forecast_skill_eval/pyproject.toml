@@ -1,0 +1,47 @@
+[project]
+name = "forecast-skill-eval"
+version = "0.1.0"
+description = "Read-only forecast skill evaluation helpers for SAPPHIRE forecast tools"
+requires-python = ">=3.11"
+authors = [
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+]
+dependencies = [
+    "pandas>=2.2.2",
+    "numpy>=1.26.4,<3.0.0",
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@4fd543e852f1eb0c834d8ab649a849a0a56d4e9b",
+    "iEasyHydroForecast",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.uv]
+allow-insecure-host = []
+
+[tool.uv.sources]
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forecast_skill_eval"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

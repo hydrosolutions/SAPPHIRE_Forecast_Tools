@@ -204,6 +204,7 @@ class SkillMetric(Base):
     model_type = Column(SQLEnum(ModelType), nullable=False)
     date = Column(Date, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
+    horizon_value = Column(Integer, nullable=False, server_default="0")  # PP-038: lead for month; sentinel 0 for pentad/decade/quarter/season
     composition = Column(String(100))  # Tracks which models compose ensemble (e.g., "LR,TFT,TiDE")
 
     # Skill metrics
@@ -231,7 +232,8 @@ class SkillMetric(Base):
             "model_type",
             "date",
             "horizon_in_year",
-            name="uq_skill_metrics_horizon_code_model_date_horizon",
+            "horizon_value",
+            name="uq_skill_metrics_horizon_code_model_date_horizon_value",
         ),
     )
 

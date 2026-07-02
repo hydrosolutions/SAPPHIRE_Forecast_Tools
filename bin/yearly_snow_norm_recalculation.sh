@@ -67,7 +67,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Check if the Docker image exists, pull if not
-IMAGE_ID="mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
+IMAGE_ID="mabesa/sapphire-prepgateway:${ieasyhydroforecast_backend_docker_image_tag:-latest}"
 if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
     log_message "Image $IMAGE_ID not found locally, pulling..."
     docker pull $IMAGE_ID
@@ -118,6 +118,7 @@ docker run \
     --network host \
     -e ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir} \
     -e ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path} \
+    -e ieasyhydroforecast_SNOW_RECALC_YEAR=${ieasyhydroforecast_SNOW_RECALC_YEAR:-$(date +%Y)} \
     -e SAPPHIRE_OPDEV_ENV=True \
     -e IN_DOCKER=True \
     ${DOCKER_HOST_OVERRIDE} \
@@ -126,7 +127,7 @@ docker run \
     --memory=${MEMORY_LIMIT} \
     --memory-swap=${MEMORY_SWAP} \
     ${IMAGE_ID} \
-    uv run recalculate_snow_norms.py \
+    uv run --directory /app/apps/preprocessing_gateway python recalculate_snow_norms.py \
     2>&1 | tee "$SERVICE_LOG"
 
 EXIT_CODE=$?

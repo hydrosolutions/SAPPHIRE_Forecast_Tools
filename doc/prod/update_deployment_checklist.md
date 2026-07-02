@@ -472,14 +472,14 @@ TODO: No need to pull them manually, they are pulled automatically when testing 
   docker pull mabesa/sapphire-dashboard:local
   ```
 
-**Optional (based on deployment configuration):**
-
-If `ieasyhydroforecast_run_ML_models=true` in your .env file:
-
-- [ ] **Pull gateway preprocessing image**
+- [ ] **Pull preprocessing gateway image** (required for gateway maintenance and yearly snow norm/stat recalculation)
   ```bash
   docker pull mabesa/sapphire-prepgateway:local
   ```
+
+**Optional (based on deployment configuration):**
+
+If `ieasyhydroforecast_run_ML_models=true` in your .env file:
 
 - [ ] **Pull ML forecasting image**
   ```bash
@@ -559,13 +559,52 @@ The stack is defined in `sapphire/docker-compose.yml` and includes:
 > bootstraps the preprocessing DB with historical site data. For routine updates,
 > the schema is already populated.
 
-- [ ] **Start the microservices stack**
+- [ ] **One-time: configure Docker log rotation if not already present.** Without
+  `/etc/docker/daemon.json`, per-container `*-json.log` files grow unbounded and
+  can fill the disk over time. Check and, if missing, apply it now — the daemon
+  restart only affects containers created afterward, so doing it here (stack down
+  from §2.1) means the `up -d` below picks up the new limits cleanly:
+  ```bash
+  if [ ! -f /etc/docker/daemon.json ]; then
+    echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' \
+      | sudo tee /etc/docker/daemon.json
+    sudo systemctl restart docker
+  fi
+  docker info --format '{{.LoggingDriver}}'   # expect: json-file
+  ```
+  This is the retrofit counterpart to `first_deploy_checklist.md` §1.3.
+
+- [ ] **Start the microservices stack** — use the wrapper, which loads the
+  deployment config first.
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools
-  docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
+  bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
   ```
-  Alternatively, the wrapper `bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}` performs
-  the same bring-up.
+
+  > **⚠️ Do NOT bring the stack up with a bare `docker compose --env-file … up -d`.**
+  > Several compose variables — `ieasyhydroforecast_data_ref_dir`,
+  > `ieasyhydroforecast_container_data_ref_dir`, `ieasyhydroforecast_url_pentad`,
+  > … — are **derived and exported by `read_configuration`** (in
+  > `bin/utils/common_functions.sh`), **not** literal keys in the `.env`. A bare
+  > compose command cannot set them, so they resolve to **blank strings**. That
+  > turns the dashboard's volume mount
+  > `${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin`
+  > into a literal **`/bin:/bin`**, mounting the **host's** bash over the
+  > container's libc and crash-looping the dashboard with
+  > `bash: libc.so.6: version 'GLIBC_2.38' not found (required by bash)` — a
+  > failure that looks identical to a broken image but is purely this config trap.
+  >
+  > If you must call `docker compose` directly (e.g. to (re)start a single
+  > service), **load the config into your shell first**:
+  > ```bash
+  > source bin/utils/common_functions.sh
+  > read_configuration ${ENV_FILE_PATH}
+  > docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d --force-recreate dashboard
+  > ```
+  > **Watch the output**: if you see
+  > `WARN The "ieasyhydroforecast_data_ref_dir" variable is not set. Defaulting to a blank string.`,
+  > the config was NOT loaded — stop and fix that first, or the dashboard mount
+  > will be `/bin:/bin`.
 
 - [ ] **Wait for the api-gateway to be live and ready**
   ```bash
@@ -680,6 +719,17 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # Daily DB backup at 01:00 UTC (pg_dump-based, 3-day retention)
   0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 3 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
 
+  # Weekly Docker cleanup at 00:30 UTC Sundays: prune dangling images + build
+  # cache so /var/lib/docker does not grow unbounded across deploys. Volume-safe:
+  # never removes named volumes (the four Postgres DBs) or tagged images. Do NOT
+  # add `-a` to image prune or `--volumes` to any prune here.
+  30 0 * * 0 docker image prune -f && docker builder prune -f >> ${LOG_DIR}/sapphire_docker_prune_$(date +\%Y\%m\%d).log 2>&1
+
+  # Weekly prune at 01:30 UTC Sundays of stale pre-update DB backup dirs (>30
+  # days). The daily backup's retention only prunes top-level dumps, not the
+  # pre_update_*/ subdirs created before each deployment update (see §1.5).
+  30 1 * * 0 find /var/backups/sapphire -maxdepth 1 -type d -name 'pre_update_*' -mtime +30 -exec rm -rf {} + >> ${LOG_DIR}/sapphire_backup_prune_$(date +\%Y\%m\%d).log 2>&1
+
   # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
   0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +\%Y\%m\%d).log 2>&1
 
@@ -763,10 +813,10 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 > cron command below will succeed.** Every cron command reads/writes through
 > the api-gateway at `http://localhost:8000`; without the stack up, each
 > command fails immediately with `Connection refused`. If you have not
-> already brought the stack up in §2.4.5, do so now:
+> already brought the stack up in §2.4.5, do so now (use the wrapper — it runs
+> `read_configuration` first; a bare `docker compose up` leaves the dashboard's
+> derived mount vars blank and crash-loops it on `/bin:/bin` — see §2.4.5):
 > ```bash
-> docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
-> # or, equivalently:
 > bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
 > ```
 > Verify before proceeding:
@@ -813,6 +863,24 @@ After updating crontabs, run each cron command manually (one by one) to verify t
   cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc  ${ENV_FILE_PATH}
   cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms    ${ENV_FILE_PATH}
   ```
+
+- [ ] **Verify snow stat columns after snow norm/stat recalculation**
+
+  The dashboard snow panel uses `mean`, `q05`..`q95`, `previous`, and
+  `current`. If a hydrological display window crosses Jan 1 (for example
+  `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD=09-01`), the current calendar
+  year must have these stat fields populated; otherwise the percentile bands,
+  mean, and previous-season line stop at Jan 1 while the current-season line
+  continues.
+
+  ```bash
+  docker exec sapphire-preprocessing-db psql -U postgres -d preprocessing_db -c \
+  "select extract(year from date) y, count(*) rows, count(mean) mean, count(q05) q05, count(previous) prev, count(current) curr from snow where code='19999' and snow_type='SWE' and date between '2025-09-01' and '2026-08-31' group by 1 order by 1;"
+  ```
+
+  Replace `19999` and the date range with a non-sensitive representative
+  station/window for the deployment. Acceptance: both years in the displayed
+  snow window have non-zero `mean`, `q05`, and `prev` counts.
 
 - [ ] **Run bimonthly long-term skill metrics recalculation**
   ```bash
@@ -1123,11 +1191,17 @@ Docker container logs can also grow large over time.
 
 ### 4.3 Prune Docker System [Optional]
 
+> **Now largely automated.** The weekly cron added in §2.5
+> (`docker image prune -f && docker builder prune -f`, Sundays 00:30 UTC) keeps
+> dangling images and build cache from accumulating across deploys — the usual
+> cause of the disk filling on these hosts. Run the manual prune below only if
+> the disk is under pressure between weekly runs.
+
 Remove unused Docker resources:
 
-- [ ] Remove dangling images and unused containers:
+- [ ] Remove dangling images and build cache (volume-safe — never add `--volumes`):
   ```bash
-  docker system prune -f
+  docker image prune -f && docker builder prune -f
   ```
 
 - [ ] Check disk space recovered:
@@ -1207,9 +1281,11 @@ The four Postgres DBs were backed up in §1.5 via `bin/backup_sapphire_db.sh` to
 Use the revisions you recorded in `$BACKUP_DIR/alembic_pre_update.txt` (§2.4.6).
 Bring the microservices stack up briefly to run the downgrade:
 
-- [ ] Start the microservices stack (needed so `alembic` can connect to its DB):
+- [ ] Start the microservices stack (needed so `alembic` can connect to its DB).
+  Use the config-loading wrapper (a bare `docker compose up` blank-mounts the
+  dashboard — see §2.4.5):
   ```bash
-  docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d
+  bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}
   curl -sf http://localhost:8000/health/ready && echo "READY"
   ```
 
@@ -1250,7 +1326,8 @@ need to be (re)started.
   ```bash
   curl -sf http://localhost:8000/health/ready && echo "READY"
   ```
-  If not running, start it: `docker compose --env-file ${ENV_FILE_PATH} -f sapphire/docker-compose.yml up -d`.
+  If not running, start it with the config-loading wrapper (not a bare
+  `docker compose up` — see §2.4.5): `bash bin/restart_sapphire_stack.sh ${ENV_FILE_PATH}`.
 
 - [ ] Start Luigi daemon:
   ```bash

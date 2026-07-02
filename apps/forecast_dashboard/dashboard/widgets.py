@@ -5,7 +5,7 @@ import datetime as dt
 import calendar
 
 from src.file_downloader import FileDownloader
-from src.gettext_config import _
+from src.gettext_config import _, p_
 from dashboard.config import import_tag_library
 
 
@@ -309,7 +309,7 @@ def create_message_pane(data):
 
 def get_pane_alert(msg):
     return pn.pane.Alert(
-        "⚠️ Warning: " + msg,
+        "⚠️ " + _("Warning:") + " " + msg,
         alert_type="warning",
         sizing_mode="stretch_width"
     )
@@ -343,15 +343,23 @@ def get_period_warning(horizon, forecast_period, forecast_year, today=None):
     else:
         return None
     try:
-        same = (int(forecast_year), int(forecast_period)) == (today.year, int(current))
+        outdated = (int(forecast_year), int(forecast_period)) < (today.year, int(current))
     except (TypeError, ValueError):
         return None
-    if same:
+    if not outdated:
         return None
     return get_pane_alert(
-        f"The displayed {horizon} forecast is for {horizon} {forecast_period} of "
-        f"{forecast_year}, but the current {horizon} is {current} of {today.year}. "
-        f"This forecast may be outdated."
+        _(
+            "The displayed %(horizon)s forecast is for %(horizon)s %(period)s of "
+            "%(year)s, but the current %(horizon)s is %(current)s of %(today_year)s. "
+            "This forecast may be outdated."
+        ) % {
+            "horizon": _(horizon),
+            "period": forecast_period,
+            "year": forecast_year,
+            "current": current,
+            "today_year": today.year,
+        }
     )
 
 
@@ -383,10 +391,16 @@ def get_predictors_warning(station, data):
             return
         else:
             print(f"{year_col} is NaN/empty")
-            return get_pane_alert(f"No discharge record available today for {station.value}")
+            return get_pane_alert(
+                _("No discharge record available today for %(station)s")
+                % {"station": station.value}
+            )
     else:
         print("No record for today and given station")
-        return get_pane_alert(f"No discharge record available today for {station.value}")
+        return get_pane_alert(
+            _("No discharge record available today for %(station)s")
+            % {"station": station.value}
+        )
 
 def create_predictors_warning(station, data):
     col = pn.Column()
@@ -405,13 +419,15 @@ def get_forecast_warning(station, data, date_picker_value):
         or "station_labels" not in forecasts_all.columns
     ):
         return get_pane_alert(
-            f"No forecast data available for {station.value} on {date_picker_value}."
+            _("No forecast data available for %(station)s on %(date)s.")
+            % {"station": station.value, "date": date_picker_value}
         )
 
     station_rows = forecasts_all[forecasts_all["station_labels"] == station.value]
     if station_rows.empty:
         return get_pane_alert(
-            f"No forecast data available for {station.value} on {date_picker_value}."
+            _("No forecast data available for %(station)s on %(date)s.")
+            % {"station": station.value, "date": date_picker_value}
         )
 
     expected_models = set(station_rows["model_short"].dropna().unique())
@@ -428,11 +444,16 @@ def get_forecast_warning(station, data, date_picker_value):
         if not present_models:
             # No model has a forecast for this date — don't enumerate every model.
             return get_pane_alert(
-                f"No forecast data available for {station.value} on {date_picker_value}."
+                _("No forecast data available for %(station)s on %(date)s.")
+                % {"station": station.value, "date": date_picker_value}
             )
         return get_pane_alert(
-            f"No forecast data available for models {', '.join(missing_models)}"
-            f" at {station.value} on {date_picker_value}."
+            _("No forecast data available for models %(models)s at %(station)s on %(date)s.")
+            % {
+                "models": ", ".join(missing_models),
+                "station": station.value,
+                "date": date_picker_value,
+            }
         )
     return
 
@@ -566,28 +587,57 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
     if last_date is None:
         return ""
 
+    # Stable English month names used as gettext msgids (independent of any
+    # system locale set on the `calendar` module). pgettext resolves the
+    # correctly-cased translation per locale; English falls back to these.
+    months_en = (
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+
+    def month_name(n, case):
+        # case is "genitive" (pentad/decade and the produced-at date) or
+        # "nominative" (the month horizon target month).
+        return p_(case, months_en[n])
+
     production_date = last_date - _dt.timedelta(days=1)
-    produced_at = production_date.strftime("%b %-d, %Y")
-    month_year = last_date.strftime("%B %Y")
 
     if horizon == "pentad":
         from forecast_library import get_pentad_from_pentad_in_year
         pim = get_pentad_from_pentad_in_year(forecast_horizon)
-        body = f"{_('pentad')}: {pim} {_('of')} {month_year} ({forecast_horizon})"
+        body = _("pentad: %(pim)s of %(month)s %(year)s (%(num)s)") % {
+            "pim": pim,
+            "month": month_name(last_date.month, "genitive"),
+            "year": last_date.year,
+            "num": forecast_horizon,
+        }
     elif horizon == "decade":
         from forecast_library import get_decad_from_decad_in_year
         dim = get_decad_from_decad_in_year(forecast_horizon)
-        body = f"{_('decade')}: {dim} {_('of')} {month_year} ({forecast_horizon})"
+        body = _("decade: %(dim)s of %(month)s %(year)s (%(num)s)") % {
+            "dim": dim,
+            "month": month_name(last_date.month, "genitive"),
+            "year": last_date.year,
+            "num": forecast_horizon,
+        }
     elif horizon == "month":
         target_month_num = (production_date.month % 12) + 1
-        target_month_year = f"{calendar.month_name[target_month_num]} {production_date.year}"
-        body = f"{_('month')}: {target_month_year}"
+        body = _("month: %(month)s %(year)s") % {
+            "month": month_name(target_month_num, "nominative"),
+            "year": production_date.year,
+        }
     elif horizon == "season":
-        body = f"{_('season')}: April-September"
+        body = _("season: April–September")
     else:
         return ""
 
-    return f"{body}, {_('produced at')} {produced_at}"
+    produced = _(", produced on %(prod)s") % {
+        "prod": production_date.strftime("%b %-d, %Y"),
+        "day": production_date.day,
+        "month": month_name(production_date.month, "genitive"),
+        "year": production_date.year,
+    }
+    return body + produced
 
 
 def create_horizon_info_pane():

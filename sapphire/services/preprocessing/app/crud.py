@@ -297,6 +297,7 @@ def get_snow(db: Session, snow_type: Optional[str] = None, code: Optional[str] =
             query = query.filter(Snow.date >= start_date)
         if end_date:
             query = query.filter(Snow.date <= end_date)
+        query = query.order_by(Snow.snow_type, Snow.code, Snow.date, Snow.id)
         results = query.offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} snow records (code={code}, skip={skip}, limit={limit})")
         return results
