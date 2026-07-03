@@ -480,78 +480,123 @@ def _read_daily_by_year(
     return daily_by_year
 
 
+_SDK_PAGE_SIZE = 1000
+_SDK_MAX_PAGES = 50
+
+
 def _fetch_sdk_period_actuals(
     iehhf_sdk: Any, code: str, horizon_type: str, target_year: int
 ) -> tuple[dict[int, float], dict[int, float]]:
     """Fetch WDFA/WDDCA period actuals from the SDK and bucket by period.
 
-    WDFA/WDDCA readings are stamped at the issue date (the day before the
-    period they describe). Shift the stamped date +1 day and reclassify with
-    ``tag_library`` to recover the described period, then split into
-    ``sdk_current`` (target_year) / ``sdk_previous`` (target_year - 1) by the
-    shifted date's year.
+    The SDK response is a paginated dict (``count``/``next``/``previous``/
+    ``results``), where each result is one station with a nested ``data``
+    list of variable series, each holding a ``values`` list of
+    ``{"value", "timestamp_local"/"timestamp_utc", ...}`` points. All pages
+    are fetched (bounded by ``_SDK_MAX_PAGES``) and every point belonging to
+    the requested variable is decoded.
+
+    # NOTE (unverified — confirm against live iEH HF in the M4 parity check): iEH HF
+    # pre-flight notes say WDFA/WDDCA are stamped mid-period, which this +1-day shift
+    # handles correctly (mid-period +1 stays within the same period). If a live
+    # diagnostic shows a different stamping convention, revisit this mapping.
+
+    Shift the stamped date +1 day and reclassify with ``tag_library`` to
+    recover the described period, then split into ``sdk_current``
+    (target_year) / ``sdk_previous`` (target_year - 1) by the shifted date's
+    year.
     """
     config = _HORIZON_CONFIG[horizon_type]
     get_in_year = config["get_in_year"]
+    sdk_variable = config["sdk_variable"]
     sdk_current: dict[int, float] = {}
     sdk_previous: dict[int, float] = {}
 
     start = dt.datetime(target_year - 1, 1, 1)
     end = dt.datetime(target_year, 12, 31, 23, 59, 59)
+    base_filters = {
+        "site_codes": [str(code)],
+        "variable_names": [sdk_variable],
+        "local_date_time__gte": start.isoformat(),
+        "local_date_time__lte": end.isoformat(),
+        "page_size": _SDK_PAGE_SIZE,
+    }
+
+    results: list[Any] = []
     try:
-        response = iehhf_sdk.get_data_values_for_site(
-            filters={
-                "site_codes": [str(code)],
-                "variable_names": [config["sdk_variable"]],
-                "local_date_time__gte": start.isoformat(),
-                "local_date_time__lte": end.isoformat(),
-            }
-        )
+        page = 1
+        filters = dict(base_filters)
+        while True:
+            response = iehhf_sdk.get_data_values_for_site(filters=filters)
+            page_results = response.get("results", []) if isinstance(response, dict) else []
+            if isinstance(page_results, list):
+                results.extend(page_results)
+            has_next = bool(response.get("next")) if isinstance(response, dict) else False
+            if not has_next or not page_results:
+                break
+            page += 1
+            if page > _SDK_MAX_PAGES:
+                logger.warning(
+                    "write_station_short_horizon: SDK actuals pagination for site %s (%s) "
+                    "hit the %d-page cap; results may be truncated.",
+                    code,
+                    sdk_variable,
+                    _SDK_MAX_PAGES,
+                )
+                break
+            filters = dict(base_filters)
+            filters["page"] = page
     except Exception as exc:
         logger.warning(
             "write_station_short_horizon: SDK actuals fetch failed for site %s (%s): %s: %s",
             code,
-            config["sdk_variable"],
+            sdk_variable,
             type(exc).__name__,
             exc,
         )
         return sdk_current, sdk_previous
 
     try:
-        for entry in _iter_daily_rows(response):
-            if not isinstance(entry, dict):
+        for result in results:
+            if not isinstance(result, dict):
                 continue
-            raw_date = (
-                entry.get("local_date_time") or entry.get("utc_date_time") or entry.get("date")
-            )
-            raw_value = entry.get("data_value", entry.get("value"))
-            if raw_date is None or raw_value is None:
-                continue
-            try:
-                stamped = pd.to_datetime(raw_date, utc=True).tz_convert(None)
-            except (ValueError, TypeError):
-                continue
-            try:
-                finite_value = float(raw_value)
-            except (TypeError, ValueError):
-                continue
-            if not math.isfinite(finite_value):
-                continue
-            shifted = stamped + pd.Timedelta(days=1)
-            period = int(get_in_year(shifted))
-            if shifted.year == target_year:
-                sdk_current[period] = finite_value
-            elif shifted.year == target_year - 1:
-                sdk_previous[period] = finite_value
+            for series in result.get("data", []) or []:
+                if not isinstance(series, dict):
+                    continue
+                if series.get("variable_code") != sdk_variable:
+                    continue
+                for point in series.get("values", []) or []:
+                    if not isinstance(point, dict):
+                        continue
+                    raw_date = point.get("timestamp_local") or point.get("timestamp_utc")
+                    raw_value = point.get("value")
+                    if raw_date is None or raw_value is None:
+                        continue
+                    try:
+                        stamped = pd.to_datetime(raw_date, utc=True).tz_convert(None)
+                    except (ValueError, TypeError):
+                        continue
+                    try:
+                        finite_value = float(raw_value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(finite_value):
+                        continue
+                    shifted = stamped + pd.Timedelta(days=1)
+                    period = int(get_in_year(shifted))
+                    if shifted.year == target_year:
+                        sdk_current[period] = finite_value
+                    elif shifted.year == target_year - 1:
+                        sdk_previous[period] = finite_value
     except Exception as exc:
-        # A non-iterable or otherwise malformed SDK response must never raise
-        # out of this fetch - fail safe to whatever was already bucketed
-        # (possibly empty) so the WDDA daily fallback in `period_actuals`
-        # takes over instead of crashing the caller.
+        # A malformed SDK response must never raise out of this fetch - fail
+        # safe to whatever was already bucketed (possibly empty) so the WDDA
+        # daily fallback in `period_actuals` takes over instead of crashing
+        # the caller.
         logger.warning(
             "write_station_short_horizon: SDK actuals response malformed for site %s (%s): %s: %s",
             code,
-            config["sdk_variable"],
+            sdk_variable,
             type(exc).__name__,
             exc,
         )
