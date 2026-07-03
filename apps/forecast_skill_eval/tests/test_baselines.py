@@ -108,6 +108,7 @@ def _pair(
     *,
     lead: int | None = None,
     regime: str = "operational",
+    issue_date: str | None = None,
 ) -> dict[str, object]:
     return {
         "horizon": horizon,
@@ -120,6 +121,7 @@ def _pair(
         "lead": lead,
         "norm_provenance": provenance,
         "contingency": contingency,
+        "issue_date": issue_date,
     }
 
 
@@ -149,6 +151,169 @@ def _cells(row: pd.Series) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 # Persistence baseline (Phase 2B)
 # ---------------------------------------------------------------------------
+
+
+def test_operational_proxy_equalizes_reissued_model_pairs() -> None:
+    """Re-issued model forecasts for a matched key must not inflate the model
+    side relative to the single-issue proxy side.
+
+    Both emitted rows must carry exactly one pair per matched key, so their
+    n_pairs are equal and equal to the number of matched keys.
+    """
+    pairs = pd.DataFrame(
+        [
+            # Two re-issues of the model forecast for the SAME matched key.
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TP",
+                issue_date="2024-01-01",
+            ),
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "FP",
+                issue_date="2024-01-05",
+            ),
+            # A single proxy pair for the same key.
+            _pair(
+                "day",
+                "LR",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TN",
+                issue_date="2024-01-03",
+            ),
+        ]
+    )
+
+    baseline = build_operational_proxy_baseline(pairs)
+
+    model_row = _one_row(baseline, code=STATION_CODE, model="TFT")
+    proxy_row = _one_row(baseline, code=STATION_CODE, model="LR")
+
+    # One matched key → one pair per side → equal n_pairs.
+    assert int(model_row["n_pairs"]) == 1
+    assert int(proxy_row["n_pairs"]) == 1
+    assert int(model_row["n_pairs"]) == int(proxy_row["n_pairs"])
+    # The representative kept for the model side is the LATEST issue_date
+    # (2024-01-05 → FP), not the earlier 2024-01-01 → TP.
+    assert _cells(model_row) == {"TP": 0, "FP": 1, "FN": 0, "TN": 0, "n_pairs": 1}
+    assert _cells(proxy_row) == {"TP": 0, "FP": 0, "FN": 0, "TN": 1, "n_pairs": 1}
+
+
+def test_operational_proxy_keeps_latest_issue_date_representative() -> None:
+    """The kept representative per key is the row with the latest issue_date,
+    regardless of the order rows appear in the frame."""
+    pairs = pd.DataFrame(
+        [
+            # Latest issue_date first in the frame, oldest last, to prove the
+            # choice is driven by issue_date and not by row order.
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TN",
+                issue_date="2024-03-01",
+            ),
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TP",
+                issue_date="2024-01-01",
+            ),
+            _pair(
+                "day",
+                "LR",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "FP",
+                issue_date="2024-02-01",
+            ),
+        ]
+    )
+
+    baseline = build_operational_proxy_baseline(pairs)
+
+    model_row = _one_row(baseline, code=STATION_CODE, model="TFT")
+    # 2024-03-01 → TN wins over 2024-01-01 → TP.
+    assert _cells(model_row) == {"TP": 0, "FP": 0, "FN": 0, "TN": 1, "n_pairs": 1}
+
+
+def test_operational_proxy_single_pair_per_key_unchanged_by_collapse() -> None:
+    """With exactly one pair per key on both sides the collapse is a no-op:
+    the contingency cells match the pre-fix result exactly."""
+    pairs = pd.DataFrame(
+        [
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TP",
+                issue_date="2024-01-01",
+            ),
+            _pair(
+                "day",
+                "TFT",
+                STATION_CODE,
+                2,
+                2024,
+                "calculated",
+                "FN",
+                issue_date="2024-01-02",
+            ),
+            _pair(
+                "day",
+                "LR",
+                STATION_CODE,
+                1,
+                2024,
+                "calculated",
+                "TN",
+                issue_date="2024-01-01",
+            ),
+            _pair(
+                "day",
+                "LR",
+                STATION_CODE,
+                2,
+                2024,
+                "calculated",
+                "FP",
+                issue_date="2024-01-02",
+            ),
+        ]
+    )
+
+    baseline = build_operational_proxy_baseline(pairs)
+
+    model_row = _one_row(baseline, code=STATION_CODE, model="TFT")
+    proxy_row = _one_row(baseline, code=STATION_CODE, model="LR")
+
+    assert _cells(model_row) == {"TP": 1, "FP": 0, "FN": 1, "TN": 0, "n_pairs": 2}
+    assert _cells(proxy_row) == {"TP": 0, "FP": 1, "FN": 0, "TN": 1, "n_pairs": 2}
 
 
 def _pair_with_observed(
@@ -525,3 +690,104 @@ def test_persistence_baseline_wired_in_orchestrator() -> None:
     assert "persistence" in baseline_labels, (
         f"Expected 'persistence' in baselines but got: {baseline_labels}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P1b: event column / below_norm_100 parity
+# ---------------------------------------------------------------------------
+
+
+def _full_pair(
+    *,
+    period_key: int,
+    year: int,
+    forecast_value: float,
+    observed_value: float,
+    norm: float = 10.0,
+    model: str = "model-a",
+    threshold: float = 0.80,
+) -> dict[str, object]:
+    """Build a complete pentad pair row classified at ``threshold × norm``."""
+    fc_class = "below" if forecast_value < threshold * norm else "normal"
+    obs_class = "below" if observed_value < threshold * norm else "normal"
+    if fc_class == "below" and obs_class == "below":
+        cont = "TP"
+    elif fc_class == "below":
+        cont = "FP"
+    elif obs_class == "below":
+        cont = "FN"
+    else:
+        cont = "TN"
+    return {
+        "horizon": "pentad",
+        "code": STATION_CODE,
+        "basin": "other",
+        "period_key": period_key,
+        "year": year,
+        "model": model,
+        "regime": "operational",
+        "season": "irrigation",
+        "lead": None,
+        "norm_provenance": "calculated",
+        "forecast_value": forecast_value,
+        "observed_value": observed_value,
+        "norm": norm,
+        "fc_class": fc_class,
+        "obs_class": obs_class,
+        "contingency": cont,
+    }
+
+
+def _flip_pairs() -> pd.DataFrame:
+    """Pairs where obs=9 (norm=10) is normal at 0.80 but below at 1.0 × norm."""
+    return pd.DataFrame(
+        [
+            _full_pair(period_key=1, year=2010, forecast_value=6.0, observed_value=9.0),
+            _full_pair(period_key=2, year=2011, forecast_value=6.0, observed_value=5.0),
+            _full_pair(period_key=3, year=2012, forecast_value=6.0, observed_value=12.0),
+            _full_pair(period_key=4, year=2013, forecast_value=6.0, observed_value=7.0),
+        ]
+    )
+
+
+def test_baseline_event_column_defaults_to_below_norm() -> None:
+    from forecast_skill_eval.baselines import BASELINE_COLUMNS
+
+    assert "event" in BASELINE_COLUMNS
+    baseline = build_climatology_baseline(_flip_pairs())
+    assert set(baseline["event"].unique()) == {"below_norm"}
+
+
+def test_climatology_below_norm_metric_values_unchanged_by_event_column() -> None:
+    """Adding the constant event column must not perturb the metric cells."""
+    baseline = build_climatology_baseline(_flip_pairs())
+    pooled = baseline[baseline["code"] == STATION_CODE].iloc[0]
+    # obs below at 0.80×10=8: obs in {9,5,12,7} -> below {5,7} -> FN=2, TN=2.
+    assert _cells(pooled) == {"TP": 0, "FP": 0, "FN": 2, "TN": 2, "n_pairs": 4}
+
+
+def test_climatology_below_norm_100_tagged_and_differs() -> None:
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_event
+
+    pairs = _flip_pairs()
+    pairs_100 = reclassify_pairs_for_event(pairs, event_by_name("below_norm_100"), {})
+    baseline_100 = build_climatology_baseline(pairs_100, event="below_norm_100")
+
+    assert set(baseline_100["event"].unique()) == {"below_norm_100"}
+    pooled = baseline_100[baseline_100["code"] == STATION_CODE].iloc[0]
+    # obs below at 1.0×10=10: obs in {9,5,12,7} -> below {9,5,7} -> FN=3, TN=1.
+    assert _cells(pooled) == {"TP": 0, "FP": 0, "FN": 3, "TN": 1, "n_pairs": 4}
+
+
+def test_persistence_and_operational_thread_event_label() -> None:
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_event
+
+    pairs = _flip_pairs()
+    pairs_100 = reclassify_pairs_for_event(pairs, event_by_name("below_norm_100"), {})
+    persistence_100 = build_persistence_baseline(pairs_100, threshold=1.0, event="below_norm_100")
+    if not persistence_100.empty:
+        assert set(persistence_100["event"].unique()) == {"below_norm_100"}
+    # Default persistence rows carry below_norm.
+    persistence = build_persistence_baseline(pairs)
+    if not persistence.empty:
+        assert set(persistence["event"].unique()) == {"below_norm"}

@@ -23,6 +23,11 @@ Return-period events are **opt-in** (not in the default event set) because
 they require a GEV fit over annual maxima, are expensive, and their positive
 class is rare by construction.  Enable them via ``--events rp5 rp10 ...`` or
 the ``events_filter`` config field.
+
+A norm-factor event is also available (opt-in, not in the default set):
+
+- ``below_norm_100`` — value < 1.0 × norm (plain below-norm), reclassified from
+  the ``norm`` column in the same run as the 0.80 × norm ``below_norm`` event.
 """
 
 from __future__ import annotations
@@ -48,7 +53,14 @@ ALL_EVENT_NAMES: Final[tuple[str, ...]] = (
 
 _RP_EVENT_NAMES: Final[tuple[str, ...]] = ("rp5", "rp10", "rp30", "rp100")
 
-VALID_EVENTS: Final[frozenset[str]] = frozenset((*ALL_EVENT_NAMES, *_RP_EVENT_NAMES))
+# Norm-factor events are opt-in (not in ALL_EVENT_NAMES / DEFAULT_EVENTS).  They
+# reclassify from the ``norm`` column at ``value < factor * norm`` and are only
+# computed when the caller lists them explicitly in ``--events``.
+_NORM_FACTOR_EVENT_NAMES: Final[tuple[str, ...]] = ("below_norm_100",)
+
+VALID_EVENTS: Final[frozenset[str]] = frozenset(
+    (*ALL_EVENT_NAMES, *_RP_EVENT_NAMES, *_NORM_FACTOR_EVENT_NAMES)
+)
 
 # Percentile levels required for the four percentile events.
 _REQUIRED_PERCENTILES: Final[tuple[float, ...]] = (5.0, 10.0, 90.0, 95.0)
@@ -73,12 +85,17 @@ class EventDef:
         return_period: Return period in years for EVT events, or ``None`` for
             percentile / norm-based events.  When set, the event is a
             return-period event and ``percentile`` must be ``None``.
+        factor: Norm multiplier for norm-factor events (e.g. ``1.0`` for plain
+            below-norm), or ``None`` for percentile / return-period events and
+            the global-threshold ``below_norm`` event.  When set, the event is
+            reclassified from the ``norm`` column at ``value < factor * norm``.
     """
 
     name: str
     direction: Literal["below", "above"]
     percentile: float | None
     return_period: float | None = field(default=None)
+    factor: float | None = field(default=None)
 
 
 ALL_EVENTS: Final[tuple[EventDef, ...]] = (
@@ -96,7 +113,13 @@ _RP_EVENTS: Final[tuple[EventDef, ...]] = (
     EventDef("rp100", "above", None, return_period=100.0),
 )
 
-_EVENT_BY_NAME: Final[dict[str, EventDef]] = {e.name: e for e in (*ALL_EVENTS, *_RP_EVENTS)}
+_NORM_FACTOR_EVENTS: Final[tuple[EventDef, ...]] = (
+    EventDef("below_norm_100", "below", None, factor=1.0),
+)
+
+_EVENT_BY_NAME: Final[dict[str, EventDef]] = {
+    e.name: e for e in (*ALL_EVENTS, *_RP_EVENTS, *_NORM_FACTOR_EVENTS)
+}
 
 
 # ---------------------------------------------------------------------------
@@ -288,9 +311,16 @@ def reclassify_pairs_for_event(
 ) -> pd.DataFrame:
     """Return a copy of *pairs* reclassified for the given percentile event.
 
-    For the ``below_norm`` event (``event.percentile is None``) the pairs are
-    returned unchanged — their ``fc_class``, ``obs_class``, and ``contingency``
-    columns already reflect the norm-based classification.
+    For norm-factor events (``event.factor is not None``, e.g. ``below_norm_100``
+    at ``factor=1.0``) the pairs are reclassified directly from the ``norm``
+    column: a value is "below" iff ``value < factor * norm`` (strict ``<``).
+    Rows whose ``norm`` is non-finite or ``<= 0`` are dropped (matching
+    :func:`classifier.classify` returning ``None``).
+
+    For the ``below_norm`` event (``event.percentile is None`` and
+    ``event.factor is None``) the pairs are returned unchanged — their
+    ``fc_class``, ``obs_class``, and ``contingency`` columns already reflect the
+    norm-based classification at the global ``config.threshold``.
 
     For percentile events the function recomputes ``fc_class``, ``obs_class``,
     and ``contingency`` based on the event's direction and percentile threshold.
@@ -319,6 +349,12 @@ def reclassify_pairs_for_event(
     """
     if pairs.empty:
         return pairs.copy()
+
+    if event.factor is not None:
+        # Norm-factor event (e.g. below_norm_100): reclassify from the norm
+        # column at value < factor * norm.  Mirrors classifier.classify: strict
+        # <, and rows with non-finite norm or norm <= 0 are dropped.
+        return _reclassify_pairs_from_norm(pairs, float(event.factor))
 
     if event.percentile is None and event.return_period is None:
         # below_norm: return pairs unchanged — fc_class / obs_class already set.
@@ -412,6 +448,72 @@ def reclassify_pairs_for_event(
     )
 
     df = df.copy()
+    df["fc_class"] = fc_class
+    df["obs_class"] = obs_class
+    df["contingency"] = contingency_arr
+
+    return df[orig_cols].reset_index(drop=True)
+
+
+def _reclassify_pairs_from_norm(pairs: pd.DataFrame, factor: float) -> pd.DataFrame:
+    """Reclassify *pairs* from the ``norm`` column at ``value < factor * norm``.
+
+    Mirrors :func:`classifier.classify` semantics for a norm-factor event:
+
+    - A value is "below" iff ``value < factor * norm`` (strict ``<``; equality
+      → "normal").
+    - Rows whose ``norm`` is non-finite or ``<= 0`` are dropped (the classifier
+      returns ``None`` for these).
+    - NaN ``forecast_value`` / ``observed_value`` are kept and classify as
+      "normal" (NaN comparisons return ``False``), matching the percentile
+      branch's NaN-keep behaviour.
+
+    Original column order and ``reset_index(drop=True)`` are preserved, exactly
+    like the percentile branch.
+
+    Args:
+        pairs: Pair DataFrame with ``norm``, ``forecast_value``, and
+            ``observed_value`` columns.
+        factor: Norm multiplier (e.g. ``1.0`` for plain below-norm).
+
+    Returns:
+        Reclassified DataFrame with updated ``fc_class``, ``obs_class``, and
+        ``contingency`` columns.  May be empty if no rows have a usable norm.
+    """
+    orig_cols = list(pairs.columns)
+
+    if pairs.empty:
+        return pairs.copy()
+
+    df = pairs.copy()
+
+    norm_arr = pd.to_numeric(df["norm"], errors="coerce").to_numpy(dtype=float)
+    # Drop rows with non-finite norm or norm <= 0 (classifier.classify → None).
+    keep = np.isfinite(norm_arr) & (norm_arr > 0.0)
+    if not keep.all():
+        df = df[keep].copy()
+        norm_arr = norm_arr[keep]
+    if df.empty:
+        return pd.DataFrame(columns=orig_cols)
+
+    threshold_arr = factor * norm_arr
+    fc_arr = pd.to_numeric(df["forecast_value"], errors="coerce").to_numpy(dtype=float)
+    obs_arr = pd.to_numeric(df["observed_value"], errors="coerce").to_numpy(dtype=float)
+
+    # Classify — strict < so equality at threshold → "normal".
+    # NaN comparisons return False → "normal", matching classifier.classify.
+    fc_class = np.where(fc_arr < threshold_arr, "below", "normal")
+    obs_class = np.where(obs_arr < threshold_arr, "below", "normal")
+
+    # Vectorized contingency — mirrors classifier.contingency exactly.
+    fc_b = fc_class == "below"
+    obs_b = obs_class == "below"
+    contingency_arr = np.where(
+        fc_b & obs_b,
+        "TP",
+        np.where(fc_b & ~obs_b, "FP", np.where(~fc_b & obs_b, "FN", "TN")),
+    )
+
     df["fc_class"] = fc_class
     df["obs_class"] = obs_class
     df["contingency"] = contingency_arr

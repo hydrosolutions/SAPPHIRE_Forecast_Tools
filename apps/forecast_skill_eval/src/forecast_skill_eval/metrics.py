@@ -107,9 +107,11 @@ def _add_hss(
     fn: float,
     tn: float,
 ) -> None:
-    observed_positives = tp + fn
+    # HSS is undefined ONLY when its denominator vanishes.  A slice with zero
+    # observed events (TP+FN == 0) but FP>0/TN>0 has a finite denominator and a
+    # genuine skill of 0.0 (the standard Heidke value), so it must not be NaN.
     denominator = (tp + fn) * (fn + tn) + (tp + fp) * (fp + tn)
-    undefined = observed_positives == 0 or denominator == 0
+    undefined = denominator == 0
     numerator = 2 * ((tp * tn) - (fp * fn))
     metrics["hss"] = math.nan if undefined else numerator / denominator
     metrics["hss_undefined"] = undefined

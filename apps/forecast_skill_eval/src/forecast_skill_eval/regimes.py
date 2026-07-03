@@ -112,6 +112,7 @@ def choose_regime_policy(
     forecasts: pd.DataFrame,
     *,
     operational_start: str | date = DEFAULT_OPERATIONAL_START,
+    regime_source: str = "auto",
     flag_sets: RegimeFlagSets | None = None,
     operational_flags: Sequence[object] | None = None,
     hindcast_flags: Sequence[object] | None = None,
@@ -123,6 +124,10 @@ def choose_regime_policy(
     Args:
         forecasts: Forecast rows for a single horizon.
         operational_start: ISO date or date object for the operational boundary.
+        regime_source: Regime selection strategy. ``"auto"`` (default) preserves
+            the historical behaviour of auto-picking flags when flag presence is
+            meaningful and falling back to issue date otherwise. ``"flag"`` forces
+            flag-based assignment; ``"date"`` forces issue-date-based assignment.
         flag_sets: Optional pre-resolved flag taxonomy.
         operational_flags: Optional operational flag override.
         hindcast_flags: Optional hindcast/backfilled flag override.
@@ -142,6 +147,24 @@ def choose_regime_policy(
         error_flags=error_flags,
     )
     counts = flag_counts(forecasts)
+
+    if regime_source == "flag":
+        return RegimePolicy(
+            source="flag",
+            operational_start=start,
+            reason="regime source forced to flag",
+            flag_counts=counts,
+            flag_sets=resolved_flags,
+        )
+    if regime_source == "date":
+        return RegimePolicy(
+            source="date",
+            operational_start=start,
+            reason="regime source forced to issue date",
+            flag_counts=counts,
+            flag_sets=resolved_flags,
+        )
+
     informative_counts = _selected_flag_counts(
         counts,
         (*resolved_flags.hindcast_flags, *resolved_flags.nan_exclude_flags),
@@ -197,14 +220,18 @@ def derive_regime(
     flag_sets = policy.flag_sets
     if flag in flag_sets.error_flags:
         return RegimeDecision(regime=None, exclude_reason=FORECAST_ERROR_FLAG_REASON)
+    # NaN-exclude flags are mode-independent: a row whose actual value is NaN
+    # must be excluded regardless of whether the policy uses flags or issue
+    # dates. Flag sets are validated disjoint, so evaluating this ahead of the
+    # flag-mode operational/hindcast checks leaves flag-mode behaviour identical.
+    if flag in flag_sets.nan_exclude_flags:
+        return RegimeDecision(regime=None, exclude_reason=FORECAST_ACTUAL_NAN_FLAG_REASON)
 
     if policy.source == "flag":
         if flag in flag_sets.operational_flags:
             return RegimeDecision(regime=OPERATIONAL_REGIME)
         if flag in flag_sets.hindcast_flags:
             return RegimeDecision(regime=HINDCAST_REGIME)
-        if flag in flag_sets.nan_exclude_flags:
-            return RegimeDecision(regime=None, exclude_reason=FORECAST_ACTUAL_NAN_FLAG_REASON)
         return _derive_date_regime(issue_date, policy.operational_start)
 
     return _derive_date_regime(issue_date, policy.operational_start)

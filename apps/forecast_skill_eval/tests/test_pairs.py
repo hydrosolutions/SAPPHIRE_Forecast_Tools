@@ -9,7 +9,12 @@ import pytest
 from forecast_skill_eval.baselines import build_operational_proxy_baseline
 from forecast_skill_eval.config import ForecastSkillEvalConfig
 from forecast_skill_eval.ledger import ExclusionLedger
-from forecast_skill_eval.pairs import _read_short_forecasts, basin_for_code, build_pairs
+from forecast_skill_eval.pairs import (
+    _read_short_forecasts,
+    _target_period_start,
+    basin_for_code,
+    build_pairs,
+)
 from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
 STATION_CODE = "19999"
@@ -227,6 +232,82 @@ def test_flag_regime_derivation_uses_taxonomy_and_date_fallback(
 
     assert decision.regime == expected_regime
     assert decision.exclude_reason == expected_reason
+
+
+def test_regime_source_auto_matches_default_on_flag_rich_frame() -> None:
+    """regime_source='auto' reproduces the no-arg policy on a flag-rich frame."""
+    frame = _flag_frame(([4] * 1100) + ([0] * 10))
+    default_policy = choose_regime_policy(frame)
+    auto_policy = choose_regime_policy(frame, regime_source="auto")
+
+    assert default_policy.source == "flag"
+    assert auto_policy.source == default_policy.source
+    assert auto_policy.reason == default_policy.reason
+    assert auto_policy.flag_counts == default_policy.flag_counts
+
+
+def test_regime_source_auto_matches_default_on_flag_sparse_frame() -> None:
+    """regime_source='auto' reproduces the no-arg policy on a flag-sparse frame."""
+    frame = _flag_frame([0] * 20)
+    default_policy = choose_regime_policy(frame)
+    auto_policy = choose_regime_policy(frame, regime_source="auto")
+
+    assert default_policy.source == "date"
+    assert auto_policy.source == default_policy.source
+    assert auto_policy.reason == default_policy.reason
+    assert auto_policy.flag_counts == default_policy.flag_counts
+
+
+def test_regime_source_flag_forces_flag_on_sparse_frame() -> None:
+    """regime_source='flag' forces flag mode even when auto would pick date."""
+    frame = _flag_frame([0] * 20)
+
+    assert choose_regime_policy(frame).source == "date"
+    forced = choose_regime_policy(frame, regime_source="flag")
+    assert forced.source == "flag"
+    assert forced.reason == "regime source forced to flag"
+
+
+def test_regime_source_date_forces_date_on_flag_rich_frame() -> None:
+    """regime_source='date' forces date mode even when auto would pick flag."""
+    frame = _flag_frame(([4] * 1100) + ([0] * 10))
+
+    assert choose_regime_policy(frame).source == "flag"
+    forced = choose_regime_policy(frame, regime_source="date")
+    assert forced.source == "date"
+    assert forced.reason == "regime source forced to issue date"
+
+
+@pytest.mark.parametrize("source", ["flag", "date"])
+def test_nan_flag_excluded_in_both_modes(source: str) -> None:
+    """REG-5: a flag-3 (nan) row is excluded regardless of regime source."""
+    policy = RegimePolicy(
+        source=source,
+        operational_start=date(2024, 1, 1),
+        reason="test",
+        flag_counts={},
+    )
+
+    decision = derive_regime({"flag": 3}, issue_date="2025-01-01", policy=policy)
+
+    assert decision.regime is None
+    assert decision.exclude_reason == "forecast_actual_nan_flag"
+
+
+@pytest.mark.parametrize("source", ["flag", "date"])
+def test_error_flag_excluded_in_both_modes(source: str) -> None:
+    """A flag-2 (error) row is excluded regardless of regime source."""
+    policy = RegimePolicy(
+        source=source,
+        operational_start=date(2024, 1, 1),
+        reason="test",
+        flag_counts={},
+    )
+
+    decision = derive_regime({"flag": 2}, issue_date="2025-01-01", policy=policy)
+
+    assert decision.regime is None
+    assert decision.exclude_reason == "forecast_error_flag"
 
 
 def test_flagless_lr_rows_date_fallback_match_flagged_operational_ml(
@@ -940,3 +1021,219 @@ def test_pairs_quantile_columns_do_not_alter_existing_columns(fake_client_factor
     assert row["obs_class"] == "below"  # 7.0 < threshold → below
     assert row["contingency"] == "FN"
     assert ledger.entries == ()
+
+
+# ---------------------------------------------------------------------------
+# Short-term issue-before-target filter + one-per-target dedup (default off)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("horizon", "period_key", "year", "expected"),
+    [
+        ("decade", 16, 2025, date(2025, 6, 1)),  # 6th decade → month 6, day 1
+        ("decade", 1, 2025, date(2025, 1, 1)),
+        ("decade", 3, 2025, date(2025, 1, 21)),
+        ("pentad", 1, 2025, date(2025, 1, 1)),
+        ("pentad", 7, 2025, date(2025, 2, 1)),  # first pentad of month 2
+        ("pentad", 6, 2025, date(2025, 1, 26)),
+        ("day", 1, 2025, date(2025, 1, 1)),
+        ("day", 60, 2024, date(2024, 2, 29)),  # leap-year day-of-year
+    ],
+)
+def test_target_period_start_maps_short_term_periods(
+    horizon: str,
+    period_key: int,
+    year: int,
+    expected: date,
+) -> None:
+    assert _target_period_start(horizon, period_key, year) == expected
+
+
+@pytest.mark.parametrize(
+    ("horizon", "period_key", "year"),
+    [
+        ("decade", 0, 2025),  # month 0 → invalid
+        ("decade", 37, 2025),  # month 13 → invalid
+        ("pentad", 0, 2025),
+        ("pentad", 73, 2025),
+        ("month", 4, 2025),  # long-term → filter N/A
+        ("quarter", 2, 2025),
+        ("season", 1, 2025),
+    ],
+)
+def test_target_period_start_returns_none_for_invalid_or_long_term(
+    horizon: str,
+    period_key: int,
+    year: int,
+) -> None:
+    assert _target_period_start(horizon, period_key, year) is None
+
+
+def _issue_filter_client(fake_client_factory):
+    # day period_key 5 → target start 2024-01-05; period_key 6 → 2024-01-06.
+    return fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(5, 7.0, issue_date="2024-01-01"),  # before start → keep
+            _short_forecast(6, 7.0, issue_date="2024-01-10"),  # after start → drop
+        ],
+        runoff_rows=[
+            _short_observed(5, 2024, 7.0),
+            _short_observed(6, 2024, 7.0),
+        ],
+        hydrograph_rows=[_day_norm(5), _day_norm(6)],
+    )
+
+
+def test_issue_before_target_filter_drops_leaking_short_term_forecast(
+    fake_client_factory,
+) -> None:
+    client = _issue_filter_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_issue_before_target=True,
+    )
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert pairs["period_key"].tolist() == [5]
+    assert ledger.counts_by_stage_reason() == {("pair", "forecast_issue_in_target_period"): 1}
+
+
+def test_issue_before_target_filter_off_by_default_keeps_all(
+    fake_client_factory,
+) -> None:
+    client = _issue_filter_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert sorted(pairs["period_key"].tolist()) == [5, 6]
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
+
+
+def test_unparseable_issue_date_is_not_dropped_by_filter(
+    fake_client_factory,
+) -> None:
+    # An unparseable issue date makes the issue-before-target guard a no-op, so
+    # turning the filter on must produce the exact same outcome as leaving it off
+    # (whatever downstream regime handling does is identical in both runs).
+    def _client():
+        return fake_client_factory(
+            forecasts_rows=[_short_forecast(6, 7.0, issue_date="not-a-date")],
+            runoff_rows=[_short_observed(6, 2024, 7.0)],
+            hydrograph_rows=[_day_norm(6)],
+        )
+
+    off_pairs, off_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        _client(),
+        "day",
+    )
+    on_pairs, on_ledger = build_pairs(
+        ForecastSkillEvalConfig(
+            station_filter=[STATION_CODE],
+            short_term_issue_before_target=True,
+        ),
+        _client(),
+        "day",
+    )
+
+    pd.testing.assert_frame_equal(on_pairs, off_pairs)
+    assert on_ledger.counts_by_stage_reason() == off_ledger.counts_by_stage_reason()
+    assert ("pair", "forecast_issue_in_target_period") not in on_ledger.counts_by_stage_reason()
+
+
+def _reissue_client(fake_client_factory):
+    # Three genuine pre-period re-issues for the same (code, pk, year, model).
+    return fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-01"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-02"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-03"),
+        ],
+        runoff_rows=[_short_observed(10, 2024, 7.0)],
+        hydrograph_rows=[_day_norm(10)],
+    )
+
+
+def test_dedup_one_per_target_keeps_latest_issue(fake_client_factory) -> None:
+    client = _reissue_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_dedup_one_per_target=True,
+    )
+
+    pairs, _ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 1
+    assert pairs.iloc[0]["issue_date"] == "2024-01-03"
+    assert pairs.iloc[0]["period_key"] == 10
+
+
+def test_dedup_off_by_default_keeps_all_reissues(fake_client_factory) -> None:
+    client = _reissue_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, _ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 3
+    assert sorted(pairs["issue_date"].tolist()) == [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+    ]
+
+
+def test_long_term_horizons_unaffected_by_short_term_gates(
+    fake_client_factory,
+) -> None:
+    # Two month re-issues for the same target period; one issued INSIDE April.
+    # Neither short-term gate may touch long-term pairs.
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(issue_date="2024-01-25"),
+            _long_forecast(issue_date="2024-04-15"),  # inside target month
+        ],
+        runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_issue_before_target=True,
+        short_term_dedup_one_per_target=True,
+    )
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert len(pairs) == 2
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
+
+
+def test_default_config_run_is_byte_identical_with_leakage_and_reissues(
+    fake_client_factory,
+) -> None:
+    # Fixture mixes a leaking issue (pk 6 issued after start) with three re-issues
+    # (pk 10).  With both gates off (default) every row must survive unchanged.
+    client = fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(5, 7.0, issue_date="2024-01-01"),
+            _short_forecast(6, 7.0, issue_date="2024-01-10"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-01"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-02"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-03"),
+        ],
+        runoff_rows=[
+            _short_observed(5, 2024, 7.0),
+            _short_observed(6, 2024, 7.0),
+            _short_observed(10, 2024, 7.0),
+        ],
+        hydrograph_rows=[_day_norm(5), _day_norm(6), _day_norm(10)],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 5
+    assert sorted(pairs["period_key"].tolist()) == [5, 6, 10, 10, 10]
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()

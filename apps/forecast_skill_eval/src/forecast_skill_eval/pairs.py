@@ -115,10 +115,12 @@ def build_pairs(
         start_date=start_date,
         end_date=end_date,
         ledger=ledger,
+        repair_lr=config.short_term_lr_repair_issue_indexing,
     )
     regime_policy = choose_regime_policy(
         forecasts,
         operational_start=config.operational_start,
+        regime_source=config.regime_source,
     )
 
     rows: list[dict[str, object]] = []
@@ -149,6 +151,22 @@ def build_pairs(
                 year=instance.year,
             )
             continue
+        if config.short_term_issue_before_target and normalized_horizon in SHORT_TERM_HORIZONS:
+            # A genuine short-term forecast is issued STRICTLY BEFORE its target
+            # period starts.  Rows whose issue date lands on/after the period
+            # start observed part of their own target (leakage / mislabelled).
+            issue_date_date = _date_or_none(instance.issue_date)
+            start = _target_period_start(normalized_horizon, instance.period_key, instance.year)
+            # Unparseable issue dates are left in place (do NOT drop).
+            if issue_date_date is not None and start is not None and issue_date_date >= start:
+                ledger.add(
+                    stage="pair",
+                    reason="forecast_issue_in_target_period",
+                    code=instance.code,
+                    period_key=instance.period_key,
+                    year=instance.year,
+                )
+                continue
         if instance.forecast_value is None:
             ledger.add(
                 stage="pair",
@@ -213,9 +231,35 @@ def build_pairs(
             )
         )
 
+    if config.short_term_dedup_one_per_target and normalized_horizon in SHORT_TERM_HORIZONS:
+        rows = _dedup_short_term_latest_issue(rows)
+
     pairs = pd.DataFrame(rows, columns=PAIR_COLUMNS)
     _attach_regime_attrs(pairs, regime_policy)
     return pairs, ledger
+
+
+def _dedup_short_term_latest_issue(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Collapse re-issues to one row per ``(code, period_key, year, model)``.
+
+    Keeps the row with the LATEST ``issue_date`` for each target/model group,
+    which — combined with the issue-before-target filter — is the operational
+    decision-time forecast (the latest genuine pre-period issue).  Rows whose
+    ``issue_date`` cannot be parsed are treated as the earliest and only survive
+    when no dated re-issue exists for the same group.  Deterministic: groups are
+    resolved in ascending-issue-date order with original position as tie-break.
+    """
+
+    def _sort_key(item: tuple[int, dict[str, object]]) -> tuple[bool, date, int]:
+        index, row = item
+        parsed = _date_or_none(row.get("issue_date"))
+        return (parsed is not None, parsed or date.min, index)
+
+    latest: dict[tuple[object, object, object, object], dict[str, object]] = {}
+    for _index, row in sorted(enumerate(rows), key=_sort_key):
+        key = (row.get("code"), row.get("period_key"), row.get("year"), row.get("model"))
+        latest[key] = row
+    return list(latest.values())
 
 
 def _read_forecasts(
@@ -227,6 +271,7 @@ def _read_forecasts(
     start_date: str | None,
     end_date: str | None,
     ledger: ExclusionLedger,
+    repair_lr: bool = False,
 ) -> pd.DataFrame:
     if horizon in SHORT_TERM_HORIZONS:
         return _read_short_forecasts(
@@ -237,6 +282,7 @@ def _read_forecasts(
             start_date,
             end_date,
             ledger,
+            repair_lr=repair_lr,
         )
     if horizon in LONG_TERM_HORIZONS:
         return _read_long_forecasts(
@@ -258,6 +304,7 @@ def _read_short_forecasts(
     start_date: str | None,
     end_date: str | None,
     ledger: ExclusionLedger,
+    repair_lr: bool = False,
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     include_lr = _include_lr_forecasts(model_filters)
@@ -282,6 +329,7 @@ def _read_short_forecasts(
                 code=code,
                 start_date=start_date,
                 end_date=end_date,
+                repair_issue_indexing=repair_lr,
             )
             frames.append(_result_frame(result))
             for _index in range(result.dropped_sentinels):
@@ -596,4 +644,49 @@ def _target_month(horizon: str, period_key: int, year: int) -> int | None:
         # SAPPHIRE uses 3 decades per calendar month (36 per year).
         month = (period_key - 1) // 3 + 1
         return month if 1 <= month <= 12 else None
+    return None
+
+
+def _target_period_start(horizon: str, period_key: int, year: int) -> date | None:
+    """Return the first calendar day of a short-term target period.
+
+    Mirrors the calendar logic in :func:`_target_month`.  Long-term horizons and
+    any invalid period key return ``None`` (the issue-before-target guard is not
+    applicable to them).
+
+    Args:
+        horizon: Normalized horizon literal (day/pentad/decade for a real result).
+        period_key: The in-year period index (``horizon_in_year``).
+        year: The target calendar year.
+
+    Returns:
+        The target period's first calendar day, or ``None`` when it cannot be
+        determined (invalid period key, out-of-range date, or long-term horizon).
+    """
+    if horizon == "day":
+        # period_key is the day-of-year index (1-based).
+        try:
+            return date(year, 1, 1) + timedelta(days=period_key - 1)
+        except (ValueError, OverflowError):
+            return None
+    if horizon == "pentad":
+        # 6 pentads per calendar month (72 per year).
+        month = (period_key - 1) // 6 + 1
+        if not 1 <= month <= 12:
+            return None
+        day = [1, 6, 11, 16, 21, 26][(period_key - 1) % 6]
+        try:
+            return date(year, month, day)
+        except (ValueError, OverflowError):
+            return None
+    if horizon == "decade":
+        # 3 decades per calendar month (36 per year).
+        month = (period_key - 1) // 3 + 1
+        if not 1 <= month <= 12:
+            return None
+        day = [1, 11, 21][(period_key - 1) % 3]
+        try:
+            return date(year, month, day)
+        except (ValueError, OverflowError):
+            return None
     return None

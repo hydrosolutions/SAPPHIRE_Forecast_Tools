@@ -729,6 +729,41 @@ def test_summary_prob_section_shows_not_computed_when_empty(tmp_path: Path) -> N
     assert "not computed" in summary
 
 
+def test_prob_section_counts_below_norm_100_brier_rows_additively() -> None:
+    """The Probabilistic Metrics section additively reports 1.0×norm Brier rows
+    only when they are present; the default frame is unaffected."""
+    from forecast_skill_eval.artifacts import _prob_metrics_section
+
+    base = _prob_metrics_frame()
+    base_lines = _prob_metrics_section(base)
+    assert not any("1.0x" in line for line in base_lines), (
+        "the 1.0×norm line must be absent when no below_norm_100 rows exist"
+    )
+
+    brier_100 = {col: math.nan for col in PROB_METRIC_COLUMNS}
+    brier_100.update(
+        {
+            "horizon": "pentad",
+            "model": "model-a",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "all",
+            "lead": None,
+            "event": "below_norm_100",
+            "fc_grid_id": "short5",
+            "n_pairs": 3,
+            "brier": 0.11,
+        }
+    )
+    with_100 = pd.concat([base, pd.DataFrame([brier_100])], ignore_index=True)
+    lines_100 = _prob_metrics_section(with_100)
+    assert any("Below-norm (1.0x norm) Brier rows: 1" in line for line in lines_100)
+    # The original below_norm count line is still present and unchanged.
+    assert any(line == "Below-norm Brier rows: 0" for line in lines_100)
+
+
 # ---------------------------------------------------------------------------
 # Phase-4 value-metric artifacts (SAPPHIRE_SKILL_VALUE)
 # ---------------------------------------------------------------------------

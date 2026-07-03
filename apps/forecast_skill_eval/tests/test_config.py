@@ -100,6 +100,57 @@ def test_invalid_config_inputs_are_rejected(kwargs: dict[str, object]) -> None:
         ForecastSkillEvalConfig(**kwargs)
 
 
+def test_short_term_gate_flags_default_off() -> None:
+    """Both short-term correctness gates must default to False (byte-identical)."""
+    config = ForecastSkillEvalConfig()
+
+    assert config.short_term_issue_before_target is False
+    assert config.short_term_dedup_one_per_target is False
+
+
+def test_short_term_gate_flags_can_be_enabled() -> None:
+    config = ForecastSkillEvalConfig(
+        short_term_issue_before_target=True,
+        short_term_dedup_one_per_target=True,
+    )
+
+    assert config.short_term_issue_before_target is True
+    assert config.short_term_dedup_one_per_target is True
+
+
+def test_lr_repair_flag_defaults_off() -> None:
+    """The LR repair-on-read flag must default to False (byte-identical reads)."""
+    config = ForecastSkillEvalConfig()
+
+    assert config.short_term_lr_repair_issue_indexing is False
+
+
+def test_lr_repair_flag_can_be_enabled() -> None:
+    config = ForecastSkillEvalConfig(short_term_lr_repair_issue_indexing=True)
+
+    assert config.short_term_lr_repair_issue_indexing is True
+
+
+def test_config_events_filter_accepts_below_norm_100() -> None:
+    """below_norm_100 (opt-in norm-factor event) must validate in events_filter."""
+    config = ForecastSkillEvalConfig(events_filter=("below_norm", "below_norm_100"))
+    assert set(config.events_filter) == {"below_norm", "below_norm_100"}
+
+
+def test_default_events_unchanged_by_norm_factor_event() -> None:
+    """DEFAULT_EVENTS must still be exactly the original five events."""
+    from forecast_skill_eval.config import DEFAULT_EVENTS
+
+    assert tuple(DEFAULT_EVENTS) == (
+        "below_norm",
+        "low_p10",
+        "low_p5",
+        "high_p90",
+        "high_p95",
+    )
+    assert "below_norm_100" not in DEFAULT_EVENTS
+
+
 def test_operational_issue_days_default_is_empty() -> None:
     config = ForecastSkillEvalConfig()
     assert config.operational_issue_days == ()
@@ -130,3 +181,21 @@ def test_operational_issue_days_empty_sequence_disables_filtering() -> None:
 def test_operational_issue_days_rejects_invalid(days: list[object]) -> None:
     with pytest.raises(ValueError):
         ForecastSkillEvalConfig(operational_issue_days=days)
+
+
+def test_regime_source_defaults_to_auto() -> None:
+    """A config built without regime_source keeps the byte-identical default."""
+    config = ForecastSkillEvalConfig()
+    assert config.regime_source == "auto"
+
+
+@pytest.mark.parametrize("value", ["auto", "flag", "date"])
+def test_regime_source_accepts_valid_values(value: str) -> None:
+    config = ForecastSkillEvalConfig(regime_source=value)
+    assert config.regime_source == value
+
+
+@pytest.mark.parametrize("value", ["", "issue_date", "FLAG", "dates"])
+def test_regime_source_rejects_invalid(value: str) -> None:
+    with pytest.raises(ValueError):
+        ForecastSkillEvalConfig(regime_source=value)

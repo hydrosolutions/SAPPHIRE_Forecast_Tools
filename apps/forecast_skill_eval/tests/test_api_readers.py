@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 
 import pandas as pd
 import pytest
 
 from forecast_skill_eval import api_readers
 from forecast_skill_eval.api_readers import (
+    _decad_of_year,
+    _normalize_lr_forecasts,
+    _pentad_of_year,
     read_forecasts,
     read_hydrograph_norms,
     read_long_forecasts,
@@ -572,3 +576,219 @@ def test_add_quantile_band_empty_frame_adds_typed_columns(fake_client_factory) -
     assert "quantiles_note" in result.data.columns
     assert "fc_grid_id" in result.data.columns
     assert "point_value" in result.data.columns  # point path still present
+
+
+# ---------------------------------------------------------------------------
+# LR issue-indexing repair-on-read tests (optional, default off)
+# ---------------------------------------------------------------------------
+
+
+def test_period_helpers_match_tag_library_convention() -> None:
+    assert _pentad_of_year(date(2022, 1, 1)) == 1
+    assert _decad_of_year(date(2022, 1, 1)) == 1
+    assert _pentad_of_year(date(2022, 5, 15)) == 27
+    assert _decad_of_year(date(2022, 5, 15)) == 14
+    assert _pentad_of_year(date(2022, 12, 31)) == 72
+    assert _decad_of_year(date(2022, 12, 31)) == 36
+
+
+def test_lr_repair_remaps_issue_indexed_pentad_row() -> None:
+    # Issue date 2023-03-21 is pentad 17; stored horizon_in_year 17 == issue
+    # period → issue-indexed → remap to target pentad 18.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-03-21",
+                "horizon_in_year": 17,
+                "horizon_value": 5,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=True)
+
+    row = repaired.iloc[0]
+    assert row["horizon_in_year"] == 18
+    assert row["horizon_value"] == ((18 - 1) % 6) + 1 == 6
+    # Non-wrap remap leaves target's year as issue-year (issue date + 1 day).
+    assert pd.to_datetime(row["target"]).year == 2023
+
+
+def test_lr_repair_leaves_already_target_indexed_row_untouched() -> None:
+    # Issue date 2023-03-21 is pentad 17; stored horizon_in_year 18 != 17 →
+    # already target-indexed → unchanged.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-03-21",
+                "horizon_in_year": 18,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=True)
+
+    assert repaired.iloc[0]["horizon_in_year"] == 18
+
+
+def test_lr_repair_wraps_pentad_72_and_advances_target_year() -> None:
+    # Issue date 2023-12-27 is pentad 72; issue-indexed → wrap to pentad 1 with
+    # the target year advanced to the following year.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-12-27",
+                "horizon_in_year": 72,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=True)
+
+    row = repaired.iloc[0]
+    assert row["horizon_in_year"] == 1
+    assert pd.to_datetime(row["target"]).year == 2024
+
+
+def test_lr_repair_ignores_unparseable_issue_date() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "not-a-date",
+                "horizon_in_year": 17,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=True)
+
+    assert repaired.iloc[0]["horizon_in_year"] == 17
+
+
+def test_lr_repair_remaps_issue_indexed_decade_row() -> None:
+    # Issue date 2023-02-15 is decade 5; horizon_in_year 5 == issue → remap to 6.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-02-15",
+                "horizon_in_year": 5,
+                "horizon_value": 2,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="decade", repair_issue_indexing=True)
+
+    row = repaired.iloc[0]
+    assert row["horizon_in_year"] == 6
+    assert row["horizon_value"] == ((6 - 1) % 3) + 1 == 3
+    assert pd.to_datetime(row["target"]).year == 2023
+
+
+def test_lr_repair_wraps_decade_36_and_advances_target_year() -> None:
+    # Issue date 2023-12-25 is decade 36; issue-indexed → wrap to decade 1 with
+    # the target year advanced to the following year.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-12-25",
+                "horizon_in_year": 36,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="decade", repair_issue_indexing=True)
+
+    row = repaired.iloc[0]
+    assert row["horizon_in_year"] == 1
+    assert pd.to_datetime(row["target"]).year == 2024
+
+
+def test_lr_repair_off_is_byte_identical_on_target_indexed_row() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-03-21",
+                "horizon_in_year": 18,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    on = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=True)
+    off = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=False)
+
+    assert on["horizon_in_year"].tolist() == off["horizon_in_year"].tolist()
+
+
+def test_lr_repair_off_leaves_issue_indexed_row_untouched() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-03-21",
+                "horizon_in_year": 17,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    # Repair OFF, and the pre-existing default call (no horizon / no flag), both
+    # leave the stored (issue) index untouched.
+    off = _normalize_lr_forecasts(df, horizon="pentad", repair_issue_indexing=False)
+    default = _normalize_lr_forecasts(df)
+
+    assert off.iloc[0]["horizon_in_year"] == 17
+    assert default.iloc[0]["horizon_in_year"] == 17
+
+
+def test_lr_repair_excludes_day_horizon() -> None:
+    # A day-horizon call with an issue-indexed-looking row must NOT be remapped;
+    # the repair is pentad/decade only.
+    df = pd.DataFrame(
+        [
+            {
+                "code": "19999",
+                "date": "2023-03-21",
+                "horizon_in_year": 17,
+                "forecasted_discharge": 10.0,
+            }
+        ]
+    )
+
+    repaired = _normalize_lr_forecasts(df, horizon="day", repair_issue_indexing=True)
+
+    assert repaired.iloc[0]["horizon_in_year"] == 17
+
+
+def test_read_lr_forecasts_repair_on_shifts_period_via_reader(fake_client_factory) -> None:
+    client = fake_client_factory(
+        lr_forecasts_rows=[
+            _lr_row(date="2023-03-21", horizon_in_year=17, discharge=10.0),
+        ],
+    )
+
+    result = read_lr_forecasts(
+        client,
+        horizon="pentad",
+        code="19999",
+        start_date="2023-01-01",
+        end_date="2023-12-31",
+        limit=10,
+        repair_issue_indexing=True,
+    )
+
+    assert result.data.iloc[0]["horizon_in_year"] == 18

@@ -178,6 +178,33 @@ def test_reducer_base_rate_undefined_all_normal_obs():
     assert row["n_pairs"] == 30
 
 
+# --------------------------------------------------------------------------- #
+# P1b: below_norm_100 event selection is independent of below_norm
+# --------------------------------------------------------------------------- #
+
+
+def test_below_norm_100_event_selection_is_independent():
+    """A contingency frame carrying BOTH events yields the 1.0 rows when asked,
+    and the below_norm selection is unaffected by the extra event rows."""
+    bn = _contingency_frame([_contingency_row(tp=8, fp=2, fn=2, tn=8)], event="below_norm")
+    bn100 = _contingency_frame([_contingency_row(tp=9, fp=1, fn=3, tn=7)], event="below_norm_100")
+    combined = pd.concat([bn, bn100], ignore_index=True)
+
+    long_bn, summary_bn = compute_economic_value(combined, event="below_norm")
+    long_100, summary_100 = compute_economic_value(combined, event="below_norm_100")
+
+    assert set(long_bn["event"].unique()) == {"below_norm"}
+    assert set(long_100["event"].unique()) == {"below_norm_100"}
+
+    # below_norm selection from the combined frame equals a below_norm-only frame.
+    long_bn_alone, summary_bn_alone = compute_economic_value(bn, event="below_norm")
+    pd.testing.assert_frame_equal(long_bn, long_bn_alone)
+    pd.testing.assert_frame_equal(summary_bn, summary_bn_alone)
+
+    # The 1.0 base rate differs (9+3)/20 = 0.6 vs 0.5 for below_norm.
+    assert summary_100.iloc[0]["base_rate_s"] == pytest.approx(0.6)
+
+
 def test_reducer_pofd_undefined_all_below_obs():
     # No non-events: FP=0, TN=0 -> pofd undefined.
     frame = _contingency_frame([_contingency_row(tp=25, fp=0, fn=5, tn=0)])

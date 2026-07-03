@@ -14,6 +14,9 @@ import pytest
 from forecast_skill_eval.prob_metrics import (
     PROB_METRIC_COLUMNS,
     PROB_RELIABILITY_COLUMNS,
+    _aggregate_brier,
+    _crpss_paired,
+    _rank_calibration_error,
     _score_pairs,
     brier_score,
     build_prob_reliability,
@@ -821,3 +824,236 @@ class TestBuildProbReliability:
         pooled = result[result["code"] == "POOLED"]
         if len(pooled) > 0:
             assert pooled["n"].max() == n
+
+
+# ===========================================================================
+# P1b: norm-factor Brier parity (below_norm_100)
+# ===========================================================================
+
+
+_NF_KEYS = [
+    "horizon",
+    "model",
+    "regime",
+    "season",
+    "code",
+    "basin",
+    "norm_provenance",
+]
+
+
+class TestNormFactorBrier:
+    def test_default_empty_norm_factor_events_is_frame_equal(self):
+        """Default ``norm_factor_events=()`` must be byte-identical to today."""
+        pairs = _make_scored_pairs()
+        base = compute_probabilistic_metrics(pairs, {}, {}, ("below_norm",))
+        same = compute_probabilistic_metrics(pairs, {}, {}, ("below_norm",), norm_factor_events=())
+        pd.testing.assert_frame_equal(base, same)
+
+    def test_norm_factor_events_not_passed_has_no_effect(self):
+        """Even with below_norm_100 in events_filter, no rows appear unless the
+        EventDef is passed via ``norm_factor_events``."""
+        pairs = _make_scored_pairs()
+        result = compute_probabilistic_metrics(pairs, {}, {}, ("below_norm", "below_norm_100"))
+        assert "below_norm_100" not in set(result["event"].unique())
+
+    def test_below_norm_100_adds_brier_only_rows_no_extra_distribution(self):
+        from forecast_skill_eval.events import event_by_name
+
+        pairs = _make_scored_pairs()
+        ev = event_by_name("below_norm_100")
+
+        without = compute_probabilistic_metrics(pairs, {}, {}, ("below_norm", "below_norm_100"))
+        result = compute_probabilistic_metrics(
+            pairs,
+            {},
+            {},
+            ("below_norm", "below_norm_100"),
+            norm_factor_events=(ev,),
+        )
+
+        events = set(result["event"].unique())
+        assert "below_norm_100" in events
+        assert "distribution" in events
+        assert "below_norm" in events
+
+        # No extra distribution rows are introduced by the norm-factor pass.
+        n_dist_without = int((without["event"] == "distribution").sum())
+        n_dist_result = int((result["event"] == "distribution").sum())
+        assert n_dist_result == n_dist_without
+
+        # below_norm_100 rows are Brier-only (NaN CRPS / coverage).
+        bn100 = result[result["event"] == "below_norm_100"]
+        assert bn100["crps"].isna().all()
+        assert bn100["coverage_90"].isna().all()
+
+    def test_below_norm_100_matches_below_norm_group_keys_and_n_pairs(self):
+        from forecast_skill_eval.events import event_by_name
+
+        pairs = _make_scored_pairs()
+        ev = event_by_name("below_norm_100")
+        result = compute_probabilistic_metrics(
+            pairs,
+            {},
+            {},
+            ("below_norm", "below_norm_100"),
+            norm_factor_events=(ev,),
+        )
+        bn = result[result["event"] == "below_norm"].reset_index(drop=True)
+        bn100 = result[result["event"] == "below_norm_100"].reset_index(drop=True)
+
+        # The norm-factor pass reuses the exact same slice/group reducer over a
+        # frame with identical group-key columns, so the Brier rows are emitted
+        # in the same order with the same group keys and the same n_pairs.
+        key_cols = [*_NF_KEYS, "lead", "n_pairs"]
+        pd.testing.assert_frame_equal(
+            bn[key_cols].reset_index(drop=True),
+            bn100[key_cols].reset_index(drop=True),
+        )
+
+    def test_below_norm_only_rows_unchanged_by_norm_factor_pass(self):
+        """distribution + below_norm rows must be byte-identical whether or not
+        the below_norm_100 Brier pass runs."""
+        from forecast_skill_eval.events import event_by_name
+
+        pairs = _make_scored_pairs()
+        ev = event_by_name("below_norm_100")
+
+        base = compute_probabilistic_metrics(pairs, {}, {}, ("below_norm", "below_norm_100"))
+        result = compute_probabilistic_metrics(
+            pairs,
+            {},
+            {},
+            ("below_norm", "below_norm_100"),
+            norm_factor_events=(ev,),
+        )
+
+        def _nonfactor(df: pd.DataFrame) -> pd.DataFrame:
+            return df[df["event"].isin(["distribution", "below_norm"])].reset_index(drop=True)
+
+        pd.testing.assert_frame_equal(_nonfactor(base), _nonfactor(result))
+
+
+# ===========================================================================
+# CORE-4: rank_calibration_error — proper PIT divergence (0 = calibrated)
+# ===========================================================================
+
+
+class TestRankCalibrationError:
+    def test_perfectly_uniform_ranks_gives_zero(self):
+        # Exact Uniform PIT: ranks at the expected (i-0.5)/n quantiles → 0.
+        n = 20
+        ranks = pd.Series([(i - 0.5) / n for i in range(1, n + 1)])
+        assert _rank_calibration_error(ranks) == pytest.approx(0.0, abs=1e-12)
+
+    def test_old_definition_would_have_been_nonzero_for_calibrated(self):
+        # Guard against regressing to mean|rank-0.5|, which was 0.25 here.
+        n = 20
+        ranks = pd.Series([(i - 0.5) / n for i in range(1, n + 1)])
+        assert _rank_calibration_error(ranks) < 0.01
+
+    def test_overdispersed_ranks_clumped_near_half_gives_positive(self):
+        # Over-dispersion: all PIT mass at 0.5 must be penalised, not rewarded.
+        ranks = pd.Series([0.5] * 20)
+        assert _rank_calibration_error(ranks) > 0.1
+
+    def test_underdispersed_ranks_at_extremes_gives_positive(self):
+        ranks = pd.Series([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+        assert _rank_calibration_error(ranks) > 0.1
+
+    def test_empty_returns_nan(self):
+        assert math.isnan(_rank_calibration_error(pd.Series(dtype=float)))
+
+    def test_nans_are_dropped(self):
+        n = 10
+        clean = pd.Series([(i - 0.5) / n for i in range(1, n + 1)])
+        with_nan = pd.concat([clean, pd.Series([float("nan"), float("nan")])], ignore_index=True)
+        assert _rank_calibration_error(with_nan) == pytest.approx(_rank_calibration_error(clean))
+
+
+# ===========================================================================
+# CORE-5: CRPSS uses the paired finite subset
+# ===========================================================================
+
+
+class TestCrpssPaired:
+    def test_uses_intersection_of_finite_pairs(self):
+        crps = pd.Series([1.0, 2.0, 3.0, 4.0])
+        crps_ref = pd.Series([2.0, 4.0, float("nan"), 8.0])
+        # Paired rows: 0, 1, 3 → fc_mean = 7/3, ref_mean = 14/3 → 1 - 0.5 = 0.5.
+        assert _crpss_paired(crps, crps_ref) == pytest.approx(0.5)
+
+    def test_all_reference_nan_returns_nan(self):
+        crps = pd.Series([1.0, 2.0])
+        crps_ref = pd.Series([float("nan"), float("nan")])
+        assert math.isnan(_crpss_paired(crps, crps_ref))
+
+    def test_paired_subset_differs_from_independent_means(self):
+        # Independent means would give 1 - 5.5/2.0 = -1.75 (biased); the paired
+        # subset (row 0 only) gives the correct 1 - 1.0/2.0 = 0.5.
+        crps = pd.Series([1.0, 10.0])
+        crps_ref = pd.Series([2.0, float("nan")])
+        assert _crpss_paired(crps, crps_ref) == pytest.approx(0.5)
+
+    def test_zero_reference_returns_nan(self):
+        crps = pd.Series([1.0, 2.0])
+        crps_ref = pd.Series([0.0, 0.0])
+        assert math.isnan(_crpss_paired(crps, crps_ref))
+
+
+# ===========================================================================
+# CORE-6: Brier row n_pairs / base_rate match the band-valid Brier sample
+# ===========================================================================
+
+
+class TestAggregateBrierBandValid:
+    @staticmethod
+    def _brier_kwargs() -> dict:
+        return {
+            "horizon": "pentad",
+            "model": "TFT",
+            "regime": "all",
+            "season": "all",
+            "code": "POOLED",
+            "basin": "all",
+            "norm_provenance": "official",
+            "lead": None,
+        }
+
+    @staticmethod
+    def _frame() -> pd.DataFrame:
+        # 2 band-valid pairs (finite below_norm_prob) + 2 band-less pairs (NaN).
+        # All-obs base_rate = 3/4 = 0.75; band-valid base_rate = 1/2 = 0.50.
+        return pd.DataFrame(
+            [
+                {"below_norm_prob": 0.2, "obs_class": "below", "fc_grid_id": "g"},
+                {"below_norm_prob": 0.6, "obs_class": "normal", "fc_grid_id": "g"},
+                {"below_norm_prob": float("nan"), "obs_class": "below", "fc_grid_id": "g"},
+                {"below_norm_prob": float("nan"), "obs_class": "below", "fc_grid_id": "g"},
+            ]
+        )
+
+    def test_n_pairs_is_band_valid_count(self):
+        row = _aggregate_brier(self._frame(), **self._brier_kwargs())
+        assert row["n_pairs"] == 2
+
+    def test_brier_ss_uses_band_valid_base_rate(self):
+        row = _aggregate_brier(self._frame(), **self._brier_kwargs())
+        # brier_mean = mean[(0.2-1)^2, (0.6-0)^2] = mean[0.64, 0.36] = 0.5.
+        assert row["brier"] == pytest.approx(0.5)
+        # base_rate over the band-valid subset = 0.5 → brier_clim = 0.25 →
+        # brier_ss = 1 - 0.5/0.25 = -1.0.  (All-obs base_rate 0.75 would give
+        # brier_clim 0.1875 → brier_ss ≈ -1.667, which this asserts against.)
+        assert row["brier_ss"] == pytest.approx(-1.0)
+
+    def test_all_band_invalid_gives_zero_pairs_and_nan(self):
+        frame = pd.DataFrame(
+            [
+                {"below_norm_prob": float("nan"), "obs_class": "below", "fc_grid_id": "g"},
+                {"below_norm_prob": float("nan"), "obs_class": "normal", "fc_grid_id": "g"},
+            ]
+        )
+        row = _aggregate_brier(frame, **self._brier_kwargs())
+        assert row["n_pairs"] == 0
+        assert math.isnan(row["brier"])
+        assert math.isnan(row["brier_ss"])

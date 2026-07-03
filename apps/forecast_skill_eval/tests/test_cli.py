@@ -138,6 +138,84 @@ def test_operational_issue_days_cli_default_is_empty() -> None:
     assert config.operational_issue_days == ()
 
 
+def test_regime_source_cli_default_is_auto() -> None:
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.regime_source == "auto"
+
+
+def test_regime_source_cli_arg_parses_into_config() -> None:
+    parser = cli._parser()
+    for value in ("auto", "flag", "date"):
+        args = parser.parse_args(["--regime-source", value])
+        config = cli._config_from_args(args)
+        assert config.regime_source == value
+
+
+def test_short_term_gate_flags_default_off_in_cli() -> None:
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.short_term_issue_before_target is False
+    assert config.short_term_dedup_one_per_target is False
+
+
+def test_short_term_gate_flags_parse_into_config() -> None:
+    parser = cli._parser()
+    args = parser.parse_args(
+        [
+            "--short-term-issue-before-target",
+            "--short-term-dedup-one-per-target",
+        ]
+    )
+    config = cli._config_from_args(args)
+    assert config.short_term_issue_before_target is True
+    assert config.short_term_dedup_one_per_target is True
+
+
+def test_forecast_only_env_enables_both_short_term_gates(monkeypatch) -> None:
+    monkeypatch.setenv("SAPPHIRE_SKILL_FORECAST_ONLY", "1")
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.short_term_issue_before_target is True
+    assert config.short_term_dedup_one_per_target is True
+
+
+def test_forecast_only_env_unset_leaves_gates_off(monkeypatch) -> None:
+    monkeypatch.delenv("SAPPHIRE_SKILL_FORECAST_ONLY", raising=False)
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.short_term_issue_before_target is False
+    assert config.short_term_dedup_one_per_target is False
+
+
+def test_lr_repair_cli_default_is_off(monkeypatch) -> None:
+    monkeypatch.delenv("SAPPHIRE_SKILL_LR_REPAIR", raising=False)
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.short_term_lr_repair_issue_indexing is False
+
+
+def test_lr_repair_cli_flag_enables_repair(monkeypatch) -> None:
+    monkeypatch.delenv("SAPPHIRE_SKILL_LR_REPAIR", raising=False)
+    parser = cli._parser()
+    args = parser.parse_args(["--short-term-lr-repair"])
+    config = cli._config_from_args(args)
+    assert config.short_term_lr_repair_issue_indexing is True
+
+
+def test_lr_repair_env_enables_repair(monkeypatch) -> None:
+    monkeypatch.setenv("SAPPHIRE_SKILL_LR_REPAIR", "1")
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.short_term_lr_repair_issue_indexing is True
+
+
 def test_apply_season_filter_passes_prob_frames_through(tmp_path: Path) -> None:
     """_apply_season_filter must slice prob_metrics / prob_reliability on 'season'
     the same way it slices contingency_metrics and baselines."""
