@@ -335,3 +335,159 @@ msgstr "Текущий сезон {season}"
 #: vizualization.py:2359
 msgid "Previous season {season}"
 msgstr "Предыдущий сезон {season}"
+
+# --- warning + horizon strings ported from ru_KG (i18n commits 9283f6cb / 7e6991e1) ---
+msgid "Warning:"
+msgstr "Внимание:"
+
+msgid "quarter"
+msgstr "квартал"
+
+msgid "season"
+msgstr "сезон"
+
+#, python-format
+msgid "The displayed %(horizon)s forecast is for %(horizon)s %(period)s of %(year)s, but the current %(horizon)s is %(current)s of %(today_year)s. This forecast may be outdated."
+msgstr "Отображаемый прогноз (%(horizon)s) составлен на период %(period)s %(year)s г., но текущий период — %(current)s %(today_year)s г. Этот прогноз может быть устаревшим."
+
+#, python-format
+msgid "No discharge record available today for %(station)s"
+msgstr "Нет данных о расходе воды на сегодня для %(station)s"
+
+#, python-format
+msgid "No forecast data available for %(station)s on %(date)s."
+msgstr "Нет данных прогноза для %(station)s на %(date)s."
+
+#, python-format
+msgid "No forecast data available for models %(models)s at %(station)s on %(date)s."
+msgstr "Нет данных прогноза для моделей %(models)s для %(station)s на %(date)s."
+
+# --- horizon-card + month names ported from ru_KG (i18n commit 7e6991e1) ---
+#, python-format
+msgid "pentad: %(pim)s of %(month)s %(year)s (%(num)s)"
+msgstr "пентада: %(pim)s-я %(month)s %(year)s г. (%(num)s)"
+
+#, python-format
+msgid "decade: %(dim)s of %(month)s %(year)s (%(num)s)"
+msgstr "декада: %(dim)s-я %(month)s %(year)s г. (%(num)s)"
+
+#, python-format
+msgid "month: %(month)s %(year)s"
+msgstr "месяц: %(month)s %(year)s г."
+
+msgid "season: April–September"
+msgstr "сезон: апрель–сентябрь"
+
+#, python-format
+msgid ", produced on %(prod)s"
+msgstr ", составлен %(day)s %(month)s %(year)s г."
+
+msgctxt "genitive"
+msgid "January"
+msgstr "января"
+
+msgctxt "genitive"
+msgid "February"
+msgstr "февраля"
+
+msgctxt "genitive"
+msgid "March"
+msgstr "марта"
+
+msgctxt "genitive"
+msgid "April"
+msgstr "апреля"
+
+msgctxt "genitive"
+msgid "May"
+msgstr "мая"
+
+msgctxt "genitive"
+msgid "June"
+msgstr "июня"
+
+msgctxt "genitive"
+msgid "July"
+msgstr "июля"
+
+msgctxt "genitive"
+msgid "August"
+msgstr "августа"
+
+msgctxt "genitive"
+msgid "September"
+msgstr "сентября"
+
+msgctxt "genitive"
+msgid "October"
+msgstr "октября"
+
+msgctxt "genitive"
+msgid "November"
+msgstr "ноября"
+
+msgctxt "genitive"
+msgid "December"
+msgstr "декабря"
+
+msgctxt "nominative"
+msgid "January"
+msgstr "январь"
+
+msgctxt "nominative"
+msgid "February"
+msgstr "февраль"
+
+msgctxt "nominative"
+msgid "March"
+msgstr "март"
+
+msgctxt "nominative"
+msgid "April"
+msgstr "апрель"
+
+msgctxt "nominative"
+msgid "May"
+msgstr "май"
+
+msgctxt "nominative"
+msgid "June"
+msgstr "июнь"
+
+msgctxt "nominative"
+msgid "July"
+msgstr "июль"
+
+msgctxt "nominative"
+msgid "August"
+msgstr "август"
+
+msgctxt "nominative"
+msgid "September"
+msgstr "сентябрь"
+
+msgctxt "nominative"
+msgid "October"
+msgstr "октябрь"
+
+msgctxt "nominative"
+msgid "November"
+msgstr "ноябрь"
+
+msgctxt "nominative"
+msgid "December"
+msgstr "декабрь"
+
+
+# --- horizon selector labels ported from ru_KG ---
+msgid "pentad"
+msgstr "пентада"
+
+msgid "decade"
+msgstr "декада"
+
+msgid "month"
+msgstr "месяц"
+
+msgid "Select forecast horizon:"
+msgstr "Выберите горизонт прогнозирования:"
