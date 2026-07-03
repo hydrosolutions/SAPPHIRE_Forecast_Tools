@@ -32,17 +32,19 @@
 
 # I/O
 import argparse
+import datetime as dt
 import logging
 import os
 import sys
 import time
 from logging.handlers import TimedRotatingFileHandler
 
+# Local methods
+import sync_short_horizon_hydrograph
+
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 from ieasyhydro_sdk.sdk import IEasyHydroHFSDK, IEasyHydroSDK
-
-# Local methods
 from src import src
 from src.config import (
     get_log_level,
@@ -481,6 +483,35 @@ def main():
     end_time = time.time()
     time_write_daily_hydrograph_data = end_time - start_time
 
+    # Pentad/decad hydrograph rows (M2): preprocessing_runoff now owns the
+    # short-horizon envelope/norm + current/previous actuals (previously
+    # written by fl.write_pentad_hydrograph_data / write_decad_hydrograph_data),
+    # produced on every operational run right after the daily hydrograph write.
+    start_time = time.time()
+    try:
+        if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
+            logger.info(
+                "Skipping pentad/decad hydrograph write: requires the iEasyHydro HF SDK "
+                "(legacy iEasyHydro connection in use)."
+            )
+        elif ieh_hf_sdk is None:
+            logger.info("Skipping pentad/decad hydrograph write: no iEasyHydro HF SDK access.")
+        else:
+            forecast_date = dt.date.today()
+            short_horizon_client = sync_short_horizon_hydrograph._get_preprocessing_client()
+            sync_short_horizon_hydrograph.write_short_horizon_hydrograph(
+                codes=site_codes,
+                iehhf_sdk=ieh_hf_sdk,
+                client=short_horizon_client,
+                target_year=forecast_date.year,
+                today=forecast_date,
+            )
+            logger.info("Pentad/decad hydrograph rows written.")
+    except Exception as e:
+        logger.warning(f"Pentad/decad hydrograph write failed, continuing: {e}")
+    end_time = time.time()
+    time_write_short_horizon_hydrograph_data = end_time - start_time
+
     # Post-write validation (Phase 3) - only in maintenance mode
     if mode == "maintenance":
         validation_config = get_validation_settings()
@@ -546,11 +577,16 @@ def main():
 
     overall_end_time = time.time()
     total_time = overall_end_time - overall_start_time
+    time_write_total = (
+        time_write_daily_time_series_data
+        + time_write_daily_hydrograph_data
+        + time_write_short_horizon_hydrograph_data
+    )
     logger.info(
         f"[TIMING] Total: {total_time:.1f}s (config: {time_load_environment:.1f}s, "
         f"sites: {time_get_forecast_sites:.1f}s, data: {time_get_runoff_data:.1f}s, "
         f"process: {time_filter_roughly_for_outliers + time_from_daily_time_series_to_hydrograph:.1f}s, "
-        f"write: {time_write_daily_time_series_data + time_write_daily_hydrograph_data:.1f}s)"
+        f"write: {time_write_total:.1f}s)"
     )
 
     # Output profiling report if enabled (PREPROCESSING_PROFILING=true)

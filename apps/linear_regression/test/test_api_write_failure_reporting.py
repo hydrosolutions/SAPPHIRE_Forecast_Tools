@@ -314,73 +314,6 @@ class TestWriteLinregDecadForecastDataReturnsBool:
 
 
 # ============================================================================
-# Unit tests: write_pentad_hydrograph_data
-# ============================================================================
-
-
-class TestWritePentadHydrographDataReturnsBool:
-    """write_pentad_hydrograph_data returns bool based on API exceptions."""
-
-    def test_api_write_succeeds_returns_true(self, tmp_path, monkeypatch):
-        """When _write_hydrograph_to_api succeeds (no exception), return True."""
-        _set_hydrograph_pentad_env(monkeypatch, tmp_path)
-        data = _make_hydrograph_df(years=(2023, 2024), pentad=True)
-
-        with patch.object(fl_module, "_write_hydrograph_to_api", return_value=None) as mock_api:
-            result = fl_module.write_pentad_hydrograph_data(data)
-
-        mock_api.assert_called_once()
-        assert result is True
-
-    def test_api_write_raises_returns_false(self, tmp_path, monkeypatch):
-        """When _write_hydrograph_to_api raises, return False (warn mode)."""
-        _set_hydrograph_pentad_env(monkeypatch, tmp_path)
-        monkeypatch.setenv("SAPPHIRE_API_FAILURE_MODE", "warn")
-        data = _make_hydrograph_df(years=(2023, 2024), pentad=True)
-
-        with patch.object(fl_module, "_write_hydrograph_to_api", side_effect=Exception("API down")):
-            result = fl_module.write_pentad_hydrograph_data(data)
-
-        assert result is False
-        # CSV was still written despite API failure
-        csv_path = tmp_path / "hydrograph_pentad.csv"
-        assert csv_path.exists()
-
-
-# ============================================================================
-# Unit tests: write_decad_hydrograph_data
-# ============================================================================
-
-
-class TestWriteDecadHydrographDataReturnsBool:
-    """write_decad_hydrograph_data returns bool based on API exceptions."""
-
-    def test_api_write_succeeds_returns_true(self, tmp_path, monkeypatch):
-        """When _write_hydrograph_to_api succeeds (no exception), return True."""
-        _set_hydrograph_decad_env(monkeypatch, tmp_path)
-        data = _make_hydrograph_df(years=(2023, 2024), pentad=False)
-
-        with patch.object(fl_module, "_write_hydrograph_to_api", return_value=None) as mock_api:
-            result = fl_module.write_decad_hydrograph_data(data)
-
-        mock_api.assert_called_once()
-        assert result is True
-
-    def test_api_write_raises_returns_false(self, tmp_path, monkeypatch):
-        """When _write_hydrograph_to_api raises, return False (warn mode)."""
-        _set_hydrograph_decad_env(monkeypatch, tmp_path)
-        monkeypatch.setenv("SAPPHIRE_API_FAILURE_MODE", "warn")
-        data = _make_hydrograph_df(years=(2023, 2024), pentad=False)
-
-        with patch.object(fl_module, "_write_hydrograph_to_api", side_effect=Exception("API down")):
-            result = fl_module.write_decad_hydrograph_data(data)
-
-        assert result is False
-        csv_path = tmp_path / "hydrograph_decad.csv"
-        assert csv_path.exists()
-
-
-# ============================================================================
 # Unit tests: write_pentad_time_series_data
 # ============================================================================
 
@@ -563,11 +496,11 @@ class TestApiWriteFailureExitCode:
     @patch.object(lr_module, "fl")
     @patch.object(lr_module, "sl")
     def test_api_write_failure_exits_nonzero(self, mock_sl, mock_fl, mock_tl, capsys):
-        """When a write function returns False, main() exits with code 1."""
+        """When a still-wired write function returns False, main() exits 1."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
-        # Make one of the write functions signal failure
-        mock_fl.write_pentad_hydrograph_data.return_value = False
+        # Make one of the still-wired write functions signal failure
+        mock_fl.write_pentad_time_series_data.return_value = False
 
         fake_date = _make_fake_date(dt.date(2024, 1, 5))
         env = {**_BASE_ENV, "SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -657,7 +590,7 @@ class TestApiWriteFailureExitCode:
         """Decad write failure also triggers exit code 1."""
         _setup_common_mocks(mock_sl, mock_fl, mock_tl)
 
-        mock_fl.write_decad_hydrograph_data.return_value = False
+        mock_fl.write_decad_time_series_data.return_value = False
 
         # Jan 10 is both a pentad and decad day
         fake_date = _make_fake_date(dt.date(2024, 1, 10))

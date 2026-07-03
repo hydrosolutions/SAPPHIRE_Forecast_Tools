@@ -783,44 +783,28 @@ def main():
     api_write_failures = False
 
     # Save pentadal data
-    if run_pentad:
-        try:
-            if not fl.write_pentad_hydrograph_data(data_pentad):
-                logger.error(
-                    "CRITICAL: API write failed for %s. Data written to CSV only. "
-                    "API database is now behind CSV.",
-                    "write_pentad_hydrograph_data",
-                )
-                api_write_failures = True
-        except ValueError as e:
-            logger.warning("Skipping pentad hydrograph write (insufficient historical data): %s", e)
-        if not fl.write_pentad_time_series_data(data_pentad):
-            logger.error(
-                "CRITICAL: API write failed for %s. Data written to CSV only. "
-                "API database is now behind CSV.",
-                "write_pentad_time_series_data",
-            )
-            api_write_failures = True
+    # Note: the pentad hydrograph row (envelope/norm + current/previous actuals)
+    # is owned by preprocessing_runoff.sync_short_horizon_hydrograph as of M2;
+    # this module no longer writes it.
+    if run_pentad and not fl.write_pentad_time_series_data(data_pentad):
+        logger.error(
+            "CRITICAL: API write failed for %s. Data written to CSV only. "
+            "API database is now behind CSV.",
+            "write_pentad_time_series_data",
+        )
+        api_write_failures = True
 
     # Save decadal data
-    if run_decad:
-        try:
-            if not fl.write_decad_hydrograph_data(data_decad):
-                logger.error(
-                    "CRITICAL: API write failed for %s. Data written to CSV only. "
-                    "API database is now behind CSV.",
-                    "write_decad_hydrograph_data",
-                )
-                api_write_failures = True
-        except ValueError as e:
-            logger.warning("Skipping decad hydrograph write (insufficient historical data): %s", e)
-        if not fl.write_decad_time_series_data(data_decad):
-            logger.error(
-                "CRITICAL: API write failed for %s. Data written to CSV only. "
-                "API database is now behind CSV.",
-                "write_decad_time_series_data",
-            )
-            api_write_failures = True
+    # Note: the decad hydrograph row (envelope/norm + current/previous actuals)
+    # is owned by preprocessing_runoff.sync_short_horizon_hydrograph as of M2;
+    # this module no longer writes it.
+    if run_decad and not fl.write_decad_time_series_data(data_decad):
+        logger.error(
+            "CRITICAL: API write failed for %s. Data written to CSV only. "
+            "API database is now behind CSV.",
+            "write_decad_time_series_data",
+        )
+        api_write_failures = True
 
     if args.hindcast and hindcast_caught_up:
         logger.info("Hindcast mode: forecasts already up to date; refreshed runoff only.")

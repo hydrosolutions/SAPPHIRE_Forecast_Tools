@@ -4863,13 +4863,10 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
     runoff_stats["pentad"] = runoff_stats["pentad"].astype(int)
     runoff_stats["day_of_year"] = runoff_stats["day_of_year"].astype(int)
 
-    # --- API Write (before CSV) ---
+    # --- API Write retired in M2: preprocessing_runoff.sync_short_horizon_hydrograph now
+    # owns the pentad hydrograph row (envelope/norm + current/previous actuals). This
+    # writer keeps producing the CSV output below only.
     api_ok = True
-    try:
-        _write_hydrograph_to_api(runoff_stats, "pentad")
-    except Exception as e:
-        _handle_api_write_error(e, "write_pentad_hydrograph_data")
-        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -5359,13 +5356,10 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
         # Replace infinities with NaN
         runoff_stats = runoff_stats.replace([np.inf, -np.inf], np.nan)
 
-    # --- API Write (before CSV) ---
+    # --- API Write retired in M2: preprocessing_runoff.sync_short_horizon_hydrograph now
+    # owns the decad hydrograph row (envelope/norm + current/previous actuals). This
+    # writer keeps producing the CSV output below only.
     api_ok = True
-    try:
-        _write_hydrograph_to_api(runoff_stats, "decade")
-    except Exception as e:
-        _handle_api_write_error(e, "write_decad_hydrograph_data")
-        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_decad_file.
