@@ -5,6 +5,7 @@ import math
 import os
 import shutil
 import tempfile
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
 import numpy as np
 import pandas as pd
@@ -433,6 +434,55 @@ def round_discharge_trad_bulletin_3numbers(value: float) -> str:
         return f"{value:.1f}"
     else:
         return f"{value:.0f}"
+
+
+def _as_finite_decimal(value) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not decimal_value.is_finite():
+        return None
+    return decimal_value
+
+
+def _round_3sf_decimal(value) -> Decimal | None:
+    decimal_value = _as_finite_decimal(value)
+    if decimal_value is None:
+        return None
+    if decimal_value.is_zero():
+        return Decimal("0")
+
+    quantum = Decimal(f"1E{decimal_value.adjusted() - 2}")
+    with localcontext() as context:
+        context.prec = max(len(decimal_value.as_tuple().digits), 3)
+        return decimal_value.quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def round_3sf(value) -> float | None:
+    """Round a finite numeric value to 3 significant figures using HALF_UP."""
+    rounded = _round_3sf_decimal(value)
+    if rounded is None:
+        return None
+    return float(rounded)
+
+
+def format_discharge(value) -> str:
+    """Format a finite, non-negative discharge as a locale-free 3sf string."""
+    decimal_value = _as_finite_decimal(value)
+    if decimal_value is None or decimal_value < 0:
+        return ""
+
+    rounded = _round_3sf_decimal(decimal_value)
+    if rounded is None:
+        return ""
+    if rounded.is_zero():
+        return "0"
+
+    decimal_places = max(0, 2 - rounded.copy_abs().adjusted())
+    return f"{rounded:.{decimal_places}f}"
 
 
 def round_discharge_to_float(value: float) -> float:

@@ -34,6 +34,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
+from .discharge_formatting import format_discharge
 from .snow_window import is_hydrological_year_display, snow_display_window
 import subprocess
 
@@ -694,7 +695,7 @@ def plot_current_runoff_forecasts(wm, data, date_col, forecast_data_col,
         # print("MODEL: ", model)
         # print("COLOR: ", runoff_forecast_color[i])
         # Get the latest forecast for the model
-        latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
+        latest_forecast = format_discharge(model_data[forecast_data_col].iloc[-1])
         legend_entry = model + ": " + latest_forecast + " " + unit_string
 
         # Create a HoverTool
@@ -808,8 +809,8 @@ def plot_runoff_forecast_range_area(
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
 
-        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
-        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        lower_bound = format_discharge(model_data[min_col].iloc[-1])
+        upper_bound = format_discharge(model_data[max_col].iloc[-1])
         # legend_entry = model + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         legend_entry = model + ": Past forecast range"
 
@@ -945,8 +946,8 @@ def plot_runoff_forecast_range_area_v2(
             )
             continue
 
-        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
-        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        lower_bound = format_discharge(model_data[min_col].iloc[-1])
+        upper_bound = format_discharge(model_data[max_col].iloc[-1])
         # legend_entry = model + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         legend_entry = model + ": Past forecast range"
 
@@ -1042,8 +1043,8 @@ def plot_current_runoff_forecast_range(
         model_data[min_col] = model_data[mean_col] - model_data[min_col]
         model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
-        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
-        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        lower_bound = format_discharge(model_data[min_col].iloc[-1])
+        upper_bound = format_discharge(model_data[max_col].iloc[-1])
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
@@ -1053,7 +1054,7 @@ def plot_current_runoff_forecast_range(
         # print("upper_bound: ", upper_bound)
 
         # Get the latest forecast for the model
-        latest_forecast = fl.round_discharge(model_data[mean_col].iloc[-1])
+        latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
         # Create a point
@@ -1162,8 +1163,8 @@ def plot_current_runoff_forecast_range_date_format(
         model_data[min_col] = model_data[mean_col] - model_data[min_col]
         model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
-        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
-        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        lower_bound = format_discharge(model_data[min_col].iloc[-1])
+        upper_bound = format_discharge(model_data[max_col].iloc[-1])
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
@@ -1173,7 +1174,7 @@ def plot_current_runoff_forecast_range_date_format(
         # print("upper_bound: ", upper_bound)
 
         # Get the latest forecast for the model
-        latest_forecast = fl.round_discharge(model_data[mean_col].iloc[-1])
+        latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
         # print(f"\n\n\n\n\n\n\n\nDebug: latest_forecast\n{latest_forecast}")
@@ -1294,11 +1295,11 @@ def plot_current_runoff_forecast_range_date_format_v2(
         #    model_data[min_col] = model_data[mean_col] - model_data[min_col]
         #    model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
-        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
-        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
-        if lower_bound is None:
+        lower_bound = format_discharge(model_data[min_col].iloc[-1])
+        upper_bound = format_discharge(model_data[max_col].iloc[-1])
+        if not lower_bound:
             lower_bound = "N/A"
-        if upper_bound is None:
+        if not upper_bound:
             upper_bound = "N/A"
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
@@ -1309,7 +1310,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
         # print("upper_bound: ", upper_bound)
 
         # Get the latest forecast for the model
-        latest_forecast = fl.round_discharge(model_data[mean_col].iloc[-1])
+        latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
         if model == 'LR':
