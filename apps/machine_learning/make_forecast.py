@@ -295,8 +295,23 @@ def prepare_forecast_data(
         discharge_df.iloc[-input_chunk_length:], threshold_missing_days
     )
 
+    window = discharge_df.iloc[-input_chunk_length:]
+    total_nans = int(window["discharge"].isna().sum())
+    interior_nans = total_nans - nans_at_end
+    logger.info(
+        "[code=%s] discharge input window (last %d d): %d/%d NaN (%d interior, %d trailing) "
+        "| thresholds: total>%d skips, trailing>=%d skips",
+        code, input_chunk_length, total_nans, len(window), interior_nans, nans_at_end,
+        threshold_missing_days, threshold_missing_days_end,
+    )
+
     # 3: Check the conditions
     if missing_values["exceeds_threshold"] or nans_at_end >= threshold_missing_days_end:
+        logger.warning(
+            "[code=%s] SKIP: too many discharge gaps (total NaN exceeds threshold=%s, or trailing NaN=%d >= %d) "
+            "-> forecast will be NaN (missing discharge)",
+            code, missing_values["exceeds_threshold"], nans_at_end, threshold_missing_days_end,
+        )
         return discharge_df, 1
 
     # 4: Replace missing values with the latest forecasted values (Q50)
@@ -332,24 +347,41 @@ def prepare_forecast_data(
                 logger.debug(f"Second method failed: {e2}")
                 pass  # Both methods failed, moving on
 
-    
+        logger.info(
+            "[code=%s] step 4: %d discharge NaN days targeted for replacement from previous forecast",
+            code, len(days_with_nan),
+        )
+
     # 5: Interpolate missing values and ffill missing values at the end
     # check again for missing values
     missing_values, nans_at_end = utils_ml_forecast.check_for_nans(
         discharge_df.iloc[-input_chunk_length:], threshold_missing_days
     )
     if missing_values["exceeds_threshold"] or nans_at_end >= threshold_missing_days_end:
+        logger.warning(
+            "[code=%s] SKIP: still too many discharge gaps after imputation (total NaN exceeds threshold=%s, "
+            "or trailing NaN=%d >= %d) -> forecast will be NaN (missing discharge)",
+            code, missing_values["exceeds_threshold"], nans_at_end, threshold_missing_days_end,
+        )
         return discharge_df, 1
 
     if missing_values["nans_in_between"]:
-        print("Interpolating missing values")
+        logger.info("[code=%s] interpolating interior discharge gaps", code)
         discharge_df = utils_ml_forecast.gaps_imputation(discharge_df)
 
     if missing_values["nans_at_end"]:
-        print(f"Filling missing values at the end: {nans_at_end}")
+        logger.info("[code=%s] forward-filling %d trailing discharge NaN", code, nans_at_end)
         discharge_df = discharge_df.ffill(limit_area="outside")
 
     # 6: Return the prepared data
+    remaining = int(discharge_df["discharge"].iloc[-input_chunk_length:].isna().sum())
+    if remaining == 0:
+        logger.info("[code=%s] discharge gaps fully resolved (0 NaN in input window)", code)
+    else:
+        logger.warning(
+            "[code=%s] %d NaN remain in discharge input window after imputation "
+            "-> model will output NaN (missing discharge)", code, remaining,
+        )
     return discharge_df, 0
 
 
@@ -731,12 +763,27 @@ def make_ml_forecast():
         past_discharge_code = past_discharge_code.sort_values(by="date")
         qmapped_era5_code = qmapped_era5_code.sort_values(by="date")
 
-        logger.debug("past_discharge_code: %s", past_discharge_code.tail())
-        logger.debug("qmapped_era5_code: %s", qmapped_era5_code.tail())
-
         # get the input chunck length -> this can than be used to determine the relevant allowed missing values
         input_chunk_length = predictor.get_input_chunk_length()
         logger.debug("input_chunk_length: %s", input_chunk_length)
+
+        today = pd.to_datetime(datetime.datetime.now().date())
+        cov_window = qmapped_era5_code[
+            (qmapped_era5_code["date"] >= today - pd.Timedelta(days=input_chunk_length))
+            & (qmapped_era5_code["date"] <= today + pd.Timedelta(days=forecast_horizon))
+        ]
+        cov_cols = [c for c in ("P", "T", "PET", "daylight_hours") if c in cov_window.columns]
+        cov_nans = {c: int(cov_window[c].isna().sum()) for c in cov_cols}
+        logger.info(
+            "[code=%s] ERA5 covariates over model window [%s..%s]: %s (rows=%d)",
+            code, (today - pd.Timedelta(days=input_chunk_length)).date(),
+            (today + pd.Timedelta(days=forecast_horizon)).date(), cov_nans, len(cov_window),
+        )
+        if any(v > 0 for v in cov_nans.values()):
+            logger.warning(
+                "[code=%s] NaN present in ERA5 covariates over model window %s "
+                "-> model may output NaN (missing meteo)", code, cov_nans,
+            )
 
         # prepare the data
         past_discharge_code, flag = prepare_forecast_data(
