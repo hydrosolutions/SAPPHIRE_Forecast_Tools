@@ -130,6 +130,36 @@ We note that the target is here fixed by the start and end month - we are only i
 
 **LR SM** Bayesian Linear Regression using past discharge, precipitation, temperature and SWE from Snowmapper (probabilistic output ~ $N(\mu, \sigma)$)
 
+### Overview Lead Times
+
+| Model | month_0 | month_1 | month_2 | month_3 | quarter | seasonal |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|
+| **LR Base**     | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **GBT**         | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **LR SM**       | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **LR SM ROF**   | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **LR SM DT**    | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **SM GBT**      | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **SM GBT Norm** | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **SM GBT LR**   | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **MC ALD**      | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+
+
+### Overview Input Features
+
+| Model | Family | Q, P, T | Static | Snow (SWE/ROF) | LR predictions | Output |
+|-------|--------|:---:|:---:|:---:|:---:|--------|
+| **LR Base**     | Base       | ✓ | ✗ | ✗ | ✗ | N(μ, σ) |
+| **GBT**         | Base       | ✓ | ✓ | ✗ | ✗ | GBT ensemble |
+| **LR SM**       | SnowMapper | ✓ | ✗ | SWE | ✗ | N(μ, σ) |
+| **LR SM ROF**   | SnowMapper | ✓ | ✗ | SWE + ROF | ✗ | N(μ, σ) |
+| **LR SM DT**    | SnowMapper | ✓ | ✗ | ΔSWE | ✗ | N(μ, σ) |
+| **SM GBT**      | SnowMapper | ✓ | ✓ | SWE + ROF | ✗ | GBT ensemble |
+| **SM GBT Norm** | SnowMapper | ✓ | ✓ | SWE + ROF | ✗ | GBT ensemble |
+| **SM GBT LR**   | SnowMapper | ✓ | ✓ | SWE + ROF | ✓ | GBT ensemble |
+| **MC ALD**      | Uncertainty | ensemble + error stats | ✗ | (via ensemble) | ✓ | ALD spread/asymmetry |
+
+
 
 
 ## Operational Schedule

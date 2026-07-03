@@ -68,13 +68,19 @@ ML models include static features (elevation, land use, etc.) into the model as 
 The currently available machine learning models are suited for forecasting time series with complex patterns. The average forecast of all 3 machine learning models is called the Neural Ensemble (NE).
 
 *Temporal Fusion Transformer (TFT)*
-TFT models learn which parts of the entire time series are most important predictors to forecast patterns in the runoff. They are especially good at identifying both short-term and long-term dependencies dynamically (a mechanism called attention) which might be missed by simpler methods as TIDE and are therefore suited for handling slow and/or complex processes. The TFT is the most sophisticated but also the most complex and resource intensive ML model.
+TFT models learn which parts of the input are the most important predictors for forecasting patterns in the runoff. They combine Long-Short Term Memory (LSTM) layers, which track recent and sequential changes in the series, with a self-attention mechanism, which weighs how strongly each past moment relates to the forecast. This lets the model dynamically focus on different parts of the input depending on the conditions, rather than treating every time step as equally important, and makes it well suited to capturing both short- and long-term dependencies as well as complex relationships in the data. The TFT is the most sophisticated of these models, but also the most complex and resource-intensive to train.
+(Lim, B., Arık, S. Ö., Loeff, N., & Pfister, T. (2021). Temporal Fusion Transformers for interpretable multi-horizon time series forecasting. International Journal of Forecasting, 37(4), 1748–1764. https://doi.org/10.1016/j.ijforecast.2021.03.012 (arXiv:1912.09363))
+
 
 *Time-Series Dense Encoder (TIDE)*
-TIDE models, like TFT models, learn which parts of the time series are most important but then simplify the time series for forecasting (a mechanism called dense encoding leading to a simplification of the attention mechanism). It is faster and easier to train than TFT but may not capture very slow or complex relationships between the data.
+TIDE models forecast by passing the input through a series of dense layers, rather than using an attention mechanism like the TFT. A global skip connection carries the input forward to retain the simple, linear relationships in the data, while the dense layers add non-linear components when needed. The result is a model with a simpler architecture that is less resource-intensive to train and to run predictions with than the TFT, while remaining well suited for forecasting. 
+(Das, A., Kong, W., Leach, A., Mathur, S., Sen, R., & Yu, R. (2023). Long-term forecasting with TiDE: Time-series Dense Encoder. Transactions on Machine Learning Research. arXiv:2304.08424)
+
 
 *Time-series Mixer (TSMIXER)*
-While TFT and TIDE use static data as a separate layer next to the time-series data, TSMIXER combines both data types and different time steps across time steps and evaluates the impact of each static feature on the dynamic feature. This process is called mixing and allows the model to capture the influence of static features in a more integrated way than TFT and TIDE. TSMIXER is simpler and therefore easier to train than TFT and TIDE, but it does not have the attention mechanism.
+TSMIXER models forecast by mixing information across the time and predictor dimensions, combining how values evolve over time with how the different predictors interact with one another. It is based entirely on dense layers, like the TIDE model, which makes it faster and less resource-intensive than the TFT, and comparable to the TIDE model.
+(Chen, S.-A., Li, C.-L., Yoder, N., Arık, S. Ö., & Pfister, T. (2023). TSMixer: An all-MLP architecture for time series forecasting. Transactions on Machine Learning Research. arXiv:2303.06053)
+
 
 **Conceptual models**
 Conceptual rainfall runoff models (RRM) implement the main runoff formation processes in a spatially semi-distributed way. Semi-distributed means that we define zones with similar runoff formation characteristics and accumulate runoff from these zones at the outlet. In the Forecast Tools, we correct the simulated forecasts using measured runoff data in a process called Data Assimilation and therefore call the model Rainfall Runoff Assimilation Model (RRAM). Our models uncertainties in model parameters and forcing into account. The forecast range is determined by the parameter and the forcing uncertainty.
@@ -82,6 +88,22 @@ This type of forecasting is state-of-the-art and often used in operational runof
 
 **Ensemble Mean (EM)**
 The average pentadal or decadal forecast over all models which have a forecast accuracy of 80% or higher is combined in the ensemble mean.
+
+**Long-Term Forecast Models**
+
+The long-term forecasting module contains three types of models. This is a quick overview; a more detailed explanation of the different input-variable setups can be found in the [readme.md](apps/long_term_forecasting/readme.md) of the Long-Term Forecasting Module.
+
+*Linear Regression*
+(Bayesian) linear regressions take multiple features that are highly correlated with the forecast period. Predictors are selected automatically based on correlation, and the models are fitted separately per gauging station and time of year. By making the regression Bayesian, we also obtain a probabilistic forecast, which gives us a measure of uncertainty. Linear regressions are used for monthly, quarterly, and seasonal predictions.
+
+*Gradient Boosted Trees*
+Gradient Boosted Trees (GBT) build many regression trees that iteratively correct each other's errors, making the approach powerful. They rely on handcrafted features, and the models are trained jointly across all basins. Three different GBT implementations are used: XGBoost, LightGBM, and CatBoost. GBT models are used for monthly predictions only.
+
+*Uncertainty Network (MC ALD)*
+To produce a probabilistic output and apply a small bias correction, a compact dense neural network is trained to predict the scale and asymmetry of an Asymmetric Laplace Distribution centered on the ensemble mean (the average prediction across all long-term forecasting models). It uses ensemble statistics (e.g. mean and standard deviation) along with historical error statistics as inputs. This model runs for monthly predictions only.
+
+
+
 </details>
 
 <details>
@@ -103,13 +125,13 @@ The average pentadal or decadal forecast over all models which have a forecast a
 Доступные в настоящее время модели машинного обучения подходят для прогнозирования временных рядов с комплексными паттернами. Средний прогноз всех 3 моделей машинного обучения называется Нейронным ансамблем (NE).
 
 *Temporal Fusion Transformer (TFT)*
-Модели TFT изучают, какие части всего временного ряда являются наиболее важными предсказателями для прогнозирования паттернов стока. Они особенно хороши в выявлении как краткосрочных, так и долгосрочных зависимостей динамически (механизм, называемый вниманием), которые могут быть упущены более простыми методами, такими как TIDE, и поэтому подходят для обработки медленных и/или сложных процессов. TFT является самой сложной, но также и самой ресурсозатратной моделью машинного обучения.
+Модели TFT определяют, какие части входных данных являются наиболее важными предикторами для прогнозирования закономерностей в стоке. Они объединяют слои долгой краткосрочной памяти (LSTM), которые отслеживают недавние и последовательные изменения во временном ряду, с механизмом самовнимания (self-attention), который оценивает, насколько сильно каждый прошлый момент связан с прогнозом. Это позволяет модели динамически фокусироваться на разных частях входных данных в зависимости от условий, а не рассматривать каждый временной шаг как одинаково важный, и делает её хорошо приспособленной для выявления как краткосрочных, так и долгосрочных зависимостей, а также сложных взаимосвязей в данных. TFT является наиболее совершенной из этих моделей, но в то же время наиболее сложной и ресурсоёмкой в обучении.
 
 *Time-Series Dense Encoder (TIDE)*
-Модели TIDE, как и модели TFT, изучают, какие части временного ряда наиболее важны, но затем упрощают временной ряд для прогнозирования (механизм, называемый плотным кодированием, что приводит к упрощению механизма внимания). Эта модель быстрее и проще в обучении, чем TFT, но может не захватывать очень медленные или сложные зависимости между данными.
+Модели TiDE строят прогноз, пропуская входные данные через серию полносвязных слоёв, а не используя механизм внимания, как TFT. Глобальное пропускающее соединение (skip connection) передаёт входные данные напрямую вперёд, чтобы сохранить простые линейные зависимости в данных, тогда как полносвязные слои добавляют нелинейные компоненты, когда это необходимо. В результате получается модель с более простой архитектурой, менее ресурсоёмкая в обучении и в построении прогнозов, чем TFT, но при этом хорошо подходящая для прогнозирования.
 
 *Time-series Mixer (TSMIXER)*
-В то время как TFT и TIDE используют статические данные как отдельный слой рядом с данными временного ряда, TSMIXER сочетает оба типа данных и различные временные шаги и оценивает влияние каждого статического признака на динамический признак. Этот процесс называется смешиванием и позволяет модели захватывать влияние статических признаков более интегрированным способом, чем TFT и TIDE. TSMIXER проще и поэтому легче обучать, чем TFT и TIDE, но он не имеет механизма внимания.
+Модели TSMixer строят прогноз, смешивая информацию по измерениям времени и предикторов, объединяя то, как значения изменяются во времени, с тем, как различные предикторы взаимодействуют друг с другом. Она целиком основана на полносвязных слоях, как и модель TiDE, что делает её быстрее и менее ресурсоёмкой, чем TFT, и сопоставимой с моделью TiDE.
 
 **Концептуальные модели**
 Концептуальные модели формирования стока (RRM) реализуют основные процессы формирования стока в пространственно полусмещенном виде. Полусмещенное означает, что мы определяем зоны с похожими характеристиками формирования стока и аккумулируем сток из этих зон на выходе. В инструментах прогнозирования мы корректируем смоделированные прогнозы с использованием измеренных данных о стоке в процессе, называемом ассимиляцией данных, и поэтому называем модель Моделью ассимиляции стока (RRAM). Мы учитываем неопределенности в параметрах модели и воздействии. Диапазон прогноза определяется неопределенностью параметров и воздействия.
@@ -117,6 +139,19 @@ The average pentadal or decadal forecast over all models which have a forecast a
 
 **Среднее ансамбля (EM)**
 Средний пентадальный или декадный прогноз по всем моделям с точностью прогноза 80% и выше комбинируется в ансамблевое среднее.
+
+**долгосрочное прогнозирование**
+
+Модуль долгосрочного прогнозирования содержит три типа моделей. Это краткий обзор; более подробное описание различных конфигураций входных переменных можно найти в файле [readme.md](apps/long_term_forecasting/readme.md) Модуля долгосрочного прогнозирования.
+
+*(Bayesian) Linear Regression* 
+(Байесовские) линейные регрессии используют несколько признаков, которые сильно коррелируют с прогнозируемым периодом. Предикторы отбираются автоматически на основе корреляции, а модели обучаются отдельно для каждого гидрологического поста и времени года. Делая регрессию байесовской, мы также получаем вероятностный прогноз, что даёт нам меру неопределённости. Линейные регрессии используются для месячных, квартальных и сезонных прогнозов.
+
+*Gradient Boosted Trees (GBT)*
+Деревья с градиентным бустингом (Gradient Boosted Trees, GBT) строят множество регрессионных деревьев, которые итеративно исправляют ошибки друг друга, что делает этот подход мощным. Они опираются на признаки, сконструированные вручную, а модели обучаются совместно по всем бассейнам. Используются три различных реализации GBT: XGBoost, LightGBM и CatBoost. Модели GBT используются только для месячных прогнозов.
+
+*Uncertainty Network (MC-ALD)*
+Чтобы получить вероятностный результат и применить небольшую коррекцию смещения, компактная полносвязная нейронная сеть обучается предсказывать масштаб и асимметрию асимметричного распределения Лапласа, центрированного на среднем по ансамблю (усреднённом прогнозе по всем моделям долгосрочного прогнозирования). В качестве входных данных она использует статистики ансамбля (например, среднее и стандартное отклонение) наряду со статистиками исторических ошибок. Эта модель работает только для месячных прогнозов.
 
 
 </details>

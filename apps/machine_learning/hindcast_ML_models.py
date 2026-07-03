@@ -310,6 +310,20 @@ def main():
     observed_discharge["code"] = observed_discharge["code"].astype(int)
     era5_data_transformed["code"] = era5_data_transformed["code"].astype(int)
 
+    # Fill gaps in forcing data before PET so PET inherits filled T.
+    # Hindcast is fully historical -> lenient everywhere (recent limit == past limit).
+    FORCING_GAP_RECENT_THRESHOLD = int(
+        os.getenv("ieasyhydroforecast_forcing_gap_fill_recent_day_threshold", 7)
+    )
+    FORCING_GAP_LIMIT_PAST = int(os.getenv("ieasyhydroforecast_forcing_gap_limit_past", 3))
+    era5_data_transformed = utils_ml_forecast.fill_forcing_gaps(
+        era5_data_transformed,
+        reference_date=pd.to_datetime(era5_data_transformed["date"]).max(),
+        recent_day_threshold=FORCING_GAP_RECENT_THRESHOLD,
+        gap_limit_recent=FORCING_GAP_LIMIT_PAST,  # lenient everywhere
+        gap_limit_past=FORCING_GAP_LIMIT_PAST,
+    )
+
     # --------------------------------------------------------------------
     # Calculate PET Oudin and Daylight Hours
     # --------------------------------------------------------------------
