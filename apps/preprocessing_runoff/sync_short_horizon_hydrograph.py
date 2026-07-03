@@ -299,6 +299,53 @@ def _period_actual(
     return fl.round_3sf(float(numeric.mean()))
 
 
+def period_actuals(
+    code: str,
+    horizon_type: str,
+    *,
+    daily_by_year: dict[int, Any],
+    sdk_current: dict[int, Any] | None,
+    sdk_previous: dict[int, Any] | None,
+    target_year: int,
+    today: dt.date,
+) -> tuple[dict[int, float | None], dict[int, float | None]]:
+    """Return (current_by_period, previous_by_period) 3sf actuals for every period_in_year.
+
+    Covers every ``period_in_year`` (1..72 pentad / 1..36 decade) using the SAME
+    SDK-first + 80% WDDA fallback + in-progress guard rules as
+    ``build_pentad_records``/``build_decad_records``. ``current`` is keyed to
+    ``target_year`` (an in-progress period -> None); ``previous`` is keyed to
+    ``target_year - 1`` (always closed).
+    """
+    config = _HORIZON_CONFIG[horizon_type]
+    periods_per_year = config["periods_per_year"]
+    daily_frame = _parsed_daily_frame(code, daily_by_year)
+    previous_year = target_year - 1
+
+    current_by_period: dict[int, float | None] = {}
+    previous_by_period: dict[int, float | None] = {}
+    for period in range(1, periods_per_year + 1):
+        current_bounds = _period_calendar_bounds(period, config, target_year)
+        current_by_period[period] = _period_actual(
+            daily_frame=daily_frame,
+            sdk_map=sdk_current,
+            source_year=target_year,
+            period=period,
+            bounds=current_bounds,
+            is_closed=current_bounds[1] < today,
+        )
+        previous_bounds = _period_calendar_bounds(period, config, previous_year)
+        previous_by_period[period] = _period_actual(
+            daily_frame=daily_frame,
+            sdk_map=sdk_previous,
+            source_year=previous_year,
+            period=period,
+            bounds=previous_bounds,
+            is_closed=True,
+        )
+    return current_by_period, previous_by_period
+
+
 def _build_short_horizon_records(
     code: str,
     horizon_type: str,
@@ -320,29 +367,18 @@ def _build_short_horizon_records(
 
     daily_frame = _parsed_daily_frame(code, daily_by_year)
     envelope_by_period = _envelope_by_period(daily_frame, config, target_year)
-    previous_year = target_year - 1
+    current_by_period, previous_by_period = period_actuals(
+        code,
+        horizon_type,
+        daily_by_year=daily_by_year,
+        sdk_current=sdk_current,
+        sdk_previous=sdk_previous,
+        target_year=target_year,
+        today=today,
+    )
 
     records = []
     for period in range(1, periods_per_year + 1):
-        current_bounds = _period_calendar_bounds(period, config, target_year)
-        current = _period_actual(
-            daily_frame=daily_frame,
-            sdk_map=sdk_current,
-            source_year=target_year,
-            period=period,
-            bounds=current_bounds,
-            is_closed=current_bounds[1] < today,
-        )
-        previous_bounds = _period_calendar_bounds(period, config, previous_year)
-        previous = _period_actual(
-            daily_frame=daily_frame,
-            sdk_map=sdk_previous,
-            source_year=previous_year,
-            period=period,
-            bounds=previous_bounds,
-            is_closed=True,
-        )
-
         envelope_row = envelope_by_period.get(period, {})
         record = {
             "horizon_type": horizon_type,
@@ -352,8 +388,8 @@ def _build_short_horizon_records(
             "horizon_in_year": period,
             "day_of_year": config["get_day_of_year"](period, target_year),
             "norm": _json_safe(norm_values[period - 1]),
-            "current": _json_safe(current),
-            "previous": _json_safe(previous),
+            "current": _json_safe(current_by_period.get(period)),
+            "previous": _json_safe(previous_by_period.get(period)),
         }
         for key in ("mean", "min", "max", "q05", "q25", "q75", "q95"):
             record[key] = _envelope_value(envelope_row, key)
@@ -481,29 +517,45 @@ def _fetch_sdk_period_actuals(
         )
         return sdk_current, sdk_previous
 
-    for entry in _iter_daily_rows(response):
-        if not isinstance(entry, dict):
-            continue
-        raw_date = entry.get("local_date_time") or entry.get("utc_date_time") or entry.get("date")
-        raw_value = entry.get("data_value", entry.get("value"))
-        if raw_date is None or raw_value is None:
-            continue
-        try:
-            stamped = pd.to_datetime(raw_date, utc=True).tz_convert(None)
-        except (ValueError, TypeError):
-            continue
-        try:
-            finite_value = float(raw_value)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(finite_value):
-            continue
-        shifted = stamped + pd.Timedelta(days=1)
-        period = int(get_in_year(shifted))
-        if shifted.year == target_year:
-            sdk_current[period] = finite_value
-        elif shifted.year == target_year - 1:
-            sdk_previous[period] = finite_value
+    try:
+        for entry in _iter_daily_rows(response):
+            if not isinstance(entry, dict):
+                continue
+            raw_date = (
+                entry.get("local_date_time") or entry.get("utc_date_time") or entry.get("date")
+            )
+            raw_value = entry.get("data_value", entry.get("value"))
+            if raw_date is None or raw_value is None:
+                continue
+            try:
+                stamped = pd.to_datetime(raw_date, utc=True).tz_convert(None)
+            except (ValueError, TypeError):
+                continue
+            try:
+                finite_value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(finite_value):
+                continue
+            shifted = stamped + pd.Timedelta(days=1)
+            period = int(get_in_year(shifted))
+            if shifted.year == target_year:
+                sdk_current[period] = finite_value
+            elif shifted.year == target_year - 1:
+                sdk_previous[period] = finite_value
+    except Exception as exc:
+        # A non-iterable or otherwise malformed SDK response must never raise
+        # out of this fetch - fail safe to whatever was already bucketed
+        # (possibly empty) so the WDDA daily fallback in `period_actuals`
+        # takes over instead of crashing the caller.
+        logger.warning(
+            "write_station_short_horizon: SDK actuals response malformed for site %s (%s): %s: %s",
+            code,
+            config["sdk_variable"],
+            type(exc).__name__,
+            exc,
+        )
+        return sdk_current, sdk_previous
 
     return sdk_current, sdk_previous
 
