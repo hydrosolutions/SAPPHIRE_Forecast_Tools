@@ -211,6 +211,14 @@ Before proceeding to the update steps, confirm:
 
 Before updating, stop all running SAPPHIRE services to prevent conflicts during the update.
 
+- [ ] **Pause the operational cron schedule first.** Stopping the stack below while cron is live risks a scheduled forecast/maintenance job firing into a half-updated system (services down, DB schema mid-migration). Your crontab was backed up in §1.5; clear the live schedule now — it is re-installed in §2.5, or restored from backup on rollback (§5.8):
+  ```bash
+  crontab -l > ~/crontab_pre_update_$(date +%Y%m%d_%H%M%S).txt   # snapshot (redundant if §1.5 done — harmless)
+  crontab -r                                                     # pause: no scheduled jobs until re-installed
+  crontab -l 2>&1 | head -1                                      # expect: "no crontab for <user>"
+  ```
+  Do NOT skip the re-install/restore step at the end — a deployment that leaves cron cleared silently stops all forecasts.
+
 > **Project-name discipline**: the Luigi daemon container is started with `COMPOSE_PROJECT_NAME=sapphire` (see §3.1). Without `-p sapphire`, `docker compose down` derives the project name from `basename $PWD` (= `sapphire_forecast_tools`), which **does not match** and silently leaves `luigi-daemon` running. Always pass `-p sapphire` on the down command, or export `COMPOSE_PROJECT_NAME=sapphire` before invoking compose.
 
 - [ ] **Stop the Luigi daemon and pipeline services** (project-name-safe)
@@ -672,6 +680,12 @@ behind the code — for example, the snow-stat write path requires migration
 ### 2.5 Update Crontabs [Required]
 
 Update the cron schedule for automated forecast runs.
+
+> **This is where cron comes back up** after the §2.1 pause — installing the
+> canonical block below re-enables the schedule. If you paused with `crontab -r`,
+> the diff step will show an empty current crontab; that is expected, so install
+> the full block fresh instead of diffing. Do not leave this section without a
+> non-empty `crontab -l`.
 
 > **Note**: The cron scripts handle Docker image pulling automatically. Once crontabs are configured, the first scheduled run will pull the required images.
 
@@ -1346,6 +1360,23 @@ The dashboard was restarted as part of the microservices stack `up -d` above; no
 - [ ] Verify rollback was successful (repeat Section 3.2 verification steps,
   including the probe suite and the four backend-service health checks)
 
+### 5.8 Restore cron schedule [Emergency only]
+
+The §2.1 pause cleared the live crontab. After a rollback you want the
+**pre-update** schedule back (not the new canonical block from §2.5), so restore
+from the backup taken in §1.5 / §2.1.
+
+- [ ] Reinstall the pre-update crontab from backup:
+  ```bash
+  crontab "$BACKUP_DIR/crontab_backup.txt"   # or the ~/crontab_pre_update_*.txt snapshot from §2.1
+  ```
+
+- [ ] Verify it is back and the cron service is running:
+  ```bash
+  crontab -l | grep -v '^#' | head
+  sudo systemctl status cron
+  ```
+
 ---
 
 ## 6. FINAL CHECKLIST [Required]
@@ -1359,6 +1390,11 @@ Complete this summary checklist before considering the update complete.
 - [ ] All containers show "healthy" status
 
 ### Crontabs Configured [Required]
+
+- [ ] **Confirm cron was re-enabled after the §2.1 pause** — `crontab -l` is
+  non-empty (the §2.5 canonical block on a normal update, or the restored
+  pre-update schedule after a rollback). This is the guard against a deployment
+  that silently leaves all forecasts disabled.
 
 - [ ] Verify crontab entries are correct:
   ```bash
