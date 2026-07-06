@@ -1842,6 +1842,16 @@ export FIRST_YEAR="$((CURRENT_YEAR - 5))"
 export LAST_YEAR="$((CURRENT_YEAR - 1))"
 export YEARS="$(seq -s ' ' "$FIRST_YEAR" "$LAST_YEAR")"
 
+# IMPORTANT — P7 differs from the other phases on networking. LT hindcast READS
+# preprocessing-db DIRECTLY by its compose DNS name (data_interface.py: with
+# IN_DOCKER=True, host="preprocessing-db"). That name resolves ONLY on the compose
+# network, so P7 must NOT use `--network host` (host net gives
+# `could not translate host name "preprocessing-db" ... Temporary failure in name
+# resolution`). Writes go to SAPPHIRE_API_URL (default http://localhost:8000), which
+# on the compose net must point at the gateway service by name.
+export NET="sapphire_sapphire-network"              # verify: docker network ls | grep -i sapphire
+export SAPPHIRE_API_URL="http://api-gateway:8000"   # gateway via compose DNS
+
 docker image inspect "$IMAGE_ID" >/dev/null 2>&1 || docker pull "$IMAGE_ID"
 
 printf "%s\n" "${ieasyhydroforecast_ml_long_term_supported_modes:-}" \
@@ -1856,7 +1866,8 @@ printf "%s\n" "${ieasyhydroforecast_ml_long_term_supported_modes:-}" \
           echo "starting $MODE years=$YEARS log=$SERVICE_LOG"
           docker run \
             --name "$CONTAINER" \
-            --network host \
+            --network "$NET" \
+            -e "SAPPHIRE_API_URL=${SAPPHIRE_API_URL}" \
             -e "PYTHONPATH=/app" \
             -e "ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}" \
             -e "ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}" \
@@ -2388,8 +2399,12 @@ If P10 fails:
 
 - **Docker bridge networking:** Dashboard containers cannot reach host loopback SSH
   tunnels under bridge networking. Mitigation: verify the server-side
-  `network_mode: host` dashboard fix remains in place before final dashboard smoke;
-  all write-phase `docker run` commands in this runbook use `--network host`.
+  `network_mode: host` dashboard fix remains in place before final dashboard smoke.
+  Most write-phase `docker run` commands use `--network host` (they reach the DB via
+  the gateway on `localhost:8000`). **P7 (long-term hindcast) is the exception:** it
+  reads `preprocessing-db` directly by compose DNS, so it runs on
+  `--network sapphire_sapphire-network` with `SAPPHIRE_API_URL=http://api-gateway:8000`
+  — `--network host` fails there with `could not translate host name "preprocessing-db"`.
 
 - **Snow stat write gap:** The `/snow/` API exposes stat fields, but operational gateway
   writes do not populate them. Mitigation: run P3 `backfill_snow_stats_history.sh`;
