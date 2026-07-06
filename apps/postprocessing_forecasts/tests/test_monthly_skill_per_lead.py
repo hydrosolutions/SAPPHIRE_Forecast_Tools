@@ -569,3 +569,107 @@ class TestNPairsFloorPerLead:
         # Lead-1: n_pairs=1 dropped by the floor -> absent
         row1 = m1[m1["horizon_value"] == 1]
         assert row1.empty, "Lead-1 thin row (n_pairs=1) must be dropped by the floor"
+
+
+# ===========================================================================
+# Stale aggregate row (calendar-month horizon_value) must not be scored
+# ===========================================================================
+
+
+class TestStaleAggregateRowNotScored:
+    """A stale aggregate row at horizon_value == month must not be scored.
+
+    A previously-written aggregate (e.g. Naive Mean) can land at
+    ``horizon_value = target month`` via the buggy calendar-month
+    fallback. It must be excluded from the raw-model-skill groupby and the
+    aggregate regenerated from the base models at their own (0) lead.
+    """
+
+    def test_stale_naive_mean_at_month_not_scored(self):
+        """Stale Naive Mean at hv=8 yields no skill row at hv=8.
+
+        Two base models live at horizon_value 0 (so the ensemble path
+        activates); one stale ``Naive Mean`` row is injected at
+        horizon_value 8 (the calendar month, the bug signature). No skill
+        row may exist at horizon_value 8, and the regenerated aggregate
+        rows must follow the base-model convention (0).
+        """
+        stale_month = 8
+        obs = _make_obs(
+            [
+                (STATION, 2021, stale_month, 100.0),
+                (STATION, 2022, stale_month, 110.0),
+                (STATION, 2023, stale_month, 120.0),
+            ]
+        )
+        fcst = _make_fcst_lead(
+            [
+                # Two base models at the no-lead sentinel horizon_value = 0.
+                (STATION, 2021, stale_month, "LR_Base", 0, 83, 88, 95, 103, 111, 118, 123),
+                (STATION, 2021, stale_month, "LR_SM", 0, 81, 86, 93, 101, 109, 116, 121),
+                (STATION, 2022, stale_month, "LR_Base", 0, 89, 94, 101, 109, 117, 124, 129),
+                (STATION, 2022, stale_month, "LR_SM", 0, 87, 92, 99, 107, 115, 122, 127),
+                (STATION, 2023, stale_month, "LR_Base", 0, 100, 105, 112, 122, 130, 137, 142),
+                (STATION, 2023, stale_month, "LR_SM", 0, 98, 103, 110, 120, 128, 135, 140),
+                # STALE aggregate row at the calendar-month horizon_value = 8.
+                (
+                    STATION,
+                    2021,
+                    stale_month,
+                    "Naive Mean",
+                    stale_month,
+                    82,
+                    87,
+                    94,
+                    102,
+                    110,
+                    117,
+                    122,
+                ),
+                (
+                    STATION,
+                    2022,
+                    stale_month,
+                    "Naive Mean",
+                    stale_month,
+                    88,
+                    93,
+                    100,
+                    108,
+                    116,
+                    123,
+                    128,
+                ),
+                (
+                    STATION,
+                    2023,
+                    stale_month,
+                    "Naive Mean",
+                    stale_month,
+                    99,
+                    104,
+                    111,
+                    121,
+                    129,
+                    136,
+                    141,
+                ),
+            ]
+        )
+
+        stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+
+        # (1) No skill row may exist at the stale calendar-month lead.
+        at_month = stats[stats["horizon_value"] == stale_month]
+        assert at_month.empty, (
+            "stale aggregate row at horizon_value == month must not be "
+            f"scored; found stray rows:\n{at_month.to_string()}"
+        )
+
+        # (2) Regenerated aggregate skill uses the base-model lead (0).
+        aggregates = stats[stats["model_short"].isin({"EM", "Naive Mean", "Skilled Mean"})]
+        assert not aggregates.empty, "expected regenerated aggregate skill rows"
+        assert (aggregates["horizon_value"] == 0).all(), (
+            "aggregate skill must follow the base-model horizon_value "
+            f"convention (0); got {sorted(aggregates['horizon_value'].unique())}"
+        )

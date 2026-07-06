@@ -228,8 +228,8 @@ def postprocessing_maintenance_long_term():
             [combined, new_ensemble],
             ignore_index=True,
         )
-        # Deduplicate on (year, month, code, model_short)
-        dedup_cols = ["year", "month", "code", "model_short"]
+        # Deduplicate on (year, month, code, model_short, horizon_value)
+        dedup_cols = ["year", "month", "code", "model_short", "horizon_value"]
         available_dedup = [c for c in dedup_cols if c in merged.columns]
         merged = merged.drop_duplicates(
             subset=available_dedup,
