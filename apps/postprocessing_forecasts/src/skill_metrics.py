@@ -11,7 +11,11 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
-from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
+from src.model_names import (
+    AGGREGATED_EM_RAW_MODELS,
+    AGGREGATED_ENSEMBLE_MODELS,
+    canonical_model_short_series,
+)
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -1199,6 +1203,20 @@ def calculate_monthly_skill_metrics(
     else:
         forecasts = forecasts.copy()
         forecasts["horizon_value"] = forecasts["horizon_value"].fillna(0).astype(int)
+
+    # Drop any pre-existing aggregate/baseline rows (EM, Naive Mean,
+    # Skilled Mean) so stale copies — e.g. a NAIVE_MEAN row stored at
+    # horizon_value = target month — are not scored as raw model rows.
+    # The ensemble/naive/skilled blocks below regenerate these from the
+    # raw models and re-exclude the same names from their input pools, so
+    # clean sites see identical legitimate output. Canonical matching
+    # catches both DB-form (NAIVE_MEAN) and display-form (Naive Mean).
+    if "model_short" in forecasts.columns:
+        forecasts = forecasts[
+            ~canonical_model_short_series(forecasts["model_short"]).isin(AGGREGATED_ENSEMBLE_MODELS)
+        ].copy()
+        if forecasts.empty:
+            return empty_stats, empty_joint, timing_stats
 
     # --- 1. Merge forecasts with observations on [code, year, month] ---
     merged = pd.merge(

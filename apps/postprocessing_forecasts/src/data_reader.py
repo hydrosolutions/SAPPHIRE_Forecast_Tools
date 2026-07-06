@@ -1352,8 +1352,10 @@ def _normalize_monthly_combined_forecasts(
     if "forecasted_discharge" not in df.columns and "q50" in df.columns:
         df["forecasted_discharge"] = df["q50"].astype(float)
 
-    # Drop API-only columns not needed internally
-    drop_cols = ["id", "horizon_type", "horizon_value", "model_type_description"]
+    # Drop API-only columns not needed internally. Preserve
+    # horizon_value so the lead carries through merge-back and skill
+    # recalc (the base normalizer already fillna(0).astype(int)s it).
+    drop_cols = ["id", "horizon_type", "model_type_description"]
     df = df.drop(
         columns=[c for c in drop_cols if c in df.columns],
         errors="ignore",

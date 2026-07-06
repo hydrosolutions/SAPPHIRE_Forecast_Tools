@@ -872,13 +872,25 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
             model_upper = str(row["model_short"]).upper()
             model_type = MODEL_TYPE_MAP.get(model_upper, str(row["model_short"]))
 
+            if "horizon_value" in row.index and pd.notna(row.get("horizon_value")):
+                horizon_value = int(row["horizon_value"])
+            else:
+                # The calendar month is NEVER a valid horizon_value; fall
+                # back to the 0 sentinel (legacy/no-lead) instead.
+                logger.warning(
+                    "horizon_value missing for monthly ensemble row "
+                    "(code=%s, year=%s, month=%s, model=%s); using 0 "
+                    "sentinel instead of the calendar month",
+                    code,
+                    year,
+                    month,
+                    row["model_short"],
+                )
+                horizon_value = 0
+
             record = {
                 "horizon_type": "month",
-                "horizon_value": (
-                    int(row["horizon_value"])
-                    if "horizon_value" in row.index and pd.notna(row.get("horizon_value"))
-                    else month
-                ),
+                "horizon_value": horizon_value,
                 "code": code,
                 "date": (
                     str(row["date"])[:10]

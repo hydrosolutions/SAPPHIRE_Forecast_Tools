@@ -143,6 +143,7 @@ def postprocessing_operational_long_term():
                     "month",
                     "code",
                     "model_short",
+                    "horizon_value",
                 ]
                 available_dedup = [c for c in dedup_cols if c in joint.columns]
                 joint = joint.drop_duplicates(

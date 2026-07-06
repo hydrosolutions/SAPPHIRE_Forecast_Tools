@@ -1464,7 +1464,13 @@ class TestWriteMonthlyEnsembleToApi:
         records = mock_client.write_long_forecasts.call_args[0][0]
         em_rec = next(r for r in records if r["model_type"] == "EM")
         assert em_rec["horizon_type"] == "month"
-        assert em_rec["horizon_value"] == 6
+        # ensemble_data has no horizon_value column, so this exercises the
+        # absent-horizon_value fallback. The correct sentinel is 0 (base-model
+        # no-lead convention), NEVER the calendar month — see the LOCKED test
+        # test_horizon_value_falls_back_to_zero_sentinel_when_absent. This
+        # assertion is incidental to the test's real purpose (LongForecast
+        # record field coverage) but must not re-lock the calendar-month bug.
+        assert em_rec["horizon_value"] == 0
         assert em_rec["code"] == "15013"
         assert em_rec["date"] == "2024-06-01"
         assert em_rec["valid_from"] == "2024-06-01"
@@ -1649,8 +1655,22 @@ class TestMonthlyEnsembleHorizonValueConsistency:
             )
 
     @patch("src.api_writer.SapphirePostprocessingClient")
-    def test_horizon_value_falls_back_to_month_when_absent(self, mock_client_class):
-        """When input lacks horizon_value column, falls back to month."""
+    def test_horizon_value_falls_back_to_zero_sentinel_when_absent(
+        self, mock_client_class
+    ):
+        """LOCKED: absent horizon_value falls back to the 0 no-lead sentinel.
+
+        The calendar month is NEVER a valid ``horizon_value``. When the input
+        lacks the column, the writer must emit the base-model no-lead sentinel
+        (0), matching the individual long-term model convention — not the
+        absolute calendar month. Emitting the month is the write-side bug that
+        plants stale aggregate rows at ``horizon_value == month``, which later
+        corrupt the monthly skill population.
+
+        Asserts the CORRECT (post-fix) behavior and therefore FAILS against the
+        current buggy ``else month`` fallback. Do NOT relax to match current
+        behavior. Placeholder station code 19999 (never a real station).
+        """
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1661,7 +1681,7 @@ class TestMonthlyEnsembleHorizonValueConsistency:
 
         data = pd.DataFrame(
             {
-                "code": ["15013"],
+                "code": ["19999"],
                 "year": [2024],
                 "month": [6],
                 "month_in_year": [6],
@@ -1680,8 +1700,10 @@ class TestMonthlyEnsembleHorizonValueConsistency:
 
         records = mock_client.write_long_forecasts.call_args[0][0]
         record = records[0]
-        assert record["horizon_value"] == 6, (
-            "Fallback: when horizon_value absent, should use month (6)"
+        assert record["horizon_value"] == 0, (
+            "Fallback: when horizon_value absent, the writer must use the 0 "
+            "no-lead sentinel (base-model convention), never the calendar "
+            f"month; got {record['horizon_value']}"
         )
 
 
