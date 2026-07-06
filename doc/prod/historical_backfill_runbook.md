@@ -199,7 +199,7 @@ The service tables have unique keys and bulk upsert code on the deployed branch:
 | `postprocessing_db.forecasts` | `(horizon_type, code, model_type, date, target)` |
 | `postprocessing_db.long_forecasts` | `(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)` |
 | `postprocessing_db.lr_forecasts` | `(horizon_type, code, date)` |
-| `postprocessing_db.skill_metrics` | `(horizon_type, code, model_type, date, horizon_in_year)` |
+| `postprocessing_db.skill_metrics` | `(horizon_type, code, model_type, date, horizon_in_year, horizon_value)` |
 | `postprocessing_db.bulletins` | `(horizon_type, year, horizon_value, code)` |
 | `postprocessing_db.lr_visibility` | `(horizon_type, code, month, horizon_value, year)` |
 
