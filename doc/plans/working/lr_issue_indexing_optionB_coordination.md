@@ -2,7 +2,14 @@
 
 **To:** owner of `sapphire/services/` + the shared postprocessing DB
 **From:** forecast-tools side (read-only investigation; nothing changed)
-**Status:** DRAFT for sign-off. No writes executed. Requires colleague approval — touches `sapphire/services/postprocessing` semantics and the shared DB.
+**Status:** DRAFT for sign-off (rev. 2). No writes executed. Requires colleague approval — touches `sapphire/services/postprocessing` semantics and the shared DB.
+
+## 0. Revisions from independent review (2026-07-03) — fold these in before running
+1. **Stale skill rows are NOT replaced by a plain recompute (blocking).** `skill_metrics` upserts on `(horizon_type, code, model_type, date, horizon_in_year, horizon_value)`, so recomputed rows get INSERTED alongside the old issue-labeled rows; the dashboard then dedups by latest `date` (`db.py:548`), not by provenance. → **Back up `skill_metrics` and add an explicit DELETE/REPLACE of the stale pentad/decade rows** in the affected date/year scope before/around the recompute (see §3).
+2. **Remap must not assume every LR `date` is a period boundary (blocking).** `period_of(date) + 1` only equals the target when `date` is the last day of the prior period. → **Compute the target as `period_of(date + interval '1 day')`** (matching the recompute reader `data_reader.py:1934`) and validate against `date + 1`, not `issue + 1`. Add a **preflight count of non-boundary LR dates** (see §4).
+3. **Set `SAPPHIRE_SKILL_METRICS_YEAR` explicitly (medium).** The wrapper passes only `..._START_YEAR`, so the write-year defaults to current year (`recalculate_skill_metrics.py:230`). Set it deliberately for the migration run (see §3).
+
+Reviewer confirmed as correct: LR constraint-safety (only `(horizon_type,code,date)` is unique) and the single dashboard lockstep change `utils.py:352`.
 
 ## 1. Bug, root cause, volume
 - `lr_forecasts.horizon_in_year` should be the **TARGET** pentad/decade period. For LR short-term rows generated/migrated **before 2026-04-13** it holds the **ISSUE** period (`target = issue + 1`).
@@ -29,6 +36,8 @@
 
 ## 4. Remap design (DRAFT — do not run without sign-off)
 Detection = SQL translation of the eval shim: a row is issue-indexed iff `horizon_in_year == period_of(date)`. Cleanly bimodal (target rows are `issue+1 ≠ issue`), catches the 2024 tail, skips the target-indexed minority. `lr_forecasts` has no `target` column, so no year-wrap field to touch — only `horizon_in_year`/`horizon_value`.
+
+> ⚠️ **Rev. 2 (see §0.2):** before running, change the target derivation to `period_of(date + interval '1 day')` (not `period_of(date) + 1`) and validate against `date + 1`. First run a **preflight count of non-boundary LR dates** — `SELECT count(*) FROM lr_forecasts WHERE horizon_type IN ('pentad','decade') AND EXTRACT(DAY FROM date)::int NOT IN (5,10,15,20,25,31 /* + decade/pentad boundaries */)` — to confirm how many rows the boundary assumption would misclassify. The SQL below is the pre-review draft kept for reference.
 
 ```sql
 -- PENTAD. Count first; run UPDATE in one txn AFTER backup.

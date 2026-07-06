@@ -87,6 +87,16 @@ class ForecastSkillEvalConfig:
     #     pentad/decade forecasts to target-indexed at read time.  Default False so
     #     the default read behaviour is byte-identical.
     short_term_lr_repair_issue_indexing: bool = False
+    # Long-term (quarter/season) lead-handling correctness gate.  Default False so
+    # the default long-term pairing behaviour is byte-identical.
+    #   * long_term_derive_lead: for quarter/season forecasts, derive the true
+    #     forecast lead (months from issue date to target-period start) instead of
+    #     using the overloaded stored ``horizon_value`` (quarter-of-year / constant
+    #     1).  Under the flag, quarter/season pairs are also deduped to one forecast
+    #     per (code, period_key, year, model) keeping the smallest derived lead, and
+    #     the quarter ``lead`` output is set to the target quarter (period_key) so
+    #     contingency stratifies per target quarter (Q1–Q4).  Month is unchanged.
+    long_term_derive_lead: bool = False
 
     def __post_init__(self) -> None:
         if not self.base_url:

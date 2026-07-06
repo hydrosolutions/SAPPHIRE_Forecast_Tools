@@ -174,6 +174,30 @@ def test_short_term_gate_flags_parse_into_config() -> None:
     assert config.short_term_dedup_one_per_target is True
 
 
+def test_long_term_derive_lead_default_off_in_cli(monkeypatch) -> None:
+    monkeypatch.delenv("SAPPHIRE_SKILL_LT_LEAD", raising=False)
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.long_term_derive_lead is False
+
+
+def test_long_term_derive_lead_cli_flag_parses_into_config(monkeypatch) -> None:
+    monkeypatch.delenv("SAPPHIRE_SKILL_LT_LEAD", raising=False)
+    parser = cli._parser()
+    args = parser.parse_args(["--long-term-derive-lead"])
+    config = cli._config_from_args(args)
+    assert config.long_term_derive_lead is True
+
+
+def test_long_term_derive_lead_env_enables_gate(monkeypatch) -> None:
+    monkeypatch.setenv("SAPPHIRE_SKILL_LT_LEAD", "true")
+    parser = cli._parser()
+    args = parser.parse_args([])
+    config = cli._config_from_args(args)
+    assert config.long_term_derive_lead is True
+
+
 def test_forecast_only_env_enables_both_short_term_gates(monkeypatch) -> None:
     monkeypatch.setenv("SAPPHIRE_SKILL_FORECAST_ONLY", "1")
     parser = cli._parser()

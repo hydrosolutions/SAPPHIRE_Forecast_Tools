@@ -181,6 +181,17 @@ def _parser() -> argparse.ArgumentParser:
             "pentad/decade forecasts to target-indexed at read time."
         ),
     )
+    parser.add_argument(
+        "--long-term-derive-lead",
+        action="store_true",
+        help=(
+            "Long-term correctness gate (default off): for quarter/season, derive "
+            "the true forecast lead (months from issue date to target-period start) "
+            "instead of the overloaded stored horizon_value, dedup to one forecast "
+            "per (code, target, year, model) at the smallest lead, and stratify "
+            "quarter output per target quarter (Q1–Q4). Month is unchanged."
+        ),
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -191,6 +202,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
     # flags are OR-ed with it so either mechanism can enable a gate.
     forecast_only = _env_flag("SAPPHIRE_SKILL_FORECAST_ONLY")
     lr_repair = _env_flag("SAPPHIRE_SKILL_LR_REPAIR")
+    lt_lead = _env_flag("SAPPHIRE_SKILL_LT_LEAD")
     return ForecastSkillEvalConfig(
         base_url=args.base_url,
         threshold=args.threshold,
@@ -216,6 +228,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
             bool(args.short_term_dedup_one_per_target) or forecast_only
         ),
         short_term_lr_repair_issue_indexing=(bool(args.short_term_lr_repair) or lr_repair),
+        long_term_derive_lead=(bool(args.long_term_derive_lead) or lt_lead),
     )
 
 

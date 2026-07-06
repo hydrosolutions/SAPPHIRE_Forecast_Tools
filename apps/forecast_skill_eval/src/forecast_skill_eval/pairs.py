@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Final
 
@@ -26,6 +26,13 @@ from forecast_skill_eval.periods import LONG_TERM_HORIZONS, SHORT_TERM_HORIZONS,
 from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
 ISSUE_DAY_FILTER_HORIZONS: tuple[str, ...] = ("month",)
+
+# Long-term horizons whose stored ``horizon_value`` is NOT the forecast lead
+# (quarter = quarter-of-year, season = constant 1).  When
+# ``long_term_derive_lead`` is on, the true lead is derived from the issue and
+# target-period-start dates for these horizons.  Month is excluded because its
+# stored ``horizon_value`` already equals the lead.
+LONG_TERM_DERIVE_LEAD_HORIZONS: tuple[str, ...] = ("quarter", "season")
 
 # Months that belong to the irrigation season (April through September).
 _IRRIGATION_MONTHS: Final = frozenset({4, 5, 6, 7, 8, 9})
@@ -125,7 +132,13 @@ def build_pairs(
 
     rows: list[dict[str, object]] = []
     for forecast in forecasts.to_dict("records"):
-        instance = _forecast_instance(forecast, normalized_horizon, ledger, operational_issue_days)
+        instance = _forecast_instance(
+            forecast,
+            normalized_horizon,
+            ledger,
+            operational_issue_days,
+            derive_lead=config.long_term_derive_lead,
+        )
         if instance is None:
             continue
         regime_decision = derive_regime(
@@ -234,6 +247,16 @@ def build_pairs(
     if config.short_term_dedup_one_per_target and normalized_horizon in SHORT_TERM_HORIZONS:
         rows = _dedup_short_term_latest_issue(rows)
 
+    if config.long_term_derive_lead and normalized_horizon in LONG_TERM_DERIVE_LEAD_HORIZONS:
+        rows = _dedup_long_term(rows, normalized_horizon)
+        if normalized_horizon == "quarter":
+            # Stratify quarter output by the target quarter (period_key) so the
+            # existing per-lead contingency machinery emits one row per Q1–Q4.
+            # The derived lead has already been used for dedup selection above;
+            # the "lead" column now carries the target quarter for this horizon.
+            for row in rows:
+                row["lead"] = row.get("period_key")
+
     pairs = pd.DataFrame(rows, columns=PAIR_COLUMNS)
     _attach_regime_attrs(pairs, regime_policy)
     return pairs, ledger
@@ -260,6 +283,62 @@ def _dedup_short_term_latest_issue(rows: list[dict[str, object]]) -> list[dict[s
         key = (row.get("code"), row.get("period_key"), row.get("year"), row.get("model"))
         latest[key] = row
     return list(latest.values())
+
+
+def _dedup_long_term(
+    rows: list[dict[str, object]],
+    horizon: str,
+) -> list[dict[str, object]]:
+    """Collapse long-term re-issues, horizon-aware, keyed on the target period.
+
+    The dedup key is target-scoped ``(code, period_key, year, model)``, extended
+    with the derived ``lead`` for horizons whose ``period_key`` does NOT already
+    distinguish the lead:
+
+    * ``quarter`` — ``period_key`` is Q1–Q4, which already separates the four
+      targets; the two genuine leads {0, 1} of a single target quarter are the
+      re-issue/two-source multiplicity we want to collapse.  Key excludes the
+      lead and the SMALLEST derived lead wins (the operational-headline issuance,
+      issued closest to the target).  Ties on lead break by the LATEST
+      ``issue_date`` then original position.
+    * ``season`` — there is one Apr–Sep season per year, so ``period_key`` is the
+      constant 1 and does NOT separate leads.  The lead is added to the key so the
+      genuine leads 0–3 are all RETAINED (like month); only true re-issues within
+      the same lead are collapsed, keeping the LATEST ``issue_date`` (ties → index).
+
+    Deterministic in all cases: original position is the final tie-break.  Mirrors
+    :func:`_dedup_short_term_latest_issue` but scoped to the long-term target.
+    """
+    include_lead_in_key = horizon == "season"
+
+    def _sort_key(item: tuple[int, dict[str, object]]) -> tuple[int, bool, date, int]:
+        index, row = item
+        parsed = _date_or_none(row.get("issue_date"))
+        issue_rank = (parsed is not None, parsed or date.min, index)
+        if include_lead_in_key:
+            # Leads are separated by the key, so lead is not a selection axis;
+            # within a lead, the LATEST issue date wins.
+            return (0, *issue_rank)
+        lead = _int_or_none(row.get("lead"))
+        # Underivable-lead rows are dropped upstream; guard defensively so an
+        # unexpected missing lead sorts last (never chosen over a real lead).
+        lead_rank = lead if lead is not None else 10**9
+        # Ascending sort with last-wins dict assignment: negate the lead so the
+        # SMALLEST lead sorts last, then prefer the latest issue date, then index.
+        return (-lead_rank, *issue_rank)
+
+    winners: dict[tuple[object, ...], dict[str, object]] = {}
+    for _index, row in sorted(enumerate(rows), key=_sort_key):
+        key: tuple[object, ...] = (
+            row.get("code"),
+            row.get("period_key"),
+            row.get("year"),
+            row.get("model"),
+        )
+        if include_lead_in_key:
+            key = (*key, row.get("lead"))
+        winners[key] = row
+    return list(winners.values())
 
 
 def _read_forecasts(
@@ -370,10 +449,12 @@ def _forecast_instance(
     horizon: str,
     ledger: ExclusionLedger,
     operational_issue_days: tuple[int, ...] = (),
+    *,
+    derive_lead: bool = False,
 ) -> _ForecastInstance | None:
     if horizon in SHORT_TERM_HORIZONS:
         return _short_instance(row)
-    return _long_instance(row, ledger, horizon, operational_issue_days)
+    return _long_instance(row, ledger, horizon, operational_issue_days, derive_lead=derive_lead)
 
 
 def _short_instance(row: dict[str, object]) -> _ForecastInstance:
@@ -395,6 +476,8 @@ def _long_instance(
     ledger: ExclusionLedger,
     horizon: str = "",
     operational_issue_days: tuple[int, ...] = (),
+    *,
+    derive_lead: bool = False,
 ) -> _ForecastInstance | None:
     instance = _ForecastInstance(
         code=_string_or_none(row.get("code")),
@@ -427,7 +510,54 @@ def _long_instance(
             year=instance.year,
         )
         return None
+    if derive_lead and horizon in LONG_TERM_DERIVE_LEAD_HORIZONS:
+        derived_lead = _derive_long_lead(
+            horizon,
+            instance.period_key,
+            row.get("date"),
+            instance.year,
+        )
+        if derived_lead is None:
+            # No issue date (or otherwise underivable): drop so aggregated-only
+            # rows with no lead do not pool with genuine per-lead forecasts.
+            ledger.add(
+                stage="pair",
+                reason="long_forecast_lead_underivable",
+                code=instance.code,
+                period_key=instance.period_key,
+                year=instance.year,
+            )
+            return None
+        instance = replace(instance, lead=derived_lead)
     return instance
+
+
+def _derive_long_lead(
+    horizon: str,
+    period_key: int | None,
+    issue_date: object,
+    year: int | None,
+) -> int | None:
+    """Derive the forecast lead in months from issue date to target-period start.
+
+    ``lead = (valid_from.year - date.year) * 12 + (valid_from.month - date.month)``
+    where ``date`` is the issue date and ``valid_from`` is the target period start.
+    The target-period-start month is derived from the horizon and period key
+    (quarter Q→month {1:1, 2:4, 3:7, 4:10}; season→April) via :func:`_target_month`,
+    and ``valid_from.year`` is the scored ``year`` (year of ``valid_from``).
+
+    Returns ``None`` when the lead cannot be derived (missing issue date, year, or
+    an unmappable period key).
+    """
+    if year is None:
+        return None
+    target_month = _target_month(horizon, period_key, year) if period_key is not None else None
+    if target_month is None:
+        return None
+    issue = _date_or_none(issue_date)
+    if issue is None:
+        return None
+    return (year - issue.year) * 12 + (target_month - issue.month)
 
 
 def _pair_row(
