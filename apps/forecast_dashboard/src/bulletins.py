@@ -18,6 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Local imports
+from .discharge_formatting import format_discharge
 from .reports import SapphireReport
 import tag_library as tl
 
@@ -572,34 +573,16 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         '1000'
     '''
     try:
-        if not isinstance(value, float):
-            raise TypeError('Input value must be a float')
+        if float(value) < 0.0:
+            return " "
+    except (TypeError, ValueError):
+        return ''
 
-        # NaN discharges must render as a blank cell, never the string 'nan'.
-        if math.isnan(value):
-            return ''
+    string = format_discharge(value)
+    if not string:
+        return ''
+    return string.replace('.', ',')
 
-        # Return an empty string if the input value is negative
-        if value < 0.0:
-            string = " "
-        # Test if the input value is close to zero
-        elif math.isclose(value, 0.0):
-            string = "0"
-        elif value > 0.0 and value < 10.0:
-            string = "{:.2f}".format(round(value, 2))
-        elif value >= 10.0 and value < 100.0:
-            string = "{:.1f}".format(round(value, 1))
-        else:
-            string = "{:.0f}".format(round(value, 0))
-        # Replace . in string with ,
-        string = string.replace('.', ',')
-        return string
-    except TypeError as e:
-        print(f'Error in round_discharge: {e}')
-        return None
-    except Exception as e:
-        print(f'Error in round_discharge: {e}')
-        return None
 
 def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
                    header_df, horizon):
@@ -1687,6 +1670,3 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
-
-
-

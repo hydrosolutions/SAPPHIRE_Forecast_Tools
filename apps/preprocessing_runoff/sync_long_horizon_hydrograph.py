@@ -28,6 +28,7 @@ if _IEHF_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+import forecast_library as fl
 import setup_library as sl
 from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
 from setup_library import (
@@ -136,6 +137,38 @@ def _read_daily_runoff(client: Any, code: str, year: int, limit: int = 10000) ->
     )
 
 
+def _resolve_from_decadal(from_decadal: bool | None) -> bool:
+    """Resolve the from-decadal switch, defaulting to TRUE when unset.
+
+    ``SAPPHIRE_MONTHLY_FROM_DECADAL`` is parsed case-insensitively:
+    "false"/"0" -> False, anything else (including unset, "true", "1") -> True.
+    """
+    if from_decadal is not None:
+        return from_decadal
+    raw = os.getenv("SAPPHIRE_MONTHLY_FROM_DECADAL")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"false", "0"}
+
+
+def _month_from_decadal(
+    month: int,
+    decad_by_period: dict[int, float | None] | None,
+) -> float | None:
+    """Mean of a month's 3 (already 3sf-rounded) decadal actuals, all-or-nothing.
+
+    The 3 decads of calendar month M have decad_in_year (M-1)*3+1, +2, +3. The
+    round-of-already-rounded result is intentional (iEH-HF parity), not a bug.
+    """
+    if not decad_by_period:
+        return None
+    first_decad = (month - 1) * 3 + 1
+    decad_values = [decad_by_period.get(first_decad + offset) for offset in range(3)]
+    if any(value is None for value in decad_values):
+        return None
+    return fl.round_3sf(sum(float(value) for value in decad_values) / 3)
+
+
 def build_monthly_records(
     code: str,
     norms: Iterable[Any],
@@ -143,23 +176,44 @@ def build_monthly_records(
     daily_previous_year: Any,
     target_year: int,
     today: dt.date,
+    *,
+    decad_current: dict[int, float | None] | None = None,
+    decad_previous: dict[int, float | None] | None = None,
+    from_decadal: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Build 12 monthly hydrograph records for one station."""
+    """Build 12 monthly hydrograph records for one station.
+
+    Actuals (``current``/``previous``) follow the iEH-HF rounded-aggregation
+    method: by default (``SAPPHIRE_MONTHLY_FROM_DECADAL`` unset/true), each
+    month's actual is ``round_3sf`` of the mean of its 3 already-3sf-rounded
+    decadal actuals (all-or-nothing on the 3 decads); when the flag is false,
+    the actual falls back to ``round_3sf`` of the existing >=80%-coverage
+    daily mean. ``norm``/date/day_of_year/horizon fields are unchanged.
+    """
     norm_values = list(norms)
+    use_decadal = _resolve_from_decadal(from_decadal)
 
     records = []
     previous_year = target_year - 1
     for month in MONTHS:
-        previous = monthly_mean_threshold_80(
-            _month_values(daily_previous_year, previous_year, month),
-            previous_year,
-            month,
-        )
-        current = monthly_mean_threshold_80(
-            _month_values(daily_current_year, target_year, month),
-            target_year,
-            month,
-        )
+        if use_decadal:
+            previous = _month_from_decadal(month, decad_previous)
+            current = _month_from_decadal(month, decad_current)
+        else:
+            previous = fl.round_3sf(
+                monthly_mean_threshold_80(
+                    _month_values(daily_previous_year, previous_year, month),
+                    previous_year,
+                    month,
+                )
+            )
+            current = fl.round_3sf(
+                monthly_mean_threshold_80(
+                    _month_values(daily_current_year, target_year, month),
+                    target_year,
+                    month,
+                )
+            )
         if target_year == today.year and month == today.month:
             current = None
 
@@ -211,6 +265,26 @@ def write_station_monthly_hydrograph(
 
     daily_current_year = _read_daily_runoff(client, code, target_year)
     daily_previous_year = _read_daily_runoff(client, code, target_year - 1)
+
+    # Local import: `sync_short_horizon_hydrograph` imports plumbing back out of
+    # this module at module load time, so importing it here (call time, once
+    # this module is already fully initialized) avoids a circular import.
+    import sync_short_horizon_hydrograph as shh
+
+    daily_by_year = {target_year: daily_current_year, target_year - 1: daily_previous_year}
+    sdk_current, sdk_previous = shh._fetch_sdk_period_actuals(
+        iehhf_sdk, code, "decade", target_year
+    )
+    decad_current, decad_previous = shh.period_actuals(
+        code,
+        "decade",
+        daily_by_year=daily_by_year,
+        sdk_current=sdk_current,
+        sdk_previous=sdk_previous,
+        target_year=target_year,
+        today=today,
+    )
+
     records = build_monthly_records(
         code=code,
         norms=norms,
@@ -218,6 +292,9 @@ def write_station_monthly_hydrograph(
         daily_previous_year=daily_previous_year,
         target_year=target_year,
         today=today,
+        decad_current=decad_current,
+        decad_previous=decad_previous,
+        from_decadal=None,
     )
     client.write_hydrograph(records)
     logger.info("Wrote %d monthly hydrograph records for station %s", len(records), code)
@@ -255,8 +332,8 @@ def build_seasonal_record(
         "horizon_value": 1,
         "horizon_in_year": 1,
         "norm": _json_safe(_seasonal_field_mean(monthly_records, "norm")),
-        "previous": _json_safe(_seasonal_field_mean(monthly_records, "previous")),
-        "current": _json_safe(_seasonal_field_mean(monthly_records, "current")),
+        "previous": _json_safe(fl.round_3sf(_seasonal_field_mean(monthly_records, "previous"))),
+        "current": _json_safe(fl.round_3sf(_seasonal_field_mean(monthly_records, "current"))),
     }
 
 
@@ -322,8 +399,12 @@ def build_quarterly_records(
                 "horizon_value": quarter,
                 "horizon_in_year": quarter,
                 "norm": _json_safe(_quarterly_field_mean(monthly_records, quarter, "norm")),
-                "previous": _json_safe(_quarterly_field_mean(monthly_records, quarter, "previous")),
-                "current": _json_safe(_quarterly_field_mean(monthly_records, quarter, "current")),
+                "previous": _json_safe(
+                    fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "previous"))
+                ),
+                "current": _json_safe(
+                    fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "current"))
+                ),
             }
         )
     return records

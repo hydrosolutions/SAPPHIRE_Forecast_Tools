@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 from dashboard.logger import setup_logger
 from src import processing
+from src.discharge_formatting import round_3sf
 from src.gettext_config import _
 from src.snow_window import snow_display_window
 
@@ -41,6 +42,13 @@ SNOW_RENAME_MAP = {
     "q75": "75%",
     "q95": "95%",
 }
+
+HYDROGRAPH_VALUE_COLS = [
+    "q05", "q25", "q50", "q75", "q95",
+    "5%", "25%", "50%", "75%", "95%",
+    "previous", "current", str(PREVIOUS_YEAR), str(CURRENT_YEAR),
+    "norm",
+]
 
 SEASONAL_ISSUE_MONTHS = (1, 2, 3, 4)
 
@@ -121,6 +129,17 @@ def _convert_na_to_nan(df: pd.DataFrame) -> pd.DataFrame:
         result[col] = result[col].astype(object)
         result.loc[mask, col] = np.nan
     return result.infer_objects()
+
+
+def _round_hydrograph_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Round hydrograph value columns from the API to display 3sf."""
+    result = df.copy()
+    for column in HYDROGRAPH_VALUE_COLS:
+        if column not in result.columns:
+            continue
+        rounded = result[column].map(round_3sf)
+        result[column] = pd.to_numeric(rounded, errors="coerce")
+    return result
 
 # ---------------------------------------------------------------------------
 # API layer
@@ -230,6 +249,7 @@ def get_hydrograph_day_all(station) -> pd.DataFrame:
     }, inplace=True)
     df.drop(columns=["horizon_type", "horizon_value", "horizon_in_year", "norm", "id"],
             inplace=True, errors="ignore")
+    df = _round_hydrograph_values(df)
     return _convert_na_to_nan(df)
 
 
@@ -260,6 +280,7 @@ def get_hydrograph_pentad_all(horizon, station) -> pd.DataFrame:
     df.rename(columns=renames, inplace=True)
     df.drop(columns=["horizon_type", "horizon_value", "count", "std", "q50", "id"],
             inplace=True, errors="ignore")
+    df = _round_hydrograph_values(df)
     return _convert_na_to_nan(df)
 
 

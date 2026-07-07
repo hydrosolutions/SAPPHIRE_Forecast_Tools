@@ -45,13 +45,13 @@ flowchart TD
     end
 
     subgraph Phase1["Phase 1: Preprocessing"]
-        PR["preprocessing_runoff<br/>─────────────────<br/>Discharge data processing"]
+        PR["preprocessing_runoff<br/>─────────────────<br/>Discharge data processing<br/>+ pentad/decade hydrograph sync"]
         PG["preprocessing_gateway<br/>─────────────────<br/>ERA5-Land P, T (daily)<br/>IFS HRES+ENS P, T (daily)<br/>SnowMapper SWE, HS, ROF"]
     end
 
     subgraph Phase2["Phase 2: Forecasting"]
         subgraph Phase2LR[" "]
-            LR["linear_regression<br/>─────────────────<br/>Pentad/decade forecasts<br/>Writes hydrograph"]
+            LR["linear_regression<br/>─────────────────<br/>Pentad/decade forecasts"]
         end
         subgraph Phase2ML[" "]
             ML["machine_learning<br/>─────────────────<br/>TFT, TiDE, TSMixer<br/>Daily forecasts (10–11 days ahead)<br/>(ARIMA, RRAM deprecated)"]
@@ -87,14 +87,13 @@ flowchart TD
 
     %% Preprocessing → DB
     PR --> DT
-    PR --> HT
+    PR -- "day, pentad, decade" --> HT
     PG --> MT
     PG --> SNT
 
-    %% Linear Regression: reads discharge, writes lr_forecasts + hydrograph
+    %% Linear Regression: reads discharge, writes lr_forecasts
     DT --> LR
     LR --> LRT
-    LR -- "hydrograph pentad/decade" --> HT
 
     %% Machine Learning: reads discharge + meteo + snow, writes forecasts
     DT --> ML
@@ -124,13 +123,47 @@ flowchart TD
 | Module | Reads From | Writes To | Data |
 |--------|-----------|-----------|------|
 | `preprocessing_gateway` | Data Gateway API | meteo table, snow table | ERA5-Land P, T; IFS HRES+ENS P, T; SnowMapper SWE, HS, ROF (all daily) |
-| `preprocessing_runoff` | iEasyHydro HF API | discharge table, hydrograph (day) | Daily discharge for all forecast stations |
+| `preprocessing_runoff` | iEasyHydro HF API | discharge table, hydrograph (day, pentad, decade) | Daily discharge for all forecast stations; pentad/decade actuals via `sync_short_horizon_hydrograph.py` |
+
+#### Pentad/Decade Actuals (Short-Horizon Hydrograph Sync)
+
+Entry point: `preprocessing_runoff/sync_short_horizon_hydrograph.py`, wired
+into `preprocessing_runoff.main()` immediately after the daily hydrograph
+write, so it runs on every operational `preprocessing_runoff` run.
+`preprocessing_runoff` is the sole writer of pentad/decade hydrograph rows;
+`linear_regression` no longer writes to the hydrograph table (see Phase 2
+below).
+
+`current` (most recent year) and `previous` (prior year) actuals are each
+computed independently:
+
+1. **SDK-first**: read the finalized period average directly from iEasyHydro
+   HF — `WDFA` for pentad, `WDDCA` for decade.
+2. **Fallback**: if the SDK value is unavailable, average the daily `WDDA`
+   values across the calendar period, but only when at least 80% of the
+   period's days are present; otherwise the value is `null`.
+3. **In-progress guard**: a period that has not yet closed never receives a
+   finalized value.
+
+Rows are keyed on the **issue date** — the last day of the *previous* period
+(`get_issue_date_from_pentad` / `get_issue_date_from_decad`), matching the LR
+issue-date convention described below. Both `current` and `previous` are
+rounded with `round_3sf` (see the
+[3sf rounding contract](data_flow_long_term.md#discharge-rounding-3sf-contract)
+in the long-term data flow doc).
+
+**Scope: actuals only.** The climatology envelope (`mean`, `min`, `max`,
+`q05`–`q95`) and `norm` are reproduced by the same legacy method as before
+(byte-identical) and are unaffected by this change; `norm` for pentad/decade
+still comes from the iEH HF SDK. No forecast predictor, norm, or
+skill-metric behavior changes — the LR predictor is read from the
+`discharge` table, not `hydrograph`.
 
 ### Phase 2: Forecasting
 
 | Module | Reads From | Writes To | Details |
 |--------|-----------|-----------|---------|
-| `linear_regression` | discharge table | lr_forecasts table, hydrograph (pentad/decade) | One forecast per pentad/decade per station |
+| `linear_regression` | discharge table | lr_forecasts table | One forecast per pentad/decade per station |
 | `machine_learning` | discharge, meteo, snow tables | forecasts table (`horizon_type=day`) | TFT, TiDE, TSMixer; 10–11 daily targets per station |
 | `conceptual_model` | CSV files | CSV files | R-based, not yet migrated to DB; candidate for retirement |
 
@@ -291,7 +324,7 @@ EM requires **≥ 2 qualifying models** per (date, code). Single-model
 | `meteo` | preprocessing | preprocessing_gateway | per-record |
 | `snow` | preprocessing | preprocessing_gateway | per-record |
 | `discharge` | preprocessing | preprocessing_runoff | per-record |
-| `hydrograph` | preprocessing | preprocessing_runoff, linear_regression | per-record |
+| `hydrograph` | preprocessing | preprocessing_runoff | per-record |
 
 ## Pentad / Decade Period Definitions
 

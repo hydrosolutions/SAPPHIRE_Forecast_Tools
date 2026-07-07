@@ -5,6 +5,7 @@ import math
 import os
 import shutil
 import tempfile
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
 import numpy as np
 import pandas as pd
@@ -433,6 +434,55 @@ def round_discharge_trad_bulletin_3numbers(value: float) -> str:
         return f"{value:.1f}"
     else:
         return f"{value:.0f}"
+
+
+def _as_finite_decimal(value) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not decimal_value.is_finite():
+        return None
+    return decimal_value
+
+
+def _round_3sf_decimal(value) -> Decimal | None:
+    decimal_value = _as_finite_decimal(value)
+    if decimal_value is None:
+        return None
+    if decimal_value.is_zero():
+        return Decimal("0")
+
+    quantum = Decimal(f"1E{decimal_value.adjusted() - 2}")
+    with localcontext() as context:
+        context.prec = max(len(decimal_value.as_tuple().digits), 3)
+        return decimal_value.quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def round_3sf(value) -> float | None:
+    """Round a finite numeric value to 3 significant figures using HALF_UP."""
+    rounded = _round_3sf_decimal(value)
+    if rounded is None:
+        return None
+    return float(rounded)
+
+
+def format_discharge(value) -> str:
+    """Format a finite, non-negative discharge as a locale-free 3sf string."""
+    decimal_value = _as_finite_decimal(value)
+    if decimal_value is None or decimal_value < 0:
+        return ""
+
+    rounded = _round_3sf_decimal(decimal_value)
+    if rounded is None:
+        return ""
+    if rounded.is_zero():
+        return "0"
+
+    decimal_places = max(0, 2 - rounded.copy_abs().adjusted())
+    return f"{rounded:.{decimal_places}f}"
 
 
 def round_discharge_to_float(value: float) -> float:
@@ -4813,13 +4863,10 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
     runoff_stats["pentad"] = runoff_stats["pentad"].astype(int)
     runoff_stats["day_of_year"] = runoff_stats["day_of_year"].astype(int)
 
-    # --- API Write (before CSV) ---
+    # --- API Write retired in M2: preprocessing_runoff.sync_short_horizon_hydrograph now
+    # owns the pentad hydrograph row (envelope/norm + current/previous actuals). This
+    # writer keeps producing the CSV output below only.
     api_ok = True
-    try:
-        _write_hydrograph_to_api(runoff_stats, "pentad")
-    except Exception as e:
-        _handle_api_write_error(e, "write_pentad_hydrograph_data")
-        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -5309,13 +5356,10 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk=None):
         # Replace infinities with NaN
         runoff_stats = runoff_stats.replace([np.inf, -np.inf], np.nan)
 
-    # --- API Write (before CSV) ---
+    # --- API Write retired in M2: preprocessing_runoff.sync_short_horizon_hydrograph now
+    # owns the decad hydrograph row (envelope/norm + current/previous actuals). This
+    # writer keeps producing the CSV output below only.
     api_ok = True
-    try:
-        _write_hydrograph_to_api(runoff_stats, "decade")
-    except Exception as e:
-        _handle_api_write_error(e, "write_decad_hydrograph_data")
-        api_ok = False
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_decad_file.

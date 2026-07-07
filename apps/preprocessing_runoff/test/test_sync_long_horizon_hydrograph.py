@@ -45,6 +45,7 @@ def _records(
     target_year=2026,
     today=dt.date(2027, 1, 1),
     norms=None,
+    from_decadal=None,
 ):
     return sync_lhh.build_monthly_records(
         code=TEST_CODE,
@@ -53,6 +54,7 @@ def _records(
         daily_previous_year=daily_previous_year,
         target_year=target_year,
         today=today,
+        from_decadal=from_decadal,
     )
 
 
@@ -67,6 +69,7 @@ def test_writes_full_triad_with_complete_data():
     records = _records(
         daily_current_year=_full_year_rows(2026, current_values),
         daily_previous_year=_full_year_rows(2025, previous_values),
+        from_decadal=False,
     )
 
     assert len(records) == 12
@@ -87,6 +90,7 @@ def test_one_year_missing_writes_only_other_field():
     records = _records(
         daily_current_year=_full_year_rows(2026, current_values),
         daily_previous_year=[],
+        from_decadal=False,
     )
 
     assert len(records) == 12
@@ -108,6 +112,7 @@ def test_current_is_none_for_in_progress_month():
         daily_current_year=current_rows,
         daily_previous_year=[],
         today=today,
+        from_decadal=False,
     )
 
     for month in range(1, 6):
@@ -125,6 +130,7 @@ def test_monthly_mean_below_threshold_writes_none():
     records = _records(
         daily_current_year=current_rows,
         daily_previous_year=previous_rows,
+        from_decadal=False,
     )
 
     january = _record_for_month(records, 1)
@@ -148,6 +154,7 @@ def test_monthly_mean_at_threshold_writes_value(year, month, finite_count):
     records = _records(
         daily_current_year=[],
         daily_previous_year=previous_rows,
+        from_decadal=False,
     )
 
     assert _record_for_month(records, month)["previous"] == float(month)
@@ -160,6 +167,7 @@ def test_writes_none_when_daily_series_contains_nan():
     sparse_records = _records(
         daily_current_year=[],
         daily_previous_year=sparse_rows,
+        from_decadal=False,
     )
 
     sparse_previous = _record_for_month(sparse_records, 1)["previous"]
@@ -171,6 +179,7 @@ def test_writes_none_when_daily_series_contains_nan():
     finite_records = _records(
         daily_current_year=[],
         daily_previous_year=finite_rows,
+        from_decadal=False,
     )
 
     finite_previous = _record_for_month(finite_records, 1)["previous"]
@@ -219,12 +228,14 @@ def test_calendar_days_used_for_february_non_leap():
     records_with_coverage = _records(
         daily_current_year=[],
         daily_previous_year=_daily_rows(2025, {2: [2.0] * 23}),
+        from_decadal=False,
     )
     assert _record_for_month(records_with_coverage, 2)["previous"] == 2.0
 
     records_below_threshold = _records(
         daily_current_year=[],
         daily_previous_year=_daily_rows(2025, {2: [2.0] * 22}),
+        from_decadal=False,
     )
     assert _record_for_month(records_below_threshold, 2)["previous"] is None
 
