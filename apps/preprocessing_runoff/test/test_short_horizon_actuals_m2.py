@@ -49,11 +49,13 @@ Fake station code '19999'; no real discharge values.
 
 import calendar
 import datetime as dt
+import json
 import os
 import sys
 
 import pandas as pd
 import pytest
+import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
@@ -666,3 +668,52 @@ def test_decad_build_does_not_silently_store_a_non_numeric_sdk_value():
     current = _row(records, 2)["current"]
     assert current is not garbage  # never the raw garbage object
     assert not isinstance(current, _NotANumber)
+
+
+# --------------------------------------------------------------------------
+# Regression — the "date" field must be JSON-serializable (ISO date string),
+# not a raw pandas.Timestamp. A real API write does
+# ``requests.post(..., json=records)``, and ``json.dumps`` cannot serialize a
+# ``pandas.Timestamp`` -> ``TypeError: Object of type Timestamp is not JSON
+# serializable``. Month/quarter/season rows already emit ISO strings; this
+# pins pentad/decad to the same contract.
+# --------------------------------------------------------------------------
+def test_pentad_and_decad_date_field_is_json_serializable():
+    _require_module()
+    daily_by_year = {
+        2024: [{"code": CODE, "date": "2024-01-01", "discharge": 10.0}],
+        2025: [{"code": CODE, "date": "2025-01-01", "discharge": 20.0}],
+    }
+    pentad_records = shh.build_pentad_records(
+        code=CODE,
+        norms=PENTAD_NORMS,
+        daily_by_year=daily_by_year,
+        sdk_current={},
+        sdk_previous={},
+        target_year=2025,
+        today=dt.date(2025, 7, 1),
+    )
+    decad_records = shh.build_decad_records(
+        code=CODE,
+        norms=DECAD_NORMS,
+        daily_by_year=daily_by_year,
+        sdk_current={},
+        sdk_previous={},
+        target_year=2025,
+        today=dt.date(2025, 7, 1),
+    )
+
+    for records in (pentad_records, decad_records):
+        for record in records:
+            assert isinstance(record["date"], str), (
+                f"date must be a JSON-serializable str, got {type(record['date'])!r}: "
+                f"{record['date']!r}"
+            )
+        # The real failure mode: json.dumps (and by extension the requests
+        # `json=` kwarg used by the API client) must not raise.
+        json.dumps({"data": records})
+        # Exercise the actual serialization path used by
+        # `client.write_hydrograph(records)` -> sapphire_api_client -> requests.
+        requests.Session().prepare_request(
+            requests.Request("POST", "http://x/", json={"data": records})
+        )
