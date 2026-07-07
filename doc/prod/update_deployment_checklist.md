@@ -1166,6 +1166,45 @@ succeeded and verified`.
 
 ---
 
+### 3.5 Discharge-Aggregation Historical Backfill (one-time, after the iEH HF parity update)
+
+**When to run this step:** Once, after deploying the discharge-aggregation
+parity change (PR #406, merged as `c80e74c2`) that made pentad/decad/month/
+quarter/season **actuals** match iEasyHydro HF to 3 significant figures. The
+parity fix only corrects values written by *new* runs — previously-stored
+aggregate rows keep their old (banded / mean-of-days) values until backfilled.
+Routine tag-bump-only updates do NOT need this step.
+
+**Reference:** general backfill methodology and idempotency model are in
+[`doc/prod/historical_backfill_runbook.md`](./historical_backfill_runbook.md).
+
+**Safety rails (built into the tool):** a dry-run computes + diffs without
+writing; a live run snapshots the pre-write state, writes per horizon, then
+re-reads and **raises on any mismatch**. The backfill is **idempotent** — it
+overwrites the same rows on re-run, so it is safe to re-run if interrupted.
+Always dry-run first and inspect the diff.
+
+- [ ] Dry-run first (no writes) and review the JSON diff report. Use `--years N`
+      for the N most-recent complete years, or `--target-year YYYY` for one year:
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools
+  bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --years 3 --dry-run
+  # single year instead:
+  # bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --target-year 2025 --dry-run
+  ```
+- [ ] Inspect the dry-run diff — a large `changed`/`added` count is EXPECTED (that
+      is the parity correction being applied to historical rows).
+- [ ] Live backfill (writes, with snapshot + post-write verification):
+  ```bash
+  bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --years 3
+  ```
+- [ ] Confirm the run ended with per-year `verification OK`. A verification
+      mismatch raises and stops the run — do NOT ignore it.
+- [ ] Spot-check a few stations' month/decad values in the dashboard against
+      iEasyHydro HF (3 significant figures).
+
+---
+
 ## 4. LOG CLEANUP [Optional]
 
 Clean up old log files to prevent disk space issues.
