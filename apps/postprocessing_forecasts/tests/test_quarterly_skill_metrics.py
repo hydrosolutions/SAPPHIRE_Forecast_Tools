@@ -145,16 +145,28 @@ class TestQuarterlyMetricsBasic:
             [
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 100.0),
+                ("S1", 2023, 1, 110.0),
+                ("S1", 2024, 1, 100.0),
                 ("S1", 2020, 2, 80.0),
                 ("S1", 2021, 2, 85.0),
+                ("S1", 2022, 2, 80.0),
+                ("S1", 2023, 2, 85.0),
+                ("S1", 2024, 2, 80.0),
             ]
         )
         fcst = _make_quarterly_fcst(
             [
                 ("S1", 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2022, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
+                ("S1", 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2024, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2020, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
                 ("S1", 2021, 2, "M1", 67, 70, 76, 83, 90, 95, 100),
+                ("S1", 2022, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
+                ("S1", 2023, 2, "M1", 67, 70, 76, 83, 90, 95, 100),
+                ("S1", 2024, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
             ]
         )
         return obs, fcst
@@ -189,7 +201,7 @@ class TestQuarterlyMetricsBasic:
         obs, fcst = basic_data
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         model_rows = skill_stats[skill_stats["model_short"] == "M1"]
-        assert all(model_rows["n_pairs"] == 2)
+        assert all(model_rows["n_pairs"] == 5)
 
     def test_crps_computed(self, basic_data):
         obs, fcst = basic_data
@@ -206,6 +218,8 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
                 ("S1", 2022, 1, 105.0),
+                ("S1", 2023, 1, 110.0),
+                ("S1", 2024, 1, 100.0),
             ]
         )
         # Two models with good accuracy (close to observed)
@@ -214,9 +228,13 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
                 ("S1", 2022, 1, "M1", 85, 90, 97, 107, 115, 120, 127),
+                ("S1", 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2024, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2020, 1, "M2", 82, 87, 94, 101, 111, 117, 124),
                 ("S1", 2021, 1, "M2", 90, 95, 102, 109, 117, 124, 131),
                 ("S1", 2022, 1, "M2", 87, 92, 99, 106, 114, 119, 126),
+                ("S1", 2023, 1, "M2", 90, 95, 102, 109, 117, 124, 131),
+                ("S1", 2024, 1, "M2", 82, 87, 94, 101, 111, 117, 124),
             ]
         )
         return obs, fcst
@@ -257,6 +275,8 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
                 ("S1", 2022, 1, 120.0),
+                ("S1", 2023, 1, 130.0),
+                ("S1", 2024, 1, 140.0),
             ]
         )
         fcst = _make_quarterly_fcst(
@@ -264,9 +284,13 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2021, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2022, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2023, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2024, 1, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2023, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2024, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
             ]
         )
 
@@ -277,11 +301,11 @@ class TestQuarterlyMetricsEnsembles:
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
         assert filtered_raw.empty
-        assert len(em_joint) == 3
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
-        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert len(em_joint) == 5
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
+        assert np.allclose(em_joint["q05"], [80.0] * 5)
+        assert np.allclose(em_joint["q50"], [100.0] * 5)
+        assert np.allclose(em_joint["q95"], [120.0] * 5)
         assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
         # EM rows must keep their period key so the write-side NaN guard
         # (api_writer drops rows with null year/quarter_in_year) persists them.
@@ -289,7 +313,7 @@ class TestQuarterlyMetricsEnsembles:
         assert em_joint["quarter_in_year"].notna().all()
         assert set(em_joint["quarter_in_year"].astype(int)) == {1}
         assert not em_skill.empty
-        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert int(em_skill.iloc[0]["n_pairs"]) == 5
         assert pd.notna(em_skill.iloc[0]["crps"])
 
     def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
@@ -305,6 +329,8 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
                 ("S1", 2022, 1, 120.0),
+                ("S1", 2023, 1, 130.0),
+                ("S1", 2024, 1, 140.0),
             ]
         )
         fcst = _make_quarterly_fcst(
@@ -312,9 +338,13 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2020, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2021, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2022, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2023, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2024, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2023, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2024, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
             ]
         )
 
@@ -322,9 +352,9 @@ class TestQuarterlyMetricsEnsembles:
         em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
-        assert len(em_joint) == 3
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert len(em_joint) == 5
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
+        assert np.allclose(em_joint["q50"], [100.0] * 5)
         assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
         assert not em_skill.empty
 
@@ -422,12 +452,18 @@ class TestSeasonalMetricsBasic:
             [
                 ("S1", 2020, 100.0),
                 ("S1", 2021, 110.0),
+                ("S1", 2022, 100.0),
+                ("S1", 2023, 110.0),
+                ("S1", 2024, 100.0),
             ]
         )
         fcst = _make_seasonal_fcst(
             [
                 ("S1", 2020, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2021, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2022, "M1", 80, 85, 92, 102, 112, 118, 125),
+                ("S1", 2023, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2024, "M1", 80, 85, 92, 102, 112, 118, 125),
             ]
         )
         return obs, fcst
@@ -453,7 +489,7 @@ class TestSeasonalMetricsBasic:
         obs, fcst = basic_data
         skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
         model_rows = skill_stats[skill_stats["model_short"] == "M1"]
-        assert all(model_rows["n_pairs"] == 2)
+        assert all(model_rows["n_pairs"] == 5)
 
 
 class TestSeasonalMetricsEnsembles:
@@ -464,6 +500,8 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, 100.0),
                 ("S1", 2021, 110.0),
                 ("S1", 2022, 105.0),
+                ("S1", 2023, 110.0),
+                ("S1", 2024, 100.0),
             ]
         )
         fcst = _make_seasonal_fcst(
@@ -471,9 +509,13 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2021, "M1", 88, 93, 100, 108, 116, 123, 130),
                 ("S1", 2022, "M1", 85, 90, 97, 107, 115, 120, 127),
+                ("S1", 2023, "M1", 88, 93, 100, 108, 116, 123, 130),
+                ("S1", 2024, "M1", 80, 85, 92, 102, 112, 118, 125),
                 ("S1", 2020, "M2", 82, 87, 94, 101, 111, 117, 124),
                 ("S1", 2021, "M2", 90, 95, 102, 109, 117, 124, 131),
                 ("S1", 2022, "M2", 87, 92, 99, 106, 114, 119, 126),
+                ("S1", 2023, "M2", 90, 95, 102, 109, 117, 124, 131),
+                ("S1", 2024, "M2", 82, 87, 94, 101, 111, 117, 124),
             ]
         )
         return obs, fcst
@@ -497,6 +539,8 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, 100.0),
                 ("S1", 2021, 110.0),
                 ("S1", 2022, 120.0),
+                ("S1", 2023, 130.0),
+                ("S1", 2024, 140.0),
             ]
         )
         fcst = _make_seasonal_fcst(
@@ -504,9 +548,13 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2021, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2022, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2023, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2024, "LR_Base", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2020, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2021, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2022, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2023, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2024, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
             ]
         )
 
@@ -517,11 +565,11 @@ class TestSeasonalMetricsEnsembles:
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
         assert filtered_raw.empty
-        assert len(em_joint) == 3
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q05"], [80.0, 80.0, 80.0])
-        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q95"], [120.0, 120.0, 120.0])
+        assert len(em_joint) == 5
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
+        assert np.allclose(em_joint["q05"], [80.0] * 5)
+        assert np.allclose(em_joint["q50"], [100.0] * 5)
+        assert np.allclose(em_joint["q95"], [120.0] * 5)
         assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
         # EM rows must keep their season keys so the write-side NaN guard
         # (api_writer drops rows with null season_year/season_in_year)
@@ -530,7 +578,7 @@ class TestSeasonalMetricsEnsembles:
         assert em_joint["season_year"].notna().all()
         assert em_joint["season_in_year"].notna().all()
         assert not em_skill.empty
-        assert int(em_skill.iloc[0]["n_pairs"]) == 3
+        assert int(em_skill.iloc[0]["n_pairs"]) == 5
         assert pd.notna(em_skill.iloc[0]["crps"])
 
     def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
@@ -546,6 +594,8 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, 100.0),
                 ("S1", 2021, 110.0),
                 ("S1", 2022, 120.0),
+                ("S1", 2023, 130.0),
+                ("S1", 2024, 140.0),
             ]
         )
         fcst = _make_seasonal_fcst(
@@ -553,9 +603,13 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2020, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2021, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2022, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2023, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
+                ("S1", 2024, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
                 ("S1", 2020, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2021, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
                 ("S1", 2022, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2023, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
+                ("S1", 2024, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
             ]
         )
 
@@ -563,9 +617,9 @@ class TestSeasonalMetricsEnsembles:
         em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
-        assert len(em_joint) == 3
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0, 100.0, 100.0])
-        assert np.allclose(em_joint["q50"], [100.0, 100.0, 100.0])
+        assert len(em_joint) == 5
+        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
+        assert np.allclose(em_joint["q50"], [100.0] * 5)
         assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
         assert not em_skill.empty
 
@@ -627,23 +681,26 @@ class TestQFallbackQuarterly:
             [
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 100.0),
+                ("S1", 2023, 1, 110.0),
+                ("S1", 2024, 1, 100.0),
             ]
         )
         # No q50 column — only q
         fcst = pd.DataFrame(
             {
-                "code": ["S1", "S1"],
-                "year": [2020, 2021],
-                "quarter_in_year": [1, 1],
-                "model_short": ["GBT", "GBT"],
-                "q": [95.0, 105.0],
-                "forecasted_discharge": [95.0, 105.0],
-                "q05": [np.nan, np.nan],
-                "q10": [np.nan, np.nan],
-                "q25": [np.nan, np.nan],
-                "q75": [np.nan, np.nan],
-                "q90": [np.nan, np.nan],
-                "q95": [np.nan, np.nan],
+                "code": ["S1"] * 5,
+                "year": [2020, 2021, 2022, 2023, 2024],
+                "quarter_in_year": [1] * 5,
+                "model_short": ["GBT"] * 5,
+                "q": [95.0, 105.0, 95.0, 105.0, 95.0],
+                "forecasted_discharge": [95.0, 105.0, 95.0, 105.0, 95.0],
+                "q05": [np.nan] * 5,
+                "q10": [np.nan] * 5,
+                "q25": [np.nan] * 5,
+                "q75": [np.nan] * 5,
+                "q90": [np.nan] * 5,
+                "q95": [np.nan] * 5,
             }
         )
         stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
@@ -657,22 +714,25 @@ class TestQFallbackQuarterly:
             [
                 ("S1", 2020, 1, 100.0),
                 ("S1", 2021, 1, 110.0),
+                ("S1", 2022, 1, 100.0),
+                ("S1", 2023, 1, 110.0),
+                ("S1", 2024, 1, 100.0),
             ]
         )
         # No q50, no forecasted_discharge — only q
         fcst = pd.DataFrame(
             {
-                "code": ["S1", "S1"],
-                "year": [2020, 2021],
-                "quarter_in_year": [1, 1],
-                "model_short": ["GBT", "GBT"],
-                "q": [95.0, 105.0],
-                "q05": [np.nan, np.nan],
-                "q10": [np.nan, np.nan],
-                "q25": [np.nan, np.nan],
-                "q75": [np.nan, np.nan],
-                "q90": [np.nan, np.nan],
-                "q95": [np.nan, np.nan],
+                "code": ["S1"] * 5,
+                "year": [2020, 2021, 2022, 2023, 2024],
+                "quarter_in_year": [1] * 5,
+                "model_short": ["GBT"] * 5,
+                "q": [95.0, 105.0, 95.0, 105.0, 95.0],
+                "q05": [np.nan] * 5,
+                "q10": [np.nan] * 5,
+                "q25": [np.nan] * 5,
+                "q75": [np.nan] * 5,
+                "q90": [np.nan] * 5,
+                "q95": [np.nan] * 5,
             }
         )
         stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)

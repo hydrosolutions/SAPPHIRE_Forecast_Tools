@@ -107,8 +107,8 @@ class TestQuarterlyRecalcWorkflow:
     """obs + forecasts → aggregate → skill metrics → ensembles."""
 
     def test_full_pipeline(self):
-        monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
+        monthly_obs = _monthly_obs(n_years=5)
+        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
 
         # Aggregate
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
@@ -138,8 +138,8 @@ class TestQuarterlyRecalcWorkflow:
 
     def test_skill_then_ensemble_creation(self):
         """Skill metrics → create ensembles from pre-calculated stats."""
-        monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
+        monthly_obs = _monthly_obs(n_years=5)
+        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
 
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
         qfc = aggregate_monthly_fc_to_quarterly(monthly_fc)
@@ -167,8 +167,8 @@ class TestSeasonalRecalcWorkflow:
         monkeypatch.delenv("SAPPHIRE_SEASON_START_MONTH", raising=False)
         monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
 
-        monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
+        monthly_obs = _monthly_obs(n_years=5)
+        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)

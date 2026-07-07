@@ -166,6 +166,51 @@ def _long_term_threshold_overrides() -> dict:
     return overrides
 
 
+# Env var names and per-horizon defaults for the minimum n_pairs gate.
+# MONTH default = 4; QUARTER and SEASON default = 5.
+_LONG_TERM_MIN_PAIRS_ENV = {
+    "MONTH": ("ieasyhydroforecast_min_pairs_long_term", 4),
+    "QUARTER": ("ieasyhydroforecast_min_pairs_long_term_quarter", 5),
+    "SEASON": ("ieasyhydroforecast_min_pairs_long_term_season", 5),
+}
+
+
+def _long_term_min_pairs(horizon_type: str) -> int:
+    """Return the minimum n_pairs threshold K for a long-term horizon.
+
+    Reads from env vars with safe integer parsing.  An invalid value raises
+    a clear ``ValueError`` rather than crashing with a bare ``int("banana")``.
+
+    Args:
+        horizon_type: One of ``'MONTH'``, ``'QUARTER'``, or ``'SEASON'``
+            (case-insensitive).
+
+    Returns:
+        The minimum pair count K (>=1) for that horizon.
+
+    Raises:
+        ValueError: If *horizon_type* is unrecognised or the env var holds
+            a non-integer value.
+    """
+    key = horizon_type.upper()
+    if key not in _LONG_TERM_MIN_PAIRS_ENV:
+        raise ValueError(
+            f"Unknown horizon_type {horizon_type!r} for _long_term_min_pairs; "
+            f"expected one of {list(_LONG_TERM_MIN_PAIRS_ENV)}"
+        )
+    env_var, default = _LONG_TERM_MIN_PAIRS_ENV[key]
+    raw = os.getenv(env_var, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid value for env var {env_var!r}: {raw!r} (expected a positive integer)"
+        ) from exc
+    if value < 1:
+        raise ValueError(f"Env var {env_var!r} must be >= 1, got {value!r}")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Monthly skill groupby keys (PP-038: per-lead stratification)
 # These constants define the groupby keys for all monthly skill groupbys and
@@ -1357,7 +1402,9 @@ def calculate_monthly_skill_metrics(
     # Ensure month_in_year is present (forecasts may only have 'month')
     if "month_in_year" not in joint_forecasts.columns and "month" in joint_forecasts.columns:
         joint_forecasts["month_in_year"] = joint_forecasts["month"]
-    skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    skill_stats_filtered = filter_for_highly_skilled_forecasts(
+        skill_stats, min_pairs=_long_term_min_pairs("MONTH")
+    )
 
     merge_keys = GROUP_COLS
     skilled_merged = merged.merge(
@@ -1469,11 +1516,13 @@ def calculate_monthly_skill_metrics(
         skill_stats, merged, observations, timing_stats, joint_forecasts
     )
 
-    # --- 6. Drop rows with n_pairs < 2 ---
+    # --- 6. Drop rows with n_pairs < K (monthly K=4) ---
     # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
-    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
-    # meaningless. Filter applies to ALL rows — raw models and baselines.
-    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+    # The configurable floor K removes small-sample noise from monthly skill
+    # rows before they reach the writer and the forecast-side gates.
+    # Filter applies to ALL rows — raw models and baselines.
+    _k_month = _long_term_min_pairs("MONTH")
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(_k_month)].reset_index(drop=True)
 
     return skill_out, joint_out, ts_out
 
@@ -1639,7 +1688,11 @@ def _add_skilled_mean(
         return skill_stats, joint_forecasts
 
     # 1. Filter for highly skilled models (long-term Skilled-Mean pool: NSE>0)
-    filtered = filter_for_highly_skilled_forecasts(skill_stats, **_long_term_threshold_overrides())
+    filtered = filter_for_highly_skilled_forecasts(
+        skill_stats,
+        min_pairs=_long_term_min_pairs("MONTH"),
+        **_long_term_threshold_overrides(),
+    )
 
     # 2. Exclude baselines from the model pool
     excluded = {"EM", "Naive Mean", "Skilled Mean"}
@@ -1799,6 +1852,8 @@ def _add_skilled_mean(
 
 def filter_for_highly_skilled_forecasts(
     skill_stats: pd.DataFrame,
+    *,
+    min_pairs: int | None = None,
     **overrides,
 ) -> pd.DataFrame:
     """Filter skill metrics to models passing all thresholds.
@@ -1808,6 +1863,11 @@ def filter_for_highly_skilled_forecasts(
 
     Args:
         skill_stats: DataFrame with metric columns.
+        min_pairs: When not ``None``, also require ``n_pairs >= min_pairs``
+            after all metric filters.  Pass the result of
+            :func:`_long_term_min_pairs` for long-term gates; leave ``None``
+            (default) for short-term paths to keep their behaviour
+            byte-identical.
         **overrides: metric_name=value to override env var lookup.
             E.g. filter_for_highly_skilled_forecasts(df, sdivsigma=0.5)
     """
@@ -1823,6 +1883,8 @@ def filter_for_highly_skilled_forecasts(
             result = result[result[name] > threshold].copy()
         else:
             result = result[result[name] < threshold].copy()
+    if min_pairs is not None:
+        result = result[result["n_pairs"].fillna(0) >= min_pairs].copy()
     return result
 
 
@@ -2457,11 +2519,18 @@ def _calculate_aggregated_skill_metrics(
         joint_forecasts,
     )
 
-    # --- 6. Drop rows with n_pairs < 2 ---
+    # --- 6. Drop rows with n_pairs < K (quarter/season K=5) ---
     # Variance-based metrics (sdivsigma, NSE) are already NaN at n<2.
-    # Per-lead splitting can produce n_pairs=1 rows whose mae/accuracy are
-    # meaningless. Filter applies to ALL rows — raw models and baselines.
-    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(2)].reset_index(drop=True)
+    # The configurable floor K removes small-sample noise from aggregated
+    # skill rows before they reach the writer and the forecast-side gates.
+    # Filter applies to ALL rows — raw models and baselines.
+    _PERIOD_COL_TO_HORIZON_AGG = {
+        "quarter_in_year": "QUARTER",
+        "season_in_year": "SEASON",
+    }
+    _horizon_type_agg = _PERIOD_COL_TO_HORIZON_AGG.get(period_col, "QUARTER")
+    _k_agg = _long_term_min_pairs(_horizon_type_agg)
+    skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(_k_agg)].reset_index(drop=True)
 
     return skill_out, joint_out, ts_out
 
@@ -2600,7 +2669,18 @@ def _add_skilled_mean_aggregated(
     if skill_stats.empty or merged.empty:
         return skill_stats, joint_forecasts
 
-    filtered = filter_for_highly_skilled_forecasts(skill_stats, **_long_term_threshold_overrides())
+    # Derive the horizon type from period_col so min_pairs is horizon-specific.
+    _PERIOD_COL_TO_HORIZON = {
+        "quarter_in_year": "QUARTER",
+        "season_in_year": "SEASON",
+    }
+    _horizon_type = _PERIOD_COL_TO_HORIZON.get(period_col, "QUARTER")
+
+    filtered = filter_for_highly_skilled_forecasts(
+        skill_stats,
+        min_pairs=_long_term_min_pairs(_horizon_type),
+        **_long_term_threshold_overrides(),
+    )
     excluded = {"EM", "Naive Mean", "Skilled Mean"}
     filtered = filtered[~filtered["model_short"].isin(excluded)].copy()
     if filtered.empty:

@@ -252,6 +252,7 @@ def create_monthly_ensemble_forecasts(
     from src.skill_metrics import (
         _QUANTILE_COLS,
         _append_to_joint,
+        _long_term_min_pairs,
         _long_term_threshold_overrides,
         filter_for_highly_skilled_forecasts,
     )
@@ -283,13 +284,17 @@ def create_monthly_ensemble_forecasts(
         group_cols.append("horizon_value")
 
     # --- EM (threshold-filtered average, DEFAULT gate — EM must not change) ---
-    skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    skill_filtered = filter_for_highly_skilled_forecasts(
+        skill_stats, min_pairs=_long_term_min_pairs("MONTH")
+    )
     merge_keys = ["month_in_year", "code", "model_short"]
 
     # Long-term Skilled-Mean pool: relaxed NSE>0 gate.  Split from the EM pool
     # so EM membership/output stays byte-identical while Skilled Mean widens.
     skill_filtered_lt = filter_for_highly_skilled_forecasts(
-        skill_stats, **_long_term_threshold_overrides()
+        skill_stats,
+        min_pairs=_long_term_min_pairs("MONTH"),
+        **_long_term_threshold_overrides(),
     )
 
     # Normalize types for merge (both pools, matching joint)
@@ -590,6 +595,7 @@ def _create_aggregated_ensemble_forecasts(
     """
     from src.skill_metrics import (
         _QUANTILE_COLS,
+        _long_term_min_pairs,
         _long_term_threshold_overrides,
         filter_for_highly_skilled_forecasts,
     )
@@ -622,11 +628,20 @@ def _create_aggregated_ensemble_forecasts(
     # period-level grouping unchanged.
     time_group_cols = [c for c in time_group_cols if c in joint.columns]
 
+    # Derive horizon type from period_col for the min_pairs SM gate.
+    _PERIOD_COL_TO_HORIZON_ENS = {
+        "quarter_in_year": "QUARTER",
+        "season_in_year": "SEASON",
+    }
+    _horizon_type_ens = _PERIOD_COL_TO_HORIZON_ENS.get(period_col, "QUARTER")
+
     # --- EM (two-LR average; not skill-gated for quarter/season) ---
     # EM below derives its pool from AGGREGATED_EM_RAW_MODELS and never reads
     # skill_filtered, so the relaxed NSE>0 pool feeds only the Skilled Mean.
     skill_filtered = filter_for_highly_skilled_forecasts(
-        skill_stats, **_long_term_threshold_overrides()
+        skill_stats,
+        min_pairs=_long_term_min_pairs(_horizon_type_ens),
+        **_long_term_threshold_overrides(),
     )
 
     # Normalize types for merge
