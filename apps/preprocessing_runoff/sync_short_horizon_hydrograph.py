@@ -386,7 +386,7 @@ def _build_short_horizon_records(
         record = {
             "horizon_type": horizon_type,
             "code": str(code),
-            "date": config["get_issue_date"](period, target_year),
+            "date": config["get_issue_date"](period, target_year).date().isoformat(),
             "horizon_value": config["get_value_in_month"](period),
             "horizon_in_year": period,
             "day_of_year": config["get_day_of_year"](period, target_year),
