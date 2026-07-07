@@ -22,17 +22,26 @@ BASELINE_EXTRA_COLUMNS: Final = (
     "comparison_model",
     "is_proxy",
     "n_matched",
+    "event",
 )
 BASELINE_COLUMNS: Final = (*OUTPUT_COLUMNS, *METRIC_COLUMNS, *BASELINE_EXTRA_COLUMNS)
 
 _MATCH_COLUMNS: Final = ("horizon", "code", "period_key", "year", "model", "regime", "lead")
 
 
-def build_climatology_baseline(pairs: pd.DataFrame) -> pd.DataFrame:
+def build_climatology_baseline(
+    pairs: pd.DataFrame,
+    *,
+    event: str = "below_norm",
+) -> pd.DataFrame:
     """Build always-normal climatology rows on each model's available samples.
 
     Args:
         pairs: P4 pair DataFrame.
+        event: Event label tagged onto the emitted rows.  Defaults to
+            ``"below_norm"`` (the 0.80 × norm classification embedded in the
+            pairs).  Pass ``"below_norm_100"`` when building from pairs
+            reclassified at 1.0 × norm.
 
     Returns:
         Tidy count and metric rows for an always-normal reference forecast.
@@ -49,6 +58,7 @@ def build_climatology_baseline(pairs: pd.DataFrame) -> pd.DataFrame:
                 baseline=CLIMATOLOGY_BASELINE,
                 comparison_model=model,
                 is_proxy=False,
+                event=event,
             )
         )
     return _concat_baselines(frames)
@@ -59,6 +69,7 @@ def build_operational_proxy_baseline(
     *,
     short_term_proxy: str = SHORT_TERM_PROXY_MODEL,
     long_term_proxy: str = LONG_TERM_PROXY_MODEL,
+    event: str = "below_norm",
 ) -> pd.DataFrame:
     """Build matched-sample model and LR/LR_Base operational proxy rows.
 
@@ -66,6 +77,10 @@ def build_operational_proxy_baseline(
         pairs: P4 pair DataFrame.
         short_term_proxy: Proxy model name used for short-term horizons.
         long_term_proxy: Proxy model name used for long-term horizons.
+        event: Event label tagged onto the emitted rows.  Defaults to
+            ``"below_norm"`` (the 0.80 × norm classification embedded in the
+            pairs).  Pass ``"below_norm_100"`` when building from pairs
+            reclassified at 1.0 × norm.
 
     Returns:
         Tidy rows for each non-proxy model and its matched proxy row. Matching
@@ -97,6 +112,7 @@ def build_operational_proxy_baseline(
                     baseline=OPERATIONAL_BASELINE,
                     comparison_model=model,
                     is_proxy=False,
+                    event=event,
                 )
             )
             frames.append(
@@ -105,6 +121,7 @@ def build_operational_proxy_baseline(
                     baseline=OPERATIONAL_BASELINE,
                     comparison_model=model,
                     is_proxy=True,
+                    event=event,
                 )
             )
     return _concat_baselines(frames)
@@ -114,6 +131,7 @@ def build_persistence_baseline(
     pairs: pd.DataFrame,
     *,
     threshold: float = 0.80,
+    event: str = "below_norm",
 ) -> pd.DataFrame:
     """Build lag-1 persistence baseline rows on each model's available samples.
 
@@ -133,6 +151,9 @@ def build_persistence_baseline(
             ``obs_class`` columns.
         threshold: Below-norm threshold fraction (default 0.80, matching the
             operational ``config.threshold``).
+        event: Event label tagged onto the emitted rows.  Defaults to
+            ``"below_norm"``.  Pass ``"below_norm_100"`` together with
+            ``threshold=1.0`` when building the 1.0 × norm persistence set.
 
     Returns:
         Tidy count and metric rows tagged ``baseline="persistence"``.  Returns
@@ -199,6 +220,7 @@ def build_persistence_baseline(
                 baseline=PERSISTENCE_BASELINE,
                 comparison_model=model,
                 is_proxy=False,
+                event=event,
             )
         )
 
@@ -291,6 +313,7 @@ def _baseline_table(
     baseline: str,
     comparison_model: str,
     is_proxy: bool,
+    event: str = "below_norm",
 ) -> pd.DataFrame:
     counts = count_contingencies(pairs)
     if counts.empty:
@@ -301,6 +324,7 @@ def _baseline_table(
     table["comparison_model"] = comparison_model
     table["is_proxy"] = pd.Series([bool(is_proxy)] * len(table), dtype="object")
     table["n_matched"] = table["n_pairs"].astype("int64")
+    table["event"] = event
     return table.loc[:, BASELINE_COLUMNS]
 
 
@@ -346,7 +370,52 @@ def _filter_to_keys(
 ) -> pd.DataFrame:
     tagged_keys = keys.assign(_matched_key=True)
     matched = pairs.merge(tagged_keys, on=key_columns, how="inner")
-    return matched.drop(columns=["_matched_key"])
+    matched = matched.drop(columns=["_matched_key"])
+    # The operational_proxy baseline is a PAIRED comparison: the model row and
+    # the proxy row must be scored on the same sample. Matching on unique keys
+    # (``_matched_keys``) equalises *which* keys appear on each side, but a side
+    # can still carry several pairs per key (re-issued forecasts). Left as-is,
+    # the two emitted rows would have unequal n_pairs. Collapse each side to one
+    # representative pair per matched key so both sides contribute exactly one
+    # pair per key group and their n_pairs are equal.
+    return _collapse_to_one_per_key(matched, key_columns)
+
+
+def _collapse_to_one_per_key(
+    matched: pd.DataFrame,
+    key_columns: list[str],
+) -> pd.DataFrame:
+    """Keep exactly one representative pair per ``key_columns`` group.
+
+    The representative is the row with the latest parseable ``issue_date`` in
+    the group. Missing or unparseable ``issue_date`` values sort first (as
+    ``NaT``), so any real date wins; pure ties (or an absent ``issue_date``
+    column) fall back to the frame's existing stable order. This keeps
+    single-pair-per-key groups byte-identical to the pre-collapse frame.
+    """
+    if matched.empty:
+        return matched
+
+    working = matched.reset_index(drop=True)
+    # Preserve the original row order so we can restore it after collapsing and
+    # break issue_date ties deterministically.
+    working["_stable_order"] = range(len(working))
+    if "issue_date" in working.columns:
+        working["_issue_order"] = pd.to_datetime(working["issue_date"], errors="coerce")
+    else:
+        working["_issue_order"] = pd.NaT
+
+    # Sort so the latest issue_date sits last within each key group (NaT first),
+    # then keep the last row per group.
+    ranked = working.sort_values(
+        by=["_issue_order", "_stable_order"],
+        kind="stable",
+        na_position="first",
+    )
+    kept = ranked.drop_duplicates(subset=key_columns, keep="last")
+    # Restore the original row order so a no-multiplicity frame is unchanged.
+    kept = kept.sort_values("_stable_order", kind="stable")
+    return kept.drop(columns=["_issue_order", "_stable_order"]).reset_index(drop=True)
 
 
 def _model_names(frame: pd.DataFrame) -> list[str]:

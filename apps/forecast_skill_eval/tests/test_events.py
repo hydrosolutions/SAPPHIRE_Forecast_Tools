@@ -1206,3 +1206,88 @@ def test_reclassify_equivalence_rp_event() -> None:
     # Above-level half → TP; below-level half → TN
     assert (actual.iloc[: len(above)]["contingency"] == "TP").all()
     assert (actual.iloc[len(above) :]["contingency"] == "TN").all()
+
+
+# ===========================================================================
+# Block 10 — Norm-factor event: below_norm_100 (plain below-norm at 1.0 × norm)
+# ===========================================================================
+
+
+def test_below_norm_100_registered_and_not_a_default_event() -> None:
+    """below_norm_100 must resolve with factor=1.0, be VALID, but not a default."""
+    from forecast_skill_eval.events import (
+        ALL_EVENT_NAMES,
+        VALID_EVENTS,
+        event_by_name,
+    )
+
+    event = event_by_name("below_norm_100")
+    assert event.factor == 1.0
+    assert event.direction == "below"
+    assert event.percentile is None
+    assert event.return_period is None
+    assert "below_norm_100" in VALID_EVENTS
+    assert "below_norm_100" not in ALL_EVENT_NAMES
+
+
+def test_below_norm_event_reclassify_is_byte_identical() -> None:
+    """REGRESSION: below_norm reclassification returns a frame-equal copy.
+
+    Proves the 0.80 × norm output is unchanged by the new norm-factor branch:
+    a hand-built pairs frame is returned identical (values and dtypes)."""
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_event
+
+    pairs = _obs_pairs(observed_values=[9.0, 5.0, 12.0], forecast_value=9.0)
+
+    event = event_by_name("below_norm")
+    result = reclassify_pairs_for_event(pairs, event, thresholds={})
+
+    pd.testing.assert_frame_equal(result, pairs)
+
+
+def test_below_norm_100_flips_rows_between_080_and_100_norm() -> None:
+    """A value in [0.80×norm, 1.0×norm) is 'normal' at below_norm but 'below' at 100.
+
+    norm=10 → below_norm threshold 8.0, below_norm_100 threshold 10.0.  A value
+    of 9.0 sits between the two.  The two events must classify the SAME rows
+    (identical row count / n_pairs), differing only in the TP/FP/FN/TN split.
+    """
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_event
+
+    # Row 0: fc=9, obs=9  → below_norm: TN;  below_norm_100: TP
+    # Row 1: fc=9, obs=5  → below_norm: FN;  below_norm_100: TP
+    # Row 2: fc=9, obs=12 → below_norm: TN;  below_norm_100: FP
+    pairs = _obs_pairs(observed_values=[9.0, 5.0, 12.0], forecast_value=9.0)
+
+    bn = reclassify_pairs_for_event(pairs, event_by_name("below_norm"), thresholds={})
+    bn100 = reclassify_pairs_for_event(pairs, event_by_name("below_norm_100"), thresholds={})
+
+    # Identical row set / n_pairs — norm-factor event drops no rows here.
+    assert len(bn) == len(bn100) == len(pairs)
+
+    # below_norm leaves the in-between rows classified as normal at 0.80.
+    assert list(bn["fc_class"]) == ["normal", "normal", "normal"]
+    assert list(bn["obs_class"]) == ["normal", "below", "normal"]
+
+    # below_norm_100 flips forecast to below for all three (all fc=9 < 10),
+    # and observed to below wherever obs < 10.
+    assert list(bn100["fc_class"]) == ["below", "below", "below"]
+    assert list(bn100["obs_class"]) == ["below", "below", "normal"]
+    assert list(bn100["contingency"]) == ["TP", "TP", "FP"]
+
+
+def test_below_norm_100_drops_rows_with_nonpositive_or_nonfinite_norm() -> None:
+    """Rows with norm <= 0 or non-finite norm are dropped (classifier → None)."""
+    from forecast_skill_eval.events import event_by_name, reclassify_pairs_for_event
+
+    pairs = _obs_pairs(observed_values=[9.0, 5.0, 12.0], forecast_value=9.0)
+    # Corrupt norm on two rows: one zero, one NaN.
+    pairs = pairs.copy()
+    pairs.loc[1, "norm"] = 0.0
+    pairs.loc[2, "norm"] = float("nan")
+
+    result = reclassify_pairs_for_event(pairs, event_by_name("below_norm_100"), thresholds={})
+
+    # Only the row with a finite, positive norm survives.
+    assert len(result) == 1
+    assert result.iloc[0]["contingency"] == "TP"

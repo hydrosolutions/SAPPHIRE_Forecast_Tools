@@ -8,8 +8,15 @@ import pytest
 
 from forecast_skill_eval.baselines import build_operational_proxy_baseline
 from forecast_skill_eval.config import ForecastSkillEvalConfig
+from forecast_skill_eval.contingency import count_contingencies
 from forecast_skill_eval.ledger import ExclusionLedger
-from forecast_skill_eval.pairs import _read_short_forecasts, basin_for_code, build_pairs
+from forecast_skill_eval.pairs import (
+    _derive_long_lead,
+    _read_short_forecasts,
+    _target_period_start,
+    basin_for_code,
+    build_pairs,
+)
 from forecast_skill_eval.regimes import RegimePolicy, choose_regime_policy, derive_regime
 
 STATION_CODE = "19999"
@@ -227,6 +234,82 @@ def test_flag_regime_derivation_uses_taxonomy_and_date_fallback(
 
     assert decision.regime == expected_regime
     assert decision.exclude_reason == expected_reason
+
+
+def test_regime_source_auto_matches_default_on_flag_rich_frame() -> None:
+    """regime_source='auto' reproduces the no-arg policy on a flag-rich frame."""
+    frame = _flag_frame(([4] * 1100) + ([0] * 10))
+    default_policy = choose_regime_policy(frame)
+    auto_policy = choose_regime_policy(frame, regime_source="auto")
+
+    assert default_policy.source == "flag"
+    assert auto_policy.source == default_policy.source
+    assert auto_policy.reason == default_policy.reason
+    assert auto_policy.flag_counts == default_policy.flag_counts
+
+
+def test_regime_source_auto_matches_default_on_flag_sparse_frame() -> None:
+    """regime_source='auto' reproduces the no-arg policy on a flag-sparse frame."""
+    frame = _flag_frame([0] * 20)
+    default_policy = choose_regime_policy(frame)
+    auto_policy = choose_regime_policy(frame, regime_source="auto")
+
+    assert default_policy.source == "date"
+    assert auto_policy.source == default_policy.source
+    assert auto_policy.reason == default_policy.reason
+    assert auto_policy.flag_counts == default_policy.flag_counts
+
+
+def test_regime_source_flag_forces_flag_on_sparse_frame() -> None:
+    """regime_source='flag' forces flag mode even when auto would pick date."""
+    frame = _flag_frame([0] * 20)
+
+    assert choose_regime_policy(frame).source == "date"
+    forced = choose_regime_policy(frame, regime_source="flag")
+    assert forced.source == "flag"
+    assert forced.reason == "regime source forced to flag"
+
+
+def test_regime_source_date_forces_date_on_flag_rich_frame() -> None:
+    """regime_source='date' forces date mode even when auto would pick flag."""
+    frame = _flag_frame(([4] * 1100) + ([0] * 10))
+
+    assert choose_regime_policy(frame).source == "flag"
+    forced = choose_regime_policy(frame, regime_source="date")
+    assert forced.source == "date"
+    assert forced.reason == "regime source forced to issue date"
+
+
+@pytest.mark.parametrize("source", ["flag", "date"])
+def test_nan_flag_excluded_in_both_modes(source: str) -> None:
+    """REG-5: a flag-3 (nan) row is excluded regardless of regime source."""
+    policy = RegimePolicy(
+        source=source,
+        operational_start=date(2024, 1, 1),
+        reason="test",
+        flag_counts={},
+    )
+
+    decision = derive_regime({"flag": 3}, issue_date="2025-01-01", policy=policy)
+
+    assert decision.regime is None
+    assert decision.exclude_reason == "forecast_actual_nan_flag"
+
+
+@pytest.mark.parametrize("source", ["flag", "date"])
+def test_error_flag_excluded_in_both_modes(source: str) -> None:
+    """A flag-2 (error) row is excluded regardless of regime source."""
+    policy = RegimePolicy(
+        source=source,
+        operational_start=date(2024, 1, 1),
+        reason="test",
+        flag_counts={},
+    )
+
+    decision = derive_regime({"flag": 2}, issue_date="2025-01-01", policy=policy)
+
+    assert decision.regime is None
+    assert decision.exclude_reason == "forecast_error_flag"
 
 
 def test_flagless_lr_rows_date_fallback_match_flagged_operational_ml(
@@ -940,3 +1023,559 @@ def test_pairs_quantile_columns_do_not_alter_existing_columns(fake_client_factor
     assert row["obs_class"] == "below"  # 7.0 < threshold → below
     assert row["contingency"] == "FN"
     assert ledger.entries == ()
+
+
+# ---------------------------------------------------------------------------
+# Short-term issue-before-target filter + one-per-target dedup (default off)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("horizon", "period_key", "year", "expected"),
+    [
+        ("decade", 16, 2025, date(2025, 6, 1)),  # 6th decade → month 6, day 1
+        ("decade", 1, 2025, date(2025, 1, 1)),
+        ("decade", 3, 2025, date(2025, 1, 21)),
+        ("pentad", 1, 2025, date(2025, 1, 1)),
+        ("pentad", 7, 2025, date(2025, 2, 1)),  # first pentad of month 2
+        ("pentad", 6, 2025, date(2025, 1, 26)),
+        ("day", 1, 2025, date(2025, 1, 1)),
+        ("day", 60, 2024, date(2024, 2, 29)),  # leap-year day-of-year
+    ],
+)
+def test_target_period_start_maps_short_term_periods(
+    horizon: str,
+    period_key: int,
+    year: int,
+    expected: date,
+) -> None:
+    assert _target_period_start(horizon, period_key, year) == expected
+
+
+@pytest.mark.parametrize(
+    ("horizon", "period_key", "year"),
+    [
+        ("decade", 0, 2025),  # month 0 → invalid
+        ("decade", 37, 2025),  # month 13 → invalid
+        ("pentad", 0, 2025),
+        ("pentad", 73, 2025),
+        ("month", 4, 2025),  # long-term → filter N/A
+        ("quarter", 2, 2025),
+        ("season", 1, 2025),
+    ],
+)
+def test_target_period_start_returns_none_for_invalid_or_long_term(
+    horizon: str,
+    period_key: int,
+    year: int,
+) -> None:
+    assert _target_period_start(horizon, period_key, year) is None
+
+
+def _issue_filter_client(fake_client_factory):
+    # day period_key 5 → target start 2024-01-05; period_key 6 → 2024-01-06.
+    return fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(5, 7.0, issue_date="2024-01-01"),  # before start → keep
+            _short_forecast(6, 7.0, issue_date="2024-01-10"),  # after start → drop
+        ],
+        runoff_rows=[
+            _short_observed(5, 2024, 7.0),
+            _short_observed(6, 2024, 7.0),
+        ],
+        hydrograph_rows=[_day_norm(5), _day_norm(6)],
+    )
+
+
+def test_issue_before_target_filter_drops_leaking_short_term_forecast(
+    fake_client_factory,
+) -> None:
+    client = _issue_filter_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_issue_before_target=True,
+    )
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert pairs["period_key"].tolist() == [5]
+    assert ledger.counts_by_stage_reason() == {("pair", "forecast_issue_in_target_period"): 1}
+
+
+def test_issue_before_target_filter_off_by_default_keeps_all(
+    fake_client_factory,
+) -> None:
+    client = _issue_filter_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert sorted(pairs["period_key"].tolist()) == [5, 6]
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
+
+
+def test_unparseable_issue_date_is_not_dropped_by_filter(
+    fake_client_factory,
+) -> None:
+    # An unparseable issue date makes the issue-before-target guard a no-op, so
+    # turning the filter on must produce the exact same outcome as leaving it off
+    # (whatever downstream regime handling does is identical in both runs).
+    def _client():
+        return fake_client_factory(
+            forecasts_rows=[_short_forecast(6, 7.0, issue_date="not-a-date")],
+            runoff_rows=[_short_observed(6, 2024, 7.0)],
+            hydrograph_rows=[_day_norm(6)],
+        )
+
+    off_pairs, off_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        _client(),
+        "day",
+    )
+    on_pairs, on_ledger = build_pairs(
+        ForecastSkillEvalConfig(
+            station_filter=[STATION_CODE],
+            short_term_issue_before_target=True,
+        ),
+        _client(),
+        "day",
+    )
+
+    pd.testing.assert_frame_equal(on_pairs, off_pairs)
+    assert on_ledger.counts_by_stage_reason() == off_ledger.counts_by_stage_reason()
+    assert ("pair", "forecast_issue_in_target_period") not in on_ledger.counts_by_stage_reason()
+
+
+def _reissue_client(fake_client_factory):
+    # Three genuine pre-period re-issues for the same (code, pk, year, model).
+    return fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-01"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-02"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-03"),
+        ],
+        runoff_rows=[_short_observed(10, 2024, 7.0)],
+        hydrograph_rows=[_day_norm(10)],
+    )
+
+
+def test_dedup_one_per_target_keeps_latest_issue(fake_client_factory) -> None:
+    client = _reissue_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_dedup_one_per_target=True,
+    )
+
+    pairs, _ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 1
+    assert pairs.iloc[0]["issue_date"] == "2024-01-03"
+    assert pairs.iloc[0]["period_key"] == 10
+
+
+def test_dedup_off_by_default_keeps_all_reissues(fake_client_factory) -> None:
+    client = _reissue_client(fake_client_factory)
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, _ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 3
+    assert sorted(pairs["issue_date"].tolist()) == [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+    ]
+
+
+def test_long_term_horizons_unaffected_by_short_term_gates(
+    fake_client_factory,
+) -> None:
+    # Two month re-issues for the same target period; one issued INSIDE April.
+    # Neither short-term gate may touch long-term pairs.
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(issue_date="2024-01-25"),
+            _long_forecast(issue_date="2024-04-15"),  # inside target month
+        ],
+        runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+        hydrograph_rows=[_april_hydrograph_norm()],
+    )
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_issue_before_target=True,
+        short_term_dedup_one_per_target=True,
+    )
+
+    pairs, ledger = build_pairs(config, client, "month")
+
+    assert len(pairs) == 2
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
+
+
+def test_default_config_run_is_byte_identical_with_leakage_and_reissues(
+    fake_client_factory,
+) -> None:
+    # Fixture mixes a leaking issue (pk 6 issued after start) with three re-issues
+    # (pk 10).  With both gates off (default) every row must survive unchanged.
+    client = fake_client_factory(
+        forecasts_rows=[
+            _short_forecast(5, 7.0, issue_date="2024-01-01"),
+            _short_forecast(6, 7.0, issue_date="2024-01-10"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-01"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-02"),
+            _short_forecast(10, 7.0, model_type="TFT", issue_date="2024-01-03"),
+        ],
+        runoff_rows=[
+            _short_observed(5, 2024, 7.0),
+            _short_observed(6, 2024, 7.0),
+            _short_observed(10, 2024, 7.0),
+        ],
+        hydrograph_rows=[_day_norm(5), _day_norm(6), _day_norm(10)],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+
+    pairs, ledger = build_pairs(config, client, "day")
+
+    assert len(pairs) == 5
+    assert sorted(pairs["period_key"].tolist()) == [5, 6, 10, 10, 10]
+    assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
+
+
+# ---------------------------------------------------------------------------
+# Long-term derive-lead correctness gate (default off)
+# ---------------------------------------------------------------------------
+
+
+def _quarter_norm(quarter: int, norm: float = 10.0) -> dict[str, object]:
+    return {
+        "horizon": "quarter",
+        "code": STATION_CODE,
+        "horizon_in_year": quarter,
+        "norm": norm,
+    }
+
+
+def _season_norm(norm: float = 10.0) -> dict[str, object]:
+    return {
+        "horizon": "season",
+        "code": STATION_CODE,
+        "horizon_in_year": 1,
+        "norm": norm,
+    }
+
+
+# Aligned validity windows for the four calendar quarters.
+_QUARTER_WINDOW = {
+    1: ("01-01", "03-31", (1, 2, 3)),
+    2: ("04-01", "06-30", (4, 5, 6)),
+    3: ("07-01", "09-30", (7, 8, 9)),
+    4: ("10-01", "12-31", (10, 11, 12)),
+}
+
+
+def _quarter_runoff(year: int, quarter: int, value: float = 7.0) -> list[dict[str, object]]:
+    _start, _end, months = _QUARTER_WINDOW[quarter]
+    rows: list[dict[str, object]] = []
+    for month in months:
+        rows.extend(_daily_rows(year=year, month=month, value=value))
+    return rows
+
+
+def _season_runoff(year: int, value: float = 7.0) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for month in range(4, 10):  # Apr–Sep
+        rows.extend(_daily_rows(year=year, month=month, value=value))
+    return rows
+
+
+def test_derive_long_lead_quarter_season_and_underivable() -> None:
+    # Quarter Q2 (target month 4): lead = 4 - issue_month within the same year.
+    assert _derive_long_lead("quarter", 2, "2024-03-25", 2024) == 1
+    assert _derive_long_lead("quarter", 2, "2024-04-10", 2024) == 0
+    # Quarter Q4 (target month 10): {0, 1} for late-summer / in-quarter issuances.
+    assert _derive_long_lead("quarter", 4, "2024-09-25", 2024) == 1
+    assert _derive_long_lead("quarter", 4, "2024-10-05", 2024) == 0
+    # Season (target month 4 = April): spans leads 0..3 across the issue months.
+    assert _derive_long_lead("season", 1, "2024-01-15", 2024) == 3
+    assert _derive_long_lead("season", 1, "2024-02-10", 2024) == 2
+    assert _derive_long_lead("season", 1, "2024-03-01", 2024) == 1
+    assert _derive_long_lead("season", 1, "2024-04-01", 2024) == 0
+    # Cross-year issuance (Q1 target month 1, issued the prior December).
+    assert _derive_long_lead("quarter", 1, "2023-12-25", 2024) == 1
+    # Underivable: no issue date, missing year, or unmappable period key.
+    assert _derive_long_lead("quarter", 2, None, 2024) is None
+    assert _derive_long_lead("quarter", 2, "2024-03-25", None) is None
+    assert _derive_long_lead("quarter", 9, "2024-03-25", 2024) is None
+
+
+def test_quarter_flag_off_is_byte_identical_to_legacy(fake_client_factory) -> None:
+    # Two re-issues of the same Q2/2024 target.  With the flag OFF the legacy
+    # behaviour keeps BOTH rows and the "lead" column carries the stored
+    # horizon_value (here a deliberately distinct sentinel 9, not the quarter).
+    def _client():
+        return fake_client_factory(
+            long_forecasts_rows=[
+                _long_forecast(
+                    horizon="quarter",
+                    issue_date="2024-03-25",
+                    valid_from="2024-04-01",
+                    valid_to="2024-06-30",
+                    horizon_value=9,
+                    value=7.0,
+                ),
+                _long_forecast(
+                    horizon="quarter",
+                    issue_date="2024-04-10",
+                    valid_from="2024-04-01",
+                    valid_to="2024-06-30",
+                    horizon_value=9,
+                    value=7.0,
+                ),
+            ],
+            runoff_rows=_quarter_runoff(2024, 2),
+            hydrograph_rows=[_quarter_norm(2)],
+        )
+
+    off_pairs, off_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        _client(),
+        "quarter",
+    )
+
+    assert len(off_pairs) == 2
+    assert off_pairs["lead"].tolist() == [9, 9]
+    assert ("pair", "long_forecast_lead_underivable") not in off_ledger.counts_by_stage_reason()
+
+    # Flipping the flag ON must change the outcome (dedup to one, lead = quarter).
+    on_pairs, _on_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True),
+        _client(),
+        "quarter",
+    )
+    assert len(on_pairs) == 1
+    assert on_pairs.iloc[0]["lead"] == 2
+
+
+def test_quarter_flag_on_dedups_two_sources_to_smallest_lead(fake_client_factory) -> None:
+    # Two sources for the SAME Q2/2024 target: one issued in March (lead 1) and
+    # one issued in April (lead 0).  Under the flag they collapse to one deduped
+    # pair keeping the smallest-lead (April) issuance.
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(
+                horizon="quarter",
+                issue_date="2024-03-25",  # lead 1
+                valid_from="2024-04-01",
+                valid_to="2024-06-30",
+                horizon_value=2,
+                value=7.0,
+            ),
+            _long_forecast(
+                horizon="quarter",
+                issue_date="2024-04-10",  # lead 0 (smallest → wins)
+                valid_from="2024-04-01",
+                valid_to="2024-06-30",
+                horizon_value=2,
+                value=7.0,
+            ),
+        ],
+        runoff_rows=_quarter_runoff(2024, 2),
+        hydrograph_rows=[_quarter_norm(2)],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True)
+
+    pairs, _ledger = build_pairs(config, client, "quarter")
+
+    assert len(pairs) == 1
+    row = pairs.iloc[0]
+    assert row["issue_date"] == "2024-04-10"  # smallest derived lead retained
+    assert row["period_key"] == 2
+    assert row["lead"] == 2  # stratified by target quarter
+
+
+def test_quarter_flag_on_stratifies_contingency_per_target_quarter(
+    fake_client_factory,
+) -> None:
+    # One aligned forecast per calendar quarter of 2024.  Under the flag the
+    # quarter contingency must break out one per-target-quarter row (Q1–Q4),
+    # carrying the target quarter in the "lead" column.
+    long_rows = [
+        _long_forecast(
+            horizon="quarter",
+            issue_date="2023-12-25" if q == 1 else f"2024-{_QUARTER_WINDOW[q][0]}",
+            valid_from=f"2024-{_QUARTER_WINDOW[q][0]}",
+            valid_to=f"2024-{_QUARTER_WINDOW[q][1]}",
+            horizon_value=q,
+            value=7.0,
+        )
+        for q in (1, 2, 3, 4)
+    ]
+    runoff_rows: list[dict[str, object]] = []
+    for q in (1, 2, 3, 4):
+        runoff_rows.extend(_quarter_runoff(2024, q))
+    client = fake_client_factory(
+        long_forecasts_rows=long_rows,
+        runoff_rows=runoff_rows,
+        hydrograph_rows=[_quarter_norm(q) for q in (1, 2, 3, 4)],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True)
+
+    pairs, _ledger = build_pairs(config, client, "quarter")
+
+    assert len(pairs) == 4
+    assert sorted(pairs["lead"].tolist()) == [1, 2, 3, 4]
+
+    contingency = count_contingencies(pairs)
+    pooled = contingency[
+        (contingency["code"] == "POOLED")
+        & (contingency["basin"] == "all")
+        & (contingency["norm_provenance"] == "all")
+        & (contingency["regime"] == "all")
+        & (contingency["season"] == "all")
+    ]
+    assert sorted(pooled["lead"].tolist()) == [1, 2, 3, 4]
+    assert (pooled["n_pairs"] == 1).all()
+
+
+def test_season_flag_on_keeps_all_leads_and_dedups_reissues(fake_client_factory) -> None:
+    # A single Apr–Sep season (2024) issued at all four leads 0–3.  Unlike quarter,
+    # season's period_key is the constant 1, so the derived lead MUST enter the
+    # dedup key: all four genuine leads are retained (like month), and only a true
+    # re-issue WITHIN a lead is collapsed (here lead 1 has two issuances → keep the
+    # latest).  Season keeps the derived lead as the stratifier (never period_key).
+    client = fake_client_factory(
+        long_forecasts_rows=[
+            _long_forecast(
+                horizon="season",
+                issue_date="2024-01-15",  # lead 3
+                valid_from="2024-04-01",
+                valid_to="2024-09-30",
+                horizon_value=1,
+                value=7.0,
+            ),
+            _long_forecast(
+                horizon="season",
+                issue_date="2024-02-10",  # lead 2
+                valid_from="2024-04-01",
+                valid_to="2024-09-30",
+                horizon_value=1,
+                value=7.0,
+            ),
+            _long_forecast(
+                horizon="season",
+                issue_date="2024-03-01",  # lead 1
+                valid_from="2024-04-01",
+                valid_to="2024-09-30",
+                horizon_value=1,
+                value=7.0,
+            ),
+            _long_forecast(
+                horizon="season",
+                issue_date="2024-03-20",  # lead 1 re-issue (latest → wins)
+                valid_from="2024-04-01",
+                valid_to="2024-09-30",
+                horizon_value=1,
+                value=7.0,
+            ),
+            _long_forecast(
+                horizon="season",
+                issue_date="2024-04-01",  # lead 0
+                valid_from="2024-04-01",
+                valid_to="2024-09-30",
+                horizon_value=1,
+                value=7.0,
+            ),
+        ],
+        runoff_rows=_season_runoff(2024),
+        hydrograph_rows=[_season_norm()],
+    )
+    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True)
+
+    pairs, _ledger = build_pairs(config, client, "season")
+
+    # All four genuine leads retained; the lead-1 re-issue collapsed to one.
+    assert sorted(pairs["lead"].tolist()) == [0, 1, 2, 3]
+    assert (pairs["period_key"] == 1).all()  # lead NOT overwritten by period_key
+    issue_by_lead = dict(zip(pairs["lead"], pairs["issue_date"], strict=True))
+    assert issue_by_lead[1] == "2024-03-20"  # latest issue within lead 1
+
+    # Season contingency stratifies per genuine lead 0–3.
+    contingency = count_contingencies(pairs)
+    pooled = contingency[
+        (contingency["code"] == "POOLED")
+        & (contingency["basin"] == "all")
+        & (contingency["norm_provenance"] == "all")
+        & (contingency["regime"] == "all")
+        & (contingency["season"] == "all")
+    ]
+    assert sorted(pooled["lead"].tolist()) == [0, 1, 2, 3]
+
+
+def test_month_unchanged_under_long_term_derive_lead(fake_client_factory) -> None:
+    # Month's stored horizon_value already IS the lead; the flag must not touch it,
+    # dedup it, or drop it as underivable.
+    def _client():
+        return fake_client_factory(
+            long_forecasts_rows=[
+                _long_forecast(issue_date="2024-01-25", horizon_value=3),
+                _long_forecast(issue_date="2024-02-25", horizon_value=2),
+            ],
+            runoff_rows=_daily_rows(year=2024, month=4, value=7.0),
+            hydrograph_rows=[_april_hydrograph_norm()],
+        )
+
+    off_pairs, _ = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        _client(),
+        "month",
+    )
+    on_pairs, on_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True),
+        _client(),
+        "month",
+    )
+
+    pd.testing.assert_frame_equal(on_pairs, off_pairs)
+    assert sorted(on_pairs["lead"].tolist()) == [2, 3]
+    assert ("pair", "long_forecast_lead_underivable") not in on_ledger.counts_by_stage_reason()
+
+
+def test_quarter_underivable_lead_dropped_under_flag(fake_client_factory) -> None:
+    # A calendar-aligned quarter forecast with NO issue date: under the flag it
+    # cannot yield a lead, so it is dropped with the dedicated ledger reason
+    # instead of pooling as an aggregated (lead-less) row.
+    dateless_row = {
+        "horizon": "quarter",
+        "code": STATION_CODE,
+        "valid_from": "2024-04-01",
+        "valid_to": "2024-06-30",
+        "horizon_value": 2,
+        "model_type": "model-a",
+        "q": 7.0,
+    }
+
+    def _client():
+        return fake_client_factory(
+            long_forecasts_rows=[dateless_row],
+            runoff_rows=_quarter_runoff(2024, 2),
+            hydrograph_rows=[_quarter_norm(2)],
+        )
+
+    # OFF: legacy behaviour never reaches the underivable guard.  (A date-less row
+    # cannot form a pair anyway — the regime step drops it — but crucially NOT with
+    # the derive-lead reason.)
+    _off_pairs, off_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE]),
+        _client(),
+        "quarter",
+    )
+    assert ("pair", "long_forecast_lead_underivable") not in off_ledger.counts_by_stage_reason()
+
+    # ON: dropped early as underivable, before the regime step even runs.
+    on_pairs, on_ledger = build_pairs(
+        ForecastSkillEvalConfig(station_filter=[STATION_CODE], long_term_derive_lead=True),
+        _client(),
+        "quarter",
+    )
+    assert on_pairs.empty
+    assert on_ledger.counts_by_stage_reason() == {("pair", "long_forecast_lead_underivable"): 1}

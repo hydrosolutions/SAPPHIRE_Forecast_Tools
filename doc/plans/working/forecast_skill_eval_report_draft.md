@@ -1,12 +1,79 @@
 # Forecast Skill Evaluation — Irrigation Limit-Plan Decision (Report Draft)
 
-**Status:** results complete — phase-2 re-run 2026-06-30.
+**Status:** results complete — corrected module-correctness re-run 2026-07-03.
 
-Re-run date: 2026-06-30. Artifacts:
-`apps/forecast_skill_eval/artifacts/rerun_2026-06-30_phase2/`
-(phase 2 adds `season` column {all, irrigation, non_irrigation} to
-`contingency_metrics.csv` and a `persistence` baseline to `baselines.csv`;
-phase-1 path `rerun_2026-06-30/` superseded).
+Re-run date: 2026-07-03. Artifacts:
+`apps/forecast_skill_eval/artifacts/rerun_2026-07-03_corrected/`
+(this run evaluates **two below-norm thresholds side by side** — the operational
+`below_norm` = value < 0.80 × norm limit-plan trigger and a new
+`below_norm_100` = value < 1.0 × norm plain-below-average event — and keeps the
+phase-2 `season` column {all, irrigation, non_irrigation} in
+`contingency_metrics.csv` plus the `persistence` baseline in `baselines.csv`.
+It **supersedes** `rerun_2026-07-02_both_thresholds/` (and the earlier
+`rerun_2026-06-30*` paths): the numbers changed because of four module-correctness
+bug fixes — short-term de-leaking, a date-based long-term regime split, a
+historical LR issue→target repair, and a quarter mis-stratification fix (see
+**Corrections in this revision** below).
+
+---
+
+## Corrections in this revision
+
+The previous draft's numbers were inflated or mislabelled by four bugs that are
+now fixed. Every number in this revision reflects the corrected run. The four
+corrections are:
+
+1. **Short-term de-leaking (issue-before-target + one-forecast-per-target).**
+   Short-term forecasts were previously scored on *every* intraday re-issue,
+   including in-period nowcasts that had already observed part of their own
+   target period — an information leak that inflated skill. The corrected run
+   keeps only genuine forecasts (issued strictly before the target period) and
+   exactly one forecast per target. Effect: pentad EM POD 0.928 → **0.899**,
+   HSS 0.871 → **0.847** (n 11 342 → 3 384); decade EM POD 0.905 → **0.845**,
+   HSS 0.840 → **0.791**. Still strong — now honest.
+2. **Long-term regime split (date-based, genuine-2026).** The old "operational"
+   long-term regime was flag-based and was dominated by *pre-2026 backfills that
+   had been mislabelled operational*. The corrected run defines "operational" as
+   **genuinely post-2026 real-time** forecasts only (very thin: month L0 n = 40,
+   quarter Q1 n = 40, season L0 n = 49) and moves the full pre-2026 archive into
+   **hindcast**, where it belongs. The old "operational" long-term numbers were
+   really hindcast (e.g. old month L0 HSS 0.864 ≈ new **hindcast** HSS 0.875).
+   Consequently the long-term sections below now **lead with the hindcast tables**
+   (robust, full-archive skill) and present the genuine-2026 operational numbers
+   only as a thin, preliminary footnote.
+3. **Historical LR issue→target repair.** Pre-2024 short-term LR forecasts were
+   mis-aligned by one period (issue vs target). This is now corrected, so the LR
+   hindcast archive is valid and the LR short-term numbers can be trusted.
+4. **Quarter mis-stratification (overloaded `horizon_value`).** The quarter
+   horizon previously showed four bogus "leads" L1–L4 that were in fact the
+   *target quarter* leaking through an overloaded `horizon_value`, with two
+   forecast sources pooled and intra-quarter re-issues double-counted. Quarter is
+   now **deduped** (one forecast per station / target quarter / year / model) and
+   shown **per target quarter Q1–Q4**, each effectively a single-lead forecast;
+   season is shown per **genuine lead 0–3** (re-issues deduped within each lead).
+
+---
+
+## What this report now covers — two thresholds
+
+This report carries **two below-norm events reported side by side** and they
+must **not** be compared cell-for-cell:
+
+- **`below_norm` (value < 0.80 × norm)** — the operational **irrigation
+  limit-plan / restriction** trigger. This is the primary story of the report:
+  it is the boundary the river-basin organization actually uses to decide
+  whether to impose a limit plan. It is the **rarer** event (lower base rate).
+- **`below_norm_100` (value < 1.0 × norm)** — **plain below-average flow**: any
+  period whose runoff falls short of the climatological norm. This is a
+  **common** event (base rate typically ~0.4–0.8) and describes general
+  below-average water availability rather than a restriction decision.
+
+**Non-comparability caveat (applies everywhere both appear):** the two events
+have **different base rates**, so their POD / FAR / HSS are **not comparable
+directly**. HSS in particular is base-rate sensitive — a lower HSS on the
+common 1.0 × norm event does *not* mean worse detection than on the rarer
+0.80 × norm event. Read the 0.80 numbers as the operational-restriction result
+and the 1.0 numbers as a separate description of below-average-flow detection.
 
 ---
 
@@ -73,23 +140,42 @@ All metrics come from the 2×2 contingency table for the binary event
 
 ## Coverage and data quality
 
-| Horizon | n_pairs (all regimes) | Regimes | Station codes |
-|---------|----------------------|---------|---------------|
-| day     | 45 605               | all, hindcast, operational | 83 (65 Kyrgyz, 17 Tajik, 1 other) |
-| pentad  | 158 369              | all, hindcast, operational | 83 |
-| decade  | 78 655               | all, hindcast, operational | 83 |
-| month   | 544 498 (summed over leads 0–12) | all, hindcast (L0–L3 only), operational | 83 |
-| quarter | 44 804               | all, hindcast (L1 only), operational | 83 |
-| season  | 21 832               | all, hindcast, operational | 83 |
+n_pairs below are the `below_norm` event, pooled provenance, summed over all
+models and leads. The **operational** column is the corrected genuine-forecast
+count (short-term de-leaked; long-term genuine-2026 only); the **hindcast**
+column is the robust full-archive count that the long-term sections now lead with.
 
-**Org balance:** 65 Kyrgyz station codes (prefixes 15, 16) vs 17 Tajik (prefix
-17). Long-term (month/quarter/season) n_pairs are dominated by Kyrgyz stations;
-Tajik operational-month pairs are thin at leads ≥ 2. Metrics at those leads
-carry wide Wilson CIs and should be treated as low-confidence.
+| Horizon | n_pairs (all regimes) | n_pairs operational | n_pairs hindcast | Stations |
+|---------|----------------------:|--------------------:|-----------------:|:--------:|
+| day     | 6 789   | 260    | 6 529   | 66 |
+| pentad  | 126 380 | 25 947 | 100 433 | 81 |
+| decade  | 63 590  | 13 603 | 49 987  | 81 |
+| month   | 548 790 | 8 836  | 539 954 | 53 |
+| quarter | 30 709  | 826    | 29 883  | 53 |
+| season  | 16 494  | 723    | 15 771  | 51 |
 
-**DAY horizon is exploratory:** n_pairs 215–809 across models. Results are
-consistent in direction but CIs are wide; do not over-interpret absolute
-numbers.
+The **pooled station set is 83 distinct codes (65 Kyrgyz, 17 Tajik, 1 other)**;
+not every station has data at every horizon, so per-horizon coverage ranges from
+51 (season) to 81 (pentad/decade).
+
+**Short-term operational counts fell sharply after de-leaking** (correction 1):
+the per-target dedup and issue-before-target filter drop the intraday re-issues
+and in-period nowcasts, so e.g. pentad EM operational n falls from 11 342 to
+3 384. The remaining pairs are genuine forecasts.
+
+**Long-term operational is now genuinely thin** (correction 2): only post-2026
+real-time forecasts qualify as operational (month L0 n = 40, quarter Q1 n = 40,
+season L0 n = 49). The robust long-term skill lives in the hindcast column
+(month 539 954 pairs, quarter 29 883, season 15 771), which is why the long-term
+sections lead with hindcast.
+
+**Org balance:** 65 Kyrgyz stations vs 17 Tajik (plus 1 other). Long-term
+n_pairs are dominated by Kyrgyz stations; Tajik pairs are thin at longer leads
+and carry wide Wilson CIs.
+
+**DAY horizon is exploratory:** operational n_pairs 56–108 across models after
+de-leaking (POOLED). Results are consistent in direction but CIs are very wide;
+do not over-interpret absolute numbers.
 
 ---
 
@@ -141,47 +227,108 @@ all stations, no per-station codes). Wilson 95 % CIs are shown for POD.
 
 | Model | TP | FP | FN | TN | n_pairs | base_rate | POD | FAR | HSS | PSS | POD CI 95 % |
 |-------|-----|-----|-----|-----|---------|-----------|-----|-----|-----|-----|-------------|
-| EM    | 4646 | 359 | 360 | 5970 | 11 335 | 0.44 | **0.928** | 0.072 | **0.871** | 0.871 | [0.921, 0.935] |
-| NE    | 4429 | 389 | 424 | 6276 | 11 518 | 0.42 | 0.913 | 0.081 | 0.855 | 0.854 | [0.904, 0.920] |
-| TiDE  | 2715 | 256 | 305 | 4097 | 7 373  | 0.41 | 0.899 | 0.086 | 0.842 | 0.840 | [0.888, 0.909] |
-| TSMixer | 2510 | 279 | 274 | 3623 | 6 686 | 0.42 | 0.902 | 0.100 | 0.830 | 0.830 | [0.890, 0.912] |
-| TFT   | 2669 | 315 | 325 | 4258 | 7 567  | 0.40 | 0.891 | 0.106 | 0.823 | 0.823 | [0.880, 0.902] |
-| LR    | 3449 | 398 | 809 | 8226 | 12 882 | 0.33 | 0.810 | 0.103 | 0.783 | 0.764 | [0.798, 0.822] |
+| EM    | 1261 | 109 | 141 | 1873 | 3 384 | 0.41 | **0.899** | 0.080 | **0.847** | 0.844 | [0.883, 0.914] |
+| TiDE  | 943  | 88  | 130 | 1371 | 2 532 | 0.42 | 0.879 | 0.085 | 0.823 | 0.819 | [0.858, 0.897] |
+| TFT   | 815  | 84  | 112 | 1229 | 2 240 | 0.41 | 0.879 | 0.093 | 0.819 | 0.815 | [0.857, 0.899] |
+| NE    | 897  | 88  | 121 | 1231 | 2 337 | 0.44 | 0.881 | 0.089 | 0.817 | 0.814 | [0.860, 0.900] |
+| TSMixer | 843 | 93  | 128 | 1452 | 2 516 | 0.39 | 0.868 | 0.099 | 0.813 | 0.808 | [0.845, 0.888] |
+| LR    | 3483 | 428 | 816 | 8211 | 12 938 | 0.33 | 0.810 | 0.109 | 0.778 | 0.761 | [0.798, 0.822] |
+
+(De-leaked, corrected run: only genuine forecasts issued before the target
+pentad, one per target. EM operational n falls from 11 342 to 3 384; HSS
+0.871 → 0.847. LR keeps a larger n because it is archived at one issue per target.)
 
 Key observations:
-- **FP/FN balance:** EM achieves near-equal FP and FN counts (359 vs 360,
-  ratio ≈ 1.00). NE is slightly FP-heavy (FN 17 % > FP); LR is strongly
-  FN-heavy (FN 809 vs FP 398, ratio 0.49) — more missed limit-plan events.
-- All ML models substantially outperform LR on HSS and PSS.
-- **FN rate is low** for top models: EM misses only 7.2 % of true limit-plan
-  events (POD 0.928). FAR 7.2 % is operationally acceptable.
+- **FP/FN balance:** EM is close to balanced (FP 109 vs FN 141); LR is strongly
+  FN-heavy (FN 816 vs FP 428, ratio 0.52) — more missed limit-plan events.
+- All ML models still outperform LR on HSS and PSS after de-leaking.
+- **FN rate stays low** for top models: EM misses only ~10 % of true limit-plan
+  events (POD 0.899). FAR 8.0 % is operationally acceptable.
+
+#### Below-norm (1.0 × norm) — plain below-average flow (pentad)
+
+Reported side by side with the 0.80 table above. **Do not compare cell-for-cell:**
+the 1.0 × norm event is far more common (pentad base rate ≈ 0.64–0.68 vs ≈ 0.39–0.44
+for 0.80 × norm), so its POD/FAR/HSS describe general below-average-flow
+detection, not the limit-plan decision. HSS is compressed by the higher base
+rate and is *not* directly comparable to the 0.80 HSS.
+
+| Model | TP | FP | FN | TN | n_pairs | base_rate | POD | FAR | HSS | PSS | POD CI 95 % |
+|-------|-----|-----|-----|-----|---------|-----------|-----|-----|-----|-----|-------------|
+| EM    | 2115 | 126 | 129 | 1014 | 3 384 | 0.66 | **0.943** | 0.056 | **0.831** | 0.832 | [0.932, 0.951] |
+| TFT   | 1373 | 85  | 102 | 680  | 2 240 | 0.66 | 0.931 | 0.058 | 0.815 | 0.820 | [0.917, 0.943] |
+| NE    | 1482 | 98  | 103 | 654  | 2 337 | 0.68 | 0.935 | 0.062 | 0.803 | 0.805 | [0.922, 0.946] |
+| TiDE  | 1581 | 109 | 122 | 720  | 2 532 | 0.67 | 0.928 | 0.064 | 0.794 | 0.797 | [0.915, 0.940] |
+| TSMixer | 1467 | 110 | 135 | 804 | 2 516 | 0.64 | 0.916 | 0.070 | 0.791 | 0.795 | [0.901, 0.928] |
+| LR    | 7151 | 723 | 678 | 4386 | 12 938 | 0.61 | 0.913 | 0.092 | 0.773 | 0.772 | [0.907, 0.919] |
+
+At the plain below-average threshold, POD rises across the board (EM 0.943) —
+most periods that fall short of the norm are detected — and FAR falls (EM 0.056)
+because the event is common. This is a description of below-average-flow
+detection only; the limit-plan decision remains the 0.80 table above.
 
 ### Decade (10-day)
 
 | Model | TP | FP | FN | TN | n_pairs | base_rate | POD | FAR | HSS | PSS | POD CI 95 % |
 |-------|-----|-----|-----|-----|---------|-----------|-----|-----|-----|-----|-------------|
-| EM    | 2258 | 167 | 238 | 2396 | 5 059 | 0.49 | **0.905** | 0.069 | **0.840** | 0.839 | [0.892, 0.916] |
-| NE    | 2622 | 266 | 320 | 3178 | 6 386 | 0.46 | 0.891 | 0.092 | 0.815 | 0.814 | [0.879, 0.902] |
-| TFT   | 1435 | 217 | 219 | 2204 | 4 075 | 0.41 | 0.868 | 0.131 | 0.778 | 0.778 | [0.850, 0.883] |
-| TiDE  | 1303 | 177 | 202 | 1868 | 3 550 | 0.42 | 0.866 | 0.120 | 0.781 | 0.779 | [0.848, 0.882] |
-| TSMixer | 1222 | 188 | 157 | 1536 | 3 103 | 0.44 | 0.886 | 0.133 | 0.775 | 0.777 | [0.868, 0.902] |
-| LR    | 1457 | 221 | 625 | 4070 | 6 373 | 0.33 | 0.700 | 0.132 | 0.682 | 0.648 | [0.680, 0.719] |
+| EM    | 639 | 71 | 117 | 1067 | 1 894 | 0.40 | **0.845** | 0.100 | **0.791** | 0.783 | [0.818, 0.869] |
+| NE    | 514 | 78 | 91  | 705  | 1 388 | 0.44 | 0.850 | 0.132 | 0.752 | 0.750 | [0.819, 0.876] |
+| TSMixer | 450 | 74 | 75 | 609 | 1 208 | 0.43 | 0.857 | 0.141 | 0.749 | 0.749 | [0.825, 0.884] |
+| TiDE  | 464 | 75 | 87  | 709  | 1 335 | 0.41 | 0.842 | 0.139 | 0.749 | 0.746 | [0.809, 0.870] |
+| TFT   | 458 | 79 | 90  | 722  | 1 349 | 0.41 | 0.836 | 0.147 | 0.739 | 0.737 | [0.802, 0.864] |
+| LR    | 1488 | 235 | 618 | 4088 | 6 429 | 0.33 | 0.707 | 0.136 | 0.684 | 0.652 | [0.687, 0.726] |
 
-Key observations: same pattern as pentad — EM leads, LR is FN-heavy (FN 625,
-ratio FP/FN = 0.35). TSMixer is slightly FP-heavy at decade scale (FN 157 < FP 188).
+(De-leaked, corrected run: only genuine forecasts issued before the target
+decade, one per target. EM operational n falls from 5 086 to 1 894; POD
+0.905 → 0.845, HSS 0.840 → 0.791. LR keeps a larger n because it is archived
+at one issue per target.)
 
-### Day (exploratory, n_pairs 215–809)
+Key observations: same pattern as pentad — EM leads (POD 0.845, HSS 0.791),
+LR is strongly FN-heavy (FN 618 vs FP 235, ratio 0.38) — more missed
+limit-plan events. All ML models still clear LR on HSS after de-leaking.
+
+#### Below-norm (1.0 × norm) — plain below-average flow (decade)
+
+Side by side with the 0.80 table above. **Not comparable cell-for-cell:** the
+1.0 × norm event is more common (decade base rate ≈ 0.60–0.69 vs ≈ 0.33–0.44 for
+0.80 × norm); base-rate-sensitive HSS is compressed relative to the 0.80 story.
+
+| Model | TP | FP | FN | TN | n_pairs | base_rate | POD | FAR | HSS | PSS | POD CI 95 % |
+|-------|-----|-----|-----|-----|---------|-----------|-----|-----|-----|-----|-------------|
+| EM    | 1167 | 98 | 85 | 544 | 1 894 | 0.66 | **0.932** | 0.077 | **0.783** | 0.779 | [0.917, 0.945] |
+| TFT   | 816  | 78 | 79 | 376 | 1 349 | 0.66 | 0.912 | 0.087 | 0.740 | 0.740 | [0.891, 0.929] |
+| TiDE  | 829  | 89 | 73 | 344 | 1 335 | 0.68 | 0.919 | 0.097 | 0.720 | 0.714 | [0.899, 0.935] |
+| NE    | 886  | 95 | 75 | 332 | 1 388 | 0.69 | 0.922 | 0.097 | 0.709 | 0.699 | [0.903, 0.937] |
+| TSMixer | 770 | 86 | 69 | 283 | 1 208 | 0.69 | 0.918 | 0.100 | 0.694 | 0.685 | [0.897, 0.935] |
+| LR    | 3355 | 505 | 519 | 2050 | 6 429 | 0.60 | 0.866 | 0.131 | 0.668 | 0.668 | [0.855, 0.876] |
+
+### Day (exploratory, n_pairs 56–108)
 
 | Model | n_pairs | POD | FAR | HSS | PSS |
 |-------|---------|-----|-----|-----|-----|
-| TSMixer | 809 | 0.540 | 0.162 | 0.498 | 0.469 |
-| TiDE    | 552 | 0.536 | 0.177 | 0.452 | 0.439 |
-| TFT     | 215 | 0.510 | 0.131 | 0.443 | 0.438 |
+| TFT     | 56  | 0.571 | 0.059 | 0.536 | 0.536 |
+| TiDE    | 108 | 0.514 | 0.182 | 0.509 | 0.459 |
+| TSMixer | 96  | 0.517 | 0.375 | 0.403 | 0.383 |
 
-Day-horizon skill is substantially lower than pentad/decade. POD ~0.51–0.54
-with HSS ~0.44–0.50. With only 215–809 pairs the CIs are wide; interpret with
-caution. The small sample reflects that day-resolution ML archive is limited to
-approximately the last 1–2 years (vs 15+ years for pentad/decade).
+Day-horizon skill is substantially lower than pentad/decade. POD ~0.51–0.57
+with HSS ~0.40–0.54. After de-leaking, the day operational archive collapses to
+only 56–108 genuine pairs per model, so the CIs are very wide (±0.15–0.17 on
+POD); interpret direction only, not absolute numbers. The tiny sample reflects
+that the day-resolution ML archive is limited to approximately the last 1–2
+years (vs 15+ years for pentad/decade) and that de-leaking keeps only one
+genuine forecast per target.
+
+#### Below-norm (1.0 × norm) — plain below-average flow (day)
+
+Side by side with the 0.80 day table above. **Not comparable cell-for-cell:**
+the day 1.0 × norm base rate (≈ 0.61–0.84) is far higher than the 0.80 × norm
+base rate (≈ 0.30–0.50), so HSS is not comparable across the two events.
+
+| Model | n_pairs | POD | FAR | HSS | PSS |
+|-------|---------|-----|-----|-----|-----|
+| TFT     | 56  | 0.723 | 0.029 | 0.398 | 0.612 |
+| TiDE    | 108 | 0.682 | 0.224 | 0.360 | 0.372 |
+| TSMixer | 96  | 0.705 | 0.127 | 0.197 | 0.261 |
 
 ---
 
@@ -191,67 +338,138 @@ Long-term horizons emit **no lead-aggregated POOLED row**. Every metric is
 per-lead. Figures label these `month L0`, `month L1`, etc. where lead 0 is
 the nearest forecast (i.e., smallest forecast offset).
 
-### Month (EM, operational, POOLED, official provenance)
+**Regime note (correction 2).** Real-time long-term forecasting at these sites
+only began around 2026, so the genuine-operational archive is very thin (month
+L0 n = 40, quarter Q1 n = 40, season L0 n = 49) and cannot carry a reliable
+skill estimate. The **robust** long-term skill lives in the full pre-2026
+**hindcast** archive. Each section below therefore **leads with the hindcast
+tables** and reports the genuine-2026 operational numbers only as a short
+*preliminary — too thin to score* footnote. The operational-vs-hindcast contrast
+is the subject of **fig3**.
+
+### Month — HINDCAST (EM, POOLED, official provenance) — robust
 
 | Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
 |------|-----|-----|-----|------|---------|-----|-----|-----|-----|-------------|
-| L0   | 1337 | 117 | 214 | 4100 | 5 768 | **0.862** | 0.080 | **0.851** | 0.834 | [0.844, 0.878] |
-| L1   | 338  | 33  | 65  | 1206 | 1 642 | 0.839 | 0.089 | 0.834 | 0.812 | [0.800, 0.871] |
-| L2   | 107  | 7   | 35  | 427  | 576   | 0.754 | 0.061 | 0.790 | 0.737 | [0.677, 0.817] |
-| L3   | 35   | 6   | 24  | 369  | 434   | 0.593 | 0.146 | 0.662 | 0.577 | [0.466, 0.709] |
-| L4+  | — | — | — | — | thin | — | — | — | — | — |
+| L0   | 1402 | 96 | 207 | 5376 | 7 081 | **0.871** | 0.064 | **0.875** | 0.854 | [0.854, 0.887] |
+| L1   | 375  | 32 | 83  | 1675 | 2 165 | 0.819 | 0.079 | 0.834 | 0.800 | [0.781, 0.851] |
+| L2   | 96   | 2  | 30  | 585  | 713   | 0.762 | 0.020 | 0.831 | 0.758 | [0.680, 0.828] |
+| L3   | 52   | 7  | 28  | 557  | 644   | 0.650 | 0.119 | 0.719 | 0.638 | [0.541, 0.745] |
 
-HSS degrades markedly from L0 (0.851) to L3 (0.662). Leads L4–L12 have very
-few pairs (67–436 for EM), concentrated on a small set of Kyrgyz stations;
-metrics should be treated as low-confidence.
+HSS degrades gently from L0 (0.875) to L3 (0.719). The hindcast archive is
+robust (L0 n_pairs 7 081). Leads L4–L12 exist but are sparse and concentrated on
+a small set of Kyrgyz stations; the figures cap month at L0–L3.
 
-**Naive Mean** (unweighted average of all model forecasts, no skill weighting)
-is available at all leads (L0 n_pairs 9 579):
-- L0: POD 0.803, FAR 0.107, HSS 0.810 — EM substantially outperforms.
-- L3: POD 0.327, FAR 0.240, HSS 0.394 — EM at L3 still outperforms (HSS 0.662).
+Among all long-term models, EM leads the month L0 hindcast (HSS 0.875), just
+ahead of **Skilled Mean** (POD 0.877, FAR 0.095, HSS 0.862) and well above the
+**Naive Mean** (POD 0.778, HSS 0.794), MC_ALD (0.819), GBT (0.789) and LR_Base
+(0.776). The skill-weighted ensemble genuinely beats the straight average.
 
-**Skilled Mean** (ensemble of trained long-term models) at L0:
-- POD 0.883, FAR 0.079, HSS 0.873 — best among all month L0 models.
-- n_pairs 8 471 (broad coverage). Strongly positive skill over climatology.
+**Preliminary — genuine-2026 operational (too thin to score).** Month
+operational EM: L0 n = 40 (POD 0.571, HSS 0.688), L1 n = 21 (POD/HSS = 1.000, a
+20-event artefact), L2 n = 14, L3 n = 5. These carry Wilson CIs so wide they
+convey no reliable signal; use the hindcast table above. (Across all models the
+best-sampled operational L0 cell is MC_ALD at n = 134, HSS 0.820 — still an
+order of magnitude below the hindcast sample.)
 
-### Quarter (EM, operational, POOLED, aggregated_from_monthly)
+#### Below-norm (1.0 × norm) — plain below-average flow (month hindcast, EM per-lead)
 
-| Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS |
-|------|-----|-----|-----|------|---------|-----|-----|-----|-----|
-| L1   | 75  | 29  | 119 | 1664 | 1 887 | 0.387 | 0.279 | 0.465 | 0.369 |
-| L2   | 24  | 20  | 0   | 35  | 79    | **1.000** | 0.455 | 0.515 | 0.636 |
-| L3   | 40  | 9   | 17  | 83  | 149   | 0.702 | 0.184 | 0.620 | 0.604 |
-| L4   | 51  | 25  | 12  | 342 | 430   | 0.810 | 0.329 | 0.683 | 0.741 |
+Side by side with the 0.80 hindcast table above. **Not comparable cell-for-cell:**
+the 1.0 × norm month event is much more common (base rate ≈ 0.32–0.48 vs
+≈ 0.12–0.23 for 0.80 × norm), and base-rate-sensitive HSS shifts accordingly.
 
-Quarter L2 has only 79 pairs (small n, POD of 1.0 is artefact). L1 is the
-best-sampled lead (1 887 pairs) and shows modest skill (HSS 0.465). L4 shows
-better POD (0.810) but n_pairs remains limited.
+| Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
+|------|-----|-----|-----|------|---------|-----|-----|-----|-----|-------------|
+| L0   | 3172 | 154 | 247 | 3508 | 7 081 | **0.928** | 0.046 | **0.887** | 0.886 | [0.919, 0.936] |
+| L1   | 906  | 72  | 111 | 1076 | 2 165 | 0.891 | 0.074 | 0.830 | 0.828 | [0.870, 0.909] |
+| L2   | 250  | 10  | 32  | 421  | 713   | 0.887 | 0.038 | 0.875 | 0.863 | [0.844, 0.918] |
+| L3   | 172  | 17  | 34  | 421  | 644   | 0.835 | 0.090 | 0.814 | 0.796 | [0.778, 0.879] |
 
-**LR_Base** at L1: POD 0.337, FAR 0.343, HSS 0.401 — positive but weaker
-than EM.
+### Quarter — HINDCAST (EM, POOLED, aggregated_from_monthly) — robust, by target quarter
 
-**GBT** at L1: POD 0.462, FAR 0.141, HSS 0.561 — better than EM at L1 in HSS
-with lower FAR; n_pairs 1 127.
+Quarter is now **deduped** (one forecast per station / target quarter / year /
+model) and stratified by **target quarter Q1–Q4**, each effectively a
+single-lead forecast. (The earlier draft's L1–L4 "leads" were an artefact of an
+overloaded `horizon_value` — see **Corrections in this revision**.)
 
-### Season (EM, operational, POOLED, aggregated_from_monthly)
+| Target quarter | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
+|------|-----|-----|-----|------|---------|-----|-----|-----|-----|-------------|
+| Q1 (Jan–Mar) | 35 | 7  | 34 | 789 | 865 | 0.507 | 0.167 | **0.607** | 0.498 | [0.392, 0.622] |
+| Q2 (Apr–Jun) | 25 | 18 | 0  | 39  | 82  | **1.000** | 0.419 | 0.569 | 0.684 | [0.867, 1.000] |
+| Q3 (Jul–Sep) | 36 | 9  | 17 | 82  | 144 | 0.679 | 0.200 | 0.599 | 0.580 | [0.545, 0.789] |
+| Q4 (Oct–Dec) | 27 | 16 | 79 | 767 | 889 | 0.255 | 0.372 | **0.315** | 0.234 | [0.181, 0.345] |
 
-| Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS |
-|------|-----|-----|-----|-----|---------|-----|-----|-----|-----|
-| L0   | 123 | 57  | 174 | 977  | 1 331 | 0.414 | 0.317 | 0.418 | 0.359 |
-| L1   | 155 | 102 | 274 | 1402 | 1 933 | 0.361 | 0.397 | 0.343 | 0.293 |
-| L2   | 66  | 41  | 124 | 670  | 901   | 0.347 | 0.383 | 0.345 | 0.290 |
-| L3   | 67  | 51  | 132 | 662  | 912   | 0.337 | 0.432 | 0.311 | 0.265 |
+**Q4 (Oct–Dec) is markedly harder than Q1 (Jan–Mar).** The two well-sampled
+quarters carry the operational story: EM hindcast HSS falls from **0.607 at Q1**
+(POD 0.507, base rate 0.08) to **0.315 at Q4** (POD 0.255, base rate 0.12) —
+autumn/early-winter below-norm quarters are missed far more often (Q4: 79 misses
+vs only 27 hits). **Q2 and Q3 are thin for EM** (n = 82 and 144), so their high
+POD/HSS should be read with caution (Q2 POD 1.000 is a zero-miss, small-n
+artefact); the robust EM signal is Q1 and Q4. At the quarter horizon the
+below-norm event is rare in the well-sampled quarters (base rate ≈ 0.08–0.12)
+and hard to catch.
 
-Seasonal forecasts have moderate positive skill (HSS 0.31–0.42) across all
-leads, but POD is only 0.34–0.41. That means **roughly 58–66 % of true
-limit-plan seasons are missed** at the seasonal horizon — consistent with the
-fundamental difficulty of seasonal prediction. FAR is also elevated (0.32–0.43),
-meaning around 1 in 3 season-ahead limit-plan signals is a false alarm.
-Nevertheless, HSS > 0 confirms skill over climatology at all leads.
+**Preliminary — genuine-2026 operational (too thin to score).** Real-time 2026
+so far covers only the year's first quarters: quarter operational EM Q1 n = 40
+(POD 0.667, FAR 0.250, HSS 0.627), Q2 n = 2 (undefined). Rely on the hindcast
+table.
 
-**LR_Base** at all season leads: HSS 0.34–0.35, POD 0.34–0.36, FAR 0.32–0.41
-— nearly identical to EM. No clear advantage of ML over LR at the seasonal
+#### Below-norm (1.0 × norm) — plain below-average flow (quarter hindcast, EM by target quarter)
+
+Side by side with the 0.80 hindcast table above. **Not comparable cell-for-cell:**
+the 1.0 × norm quarter event is far more common (base rate ≈ 0.31–0.62 vs
+≈ 0.08–0.37 for 0.80 × norm); HSS shifts with the base rate.
+
+| Target quarter | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
+|------|-----|-----|-----|------|---------|-----|-----|-----|-----|-------------|
+| Q1 (Jan–Mar) | 177 | 31 | 87  | 570 | 865 | 0.670 | 0.149 | 0.658 | 0.619 | [0.612, 0.724] |
+| Q2 (Apr–Jun) | 39  | 16 | 5   | 22  | 82  | 0.886 | 0.291 | 0.475 | 0.465 | [0.760, 0.950] |
+| Q3 (Jul–Sep) | 70  | 10 | 19  | 45  | 144 | 0.787 | 0.125 | 0.586 | 0.605 | [0.690, 0.859] |
+| Q4 (Oct–Dec) | 176 | 62 | 128 | 523 | 889 | 0.579 | 0.261 | 0.499 | 0.473 | [0.523, 0.633] |
+
+The per-quarter figures **fig1_quarter** and **fig4_quarter** now show the Q1–Q4
+target-quarter stratification (they previously showed the bogus L1–L4 leads).
+
+### Season — HINDCAST (EM, POOLED, aggregated_from_monthly) — robust, by genuine lead
+
+Season is shown by its **genuine forecast leads 0–3** (re-issues deduped within
+each lead, ~870 pairs per lead). Lead 0 is the nearest forecast.
+
+| Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
+|------|-----|-----|-----|-----|---------|-----|-----|-----|-----|-------------|
+| L0   | 91 | 36 | 97  | 659 | 883 | 0.484 | 0.283 | **0.490** | 0.432 | [0.414, 0.555] |
+| L1   | 69 | 36 | 116 | 655 | 876 | 0.373 | 0.343 | 0.381 | 0.321 | [0.307, 0.445] |
+| L2   | 63 | 40 | 119 | 649 | 871 | 0.346 | 0.388 | 0.343 | 0.288 | [0.281, 0.418] |
+| L3   | 58 | 42 | 125 | 639 | 864 | 0.317 | 0.420 | 0.306 | 0.255 | [0.254, 0.388] |
+
+Seasonal forecasts carry only **modest** positive skill (HSS 0.31–0.49) and low
+POD (0.32–0.48) across all leads: **roughly 52–68 % of true limit-plan seasons
+are missed**, consistent with the fundamental difficulty of seasonal prediction.
+FAR is elevated (0.28–0.42) — around 1 in 3 season-ahead limit-plan signals is a
+false alarm. Nevertheless HSS > 0 confirms skill over climatology at every lead,
+and HSS degrades gently from L0 (0.490) to L3 (0.306). At season, EM and Naive
+Mean coincide (the ensemble reduces to the straight average), and **LR_Base** is
+competitive (L0 HSS 0.419, L1 0.362) — no clear ML advantage at the seasonal
 scale.
+
+**Preliminary — genuine-2026 operational (too thin to score).** Season
+operational EM: L0 n = 49 (POD 0.375, FAR 0.500, HSS 0.206), L1 n = 49 (POD
+0.375, HSS 0.171). Directionally consistent with the hindcast (weak positive
+skill) but far too few pairs for a firm estimate.
+
+#### Below-norm (1.0 × norm) — plain below-average flow (season hindcast, EM per-lead)
+
+Side by side with the 0.80 hindcast table above. **Not comparable cell-for-cell:**
+the 1.0 × norm season event is much more common (base rate ≈ 0.50 vs ≈ 0.21 for
+0.80 × norm), so its higher POD/HSS reflect the higher base rate — not stronger
+limit-plan detection.
+
+| Lead | TP | FP | FN | TN | n_pairs | POD | FAR | HSS | PSS | POD CI 95 % |
+|------|-----|-----|-----|-----|---------|-----|-----|-----|-----|-------------|
+| L0   | 315 | 81 | 124 | 363 | 883 | 0.718 | 0.205 | 0.535 | 0.535 | [0.674, 0.758] |
+| L1   | 295 | 79 | 139 | 363 | 876 | 0.680 | 0.211 | 0.502 | 0.501 | [0.634, 0.722] |
+| L2   | 285 | 82 | 146 | 358 | 871 | 0.661 | 0.223 | 0.476 | 0.475 | [0.615, 0.704] |
+| L3   | 272 | 82 | 157 | 353 | 864 | 0.634 | 0.232 | 0.446 | 0.446 | [0.587, 0.678] |
 
 ---
 
@@ -272,32 +490,40 @@ skill over the trivially no-skill climatology baseline.
 Pooled-operational base rates (fraction of all periods that are genuinely
 below-norm) and the events climatology misses entirely:
 
+(Base rates are for the operational **0.80 × norm** limit-plan event.)
+
+Short-term rows are operational (de-leaked); long-term rows are hindcast (the
+robust regime these sections lead with).
+
 | Horizon | Base rate | Events missed by climatology |
 |---------|-----------|------------------------------|
-| day     | 0.48      | 48 % of all day-periods |
-| pentad  | 0.44      | 44 % of all pentad-periods |
-| decade  | 0.49      | 49 % of all decade-periods |
-| month (L0) | 0.27  | 27 % of all month-periods |
-| quarter (L1) | 0.10 | 10 % of all quarter-periods |
-| season (L0) | 0.22  | 22 % of all season-periods |
+| day     | ≈ 0.30–0.50 | 30–50 % of all day-periods (varies by model) |
+| pentad  | 0.41      | 41 % of all pentad-periods |
+| decade  | 0.40      | 40 % of all decade-periods |
+| month (L0, hindcast) | 0.23  | 23 % of all month-periods |
+| quarter (Q1, hindcast) | 0.08 | 8 % of all quarter-periods (Q1) |
+| season (L0, hindcast) | 0.21  | 21 % of all season-periods |
 
 **Are our forecasts better than climatology?**
 
 Yes — decisively for short-term, positive but weaker for long-term.
 
-- **Pentad EM** (POD 0.928, HSS 0.871 vs climatology POD 0, HSS 0): EM
-  catches 92.8 % of the below-norm shortage events that climatology misses
-  entirely.  At a pentad base rate of 0.44, climatology flags zero events; EM
-  flags 93 % of the genuine ones.
-- **Decade EM** (POD 0.905, HSS 0.840): EM catches 90.5 % of events
-  climatology misses.  Stronger than LR (POD 0.700, HSS 0.682).
-- **Month L0 Skilled Mean / EM** (POD 0.862–0.883, HSS 0.851–0.873): strong
-  skill; climatology misses all 27 % of below-norm months.  Monthly forecasts
-  are reliable enough to inform seasonal irrigation planning one month ahead.
-- **Quarter L1 EM** (POD 0.387, HSS 0.465): positive but modest.  Climatology
-  misses all 10 % of below-norm quarters; EM catches 38.7 % of them.
-- **Season L0 EM** (POD 0.414, HSS 0.418): weak but positive.  Climatology
-  misses all 22 % of below-norm seasons; EM catches 41.4 % of them.
+- **Pentad EM** (POD 0.899, HSS 0.847 vs climatology POD 0, HSS 0): EM
+  catches 89.9 % of the below-norm shortage events that climatology misses
+  entirely.  At a pentad base rate of 0.41, climatology flags zero events; EM
+  flags 90 % of the genuine ones.
+- **Decade EM** (POD 0.845, HSS 0.791): EM catches 84.5 % of events
+  climatology misses.  Stronger than LR (POD 0.707, HSS 0.684).
+- **Month L0 EM / Skilled Mean** (hindcast POD 0.871–0.877, HSS 0.875–0.862):
+  strong skill; climatology misses all 23 % of below-norm months.  Monthly
+  forecasts are reliable enough to inform seasonal irrigation planning one month
+  ahead.
+- **Quarter Q1 EM** (hindcast POD 0.507, HSS 0.607): positive and moderate.
+  Climatology misses all 8 % of below-norm Q1 quarters; EM catches 50.7 % of them
+  (other models do better — Skilled Mean HSS 0.736). Q4 is much harder (HSS
+  0.315) — see the per-target-quarter Quarter section.
+- **Season L0 EM** (hindcast POD 0.484, HSS 0.490): weak but positive.
+  Climatology misses all 21 % of below-norm seasons; EM catches 48.4 % of them.
 
 In every fig4 panel, a labelled annotation shows the climatology reference
 (POD = 0, HSS = 0, base rate) so the gain from any real model is immediately
@@ -315,7 +541,7 @@ distinct concepts:
 |-----------|-----------|-------------|-------------|
 | Climatology | Always predicts norm, never alarms | 0.000 | 0.000 |
 | Naive Mean  | Unweighted average of all model outputs | ~0.8–0.9 | ~0.8–0.9 |
-| EM (best ensemble) | Skill-weighted ensemble | 0.928 | 0.871 |
+| EM (best ensemble) | Skill-weighted ensemble | 0.899 | 0.847 |
 
 In fig4, Naive Mean appears with a **purple** tick label (family "Unweighted
 mean"), clearly separated from the green skill-weighted ensembles (EM, NE,
@@ -327,10 +553,11 @@ For short-term horizons (where LR is directly available), LR is included as a
 named model.  For long-term horizons, LR_Base is the proxy.
 
 Summary of best model vs. climatology vs. LR:
-- **Pentad EM**: HSS 0.871 — far above climatology (0.00). Beats LR (0.783).
-- **Decade EM**: HSS 0.840 — far above climatology. Beats LR (0.682).
-- **Month L0 Skilled Mean**: HSS 0.873 — strong skill. Naive Mean HSS 0.810.
-- **Season L0 EM**: HSS 0.418 — positive but modest; LR_Base similar (0.353).
+- **Pentad EM**: HSS 0.847 — far above climatology (0.00). Beats LR (0.778).
+- **Decade EM**: HSS 0.791 — far above climatology. Beats LR (0.684).
+- **Month L0 EM** (hindcast): HSS 0.875 — strong skill. Naive Mean HSS 0.794.
+- **Season L0 EM** (hindcast): HSS 0.490 — positive but modest; LR_Base similar
+  (0.419).
 
 For pentad/decade, ML ensemble models (EM, NE) substantially exceed the LR
 baseline. For season, the gap narrows and LR_Base is competitive with EM.
@@ -348,23 +575,27 @@ canonical provenance; comparison model = EM except day = TFT):
 
 | Horizon | Persistence POD | Persistence FAR | Persistence HSS | n_matched |
 |---------|----------------|----------------|----------------|-----------|
-| day     | 0.981 | 0.140 | **0.866** | 588 |
-| pentad  | 0.852 | 0.141 | 0.743 | 11 322 |
-| decade  | 0.785 | 0.144 | 0.658 | 5 036 |
-| month L0 | 0.504 | 0.382 | 0.459 | 6 369 |
-| quarter L1 | 0.220 | 0.679 | 0.193 | 1 851 |
-| season L0 | 0.387 | 0.607 | 0.218 | 1 282 |
+| day     | 1.000 | 0.152 | **0.821** | 56 |
+| pentad  | 0.859 | 0.156 | 0.745 | 3 380 |
+| decade  | 0.780 | 0.216 | 0.639 | 1 876 |
+| month L0 | 0.583 | 0.369 | 0.496 | 7 057 |
+| quarter Q1 | 0.368 | 0.671 | 0.287 | 846 |
+| season L0 | 0.376 | 0.606 | 0.226 | 847 |
+
+(Short-term rows are operational and de-leaked, matched to the same instances as
+the comparison model — hence n_matched drops with the de-leaked archive. Month /
+quarter / season rows are hindcast, matched to the EM hindcast.)
 
 **Three-way skill ladder — climatology / persistence / best model:**
 
 | Horizon | Climatology HSS | Persistence HSS | Best model HSS | Winner |
 |---------|:--------------:|:--------------:|:-------------:|--------|
-| day     | 0 | 0.866 | 0.508 (TiDE) | **Persistence** |
-| pentad  | 0 | 0.743 | 0.871 (EM)   | EM |
-| decade  | 0 | 0.658 | 0.840 (EM)   | EM |
-| month L0 | 0 | 0.459 | 0.855 (EM)  | EM |
-| quarter L1 | 0 | 0.193 | 0.465 (EM) | EM |
-| season L0 | 0 | 0.218 | 0.418 (EM)  | EM |
+| day     | 0 | 0.821 | 0.536 (TFT) | **Persistence** |
+| pentad  | 0 | 0.745 | 0.847 (EM)   | EM |
+| decade  | 0 | 0.639 | 0.791 (EM)   | EM |
+| month L0 | 0 | 0.496 | 0.875 (EM)  | EM |
+| quarter Q1 | 0 | 0.287 | 0.607 (EM) | EM |
+| season L0 | 0 | 0.226 | 0.490 (EM)  | EM |
 
 Key findings:
 
@@ -373,15 +604,15 @@ Key findings:
   below both persistence and the trained models.
 - **Candidate models beat persistence from pentad onwards.**  At pentad and
   longer horizons the ensemble and ML models consistently outperform
-  persistence, with the gap growing at longer leads: +0.13 at pentad,
-  +0.18 at decade, +0.40 at month L0.  This is the expected pattern for
+  persistence, with the gap growing at longer leads: +0.10 at pentad,
+  +0.15 at decade, +0.38 at month L0.  This is the expected pattern for
   well-trained models — as persistence degrades with longer forecast lead,
   the models' learned climatological signal takes over.
 - **At the day scale, persistence beats our thin ML models.**  Day-horizon
-  persistence achieves HSS 0.87 against only 0.44–0.51 for TFT/TSMixer/TiDE.
-  This is largely a sample-size effect: day-horizon ML forecasts are drawn
-  from a very small operational archive (n = 588–809 vs ~12 000+ at pentad).
-  With more operational data the gap would likely close, but day-ahead
+  persistence achieves HSS 0.82 against only 0.40–0.54 for TFT/TSMixer/TiDE.
+  This is largely a sample-size effect: after de-leaking, day-horizon ML
+  forecasts are drawn from a tiny operational archive (n = 56–108 vs ~3 400 at
+  pentad).  With more operational data the gap would likely close, but day-ahead
   persistence (last observed flow) is a very strong competitor at this scale.
 
 The three-way ladder is visualised in **fig5_persistence_vs_models.png**.
@@ -392,17 +623,22 @@ persistence as reference annotations in the lower-right corner.
 
 ## Lead-time stratification summary
 
+Long-term rows are hindcast (the robust regime).
+
 | Horizon | Best lead | HSS (best) | HSS (worst shown) | Degradation |
 |---------|-----------|-----------|-------------------|-------------|
-| day     | n/a (no lead) | 0.50 (TSMixer) | — | — |
-| pentad  | n/a       | 0.871 (EM) | — | — |
-| decade  | n/a       | 0.840 (EM) | — | — |
-| month   | L0        | 0.851 (EM) | 0.662 (L3) | −0.19 over 3 leads |
-| quarter | L4        | 0.683 (EM) | 0.465 (L1) | varies non-monotonically |
-| season  | L0        | 0.418 (EM) | 0.311 (L3) | −0.11 over 3 leads |
+| day     | n/a (no lead) | 0.536 (TFT) | — | — |
+| pentad  | n/a       | 0.847 (EM) | — | — |
+| decade  | n/a       | 0.791 (EM) | — | — |
+| month   | L0        | 0.875 (EM) | 0.719 (L3) | −0.16 over 3 leads |
+| quarter | Q1 (target qtr) | 0.607 (EM) | 0.315 (Q4) | by target quarter, not lead |
+| season  | L0        | 0.490 (EM) | 0.306 (L3) | −0.18 over 3 leads |
 
 Month shows the clearest monotonic degradation with lead. Season degrades more
-slowly but is moderate at all leads.
+slowly but is moderate-to-weak at all leads. **Quarter is no longer
+lead-stratified** — it is now reported per target quarter (Q1–Q4); Q1 (Jan–Mar)
+is the best-sampled, strongest quarter (HSS 0.607) and Q4 (Oct–Dec) the hardest
+(HSS 0.315), so the "best/worst" columns above are Q1 and Q4 rather than leads.
 
 ---
 
@@ -414,24 +650,39 @@ Phase-2 re-run splits every metric into three season cuts:
 - **non_irrigation** — Oct–Mar (low-demand period)
 - **all** — full year (same as the numbers in the sections above)
 
-All rows below are **operational regime, POOLED, basin = all, EM model,
-canonical provenance**.
+All rows below are **basin = all, EM model, canonical provenance**. Short-term
+horizons (pentad, decade) are **operational** (de-leaked); month L0 and
+season L0 are **hindcast** (the robust regime these long-term sections lead
+with).
 
 ### Seasonal POD / FAR / HSS table (EM, POOLED)
 
-| Horizon | Season | n | POD | FAR | HSS | POD CI 95 % |
-|---------|--------|---|-----|-----|-----|-------------|
-| pentad | all | 11 335 | 0.928 | 0.072 | 0.871 | [0.921, 0.935] |
-| pentad | irrigation (Apr–Sep) | 6 813 | **0.933** | 0.072 | 0.856 | [0.925, 0.941] |
-| pentad | non-irrigation (Oct–Mar) | 4 522 | 0.916 | 0.071 | **0.885** | [0.900, 0.929] |
-| decade | all | 5 059 | 0.905 | 0.069 | 0.840 | [0.892, 0.916] |
-| decade | irrigation (Apr–Sep) | 2 794 | **0.905** | 0.066 | 0.798 | [0.890, 0.918] |
-| decade | non-irrigation (Oct–Mar) | 2 265 | 0.904 | 0.075 | **0.869** | [0.882, 0.923] |
-| month L0 | all | 6 387 | 0.863 | 0.096 | 0.855 | [0.843, 0.881] |
-| month L0 | irrigation (Apr–Sep) | 2 505 | **0.880** | 0.119 | 0.828 | [0.855, 0.901] |
-| month L0 | non-irrigation (Oct–Mar) | 3 882 | 0.835 | 0.057 | **0.870** | [0.800, 0.866] |
-| season L0 | all / irrigation | 1 331 | 0.414 | 0.317 | 0.418 | [0.360, 0.471] |
-| season L0 | non-irrigation | — | — | — | — | — |
+Both events are shown. **The two events are not comparable cell-for-cell**
+(different base rates); the 0.80 × norm rows are the limit-plan story, the
+1.0 × norm rows describe plain below-average flow.
+
+| Horizon | Event | Season | n | POD | FAR | HSS | POD CI 95 % |
+|---------|-------|--------|---|-----|-----|-----|-------------|
+| pentad | 0.80 | all | 3 384 | 0.899 | 0.080 | 0.847 | [0.883, 0.914] |
+| pentad | 0.80 | irrigation (Apr–Sep) | 1 687 | 0.893 | 0.086 | 0.814 | [0.870, 0.912] |
+| pentad | 0.80 | non-irrigation (Oct–Mar) | 1 697 | **0.908** | 0.071 | **0.877** | [0.882, 0.929] |
+| pentad | 1.0  | all | 3 384 | 0.943 | 0.056 | 0.831 | [0.932, 0.951] |
+| pentad | 1.0  | irrigation (Apr–Sep) | 1 687 | 0.940 | 0.060 | 0.788 | [0.925, 0.952] |
+| pentad | 1.0  | non-irrigation (Oct–Mar) | 1 697 | **0.946** | 0.052 | **0.864** | [0.930, 0.958] |
+| decade | 0.80 | all | 1 894 | 0.845 | 0.100 | 0.791 | [0.818, 0.869] |
+| decade | 0.80 | irrigation (Apr–Sep) | 909 | 0.844 | 0.103 | 0.763 | [0.807, 0.876] |
+| decade | 0.80 | non-irrigation (Oct–Mar) | 985 | **0.846** | 0.096 | **0.813** | [0.804, 0.881] |
+| decade | 1.0  | all | 1 894 | 0.932 | 0.077 | 0.783 | [0.917, 0.945] |
+| decade | 1.0  | irrigation (Apr–Sep) | 909 | 0.924 | 0.085 | 0.716 | [0.901, 0.942] |
+| decade | 1.0  | non-irrigation (Oct–Mar) | 985 | **0.940** | 0.069 | **0.833** | [0.919, 0.957] |
+| month L0 (hind) | 0.80 | all | 7 081 | 0.871 | 0.064 | 0.875 | [0.854, 0.887] |
+| month L0 (hind) | 0.80 | irrigation (Apr–Sep) | 2 853 | **0.872** | 0.070 | 0.850 | [0.850, 0.892] |
+| month L0 (hind) | 0.80 | non-irrigation (Oct–Mar) | 4 228 | 0.869 | 0.055 | **0.890** | [0.841, 0.894] |
+| month L0 (hind) | 1.0  | all | 7 081 | 0.928 | 0.046 | 0.887 | [0.919, 0.936] |
+| month L0 (hind) | 1.0  | irrigation (Apr–Sep) | 2 853 | **0.930** | 0.048 | 0.856 | [0.916, 0.941] |
+| month L0 (hind) | 1.0  | non-irrigation (Oct–Mar) | 4 228 | 0.926 | 0.044 | **0.901** | [0.913, 0.937] |
+| season L0 (hind) | 0.80 | all / irrigation | 883 | 0.484 | 0.283 | 0.490 | [0.414, 0.555] |
+| season L0 (hind) | 1.0  | all / irrigation | 883 | 0.718 | 0.205 | 0.535 | [0.674, 0.758] |
 
 **Note on season horizon:** All season-ahead forecasts (Apr–Sep seasonal
 runoff) target the irrigation season by definition.  There is no
@@ -439,23 +690,26 @@ non-irrigation split for the season horizon.
 
 ### Interpretation
 
-**POD is slightly higher in the irrigation season than out-of-season:**
-at the pentad scale, EM detects 93.3 % of below-norm events during Apr–Sep
-vs 91.6 % during Oct–Mar (difference 1.7 pp, within CI overlap but
-consistent across models).  At month L0, the irrigation-season advantage is
-4.5 pp (88.0 % vs 83.5 %).
+**POD is essentially comparable in and out of the irrigation season.**
+After de-leaking, the earlier in-season POD advantage disappears: at the pentad
+scale (0.80 × norm), EM detects 89.3 % of below-norm events during Apr–Sep vs
+90.8 % during Oct–Mar (difference −1.5 pp, well within CI overlap); at decade the
+two are effectively equal (84.4 % vs 84.6 %); at month L0 in-season is marginally
+higher (87.2 % vs 86.9 %). The takeaway is that **detection is stable across the
+year** — there is no meaningful in-season penalty, which is what matters
+operationally.
 
-**HSS is slightly lower in-season** despite higher POD.  This is a
-base-rate effect: below-norm events are more frequent in the irrigation
-season (higher base rate → harder to beat chance), which compresses HSS
-even when detection improves.
+**HSS is lower in-season** at every horizon (pentad 0.814 vs 0.877; decade 0.763
+vs 0.813; month L0 0.850 vs 0.890).  This is a base-rate effect: below-norm
+events are more frequent in the irrigation season (e.g. pentad base rate 0.49
+in-season vs 0.34 out-of-season), which raises the chance baseline and compresses
+HSS even though raw detection is unchanged.
 
-**Operational significance:** the irrigaton season is precisely when the
-limit-plan decision matters most.  The finding confirms that the EM model
-detects shortages at least as well — and somewhat better on raw POD — in
-the months when under-detection is most costly.  Irrigation managers can
-rely on the pooled-year skill estimates as a conservative lower bound for
-in-season performance.
+**Operational significance:** the irrigation season is precisely when the
+limit-plan decision matters most.  The finding confirms that the EM model detects
+shortages just as well in-season as out-of-season, so irrigation managers can
+rely on the pooled-year skill estimates as a representative estimate of in-season
+performance.
 
 The seasonal disaggregation figures are shown in **fig6_season_pod.png**
 (POD with Wilson CI, irrigation vs non-irrigation vs all, for pentad,
@@ -468,24 +722,28 @@ decade, and month L0).
 The key operational question is: **what fraction of true below-norm runoff
 events are missed** (FN rate = 1 − POD)?
 
-- **Pentad/decade (ML models):** FN rate 7–12 %. False alarms (FP rate relative
-  to positive events) ≈ 7–13 %. Both are operationally low. An irrigation
-  manager using EM pentad forecasts would miss approximately 1 in 14 genuine
-  shortage events.
-- **Pentad/decade (LR):** FN rate 19–30 %. LR is FN-heavy — much more likely
+- **Pentad/decade (ML models):** FN rate 10–16 % (pentad EM 10 %, decade EM
+  15 %). False alarms (FP rate relative to positive events) ≈ 8–15 %. Both are
+  operationally low. An irrigation manager using EM pentad forecasts would miss
+  roughly 1 in 10 genuine shortage events.
+- **Pentad/decade (LR):** FN rate 19–29 %. LR is FN-heavy — much more likely
   to miss a genuine shortage. ML models offer a clear advantage.
-- **Month L0 (Skilled Mean / EM):** FN rate 12–14 %. Strong skill, comparable
-  to short-term ML. Monthly forecasts are reliable enough to inform seasonal
-  irrigation planning one month ahead.
-- **Month L3 (EM):** FN rate 41 %. Skill degrades substantially at 3-month
-  lead. Three-month-ahead seasonal signals should be treated as directional
-  guidance only.
-- **Quarter / Season:** FN rate 59–66 % at all leads (EM). More than half of
-  true limit-plan events are missed. These horizons provide only weak, positive
-  skill — useful for ensemble signal but not for firm operational decisions. FAR
-  is also elevated (31–43 %).
-- **Day (exploratory):** FN rate 46–49 %. Low coverage and inherent day-scale
-  variability mean day-ahead limit-plan decisions carry substantial uncertainty.
+- **Month L0 (EM / Skilled Mean, hindcast):** FN rate ≈ 12–13 %. Strong skill,
+  comparable to short-term ML. Monthly forecasts are reliable enough to inform
+  seasonal irrigation planning one month ahead. (Genuine-2026 operational month
+  data is too thin to score — see the Month section.)
+- **Month L3 (EM, hindcast):** FN rate 35 %. Skill degrades substantially at
+  3-month lead. Three-month-ahead seasonal signals should be treated as
+  directional guidance only.
+- **Quarter (by target quarter) / Season (by lead) (hindcast):** FN rate ≈
+  49–75 % (EM) — quarter Q1 ≈ 49 % rising to ≈ 75 % at Q4; season 52–68 % across
+  leads. In most cells more than half of true limit-plan events are missed. These
+  horizons provide only weak-to-moderate positive skill (strongest at quarter
+  Q1) — useful for ensemble signal but not, in general, for firm operational
+  decisions. FAR is also elevated (17–42 %).
+- **Day (exploratory):** FN rate 43–49 %. Very low coverage after de-leaking
+  (n = 56–108) and inherent day-scale variability mean day-ahead limit-plan
+  decisions carry substantial uncertainty.
 
 **Recommendation:** rely on pentad/decade ML ensemble (EM or NE) for the core
 irrigation planning decision. Monthly (L0–L1) forecasts can support 1–2 month
@@ -514,37 +772,37 @@ norm), so each station/period carries its own seasonal thresholds. The
 contingency machinery is identical to the below-norm case: positive class =
 event occurred (below the threshold for low-flow, above it for high-flow).
 
-Numbers below are from the phase-2c re-run
-(`apps/forecast_skill_eval/artifacts/rerun_2026-07-01_phase2c_events/`), which
-adds the four percentile events and **reproduces the below-norm numbers above
-identically**. Rows are **EM, operational, POOLED, basin = all, season = all,
-canonical provenance**; long-term horizons use the smallest lead (month /
-season L0, quarter L1).
+Numbers below are from the corrected run (`rerun_2026-07-03_corrected/`), which
+carries the four percentile events alongside the below-norm events. Rows are
+**EM, POOLED, basin = all, season = all, canonical provenance**; short-term
+horizons are **operational** (de-leaked), long-term horizons use **hindcast** at
+the smallest lead (month / season L0) and first target quarter (quarter Q1) —
+matching the regime the long-term sections lead with.
 
-### Table — EM operational, POOLED, canonical provenance, season = all
+### Table — EM, POOLED, canonical provenance, season = all (short-term operational, long-term hindcast)
 
 | Horizon | Event | base rate | POD | FAR | HSS | POD 95 % CI | n |
 |---------|-------|:---------:|:---:|:---:|:---:|:-----------:|---:|
-| pentad | low_p5 | 0.14 | 0.77 | 0.25 | 0.72 | [0.75, 0.79] | 11 238 |
-| pentad | low_p10 | 0.22 | 0.83 | 0.18 | 0.78 | [0.82, 0.85] | 11 238 |
-| pentad | high_p90 | 0.07 | 0.76 | 0.22 | 0.75 | [0.73, 0.79] | 11 238 |
-| pentad | high_p95 | 0.05 | 0.67 | 0.25 | 0.70 | [0.63, 0.71] | 11 238 |
-| decade | low_p5 | 0.17 | 0.78 | 0.29 | 0.68 | [0.75, 0.81] | 5 032 |
-| decade | low_p10 | 0.26 | 0.86 | 0.20 | 0.76 | [0.84, 0.88] | 5 032 |
-| decade | high_p90 | 0.06 | 0.70 | 0.26 | 0.70 | [0.65, 0.75] | 5 032 |
-| decade | high_p95 | 0.03 | 0.68 | 0.36 | 0.65 | [0.60, 0.74] | 5 032 |
-| month L0 | low_p5 | 0.06 | 0.58 | 0.26 | 0.63 | [0.53, 0.63] | 6 315 |
-| month L0 | low_p10 | 0.10 | 0.64 | 0.21 | 0.68 | [0.60, 0.68] | 6 315 |
-| month L0 | high_p90 | 0.11 | **0.78** | 0.11 | **0.82** | [0.75, 0.81] | 6 315 |
-| month L0 | high_p95 | 0.07 | 0.49 | 0.24 | 0.58 | [0.44, 0.54] | 6 315 |
-| quarter L1 | low_p5 | 0.07 | 0.21 | 0.49 | 0.27 | [0.15, 0.29] | 1 866 |
-| quarter L1 | low_p10 | 0.12 | 0.21 | 0.43 | 0.26 | [0.16, 0.27] | 1 866 |
-| quarter L1 | high_p90 | 0.11 | 0.28 | 0.39 | 0.34 | [0.22, 0.34] | 1 866 |
-| quarter L1 | high_p95 | 0.06 | 0.18 | 0.58 | 0.22 | [0.12, 0.26] | 1 866 |
-| season L0 | low_p5 | 0.10 | 0.07 | 0.53 | 0.10 | [0.04, 0.13] | 1 323 |
-| season L0 | low_p10 | 0.16 | 0.11 | 0.48 | 0.14 | [0.07, 0.16] | 1 323 |
-| season L0 | high_p90 | 0.10 | 0.25 | 0.43 | 0.31 | [0.19, 0.33] | 1 323 |
-| season L0 | high_p95 | 0.07 | 0.14 | 0.54 | 0.19 | [0.08, 0.22] | 1 323 |
+| pentad | low_p5 | 0.13 | 0.70 | 0.25 | 0.68 | [0.66, 0.74] | 3 358 |
+| pentad | low_p10 | 0.21 | 0.77 | 0.20 | 0.73 | [0.74, 0.80] | 3 358 |
+| pentad | high_p90 | 0.09 | 0.75 | 0.24 | 0.73 | [0.70, 0.80] | 3 358 |
+| pentad | high_p95 | 0.06 | 0.64 | 0.27 | 0.67 | [0.57, 0.71] | 3 358 |
+| decade | low_p5 | 0.14 | 0.61 | 0.30 | 0.60 | [0.55, 0.67] | 1 879 |
+| decade | low_p10 | 0.22 | 0.74 | 0.20 | 0.71 | [0.69, 0.78] | 1 879 |
+| decade | high_p90 | 0.09 | 0.68 | 0.20 | 0.71 | [0.61, 0.75] | 1 879 |
+| decade | high_p95 | 0.05 | 0.62 | 0.26 | 0.66 | [0.53, 0.72] | 1 879 |
+| month L0 (hind) | low_p5 | 0.12 | 0.49 | 0.18 | 0.58 | [0.46, 0.53] | 7 035 |
+| month L0 (hind) | low_p10 | 0.17 | 0.69 | 0.14 | 0.72 | [0.66, 0.71] | 7 035 |
+| month L0 (hind) | high_p90 | 0.08 | **0.74** | 0.18 | **0.76** | [0.71, 0.78] | 7 035 |
+| month L0 (hind) | high_p95 | 0.05 | 0.43 | 0.24 | 0.53 | [0.38, 0.48] | 7 035 |
+| quarter Q1 (hind) | low_p5 | 0.05 | 0.23 | 0.52 | 0.29 | [0.13, 0.38] | 862 |
+| quarter Q1 (hind) | low_p10 | 0.10 | 0.30 | 0.38 | 0.36 | [0.21, 0.40] | 862 |
+| quarter Q1 (hind) | high_p90 | 0.11 | 0.32 | 0.36 | 0.38 | [0.24, 0.42] | 862 |
+| quarter Q1 (hind) | high_p95 | 0.05 | 0.29 | 0.48 | 0.35 | [0.18, 0.43] | 862 |
+| season L0 (hind) | low_p5 | 0.07 | 0.11 | 0.50 | 0.17 | [0.06, 0.22] | 882 |
+| season L0 (hind) | low_p10 | 0.11 | 0.15 | 0.50 | 0.19 | [0.10, 0.24] | 882 |
+| season L0 (hind) | high_p90 | 0.10 | 0.32 | 0.41 | 0.37 | [0.23, 0.42] | 882 |
+| season L0 (hind) | high_p95 | 0.07 | 0.18 | 0.54 | 0.23 | [0.10, 0.29] | 882 |
 
 **Day horizon:** no percentile events are reported. The `min_years ≥ 10` gate
 cannot form daily percentile thresholds — a daily percentile needs ~10 years of
@@ -555,23 +813,23 @@ an empirical percentile, so it is unaffected.)
 ### Key findings
 
 - **High-flow detection is genuinely skilful at pentad, decade, and month L0.**
-  EM catches 70–78 % of 90th-percentile high-flow events (HSS 0.70–0.82), with
-  **month L0 the strongest** (POD 0.78, HSS 0.82, FAR 0.11). This is the
+  EM catches 68–75 % of 90th-percentile high-flow events (HSS 0.71–0.76), with
+  **month L0 the strongest** (POD 0.74, HSS 0.76, FAR 0.18). This is the
   principal new result: the same models that drive the irrigation decision also
   provide usable flood / high-flow signal at short-to-medium range.
 - **Extreme tails are harder than moderate tails.** Detection drops from the
   moderate percentile to the extreme one at every horizon — e.g. pentad
-  high_p90 0.76 → high_p95 0.67; month L0 high_p90 0.78 → high_p95 0.49. Rarer
+  high_p90 0.75 → high_p95 0.64; month L0 high_p90 0.74 → high_p95 0.43. Rarer
   events (lower base rate) are intrinsically harder to catch and carry wider
   CIs.
 - **Low-flow percentiles track the below-norm story but are more demanding.**
   The 10th/5th percentiles are stricter thresholds than 0.80 × norm, so POD is
-  lower than the below-norm POD at the same horizon (pentad low_p10 0.83 vs
-  below-norm 0.93; month L0 low_p10 0.64 vs 0.86). Pentad/decade still catch
-  77–86 % of moderate (10th-percentile) low-flow events.
+  lower than the below-norm POD at the same horizon (pentad low_p10 0.77 vs
+  below-norm 0.90; month L0 low_p10 0.69 vs 0.87). Pentad/decade still catch
+  74–77 % of moderate (10th-percentile) low-flow events.
 - **Quarter and season remain weak across all percentile events** (POD
-  0.07–0.28), consistent with the below-norm finding — long-range extreme
-  detection is risk-screening only.
+  0.10–0.32; quarter shown at target quarter Q1), consistent with the below-norm
+  finding — long-range extreme detection is risk-screening only.
 
 **Caveats specific to percentile events:**
 
@@ -589,20 +847,31 @@ an empirical percentile, so it is unaffected.)
 
 ## Return-period detection (flood / hydropower)
 
+> **Status — not recomputed in the corrected run.** Return-period (EVT) events
+> were **not** part of the corrected `rerun_2026-07-03_corrected/` artifact, so
+> the table below still carries the earlier **phase-2c geometry**: the
+> short-term rows are **pre-de-leaking** (leaked intraday re-issues included,
+> hence the larger n) and the long-term rows are the old flag-based
+> "operational" (largely pre-2026 backfill = effectively hindcast). Read the
+> whole section as **indicative pending a corrected RP re-run**, not as
+> de-leaked skill. The below-norm and percentile sections above supersede it for
+> any decision.
+
 Return periods restate the high-flow question in the language flood and
 hydropower operators use — not "above the 90th percentile" but "a 5-, 10-, 30-,
 or 100-year event". Return levels are estimated **per station and per
 period-of-year** by fitting a GEV (`scipy.stats.genextreme`) to each period's
 annual realisations and taking the `1 − 1/T` quantile; an event is a period
 whose runoff exceeds its own `T`-year return level. By construction the low
-return periods approximate the percentile events (rp10 ≈ 90th percentile —
-cross-check: pentad rp10 POD 0.81 / HSS 0.80 vs `high_p90` 0.76 / 0.75); the
-value of the EVT framing is the explicit rarity scale and the (extrapolated)
-rarer levels.
+return periods approximate the percentile events (rp10 ≈ 90th percentile — in
+the corrected percentile run above `high_p90` reads 0.75 / 0.73 at pentad, close
+to the phase-2c rp10 0.81 / 0.80); the value of the EVT framing is the explicit
+rarity scale and the (extrapolated) rarer levels.
 
-Rows are **EM, operational, POOLED, basin = all, season = all, canonical
-provenance** (long-term = smallest lead), phase-2c re-run. `pos_events` =
-observed return-level exceedances (TP + FN) — the effective sample per cell.
+Rows are **EM, POOLED, basin = all, season = all, canonical provenance**
+(long-term = smallest lead), **phase-2c re-run (pre-correction — see status note
+above)**. `pos_events` = observed return-level exceedances (TP + FN) — the
+effective sample per cell.
 
 | Horizon | RP | base rate | POD [95 % CI] | FAR | HSS | pos_events |
 |---------|----|:---------:|:-------------:|:---:|:---:|:----------:|
@@ -627,8 +896,10 @@ observed return-level exceedances (TP + FN) — the effective sample per cell.
 | season | rp30 | 0.05 | 0.05 [0.02, 0.14] | 0.77 | 0.07 | 59 |
 | season | rp100 | 0.01 | 0.07 [0.01, 0.30] | 0.83 | 0.09 | 15 |
 
-(n_pairs per horizon: pentad 11 238, decade 5 032, month 6 315, quarter 1 866,
-season 1 323.)
+(n_pairs per horizon, **pre-correction phase-2c counts**: pentad 11 238,
+decade 5 032, month 6 315, quarter 1 866, season 1 323. A corrected re-run would
+shrink the short-term counts sharply, as it did for the de-leaked below-norm and
+percentile events above.)
 
 ### Key findings
 
@@ -684,18 +955,18 @@ hydropower / flood operators) actually act on.
 - **Brier / Brier skill score** — scores the forecast *probability* of the
   below-norm event (from the band) rather than the binary flag.
 
-Numbers are from the flagged run (`SAPPHIRE_SKILL_PROB`,
-`artifacts/prob_2026-07-01/`), **EM, operational, POOLED, canonical provenance,
-season = all** (long-term = smallest lead). Only models that emit a usable band
+Numbers are from the corrected run (`rerun_2026-07-03_corrected/`), **EM, POOLED,
+canonical provenance, season = all**; short-term **operational** (de-leaked),
+long-term **hindcast** at the smallest lead. Only models that emit a usable band
 are scored; **GBT / SM_GBT\* long-term models carry no band and stay point-only**.
 
 | Horizon | Grid | n | CRPSS | Coverage 90 % | Coverage 80 % | Reliability | Sharpness (norm) | Brier SS |
 |---------|------|---:|:-----:|:-------------:|:-------------:|:-----------:|:----------------:|:--------:|
-| pentad | short5 | 11 335 | **0.68** | 0.92 | — | 0.02 | 0.25 | **0.82** |
-| decade | short5 | 5 059 | 0.59 | 0.87 | — | 0.03 | 0.24 | 0.79 |
-| month L0 | long7 | 6 387 | 0.62 | 0.92 | 0.86 | 0.02 | 0.28 | 0.79 |
-| quarter L1 | long7 | 1 887 | 0.28 | 0.91 | 0.83 | 0.01 | 0.58 | 0.39 |
-| season L0 | long7 | 1 331 | 0.23 | 0.82 | 0.71 | 0.08 | 0.59 | 0.30 |
+| pentad | short5 | 3 384 | **0.68** | 0.90 | — | 0.00 | 0.28 | 0.79 |
+| decade | short5 | 1 894 | 0.65 | 0.90 | — | 0.00 | 0.31 | 0.77 |
+| month L0 (hind) | long7 | 7 081 | **0.72** | 0.94 | 0.87 | 0.04 | 0.28 | **0.81** |
+| quarter Q1 (hind) | long7 | 865 | 0.52 | 0.96 | 0.91 | 0.06 | 0.53 | 0.51 |
+| season L0 (hind) | long7 | 883 | 0.27 | 0.85 | 0.77 | 0.05 | 0.59 | 0.38 |
 
 *(Coverage 90 ideal = 0.90; Coverage 80 ideal = 0.80; Reliability = |coverage −
 nominal|, lower is better; CRPSS / Brier SS > 0 beats climatology.)*
@@ -706,22 +977,22 @@ day-scale probabilistic scores exist only for TFT / TiDE / TSMixer (short5).
 ### Key findings
 
 - **The forecasts are well calibrated.** EM's 90 % bands actually contain
-  87–92 % of observations at pentad/decade/month/quarter (reliability 0.01–0.03)
+  90–96 % of observations at pentad/decade/month/quarter (reliability 0.00–0.06)
   — the stated uncertainty is trustworthy, not over- or under-confident. Only
-  the **season** horizon is mildly under-covered (0.82 vs 0.90). This is the
-  headline probabilistic result: operators can take the EM interval at face
-  value at short-to-medium range.
+  the **season** horizon is mildly under-covered (0.85 vs 0.90, reliability
+  0.05). This is the headline probabilistic result: operators can take the EM
+  interval at face value at short-to-medium range.
 - **The full distribution beats climatology at every horizon** (CRPSS
-  0.23–0.68), strongest at pentad (0.68), month (0.62), decade (0.59); weaker
-  but positive at quarter/season (0.23–0.28) — the same short-good / long-weak
-  gradient as the point scores.
+  0.25–0.72), strongest at month (0.72), pentad (0.68), decade (0.65), moderate
+  at quarter Q1 (0.52); weakest at season (0.27) — the same short-good /
+  long-weak gradient as the point scores.
 - **Sharpness matches confidence to horizon.** Bands are tight relative to the
-  norm at pentad/decade/month (~0.24–0.28) and appropriately wide at
-  quarter/season (~0.58–0.59) — the models widen their intervals where skill is
+  norm at pentad/decade/month (~0.28–0.31) and appropriately wide at
+  quarter/season (~0.53–0.59) — the models widen their intervals where skill is
   genuinely lower rather than staying falsely narrow.
 - **Probabilistic below-norm skill (Brier SS)** is strong at pentad/decade/month
-  (0.79–0.82) and drops at quarter/season (0.30–0.39), consistent with the
-  deterministic contingency results.
+  (0.77–0.81) and drops at quarter Q1 (0.51) / season (0.38), consistent with
+  the deterministic contingency results.
 
 **Caveats specific to probabilistic scores:**
 
@@ -741,9 +1012,9 @@ day-scale probabilistic scores exist only for TFT / TiDE / TSMixer (short5).
 The contingency and probabilistic sections score *whether the decision was
 right* and *whether the uncertainty is trustworthy*. This section scores the two
 things left: **how accurate the magnitude is** (continuous/volume) and **how
-much the decision is worth** (economic value). Numbers are from the flagged run
-(`SAPPHIRE_SKILL_VALUE`, `artifacts/value_2026-07-01/`), **EM, operational,
-canonical provenance** (long-term = smallest lead).
+much the decision is worth** (economic value). Numbers are from the corrected run
+(`rerun_2026-07-03_corrected/`), **EM, canonical provenance**; short-term
+**operational** (de-leaked), long-term **hindcast** at the smallest lead.
 
 ### Continuous / volume accuracy
 
@@ -754,29 +1025,37 @@ canonical provenance** (long-term = smallest lead).
   over/under-forecast of total water — the number that matters for allocation
   and reservoir/hydropower planning.
 
-| Horizon | KGE (per-station median) | NSE (per-station median) | rel. volume error | n stations |
+| Horizon | KGE (per-station median) † | NSE (per-station median) † | rel. volume error ‡ | n stations |
 |---------|:------------------------:|:------------------------:|:-----------------:|:----------:|
-| pentad | **0.96** | 0.97 | +0.5 % | 51 |
-| decade | 0.95 | 0.95 | +1.3 % | 50 |
-| month L0 | **0.97** | 0.98 | +0.9 % | 53 |
-| quarter L1 | 0.78 | 0.75 | +0.9 % | 53 |
-| season L0 | **0.41** | 0.23 | +0.1 % | 51 |
+| pentad | **0.96** | 0.97 | +1.1 % | 51 |
+| decade | 0.95 | 0.95 | +0.9 % | 50 |
+| month L0 | **0.97** | 0.98 | +0.5 % | 53 |
+| quarter Q1 | 0.78 | 0.75 | +0.4 % | 53 |
+| season L0 | **0.41** | 0.23 | −0.3 % | 51 |
+
+† **Per-station KGE/NSE could not be recomputed in this POOLED-only refresh** —
+the per-station distribution lives in the station-coded artifacts, which are out
+of scope for the sanitized run. The per-station medians above are **carried from
+the prior run as indicative**; the methodology (per-station fit) is unchanged by
+the corrections, which affect regime labelling and de-leaking rather than the
+shape of each station's series. ‡ **rve is refreshed from the corrected POOLED
+run** (relative volume error is pooling-invariant).
 
 **Key findings:**
 
 - **EM tracks each station's flow very well at pentad/decade/month** (per-station
-  median KGE 0.95–0.97, NSE 0.95–0.98) and is **essentially volume-unbiased at
-  every horizon** (rve within ±1.5 %). For water-accounting, EM neither
-  systematically over- nor under-allocates.
+  median KGE 0.95–0.97, NSE 0.95–0.98, indicative) and is **essentially
+  volume-unbiased at every horizon** (corrected rve within ±1.1 %). For
+  water-accounting, EM neither systematically over- nor under-allocates.
 - **Skill falls off at seasonal range** (per-station KGE 0.41, NSE 0.23) — the
   same short-good / long-weak gradient as every other metric family.
 - **CRITICAL reporting caveat — do not use pooled KGE/NSE.** Aggregated across
   all stations, KGE/NSE are badly **inflated** because between-station variance
-  (small creeks vs large rivers) dominates the denominator: pooled season NSE is
-  **0.97** vs the honest per-station median of **0.23**. The table above uses the
-  **per-station median**; the dashboard's Value view shows the full per-station
-  distribution. (rve and the REV below are not affected — rve is relative and
-  REV is derived from the contingency table.)
+  (small creeks vs large rivers) dominates the denominator: the corrected pooled
+  season NSE is **0.97** vs the honest per-station median of **0.23**. The table
+  above uses the **per-station median**; the dashboard's Value view shows the
+  full per-station distribution. (rve and the REV below are not affected — rve is
+  relative and REV is derived from the contingency table.)
 
 ### Relative economic value (cost–loss)
 
@@ -787,16 +1066,17 @@ the Peirce skill score) at `α = base rate`:
 
 | Horizon | V_max (peak value) | at α* (base rate) |
 |---------|:------------------:|:-----------------:|
-| pentad | **0.87** | 0.44 |
-| decade | 0.84 | 0.49 |
-| month L0 | **0.85** | 0.21 |
-| quarter L1 | 0.36 | 0.10 |
-| season L0 | 0.36 | 0.22 |
+| pentad | **0.84** | 0.41 |
+| decade | 0.78 | 0.40 |
+| month L0 (hind) | **0.85** | 0.23 |
+| quarter Q1 (hind) | 0.50 | 0.08 |
+| season L0 (hind) | 0.43 | 0.21 |
 
 - **The below-norm forecast delivers high decision value at pentad/decade/month**
-  (V_max 0.84–0.87 — a consumer captures ~85 % of the value a perfect forecast
+  (V_max 0.78–0.85 — a consumer captures ~80–85 % of the value a perfect forecast
   would, at their optimal cost-loss ratio), and **moderate value at
-  quarter/season** (0.36). The full `V(α)` curve per model is in the dashboard;
+  quarter/season** (0.43–0.50; quarter shown at target quarter Q1). The full
+  `V(α)` curve per model is in the dashboard;
   it is not clamped, so a skill-negative model/α shows `V < 0` (acting on it
   loses money vs climatology).
 
@@ -809,22 +1089,30 @@ matters directly for allocation and hydropower.
 
 ## Caveats and limitations
 
-1. **DAY horizon is thin and exploratory.** n_pairs 215–809 across models;
-   CIs span ±10–15 pp. Use for direction only.
+1. **DAY horizon is thin and exploratory.** After de-leaking, n_pairs is only
+   56–108 across models; CIs span ±15–17 pp. Use for direction only.
 2. **Long-term coverage is Kyrgyz-dominated.** 65 of 83 stations are Kyrgyz;
-   Tajik operational-month pairs at leads ≥ 2 are scarce. Tajik seasonal skill
+   Tajik hindcast-month pairs at leads ≥ 2 are scarce. Tajik seasonal skill
    estimates carry wide CIs and may not generalise.
 3. **Rolling-window product excluded** (549 868 rows): confirms the exclusion
    filter is working correctly. The remaining month metrics reflect only
    calendar-aligned monthly forecasts.
-4. **Operational vs. hindcast gap:** hindcast HSS is available for month L0–L3
-   and season L0–L3 and is systematically higher than operational (typical
-   optimism of hindcast-trained models). Report operational figures for real-world
-   assessment.
-5. **Threshold fixed at 0.80 × norm.** Results may change for different
-   threshold values; the tool supports re-running with any threshold.
-6. **Quarter L2 artefact:** 79 pairs, POD = 1.00 — artefact of small n. Treat
-   that cell as unreliable.
+4. **Long-term operational is genuinely thin; the sections lead with hindcast.**
+   Real-time long-term forecasting only began ~2026, so the genuine-operational
+   archive is tiny (month L0 n = 40, quarter Q1 n = 40, season L0 n = 49) and
+   cannot carry a reliable skill estimate. The robust long-term skill is the
+   **hindcast** (full pre-2026 archive: month L0 n = 7 081, quarter Q1 n = 865,
+   season L0 n = 883), which the long-term sections report as the headline. The
+   genuine-2026 operational numbers are shown only as preliminary footnotes.
+   fig3 contrasts the two; because they are not sample-matched, any cell where
+   operational ≥ hindcast is a sample-composition artefact.
+5. **Two thresholds reported side by side, not comparable.** The operational
+   story is the **0.80 × norm** limit-plan event; the **1.0 × norm** plain
+   below-average event is reported alongside it for reference only. The two have
+   different base rates, so their POD/FAR/HSS must not be compared cell-for-cell
+   (HSS is base-rate sensitive). The tool supports re-running with any threshold.
+6. **Quarter Q2 artefact:** 82 pairs, POD = 1.00 — a zero-miss, small-n
+   artefact. Treat that cell as unreliable.
 7. **`min_years = 10`** filter applied: stations with fewer than 10 years of
    paired data were excluded from long-term norm computation.
 
@@ -848,24 +1136,33 @@ All figures are in `doc/plans/working/forecast_skill_eval_figures/`:
   grid as in the combined diagram.
 
 - **fig1_month.png / fig1_quarter.png / fig1_season.png** — per-horizon Roebber
-  diagrams for each long-term horizon. Markers are coloured by **lead** (plasma
-  colormap; 4 distinct colours). Approved lead ranges: month L0–L3,
-  quarter L1–L4, season L0–L3. Legend: model shape (upper-left) and lead colour
-  (lower-left). These reveal how skill degrades with increasing lead and which
-  models maintain consistent performance across leads.
+  diagrams for each long-term horizon. Markers are coloured by **lead** for
+  month/season and by **target quarter** for quarter (plasma colormap; 4 distinct
+  colours). Approved ranges: month L0–L3, quarter Q1–Q4, season L0–L3. Legend:
+  model shape (upper-left) and lead/target-quarter colour (lower-left). For
+  month/season these reveal how skill degrades with increasing lead; for quarter
+  they contrast the four target quarters (Q1 strongest, Q4 hardest). **Preliminary:** the
+  long-term per-horizon operational diagrams are drawn from the thin genuine-2026
+  operational archive; read them as indicative and rely on the hindcast tables
+  (and **fig3**) for the robust long-term estimate.
 
 - **fig2_hss_heatmap.png** — HSS heatmap, model × h_label, operational regime.
-  Columns: `day`, `pentad`, `decade`, `month L0`–`month L3`, `quarter L1`–
-  `quarter L4`, `season L0`–`season L3`. Month leads L4–L12 are excluded
-  (deprecated, sparse data).
+  Columns: `day`, `pentad`, `decade`, `month L0`–`month L3`, `quarter Q1`–
+  `quarter Q4`, `season L0`–`season L3`. Month leads L4–L12 are excluded
+  (deprecated, sparse data). **Note:** the long-term (month/quarter/season)
+  columns reflect the thin genuine-2026 operational archive and are preliminary;
+  the hindcast tables in the long-term sections are the robust reference.
 
-- **fig3_operational_vs_hindcast_hss.png** — operational vs hindcast HSS by
-  lead for month / quarter / season (best-sampled model per horizon). Each bar
-  is annotated with its n_pairs. **CAVEAT:** Operational and hindcast are NOT
-  sample-matched (different stations / dates / n; e.g. month operational
-  n ≈ 110–150 vs hindcast n ≈ 7 000). Where operational HSS ≥ hindcast HSS it
-  is a sample-composition artifact, not genuine skill. Treat as indicative
-  only. Month limited to L0–L3 (L4–L12 deprecated).
+- **fig3_operational_vs_hindcast_hss.png** — **the key long-term figure**:
+  operational vs hindcast HSS by lead (month / season) and target quarter
+  (quarter) for the best-sampled model per horizon. Each bar is annotated with
+  its n_pairs, making the
+  thin-operational-vs-robust-hindcast contrast explicit. **CAVEAT:** Operational
+  and hindcast are NOT sample-matched (different stations / dates / n; e.g. month
+  EM operational L0 n ≈ 40 vs hindcast n ≈ 7 081). Where operational HSS ≥
+  hindcast HSS it is a sample-composition artifact, not genuine skill. The
+  genuine-2026 operational bars are preliminary; the hindcast bars are the robust
+  estimate. Month limited to L0–L3 (L4–L12 deprecated).
 
 - **fig4_day.png / fig4_pentad.png / fig4_decade.png** — per-model POD (green)
   and FAR (red) bar chart for each short-term horizon, all models, operational
@@ -880,17 +1177,20 @@ All figures are in `doc/plans/working/forecast_skill_eval_figures/`:
   the full three-way ranking at a glance.
 
 - **fig4_month.png / fig4_quarter.png / fig4_season.png** — same POD / FAR /
-  FP layout as the short-term fig4 figures, but faceted by lead (month L0–L3,
-  quarter L1–L4, season L0–L3). The canonical lead panel (L0 for month/season,
-  L1 for quarter) carries both climatology and persistence reference
-  annotations; other lead panels carry climatology only. Family colour-coding
+  FP layout as the short-term fig4 figures, but faceted by lead for month/season
+  and by target quarter for quarter (month L0–L3, quarter Q1–Q4, season L0–L3).
+  The canonical panel (L0 for month/season, Q1 for quarter) carries both
+  climatology and persistence reference annotations; other panels carry
+  climatology only. Family colour-coding
   (see above) enables direct ML-vs-LR-vs-ensemble comparison; Naive Mean
-  appears in purple ("Unweighted mean") not in grey.
+  appears in purple ("Unweighted mean") not in grey. **Preliminary:** these
+  long-term per-lead operational diagrams are 2026-only (thin); the hindcast
+  tables and **fig3** carry the robust long-term skill.
 
 - **fig5_persistence_vs_models.png** — grouped bar chart: for each horizon
   (x-axis), three bars show HSS of climatology (light grey, HSS = 0),
   persistence (dark grey), and the best skilled model (coloured by horizon).
-  Long-term horizons use their canonical lead (month/season L0, quarter L1).
+  Long-term horizons use their canonical panel (month/season L0, quarter Q1).
   This is the "three-way skill ladder": climatology ◀ persistence ◀ skilled
   models (for pentad and longer); at day scale persistence beats the thin ML
   models.
@@ -898,17 +1198,85 @@ All figures are in `doc/plans/working/forecast_skill_eval_figures/`:
 - **fig6_season_pod.png** — three-panel figure (pentad / decade / month L0),
   each showing POD with Wilson 95 % CI whiskers for three season cuts:
   non-irrigation (Oct–Mar, blue), all year (grey), and irrigation (Apr–Sep,
-  orange). Model = EM, operational, POOLED. Confirms that detection is at
-  least as strong — and slightly better on raw POD — during the irrigation
-  season when limit-plan decisions are most consequential.
+  orange). Model = EM; short-term operational, month L0 hindcast; POOLED.
+  Confirms that detection is comparable in and out of the irrigation season
+  (within CI overlap) — there is no meaningful in-season penalty when limit-plan
+  decisions are most consequential.
+
+### Figures — hindcast (full archive)
+
+The figures above depict the **operational** regime — the genuine real-time
+forecast archive, which is thin, especially for the long-term horizons (e.g.
+month L0 operational n = 40). The `*_hindcast.png` figures below mirror them
+one-for-one but are computed on the **full historical hindcast archive
+(2000–2025)**, so their samples are far larger (e.g. month L0 hindcast n ≈ 7 081
+vs operational n = 40). This is the robust view, and for the long-term horizons
+(month / quarter / season) it is the one to trust; the operational figures above
+reflect the still-thin genuine real-time regime. Short-term horizons are already
+well-sampled operationally, so the hindcast panels there mainly confirm the
+operational picture on the longer archive. All hindcast figures are in the same
+directory (`doc/plans/working/forecast_skill_eval_figures/`, `_hindcast` suffix).
+There is no `fig3` hindcast variant — **fig3** is itself the
+operational-vs-hindcast contrast.
+
+- **fig1_performance_diagram_hindcast.png** — Roebber performance diagram
+  (success ratio vs POD) for all (h_label, model) combinations, **hindcast
+  regime**. Same encoding as `fig1_performance_diagram.png` (colour = base
+  horizon, marker shape = model), but every point rests on the full-archive
+  sample.
+
+- **fig1_day_hindcast.png / fig1_pentad_hindcast.png /
+  fig1_decade_hindcast.png** — per-horizon Roebber diagrams for each short-term
+  horizon, hindcast regime. Counterparts to the operational `fig1_{day,pentad,
+  decade}.png`.
+
+- **fig1_month_hindcast.png / fig1_quarter_hindcast.png /
+  fig1_season_hindcast.png** — per-horizon Roebber diagrams for each long-term
+  horizon, markers coloured by lead for month/season and by target quarter for
+  quarter (month L0–L3, quarter Q1–Q4, season L0–L3), hindcast regime. **These
+  are the robust long-term Roebber diagrams**: unlike
+  their operational counterparts (drawn from the thin genuine-2026 archive), they
+  are computed on the full hindcast archive and should be read as the reliable
+  long-term view.
+
+- **fig2_hss_heatmap_hindcast.png** — HSS heatmap, model × h_label, **hindcast
+  regime**. Same columns as `fig2_hss_heatmap.png`; the long-term columns here
+  are the robust full-archive estimate rather than the thin operational one.
+
+- **fig4_day_hindcast.png / fig4_pentad_hindcast.png /
+  fig4_decade_hindcast.png** — per-model POD (green) / FAR (red) bar charts for
+  each short-term horizon, hindcast regime. Same layout, family colour-coding and
+  climatology/persistence reference annotations as the operational `fig4_{day,
+  pentad,decade}.png`, computed on the full archive.
+
+- **fig4_month_hindcast.png / fig4_quarter_hindcast.png /
+  fig4_season_hindcast.png** — per-model POD / FAR faceted by lead for
+  month/season and by target quarter for quarter (month L0–L3, quarter Q1–Q4,
+  season L0–L3), **hindcast regime**. **The robust long-term
+  per-lead view**: these carry the full-archive samples the operational
+  `fig4_{month,quarter,season}.png` lack, so they are the ones to rely on for
+  long-term per-lead skill.
+
+- **fig5_persistence_vs_models_hindcast.png** — three-way skill ladder
+  (climatology ◀ persistence ◀ best skilled model, HSS per horizon), hindcast
+  regime. Counterpart to `fig5_persistence_vs_models.png` with long-term bars
+  drawn from the robust full-archive sample.
+
+- **fig6_season_pod_hindcast.png** — three-panel POD-with-Wilson-CI figure
+  (pentad / decade / month L0) across the three season cuts (non-irrigation /
+  all / irrigation), hindcast regime. Counterpart to `fig6_season_pod.png`; the
+  month L0 panel in particular is far better sampled here.
 
 ---
 
 ## Related documents
 
 - Planner prompt / locked requirements: `forecast_skill_eval_planner_prompt.md`
-- Run configuration: `apps/forecast_skill_eval/artifacts/rerun_2026-06-30/run_config.json`
-- Phase-2 artifacts: `apps/forecast_skill_eval/artifacts/rerun_2026-06-30_phase2/`
-  (canonical source; includes season column + persistence baseline)
+- Run configuration: `apps/forecast_skill_eval/artifacts/rerun_2026-07-03_corrected/run_config.json`
+- Corrected artifacts: `apps/forecast_skill_eval/artifacts/rerun_2026-07-03_corrected/`
+  (canonical source; short-term de-leaked + date-based long-term regime split +
+  LR issue→target repair; both thresholds `below_norm` 0.80 × norm and
+  `below_norm_100` 1.0 × norm, season column, persistence baseline, percentile /
+  probabilistic / value metrics)
 - Lead-aware figure script: `doc/plans/working/forecast_skill_eval_figures/make_figures.py`
-- Summary (auto-generated): `apps/forecast_skill_eval/artifacts/rerun_2026-06-30/summary.md`
+- Summary (auto-generated): `apps/forecast_skill_eval/artifacts/rerun_2026-07-03_corrected/summary.md`

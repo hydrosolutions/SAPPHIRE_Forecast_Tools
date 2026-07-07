@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Final, Literal
 
 import numpy as np
@@ -98,6 +99,7 @@ def read_lr_forecasts(
     start_date: str | None,
     end_date: str | None,
     limit: int = DEFAULT_PAGE_SIZE,
+    repair_issue_indexing: bool = False,
 ) -> ReaderResult:
     """Read LR forecasts and normalize them for the short-term pair path.
 
@@ -105,6 +107,11 @@ def read_lr_forecasts(
     linear_regression.py:925-933); date is the issue date; target := date+1
     recovers the target year only; period_key derives from horizon_in_year,
     never from date+1.
+
+    When ``repair_issue_indexing`` is True an optional, default-off repair-on-read
+    corrects historical issue-indexed LR pentad/decade forecasts to target-indexed
+    (see :func:`_repair_lr_issue_indexing`); the default (False) leaves the read
+    byte-identical.
     """
     normalized_horizon = normalize_horizon(horizon)
     data = _read_all_pages(
@@ -118,7 +125,11 @@ def read_lr_forecasts(
         ),
         limit=limit,
     )
-    data = _normalize_lr_forecasts(data)
+    data = _normalize_lr_forecasts(
+        data,
+        horizon=normalized_horizon,
+        repair_issue_indexing=repair_issue_indexing,
+    )
     data, dropped_sentinels = _drop_short_term_sentinels(data, normalized_horizon)
     enriched = _add_point_values(data, forecast_type="short")
     enriched = _add_quantile_band(enriched, forecast_type="short")
@@ -292,7 +303,12 @@ def _drop_short_term_sentinels(data: pd.DataFrame, horizon: str) -> tuple[pd.Dat
     return filtered, dropped_count
 
 
-def _normalize_lr_forecasts(data: pd.DataFrame) -> pd.DataFrame:
+def _normalize_lr_forecasts(
+    data: pd.DataFrame,
+    *,
+    horizon: str = "",
+    repair_issue_indexing: bool = False,
+) -> pd.DataFrame:
     normalized = data.copy()
     normalized["model"] = "LR"
     if "date" in normalized.columns:
@@ -300,6 +316,8 @@ def _normalize_lr_forecasts(data: pd.DataFrame) -> pd.DataFrame:
         normalized["target"] = issue_dates + pd.Timedelta(days=1)
     else:
         normalized["target"] = pd.Series(pd.NaT, index=normalized.index, dtype="datetime64[ns]")
+    if repair_issue_indexing and horizon in ("pentad", "decade"):
+        normalized = _repair_lr_issue_indexing(normalized, horizon)
     return normalized
 
 
@@ -351,3 +369,89 @@ def _add_long_calendar_periods(data: pd.DataFrame, horizon: str) -> pd.DataFrame
     enriched["calendar_period"] = [period[0] for period in periods]
     enriched["is_calendar_aligned"] = [period[1] for period in periods]
     return enriched
+
+
+# ---------------------------------------------------------------------------
+# LR issue-indexing repair-on-read helpers (optional, default off)
+#
+# Period conventions mirror apps/iEasyHydroForecast/tag_library.py
+# (get_pentad_in_year / get_decad_for_date).  Implemented locally to avoid a
+# cross-package import of iEasyHydroForecast.
+# ---------------------------------------------------------------------------
+
+
+def _pentad_of_year(d: date) -> int:
+    """Return the 1..72 pentad-of-year index for a calendar date.
+
+    Convention (tag_library.py get_pentad_in_year): days 1-5 -> 1, 6-10 -> 2,
+    ... 26-end -> 6 within each month; pentad_of_year = (month - 1) * 6 + pentad.
+    """
+    pentad_in_month = min((d.day - 1) // 5 + 1, 6)
+    return (d.month - 1) * 6 + pentad_in_month
+
+
+def _decad_of_year(d: date) -> int:
+    """Return the 1..36 decad-of-year index for a calendar date.
+
+    Convention (tag_library.py get_decad_for_date): day <= 10 -> 1, <= 20 -> 2,
+    else 3 within each month; decad_of_year = (month - 1) * 3 + decad.
+    """
+    decad_in_month = 1 if d.day <= 10 else 2 if d.day <= 20 else 3
+    return (d.month - 1) * 3 + decad_in_month
+
+
+def _issue_period_of_year(d: date, horizon: str) -> int:
+    """Dispatch to the pentad/decad in-year period index for the given horizon."""
+    if horizon == "pentad":
+        return _pentad_of_year(d)
+    return _decad_of_year(d)
+
+
+def _repair_lr_issue_indexing(data: pd.DataFrame, horizon: str) -> pd.DataFrame:
+    """Remap issue-indexed LR pentad/decade forecasts to target-indexed.
+
+    Historical (pre-2024) LR short-term forecasts store ``horizon_in_year`` as the
+    ISSUE period; new forecasts are already target-indexed, so the DB is a mix.
+    Detection is bimodal: for an LR row with issue date ``D`` and stored period
+    ``H``, if ``H`` equals the issue period computed from ``D`` the row is
+    issue-indexed and is remapped to ``issue_period + 1`` (with wrap 72->1 /
+    36->1).  Every other case (already target-indexed, sentinel, uncomputable) is
+    left completely unchanged.
+
+    Args:
+        data: Normalized LR frame (must retain the raw ``date`` and
+            ``horizon_in_year`` columns).
+        horizon: ``"pentad"`` or ``"decade"``.
+
+    Returns:
+        A copy of ``data`` with only the issue-indexed rows remapped.
+    """
+    if data.empty or "horizon_in_year" not in data.columns or "date" not in data.columns:
+        return data
+
+    period_max = 72 if horizon == "pentad" else 36
+    periods_per_month = 6 if horizon == "pentad" else 3
+
+    repaired = data.copy()
+    for idx in repaired.index:
+        issue_date = pd.to_datetime(repaired.at[idx, "date"], errors="coerce")
+        h_value = pd.to_numeric(repaired.at[idx, "horizon_in_year"], errors="coerce")
+        if pd.isna(issue_date) or pd.isna(h_value):
+            continue
+        issue_period = _issue_period_of_year(issue_date.date(), horizon)
+        h_int = int(h_value)
+        # Only issue-indexed rows (H == issue period) are remapped; this cleanly
+        # leaves already-target-indexed rows, sentinels, and anything else alone.
+        if h_int != issue_period:
+            continue
+        # WRAP: pentad 72 / decade 36 -> period 1 of the next year.
+        target = 1 if issue_period == period_max else issue_period + 1
+        repaired.at[idx, "horizon_in_year"] = target
+        if "horizon_value" in repaired.columns:
+            repaired.at[idx, "horizon_value"] = ((target - 1) % periods_per_month) + 1
+        if issue_period == period_max:
+            # WRAP: the target period (pentad 1 / decade 1) lives in issue_year + 1.
+            # Downstream only reads the YEAR of `target` (_year_or_none), so set the
+            # cell to Jan 1 of the following year to carry the correct target year.
+            repaired.at[idx, "target"] = pd.Timestamp(year=issue_date.year + 1, month=1, day=1)
+    return repaired

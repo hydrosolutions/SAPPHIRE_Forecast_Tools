@@ -520,9 +520,11 @@ def _prob_metrics_section(prob_metrics: pd.DataFrame) -> list[str]:
     if "event" in prob_metrics.columns:
         n_dist = int((prob_metrics["event"] == "distribution").sum())
         n_brier = int((prob_metrics["event"] == "below_norm").sum())
+        n_brier_100 = int((prob_metrics["event"] == "below_norm_100").sum())
     else:
         n_dist = len(prob_metrics)
         n_brier = 0
+        n_brier_100 = 0
 
     grid_ids: list[str] = []
     if "fc_grid_id" in prob_metrics.columns:
@@ -530,6 +532,8 @@ def _prob_metrics_section(prob_metrics: pd.DataFrame) -> list[str]:
 
     lines.append(f"Distribution score rows: {n_dist}")
     lines.append(f"Below-norm Brier rows: {n_brier}")
+    if n_brier_100 > 0:
+        lines.append(f"Below-norm (1.0x norm) Brier rows: {n_brier_100}")
     if grid_ids:
         lines.append(f"Forecast grids scored: {', '.join(grid_ids)}")
     lines.append(

@@ -94,6 +94,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-years", type=int, default=10)
     parser.add_argument("--operational-start", default="2024-01-01")
     parser.add_argument(
+        "--regime-source",
+        choices=["auto", "flag", "date"],
+        default="auto",
+        help=(
+            "Regime selection strategy. 'auto' (default) auto-picks flags when "
+            "flag presence is meaningful, else issue date; 'flag' forces "
+            "flag-based assignment; 'date' forces issue-date-based assignment."
+        ),
+    )
+    parser.add_argument(
         "--operational-flags",
         nargs="+",
         default=list(DEFAULT_OPERATIONAL_FLAGS),
@@ -132,7 +142,8 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Binary events to evaluate. "
             "Valid values: below_norm low_p10 low_p5 high_p90 high_p95. "
-            "Default: all five events."
+            "Default: all five events. "
+            "Optional: below_norm_100 (plain below-norm at 1.0x norm)."
         ),
     )
     parser.add_argument(
@@ -145,11 +156,53 @@ def _parser() -> argparse.ArgumentParser:
             "'irrigation' restricts to Apr–Sep, 'non_irrigation' restricts to Oct–Mar."
         ),
     )
+    parser.add_argument(
+        "--short-term-issue-before-target",
+        action="store_true",
+        help=(
+            "Short-term correctness gate (default off): drop day/pentad/decade "
+            "forecasts issued on or after their target period start (leakage / "
+            "mislabelled rows)."
+        ),
+    )
+    parser.add_argument(
+        "--short-term-dedup-one-per-target",
+        action="store_true",
+        help=(
+            "Short-term correctness gate (default off): keep only the latest "
+            "issue per (code, period_key, year, model) for day/pentad/decade."
+        ),
+    )
+    parser.add_argument(
+        "--short-term-lr-repair",
+        action="store_true",
+        help=(
+            "LR repair-on-read (default off): correct historical issue-indexed LR "
+            "pentad/decade forecasts to target-indexed at read time."
+        ),
+    )
+    parser.add_argument(
+        "--long-term-derive-lead",
+        action="store_true",
+        help=(
+            "Long-term correctness gate (default off): for quarter/season, derive "
+            "the true forecast lead (months from issue date to target-period start) "
+            "instead of the overloaded stored horizon_value, dedup to one forecast "
+            "per (code, target, year, model) at the smallest lead, and stratify "
+            "quarter output per target quarter (Q1–Q4). Month is unchanged."
+        ),
+    )
     parser.add_argument("--run-id")
     return parser
 
 
 def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
+    # SAPPHIRE_SKILL_FORECAST_ONLY=1/true turns BOTH short-term correctness gates
+    # on, mirroring the existing SAPPHIRE_SKILL_* env-flag convention.  The CLI
+    # flags are OR-ed with it so either mechanism can enable a gate.
+    forecast_only = _env_flag("SAPPHIRE_SKILL_FORECAST_ONLY")
+    lr_repair = _env_flag("SAPPHIRE_SKILL_LR_REPAIR")
+    lt_lead = _env_flag("SAPPHIRE_SKILL_LT_LEAD")
     return ForecastSkillEvalConfig(
         base_url=args.base_url,
         threshold=args.threshold,
@@ -162,6 +215,7 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         provenance_by_horizon=_provenance_overrides(args.provenance),
         min_years=args.min_years,
         operational_start=args.operational_start,
+        regime_source=args.regime_source,
         operational_flags=_split_int_values(args.operational_flags),
         hindcast_flags=_split_int_values(args.hindcast_flags),
         nan_exclude_flags=_split_int_values(args.nan_exclude_flags),
@@ -169,7 +223,19 @@ def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
         operational_issue_days=_split_int_values(args.operational_issue_days),
         events_filter=_split_values(args.events_filter),
         season_filter=args.season_filter,
+        short_term_issue_before_target=(bool(args.short_term_issue_before_target) or forecast_only),
+        short_term_dedup_one_per_target=(
+            bool(args.short_term_dedup_one_per_target) or forecast_only
+        ),
+        short_term_lr_repair_issue_indexing=(bool(args.short_term_lr_repair) or lr_repair),
+        long_term_derive_lead=(bool(args.long_term_derive_lead) or lt_lead),
     )
+
+
+def _env_flag(name: str) -> bool:
+    import os
+
+    return os.environ.get(name, "").strip().lower() in {"1", "true"}
 
 
 def _split_optional_values(values: Sequence[str] | None) -> list[str] | None:

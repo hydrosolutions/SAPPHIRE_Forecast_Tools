@@ -219,6 +219,92 @@ def test_orchestrator_skips_failed_horizon_and_continues(
     assert bundle.exclusion_ledger.counts_by_stage_reason() == {("horizon", "horizon_error"): 1}
 
 
+# ---------------------------------------------------------------------------
+# Norm-factor event: below_norm_100 in the contingency pipeline
+# ---------------------------------------------------------------------------
+
+
+def _below_norm_pairs() -> pd.DataFrame:
+    """Build a small pentad pairs frame classified at 0.80 × norm (norm=10)."""
+    rows = []
+    specs = [(9.0, 9.0), (9.0, 5.0), (5.0, 5.0), (9.0, 12.0)]
+    for i, (fc, obs) in enumerate(specs):
+        fc_class = "below" if fc < 8.0 else "normal"
+        obs_class = "below" if obs < 8.0 else "normal"
+        if fc_class == "below" and obs_class == "below":
+            cont = "TP"
+        elif fc_class == "below":
+            cont = "FP"
+        elif obs_class == "below":
+            cont = "FN"
+        else:
+            cont = "TN"
+        rows.append(
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "basin": "other",
+                "period_key": 1,
+                "year": 2010 + i,
+                "model": "model-a",
+                "regime": "hindcast",
+                "season": "irrigation",
+                "lead": None,
+                "issue_date": None,
+                "forecast_value": fc,
+                "observed_value": obs,
+                "norm": 10.0,
+                "norm_provenance": "calculated",
+                "fc_class": fc_class,
+                "obs_class": obs_class,
+                "contingency": cont,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_compute_event_contingencies_includes_below_norm_100_when_requested() -> None:
+    """With both events requested, both appear and share identical n_pairs per group,
+    while below_norm rows are unchanged vs a below_norm-only run."""
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _below_norm_pairs()
+
+    both = _compute_event_contingencies(pairs, {}, ("below_norm", "below_norm_100"))
+    bn_only = _compute_event_contingencies(pairs, {}, ("below_norm",))
+
+    # Both events present in the combined output.
+    assert set(both["event"].unique()) == {"below_norm", "below_norm_100"}
+
+    group_keys = [
+        "horizon",
+        "model",
+        "regime",
+        "season",
+        "code",
+        "basin",
+        "norm_provenance",
+        "lead",
+    ]
+
+    bn_rows = both[both["event"] == "below_norm"].reset_index(drop=True)
+    bn100_rows = both[both["event"] == "below_norm_100"].reset_index(drop=True)
+
+    # Identical n_pairs per matching group (same row set, differing only in split).
+    merged = bn_rows.merge(
+        bn100_rows,
+        on=group_keys,
+        suffixes=("_bn", "_bn100"),
+        how="inner",
+    )
+    assert len(merged) == len(bn_rows)
+    assert (merged["n_pairs_bn"] == merged["n_pairs_bn100"]).all()
+
+    # below_norm rows are byte-identical whether or not below_norm_100 is requested.
+    bn_only_rows = bn_only[bn_only["event"] == "below_norm"].reset_index(drop=True)
+    pd.testing.assert_frame_equal(bn_rows, bn_only_rows)
+
+
 def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object]]:
     rows = []
     day = date(year, month, 1)
@@ -550,3 +636,90 @@ def test_value_flag_truthiness_accepts_true_string(
     assert not bundle.continuous_metrics.empty, (
         "SAPPHIRE_SKILL_VALUE='true' must enable value metrics"
     )
+
+
+# ---------------------------------------------------------------------------
+# P1b: below_norm_100 full-parity (economic value / baselines / prob) invariant
+# ---------------------------------------------------------------------------
+
+
+def _band_client(fake_client_factory):
+    return fake_client_factory(
+        forecasts_rows=[_FORECAST_WITH_BAND],
+        runoff_rows=[_RUNOFF_PENTAD],
+        hydrograph_rows=[_HYDROGRAPH_PENTAD],
+    )
+
+
+def test_economic_value_includes_below_norm_100_when_requested(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SAPPHIRE_SKILL_VALUE", "1")
+    config = ForecastSkillEvalConfig(
+        horizons=["pentad"],
+        station_filter=[STATION_CODE],
+        events_filter=("below_norm", "below_norm_100"),
+    )
+    bundle = run(config, _band_client(fake_client_factory), run_id="ev-100")
+
+    assert {"below_norm", "below_norm_100"} <= set(bundle.economic_value["event"].unique())
+    assert {"below_norm", "below_norm_100"} <= set(bundle.economic_value_summary["event"].unique())
+    # 0.80 rows are ordered first (deterministic).
+    events_in_order = bundle.economic_value["event"].tolist()
+    first_100 = events_in_order.index("below_norm_100")
+    assert all(e == "below_norm" for e in events_in_order[:first_100])
+
+
+def test_below_norm_100_is_purely_additive_across_all_frames(
+    fake_client_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ABSOLUTE INVARIANT: adding below_norm_100 leaves the below_norm slice
+    of every output frame (contingency, prob, economic value + summary,
+    baselines) byte-identical to a below_norm-only run."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_PROB", "1")
+    monkeypatch.setenv("SAPPHIRE_SKILL_VALUE", "1")
+
+    only = run(
+        ForecastSkillEvalConfig(
+            horizons=["pentad"],
+            station_filter=[STATION_CODE],
+            events_filter=("below_norm",),
+        ),
+        _band_client(fake_client_factory),
+        run_id="only",
+    )
+    both = run(
+        ForecastSkillEvalConfig(
+            horizons=["pentad"],
+            station_filter=[STATION_CODE],
+            events_filter=("below_norm", "below_norm_100"),
+        ),
+        _band_client(fake_client_factory),
+        run_id="both",
+    )
+
+    def _bn(df: pd.DataFrame) -> pd.DataFrame:
+        return df[df["event"] == "below_norm"].reset_index(drop=True)
+
+    def _nonfactor_prob(df: pd.DataFrame) -> pd.DataFrame:
+        return df[df["event"].isin(["distribution", "below_norm"])].reset_index(drop=True)
+
+    # Byte-identical below_norm slice across all four frame families.
+    pd.testing.assert_frame_equal(_bn(only.contingency_metrics), _bn(both.contingency_metrics))
+    pd.testing.assert_frame_equal(_bn(only.baselines), _bn(both.baselines))
+    pd.testing.assert_frame_equal(_bn(only.economic_value), _bn(both.economic_value))
+    pd.testing.assert_frame_equal(
+        _bn(only.economic_value_summary), _bn(both.economic_value_summary)
+    )
+    pd.testing.assert_frame_equal(
+        _nonfactor_prob(only.prob_metrics), _nonfactor_prob(both.prob_metrics)
+    )
+
+    # And the both-run actually carries the new below_norm_100 rows everywhere.
+    assert "below_norm_100" in set(both.contingency_metrics["event"])
+    assert "below_norm_100" in set(both.baselines["event"])
+    assert "below_norm_100" in set(both.economic_value["event"])
+    assert "below_norm_100" in set(both.economic_value_summary["event"])
+    assert "below_norm_100" in set(both.prob_metrics["event"])

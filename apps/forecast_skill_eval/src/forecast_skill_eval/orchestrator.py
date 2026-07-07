@@ -27,8 +27,10 @@ from forecast_skill_eval.economic_value import (
     compute_economic_value,
 )
 from forecast_skill_eval.events import (
+    _NORM_FACTOR_EVENTS,
     ALL_EVENTS,
     compute_percentile_thresholds,
+    event_by_name,
     reclassify_pairs_for_event,
 )
 from forecast_skill_eval.ledger import ExclusionLedger
@@ -162,6 +164,24 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
         ]
     )
 
+    # Additive 1.0 × norm baseline set (opt-in, tagged event="below_norm_100").
+    # Built from pairs reclassified at value < 1.0 × norm; the existing 0.80
+    # rows (tagged event="below_norm") are unchanged and ordered first.
+    if "below_norm_100" in config.events_filter:
+        event_100 = event_by_name("below_norm_100")
+        pairs_100 = reclassify_pairs_for_event(all_pairs, event_100, thresholds)
+        if not pairs_100.empty:
+            baselines = _concat_baselines(
+                [
+                    baselines,
+                    build_climatology_baseline(pairs_100, event=event_100.name),
+                    build_operational_proxy_baseline(pairs_100, event=event_100.name),
+                    build_persistence_baseline(
+                        pairs_100, threshold=float(event_100.factor), event=event_100.name
+                    ),
+                ]
+            )
+
     if os.environ.get("SAPPHIRE_SKILL_PROB", "").lower() in {"1", "true"}:
         clim_ref = precompute_climatology_crps(all_pairs)
         persist_ref = precompute_persistence_crps(all_pairs)
@@ -172,6 +192,9 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
             config.events_filter,
             threshold=float(config.threshold),
             persist_ref=persist_ref,
+            norm_factor_events=tuple(
+                event for event in _NORM_FACTOR_EVENTS if event.name in config.events_filter
+            ),
         )
         prob_reliability = build_prob_reliability(all_pairs)
         for code, _horizon in _bandless_groups(all_pairs):
@@ -190,6 +213,17 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
             all_pairs, ledger=merged_ledger
         )
         economic_value, economic_value_summary = compute_economic_value(contingency)
+        # Additive 1.0 × norm REV (opt-in).  The contingency frame already holds
+        # below_norm_100 rows (from _compute_event_contingencies), so this is a
+        # second read of the same frame filtered to that event.  0.80 rows first.
+        if "below_norm_100" in config.events_filter:
+            long_100, summary_100 = compute_economic_value(contingency, event="below_norm_100")
+            if not long_100.empty:
+                economic_value = pd.concat([economic_value, long_100], ignore_index=True)
+            if not summary_100.empty:
+                economic_value_summary = pd.concat(
+                    [economic_value_summary, summary_100], ignore_index=True
+                )
         for code in _starved_value_groups(continuous_metrics):
             merged_ledger.add(stage="value", reason="min_pairs_gate", code=code)
     else:
@@ -245,7 +279,7 @@ def _compute_event_contingencies(
     events_set = frozenset(events_filter)
     frames: list[pd.DataFrame] = []
 
-    for event in ALL_EVENTS:
+    for event in (*ALL_EVENTS, *_NORM_FACTOR_EVENTS):
         if event.name not in events_set:
             continue
         event_pairs = reclassify_pairs_for_event(pairs, event, thresholds)

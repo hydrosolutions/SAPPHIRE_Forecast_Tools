@@ -32,6 +32,7 @@ from forecast_skill_eval.contingency import (
     ALL_SEASON,
     POOLED_CODE,
 )
+from forecast_skill_eval.events import EventDef, reclassify_pairs_for_event
 from forecast_skill_eval.metrics import _wilson_interval
 from forecast_skill_eval.periods import LONG_TERM_HORIZONS
 from forecast_skill_eval.regimes import ALL_REGIME
@@ -585,6 +586,7 @@ def compute_probabilistic_metrics(
     *,
     threshold: float = 0.80,
     persist_ref: dict | None = None,
+    norm_factor_events: tuple[EventDef, ...] = (),
 ) -> pd.DataFrame:
     """Score pairs and aggregate across the same 8-key slice structure as
     count_contingencies (POOLED + per-code; per-lead for long-term).
@@ -608,6 +610,13 @@ def compute_probabilistic_metrics(
         threshold: Below-norm threshold fraction (mirrors classifier.classify).
         persist_ref: Optional persistence reference.  Maps
             (code, horizon, period_key, year) → lag1_observed_value.
+        norm_factor_events: Optional tuple of norm-factor :class:`EventDef`
+            (e.g. ``below_norm_100`` at ``factor=1.0``).  Default ``()`` →
+            behaviour byte-identical to the pre-P1b pass.  For each event whose
+            name is in *events_filter*, the pairs are reclassified at
+            ``value < factor * norm``, re-scored at ``threshold=factor``, and an
+            additional set of Brier-only rows tagged ``event=<name>`` is emitted
+            (NO extra distribution rows — those are threshold-independent).
 
     Returns:
         DataFrame with ``PROB_METRIC_COLUMNS``.
@@ -620,23 +629,28 @@ def compute_probabilistic_metrics(
     # Attach crps_clim and crps_persist per row.
     scored = _attach_reference_crps(scored, clim_ref, persist_ref)
 
-    frames: list[pd.DataFrame] = []
     working = _ensure_group_columns(scored)
+    frames: list[pd.DataFrame] = _reduce_scopes(working, events_filter)
 
-    for basin, basin_frame in _basin_slices(working):
-        for provenance, prov_frame in _provenance_slices(basin_frame):
-            for regime, regime_frame in _regime_slices(prov_frame):
-                for season, season_frame in _season_slices(regime_frame):
-                    frames.extend(
-                        _metric_scopes(
-                            season_frame,
-                            basin,
-                            provenance,
-                            regime,
-                            season,
-                            events_filter=events_filter,
-                        )
-                    )
+    # Additive norm-factor Brier passes (opt-in, e.g. below_norm_100).  Each
+    # emits Brier-only rows scored at the event's factor and tagged with the
+    # event name; distribution rows are NOT duplicated.
+    for event in norm_factor_events:
+        if event.name not in events_filter:
+            continue
+        pairs_f = reclassify_pairs_for_event(pairs, event, thresholds)
+        if pairs_f.empty:
+            continue
+        scored_f = _score_pairs(pairs_f, threshold=float(event.factor))
+        working_f = _ensure_group_columns(scored_f)
+        frames.extend(
+            _reduce_scopes(
+                working_f,
+                events_filter,
+                brier_only=True,
+                event_label=event.name,
+            )
+        )
 
     if not frames:
         return pd.DataFrame(columns=PROB_METRIC_COLUMNS)
@@ -721,6 +735,38 @@ def _ensure_group_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _reduce_scopes(
+    working: pd.DataFrame,
+    events_filter: tuple[str, ...],
+    *,
+    brier_only: bool = False,
+    event_label: str = "below_norm",
+) -> list[pd.DataFrame]:
+    """Run the basin/provenance/regime/season slice reducer over *working*.
+
+    ``brier_only`` / ``event_label`` are threaded to :func:`_metric_scopes` so
+    a norm-factor pass can emit Brier-only rows tagged with the event name.
+    """
+    frames: list[pd.DataFrame] = []
+    for basin, basin_frame in _basin_slices(working):
+        for provenance, prov_frame in _provenance_slices(basin_frame):
+            for regime, regime_frame in _regime_slices(prov_frame):
+                for season, season_frame in _season_slices(regime_frame):
+                    frames.extend(
+                        _metric_scopes(
+                            season_frame,
+                            basin,
+                            provenance,
+                            regime,
+                            season,
+                            events_filter=events_filter,
+                            brier_only=brier_only,
+                            event_label=event_label,
+                        )
+                    )
+    return frames
+
+
 def _metric_scopes(
     frame: pd.DataFrame,
     basin: str,
@@ -728,6 +774,8 @@ def _metric_scopes(
     regime: str,
     season: str,
     events_filter: tuple[str, ...],
+    brier_only: bool = False,
+    event_label: str = "below_norm",
 ) -> list[pd.DataFrame]:
     frames: list[pd.DataFrame] = []
     for horizon, h_frame in frame.groupby("horizon", dropna=False, sort=True):
@@ -746,20 +794,22 @@ def _metric_scopes(
 
                 code_val = POOLED_CODE if pooled else str(key_dict.get("code", ""))
 
-                dist_row = _aggregate_distribution(
-                    g_frame,
-                    horizon=str(horizon),
-                    model=str(key_dict.get("model", "")),
-                    regime=regime,
-                    season=season,
-                    code=code_val,
-                    basin=basin,
-                    norm_provenance=provenance,
-                    lead=key_dict.get("lead") if is_long else None,
-                )
-                frames.append(pd.DataFrame([dist_row]))
+                if not brier_only:
+                    dist_row = _aggregate_distribution(
+                        g_frame,
+                        horizon=str(horizon),
+                        model=str(key_dict.get("model", "")),
+                        regime=regime,
+                        season=season,
+                        code=code_val,
+                        basin=basin,
+                        norm_provenance=provenance,
+                        lead=key_dict.get("lead") if is_long else None,
+                    )
+                    frames.append(pd.DataFrame([dist_row]))
 
-                if "below_norm" in events_filter:
+                emit_brier = brier_only or (event_label in events_filter)
+                if emit_brier:
                     brier_row = _aggregate_brier(
                         g_frame,
                         horizon=str(horizon),
@@ -770,6 +820,7 @@ def _metric_scopes(
                         basin=basin,
                         norm_provenance=provenance,
                         lead=key_dict.get("lead") if is_long else None,
+                        event=event_label,
                     )
                     frames.append(pd.DataFrame([brier_row]))
 
@@ -791,6 +842,50 @@ def _crpss(crps_fc: float, crps_ref: float) -> float:
     return 1.0 - crps_fc / crps_ref
 
 
+def _crpss_paired(crps: pd.Series, crps_ref: pd.Series) -> float:
+    """CRPSS over the paired finite subset of forecast and reference CRPS.
+
+    The skill-score numerator and denominator means are taken over the SAME
+    rows (``crps.notna() & crps_ref.notna()``) so a reference CRPS that is
+    missing for some pairs cannot bias the ratio (CORE-5).  Returns NaN when the
+    intersection is empty.
+    """
+    mask = crps.notna() & crps_ref.notna()
+    if not bool(mask.any()):
+        return math.nan
+    fc_mean = float(crps[mask].mean())
+    ref_mean = float(crps_ref[mask].mean())
+    return _crpss(fc_mean, ref_mean)
+
+
+def _rank_calibration_error(rank_vals: pd.Series) -> float:
+    """Cramér–von-Mises / KS-style PIT calibration divergence (CORE-4).
+
+    Returns the mean absolute deviation between the sorted empirical rank (PIT)
+    values and their expected Uniform(0, 1) quantiles ``(i - 0.5) / n``.  The
+    statistic is 0 only when the ranks are perfectly uniform (calibrated); both
+    over-dispersion (ranks clumped near 0.5) and under-dispersion (ranks piled at
+    0/1) yield a clearly positive value.
+
+    This replaces the previous ``mean|rank - 0.5|``, which equalled 0.25 for a
+    perfectly calibrated Uniform PIT and rewarded over-dispersion.
+
+    Args:
+        rank_vals: Per-pair rank/PIT values in [0, 1]; NaNs are dropped.
+
+    Returns:
+        Calibration divergence >= 0 (0 = calibrated), or NaN when no finite
+        ranks remain.
+    """
+    vals = rank_vals.dropna()
+    n_r = len(vals)
+    if n_r == 0:
+        return math.nan
+    sorted_ranks = np.sort(vals.to_numpy(dtype=float))
+    expected = (np.arange(1, n_r + 1) - 0.5) / n_r
+    return float(np.abs(sorted_ranks - expected).mean())
+
+
 def _aggregate_distribution(
     frame: pd.DataFrame,
     *,
@@ -806,9 +901,16 @@ def _aggregate_distribution(
     n = len(frame)
     grid_id = str(frame["fc_grid_id"].iloc[0]) if "fc_grid_id" in frame.columns else ""
 
+    # Reported means use every available sample (dropping only their own NaNs).
     crps_mean = _nan_mean(frame["crps"])
     crps_clim_mean = _nan_mean(frame["crps_clim"])
     crps_persist_mean = _nan_mean(frame["crps_persist"])
+
+    # Skill scores use the PAIRED finite subset so numerator and denominator are
+    # averaged over the same rows — an unbiased ratio even when the reference
+    # CRPS is missing for some pairs (CORE-5).
+    crpss = _crpss_paired(frame["crps"], frame["crps_clim"])
+    crpss_persist = _crpss_paired(frame["crps"], frame["crps_persist"])
 
     # Coverage at 50%, 80%, 90%
     cov_50 = _nan_mean(frame["hit_50"]) if "hit_50" in frame.columns else math.nan
@@ -827,11 +929,12 @@ def _aggregate_distribution(
     rel_90 = abs(cov_90 - 0.90) if math.isfinite(cov_90) else math.nan
 
     # Rank stats
-    rank_vals = frame["rank"].dropna() if "rank" in frame.columns else pd.Series(dtype=float)
+    rank_series = frame["rank"] if "rank" in frame.columns else pd.Series(dtype=float)
+    rank_vals = rank_series.dropna()
     rank_mean = float(rank_vals.mean()) if len(rank_vals) > 0 else math.nan
     rank_var = float(rank_vals.var()) if len(rank_vals) > 1 else math.nan
-    # Calibration error: mean |rank - uniform_mean| (uniform mean = 0.5)
-    rank_cal_err = float((rank_vals - 0.5).abs().mean()) if len(rank_vals) > 0 else math.nan
+    # Calibration error: Cramér–von-Mises / KS-style PIT divergence (0 = calibrated).
+    rank_cal_err = _rank_calibration_error(rank_series)
 
     return {
         "horizon": horizon,
@@ -847,9 +950,9 @@ def _aggregate_distribution(
         "n_pairs": n,
         "crps": crps_mean,
         "crps_clim": crps_clim_mean,
-        "crpss": _crpss(crps_mean, crps_clim_mean),
+        "crpss": crpss,
         "crps_persist": crps_persist_mean,
-        "crpss_persist": _crpss(crps_mean, crps_persist_mean),
+        "crpss_persist": crpss_persist,
         "coverage_50": cov_50,
         "coverage_80": cov_80,
         "coverage_90": cov_90,
@@ -892,15 +995,39 @@ def _aggregate_brier(
     basin: str,
     norm_provenance: str,
     lead: object,
+    event: str = "below_norm",
 ) -> dict:
-    """Aggregate below_norm Brier scores for a group."""
-    n = len(frame)
+    """Aggregate below-norm Brier scores for a group, tagged with *event*.
+
+    ``below_norm_prob`` and ``obs_class`` in *frame* are already threshold-
+    specific (scored at the event's factor), so this reducer is reused verbatim
+    for the 0.80 × norm (``event="below_norm"``) and 1.0 × norm
+    (``event="below_norm_100"``) passes.
+
+    The emitted ``n_pairs`` is the band-valid count — the number of pairs with a
+    finite ``below_norm_prob`` (a >=2-node band) — which is exactly the sample
+    the Brier mean and the climatology base_rate are computed over (CORE-6).  It
+    is therefore <= ``len(frame)`` and may differ from the distribution row's
+    ``n_pairs``.
+    """
     grid_id = str(frame["fc_grid_id"].iloc[0]) if "fc_grid_id" in frame.columns else ""
+
+    # Band-valid subset = pairs with a finite below_norm_prob (i.e. a >=2-node
+    # band).  This is the ACTUAL Brier sample, so n_pairs, brier_mean and the
+    # climatology base_rate are all computed over it — the Brier row is then
+    # internally consistent (CORE-6).  n_pairs here is therefore the band-valid
+    # count, NOT len(frame).
+    if "below_norm_prob" in frame.columns:
+        band_valid = pd.to_numeric(frame["below_norm_prob"], errors="coerce").notna()
+    else:
+        band_valid = pd.Series(False, index=frame.index)
+    band_frame = frame[band_valid]
+    n = int(band_valid.sum())
 
     # Compute Brier score per pair: need below_norm_prob and observed event
     brier_vals: list[float] = []
 
-    for row in frame.to_dict("records"):
+    for row in band_frame.to_dict("records"):
         fc_prob = row.get("below_norm_prob", math.nan)
         obs_class = row.get("obs_class")
         # obs_class == "below" means the event occurred
@@ -917,9 +1044,10 @@ def _aggregate_brier(
 
     brier_mean = float(np.mean(brier_vals)) if brier_vals else math.nan
 
-    # Climatology Brier reference (base rate × (1 - base_rate))
-    if "obs_class" in frame.columns:
-        obs_classes = frame["obs_class"].dropna()
+    # Climatology Brier reference (base rate × (1 - base_rate)), base_rate taken
+    # over the SAME band-valid subset used for brier_mean (CORE-6).
+    if "obs_class" in band_frame.columns:
+        obs_classes = band_frame["obs_class"].dropna()
         base_rate = float((obs_classes == "below").mean()) if len(obs_classes) > 0 else math.nan
         brier_clim = base_rate * (1.0 - base_rate) if math.isfinite(base_rate) else math.nan
     else:
@@ -941,7 +1069,7 @@ def _aggregate_brier(
         "basin": basin,
         "norm_provenance": norm_provenance,
         "lead": lead,
-        "event": "below_norm",
+        "event": event,
         "fc_grid_id": grid_id,
         "n_pairs": n,
         # NaN for distribution columns in below_norm rows

@@ -74,6 +74,29 @@ class ForecastSkillEvalConfig:
     operational_issue_days: Sequence[int] = DEFAULT_OPERATIONAL_ISSUE_DAYS
     events_filter: Sequence[str] = DEFAULT_EVENTS
     season_filter: str = "all"
+    regime_source: str = "auto"
+    # Short-term (day/pentad/decade) forecast-pairing correctness gates.
+    # Both default False so the default pairing behaviour is byte-identical.
+    #   * short_term_issue_before_target: drop short-term forecasts issued on or
+    #     after their target period start (observation leakage / mislabelled rows).
+    #   * short_term_dedup_one_per_target: keep only the latest genuine pre-period
+    #     issue per (code, period_key, year, model) for short-term horizons.
+    short_term_issue_before_target: bool = False
+    short_term_dedup_one_per_target: bool = False
+    #   * short_term_lr_repair_issue_indexing: correct historical issue-indexed LR
+    #     pentad/decade forecasts to target-indexed at read time.  Default False so
+    #     the default read behaviour is byte-identical.
+    short_term_lr_repair_issue_indexing: bool = False
+    # Long-term (quarter/season) lead-handling correctness gate.  Default False so
+    # the default long-term pairing behaviour is byte-identical.
+    #   * long_term_derive_lead: for quarter/season forecasts, derive the true
+    #     forecast lead (months from issue date to target-period start) instead of
+    #     using the overloaded stored ``horizon_value`` (quarter-of-year / constant
+    #     1).  Under the flag, quarter/season pairs are also deduped to one forecast
+    #     per (code, period_key, year, model) keeping the smallest derived lead, and
+    #     the quarter ``lead`` output is set to the target quarter (period_key) so
+    #     contingency stratifies per target quarter (Q1–Q4).  Month is unchanged.
+    long_term_derive_lead: bool = False
 
     def __post_init__(self) -> None:
         if not self.base_url:
@@ -130,6 +153,7 @@ class ForecastSkillEvalConfig:
             tuple(self.events_filter),
         )
         _validate_season_filter(self.season_filter)
+        _validate_regime_source(self.regime_source)
 
 
 def _freeze_optional_strings(values: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -194,6 +218,14 @@ _VALID_SEASON_FILTERS: Final = ("all", "irrigation", "non_irrigation")
 def _validate_season_filter(value: str) -> None:
     if value not in _VALID_SEASON_FILTERS:
         raise ValueError(f"season_filter must be one of {_VALID_SEASON_FILTERS!r}, got {value!r}")
+
+
+_VALID_REGIME_SOURCES: Final = ("auto", "flag", "date")
+
+
+def _validate_regime_source(value: str) -> None:
+    if value not in _VALID_REGIME_SOURCES:
+        raise ValueError(f"regime_source must be one of {_VALID_REGIME_SOURCES!r}, got {value!r}")
 
 
 def _validate_events_filter(events: Sequence[str]) -> None:

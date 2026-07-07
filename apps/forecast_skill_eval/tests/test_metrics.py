@@ -36,12 +36,30 @@ def test_zero_denominators_emit_nan_and_undefined_flags() -> None:
     assert metrics["far_ci_undefined"] is True
 
 
-def test_hss_and_pss_are_undefined_when_observed_positives_are_zero() -> None:
+def test_pss_is_undefined_when_observed_positives_are_zero() -> None:
     metrics = metrics_from_counts({"TP": 0, "FP": 1, "FN": 0, "TN": 4})
 
-    assert math.isnan(metrics["hss"])
-    assert metrics["hss_undefined"] is True
     assert math.isnan(metrics["pss"])
     assert metrics["pss_undefined"] is True
     assert metrics["far"] == pytest.approx(1.0)
     assert metrics["pofd"] == pytest.approx(0.2)
+
+
+def test_hss_is_zero_when_zero_observed_events_but_denominator_finite() -> None:
+    # CORE-3: TP+FN == 0 with FP>0 and TN>0 → finite denominator, genuine HSS=0.
+    # TP=0,FP=1,FN=0,TN=16: denominator = 0*16 + 1*17 = 17, numerator = 0 → 0.0.
+    metrics = metrics_from_counts({"TP": 0, "FP": 1, "FN": 0, "TN": 16})
+
+    assert metrics["hss"] == pytest.approx(0.0)
+    assert metrics["hss_undefined"] is False
+    # PSS remains undefined — there are no observed positives.
+    assert math.isnan(metrics["pss"])
+    assert metrics["pss_undefined"] is True
+
+
+def test_hss_is_undefined_only_when_denominator_is_zero() -> None:
+    # All-zero counts → HSS denominator is 0 → genuinely undefined (NaN).
+    metrics = metrics_from_counts({"TP": 0, "FP": 0, "FN": 0, "TN": 0})
+
+    assert math.isnan(metrics["hss"])
+    assert metrics["hss_undefined"] is True
