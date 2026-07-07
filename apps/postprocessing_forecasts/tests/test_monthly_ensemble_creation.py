@@ -529,11 +529,15 @@ class TestSkilledMeanCreation:
         assert sm.iloc[0]["composition"] == "LR, TFT"
 
     def test_skilled_mean_single_model_discarded(self):
-        """Skilled Mean is not created with only one qualifying model."""
+        """Skilled Mean is not created with only one qualifying model.
+
+        The monthly Skilled Mean pool is the long-term NSE>0 gate, so TFT must
+        have NSE<=0 to be the single-model-discard case (only LR qualifies).
+        """
         skill = _make_skill(
             [
                 (3, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-                (3, "S1", "TFT", 0.9, 0.50, 5.0, 0.50, 8.0, 10),  # fails
+                (3, "S1", "TFT", 0.9, -0.50, 5.0, 0.50, 8.0, 10),  # NSE<=0: excluded
             ]
         )
         forecasts = _two_model_forecasts()
@@ -1391,11 +1395,16 @@ class TestEdgeCases:
         assert "TFT" not in em.iloc[0]["composition"]
 
     def test_no_models_pass_thresholds(self):
-        """No ensembles created when all models fail thresholds."""
+        """No ensembles created when all models fail thresholds.
+
+        EM uses the default gate; the monthly Skilled Mean uses the long-term
+        NSE>0 gate, so both models must have NSE<=0 for the Skilled-Mean pool to
+        be empty as well.
+        """
         skill = _make_skill(
             [
-                (3, "S1", "LR", 0.9, 0.50, 5.0, 0.50, 8.0, 10),
-                (3, "S1", "TFT", 0.9, 0.40, 5.0, 0.40, 9.0, 10),
+                (3, "S1", "LR", 0.9, -0.50, 5.0, 0.50, 8.0, 10),
+                (3, "S1", "TFT", 0.9, -0.40, 5.0, 0.40, 9.0, 10),
             ]
         )
         forecasts = _two_model_forecasts()

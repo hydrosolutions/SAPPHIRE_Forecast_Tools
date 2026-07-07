@@ -103,6 +103,70 @@ THRESHOLD_METRICS = {
 }
 
 # ---------------------------------------------------------------------------
+# Long-term (month/quarter/season) Skilled-Mean threshold overrides
+# ---------------------------------------------------------------------------
+# The long-term "Skilled Mean" pool admits ALL long-term models with NSE > 0.
+# This is expressed as per-metric overrides to filter_for_highly_skilled_forecasts:
+# keep nse > 0.0 and disable both the sdivsigma and accuracy gates.  The canonical
+# filter treats the exact string "False" as "gate disabled".  These vars are
+# LONG-TERM ONLY — the short-term env vars/defaults are untouched.
+_LONG_TERM_THRESHOLD_ENV = {
+    "nse": ("ieasyhydroforecast_nse_threshold_long_term", "0.0"),
+    "sdivsigma": ("ieasyhydroforecast_efficiency_threshold_long_term", "False"),
+    "accuracy": ("ieasyhydroforecast_accuracy_threshold_long_term", "False"),
+}
+
+# Case-insensitive tokens that disable a threshold gate.
+_THRESHOLD_DISABLE_TOKENS = frozenset({"false", "off", "none", "disable", "disabled", ""})
+
+
+def _parse_threshold_env(raw: str) -> "float | bool":
+    """Parse a long-term threshold env value into a float or a disable sentinel.
+
+    Disable tokens (case-insensitive: false/off/none/disable/disabled/empty)
+    map to the boolean ``False`` whose ``str()`` is ``"False"`` — the sentinel
+    the canonical filter recognizes as "gate disabled".  Otherwise the value is
+    parsed as a float.  An invalid value raises a clear ``ValueError`` naming the
+    offending value, never a bare ``float("banana")`` error.
+
+    Args:
+        raw: The raw env-var string.
+
+    Returns:
+        ``False`` for a disable token, otherwise the parsed float.
+
+    Raises:
+        ValueError: If *raw* is neither a disable token nor a valid number.
+    """
+    token = str(raw).strip().lower()
+    if token in _THRESHOLD_DISABLE_TOKENS:
+        return False
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid long-term skill threshold: {raw!r} (expected a number or a "
+            f"disable token like 'false'/'off'/'none')"
+        ) from exc
+
+
+def _long_term_threshold_overrides() -> dict:
+    """Return the per-metric override dict for the long-term Skilled-Mean filter.
+
+    Reads the long-term-only env vars (defaulting to the NSE>0-only behavior)
+    and parses each through :func:`_parse_threshold_env`.  Returns e.g.
+    ``{"nse": 0.0, "sdivsigma": False, "accuracy": False}`` under defaults.
+    This dict is splatted as ``**overrides`` into
+    :func:`filter_for_highly_skilled_forecasts`, which treats a ``False`` value
+    (``str(threshold) == "False"``) as a disabled gate.
+    """
+    overrides: dict = {}
+    for metric_key, (env_var, default) in _LONG_TERM_THRESHOLD_ENV.items():
+        overrides[metric_key] = _parse_threshold_env(os.getenv(env_var, default))
+    return overrides
+
+
+# ---------------------------------------------------------------------------
 # Monthly skill groupby keys (PP-038: per-lead stratification)
 # These constants define the groupby keys for all monthly skill groupbys and
 # the ensemble aggregation groupby.  Threading them through every site avoids
@@ -1558,7 +1622,9 @@ def _add_skilled_mean(
     q50 forecasts, where w_i = 1 / (MAE_i + eps).
     eps = mean(MAE) / 100 to avoid division by zero.
 
-    Only models passing the same threshold filter as EM are included.
+    Models are selected by the long-term Skilled-Mean gate (NSE>0; the
+    efficiency and accuracy gates disabled) — broader than EM's
+    default-gated pool.
     EM, Naive Mean, and Skilled Mean themselves are excluded from
     the model pool. Single-model groups are discarded.
 
@@ -1572,8 +1638,8 @@ def _add_skilled_mean(
     if skill_stats.empty or merged.empty:
         return skill_stats, joint_forecasts
 
-    # 1. Filter for highly skilled models (same pool as EM)
-    filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    # 1. Filter for highly skilled models (long-term Skilled-Mean pool: NSE>0)
+    filtered = filter_for_highly_skilled_forecasts(skill_stats, **_long_term_threshold_overrides())
 
     # 2. Exclude baselines from the model pool
     excluded = {"EM", "Naive Mean", "Skilled Mean"}
@@ -2534,7 +2600,7 @@ def _add_skilled_mean_aggregated(
     if skill_stats.empty or merged.empty:
         return skill_stats, joint_forecasts
 
-    filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    filtered = filter_for_highly_skilled_forecasts(skill_stats, **_long_term_threshold_overrides())
     excluded = {"EM", "Naive Mean", "Skilled Mean"}
     filtered = filtered[~filtered["model_short"].isin(excluded)].copy()
     if filtered.empty:

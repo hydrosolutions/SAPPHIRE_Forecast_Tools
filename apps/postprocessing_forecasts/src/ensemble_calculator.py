@@ -252,6 +252,7 @@ def create_monthly_ensemble_forecasts(
     from src.skill_metrics import (
         _QUANTILE_COLS,
         _append_to_joint,
+        _long_term_threshold_overrides,
         filter_for_highly_skilled_forecasts,
     )
 
@@ -281,12 +282,18 @@ def create_monthly_ensemble_forecasts(
     if "horizon_value" in forecasts.columns:
         group_cols.append("horizon_value")
 
-    # --- EM (threshold-filtered average) ---
+    # --- EM (threshold-filtered average, DEFAULT gate — EM must not change) ---
     skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
     merge_keys = ["month_in_year", "code", "model_short"]
 
-    # Normalize types for merge
-    for df in (joint, skill_filtered):
+    # Long-term Skilled-Mean pool: relaxed NSE>0 gate.  Split from the EM pool
+    # so EM membership/output stays byte-identical while Skilled Mean widens.
+    skill_filtered_lt = filter_for_highly_skilled_forecasts(
+        skill_stats, **_long_term_threshold_overrides()
+    )
+
+    # Normalize types for merge (both pools, matching joint)
+    for df in (joint, skill_filtered, skill_filtered_lt):
         if "month_in_year" in df.columns:
             df["month_in_year"] = pd.to_numeric(df["month_in_year"], errors="coerce")
         if "code" in df.columns:
@@ -332,10 +339,10 @@ def create_monthly_ensemble_forecasts(
             em_avg["flag"] = 0
             joint = _append_to_joint(joint, em_avg)
 
-    # --- Skilled Mean (1/MAE weighted average) ---
+    # --- Skilled Mean (1/MAE weighted average, relaxed NSE>0 pool) ---
     joint = _add_skilled_mean_monthly(
         joint,
-        skill_filtered,
+        skill_filtered_lt,
         baselines,
         _QUANTILE_COLS,
         group_cols,
@@ -361,7 +368,9 @@ def _add_skilled_mean_monthly(
 ) -> pd.DataFrame:
     """Add Skilled Mean rows (1/MAE weighted) to joint forecasts.
 
-    Uses the same threshold-filtered model pool as EM.
+    Uses the long-term Skilled-Mean pool (relaxed to NSE>0 via
+    ``_long_term_threshold_overrides``), which is broader than EM's
+    default-gated pool.
     """
     from src.skill_metrics import _append_to_joint
 
@@ -372,7 +381,13 @@ def _add_skilled_mean_monthly(
     if filtered.empty:
         return joint
 
-    mae_df = filtered[["month_in_year", "code", "model_short", "mae"]].copy()
+    # Lead-aware ONLY when horizon_value is present on BOTH sides; a one-sided
+    # presence must keep the 3-key merge (a 4-key merge with horizon_value on one
+    # side only would mismatch and drop every row).
+    use_hv = "horizon_value" in joint.columns and "horizon_value" in skill_filtered.columns
+    key_cols = ["month_in_year"] + (["horizon_value"] if use_hv else []) + ["code", "model_short"]
+
+    mae_df = filtered[[*key_cols, "mae"]].copy()
     mae_df = mae_df.dropna(subset=["mae"])
     if mae_df.empty:
         return joint
@@ -382,13 +397,13 @@ def _add_skilled_mean_monthly(
     eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
     mae_df["weight"] = 1.0 / (mae_df["mae"] + eps)
 
-    qualifying_keys = mae_df[["month_in_year", "code", "model_short"]].drop_duplicates()
+    qualifying_keys = mae_df[key_cols].drop_duplicates()
 
     # Filter joint (non-baseline) to qualifying models
     pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.merge(
         qualifying_keys,
-        on=["month_in_year", "code", "model_short"],
+        on=key_cols,
         how="inner",
     )
     pool = pool.dropna(subset=["forecasted_discharge"]).copy()
@@ -397,8 +412,8 @@ def _add_skilled_mean_monthly(
 
     # Attach weights
     pool = pool.merge(
-        mae_df[["month_in_year", "code", "model_short", "weight"]],
-        on=["month_in_year", "code", "model_short"],
+        mae_df[[*key_cols, "weight"]],
+        on=key_cols,
         how="left",
     )
 
@@ -575,6 +590,7 @@ def _create_aggregated_ensemble_forecasts(
     """
     from src.skill_metrics import (
         _QUANTILE_COLS,
+        _long_term_threshold_overrides,
         filter_for_highly_skilled_forecasts,
     )
 
@@ -607,7 +623,11 @@ def _create_aggregated_ensemble_forecasts(
     time_group_cols = [c for c in time_group_cols if c in joint.columns]
 
     # --- EM (two-LR average; not skill-gated for quarter/season) ---
-    skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    # EM below derives its pool from AGGREGATED_EM_RAW_MODELS and never reads
+    # skill_filtered, so the relaxed NSE>0 pool feeds only the Skilled Mean.
+    skill_filtered = filter_for_highly_skilled_forecasts(
+        skill_stats, **_long_term_threshold_overrides()
+    )
 
     # Normalize types for merge
     if period_col in joint.columns:
