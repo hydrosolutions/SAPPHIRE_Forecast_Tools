@@ -26,6 +26,7 @@ from forecast_skill_eval.dashboard.aggregates import (
     _baseline_rows,
     base_horizon,
     get_baseline_refs,
+    lead_display,
     load_baselines,
     model_family,
     model_sort_key,
@@ -169,9 +170,43 @@ class TestBaseHorizon:
         assert base_horizon("quarter L1") == "quarter"
         assert base_horizon("season L0") == "season"
 
+    def test_quarter_with_q_label_returns_base(self):
+        """'quarter Q1' (target-quarter form) should still return 'quarter'."""
+        assert base_horizon("quarter Q1") == "quarter"
+        assert base_horizon("quarter Q4") == "quarter"
+
     def test_unknown_returns_input(self):
         """Unrecognised labels are passed through unchanged."""
         assert base_horizon("foobar") == "foobar"
+
+
+# ---------------------------------------------------------------------------
+# TestLeadDisplay
+# ---------------------------------------------------------------------------
+
+
+class TestLeadDisplay:
+    """Tests for the horizon-aware :func:`lead_display` helper."""
+
+    def test_quarter_uses_q_prefix(self):
+        """Quarter's lead value is the target quarter → 'Q{n}'."""
+        assert lead_display("quarter", 1) == "Q1"
+        assert lead_display("quarter", 4) == "Q4"
+
+    def test_month_uses_l_prefix(self):
+        """Month keeps genuine forecast-lead labelling → 'L{n}'."""
+        assert lead_display("month", 0) == "L0"
+        assert lead_display("month", 3) == "L3"
+
+    def test_season_uses_l_prefix(self):
+        """Season keeps genuine forecast-lead labelling → 'L{n}'."""
+        assert lead_display("season", 0) == "L0"
+        assert lead_display("season", 2) == "L2"
+
+    def test_short_term_sentinel_is_dash(self):
+        """The short-term sentinel (-1) renders as an em dash, any horizon."""
+        assert lead_display("pentad", -1) == "—"
+        assert lead_display("quarter", -1) == "—"
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +240,18 @@ class TestAddHLabel:
         df = _make_df(_base_row(horizon="month", lead=2.0))
         result = _add_h_label(df)
         assert result["h_label"].iloc[0] == "month L2"
+
+    def test_quarter_h_label_uses_q_prefix(self):
+        """Quarter rows carry the target quarter → h_label like 'quarter Q1'."""
+        df = _make_df(_base_row(horizon="quarter", lead=1.0))
+        result = _add_h_label(df)
+        assert result["h_label"].iloc[0] == "quarter Q1"
+
+    def test_season_h_label_unchanged_uses_l_prefix(self):
+        """Season rows keep the 'L{n}' lead form."""
+        df = _make_df(_base_row(horizon="season", lead=0.0))
+        result = _add_h_label(df)
+        assert result["h_label"].iloc[0] == "season L0"
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +493,23 @@ class TestPrepPerformanceDiagram:
         result = prep_performance_diagram(df)
         assert not result.empty
         assert result["lead_label"].iloc[0] == "L0"
+
+    def test_lead_label_uses_q_prefix_for_quarter(self):
+        """Quarter rows label the lead as the target quarter → 'Q1'."""
+        df = _make_df(
+            _base_row(
+                horizon="quarter",
+                norm_provenance="aggregated_from_monthly",
+                lead=1.0,
+                pod=0.70,
+                pod_undefined=False,
+                far=0.20,
+                far_undefined=False,
+            )
+        )
+        result = prep_performance_diagram(df)
+        assert not result.empty
+        assert result["lead_label"].iloc[0] == "Q1"
 
 
 # ---------------------------------------------------------------------------
@@ -880,3 +944,13 @@ class TestPrepOpVsHindcast:
         regimes = set(result["regime"].unique())
         assert "operational" in regimes
         assert "hindcast" in regimes
+
+    def test_lead_label_is_horizon_aware(self, df_lt: pd.DataFrame):
+        """Quarter rows label as 'Q{n}'; month/season keep 'L{n}'."""
+        result = prep_op_vs_hindcast(df_lt)
+        quarter_labels = set(result.loc[result["horizon"] == "quarter", "lead_label"])
+        month_labels = set(result.loc[result["horizon"] == "month", "lead_label"])
+        season_labels = set(result.loc[result["horizon"] == "season", "lead_label"])
+        assert quarter_labels == {"Q1"}
+        assert month_labels == {"L0"}
+        assert season_labels == {"L0"}

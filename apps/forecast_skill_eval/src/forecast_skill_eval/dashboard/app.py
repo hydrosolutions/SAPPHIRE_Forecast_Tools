@@ -7,8 +7,10 @@ Launch command (from repo root):
 CSV path resolution order:
     1. SKILL_EVAL_METRICS_CSV environment variable
     2. Sidebar path input
-    3. Default: apps/forecast_skill_eval/artifacts/rerun_2026-06-30_phase2/contingency_metrics.csv
-       (relative to this file's location, resolved at runtime)
+    3. Default: the latest corrected run under apps/forecast_skill_eval/artifacts/
+       (prefers rerun_2026-07-06_corrected, else the most recently modified
+       contingency_metrics.csv), resolved at runtime; used when the sidebar box
+       is empty.
 
 Read-only: this dashboard never writes files or exports data.
 """
@@ -30,6 +32,7 @@ from forecast_skill_eval.dashboard.aggregates import (
     HORIZONS,
     LONG_TERM,
     get_baseline_refs,
+    lead_display,
     load_baselines,
     model_sort_key,
     prep_model_comparison_per_horizon,
@@ -216,7 +219,7 @@ def _render_fig4_bars(
         )
         layers.append(pers_rule)
 
-    lead_label = f" L{lead}" if lead is not None else ""
+    lead_label = f" {lead_display(horizon, lead)}" if lead is not None else ""
     title = f"{horizon}{lead_label} — POD (green) / FAR (red)"
     if refs.get("clim_base_rate") is not None:
         title += f"  |  Climatology: POD=0, base_rate={refs['clim_base_rate']:.2f}"
@@ -379,7 +382,15 @@ if view == "Per-station":
             st.caption("Short-term horizon — no lead dimension.")
         else:
             lead_int_choices = [int(v) for v in lead_opts]  # sorted by available_options
-            lead = st.selectbox("Lead", lead_int_choices, index=0)
+            # Quarter's lead value IS the target quarter (Q1-Q4), not a forecast
+            # lead — label and format it accordingly; month/season stay "Lead"/L.
+            lead_widget_label = "Target quarter" if horizon == "quarter" else "Lead"
+            lead = st.selectbox(
+                lead_widget_label,
+                lead_int_choices,
+                index=0,
+                format_func=lambda v: lead_display(horizon, int(v)),
+            )
         selections["lead"] = lead
 
         # 7. Model — cascaded from all upstream filters (incl. lead).
@@ -635,7 +646,7 @@ elif view == "Aggregates (pooled)":
                 tooltip=[
                     alt.Tooltip("horizon:N", title="Horizon"),
                     alt.Tooltip("model:N", title="Model"),
-                    alt.Tooltip("lead_label:N", title="Lead"),
+                    alt.Tooltip("lead_label:N", title="Lead / target quarter"),
                     alt.Tooltip("pod:Q", title="POD", format=".3f"),
                     alt.Tooltip("far:Q", title="FAR", format=".3f"),
                     alt.Tooltip("csi:Q", title="CSI", format=".3f"),
@@ -687,14 +698,21 @@ elif view == "Aggregates (pooled)":
         if selected_horizon in LONG_TERM:
             # Show one chart per approved lead
             lead_tabs = FIG4_LEADS.get(selected_horizon, [])
-            tab_labels = [f"Lead L{ll}" for ll in lead_tabs]
+            # Quarter's leads are target quarters (Q1-Q4); other horizons show
+            # a genuine forecast lead (Lead L{n}).
+            _is_quarter = selected_horizon == "quarter"
+            if _is_quarter:
+                tab_labels = [f"Q{ll}" for ll in lead_tabs]
+            else:
+                tab_labels = [f"Lead L{ll}" for ll in lead_tabs]
             if tab_labels:
                 tabs = st.tabs(tab_labels)
                 for tab, lead in zip(tabs, lead_tabs, strict=False):
                     with tab:
                         df_lead = df_melt[df_melt["lead_int"] == lead]
                         if df_lead.empty:
-                            st.info(f"No data for lead L{lead}.")
+                            _what = "target quarter" if _is_quarter else "lead"
+                            st.info(f"No data for {_what} {lead_display(selected_horizon, lead)}.")
                             continue
                         refs = get_baseline_refs(baselines_df, selected_horizon, lead=lead)
                         _render_fig4_bars(df_lead, sorted_models, refs, selected_horizon, lead)
@@ -714,7 +732,7 @@ elif view == "Aggregates (pooled)":
             "pentad",
             "decade",
             "month\nL0",
-            "quarter\nL1",
+            "quarter\nQ1",
             "season\nL0",
         ]
         series_color_map: dict[str, str] = {
@@ -758,7 +776,7 @@ elif view == "Aggregates (pooled)":
         st.altair_chart((ladder_chart + zero_line), use_container_width=True)
         st.caption(
             "Operational regime, POOLED. Long-term uses canonical lead"
-            " (month/season L0, quarter L1)."
+            " (month/season L0, quarter Q1 = target quarter)."
         )
 
     # --- Fig 6: Seasonal POD ---
@@ -817,7 +835,7 @@ elif view == "Aggregates (pooled)":
             alt.Chart(df_ovh_valid)
             .mark_bar()
             .encode(
-                x=alt.X("lead_label:N", sort=None, title="Lead"),
+                x=alt.X("lead_label:N", sort=None, title="Lead / target quarter"),
                 xOffset=alt.XOffset("regime:N", sort=regime_domain),
                 y=alt.Y("hss:Q", title="HSS"),
                 color=alt.Color(
@@ -828,7 +846,7 @@ elif view == "Aggregates (pooled)":
                 facet=alt.Facet("horizon:N", columns=3, title="Horizon"),
                 tooltip=[
                     alt.Tooltip("horizon:N", title="Horizon"),
-                    alt.Tooltip("lead_label:N", title="Lead"),
+                    alt.Tooltip("lead_label:N", title="Lead / target quarter"),
                     alt.Tooltip("regime:N", title="Regime"),
                     alt.Tooltip("hss:Q", title="HSS", format=".3f"),
                     alt.Tooltip("n_pairs:Q", title="n_pairs"),
@@ -1251,10 +1269,11 @@ elif view == "Value metrics":
             st.caption("Short-term horizon — no lead dimension.")
         else:
             vm_lead = st.selectbox(
-                "Lead (value)",
+                "Target quarter (value)" if vm_horizon == "quarter" else "Lead (value)",
                 [int(v) for v in vm_lead_opts],
                 index=0,
                 key="vm_lead",
+                format_func=lambda v: lead_display(vm_horizon, int(v)),
             )
 
     # ── Shared lead mask helpers ────────────────────────────────────────────

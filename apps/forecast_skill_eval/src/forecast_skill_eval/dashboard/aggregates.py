@@ -99,7 +99,7 @@ _H_DISPLAY_MAP: dict[str, str] = {
     "pentad": "pentad",
     "decade": "decade",
     "month": "month\nL0",
-    "quarter": "quarter\nL1",
+    "quarter": "quarter\nQ1",
     "season": "season\nL0",
 }
 
@@ -165,15 +165,41 @@ def base_horizon(h_label: str) -> str:
     """Return the base horizon string from a display label.
 
     Args:
-        h_label: Display label such as "month L0" or "pentad".
+        h_label: Display label such as "month L0", "quarter Q1", or "pentad".
 
     Returns:
-        Base horizon string, e.g. "month" for "month L0", "pentad" for "pentad".
+        Base horizon string, e.g. "month" for "month L0", "quarter" for
+        "quarter Q1", "pentad" for "pentad".
     """
     for h in HORIZONS:
-        if h_label == h or h_label.startswith(h + " L"):
+        # Match the bare horizon or "<horizon> <lead-label>"; the lead label may
+        # start with "L" (month/season lead) or "Q" (quarter target quarter).
+        if h_label == h or h_label.startswith(h + " "):
             return h
     return h_label
+
+
+def lead_display(horizon: str, lead_int: int) -> str:
+    """Return the display label for a lead value, horizon-aware.
+
+    For the ``quarter`` horizon the ``lead`` value is the *target quarter*
+    (1-4), so it is displayed as ``"Q{n}"``.  All other long-term horizons
+    display a genuine forecast lead as ``"L{n}"``.  The short-term sentinel
+    ``lead_int == -1`` renders as ``"—"``.
+
+    Args:
+        horizon: Horizon string (e.g. ``"quarter"``, ``"month"``).
+        lead_int: Integer lead value, or ``-1`` for the short-term sentinel.
+
+    Returns:
+        Display label: ``"—"`` for the sentinel, ``"Q{n}"`` for quarter,
+        ``"L{n}"`` otherwise.
+    """
+    if lead_int == -1:
+        return "—"
+    if horizon == "quarter":
+        return f"Q{lead_int}"
+    return f"L{lead_int}"
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +235,7 @@ def _add_h_label(df: pd.DataFrame) -> pd.DataFrame:
         lead_val = row["lead"]
         if isinstance(lead_val, float) and math.isnan(lead_val):
             return str(row["horizon"])
-        return f"{row['horizon']} L{int(lead_val)}"
+        return f"{row['horizon']} {lead_display(str(row['horizon']), int(lead_val))}"
 
     if df.empty:
         df["lead_int"] = pd.Series(dtype=int)
@@ -330,7 +356,9 @@ def prep_performance_diagram(
     df["family_color"] = df["family"].map(FAMILY_COLOR).fillna("#888888")
     df["family_label"] = df["family"].map(FAMILY_LABEL).fillna("Other")
     df["horizon_color"] = df["horizon"].map(HCOLORS).fillna("#888888")
-    df["lead_label"] = df["lead_int"].apply(lambda li: "—" if li == -1 else f"L{li}")
+    df["lead_label"] = df.apply(
+        lambda row: lead_display(str(row["horizon"]), int(row["lead_int"])), axis=1
+    )
     return df
 
 
@@ -745,7 +773,7 @@ def prep_op_vs_hindcast(
                 {
                     "horizon": horizon,
                     "lead_int": lead_i,
-                    "lead_label": f"L{lead_i}",
+                    "lead_label": lead_display(horizon, lead_i),
                     "regime": str(row["regime"]),
                     "hss": float(hss_val),
                     "n_pairs": int(row.get("n_pairs", 0)),
