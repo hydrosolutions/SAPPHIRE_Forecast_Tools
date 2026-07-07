@@ -524,6 +524,20 @@ def get_forecasts_all(horizon, station=None) -> pd.DataFrame:
         )
     return _convert_na_to_nan(combined.sort_values("Date"))
 
+
+def _drop_tombstone_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop tombstone rows (n_pairs == 0) from a skill metrics DataFrame.
+
+    Tombstones are upserted by the write-side to mark stale long-horizon
+    skill keys (n_pairs = 0, all metric columns NULL). Legitimate rows always
+    have n_pairs > 0, so that is a clean separator. If n_pairs is absent the
+    DataFrame is returned unchanged (short-term rows are never affected).
+    """
+    if df.empty or "n_pairs" not in df.columns:
+        return df
+    return df[df["n_pairs"].notna() & (df["n_pairs"] > 0)].copy()
+
+
 @_timed
 def get_forecast_stats(horizon, station) -> pd.DataFrame:
     code = _resolve_station(station)
@@ -540,6 +554,9 @@ def get_forecast_stats(horizon, station) -> pd.DataFrame:
             "code", _horizon_in_year_col(horizon),
             "model_short", "model_long",
         ])
+    # Drop tombstones before sort/dedup so a stale-key row can never be
+    # selected or displayed.
+    df = _drop_tombstone_rows(df)
     df.rename(columns={
         "horizon_in_year": _horizon_in_year_col(horizon),
         "model_type": "model_short",
@@ -591,13 +608,21 @@ def get_forecast_stats_all(horizon) -> pd.DataFrame:
             "code", _horizon_in_year_col(horizon),
             "model_short", "model_long",
         ])
+    # Drop tombstones before sort/dedup so a stale-key row can never be
+    # selected or displayed.
+    df = _drop_tombstone_rows(df)
     df.rename(columns={
         "horizon_in_year": _horizon_in_year_col(horizon),
         "model_type": "model_short",
         "model_type_description": "model_long",
     }, inplace=True)
     df.sort_values("date", inplace=True)
-    df.drop_duplicates(subset=["code", _horizon_in_year_col(horizon), "model_short"], keep="last", inplace=True)
+    # PP-038 (mirrors get_forecast_stats): include horizon_value in the dedup
+    # subset when present so distinct per-lead rows are NOT collapsed.
+    dedup_cols = ["code", _horizon_in_year_col(horizon), "model_short"]
+    if "horizon_value" in df.columns:
+        dedup_cols = dedup_cols + ["horizon_value"]
+    df.drop_duplicates(subset=dedup_cols, keep="last", inplace=True)
     df.drop(columns=["horizon_type", "date", "id"], inplace=True, errors="ignore")
     return _convert_na_to_nan(df)
 

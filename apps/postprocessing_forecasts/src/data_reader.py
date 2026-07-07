@@ -81,6 +81,27 @@ def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFra
     return df[model_keys.isin(AGGREGATED_SUPPORTED_MODELS)].copy()
 
 
+def _drop_tombstone_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop tombstone rows (n_pairs == 0) from a skill metrics DataFrame.
+
+    Tombstones are upserted by the write-side to mark stale long-horizon
+    skill keys.  A tombstone has n_pairs = 0 and all metric columns NULL.
+    Legitimate rows always have n_pairs >= K (K >= 4), so n_pairs > 0 is
+    a clean separator.
+
+    Args:
+        df: Skill metrics DataFrame.  May or may not have an n_pairs column.
+
+    Returns:
+        DataFrame with tombstone rows removed.  If n_pairs is absent the
+        original DataFrame is returned unchanged (no short-term rows are
+        ever affected).
+    """
+    if df.empty or "n_pairs" not in df.columns:
+        return df
+    return df[df["n_pairs"].notna() & (df["n_pairs"] > 0)].copy()
+
+
 def read_skill_metrics(
     horizon_type: str,
     codes: list[str] | None = None,
@@ -291,6 +312,9 @@ def read_monthly_skill_metrics(
 ) -> pd.DataFrame:
     """Read pre-calculated monthly skill metrics from API or CSV.
 
+    Tombstone rows (n_pairs == 0) produced by the stale-key write-side
+    are silently dropped before the result is returned.
+
     Args:
         codes: Optional list of station codes to filter. When provided,
             only skill metrics for those codes are returned. When None,
@@ -305,6 +329,7 @@ def read_monthly_skill_metrics(
     # API-first: try the authoritative source
     df = _read_monthly_skill_metrics_api(codes)
     if df is not None and not df.empty:
+        df = _drop_tombstone_rows(df)
         logger.info("Read %d monthly skill metric rows from API", len(df))
         return df
 
@@ -312,6 +337,7 @@ def read_monthly_skill_metrics(
     logger.info("API monthly skill metrics unavailable, falling back to CSV")
     df = _read_monthly_skill_metrics_csv(codes)
     if df is not None and not df.empty:
+        df = _drop_tombstone_rows(df)
         logger.info("Read %d monthly skill metric rows from CSV", len(df))
         return df
 
@@ -2424,6 +2450,7 @@ def read_quarterly_skill_metrics(
     """Read pre-calculated quarterly skill metrics from API.
 
     API-only (no CSV fallback for new horizons).
+    Tombstone rows (n_pairs == 0) are silently dropped before returning.
 
     Args:
         codes: Optional list of station codes to filter. When provided,
@@ -2436,6 +2463,7 @@ def read_quarterly_skill_metrics(
     """
     df = _read_horizon_skill_metrics_api("quarter", codes)
     if df is not None and not df.empty:
+        df = _drop_tombstone_rows(df)
         logger.info("Read %d quarterly skill metric rows from API", len(df))
         return df
     logger.warning("No quarterly skill metrics available")
@@ -2448,6 +2476,7 @@ def read_seasonal_skill_metrics(
     """Read pre-calculated seasonal skill metrics from API.
 
     API-only (no CSV fallback for new horizons).
+    Tombstone rows (n_pairs == 0) are silently dropped before returning.
 
     Args:
         codes: Optional list of station codes to filter. When provided,
@@ -2460,6 +2489,7 @@ def read_seasonal_skill_metrics(
     """
     df = _read_horizon_skill_metrics_api("season", codes)
     if df is not None and not df.empty:
+        df = _drop_tombstone_rows(df)
         logger.info("Read %d seasonal skill metric rows from API", len(df))
         return df
     logger.warning("No seasonal skill metrics available")

@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 from src.data_reader import (
     _aggregate_daily_to_monthly,
+    _drop_tombstone_rows,
     _normalize_api_combined_forecasts,
     _normalize_api_monthly_skill_metrics,
     _normalize_api_skill_metrics,
@@ -39,6 +40,8 @@ from src.data_reader import (
     read_monthly_observations,
     read_monthly_skill_metrics,
     read_observed_and_modelled_data,
+    read_quarterly_skill_metrics,
+    read_seasonal_skill_metrics,
     read_skill_metrics,
 )
 
@@ -2925,3 +2928,294 @@ class TestReadIndividualModelForecasts:
         """Invalid horizon_type raises ValueError."""
         with pytest.raises(ValueError, match="horizon_type"):
             read_individual_model_forecasts("weekly")
+
+
+# ===================================================================
+# Tombstone suppression (_drop_tombstone_rows + long-horizon readers)
+# ===================================================================
+
+
+class TestDropTombstoneRows:
+    """Unit tests for the _drop_tombstone_rows helper."""
+
+    def test_no_n_pairs_column_unchanged(self):
+        """DataFrame without n_pairs column is returned unchanged."""
+        df = pd.DataFrame({"code": ["19999"], "nse": [0.8]})
+        result = _drop_tombstone_rows(df)
+        assert len(result) == 1
+        assert "code" in result.columns
+
+    def test_empty_dataframe_unchanged(self):
+        """Empty DataFrame is returned unchanged."""
+        df = pd.DataFrame(columns=["code", "n_pairs", "nse"])
+        result = _drop_tombstone_rows(df)
+        assert result.empty
+
+    def test_zero_n_pairs_rows_dropped(self):
+        """Rows with n_pairs == 0 are removed."""
+        df = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "month_in_year": [1, 2],
+                "model_short": ["GBT", "LR_Base"],
+                "n_pairs": [0, 6],
+                "nse": [None, 0.8],
+                "mae": [None, 1.2],
+            }
+        )
+        result = _drop_tombstone_rows(df)
+        assert len(result) == 1
+        assert result.iloc[0]["month_in_year"] == 2
+        assert result.iloc[0]["n_pairs"] == 6
+
+    def test_null_n_pairs_rows_dropped(self):
+        """Rows with NaN n_pairs are also removed."""
+        df = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "n_pairs": [None, 8],
+                "nse": [None, 0.7],
+            }
+        )
+        result = _drop_tombstone_rows(df)
+        assert len(result) == 1
+        assert result.iloc[0]["n_pairs"] == 8
+
+    def test_all_real_rows_preserved(self):
+        """All rows with n_pairs > 0 are preserved unchanged."""
+        df = pd.DataFrame(
+            {
+                "code": ["19999", "19999", "19999"],
+                "n_pairs": [4, 8, 12],
+                "nse": [0.6, 0.7, 0.8],
+            }
+        )
+        result = _drop_tombstone_rows(df)
+        assert len(result) == 3
+
+    def test_all_tombstones_returns_empty(self):
+        """DataFrame containing only tombstones returns empty (with columns)."""
+        df = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "n_pairs": [0],
+                "nse": [None],
+            }
+        )
+        result = _drop_tombstone_rows(df)
+        assert result.empty
+        assert "code" in result.columns
+
+
+class TestReadMonthlySkillMetricsTombstoneSuppression:
+    """Tombstones in the monthly skill path are suppressed by read_monthly_skill_metrics.
+
+    The private reader (_read_monthly_skill_metrics_api) already normalises
+    column names (model_type → model_short, horizon_in_year → month_in_year).
+    Our mocks return already-normalised data to reflect what the real
+    private function returns.
+    """
+
+    def _make_normalised_skill_df(self):
+        """Return a mixed normalised frame: one real row, one tombstone."""
+        return pd.DataFrame(
+            {
+                "month_in_year": [3, 3],
+                "model_short": ["GBT", "LR_Base"],
+                "code": ["19999", "19999"],
+                "horizon_value": [1, 1],
+                "n_pairs": [6, 0],
+                "nse": [0.75, None],
+                "mae": [1.1, None],
+                "accuracy": [88.0, None],
+                "sdivsigma": [0.4, None],
+            }
+        )
+
+    def test_tombstone_dropped_from_api_result(self):
+        """A tombstone row returned by the API is not included in the output."""
+        # _read_monthly_skill_metrics_api returns normalised data
+        normalised = self._make_normalised_skill_df()
+
+        with patch(
+            "src.data_reader._read_monthly_skill_metrics_api",
+            return_value=normalised,
+        ):
+            result = read_monthly_skill_metrics(["19999"])
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert result.iloc[0]["n_pairs"] == 6
+
+    def test_tombstone_dropped_from_csv_fallback(self, tmp_path):
+        """A tombstone row in the CSV fallback is not included in the output."""
+        csv_file = tmp_path / "monthly_skill.csv"
+        pd.DataFrame(
+            {
+                "month_in_year": [3, 3],
+                "code": ["19999", "19999"],
+                "model_short": ["GBT", "LR_Base"],
+                "n_pairs": [6, 0],
+                "nse": [0.75, None],
+            }
+        ).to_csv(csv_file, index=False)
+
+        with (
+            patch(
+                "src.data_reader._read_monthly_skill_metrics_api",
+                return_value=None,
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    "ieasyforecast_intermediate_data_path": str(tmp_path),
+                    "ieasyforecast_monthly_skill_metrics_file": "monthly_skill.csv",
+                },
+            ),
+        ):
+            result = read_monthly_skill_metrics(["19999"])
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+
+    def test_all_tombstones_returns_empty(self):
+        """API returning only tombstones yields an empty DataFrame."""
+        normalised = pd.DataFrame(
+            {
+                "month_in_year": [1, 2],
+                "model_short": ["GBT", "LR_Base"],
+                "code": ["19999", "19999"],
+                "horizon_value": [1, 1],
+                "n_pairs": [0, 0],
+                "nse": [None, None],
+            }
+        )
+
+        with patch(
+            "src.data_reader._read_monthly_skill_metrics_api",
+            return_value=normalised,
+        ):
+            result = read_monthly_skill_metrics(["19999"])
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+
+class TestReadQuarterlySkillMetricsTombstoneSuppression:
+    """Tombstones in the quarterly skill path are suppressed.
+
+    The private reader (_read_horizon_skill_metrics_api) normalises column
+    names before returning.  Our mocks return already-normalised data.
+    """
+
+    def test_tombstone_dropped(self):
+        """Tombstone rows are not included in the output."""
+        normalised = pd.DataFrame(
+            {
+                "quarter_in_year": [2, 2],
+                "model_short": ["LR_Base", "LR_SM"],
+                "code": ["19999", "19999"],
+                "n_pairs": [5, 0],
+                "nse": [0.7, None],
+            }
+        )
+
+        with patch(
+            "src.data_reader._read_horizon_skill_metrics_api",
+            return_value=normalised,
+        ):
+            result = read_quarterly_skill_metrics(["19999"])
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "LR_Base"
+
+    def test_real_rows_preserved(self):
+        """Non-tombstone rows are all preserved."""
+        normalised = pd.DataFrame(
+            {
+                "quarter_in_year": [2, 3],
+                "model_short": ["LR_Base", "LR_SM"],
+                "code": ["19999", "19999"],
+                "n_pairs": [5, 8],
+                "nse": [0.7, 0.8],
+            }
+        )
+
+        with patch(
+            "src.data_reader._read_horizon_skill_metrics_api",
+            return_value=normalised,
+        ):
+            result = read_quarterly_skill_metrics(["19999"])
+
+        assert len(result) == 2
+
+
+class TestReadSeasonalSkillMetricsTombstoneSuppression:
+    """Tombstones in the seasonal skill path are suppressed.
+
+    The private reader (_read_horizon_skill_metrics_api) normalises column
+    names before returning.  Our mocks return already-normalised data.
+    """
+
+    def test_tombstone_dropped(self):
+        """Tombstone rows are not included in the output."""
+        normalised = pd.DataFrame(
+            {
+                "season_in_year": [1, 1],
+                "model_short": ["LR_Base", "LR_SM"],
+                "code": ["19999", "19999"],
+                "n_pairs": [0, 7],
+                "nse": [None, 0.6],
+            }
+        )
+
+        with patch(
+            "src.data_reader._read_horizon_skill_metrics_api",
+            return_value=normalised,
+        ):
+            result = read_seasonal_skill_metrics(["19999"])
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "LR_SM"
+
+
+class TestShortTermReadPathsUnaffected:
+    """Confirm pentad/decad read paths pass tombstones through unchanged.
+
+    The write-side never creates tombstones for short-term keys, but even if
+    n_pairs == 0 somehow appeared in a pentad/decad row, the short-term code
+    path does NOT call _drop_tombstone_rows.  This class documents that contract.
+    """
+
+    def test_pentad_rows_with_zero_n_pairs_not_dropped(self, tmp_path):
+        """A pentad row with n_pairs == 0 is NOT dropped by read_skill_metrics.
+
+        The suppression only happens inside read_monthly/quarterly/seasonal_skill_metrics.
+        The pentad/decad path in read_skill_metrics() delegates to
+        _read_skill_metrics_api / _read_skill_metrics_csv which do not filter.
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame(
+            {
+                "pentad_in_year": [1, 2],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "LR"],
+                "n_pairs": [0, 10],
+                "nse": [None, 0.8],
+            }
+        ).to_csv(csv_file, index=False)
+
+        with (
+            patch("src.data_reader._read_skill_metrics_api", return_value=None),
+            patch.dict(
+                os.environ,
+                {
+                    "ieasyforecast_intermediate_data_path": str(tmp_path),
+                    "ieasyforecast_pentadal_skill_metrics_file": "pentad_skill.csv",
+                },
+            ),
+        ):
+            result = read_skill_metrics("pentad")
+
+        # Both rows returned — no tombstone suppression on pentad path
+        assert len(result) == 2
