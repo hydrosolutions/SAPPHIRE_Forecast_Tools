@@ -31,7 +31,6 @@ import sys
 
 import numpy as np
 import pandas as pd
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -39,13 +38,6 @@ from src.skill_metrics import calculate_monthly_skill_metrics
 
 # Placeholder station code — never a real station.
 STATION = "19999"
-
-
-# These tests use 2-year data fixtures and are not testing the min-n floor.
-# Set K=2 so the output floor does not interfere with their assertions.
-@pytest.fixture(autouse=True)
-def _set_min_pairs_to_2(monkeypatch):
-    monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "2")
 
 
 # Target month of the forecast; also the (INVALID) horizon_value a stale

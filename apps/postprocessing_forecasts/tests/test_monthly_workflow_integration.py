@@ -39,11 +39,8 @@ TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "test_data")
 
 
 # These integration tests exercise workflow behavior and are not testing the
-# min-n floor.  Set K=2 so the floor does not interfere with assertions that
-# use 2-year data to verify routing, filtering, and CSV output structure.
-@pytest.fixture(autouse=True)
-def _set_min_pairs_to_2(monkeypatch):
-    monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "2")
+# min-n floor.  They use 5-year data (YEARS = range(2021, 2026)) and pass
+# at the production K=4.
 
 
 # ---------------------------------------------------------------------------
@@ -816,10 +813,11 @@ class TestMonthlyEdgeCases:
     def test_single_year_data_produces_no_skill_rows(self, monthly_integration_env):
         """1 year of data -> n_pairs=1 for every group -> all rows dropped.
 
-        The n_pairs<2 floor filter silently drops any skill row whose
-        n_pairs is less than 2.  With a single year every (month, station,
-        model) group contributes exactly one obs-forecast pair (n_pairs=1),
-        so the entire output frame must be empty after filtering.
+        The n_pairs < K floor filter (K=4 for monthly) silently drops any
+        skill row whose n_pairs is less than K.  With a single year every
+        (month, station, model) group contributes exactly one obs-forecast
+        pair (n_pairs=1), so the entire output frame must be empty after
+        filtering.
         Pipeline still exits 0 — absence of skill rows is not an error.
         """
         tmp_path, data_dir = monthly_integration_env

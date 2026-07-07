@@ -2528,7 +2528,11 @@ def _calculate_aggregated_skill_metrics(
         "quarter_in_year": "QUARTER",
         "season_in_year": "SEASON",
     }
-    _horizon_type_agg = _PERIOD_COL_TO_HORIZON_AGG.get(period_col, "QUARTER")
+    if period_col not in _PERIOD_COL_TO_HORIZON_AGG:
+        raise ValueError(
+            f"Unexpected period_col {period_col!r}; expected 'quarter_in_year' or 'season_in_year'"
+        )
+    _horizon_type_agg = _PERIOD_COL_TO_HORIZON_AGG[period_col]
     _k_agg = _long_term_min_pairs(_horizon_type_agg)
     skill_out = skill_out[skill_out["n_pairs"].fillna(0).ge(_k_agg)].reset_index(drop=True)
 

@@ -633,11 +633,16 @@ def _create_aggregated_ensemble_forecasts(
         "quarter_in_year": "QUARTER",
         "season_in_year": "SEASON",
     }
-    _horizon_type_ens = _PERIOD_COL_TO_HORIZON_ENS.get(period_col, "QUARTER")
+    if period_col not in _PERIOD_COL_TO_HORIZON_ENS:
+        raise ValueError(
+            f"Unexpected period_col {period_col!r}; expected 'quarter_in_year' or 'season_in_year'"
+        )
+    _horizon_type_ens = _PERIOD_COL_TO_HORIZON_ENS[period_col]
 
     # --- EM (two-LR average; not skill-gated for quarter/season) ---
-    # EM below derives its pool from AGGREGATED_EM_RAW_MODELS and never reads
-    # skill_filtered, so the relaxed NSE>0 pool feeds only the Skilled Mean.
+    # EM membership derives from AGGREGATED_EM_RAW_MODELS (fixed-LR, no skill
+    # gate); `skill_filtered` (computed with min_pairs) feeds only the Skilled
+    # Mean below.
     skill_filtered = filter_for_highly_skilled_forecasts(
         skill_stats,
         min_pairs=_long_term_min_pairs(_horizon_type_ens),

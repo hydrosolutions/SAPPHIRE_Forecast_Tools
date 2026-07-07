@@ -398,13 +398,79 @@ class TestMonthlyEMGate:
                 )
 
     def test_sufficient_n_model_can_enter_em(self):
-        """A model with n_pairs >= K is eligible to enter the EM pool."""
-        # Both models have K years
-        skill_out = self._run_monthly({"LR_Base": K_MONTH, "LR_SM": K_MONTH})
+        """Both models with n_pairs >= K that pass the default EM gate produce an EM row.
+
+        The monthly EM pool uses the DEFAULT skill gate (nse>0.8, sdivsigma<0.6,
+        accuracy>0.8) plus the min_pairs floor.  This fixture is designed so that
+        both member models genuinely pass that gate, confirming EM is produced.
+
+        Fixture: obs=[70,90,110,130], LR_Base q50=[84,95,107,118],
+        LR_SM q50=[82,94,105,116].  Both yield nse≈0.81, sdivsigma≈0.57,
+        accuracy=1.0 — all passing the default thresholds.
+        """
+        month = 5
+        obs_vals = [70.0, 90.0, 110.0, 130.0]  # 4 years = K_MONTH
+        lr_base_q50 = [84.0, 95.0, 107.0, 118.0]  # nse≈0.813, sdivsigma≈0.570
+        lr_sm_q50 = [82.0, 94.0, 105.0, 116.0]  # nse≈0.810, sdivsigma≈0.565
+
+        obs_rows = [(STATION, 2010 + i, month, obs_vals[i]) for i in range(K_MONTH)]
+        fcst_rows = [
+            (STATION, 2010 + i, month, "LR_Base", lr_base_q50[i]) for i in range(K_MONTH)
+        ] + [(STATION, 2010 + i, month, "LR_SM", lr_sm_q50[i]) for i in range(K_MONTH)]
+        obs = _make_monthly_obs(obs_rows)
+        fcst = _make_monthly_fcst(fcst_rows)
+        skill_out, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         em_rows = skill_out[skill_out["model_short"] == "EM"]
-        # If there's an EM row, at least one model should be in its composition
-        if not em_rows.empty:
-            assert not em_rows.empty
+        assert not em_rows.empty, (
+            "Expected an EM row when both models pass the default gate "
+            "(nse>0.8, sdivsigma<0.6, accuracy>0.8) with n_pairs >= K"
+        )
+
+    def test_em_membership_gates_on_min_pairs(self, monkeypatch):
+        """min_pairs — not the NSE gate — controls whether EM members qualify.
+
+        Both models pass the default EM gate (nse≈0.82, sdivsigma≈0.57,
+        accuracy=1.0) and have n_pairs=5 (≥K=4 but <10).
+
+        With ieasyhydroforecast_min_pairs_long_term=4 → EM row IS produced
+        (n_pairs=5 ≥ K=4, metric gate passes).
+        With ieasyhydroforecast_min_pairs_long_term=10 → EM row ABSENT
+        (n_pairs=5 < K=10, members are excluded by the min_pairs floor).
+
+        Fixture: obs=[70,85,100,115,130], LR_Base q50=[84,92,101,110,118],
+        LR_SM q50=[82,90,99,108,116].  Both yield nse≈0.82, sdivsigma≈0.57,
+        accuracy=1.0 — all passing the default thresholds.
+        """
+        month = 8
+        n_years = 5  # n_pairs = 5 ∈ [K=4, 10)
+        obs_vals = [70.0, 85.0, 100.0, 115.0, 130.0]
+        lr_base_q50 = [84.0, 92.0, 101.0, 110.0, 118.0]  # nse≈0.816, sdivsigma≈0.574
+        lr_sm_q50 = [82.0, 90.0, 99.0, 108.0, 116.0]  # nse≈0.816, sdivsigma≈0.574
+
+        obs_rows = [(STATION, 2010 + i, month, obs_vals[i]) for i in range(n_years)]
+        fcst_rows = [
+            (STATION, 2010 + i, month, "LR_Base", lr_base_q50[i]) for i in range(n_years)
+        ] + [(STATION, 2010 + i, month, "LR_SM", lr_sm_q50[i]) for i in range(n_years)]
+        obs = _make_monthly_obs(obs_rows)
+        fcst = _make_monthly_fcst(fcst_rows)
+
+        # --- K=4: members have n_pairs=5 >= K → EM row produced ---
+        monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "4")
+        skill_k4, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_k4 = skill_k4[skill_k4["model_short"] == "EM"]
+        assert not em_k4.empty, (
+            "EM row must be present when n_pairs=5 >= min_pairs=4 "
+            "and both models pass the default skill gate"
+        )
+
+        # --- K=10: members have n_pairs=5 < K → excluded from EM → absent ---
+        monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "10")
+        skill_k10, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_k10 = skill_k10[skill_k10["model_short"] == "EM"]
+        assert em_k10.empty, (
+            "EM row must be absent when n_pairs=5 < min_pairs=10 "
+            "(min_pairs gate excludes both members from the EM pool)"
+        )
 
 
 # ---------------------------------------------------------------------------
