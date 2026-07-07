@@ -102,6 +102,16 @@ def _daily_for_dates(year, month, days, value):
     ]
 
 
+def _daily_for_dates_with_values(year, month, day_value_pairs):
+    """Like ``_daily_for_dates`` but each date carries its OWN discharge value,
+    including ``None`` for a dated-but-non-numeric row (present row, no reading).
+    """
+    return [
+        {"code": CODE, "date": dt.date(year, month, d).isoformat(), "discharge": value}
+        for d, value in day_value_pairs
+    ]
+
+
 def _varying_year_daily(year, base):
     """Every calendar day carries a DISTINCT value (day-of-year + year offset).
 
@@ -309,6 +319,110 @@ def test_decad_fallback_below_80pct_stores_null():
         },
     )
     assert _row(records, 2)["current"] is None
+
+
+# --------------------------------------------------------------------------
+# Criterion 2b — the >= 80% coverage gate is computed from FINITE discharge
+# values, not merely dated rows. A dated-but-non-numeric (NaN/None) row must
+# not count toward coverage, and must not be averaged in.
+# --------------------------------------------------------------------------
+def test_pentad_row_count_passes_80pct_but_finite_coverage_below_80pct_stores_null():
+    _require_module()
+    # Pentad 3 = Jan 11-15 (5 days); all 5 days are DATED (100% row coverage),
+    # but only 1/5 = 20% carry a finite discharge value (the rest are None).
+    # Row-count coverage alone would pass (5/5 >= 0.80); finite coverage must
+    # gate this to null.
+    records = _build_pentads(
+        sdk_current={},
+        daily_by_year={
+            PREVIOUS_YEAR: _full_year_daily(PREVIOUS_YEAR, 8.0),
+            TARGET_YEAR: _daily_for_dates_with_values(
+                TARGET_YEAR,
+                1,
+                [(11, 5.0), (12, None), (13, None), (14, None), (15, None)],
+            ),
+        },
+    )
+    assert _row(records, 3)["current"] is None
+
+
+def test_decad_row_count_passes_80pct_but_finite_coverage_below_80pct_stores_null():
+    _require_module()
+    # Decad 2 = Jan 11-20 (10 days); all 10 days are DATED (100% row coverage),
+    # but only 2/10 = 20% carry a finite discharge value.
+    records = _build_decads(
+        sdk_current={},
+        daily_by_year={
+            PREVIOUS_YEAR: _full_year_daily(PREVIOUS_YEAR, 8.0),
+            TARGET_YEAR: _daily_for_dates_with_values(
+                TARGET_YEAR,
+                1,
+                [
+                    (11, 5.0),
+                    (12, 5.0),
+                    (13, None),
+                    (14, None),
+                    (15, None),
+                    (16, None),
+                    (17, None),
+                    (18, None),
+                    (19, None),
+                    (20, None),
+                ],
+            ),
+        },
+    )
+    assert _row(records, 2)["current"] is None
+
+
+def test_pentad_average_uses_only_finite_discharge_values_at_exact_80pct_coverage():
+    _require_module()
+    # Pentad 3 = Jan 11-15 (5 days); 5/5 dated but only 4/5 = 80% (boundary)
+    # carry a finite value. Coverage passes on FINITE count, and the average
+    # must be the mean of the 4 finite values only (5, 6, 7, 8 -> 6.5), never
+    # contaminated by the None row.
+    records = _build_pentads(
+        sdk_current={},
+        daily_by_year={
+            PREVIOUS_YEAR: _full_year_daily(PREVIOUS_YEAR, 8.0),
+            TARGET_YEAR: _daily_for_dates_with_values(
+                TARGET_YEAR,
+                1,
+                [(11, 5.0), (12, 6.0), (13, 7.0), (14, 8.0), (15, None)],
+            ),
+        },
+    )
+    assert _row(records, 3)["current"] == fl.round_3sf(6.5)
+
+
+def test_decad_average_uses_only_finite_discharge_values_at_exact_80pct_coverage():
+    _require_module()
+    # Decad 2 = Jan 11-20 (10 days); 10/10 dated but only 8/10 = 80% (boundary)
+    # carry a finite value. Average must be the mean of those 8 finite values
+    # only (5..12 -> 8.5), never contaminated by the 2 None rows.
+    records = _build_decads(
+        sdk_current={},
+        daily_by_year={
+            PREVIOUS_YEAR: _full_year_daily(PREVIOUS_YEAR, 8.0),
+            TARGET_YEAR: _daily_for_dates_with_values(
+                TARGET_YEAR,
+                1,
+                [
+                    (11, 5.0),
+                    (12, 6.0),
+                    (13, 7.0),
+                    (14, 8.0),
+                    (15, 9.0),
+                    (16, 10.0),
+                    (17, 11.0),
+                    (18, 12.0),
+                    (19, None),
+                    (20, None),
+                ],
+            ),
+        },
+    )
+    assert _row(records, 2)["current"] == fl.round_3sf((5.0 + 6 + 7 + 8 + 9 + 10 + 11 + 12) / 8)
 
 
 # --------------------------------------------------------------------------

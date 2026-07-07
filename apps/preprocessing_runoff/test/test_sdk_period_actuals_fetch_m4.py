@@ -124,6 +124,56 @@ def test_decode_and_pagination_and_variable_filter_decad():
     assert fake_sdk.calls[0]["page_size"] == 1000
 
 
+def test_local_timestamp_offset_is_wall_clock_not_utc_converted():
+    """A period-boundary ``timestamp_local`` with a positive UTC offset must
+    bucket into the SAME local-date period as the equivalent NAIVE timestamp -
+    it must NOT shift backward across the period boundary via a UTC round-trip.
+
+    2024-01-10 is the last day of decad 1 (Jan 1-10); +1 day -> 2024-01-11,
+    decad 2 (Jan 11-20). Interpreting "2024-01-10T00:00:00+06:00" as UTC first
+    (the bug: ``pd.to_datetime(raw_date, utc=True).tz_convert(None)``) shifts
+    the wall-clock date back to 2024-01-09 before the +1 day shift, landing in
+    decad 1 instead of decad 2.
+    """
+    offset_page = _page(
+        results=[
+            _result(
+                _series(
+                    "WDDCA",
+                    [_point(15.5, "2024-01-10T00:00:00+06:00")],
+                )
+            )
+        ],
+        next_url=None,
+    )
+    offset_sdk = _FakeSdk({1: offset_page})
+    sdk_current, _sdk_previous = shh._fetch_sdk_period_actuals(
+        offset_sdk, CODE, "decade", TARGET_YEAR
+    )
+
+    # Control: the equivalent NAIVE timestamp (no offset) for the same local
+    # wall-clock date/time.
+    naive_page = _page(
+        results=[
+            _result(
+                _series(
+                    "WDDCA",
+                    [_point(15.5, "2024-01-10T00:00:00")],
+                )
+            )
+        ],
+        next_url=None,
+    )
+    naive_sdk = _FakeSdk({1: naive_page})
+    naive_current, _naive_previous = shh._fetch_sdk_period_actuals(
+        naive_sdk, CODE, "decade", TARGET_YEAR
+    )
+
+    assert naive_current == {2: 15.5}  # control: naive already buckets correctly
+    assert sdk_current == naive_current  # offset must bucket to the SAME period
+    assert sdk_current == {2: 15.5}  # not {1: 15.5} (the UTC-shifted wrong period)
+
+
 def test_decode_pentad_basic():
     page = _page(
         results=[

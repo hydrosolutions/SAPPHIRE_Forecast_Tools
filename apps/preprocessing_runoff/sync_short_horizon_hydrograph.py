@@ -289,14 +289,17 @@ def _period_actual(
     ]
     if in_range.empty:
         return None
-    distinct_days = in_range["date"].dt.date.nunique()
-    if distinct_days / days_in_period < 0.80:
+
+    numeric = pd.to_numeric(in_range["discharge"], errors="coerce")
+    finite_mask = numeric.notna()
+    distinct_finite_days = in_range.loc[finite_mask, "date"].dt.date.nunique()
+    if distinct_finite_days / days_in_period < 0.80:
         return None
 
-    numeric = pd.to_numeric(in_range["discharge"], errors="coerce").dropna()
-    if numeric.empty:
+    finite_numeric = numeric[finite_mask]
+    if finite_numeric.empty:
         return None
-    return fl.round_3sf(float(numeric.mean()))
+    return fl.round_3sf(float(finite_numeric.mean()))
 
 
 def period_actuals(
@@ -573,7 +576,15 @@ def _fetch_sdk_period_actuals(
                     if raw_date is None or raw_value is None:
                         continue
                     try:
-                        stamped = pd.to_datetime(raw_date, utc=True).tz_convert(None)
+                        # Interpret the chosen timestamp as LOCAL WALL TIME: if it
+                        # carries a timezone offset, drop the offset WITHOUT
+                        # converting to UTC (tz_localize(None) keeps the wall-clock
+                        # value; tz_convert(None) would shift it). A naive
+                        # timestamp has no tzinfo and is used as-is, unchanged from
+                        # prior behaviour.
+                        stamped = pd.to_datetime(raw_date)
+                        if stamped.tzinfo is not None:
+                            stamped = stamped.tz_localize(None)
                     except (ValueError, TypeError):
                         continue
                     try:
