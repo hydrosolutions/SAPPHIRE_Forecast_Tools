@@ -42,6 +42,7 @@ from src import data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
 from src.horizon_config import ShortTermHorizonConfig
 from src.postprocessing_tools import TimingStats, timer
+from src.stale_tombstones import build_stale_tombstones
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
@@ -292,6 +293,27 @@ def recalculate_skill_metrics():
                     logger.error(f"Error saving monthly forecast data: {ret}")
                     errors.append(f"Monthly forecast data save failed: {ret}")
 
+                # --- P1: stale-aggregate invalidation (monthly) ---
+                try:
+                    _existing_monthly = data_reader.read_skill_metrics("month", codes)
+                    _tombstones_monthly = build_stale_tombstones(
+                        _existing_monthly, monthly_skill, "month_in_year"
+                    )
+                    if not _tombstones_monthly.empty:
+                        logger.info(
+                            "P1 stale invalidation: %d tombstone rows for monthly",
+                            len(_tombstones_monthly),
+                        )
+                        monthly_skill = pd.concat(
+                            [monthly_skill, _tombstones_monthly], ignore_index=True
+                        )
+                except Exception as _e:
+                    logger.warning(
+                        "P1 stale invalidation read/diff failed for monthly, "
+                        "saving without tombstones: %s",
+                        _e,
+                    )
+
                 ret = file_writer.save_monthly_skill_metrics(monthly_skill, year=skill_metrics_year)
                 if ret is None:
                     logger.info("Monthly skill metrics saved successfully.")
@@ -338,6 +360,27 @@ def recalculate_skill_metrics():
                 else:
                     logger.error(f"Error saving quarterly forecast data: {ret}")
                     errors.append(f"Quarterly forecast data save failed: {ret}")
+
+                # --- P1: stale-aggregate invalidation (quarterly) ---
+                try:
+                    _existing_quarterly = data_reader.read_skill_metrics("quarter", codes)
+                    _tombstones_quarterly = build_stale_tombstones(
+                        _existing_quarterly, quarterly_skill, "quarter_in_year"
+                    )
+                    if not _tombstones_quarterly.empty:
+                        logger.info(
+                            "P1 stale invalidation: %d tombstone rows for quarterly",
+                            len(_tombstones_quarterly),
+                        )
+                        quarterly_skill = pd.concat(
+                            [quarterly_skill, _tombstones_quarterly], ignore_index=True
+                        )
+                except Exception as _e:
+                    logger.warning(
+                        "P1 stale invalidation read/diff failed for quarterly, "
+                        "saving without tombstones: %s",
+                        _e,
+                    )
 
                 ret = file_writer.save_quarterly_skill_metrics(
                     quarterly_skill, year=skill_metrics_year
@@ -399,6 +442,27 @@ def recalculate_skill_metrics():
                 else:
                     logger.error(f"Error saving seasonal forecast data: {ret}")
                     errors.append(f"Seasonal forecast data save failed: {ret}")
+
+                # --- P1: stale-aggregate invalidation (seasonal) ---
+                try:
+                    _existing_seasonal = data_reader.read_skill_metrics("season", codes)
+                    _tombstones_seasonal = build_stale_tombstones(
+                        _existing_seasonal, seasonal_skill, "season_in_year"
+                    )
+                    if not _tombstones_seasonal.empty:
+                        logger.info(
+                            "P1 stale invalidation: %d tombstone rows for seasonal",
+                            len(_tombstones_seasonal),
+                        )
+                        seasonal_skill = pd.concat(
+                            [seasonal_skill, _tombstones_seasonal], ignore_index=True
+                        )
+                except Exception as _e:
+                    logger.warning(
+                        "P1 stale invalidation read/diff failed for seasonal, "
+                        "saving without tombstones: %s",
+                        _e,
+                    )
 
                 ret = file_writer.save_seasonal_skill_metrics(
                     seasonal_skill, year=skill_metrics_year
