@@ -63,7 +63,28 @@ alt.data_transformers.disable_max_rows()
 # apps/forecast_skill_eval project.  Walk up 3 levels to reach the project
 # root (apps/forecast_skill_eval/) where the artifacts/ directory lives.
 _APP_DIR = Path(__file__).resolve().parents[3]
-_DEFAULT_CSV = _APP_DIR / "artifacts" / "rerun_2026-06-30_phase2" / "contingency_metrics.csv"
+_ARTIFACTS_DIR = _APP_DIR / "artifacts"
+
+
+def _resolve_default_csv() -> Path:
+    """Pick a sensible default contingency_metrics.csv.
+
+    Prefer the latest corrected run; otherwise fall back to the most recently
+    modified ``contingency_metrics.csv`` under ``artifacts/`` so the default
+    never goes stale when a specific run directory is cleaned or renamed.
+    """
+    preferred = _ARTIFACTS_DIR / "rerun_2026-07-06_corrected" / "contingency_metrics.csv"
+    if preferred.exists():
+        return preferred
+    candidates = sorted(
+        _ARTIFACTS_DIR.glob("*/contingency_metrics.csv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else preferred
+
+
+_DEFAULT_CSV = _resolve_default_csv()
 
 _TABLE_COLUMNS = [
     "code",
@@ -242,11 +263,17 @@ with st.sidebar:
         ),
     )
 
-csv_path = Path(csv_path_input) if csv_path_input else None
+# Fall back to the resolved default when the sidebar box is empty.  Streamlit
+# persists a widget's value across reruns, so a box that was blank in a prior
+# session stays blank and would otherwise ignore the ``value=`` default — this
+# keeps the app usable without the user having to paste the path every time.
+csv_path_resolved = csv_path_input or default_csv_str
+csv_path = Path(csv_path_resolved) if csv_path_resolved else None
 
 if csv_path is None or not csv_path.exists():
     st.warning(
-        "No valid CSV path provided. Set SKILL_EVAL_METRICS_CSV or enter a path in the sidebar."
+        "No valid CSV path provided. Set SKILL_EVAL_METRICS_CSV or enter a path in the sidebar. "
+        f"(Tried default: {default_csv_str or 'none found'}.)"
     )
     st.stop()
 
