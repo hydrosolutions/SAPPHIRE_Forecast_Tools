@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import math
 import os
 import sys
@@ -39,6 +40,77 @@ def _norms():
     return [float(month) for month in range(1, 13)]
 
 
+_EMPTY_SDK_PAGE = {"count": 0, "next": None, "previous": None, "results": []}
+
+
+class FakeSDK:
+    def __init__(self, *payloads):
+        self.payloads = list(payloads)
+
+    def get_norm_for_site(self, code, value_field, norm_period):
+        payload = self.payloads.pop(0)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    def get_data_values_for_site(self, filters=None, **kwargs):
+        # No SDK period actuals: force the local daily-aggregation fallback in
+        # sync_short_horizon_hydrograph._fetch_sdk_period_actuals and avoid the
+        # code-leaking AttributeError warning that would otherwise fire.
+        return dict(_EMPTY_SDK_PAGE)
+
+
+class FakeHydrographClient:
+    def __init__(self, runoff_by_year=None, existing_hydrograph=None):
+        self.runoff_by_year = runoff_by_year or {}
+        self.records_by_key = {}
+        self.write_calls = []
+        for record in existing_hydrograph or []:
+            self.records_by_key[self._key(record)] = dict(record)
+
+    @staticmethod
+    def _key(record):
+        return (record["horizon_type"], record["code"], record["date"])
+
+    def read_runoff(self, horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        return self.runoff_by_year.get(year, [])
+
+    def read_hydrograph(self, horizon, code, start_date, end_date, limit):
+        rows = [
+            record
+            for record in self.records_by_key.values()
+            if record["horizon_type"] == horizon
+            and record["code"] == str(code)
+            and start_date <= record["date"] <= end_date
+        ]
+        return sync_lhh.pd.DataFrame(rows)
+
+    def write_hydrograph(self, records):
+        records = [dict(record) for record in records]
+        self.write_calls.append(records)
+        for record in records:
+            self.records_by_key[self._key(record)] = record
+
+    def written_records(self):
+        return list(self.records_by_key.values())
+
+
+class StageFailingHydrographClient(FakeHydrographClient):
+    def __init__(self, *, fail_code, fail_on_call, runoff_by_year=None):
+        super().__init__(runoff_by_year=runoff_by_year)
+        self.fail_code = fail_code
+        self.fail_on_call = fail_on_call
+        self._write_call_count_by_code = {}
+
+    def write_hydrograph(self, records):
+        code = str(records[0]["code"])
+        self._write_call_count_by_code[code] = self._write_call_count_by_code.get(code, 0) + 1
+        if code == self.fail_code and self._write_call_count_by_code[code] == self.fail_on_call:
+            raise sync_lhh.SapphireAPIError("stage write rejected", status_code=422)
+        super().write_hydrograph(records)
+
+
 def _records(
     daily_current_year,
     daily_previous_year,
@@ -60,6 +132,10 @@ def _records(
 
 def _record_for_month(records, month):
     return next(record for record in records if record["horizon_value"] == month)
+
+
+def _records_by_horizon(records, horizon_type):
+    return [record for record in records if record["horizon_type"] == horizon_type]
 
 
 def test_writes_full_triad_with_complete_data():
@@ -190,6 +266,59 @@ def test_writes_none_when_daily_series_contains_nan():
     assert sync_lhh._json_safe(float("-inf")) is None
 
 
+def test_numpy_integer_norms_are_json_safe_python_floats():
+    np = pytest.importorskip("numpy")
+    client = FakeHydrographClient(runoff_by_year={2025: [], 2026: []})
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([np.int64(month) for month in range(1, 13)]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly_norms = [record["norm"] for record in _records_by_horizon(records, "month")]
+    assert monthly_norms == [float(month) for month in range(1, 13)]
+    assert all(type(norm) is float for norm in monthly_norms)
+    json.dumps(records)
+
+
+def test_numpy_nan_existing_norm_is_written_as_none():
+    np = pytest.importorskip("numpy")
+    existing_months = [
+        {
+            "horizon_type": "month",
+            "code": TEST_CODE,
+            "date": f"2026-{month:02d}-01",
+            "day_of_year": sync_lhh.MID_MONTH_DOY[month - 1],
+            "horizon_value": month,
+            "horizon_in_year": month,
+            "norm": np.float64("nan") if month == 1 else np.float64(month),
+            "previous": None,
+            "current": None,
+        }
+        for month in range(1, 13)
+    ]
+    client = FakeHydrographClient(
+        runoff_by_year={2025: [], 2026: []},
+        existing_hydrograph=existing_months,
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly_records = _records_by_horizon(records, "month")
+    assert _record_for_month(monthly_records, 1)["norm"] is None
+    assert _record_for_month(monthly_records, 2)["norm"] == 2.0
+    json.dumps(records)
+
+
 def test_idempotent_writes_with_identical_upstream():
     sdk = MagicMock()
     sdk.get_norm_for_site.return_value = _norms()
@@ -218,10 +347,11 @@ def test_idempotent_writes_with_identical_upstream():
 
     # Service-side upsert logging is covered by the API service; this unit
     # invariant keeps the posted payload stable for identical upstream inputs.
-    assert second == first
+    assert second.records == first.records
+    assert second.status is sync_lhh.LongHorizonStationWriteStatus.WRITTEN
     assert client.write_hydrograph.call_count == 2
-    assert client.write_hydrograph.call_args_list[0].args[0] == first
-    assert client.write_hydrograph.call_args_list[1].args[0] == second
+    assert client.write_hydrograph.call_args_list[0].args[0] == first.records
+    assert client.write_hydrograph.call_args_list[1].args[0] == second.records
 
 
 def test_calendar_days_used_for_february_non_leap():
@@ -503,45 +633,437 @@ def test_write_long_horizon_hydrograph_writes_quarterly_records():
         assert record["norm"] == pytest.approx(expected_norm, abs=1e-9)
 
 
-@pytest.mark.parametrize(("norms", "actual_count"), [([], 0), ([1.0] * 7, 7)])
-def test_skips_station_when_norms_missing(norms, actual_count, caplog):
-    sdk = MagicMock()
-    sdk.get_norm_for_site.return_value = norms
-    client = MagicMock()
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ([float(month) for month in range(1, 13)], sync_lhh._NormClassification.VALID),
+        (tuple(float(month) for month in range(1, 13)), sync_lhh._NormClassification.VALID),
+        (None, sync_lhh._NormClassification.NORM_ABSENT),
+        ([], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11, sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 13, sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + [None], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + [float("nan")], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + [float("inf")], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + [float("-inf")], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + ["12.0"], sync_lhh._NormClassification.NORM_ABSENT),
+        ([1.0] * 11 + [object()], sync_lhh._NormClassification.NORM_ABSENT),
+        ("bare string", sync_lhh._NormClassification.NORM_ABSENT),
+        ({"month": 1.0}, sync_lhh._NormClassification.NORM_ABSENT),
+        (12.0, sync_lhh._NormClassification.NORM_ABSENT),
+    ],
+)
+def test_classifies_monthly_norm_payloads(payload, expected):
+    assert sync_lhh._classify_monthly_norms(payload) is expected
 
-    with caplog.at_level(sync_lhh.logging.WARNING):
-        records = sync_lhh.write_station_monthly_hydrograph(
-            TEST_CODE,
-            sdk,
-            client,
-            target_year=2026,
-            today=dt.date(2026, 6, 15),
-        )
 
-    assert records == []
-    client.write_hydrograph.assert_not_called()
-    assert "12" in caplog.text
-    assert str(actual_count) in caplog.text
+def test_classifies_sdk_exception_as_failed():
+    result = sync_lhh._lookup_monthly_norms(
+        TEST_CODE,
+        FakeSDK(ConnectionError("tunnel down")),
+    )
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+    assert isinstance(result.exception, ConnectionError)
+
+
+def test_norm_absent_without_prior_norms_writes_all_horizons_and_local_values(monkeypatch):
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+    previous_values = {month: month * 10.0 for month in range(1, 13)}
+    current_values = {month: month * 20.0 for month in range(1, 13)}
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, previous_values),
+            2026: _full_year_rows(2026, current_values),
+        },
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly_records = _records_by_horizon(records, "month")
+    season_records = _records_by_horizon(records, "season")
+    quarter_records = _records_by_horizon(records, "quarter")
+    keys = {(record["horizon_type"], record["code"], record["date"]) for record in records}
+    assert len(monthly_records) == 12
+    assert len(season_records) == 1
+    assert len(quarter_records) == 4
+    assert len(keys) == 17
+    assert records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT)
+    ]
+    for month in range(1, 13):
+        monthly = _record_for_month(monthly_records, month)
+        assert monthly["date"] == f"2026-{month:02d}-01"
+        assert monthly["horizon_value"] == month
+        assert monthly["horizon_in_year"] == month
+        assert monthly["norm"] is None
+    assert _record_for_month(monthly_records, 2)["previous"] == sync_lhh.fl.round_3sf(20.0)
+    assert _record_for_month(monthly_records, 2)["current"] == sync_lhh.fl.round_3sf(40.0)
+    assert _record_for_month(monthly_records, 9)["previous"] == sync_lhh.fl.round_3sf(90.0)
+    assert _record_for_month(monthly_records, 9)["current"] == sync_lhh.fl.round_3sf(180.0)
+    assert season_records[0]["norm"] is None
+    assert all(record["norm"] is None for record in quarter_records)
+
+
+def test_norm_absent_preserves_existing_month_norms_and_derives_rollups():
+    existing_months = [
+        {
+            "horizon_type": "month",
+            "code": TEST_CODE,
+            "date": f"2026-{month:02d}-01",
+            "day_of_year": sync_lhh.MID_MONTH_DOY[month - 1],
+            "horizon_value": month,
+            "horizon_in_year": month,
+            "norm": 100.0 + month,
+            "previous": None,
+            "current": None,
+        }
+        for month in range(1, 13)
+    ]
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+        existing_hydrograph=existing_months,
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK(None),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly_records = _records_by_horizon(records, "month")
+    quarter_records = _records_by_horizon(records, "quarter")
+    season = _records_by_horizon(records, "season")[0]
+    for month in range(1, 13):
+        assert _record_for_month(monthly_records, month)["norm"] == 100.0 + month
+    assert season["norm"] == pytest.approx(sum(100.0 + month for month in range(4, 10)) / 6)
+    for quarter_record in quarter_records:
+        quarter = quarter_record["horizon_value"]
+        expected = sum(100.0 + month for month in sync_lhh.QUARTER_MONTHS[quarter]) / 3
+        assert quarter_record["norm"] == pytest.approx(expected)
 
 
 def test_skips_station_when_sdk_raises(caplog):
-    sdk = MagicMock()
-    sdk.get_norm_for_site.side_effect = ConnectionError("tunnel down")
     client = MagicMock()
 
-    with caplog.at_level(sync_lhh.logging.WARNING):
-        records = sync_lhh.write_station_monthly_hydrograph(
+    with caplog.at_level(sync_lhh.logging.DEBUG):
+        result = sync_lhh.write_station_monthly_hydrograph(
             TEST_CODE,
-            sdk,
+            FakeSDK(ConnectionError("tunnel down")),
             client,
             target_year=2026,
             today=dt.date(2026, 6, 15),
         )
 
-    assert records == []
+    assert result.status is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
+    assert result.records == []
     client.write_hydrograph.assert_not_called()
     assert "ConnectionError" in caplog.text
     assert "tunnel down" in caplog.text
+
+
+def test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sdk_failed(
+    monkeypatch,
+):
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    valid_records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK(_norms()),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    assert valid_records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN)
+    ]
+    assert _record_for_month(_records_by_horizon(valid_records, "month"), 5)["norm"] == 5.0
+
+    client.runoff_by_year = {
+        2025: _full_year_rows(2025, {month: 15.0 for month in range(1, 13)}),
+        2026: _full_year_rows(2026, {month: 30.0 for month in range(1, 13)}),
+    }
+    norm_absent_records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    month_five = _record_for_month(_records_by_horizon(norm_absent_records, "month"), 5)
+    assert norm_absent_records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT)
+    ]
+    assert month_five["norm"] == 5.0
+    assert month_five["previous"] == sync_lhh.fl.round_3sf(15.0)
+    assert month_five["current"] == sync_lhh.fl.round_3sf(30.0)
+
+    write_call_count = len(client.write_calls)
+    sdk_failed_records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK(ConnectionError("tunnel down")),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    assert sdk_failed_records == []
+    assert sdk_failed_records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)
+    ]
+    assert len(client.write_calls) == write_call_count
+
+
+def test_mixed_batch_carries_station_statuses():
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE, TEST_CODE, TEST_CODE],
+        iehhf_sdk=FakeSDK(_norms(), [], ConnectionError("tunnel down")),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+
+
+def test_mixed_batch_status_summary_tallies_statuses_and_total():
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.API_FAILED),
+    ]
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    assert summary.status_counts == {
+        sync_lhh.LongHorizonStationWriteStatus.WRITTEN: 1,
+        sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT: 1,
+        sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED: 1,
+        sync_lhh.LongHorizonStationWriteStatus.API_FAILED: 1,
+    }
+    assert summary.total_attempted == 4
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected_exit_code"),
+    [
+        ([sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED], 4),
+        ([sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT], 0),
+        ([sync_lhh.LongHorizonStationWriteStatus.WRITTEN], 0),
+        ([sync_lhh.LongHorizonStationWriteStatus.API_FAILED], 5),
+    ],
+)
+def test_exit_code_for_station_status_summary(statuses, expected_exit_code):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [(TEST_CODE, status) for status in statuses]
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == expected_exit_code
+
+
+def test_degraded_summary_logs_exact_counts_only_line(caplog):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        sync_lhh._log_degraded_long_horizon_summary(summary)
+
+    expected = (
+        "DEGRADED: monthly discharge norms unavailable for 1/3 stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    )
+    assert [record.message for record in caplog.records] == [expected]
+    assert TEST_CODE not in expected
+
+
+def test_degraded_summary_not_logged_when_no_norms_absent(caplog):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        sync_lhh._log_degraded_long_horizon_summary(summary)
+
+    assert "DEGRADED:" not in caplog.text
+
+
+def test_run_summary_artifact_is_counts_only():
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    artifact = sync_lhh._format_long_horizon_run_summary_artifact(summary)
+
+    assert "LONG-HORIZON RUN SUMMARY" in artifact
+    assert (
+        "DEGRADED: monthly discharge norms unavailable for 1/3 stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    ) in artifact
+    assert "written=1" in artifact
+    assert "norm_absent=1" in artifact
+    assert "sdk_failed=1" in artifact
+    assert "api_failed=0" in artifact
+    assert TEST_CODE not in artifact
+
+
+def test_api_failed_station_counts_in_summary_denominator_and_artifact():
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    original_write_hydrograph = client.write_hydrograph
+    failed_once = False
+
+    def fail_first_write(records):
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise sync_lhh.requests.exceptions.Timeout("hydrograph write timed out")
+        original_write_hydrograph(records)
+
+    client.write_hydrograph = fail_first_write
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE, TEST_CODE],
+        iehhf_sdk=FakeSDK(_norms(), []),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    artifact = sync_lhh._format_long_horizon_run_summary_artifact(summary)
+
+    assert records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.API_FAILED),
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+    ]
+    assert summary.total_attempted == 2
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.API_FAILED] == 1
+    assert sync_lhh._degraded_long_horizon_summary_line(summary) == (
+        "DEGRADED: monthly discharge norms unavailable for 1/2 stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    )
+    assert "api_failed=1" in artifact
+
+
+def test_norm_absent_with_no_local_data_writes_empty_triad_rows():
+    client = FakeHydrographClient(runoff_by_year={2025: [], 2026: []})
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK({}),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert len(_records_by_horizon(records, "month")) == 12
+    assert len(_records_by_horizon(records, "season")) == 1
+    assert len(_records_by_horizon(records, "quarter")) == 4
+    for record in records:
+        assert record["norm"] is None
+        assert record["previous"] is None
+        assert record["current"] is None
+
+
+def test_norm_absent_rerun_is_idempotent_without_duplicate_keys():
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+
+    first = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    second = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert sorted(first, key=lambda record: (record["horizon_type"], record["date"])) == sorted(
+        second,
+        key=lambda record: (record["horizon_type"], record["date"]),
+    )
+    assert len(client.written_records()) == 17
+    keys = {
+        (record["horizon_type"], record["code"], record["date"])
+        for record in client.written_records()
+    }
+    assert len(keys) == 17
+
+
+def test_leap_year_february_threshold_still_uses_29_days_with_norm_absent(monkeypatch):
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2023: _daily_rows(2023, {2: [2.0] * 23}),
+            2024: _daily_rows(2024, {2: [4.0] * 24}),
+        },
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK([]),
+        client=client,
+        target_year=2024,
+        today=dt.date(2025, 1, 1),
+    )
+
+    february = _record_for_month(_records_by_horizon(records, "month"), 2)
+    assert february["previous"] == sync_lhh.fl.round_3sf(2.0)
+    assert february["current"] == sync_lhh.fl.round_3sf(4.0)
+    assert february["day_of_year"] == 46
 
 
 def test_orchestrator_continues_after_skipped_station():
@@ -603,8 +1125,8 @@ def test_orchestrator_continues_after_quarterly_api_write_failure(caplog):
 
     assert client.write_hydrograph.call_count == 6
     assert len(records) == 30
-    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
     assert "1/2 attempted station(s)" in caplog.text
+    assert "19999" not in caplog.text
     assert records.attempted_station_codes == ["19999", "19998"]
     assert records.completed_station_codes == ["19998"]
     assert records.failed_station_codes == ["19999"]
@@ -638,10 +1160,73 @@ def test_orchestrator_preserves_monthly_when_seasonal_api_write_fails(caplog):
 
     assert len(records) == 12
     assert client.write_hydrograph.call_count == 2
-    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
+    assert "1/1 attempted station(s)" in caplog.text
+    assert "19999" not in caplog.text
     assert records.attempted_station_codes == ["19999"]
     assert records.completed_station_codes == []
     assert records.failed_station_codes == ["19999"]
+
+
+@pytest.mark.parametrize(
+    ("fail_on_call", "expected_records"),
+    [
+        (2, 12),
+        (3, 13),
+    ],
+)
+def test_norm_absent_later_stage_api_failure_counts_station_once_and_keeps_denominator(
+    caplog,
+    fail_on_call,
+    expected_records,
+):
+    first_code = "19999"
+    second_code = "19998"
+    client = StageFailingHydrographClient(
+        fail_code=first_code,
+        fail_on_call=fail_on_call,
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+
+    def read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        base_rows = client.runoff_by_year.get(year, [])
+        return [{**row, "code": str(code)} for row in base_rows]
+
+    client.read_runoff = read_runoff
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=[first_code, second_code],
+            iehhf_sdk=FakeSDK({}, {}),
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    artifact = sync_lhh._format_long_horizon_run_summary_artifact(summary)
+
+    assert len(records) == expected_records + 17
+    assert records.station_statuses == [
+        (first_code, sync_lhh.LongHorizonStationWriteStatus.API_FAILED),
+        (second_code, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+    ]
+    assert summary.total_attempted == 2
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.API_FAILED] == 1
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT] == 1
+    assert sync_lhh._degraded_long_horizon_summary_line(summary) == (
+        "DEGRADED: monthly discharge norms unavailable for 1/2 stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    )
+    assert "total_attempted=2" in artifact
+    assert "api_failed=1" in artifact
+    warning_and_error_text = " ".join(
+        record.message for record in caplog.records if record.levelno >= sync_lhh.logging.WARNING
+    )
+    assert first_code not in warning_and_error_text
 
 
 def test_orchestrator_marks_read_runoff_failure_as_attempted_failed(caplog):
@@ -661,8 +1246,8 @@ def test_orchestrator_marks_read_runoff_failure_as_attempted_failed(caplog):
 
     assert len(records) == 0
     client.write_hydrograph.assert_not_called()
-    assert "Long-horizon hydrograph API read/write failed for station 19999" in caplog.text
-    assert "read/write" in caplog.text
+    assert "1/1 attempted station(s)" in caplog.text
+    assert "19999" not in caplog.text
     assert records.attempted_station_codes == ["19999"]
     assert records.completed_station_codes == []
     assert records.failed_station_codes == ["19999"]
@@ -689,7 +1274,11 @@ def test_orchestrator_skip_has_metadata_but_no_attempt_completion_or_failure():
 
 
 def _patch_main_dependencies(monkeypatch, records):
-    monkeypatch.setattr(sync_lhh.sys, "argv", ["sync_long_horizon_hydrograph.py"])
+    monkeypatch.setattr(
+        sync_lhh.sys,
+        "argv",
+        ["sync_long_horizon_hydrograph.py", "--target-year", "2026"],
+    )
     monkeypatch.setattr(sync_lhh.sl, "load_environment", MagicMock())
     monkeypatch.setattr(sync_lhh, "IEasyHydroHFSDK", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr(sync_lhh, "resolve_sdk_station_codes", MagicMock(return_value=["19999"]))
@@ -701,11 +1290,12 @@ def _patch_main_dependencies(monkeypatch, records):
     )
 
 
-def test_main_exits_two_when_every_attempted_station_has_api_read_write_failure(
+def test_main_exits_five_when_every_attempted_station_has_api_read_write_failure(
     monkeypatch,
     caplog,
 ):
     records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [("19999", sync_lhh.LongHorizonStationWriteStatus.API_FAILED)]
     records.attempted_station_codes = ["19999"]
     records.completed_station_codes = []
     records.failed_station_codes = ["19999"]
@@ -714,17 +1304,21 @@ def test_main_exits_two_when_every_attempted_station_has_api_read_write_failure(
     with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
         sync_lhh.main()
 
-    assert exc.value.code == 2
+    assert exc.value.code == 5
     assert (
-        "All 1 attempted station(s) had long-horizon hydrograph API read/write failures"
+        "Long-horizon monthly hydrograph ingestion completed with 1 API read/write failure(s)."
         in caplog.text
     )
 
 
-def test_main_exits_zero_when_some_station_completes_after_api_read_write_failure(
+def test_main_exits_five_when_some_station_completes_after_api_read_write_failure(
     monkeypatch,
 ):
     records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}, {"code": "19998"}])
+    records.station_statuses = [
+        ("19999", sync_lhh.LongHorizonStationWriteStatus.API_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+    ]
     records.attempted_station_codes = ["19999", "19998"]
     records.completed_station_codes = ["19998"]
     records.failed_station_codes = ["19999"]
@@ -733,7 +1327,95 @@ def test_main_exits_zero_when_some_station_completes_after_api_read_write_failur
     with pytest.raises(SystemExit) as exc:
         sync_lhh.main()
 
+    assert exc.value.code == 5
+
+
+def test_main_exits_four_when_sdk_norm_lookup_fails(monkeypatch):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 4
+
+
+def test_main_exits_four_before_five_when_sdk_and_api_failures_both_present(monkeypatch):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.API_FAILED),
+    ]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 4
+
+
+def test_main_exits_four_when_all_sdk_failed_even_with_zero_records(monkeypatch, caplog):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)]
+    records.attempted_station_codes = []
+    records.completed_station_codes = []
+    records.failed_station_codes = []
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 4
+    assert "SDK norm lookup failure" in caplog.text
+    assert "No monthly hydrograph records produced" not in caplog.text
+
+
+def test_main_norm_absent_no_records_still_exits_two(monkeypatch, caplog):
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT)]
+    records.attempted_station_codes = []
+    records.completed_station_codes = []
+    records.failed_station_codes = []
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 2
+    assert "No monthly hydrograph records produced - nothing to write." in caplog.text
+
+
+def test_main_clean_records_exit_zero(monkeypatch):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.WRITTEN)]
+    records.attempted_station_codes = [TEST_CODE]
+    records.completed_station_codes = [TEST_CODE]
+    records.failed_station_codes = []
+    _patch_main_dependencies(monkeypatch, records)
+
+    with pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
     assert exc.value.code == 0
+
+
+def test_main_prints_counts_only_run_summary_artifact(monkeypatch, capsys):
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT)]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    stdout = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert "LONG-HORIZON RUN SUMMARY" in stdout
+    assert (
+        "DEGRADED: monthly discharge norms unavailable for 1/1 stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    ) in stdout
+    assert TEST_CODE not in stdout
 
 
 def test_main_empty_records_path_when_no_station_attempted(monkeypatch, caplog):
