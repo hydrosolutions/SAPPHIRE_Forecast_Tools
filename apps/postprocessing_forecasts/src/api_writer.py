@@ -38,7 +38,10 @@ MODEL_TYPE_MAP = {
     "SM_GBT": "SM_GBT",
     "SM_GBT_LR": "SM_GBT_LR",
     "SM_GBT_NORM": "SM_GBT_Norm",
-    # Baseline models (computed in postprocessing)
+    # Ensemble aggregates computed in postprocessing (not baselines):
+    #   Naive Mean   = unweighted mean of all models
+    #   Skilled Mean = skill-weighted (1/MAE) mean of the skilled models
+    #   (EM = Ensemble Mean is listed above with the short-term models.)
     "NAIVE MEAN": "Naive Mean",
     "SKILLED MEAN": "Skilled Mean",
     # DB-form aliases (CSV-fallback read may yield these instead of value-form)
