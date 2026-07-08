@@ -94,6 +94,10 @@ set +u
 read_configuration "$ENV_FILE_PATH"
 set -u
 
+# read_configuration (Docker-oriented) rewrote ieasyhydroforecast_env_file_path to a
+# container path; this wrapper runs on the host, so restore the host path for load_environment.
+export ieasyhydroforecast_env_file_path="$ENV_FILE_PATH"
+
 if [ -z "${ieasyhydroforecast_data_root_dir-}" ]; then
     echo "| Error: ieasyhydroforecast_data_root_dir is not set. Please check your .env file."
     exit 1
