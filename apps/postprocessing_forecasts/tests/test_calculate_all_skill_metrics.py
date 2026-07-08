@@ -170,7 +170,14 @@ class TestCalculateAllSkillMetricsAllNaN:
         assert np.isnan(result["mae"])
 
     def test_all_nan_delta(self):
-        """All NaN in delta -> nan_result."""
+        """All NaN in delta, but obs/sim both valid.
+
+        Re-baselined for M3 (finding #2, doc/plans/postprocessing_skill_correctness_design.md):
+        point metrics (mae, sdivsigma, nse) only need obs+sim to be
+        finite and must NOT be starved just because delta is entirely
+        NaN — n_pairs reflects the obs/sim-valid count. accuracy/delta
+        legitimately stay NaN since no row has a valid delta.
+        """
         data = pd.DataFrame(
             {
                 "obs": [100.0, 110.0],
@@ -179,8 +186,12 @@ class TestCalculateAllSkillMetricsAllNaN:
             }
         )
         result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
-        assert result["n_pairs"] == 0
-        assert np.isnan(result["mae"])
+        assert result["n_pairs"] == 2
+        assert result["mae"] == pytest.approx(2.0)
+        assert result["nse"] == pytest.approx(0.84)
+        assert result["sdivsigma"] == pytest.approx(0.4)
+        assert np.isnan(result["accuracy"])
+        assert np.isnan(result["delta"])
 
     def test_mixed_nan_filters_correctly(self):
         """Some NaN rows filtered, valid rows produce correct metrics.

@@ -966,6 +966,15 @@ def calculate_all_skill_metrics(
         pd.Series with keys:
             sdivsigma, nse, mae, n_pairs, delta, accuracy,
             pbias, kgelf, nse_log
+
+        sdivsigma/nse/mae/pbias/kgelf/nse_log are point metrics computed
+        over rows where obs+sim are both finite (they do not use delta
+        at all, matching sdivsigma_nse()/mae()). n_pairs is the count of
+        those obs/sim-valid rows. accuracy/delta are computed over the
+        independently-filtered subset where obs, sim, AND delta are all
+        finite (matching forecast_accuracy_hydromet()) — that subset can
+        be smaller than n_pairs when delta is NaN/inf for some otherwise
+        obs/sim-valid rows.
     """
     nan_result = pd.Series(
         [0 if name == "n_pairs" else np.nan for name in METRIC_ORDER],
@@ -982,27 +991,21 @@ def calculate_all_skill_metrics(
     simulated = data[simulated_col].to_numpy(dtype=np.float64)
     delta_values = data[delta_col].to_numpy(dtype=np.float64)
 
-    # Common NaN/inf mask for all metrics
-    mask = (
-        ~np.isnan(observed)
-        & ~np.isnan(simulated)
-        & ~np.isnan(delta_values)
-        & ~np.isinf(observed)
-        & ~np.isinf(simulated)
-        & ~np.isinf(delta_values)
+    # Point-metric mask: obs/sim only. mae/sdivsigma/nse/pbias/kgelf/
+    # nse_log don't use delta at all, so they must not be starved by a
+    # NaN delta on an otherwise-valid obs/sim row (matches
+    # sdivsigma_nse()/mae(), which never look at delta).
+    obs_sim_mask = (
+        ~np.isnan(observed) & ~np.isnan(simulated) & ~np.isinf(observed) & ~np.isinf(simulated)
     )
-    if not np.any(mask):
-        return nan_result
-
-    obs = observed[mask]
-    sim = simulated[mask]
-    deltas = delta_values[mask]
-    n = len(obs)
-
-    # --- MAE + n_pairs (need >= 1 point) ---
+    n = int(obs_sim_mask.sum())
     if n < 1:
         return nan_result
 
+    obs = observed[obs_sim_mask]
+    sim = simulated[obs_sim_mask]
+
+    # --- MAE (need >= 1 obs/sim-valid point) ---
     differences = obs - sim
     abs_diff = np.abs(differences)
 
@@ -1013,30 +1016,43 @@ def calculate_all_skill_metrics(
     except (RuntimeWarning, FloatingPointError):
         mae_value = np.nan
 
-    # --- Accuracy + delta (need >= 1 point) ---
-    try:
-        accuracy = float(np.mean(abs_diff <= deltas))
-        # Delta is constant per (code, period_in_year) by design.
-        # Use first value; warn if they vary unexpectedly.
-        delta = float(deltas[0])
-        delta_range = float(np.ptp(deltas))
-        if delta_range > 1e-6:
-            logger.warning(
-                "Delta values vary within group: range=%.6f, "
-                "min=%.6f, max=%.6f (using first value %.6f)",
-                delta_range,
-                float(np.min(deltas)),
-                float(np.max(deltas)),
-                delta,
-            )
-        if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+    # --- Accuracy + delta: independent obs/sim/delta mask (need >= 1
+    # delta-valid point). This subset can be strictly smaller than
+    # obs_sim_mask when delta is NaN/inf for some obs/sim-valid rows —
+    # accuracy/delta must reflect only the delta-valid rows, exactly as
+    # forecast_accuracy_hydromet() does.
+    delta_mask = obs_sim_mask & ~np.isnan(delta_values) & ~np.isinf(delta_values)
+    if np.any(delta_mask):
+        try:
+            obs_d = observed[delta_mask]
+            sim_d = simulated[delta_mask]
+            deltas = delta_values[delta_mask]
+            abs_diff_d = np.abs(obs_d - sim_d)
+            accuracy = float(np.mean(abs_diff_d <= deltas))
+            # Delta is constant per (code, period_in_year) by design.
+            # Use first value; warn if they vary unexpectedly.
+            delta = float(deltas[0])
+            delta_range = float(np.ptp(deltas))
+            if delta_range > 1e-6:
+                logger.warning(
+                    "Delta values vary within group: range=%.6f, "
+                    "min=%.6f, max=%.6f (using first value %.6f)",
+                    delta_range,
+                    float(np.min(deltas)),
+                    float(np.max(deltas)),
+                    delta,
+                )
+            if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+                accuracy = np.nan
+                delta = np.nan
+        except (RuntimeWarning, FloatingPointError):
             accuracy = np.nan
             delta = np.nan
-    except (RuntimeWarning, FloatingPointError):
+    else:
         accuracy = np.nan
         delta = np.nan
 
-    # --- sdivsigma + NSE (need >= 2 points for std) ---
+    # --- sdivsigma + NSE (need >= 2 obs/sim-valid points for std) ---
     if n < 2:
         return pd.Series(
             [np.nan, np.nan, mae_value, n, delta, accuracy, np.nan, np.nan, np.nan],
