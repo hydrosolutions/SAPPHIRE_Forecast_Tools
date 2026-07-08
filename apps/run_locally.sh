@@ -719,6 +719,12 @@ run_maintenance_preprocessing_runoff() {
 
         if [ $lt_rc -eq 2 ]; then
             log WARN "Long-horizon hydrograph sync produced no records; continuing maintenance"
+        elif [ $lt_rc -eq 5 ]; then
+            log ERROR "Long-horizon hydrograph sync had API read/write failure(s)"
+            rc=$lt_rc
+        elif [ $lt_rc -eq 4 ]; then
+            log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
+            rc=$lt_rc
         elif [ $lt_rc -ne 0 ]; then
             rc=$lt_rc
         fi

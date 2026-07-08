@@ -13,9 +13,12 @@ import calendar
 import datetime as dt
 import logging
 import math
+import numbers
 import os
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 import pandas as pd
@@ -53,12 +56,45 @@ if SapphireAPIError is not None:
     _API_READ_WRITE_ERRORS = (SapphireAPIError, *_API_READ_WRITE_ERRORS)
 
 
+class _NormClassification(Enum):
+    VALID = "valid"
+    NORM_ABSENT = "norm_absent"
+    SDK_FAILED = "sdk_failed"
+
+
+class LongHorizonStationWriteStatus(Enum):
+    WRITTEN = "written"
+    NORM_ABSENT = "norm_absent"
+    SDK_FAILED = "sdk_failed"
+    API_FAILED = "api_failed"
+
+
+@dataclass(frozen=True)
+class LongHorizonStationWriteResult:
+    status: LongHorizonStationWriteStatus
+    records: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class LongHorizonRunSummary:
+    status_counts: dict[LongHorizonStationWriteStatus, int]
+    total_attempted: int
+
+
+@dataclass(frozen=True)
+class _MonthlyNormLookupResult:
+    classification: _NormClassification
+    norms: Any
+    exception: Exception | None = None
+
+
 class _LongHorizonWriteResult(list):
     def __init__(self, records: Iterable[dict[str, Any]] = ()) -> None:
         super().__init__(records)
         self.attempted_station_codes: list[str] = []
         self.completed_station_codes: list[str] = []
         self.failed_station_codes: list[str] = []
+        self.station_statuses: list[tuple[str, LongHorizonStationWriteStatus]] = []
 
 
 logging.basicConfig(
@@ -78,8 +114,13 @@ def _json_safe(value: Any) -> Any:
     """NaN, +inf, -inf, and None all map to None. Finite values pass through."""
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not math.isfinite(value):
-        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, numbers.Real):
+        coerced = float(value)
+        if not math.isfinite(coerced):
+            return None
+        return coerced
     return value
 
 
@@ -233,35 +274,105 @@ def build_monthly_records(
     return records
 
 
+def _classify_monthly_norms(norms: Any) -> _NormClassification:
+    """Classify an SDK monthly-norm return value.
+
+    VALID only when ``norms`` is a list/tuple of exactly 12 finite real numbers
+    (bool is explicitly rejected); any other successful shape is NORM_ABSENT.
+    """
+    if not isinstance(norms, (list, tuple)):
+        return _NormClassification.NORM_ABSENT
+    if len(norms) != 12:
+        return _NormClassification.NORM_ABSENT
+    for value in norms:
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            return _NormClassification.NORM_ABSENT
+        if not math.isfinite(float(value)):
+            return _NormClassification.NORM_ABSENT
+    return _NormClassification.VALID
+
+
+def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult:
+    """Fetch and classify the SDK monthly norms, capturing any raised exception."""
+    try:
+        norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
+    except Exception as exc:
+        return _MonthlyNormLookupResult(
+            classification=_NormClassification.SDK_FAILED,
+            norms=None,
+            exception=exc,
+        )
+    return _MonthlyNormLookupResult(
+        classification=_classify_monthly_norms(norms),
+        norms=norms,
+    )
+
+
+def _read_existing_month_norms(client: Any, code: str, target_year: int) -> list[Any]:
+    """Read stored MONTH-row norms for the target year into a 12-element list.
+
+    Returns ``[None] * 12`` keyed by ``horizon_in_year`` (1-12); missing months
+    stay ``None``. Used to preserve any stored norm across a norm-absent rerun.
+    """
+    existing = client.read_hydrograph(
+        horizon="month",
+        code=code,
+        start_date=f"{target_year}-01-01",
+        end_date=f"{target_year}-12-31",
+        limit=1000,
+    )
+    norm_values: list[Any] = [None] * 12
+    for row in _iter_daily_rows(existing):
+        if not isinstance(row, dict):
+            continue
+        try:
+            month = int(row.get("horizon_in_year"))
+        except (TypeError, ValueError):
+            continue
+        if month in MONTHS:
+            norm_values[month - 1] = row.get("norm")
+    return norm_values
+
+
 def write_station_monthly_hydrograph(
     code: str,
     iehhf_sdk: Any,
     client: Any,
     target_year: int,
     today: dt.date,
-) -> list[dict[str, Any]]:
-    """Build and write monthly hydrograph records for one station."""
+) -> LongHorizonStationWriteResult:
+    """Build and write monthly hydrograph records for one station.
+
+    Row existence is decoupled from the iEH-HF monthly norm: when the norm is
+    absent (any non-12-finite return), the 12 month rows are still written and
+    any previously stored norm is preserved via a read-merge. Only an SDK
+    exception skips the station.
+    """
     logger.info("Building long-horizon monthly hydrograph for station %s", code)
-    try:
-        norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
-    except Exception as exc:
-        logger.warning(
+    norm_lookup = _lookup_monthly_norms(code, iehhf_sdk)
+    norm_classification = norm_lookup.classification
+    if norm_classification is _NormClassification.SDK_FAILED:
+        exc = norm_lookup.exception
+        logger.debug(
             "write_station_monthly_hydrograph: SDK call failed for site %s, skipping. "
             "Error: %s: %s",
             code,
             type(exc).__name__,
             exc,
         )
-        return []
-
-    if len(norms) != 12:
-        logger.warning(
-            "write_station_monthly_hydrograph: expected 12 norm values for site %s, "
-            "got %d - skipping this site.",
-            code,
-            len(norms),
+        return LongHorizonStationWriteResult(
+            status=LongHorizonStationWriteStatus.SDK_FAILED,
+            records=[],
         )
-        return []
+
+    norms = norm_lookup.norms
+    if norm_classification is _NormClassification.NORM_ABSENT:
+        logger.debug(
+            "write_station_monthly_hydrograph: monthly norms absent for site %s; "
+            "preserving any existing month norms.",
+            code,
+        )
+        norms = _read_existing_month_norms(client, code, target_year)
 
     daily_current_year = _read_daily_runoff(client, code, target_year)
     daily_previous_year = _read_daily_runoff(client, code, target_year - 1)
@@ -298,7 +409,12 @@ def write_station_monthly_hydrograph(
     )
     client.write_hydrograph(records)
     logger.info("Wrote %d monthly hydrograph records for station %s", len(records), code)
-    return records
+    status = (
+        LongHorizonStationWriteStatus.WRITTEN
+        if norm_classification is _NormClassification.VALID
+        else LongHorizonStationWriteStatus.NORM_ABSENT
+    )
+    return LongHorizonStationWriteResult(status=status, records=records)
 
 
 def _seasonal_field_mean(monthly_records: list[dict[str, Any]], field: str) -> float | None:
@@ -446,20 +562,22 @@ def write_long_horizon_hydrograph(
         code_str = str(code)
         all_records.attempted_station_codes.append(code_str)
         try:
-            monthly_records = write_station_monthly_hydrograph(
+            monthly_result = write_station_monthly_hydrograph(
                 code=code_str,
                 iehhf_sdk=iehhf_sdk,
                 client=client,
                 target_year=target_year,
                 today=today,
             )
-            if not monthly_records:
+            if monthly_result.status is LongHorizonStationWriteStatus.SDK_FAILED:
+                all_records.station_statuses.append((code_str, monthly_result.status))
                 all_records.attempted_station_codes.pop()
                 logger.info(
                     "Skipping seasonal hydrograph for station %s without monthly records",
                     code,
                 )
                 continue
+            monthly_records = monthly_result.records
             all_records.extend(monthly_records)
             all_records.append(
                 write_station_seasonal_hydrograph(
@@ -480,9 +598,13 @@ def write_long_horizon_hydrograph(
                 )
             )
             all_records.completed_station_codes.append(code_str)
+            all_records.station_statuses.append((code_str, monthly_result.status))
         except _API_READ_WRITE_ERRORS as exc:
             all_records.failed_station_codes.append(code_str)
-            logger.warning(
+            all_records.station_statuses.append(
+                (code_str, LongHorizonStationWriteStatus.API_FAILED)
+            )
+            logger.debug(
                 "Long-horizon hydrograph API read/write failed for station %s; preserving "
                 "any records already written for this station and continuing. Error: %s: %s",
                 code_str,
@@ -493,12 +615,69 @@ def write_long_horizon_hydrograph(
 
     if all_records.failed_station_codes:
         logger.warning(
-            "Long-horizon hydrograph API read/write failures for %d/%d attempted station(s): %s",
+            "Long-horizon hydrograph API read/write failures for %d/%d attempted station(s).",
             len(all_records.failed_station_codes),
             len(all_records.attempted_station_codes),
-            ", ".join(all_records.failed_station_codes),
         )
     return all_records
+
+
+def _summarize_long_horizon_station_statuses(
+    records: Any,
+) -> LongHorizonRunSummary:
+    """Count long-horizon station write statuses from the writer result metadata."""
+    status_counts = {status: 0 for status in LongHorizonStationWriteStatus}
+    station_statuses = getattr(records, "station_statuses", [])
+    for _code, status in station_statuses:
+        status_counts[status] += 1
+    return LongHorizonRunSummary(
+        status_counts=status_counts,
+        total_attempted=len(station_statuses),
+    )
+
+
+def _exit_code_for_long_horizon_summary(summary: LongHorizonRunSummary) -> int:
+    """Return the terminal exit code for the station-status summary."""
+    if summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED] >= 1:
+        return 4
+    if summary.status_counts[LongHorizonStationWriteStatus.API_FAILED] >= 1:
+        return 5
+    return 0
+
+
+def _degraded_long_horizon_summary_line(summary: LongHorizonRunSummary) -> str | None:
+    n_absent = summary.status_counts[LongHorizonStationWriteStatus.NORM_ABSENT]
+    if n_absent == 0:
+        return None
+    n_total = summary.total_attempted
+    return (
+        f"DEGRADED: monthly discharge norms unavailable for {n_absent}/{n_total} stations; "
+        "observed runoff written; norm and percent-of-norm unavailable."
+    )
+
+
+def _log_degraded_long_horizon_summary(summary: LongHorizonRunSummary) -> None:
+    """Emit the counts-only degraded-success warning when monthly norms were absent."""
+    degraded_line = _degraded_long_horizon_summary_line(summary)
+    if degraded_line is not None:
+        logger.warning("%s", degraded_line)
+
+
+def _format_long_horizon_run_summary_artifact(summary: LongHorizonRunSummary) -> str:
+    """Format the counts-only maintenance summary block captured by the yearly service log."""
+    degraded_line = _degraded_long_horizon_summary_line(summary)
+    lines = [
+        "LONG-HORIZON RUN SUMMARY",
+        f"total_attempted={summary.total_attempted}",
+        f"written={summary.status_counts[LongHorizonStationWriteStatus.WRITTEN]}",
+        f"norm_absent={summary.status_counts[LongHorizonStationWriteStatus.NORM_ABSENT]}",
+        f"sdk_failed={summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED]}",
+        f"api_failed={summary.status_counts[LongHorizonStationWriteStatus.API_FAILED]}",
+    ]
+    if degraded_line is not None:
+        lines.append(degraded_line)
+    lines.append("END LONG-HORIZON RUN SUMMARY")
+    return "\n".join(lines)
 
 
 def resolve_sdk_station_codes(sdk: Any) -> list[str]:
@@ -550,9 +729,19 @@ def _get_preprocessing_client() -> Any:
 
 
 def main() -> None:
+    """Entry point for long-horizon runoff hydrograph ingestion.
+
+    Exit codes:
+        0  Success, including degraded success with missing monthly norms.
+        1  API setup/runtime error.
+        2  No SDK sites/no records.
+        3  Unexpected exception.
+        4  >=1 SDK norm lookup failure.
+        5  >=1 API read/write failure.
+    """
     parser = _build_parser()
     args = parser.parse_args()
-    today = dt.date.today()
+    today = dt.datetime.now().date()
     target_year = args.target_year if args.target_year is not None else today.year
 
     try:
@@ -578,20 +767,29 @@ def main() -> None:
             target_year=target_year,
             today=today,
         )
-        attempted_station_codes = getattr(records, "attempted_station_codes", [])
-        completed_station_codes = getattr(records, "completed_station_codes", [])
-        if len(completed_station_codes) == 0 and len(attempted_station_codes) > 0:
-            logger.error(
-                "All %d attempted station(s) had long-horizon hydrograph API read/write "
-                "failures; exiting 2 after preserving any successful partial writes.",
-                len(attempted_station_codes),
-            )
-            sys.exit(2)
+        run_summary = _summarize_long_horizon_station_statuses(records)
+        _log_degraded_long_horizon_summary(run_summary)
+        print(_format_long_horizon_run_summary_artifact(run_summary))
+        exit_code = _exit_code_for_long_horizon_summary(run_summary)
+        if exit_code != 0:
+            if exit_code == 4:
+                logger.error(
+                    "Long-horizon monthly hydrograph ingestion completed with %d SDK norm "
+                    "lookup failure(s).",
+                    run_summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED],
+                )
+            else:
+                logger.error(
+                    "Long-horizon monthly hydrograph ingestion completed with %d API "
+                    "read/write failure(s).",
+                    run_summary.status_counts[LongHorizonStationWriteStatus.API_FAILED],
+                )
+            sys.exit(exit_code)
         if not records:
             logger.error("No monthly hydrograph records produced - nothing to write.")
             sys.exit(2)
         logger.info("Long-horizon monthly hydrograph ingestion wrote %d records.", len(records))
-        sys.exit(0)
+        sys.exit(exit_code)
 
     except RuntimeError as exc:
         logger.error("API error during long-horizon monthly hydrograph ingestion: %s", exc)
