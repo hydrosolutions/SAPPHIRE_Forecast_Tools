@@ -48,3 +48,32 @@ cross-vendor quality gate (strong Claude + `codex exec review` read the diff), t
 `SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>` (zero failures / zero unexpected skips) and
 changed-line coverage before PR. EM output must stay byte-identical where a fix is not meant to
 change it (M1's dedup changes n_pairs/NSE by design — re-baseline those tests explicitly).
+
+---
+
+## Review update (2026-07-08) — WF1 output + critical milestone review
+
+**WF1 (vision-decompose) result:** 6 milestones, all 4 adversarial reviewers approved. Applied
+advisories: M6 scoped to PRODUCE rp5 rows only (the "reject at config validation" branch would
+break the locked test_events.py:585-590 contract that rp5/rp10/rp30/rp100 are accepted); deps
+relaxed to two tracks (skill_metrics M1→M2→M3→M4 serial for same-file churn; forecast_skill_eval
+M5 ∥ M6 independent); "byte-identical" reworded to "numerically unchanged for unmodified paths".
+
+**Confirmed domain facts (user, 2026-07-08):** ONE target season (irrigation, months 4–9);
+`season_in_year` = the ISSUE LEAD, not a distinct season; skill + ensembles are wanted PER LEAD;
+min-n floors (MONTH≥4/QUARTER≥5/SEASON≥5) = minimum number of YEARS of paired history.
+
+**M1 INVERTED — now BLOCKED pending design.** The user confirmed day-10 vs day-25 issues within
+the same issue-month are DIFFERENT leads that must each get their own skill metric + ensemble.
+Current `horizon_value` is a COARSE month-level lead (0–3) that collapses them; the issue day is
+stored (`LongForecast.date`) but is not a grouping key. So the original M1 plan (dedup re-issues,
+keep latest) is WRONG — it would delete a forecast the user wants to keep. Correct direction:
+STRATIFY skill/ensembles by a finer lead, not collapse. This is a lead-taxonomy redesign, overlaps
+the parked lead-aware project (`SAPPHIRE_SKILL_LEAD_AWARE`, not on this base), and may touch the
+colleague-owned skill_metrics/long_forecasts key. OPEN DECISION (awaiting user): (a) define what a
+lead is (issue day-of-month / issue-date / lead-days bucket); (b) how it's keyed/stored (re-encode
+horizon_value vs add a field → service coordination); (c) campaign path — design-first / fold-in /
+park M1 & ship M2–M6.
+
+**M2–M6:** independent of the lead question; not yet critically reviewed with the user (pending).
+NOT fed to WF2 yet — no build until the user approves the path.
