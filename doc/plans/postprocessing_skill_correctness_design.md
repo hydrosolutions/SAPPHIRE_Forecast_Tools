@@ -77,3 +77,38 @@ park M1 & ship M2–M6.
 
 **M2–M6:** independent of the lead question; not yet critically reviewed with the user (pending).
 NOT fed to WF2 yet — no build until the user approves the path.
+
+---
+
+## M1 design pass — RESOLVED (2026-07-08, config-driven)
+
+Source of truth = deployment long-term configs (`<org>_data_forecast_tools/config/long_term_configs/`),
+NOT the relic-contaminated DB. Empirics: DB has ~32 issue-dates/target-year for MONTH (pentad-day
+relics from backfill/hindcast); operationally each mode issues ONCE.
+
+**Operational taxonomy (per org, from config `operational_issue_day` / `operational_month_lead_time`
+/ `target_*_month`):**
+- Kyrgyz: month_0 (d10,L0), month_1/2/3 (d25, L1/2/3), quarter (d25,L1), seasonal Jan/Feb/Mar/Apr
+  (d25, L3/2/1/0, target months 4–9). 9 modes.
+- Tajik: month_1/2/3 (d1, L0/1/2), quarter (d1,L0), seasonal_april (d1,L0, months 4–9). 5 modes.
+
+**Resolved M1 design:**
+1. Lead taxonomy = config modes (month-level lead); one `(horizon, target-window, lead,
+   operational_issue_day)` per mode per org. Stored in `horizon_value` (month-level → NO service
+   schema change). Matches the parked lead-aware derived `lead_months`.
+2. Pairing = ONE operational forecast per `(code, mode, target-year)`: **select by configured lead
+   across all history** — the issuance whose derived lead `(valid_from.y-date.y)*12 +
+   (valid_from.m-date.m)` == mode's `operational_month_lead_time`; among candidates prefer
+   `operational_issue_day`, else nearest/latest. Collapses relics; uses full hindcast history →
+   `n_pairs = number of target-years`.
+3. Skill + ensembles computed per mode/lead (preserves per-lead separation). Relics excluded from
+   operational skill (candidates for the merged stale-tombstone cleanup).
+4. Gates: #411 hard floor (MONTH≥4/QUARTER≥5/SEASON≥5) for ensemble-eligibility + per-lead
+   NaN-at-`n_pairs<2` for variance metrics (sdivsigma/nse).
+
+**Relationship to parked lead-aware project:** this IS that project, refined. Reuse its locked
+decisions + its already-built P2 reader lead-derivation (flag-gated, uncommitted); ADD the
+config-driven operational-issuance selection (parked plan accepted intra-lead re-issue pooling as
+"rare" — we now know those are relics and select the operational one instead). Reconcile with the
+merged #411 min-n/tombstone (built after the parked P2). Recommend RESUMING the lead-aware
+plan/branch rather than building M1 from scratch.
