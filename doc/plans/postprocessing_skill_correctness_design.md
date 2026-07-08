@@ -112,3 +112,30 @@ config-driven operational-issuance selection (parked plan accepted intra-lead re
 "rare" — we now know those are relics and select the operational one instead). Reconcile with the
 merged #411 min-n/tombstone (built after the parked P2). Recommend RESUMING the lead-aware
 plan/branch rather than building M1 from scratch.
+
+---
+
+## M2–M6 critical review — RESOLVED (2026-07-08)
+
+- **M2** (gates): operator = **global inclusive `>=`/`<=`** + **long-term NSE threshold = small epsilon**
+  so NSE=0 stays excluded (honours strict-positive without a horizon flag). Lock the long-term NSE
+  env var against disable tokens (metric-specific in `_parse_threshold_env`); add `isfinite` guard
+  (rejects nan/inf, closes #12); route the short-term direct-env read through the lenient parser
+  (closes #11). sdivsigma/accuracy stay disable-able long-term.
+- **M3** (per-metric masks, #2): split masks — NSE/MAE/pbias/kgelf/nse_log use obs/sim-only; delta
+  mask applies to accuracy/delta only. **Stored `n_pairs` = obs/sim pair count** (accuracy uses its
+  own delta-valid subset internally). Numerically identical where delta is finite (monthly fills 0.0).
+- **M4** (CRPS, D3/#5+#6): one canonical `crps_from_quantiles` (factor-2 + flat tails + NaN-quantile
+  handling) in **`iEasyHydroForecast`** (both apps already depend on it); both import it. Stored
+  postprocessing `crps` changes (~2x, informational, no gate) — **accept mixed old/new until next
+  recalc** (no special action).
+- **M5** (eval short-term dedup, D4/#7): flip `short_term_dedup_one_per_target` default **ON** using
+  the existing latest-issue rule; **minimal scope** — eval↔operational LONG-TERM parity is handled
+  inside M1's lead-aware resumption (its P4), not here.
+- **M6** (rp events, #8): **DEFERRED to the M7 tier** — eval-only feature-completeness (a silent
+  no-op), not a core skill/ensemble correctness/consistency fix. Backlog with #14/#15/#16.
+
+**Campaign scope is now M1–M5.** M1 = resume+refine the parked lead-aware project (config-driven
+operational-issuance selection + reconcile with merged #411). M2–M5 = independent, mostly single-file
+correctness/consistency fixes. M6 + M7 (#14/#15/#16) = deferred backlog issues. #9/#10 = colleague
+service coordination.
