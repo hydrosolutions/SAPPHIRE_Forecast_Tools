@@ -1180,6 +1180,10 @@ Routine tag-bump-only updates do NOT need this step.
 must be up (`SAPPHIRE_API_URL` reachable, default `http://localhost:8000`) and
 the iEasyHydro HF SDK / SSH tunnel must be reachable, because the backfill reads
 daily runoff from the preprocessing API and period actuals from the HF SDK.
+The wrapper runs the backfill directly on the host via `uv run` (it does not
+pull or build a Docker image), so the host must also have `uv` installed and
+the `apps/preprocessing_runoff` environment synced (`uv sync` in that
+directory) before running it.
 
 **Reference:** general backfill methodology and idempotency model are in
 [`doc/prod/historical_backfill_runbook.md`](./historical_backfill_runbook.md).
