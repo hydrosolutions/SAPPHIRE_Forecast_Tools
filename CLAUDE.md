@@ -74,11 +74,15 @@ vocabulary is owned by** [`doc/plans/README.md`](doc/plans/README.md) — do not
    tool/model where possible. Default out-of-loop verifier = `codex exec`; fall back to a
    general-purpose Claude subagent with no prior session context if Codex is unavailable.
    Post-implementation review is a required gate before PR approval — never approve on the
-   implementer's claim alone.
+   implementer's claim alone. **Work is not "done", review-eligible, or PR-eligible until the full
+   affected-scope tests pass** (`run_tests.sh`, zero fail / zero unexpected skip) — a standing
+   precondition, not a pre-PR afterthought.
 
-2. **Out-of-loop verifier for high-claim-density artifacts** (plans, designs, audits, multi-file
-   patches). Pass the artifact *in the prompt before committing it*; the verifier checks every
-   falsifiable claim against code, tests, docs, and DB/API contracts. Verifier-found **factual
+2. **Out-of-loop review for high-claim-density artifacts** (plans, designs, audits, multi-file
+   patches). Pass the artifact *in the prompt before committing it*; the reviewer must run an
+   **OPEN-ENDED adversarial pass — find any defect / missing step / edge case, not merely confirm a
+   claim checklist** — against code, tests, docs, and DB/API contracts (claim-verification alone is
+   necessary but not sufficient). Applies to plans as well as implementation diffs. Verifier-found **factual
    errors** may be applied directly; **scope/design/semantics/security/API-contract** changes
    **escalate to the human owner**; related bugs found while mapping become `gi_draft_*` plan files
    under `doc/plans/issues/` (indexed in `doc/plans/module_issues.md`), never inline fixes. After

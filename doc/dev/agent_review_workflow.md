@@ -10,6 +10,15 @@ Procedure and templates for the multi-model review rules in
 > Every bullet must help an agent know what to inspect, what contract not to break, or what
 > verification proves safety — otherwise cut it.
 
+## Definition of done: tests are non-negotiable
+
+Nothing is "done", review-eligible, or PR-eligible until the full affected-scope tests pass —
+`run_tests.sh` for every touched module AND every module that imports the changed code, with **zero
+failures and zero unexpected skips**. Run them before calling a milestone complete or handing an
+artifact for review; this is a standing precondition, not a pre-PR afterthought (see CLAUDE.md
+Testing Requirements). If the local worktree lacks a module's venv, either `uv sync --all-extras` it
+and run it, or explicitly record it as deferred-to-CI **with the reason** — never silently skip.
+
 ## When mandatory multi-model review applies
 
 Required for: implementation plans (`gi_*.md`), design docs, audit/investigation reports, and
@@ -36,16 +45,36 @@ The repo-native path (`codex exec` verifier + `code-review` + human owner) satis
 a repo-native equivalent as a **separate `gi_draft` initiative** — do not couple the review rule to
 undocumented external tooling.
 
+## Adversarial review is REQUIRED — not just claim verification
+
+There are two different out-of-loop passes; a high-claim artifact (plan, design, audit, or
+multi-file / high-risk patch) needs the **adversarial** one, and it is the primary gate:
+
+- **Claim verification** — you hand the reviewer a checklist of falsifiable claims; it confirms/refutes
+  each. Catches "does the code do what I said" — but only checks what you thought to ask. Necessary,
+  **not sufficient**; never treat a passing claim-verifier as review-complete.
+- **Open-ended adversarial review** — you hand the reviewer the artifact/diff with **no checklist** and
+  instruct it to find ANY defect, missing step, wrong assumption, edge case, or regression. Applies to
+  **implementations (the diff) AND plans**. This is what catches what you didn't think to ask. Run it
+  via read-only `codex exec` with an open-ended prompt; a fresh Claude subagent (no prior context) is
+  the fallback — also open-ended.
+
+Note: the dedicated `codex exec review` subcommand cannot run sandboxed (it requires
+`--dangerously-bypass-approvals-and-sandbox`), so prefer the **read-only `codex exec`** form with the
+artifact/diff pasted in the prompt.
+
 ## Out-of-loop verifier requirements
 
 - Different tool/model where possible — default `codex exec`; fallback = a fresh Claude
   general-purpose subagent with **no prior session context**.
 - **Read-only.** The verifier must not edit repo files.
 - The artifact is passed **in the prompt, before it is committed**.
-- Run against the patch's **target branch in a clean checkout** (e.g. a worktree off
-  `origin/maxat_sapphire_2`), NOT the current working tree — a dirty or wrong-branch tree yields
-  false refutations. (Learned the hard way: a verifier run against the wrong branch falsely refuted
-  `round_3sf` usage and dashboard tombstone suppression that are present on the target.)
+- Run against the patch's **target branch in a clean checkout**, and **diff against `origin/<target>`
+  (e.g. `origin/maxat_sapphire_2`), never a stale LOCAL branch ref or the working tree.** A
+  dirty/wrong-branch tree or a stale local ref produces false verdicts. (Seen twice: a wrong-branch
+  run falsely refuted `round_3sf`/tombstone code that is present on the target; a run diffing against a
+  stale local `maxat_sapphire_2` falsely reported an upstream `sapphire/services/` file as added by
+  the change.)
 - Output = per-claim verdict: `confirmed` / `refuted` / `unverifiable`, each with concrete evidence
   (path, symbol, test, or contract). No prose approval.
 
@@ -110,7 +139,8 @@ transcription drift introduced while applying fixes.
 
 No PR is approved on the implementer's `done` alone. Standard patches: in-loop `code-review`
 (correctness) + human owner. Patches touching a high-risk coupling point (below): additionally one
-**out-of-loop** reviewer (`codex exec review` on the diff, or the fresh-Claude fallback).
+**out-of-loop** reviewer running an OPEN-ENDED adversarial review of the diff (read-only `codex exec`,
+or the fresh-Claude fallback — not merely a claim-checklist).
 PASS = `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` zero-fail / zero-unexpected-skip
 **and** both reviewers' Critical/Important items resolved or reasoned-rebutted **and** no
 unescalated design/contract fork. Live-DB behavior changes additionally require the operational
