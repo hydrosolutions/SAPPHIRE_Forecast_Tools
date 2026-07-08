@@ -108,6 +108,7 @@ Use these Claude Code skills to guide the planning process:
 | Implementation | executing-issues | `/executing-issues` | Execute discrete issues with plans |
 | Large Plans | executing-plans | `/executing-plans` | Execute multi-issue architecture work |
 | Deployment | pre-deploy-validation | `/pre-deploy-validation` | Verify before pushing to production |
+| Review | multi-model review + out-of-loop verifier | see [`../dev/agent_review_workflow.md`](../dev/agent_review_workflow.md) | Independent review gates for plans, patches, and high-claim artifacts |
 
 **Start with `/use-skills`** if unsure which skill applies — it includes a workflow decision tree.
 
