@@ -38,6 +38,11 @@ SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "test_data")
 
 
+# These integration tests exercise workflow behavior and are not testing the
+# min-n floor.  They use 5-year data (YEARS = range(2021, 2026)) and pass
+# at the production K=4.
+
+
 # ---------------------------------------------------------------------------
 # Constants — 3-station skill-profile design
 # ---------------------------------------------------------------------------
@@ -808,10 +813,11 @@ class TestMonthlyEdgeCases:
     def test_single_year_data_produces_no_skill_rows(self, monthly_integration_env):
         """1 year of data -> n_pairs=1 for every group -> all rows dropped.
 
-        The n_pairs<2 floor filter silently drops any skill row whose
-        n_pairs is less than 2.  With a single year every (month, station,
-        model) group contributes exactly one obs-forecast pair (n_pairs=1),
-        so the entire output frame must be empty after filtering.
+        The n_pairs < K floor filter (K=4 for monthly) silently drops any
+        skill row whose n_pairs is less than K.  With a single year every
+        (month, station, model) group contributes exactly one obs-forecast
+        pair (n_pairs=1), so the entire output frame must be empty after
+        filtering.
         Pipeline still exits 0 — absence of skill rows is not an error.
         """
         tmp_path, data_dir = monthly_integration_env
@@ -896,14 +902,14 @@ class TestMonthlyEdgeCases:
     def test_partial_station_coverage(self, monthly_integration_env):
         """Station A has 12 months, B has 6 → correct per-station rows.
 
-        Two years (2022 + 2023) are used so every (month, station, model)
-        group has n_pairs=2 and survives the n_pairs<2 floor filter.
+        Four years (2022-2025) are used so every (month, station, model)
+        group has n_pairs=4 and survives the n_pairs<4 floor filter.
         Station 99001 covers all 12 months; station 99002 covers Jan-Jun only.
         """
         tmp_path, data_dir = monthly_integration_env
 
-        # Two years to ensure n_pairs >= 2 per group.
-        two_years = [2022, 2023]
+        # Four years to ensure n_pairs >= 4 per group (K=4 monthly floor).
+        two_years = [2022, 2023, 2024, 2025]
 
         # Station 99001: full year (12 months), Station 99002: only Jan-Jun
         rows = []
@@ -1014,12 +1020,12 @@ class TestMonthlyEdgeCases:
             df = df[(df["_year"] >= start_year) & (df["_year"] <= end_year)].drop(columns=["_year"])
             return df
 
-        # Restrict to 2023-2024 only
+        # Restrict to 2021-2024 only (4 years → n_pairs=4, at the K=4 floor)
         with patch.dict(
             os.environ,
             {
                 "SAPPHIRE_PREDICTION_MODE": "MONTHLY",
-                "SAPPHIRE_RECALC_START_YEAR": "2023",
+                "SAPPHIRE_RECALC_START_YEAR": "2021",
                 "SAPPHIRE_RECALC_END_YEAR": "2024",
             },
         ):
@@ -1052,12 +1058,12 @@ class TestMonthlyEdgeCases:
         skill = _read_output_csv(data_dir, "skill_metrics_monthly.csv")
         assert not skill.empty
 
-        # n_pairs should be <= 2 (only 2 years of data)
+        # n_pairs should be <= 4 (only 4 years of data)
         for model in MODELS:
             model_rows = skill[skill["model_short"] == model]
             for _, row in model_rows.iterrows():
-                assert row["n_pairs"] <= 2, (
-                    f"With 2-year range, n_pairs should be <= 2, got {row['n_pairs']}"
+                assert row["n_pairs"] <= 4, (
+                    f"With 4-year range, n_pairs should be <= 4, got {row['n_pairs']}"
                 )
 
 

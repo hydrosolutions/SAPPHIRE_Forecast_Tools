@@ -196,3 +196,111 @@ class TestSkillMetricsDedup:
 
         # The alphabetically last composition string must be retained
         assert call_args[0]["composition"] == "LR, TFT, TiDE"
+
+
+class TestDbFormModelTypeAliases:
+    """DB-form model_short aliases map to the same model_type as value-form.
+
+    The CSV-fallback read path may yield ENSEMBLE_MEAN / NAIVE_MEAN /
+    SKILLED_MEAN instead of the value-form EM / Naive Mean / Skilled Mean.
+    MODEL_TYPE_MAP must map both forms to the identical wire value so that
+    tombstone rows are written under the correct model_type.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+    def _make_skill_df(self, model_short: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "code": ["19999"],
+                "month_in_year": [3],
+                "model_short": [model_short],
+                "sdivsigma": [0.5],
+                "nse": [0.8],
+                "delta": [0.1],
+                "accuracy": [0.9],
+                "mae": [5.0],
+                "n_pairs": [10],
+            }
+        )
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_ensemble_mean_db_form_maps_to_em(self, mock_client_class):
+        """ENSEMBLE_MEAN (DB-form) must be written as model_type='EM'."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_skill_metrics.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        _write_skill_metrics_to_api(self._make_skill_df("ENSEMBLE_MEAN"), "month", 2025)
+
+        call_args = mock_client.write_skill_metrics.call_args[0][0]
+        assert len(call_args) == 1
+        assert call_args[0]["model_type"] == "EM"
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_naive_mean_db_form_maps_to_naive_mean(self, mock_client_class):
+        """NAIVE_MEAN (DB-form) must be written as model_type='Naive Mean'."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_skill_metrics.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        _write_skill_metrics_to_api(self._make_skill_df("NAIVE_MEAN"), "month", 2025)
+
+        call_args = mock_client.write_skill_metrics.call_args[0][0]
+        assert len(call_args) == 1
+        assert call_args[0]["model_type"] == "Naive Mean"
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_skilled_mean_db_form_maps_to_skilled_mean(self, mock_client_class):
+        """SKILLED_MEAN (DB-form) must be written as model_type='Skilled Mean'."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_skill_metrics.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        _write_skill_metrics_to_api(self._make_skill_df("SKILLED_MEAN"), "month", 2025)
+
+        call_args = mock_client.write_skill_metrics.call_args[0][0]
+        assert len(call_args) == 1
+        assert call_args[0]["model_type"] == "Skilled Mean"
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_db_form_matches_value_form_model_type(self, mock_client_class):
+        """DB-form and value-form rows for the same aggregate produce identical model_type.
+
+        EM (value-form) and ENSEMBLE_MEAN (DB-form) must yield model_type='EM'.
+        Naive Mean (value-form) and NAIVE_MEAN (DB-form) must yield 'Naive Mean'.
+        Skilled Mean (value-form) and SKILLED_MEAN (DB-form) must yield 'Skilled Mean'.
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        from src.api_writer import MODEL_TYPE_MAP
+
+        pairs = [
+            ("EM", "ENSEMBLE_MEAN", "EM"),
+            ("Naive Mean", "NAIVE_MEAN", "Naive Mean"),
+            ("Skilled Mean", "SKILLED_MEAN", "Skilled Mean"),
+        ]
+        for value_form, db_form, expected in pairs:
+            value_mapped = MODEL_TYPE_MAP.get(value_form.upper(), value_form)
+            db_mapped = MODEL_TYPE_MAP.get(db_form.upper(), db_form)
+            assert value_mapped == expected, (
+                f"{value_form!r} mapped to {value_mapped!r}, expected {expected!r}"
+            )
+            assert db_mapped == expected, (
+                f"{db_form!r} mapped to {db_mapped!r}, expected {expected!r}"
+            )

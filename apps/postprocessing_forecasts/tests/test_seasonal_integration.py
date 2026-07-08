@@ -311,6 +311,8 @@ class TestSeasonalSkillMetricsPerLead:
             2021: 100.0,
             2022: 120.0,
             2023: 140.0,
+            2024: 160.0,
+            2025: 180.0,
         }
         lead_error = {
             3: 30.0,  # January issue
@@ -355,7 +357,7 @@ class TestSeasonalSkillMetricsPerLead:
 
         assert set(model_rows["season_in_year"]) == {0, 1, 2, 3}
         assert len(model_rows) == 4
-        assert set(model_rows["n_pairs"]) == {3}
+        assert set(model_rows["n_pairs"]) == {5}
 
         mae_by_lead = dict(zip(model_rows["season_in_year"], model_rows["mae"], strict=True))
         assert mae_by_lead == {0: 0.0, 1: 10.0, 2: 20.0, 3: 30.0}
@@ -365,26 +367,26 @@ class TestSeasonalSkillMetricsPerLead:
         code = "PP3_SINGLE_SENTINEL"
         obs = pd.DataFrame(
             {
-                "code": [code, code, code],
-                "season_year": [2021, 2022, 2023],
-                "season_in_year": [1, 1, 1],
-                "discharge_avg": [100.0, 120.0, 140.0],
-                "delta": [5.0, 5.0, 5.0],
+                "code": [code] * 5,
+                "season_year": [2021, 2022, 2023, 2024, 2025],
+                "season_in_year": [1] * 5,
+                "discharge_avg": [100.0, 120.0, 140.0, 160.0, 180.0],
+                "delta": [5.0] * 5,
             }
         )
         fcst = pd.DataFrame(
             {
-                "code": [code, code, code],
-                "season_year": [2021, 2022, 2023],
-                "season_in_year": [0, 0, 0],
-                "model_short": ["LR", "LR", "LR"],
-                "q05": [80.0, 100.0, 120.0],
-                "q10": [85.0, 105.0, 125.0],
-                "q25": [95.0, 115.0, 135.0],
-                "q50": [100.0, 120.0, 140.0],
-                "q75": [105.0, 125.0, 145.0],
-                "q90": [115.0, 135.0, 155.0],
-                "q95": [120.0, 140.0, 160.0],
+                "code": [code] * 5,
+                "season_year": [2021, 2022, 2023, 2024, 2025],
+                "season_in_year": [0] * 5,
+                "model_short": ["LR"] * 5,
+                "q05": [80.0, 100.0, 120.0, 140.0, 160.0],
+                "q10": [85.0, 105.0, 125.0, 145.0, 165.0],
+                "q25": [95.0, 115.0, 135.0, 155.0, 175.0],
+                "q50": [100.0, 120.0, 140.0, 160.0, 180.0],
+                "q75": [105.0, 125.0, 145.0, 165.0, 185.0],
+                "q90": [115.0, 135.0, 155.0, 175.0, 195.0],
+                "q95": [120.0, 140.0, 160.0, 180.0, 200.0],
             }
         )
 
@@ -552,6 +554,7 @@ class TestSeasonalFileWriter:
                 "accuracy": [0.90, 0.85],
                 "mae": [2.0, 3.0],
                 "n_pairs": [10, 10],
+                "crps": [0.5, 0.8],
             }
         )
         with (
@@ -559,7 +562,7 @@ class TestSeasonalFileWriter:
             patch(
                 "src.api_writer._write_skill_metrics_to_api",
             ) as mock_write,
-            patch("src.file_writer.write_diagnostics") as mock_diag,
+            patch.object(file_writer, "write_diagnostics") as mock_diag,
         ):
             file_writer.save_seasonal_skill_metrics(data, year=2025)
 
@@ -588,7 +591,7 @@ class TestSeasonalFileWriter:
                 "src.api_writer._write_seasonal_ensemble_to_api",
                 return_value=True,
             ) as mock_write,
-            patch("src.file_writer.write_diagnostics") as mock_diag,
+            patch.object(file_writer, "write_diagnostics") as mock_diag,
         ):
             file_writer.save_seasonal_forecast_data(data)
 
@@ -679,8 +682,8 @@ class TestSeasonalCrossYearPipeline:
         monkeypatch.setenv("SAPPHIRE_SEASON_START_MONTH", "6")
         monkeypatch.setenv("SAPPHIRE_SEASON_END_MONTH", "8")
 
-        monthly_obs = _monthly_obs(n_years=3)
-        monthly_fc = _monthly_fc(n_years=3, models=("LR_Base", "LR_SM"))
+        monthly_obs = _monthly_obs(n_years=5)
+        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
 
         sobs = aggregate_monthly_obs_to_seasonal(monthly_obs)
         # Build seasonal forecasts directly (replaces removed aggregation)

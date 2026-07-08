@@ -39,6 +39,7 @@ from src.skill_metrics import calculate_monthly_skill_metrics
 # Placeholder station code — never a real station.
 STATION = "19999"
 
+
 # Target month of the forecast; also the (INVALID) horizon_value a stale
 # aggregate row would carry under the buggy calendar-month fallback.
 TARGET_MONTH = 8
@@ -51,7 +52,7 @@ AGGREGATE_MODELS = {"EM", "Naive Mean", "Skilled Mean"}
 
 
 def _make_observations():
-    """Observations for station 19999, month 8, three years.
+    """Observations for station 19999, month 8, four years.
 
     Returns a frame with the columns the monthly skill routine consumes:
     ``code, year, month, month_in_year, discharge_avg, delta``.
@@ -60,6 +61,7 @@ def _make_observations():
         (STATION, 2021, TARGET_MONTH, 100.0),
         (STATION, 2022, TARGET_MONTH, 110.0),
         (STATION, 2023, TARGET_MONTH, 120.0),
+        (STATION, 2024, TARGET_MONTH, 130.0),
     ]
     df = pd.DataFrame(rows, columns=["code", "year", "month", "discharge_avg"])
     df["month_in_year"] = df["month"]
@@ -102,7 +104,7 @@ def _make_forecasts_with_stale_aggregate():
     regenerate the aggregate from the base models at the base convention (0).
     """
     rows = []
-    for year, base in [(2021, 102.0), (2022, 108.0), (2023, 121.0)]:
+    for year, base in [(2021, 102.0), (2022, 108.0), (2023, 121.0), (2024, 131.0)]:
         # Base models at the no-lead sentinel horizon_value = 0.
         rows.append(_fcst_row(year, "LR_Base", BASE_HV, base + 1.0))
         rows.append(_fcst_row(year, "LR_SM", BASE_HV, base - 1.0))

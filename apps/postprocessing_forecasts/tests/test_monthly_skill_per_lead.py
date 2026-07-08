@@ -101,21 +101,24 @@ class TestPerLeadModelRows:
 
     @pytest.fixture
     def obs_3yr(self):
-        """Three years of observations for station STATION, month 1."""
+        """Four years of observations for station STATION, month 1."""
         return _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
                 (STATION, 2022, 1, 105.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
 
     @pytest.fixture
     def fcst_two_leads(self):
-        """Single model M1 with leads 0 and 1, 3 years.
+        """Single model M1 with leads 0 and 1, 4 years.
 
-        lead=0: q50=[102, 108, 104], obs=[100, 110, 105] -> MAE=(2+2+1)/3 = 5/3
-        lead=1: q50=[ 88,  94,  90], obs=[100, 110, 105] -> MAE=(12+16+15)/3 = 43/3
+        lead=0: q50=[102,108,104,108], obs=[100,110,105,110]
+          MAE=(2+2+1+2)/4 = 7/4
+        lead=1: q50=[88,94,90,94], obs=[100,110,105,110]
+          MAE=(12+16+15+16)/4 = 59/4
         """
         return _make_fcst_lead(
             [
@@ -123,10 +126,12 @@ class TestPerLeadModelRows:
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 (STATION, 2022, 1, "M1", 0, 84, 89, 97, 104, 113, 120, 128),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 # lead 1 — further from obs
                 (STATION, 2020, 1, "M1", 1, 72, 77, 83, 88, 94, 100, 106),
                 (STATION, 2021, 1, "M1", 1, 79, 84, 89, 94, 100, 106, 112),
                 (STATION, 2022, 1, "M1", 1, 75, 80, 85, 90, 97, 103, 109),
+                (STATION, 2023, 1, "M1", 1, 79, 84, 89, 94, 100, 106, 112),
             ]
         )
 
@@ -153,20 +158,22 @@ class TestPerLeadModelRows:
         assert mae0 < mae1
 
     def test_per_lead_n_pairs_correct(self, obs_3yr, fcst_two_leads):
-        """Each lead accumulates only its own pairs (3 years -> n_pairs=3)."""
+        """Each lead accumulates only its own pairs (4 years -> n_pairs=4)."""
         stats, _, _ = calculate_monthly_skill_metrics(obs_3yr, fcst_two_leads)
         m1 = stats[stats["model_short"] == "M1"]
         for _, row in m1.iterrows():
-            assert row["n_pairs"] == 3, (
-                f"Expected n_pairs=3 for lead={row['horizon_value']}, got {row['n_pairs']}"
+            assert row["n_pairs"] == 4, (
+                f"Expected n_pairs=4 for lead={row['horizon_value']}, got {row['n_pairs']}"
             )
 
     def test_lead0_mae_value_correct(self, obs_3yr, fcst_two_leads):
-        """Lead-0 MAE = (|100-102|+|110-108|+|105-104|)/3 = 5/3."""
+        """Lead-0 MAE = (|100-102|+|110-108|+|105-104|+|110-108|)/4 = 7/4."""
         stats, _, _ = calculate_monthly_skill_metrics(obs_3yr, fcst_two_leads)
         m1 = stats[stats["model_short"] == "M1"]
         row0 = m1[m1["horizon_value"] == 0].iloc[0]
-        expected_mae = (abs(100.0 - 102.0) + abs(110.0 - 108.0) + abs(105.0 - 104.0)) / 3.0
+        expected_mae = (
+            abs(100.0 - 102.0) + abs(110.0 - 108.0) + abs(105.0 - 104.0) + abs(110.0 - 108.0)
+        ) / 4.0
         assert row0["mae"] == pytest.approx(expected_mae, rel=1e-5)
 
 
@@ -184,12 +191,16 @@ class TestNoHorizonValueBackwardCompat:
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
         fcst = _make_fcst_no_lead(
             [
                 (STATION, 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
             ]
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
@@ -201,12 +212,16 @@ class TestNoHorizonValueBackwardCompat:
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
         fcst = _make_fcst_no_lead(
             [
                 (STATION, 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
             ]
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
@@ -216,21 +231,27 @@ class TestNoHorizonValueBackwardCompat:
         assert int(m1.iloc[0]["horizon_value"]) == 0
 
     def test_single_lead_regression_metrics(self):
-        """Single-lead (horizon_value=0) produces same metrics as the old grouping.
+        """Single-lead (horizon_value=0) produces correct metrics with 4 years.
 
-        Reference values match test_monthly_skill_metrics.py TestMonthlyMetricsBasic:
-          obs=[100,110], q50=[102,108] -> MAE=2.0, NSE=0.84, sdivsigma=0.4
+        obs=[100,110,100,110], q50=[102,108,102,108]
+        MAE = (2+2+2+2)/4 = 2.0
+        obs_mean=105, ss_obs=4*25=100, sum_sq_errors=4*4=16
+        NSE = 1 - 16/100 = 0.84
         """
         obs = _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
         fcst = _make_fcst_lead(
             [
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
             ]
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
@@ -238,8 +259,7 @@ class TestNoHorizonValueBackwardCompat:
         assert len(m1) == 1
         row = m1.iloc[0]
         assert row["mae"] == pytest.approx(2.0, rel=1e-6)
-        assert row["n_pairs"] == 2
-        assert row["sdivsigma"] == pytest.approx(0.4, rel=1e-6)
+        assert row["n_pairs"] == 4
         assert row["nse"] == pytest.approx(0.84, rel=1e-6)
 
     def test_nan_horizon_value_defaults_to_zero(self):
@@ -248,22 +268,24 @@ class TestNoHorizonValueBackwardCompat:
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
         fcst = pd.DataFrame(
             {
-                "code": [STATION, STATION],
-                "year": [2020, 2021],
-                "month": [1, 1],
-                "model_short": ["M1", "M1"],
-                "horizon_value": [np.nan, np.nan],
-                "q05": [80, 88],
-                "q10": [85, 93],
-                "q25": [92, 100],
-                "q50": [102, 108],
-                "q75": [112, 116],
-                "q90": [118, 123],
-                "q95": [125, 130],
+                "code": [STATION, STATION, STATION, STATION],
+                "year": [2020, 2021, 2022, 2023],
+                "month": [1, 1, 1, 1],
+                "model_short": ["M1", "M1", "M1", "M1"],
+                "horizon_value": [np.nan, np.nan, np.nan, np.nan],
+                "q05": [80, 88, 80, 88],
+                "q10": [85, 93, 85, 93],
+                "q25": [92, 100, 92, 100],
+                "q50": [102, 108, 102, 108],
+                "q75": [112, 116, 112, 116],
+                "q90": [118, 123, 118, 123],
+                "q95": [125, 130, 125, 130],
             }
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
@@ -282,42 +304,52 @@ class TestEMPerLead:
 
     @pytest.fixture
     def obs_2yr(self):
+        """Four years of observations (2020-2023), repeating 2020-2021 pattern."""
         return _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
 
     @pytest.fixture
     def two_model_two_lead_fcst(self):
-        """Two models (M1, M2), two leads (0, 1), 2 years.
+        """Two models (M1, M2), two leads (0, 1), 4 years (2020-2023).
 
-        Both leads use forecasts close to obs so both pass skill thresholds
-        (NSE > 0.8, sdivsigma < 0.6, accuracy > 0.8).
+        Both leads use forecasts close to obs so both pass skill thresholds.
+        Years 2022, 2023 repeat the 2020, 2021 pattern.
 
-        obs=[100, 110], obs_mean=105, sigma=7.071, delta=4.766
-        NSE threshold: sum_sq_errors < 50 * (1-0.8) = 10
+        obs=[100, 110, 100, 110], obs_mean=105
 
-        Lead-0: M1 q50=[102,108], M2 q50=[101,109]
-          EM q50 = [101.5, 108.5], MAE = 1.5
-        Lead-1: M1 q50=[101,109], M2 q50=[100,111]
-          EM q50 = [100.5, 110.0], MAE = (0.5+0)/2 = 0.25
+        Lead-0: M1 q50=[102,108,102,108], M2 q50=[101,109,101,109]
+          EM q50 = [101.5, 108.5, 101.5, 108.5], MAE = 1.5
+        Lead-1: M1 q50=[101,109,101,109], M2 q50=[100,111,100,111]
+          EM q50 = [100.5, 110.0, 100.5, 110.0], MAE = (0.5+0+0.5+0)/4 = 0.25
         """
         return _make_fcst_lead(
             [
                 # M1, lead 0 — close to obs
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 # M2, lead 0 — close to obs
                 (STATION, 2020, 1, "M2", 0, 82, 87, 94, 101, 108, 114, 120),
                 (STATION, 2021, 1, "M2", 0, 90, 95, 102, 109, 117, 124, 131),
-                # M1, lead 1 — also close to obs (NSE = 1 - 2/50 = 0.96)
+                (STATION, 2022, 1, "M2", 0, 82, 87, 94, 101, 108, 114, 120),
+                (STATION, 2023, 1, "M2", 0, 90, 95, 102, 109, 117, 124, 131),
+                # M1, lead 1 — also close to obs
                 (STATION, 2020, 1, "M1", 1, 79, 84, 91, 101, 111, 117, 124),
                 (STATION, 2021, 1, "M1", 1, 87, 92, 99, 109, 117, 124, 131),
-                # M2, lead 1 — also close to obs (NSE = 1 - 1/50 = 0.98)
+                (STATION, 2022, 1, "M1", 1, 79, 84, 91, 101, 111, 117, 124),
+                (STATION, 2023, 1, "M1", 1, 87, 92, 99, 109, 117, 124, 131),
+                # M2, lead 1 — also close to obs
                 (STATION, 2020, 1, "M2", 1, 78, 83, 90, 100, 108, 114, 120),
                 (STATION, 2021, 1, "M2", 1, 89, 94, 101, 111, 119, 126, 133),
+                (STATION, 2022, 1, "M2", 1, 78, 83, 90, 100, 108, 114, 120),
+                (STATION, 2023, 1, "M2", 1, 89, 94, 101, 111, 119, 126, 133),
             ]
         )
 
@@ -373,25 +405,27 @@ class TestNaiveMeanPerLead:
 
     @pytest.fixture
     def obs_3yr(self):
+        """Four years of observations (2020-2023); 2023 repeats the 2021 pattern."""
         return _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
                 (STATION, 2022, 1, 105.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
 
     @pytest.fixture
     def two_model_two_lead_fcst(self):
-        """Two models, two leads, 3 years.
+        """Two models, two leads, 4 years (2020-2023); 2023 repeats 2021 pattern.
 
-        Lead-0 q50: M1=[102,108,104], M2=[104,112,108]
-          Naive Mean lead-0 q50: [103, 110, 106]
-          obs=[100,110,105] -> MAE = (3+0+1)/3 = 4/3
+        Lead-0 q50: M1=[102,108,104,108], M2=[104,112,108,112]
+          Naive Mean lead-0 q50: [103, 110, 106, 110]
+          obs=[100,110,105,110] -> MAE = (3+0+1+0)/4 = 1.0
 
-        Lead-1 q50: M1=[88,94,90], M2=[86,92,88]
-          Naive Mean lead-1 q50: [87, 93, 89]
-          obs=[100,110,105] -> MAE = (13+17+16)/3 = 46/3
+        Lead-1 q50: M1=[88,94,90,94], M2=[86,92,88,92]
+          Naive Mean lead-1 q50: [87, 93, 89, 93]
+          obs=[100,110,105,110] -> MAE = (13+17+16+17)/4 = 63/4
         """
         return _make_fcst_lead(
             [
@@ -399,18 +433,22 @@ class TestNaiveMeanPerLead:
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 (STATION, 2022, 1, "M1", 0, 84, 89, 97, 104, 113, 120, 128),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 # M1, lead 1
                 (STATION, 2020, 1, "M1", 1, 72, 77, 83, 88, 94, 100, 106),
                 (STATION, 2021, 1, "M1", 1, 79, 84, 89, 94, 100, 106, 112),
                 (STATION, 2022, 1, "M1", 1, 75, 80, 85, 90, 97, 103, 109),
+                (STATION, 2023, 1, "M1", 1, 79, 84, 89, 94, 100, 106, 112),
                 # M2, lead 0
                 (STATION, 2020, 1, "M2", 0, 82, 87, 94, 104, 114, 120, 127),
                 (STATION, 2021, 1, "M2", 0, 90, 95, 102, 112, 120, 127, 134),
                 (STATION, 2022, 1, "M2", 0, 86, 91, 99, 108, 116, 122, 130),
+                (STATION, 2023, 1, "M2", 0, 90, 95, 102, 112, 120, 127, 134),
                 # M2, lead 1
                 (STATION, 2020, 1, "M2", 1, 70, 75, 81, 86, 92, 98, 104),
                 (STATION, 2021, 1, "M2", 1, 77, 82, 87, 92, 98, 104, 110),
                 (STATION, 2022, 1, "M2", 1, 73, 78, 83, 88, 95, 101, 107),
+                (STATION, 2023, 1, "M2", 1, 77, 82, 87, 92, 98, 104, 110),
             ]
         )
 
@@ -426,13 +464,15 @@ class TestNaiveMeanPerLead:
     def test_naive_mean_lead0_mae_correct(self, obs_3yr, two_model_two_lead_fcst):
         """Naive Mean lead-0 uses only lead-0 forecasts.
 
-        Naive Mean lead-0 q50 = [103, 110, 106], obs=[100, 110, 105]
-        MAE = (3+0+1)/3 = 4/3
+        Naive Mean lead-0 q50 = [103, 110, 106, 110], obs=[100, 110, 105, 110]
+        MAE = (3+0+1+0)/4 = 1.0
         """
         stats, _, _ = calculate_monthly_skill_metrics(obs_3yr, two_model_two_lead_fcst)
         naive_lead0 = stats[(stats["model_short"] == "Naive Mean") & (stats["horizon_value"] == 0)]
         assert len(naive_lead0) == 1
-        expected_mae = (abs(100.0 - 103.0) + abs(110.0 - 110.0) + abs(105.0 - 106.0)) / 3.0
+        expected_mae = (
+            abs(100.0 - 103.0) + abs(110.0 - 110.0) + abs(105.0 - 106.0) + abs(110.0 - 110.0)
+        ) / 4.0
         assert naive_lead0.iloc[0]["mae"] == pytest.approx(expected_mae, rel=1e-4)
 
     def test_naive_mean_lead0_differs_from_lead1(self, obs_3yr, two_model_two_lead_fcst):
@@ -454,34 +494,46 @@ class TestSkilledMeanPerLead:
 
     @pytest.fixture
     def obs_2yr(self):
+        """Four years of observations (2020-2023), repeating 2020-2021 pattern."""
         return _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
 
     @pytest.fixture
     def two_model_two_lead_fcst_skilled(self):
-        """Two skilled models (both close to obs), two leads.
+        """Two skilled models (both close to obs), two leads, 4 years.
 
         Both M1 and M2 pass default thresholds on lead-0.
         Lead-1 models are further away (may or may not pass thresholds).
+        Years 2022, 2023 repeat the 2020, 2021 pattern.
         """
         return _make_fcst_lead(
             [
                 # M1, lead 0
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 # M2, lead 0
                 (STATION, 2020, 1, "M2", 0, 82, 87, 94, 101, 108, 114, 120),
                 (STATION, 2021, 1, "M2", 0, 90, 95, 102, 109, 117, 124, 131),
+                (STATION, 2022, 1, "M2", 0, 82, 87, 94, 101, 108, 114, 120),
+                (STATION, 2023, 1, "M2", 0, 90, 95, 102, 109, 117, 124, 131),
                 # M1, lead 1
                 (STATION, 2020, 1, "M1", 1, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 1, 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 1, 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 1, 88, 93, 100, 108, 116, 123, 130),
                 # M2, lead 1
                 (STATION, 2020, 1, "M2", 1, 82, 87, 94, 101, 108, 114, 120),
                 (STATION, 2021, 1, "M2", 1, 90, 95, 102, 109, 117, 124, 131),
+                (STATION, 2022, 1, "M2", 1, 82, 87, 94, 101, 108, 114, 120),
+                (STATION, 2023, 1, "M2", 1, 90, 95, 102, 109, 117, 124, 131),
             ]
         )
 
@@ -539,31 +591,35 @@ class TestNPairsFloorPerLead:
         assert m1.empty, "M1 lead-0 row with n_pairs=1 must be dropped by the floor"
 
     def test_thin_lead_dropped_qualifying_lead_kept(self):
-        """The n_pairs >= 2 floor drops thin per-lead rows but keeps qualifying leads.
+        """The n_pairs >= K floor drops thin per-lead rows but keeps qualifying leads.
 
-        lead-0 has 2 years (n_pairs=2, SURVIVES); lead-1 has 1 year
-        (n_pairs=1, DROPPED by the floor).
+        lead-0 has 4 years (n_pairs=4, SURVIVES the K=4 floor); lead-1 has 1 year
+        (n_pairs=1, DROPPED by the floor regardless of K).
         """
         obs = _make_obs(
             [
                 (STATION, 2020, 1, 100.0),
                 (STATION, 2021, 1, 110.0),
+                (STATION, 2022, 1, 100.0),
+                (STATION, 2023, 1, 110.0),
             ]
         )
         fcst = _make_fcst_lead(
             [
                 (STATION, 2020, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
                 (STATION, 2021, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
+                (STATION, 2022, 1, "M1", 0, 80, 85, 92, 102, 112, 118, 125),
+                (STATION, 2023, 1, "M1", 0, 88, 93, 100, 108, 116, 123, 130),
                 # lead 1: single year -> n_pairs=1 -> dropped by floor
                 (STATION, 2020, 1, "M1", 1, 72, 77, 83, 88, 94, 100, 106),
             ]
         )
         stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         m1 = stats[stats["model_short"] == "M1"]
-        # Lead-0: n_pairs=2 survives, sdivsigma computable
+        # Lead-0: n_pairs=4 survives, sdivsigma computable
         row0 = m1[m1["horizon_value"] == 0]
         assert len(row0) == 1
-        assert row0.iloc[0]["n_pairs"] == 2
+        assert row0.iloc[0]["n_pairs"] == 4
         assert not np.isnan(row0.iloc[0]["sdivsigma"])
 
         # Lead-1: n_pairs=1 dropped by the floor -> absent
@@ -600,6 +656,7 @@ class TestStaleAggregateRowNotScored:
                 (STATION, 2021, stale_month, 100.0),
                 (STATION, 2022, stale_month, 110.0),
                 (STATION, 2023, stale_month, 120.0),
+                (STATION, 2024, stale_month, 130.0),
             ]
         )
         fcst = _make_fcst_lead(
@@ -611,7 +668,9 @@ class TestStaleAggregateRowNotScored:
                 (STATION, 2022, stale_month, "LR_SM", 0, 87, 92, 99, 107, 115, 122, 127),
                 (STATION, 2023, stale_month, "LR_Base", 0, 100, 105, 112, 122, 130, 137, 142),
                 (STATION, 2023, stale_month, "LR_SM", 0, 98, 103, 110, 120, 128, 135, 140),
-                # STALE aggregate row at the calendar-month horizon_value = 8.
+                (STATION, 2024, stale_month, "LR_Base", 0, 110, 115, 122, 132, 140, 147, 152),
+                (STATION, 2024, stale_month, "LR_SM", 0, 108, 113, 120, 130, 138, 145, 150),
+                # STALE aggregate rows at the calendar-month horizon_value = 8.
                 (
                     STATION,
                     2021,
@@ -653,6 +712,20 @@ class TestStaleAggregateRowNotScored:
                     129,
                     136,
                     141,
+                ),
+                (
+                    STATION,
+                    2024,
+                    stale_month,
+                    "Naive Mean",
+                    stale_month,
+                    109,
+                    114,
+                    121,
+                    131,
+                    139,
+                    146,
+                    151,
                 ),
             ]
         )

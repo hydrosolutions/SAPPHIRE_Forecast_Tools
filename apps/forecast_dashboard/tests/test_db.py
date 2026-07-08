@@ -26,9 +26,7 @@ def _long_term_resolver_env(monkeypatch, tmp_path):
         "seasonal_april": 0,
     }
     for name, lead in leads.items():
-        (config_dir / f"{name}.json").write_text(
-            json.dumps({"operational_month_lead_time": lead})
-        )
+        (config_dir / f"{name}.json").write_text(json.dumps({"operational_month_lead_time": lead}))
 
     monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
     monkeypatch.setenv(
@@ -40,6 +38,7 @@ def _long_term_resolver_env(monkeypatch, tmp_path):
         ",".join(leads),
     )
     return config_dir
+
 
 # ── _convert_na_to_nan ─────────────────────────────────────────────────────
 
@@ -115,8 +114,20 @@ class TestResolveStation:
 # ── _get_snow_single / get_snow_data ─────────────────────────────────────
 
 _SNOW_CONTRACT_COLUMNS = [
-    "code", "date", "HS", "norm", "mean", "min", "max",
-    "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
+    "code",
+    "date",
+    "HS",
+    "norm",
+    "mean",
+    "min",
+    "max",
+    "5%",
+    "25%",
+    "50%",
+    "75%",
+    "95%",
+    "last_year",
+    "current_year",
 ]
 
 
@@ -214,11 +225,13 @@ class TestSnowData:
 
     def test_get_snow_single_sorts_rows_by_date(self, monkeypatch):
         def mock_get(url, **kwargs):
-            return _make_mock_response([
-                _snow_record(id=3, date="2026-02-03", value=3.0),
-                _snow_record(id=1, date="2026-02-01", value=1.0),
-                _snow_record(id=2, date="2026-02-02", value=2.0),
-            ])
+            return _make_mock_response(
+                [
+                    _snow_record(id=3, date="2026-02-03", value=3.0),
+                    _snow_record(id=1, date="2026-02-01", value=1.0),
+                    _snow_record(id=2, date="2026-02-02", value=2.0),
+                ]
+            )
 
         monkeypatch.setattr(requests, "get", mock_get)
 
@@ -247,8 +260,18 @@ class TestSnowData:
         result = db.get_snow_data("19999")
 
         stat_columns = [
-            "HS", "norm", "mean", "min", "max",
-            "5%", "25%", "50%", "75%", "95%", "last_year", "current_year",
+            "HS",
+            "norm",
+            "mean",
+            "min",
+            "max",
+            "5%",
+            "25%",
+            "50%",
+            "75%",
+            "95%",
+            "last_year",
+            "current_year",
         ]
         original = _snow_record()
         original_by_column = {
@@ -499,9 +522,7 @@ class TestGetForecastStats:
         self, horizon, period_col, period_value, monkeypatch
     ):
         """Quarter and season stats use horizon-specific period keys."""
-        records = [
-            _skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)
-        ]
+        records = [_skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)]
 
         def mock_get(url, **kwargs):
             return _make_mock_response(records)
@@ -525,9 +546,7 @@ class TestGetForecastStats:
             ("season", "season_in_year"),
         ],
     )
-    def test_long_horizons_empty_stats_keep_period_key(
-        self, horizon, period_col, monkeypatch
-    ):
+    def test_long_horizons_empty_stats_keep_period_key(self, horizon, period_col, monkeypatch):
         """Empty skill-metric responses still declare the right merge key."""
 
         def mock_get(url, **kwargs):
@@ -550,13 +569,9 @@ class TestGetForecastStatsAll:
             ("season", "season_in_year", 1),
         ],
     )
-    def test_long_horizons_page_and_rename(
-        self, horizon, period_col, period_value, monkeypatch
-    ):
+    def test_long_horizons_page_and_rename(self, horizon, period_col, period_value, monkeypatch):
         """All-station stats use the same horizon-specific period keys."""
-        records = [
-            _skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)
-        ]
+        records = [_skill_metric_record_19999(horizon, period_value, "LR_Base", 1.0)]
 
         def mock_get(url, **kwargs):
             limit = kwargs["params"]["limit"]
@@ -578,9 +593,7 @@ class TestGetForecastStatsAll:
             ("season", "season_in_year"),
         ],
     )
-    def test_long_horizons_empty_all_stats_keep_period_key(
-        self, horizon, period_col, monkeypatch
-    ):
+    def test_long_horizons_empty_all_stats_keep_period_key(self, horizon, period_col, monkeypatch):
         """Empty all-station stats declare the right period key."""
 
         def mock_get(url, **kwargs):
@@ -652,7 +665,7 @@ class TestGetForecastStatsPP038:
 
         # Both leads must survive — not collapsed to one
         assert len(result) == 2, (
-            f"Expected 2 rows (one per lead), got {len(result)}: {result[['month_in_year','model_short','horizon_value']].to_dict('records') if not result.empty else '(empty)'}"
+            f"Expected 2 rows (one per lead), got {len(result)}: {result[['month_in_year', 'model_short', 'horizon_value']].to_dict('records') if not result.empty else '(empty)'}"
         )
         assert "horizon_value" in result.columns
         assert set(result["horizon_value"].unique()) == {0, 1}
@@ -721,14 +734,10 @@ class TestGetDataMonthly:
         )
 
     def _all_stations_df(self):
-        return pd.DataFrame(
-            {"code": ["99001"], "station_labels": ["Test River A"]}
-        )
+        return pd.DataFrame({"code": ["99001"], "station_labels": ["Test River A"]})
 
     def _all_stations_19999_df(self):
-        return pd.DataFrame(
-            {"code": ["19999"], "station_labels": ["Test Reservoir B"]}
-        )
+        return pd.DataFrame({"code": ["19999"], "station_labels": ["Test Reservoir B"]})
 
     def _monthly_forecast_19999(self):
         return {
@@ -773,9 +782,7 @@ class TestGetDataMonthly:
         assert month_row["accuracy"].iloc[0] == 93.0
 
         quarter = data["long_forecasts_quarter"]
-        quarter_row = quarter[
-            (quarter["code"] == "19999") & (quarter["model_short"] == "LR_Base")
-        ]
+        quarter_row = quarter[(quarter["code"] == "19999") & (quarter["model_short"] == "LR_Base")]
         assert len(quarter_row) == 1
         assert quarter_row["quarter_in_year"].iloc[0] == 2
         assert quarter_row["delta"].iloc[0] == 4.0
@@ -783,9 +790,7 @@ class TestGetDataMonthly:
         assert quarter_row["mae"].iloc[0] == 5.0
         assert quarter_row["accuracy"].iloc[0] == 94.0
 
-    def test_monthly_quarter_frame_preserves_unmatched_rows_with_nan_metrics(
-        self, monkeypatch
-    ):
+    def test_monthly_quarter_frame_preserves_unmatched_rows_with_nan_metrics(self, monkeypatch):
         """Unmatched quarter forecast models stay present with NaN skill metrics."""
         monthly_forecast = self._monthly_forecast_19999()
         monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
@@ -829,15 +834,11 @@ class TestGetDataMonthly:
         assert pd.isna(sm["mae"])
         assert pd.isna(sm["accuracy"])
 
-    def test_monthly_quarter_frame_no_matching_skill_rows_preserves_forecasts(
-        self, monkeypatch
-    ):
+    def test_monthly_quarter_frame_no_matching_skill_rows_preserves_forecasts(self, monkeypatch):
         """Quarter forecasts are not dropped when quarter skill rows do not match."""
         monthly_forecast = self._monthly_forecast_19999()
         monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
-        unmatched_quarter_skill = _skill_metric_record_19999(
-            "quarter", 3, "LR_Base", 2.0
-        )
+        unmatched_quarter_skill = _skill_metric_record_19999("quarter", 3, "LR_Base", 2.0)
 
         def mock_get(url, **kwargs):
             params = kwargs.get("params", {})
@@ -933,9 +934,7 @@ class TestGetDataMonthly:
 
     def test_merges_skill_metrics_into_month0_forecasts(self, monkeypatch):
         """Skill metric columns appear in long_forecasts_m0 when month_0 is enabled."""
-        monkeypatch.setenv(
-            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
-        )
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1")
         self._make_dispatch_mock(monkeypatch)
         self._patch_processing(monkeypatch)
 
@@ -954,9 +953,7 @@ class TestGetDataMonthly:
 
     def test_month0_without_skill_metrics_still_returns_forecasts(self, monkeypatch):
         """When skill-metric API returns nothing, month_0 forecasts are still present."""
-        monkeypatch.setenv(
-            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
-        )
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1")
 
         def mock_get(url, **kwargs):
             if "/long-forecast/" in url:
@@ -975,9 +972,7 @@ class TestGetDataMonthly:
 
     def test_month0_disabled_returns_empty_dataframe(self, monkeypatch):
         """When month_0 is not in supported modes, long_forecasts_m0 is empty."""
-        monkeypatch.setenv(
-            "ieasyhydroforecast_ml_long_term_supported_modes", "month_1"
-        )
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
         self._make_dispatch_mock(monkeypatch)
         self._patch_processing(monkeypatch)
 
@@ -1033,9 +1028,7 @@ class TestGetLongForecastsQuarter:
     ):
         config_dir = tmp_path / expected_name
         config_dir.mkdir()
-        (config_dir / "quarter.json").write_text(
-            json.dumps({"operational_month_lead_time": lead})
-        )
+        (config_dir / "quarter.json").write_text(json.dumps({"operational_month_lead_time": lead}))
         monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
         monkeypatch.setenv(
             "ieasyhydroforecast_ml_long_term_configuration",
@@ -1138,9 +1131,7 @@ class TestGetLongForecastsSeason:
     def test_season_in_year_comes_from_api_horizon_value(self, monkeypatch):
         def mock_get(url, **kwargs):
             assert kwargs["params"]["horizon_value"] == 0
-            return _make_mock_response(
-                [{**_SEASON_FORECAST_RECORD_19999, "horizon_value": 0}]
-            )
+            return _make_mock_response([{**_SEASON_FORECAST_RECORD_19999, "horizon_value": 0}])
 
         monkeypatch.setattr(requests, "get", mock_get)
 
@@ -1193,9 +1184,17 @@ class TestGetDataQuarter:
 
         data = db.get_data("quarter", "99001", self._all_stations_df())
 
-        for key in ("hydrograph_day_all", "hydrograph_pentad_all", "rain", "temp",
-                    "snow_data", "ml_forecast", "linreg_predictor",
-                    "forecasts_all", "forecast_stats"):
+        for key in (
+            "hydrograph_day_all",
+            "hydrograph_pentad_all",
+            "rain",
+            "temp",
+            "snow_data",
+            "ml_forecast",
+            "linreg_predictor",
+            "forecasts_all",
+            "forecast_stats",
+        ):
             assert key in data, f"Missing key: {key}"
 
     def test_forecast_stats_populated_and_merged(self, monkeypatch):
@@ -1354,9 +1353,17 @@ class TestGetDataSeason:
 
         data = db.get_data("season", "99001", self._all_stations_df())
 
-        for key in ("hydrograph_day_all", "hydrograph_pentad_all", "rain", "temp",
-                    "snow_data", "ml_forecast", "linreg_predictor",
-                    "forecasts_all", "forecast_stats"):
+        for key in (
+            "hydrograph_day_all",
+            "hydrograph_pentad_all",
+            "rain",
+            "temp",
+            "snow_data",
+            "ml_forecast",
+            "linreg_predictor",
+            "forecasts_all",
+            "forecast_stats",
+        ):
             assert key in data, f"Missing key: {key}"
 
     def test_forecast_stats_populated_and_merged(self, monkeypatch):
@@ -1602,9 +1609,7 @@ class TestSeasonSummaryRendering:
         assert sm["s/σ"] == 3.5
         assert sm["MAE"] == 4.0
 
-    def test_season_summary_table_without_skill_metrics_does_not_crash(
-        self, monkeypatch
-    ):
+    def test_season_summary_table_without_skill_metrics_does_not_crash(self, monkeypatch):
         forecasts = [
             _SEASON_FORECAST_RECORD_19999,
             {
@@ -1635,3 +1640,152 @@ class TestSeasonSummaryRendering:
         for column in ("Accuracy", "δ", "s/σ", "MAE"):
             assert column in table.columns
             assert table[column].isna().all()
+
+
+# ── Tombstone suppression in get_forecast_stats / get_forecast_stats_all ─────
+
+
+def _tombstone_skill_record(horizon, horizon_in_year, model_type, **overrides):
+    """Build an API skill-metric record that looks like a tombstone (n_pairs=0)."""
+    base = _skill_metric_record_19999(horizon, horizon_in_year, model_type, delta=0.0)
+    # Overwrite metric fields to NULL/zero to mimic a real tombstone
+    base.update(
+        {
+            "n_pairs": 0,
+            "nse": None,
+            "mae": None,
+            "accuracy": None,
+            "sdivsigma": None,
+            "delta": None,
+            "crps": None,
+            "pbias": None,
+            "kgelf": None,
+            "nse_log": None,
+        }
+    )
+    base.update(overrides)
+    return base
+
+
+class TestGetForecastStatsTombstoneSuppression:
+    """Tombstone rows (n_pairs == 0) must not appear in get_forecast_stats output."""
+
+    def test_tombstone_excluded_from_get_forecast_stats(self, monkeypatch):
+        """A tombstone row returned by the API is dropped before dedup."""
+        records = [
+            _skill_metric_record_19999("month", 4, "GBT", 1.0),
+            _tombstone_skill_record("month", 4, "LR_Base"),
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        # Tombstone LR_Base must not be present
+        assert "LR_Base" not in result["model_short"].values
+
+    def test_all_tombstones_returns_empty_frame_with_columns(self, monkeypatch):
+        """When the API returns only tombstone rows, the result is empty."""
+        records = [
+            _tombstone_skill_record("month", 4, "GBT"),
+            _tombstone_skill_record("month", 4, "LR_Base"),
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        assert result.empty
+        assert "month_in_year" in result.columns
+        assert "model_short" in result.columns
+
+    def test_tombstone_excluded_from_get_forecast_stats_all(self, monkeypatch):
+        """get_forecast_stats_all also drops tombstone rows."""
+        records = [
+            _skill_metric_record_19999("quarter", 2, "LR_Base", 1.0),
+            _tombstone_skill_record("quarter", 2, "LR_SM"),
+        ]
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats_all("quarter")
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "LR_Base"
+        assert "LR_SM" not in result["model_short"].values
+
+    def test_tombstone_is_not_the_selected_skill_row_in_month_merge(self, monkeypatch):
+        """A tombstone for LR_Base must not land in the month forecasts_all merge."""
+        monthly_forecast = {
+            **_LONG_FORECAST_RECORD,
+            "id": 50,
+            "code": "19999",
+            "model_type": "GBT",
+            "model_type_description": "Gradient Boosted Trees",
+            "q": 130.0,
+        }
+        # API returns one real skill row for GBT and one tombstone for LR_Base
+        skills = [
+            _skill_metric_record_19999("month", 4, "GBT", 2.0),
+            _tombstone_skill_record("month", 4, "LR_Base"),
+        ]
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([monthly_forecast])
+            if "/skill-metric/" in url:
+                return _make_mock_response(skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        monkeypatch.setattr("src.db.processing.add_labels_to_hydrograph", lambda df, s: df)
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+        data = db.get_data(
+            "month",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        fs = data["forecast_stats"]
+        # The tombstone must not appear in forecast_stats
+        assert "LR_Base" not in fs["model_short"].values
+        assert "GBT" in fs["model_short"].values
+
+    def test_get_forecast_stats_all_horizon_value_dedup_preserves_distinct_leads(self, monkeypatch):
+        """get_forecast_stats_all: two leads for the same (code, month, model) are
+        both retained — the dedup key now includes horizon_value.
+        """
+        records = [
+            {**_skill_metric_record_with_lead(3, "GBT", 1, delta=1.0), "code": "19999"},
+            {**_skill_metric_record_with_lead(3, "GBT", 2, delta=1.5), "code": "19999"},
+        ]
+
+        def mock_get(url, **kwargs):
+            limit = kwargs["params"]["limit"]
+            assert limit == 1000
+            return _make_mock_response(records)
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats_all("month")
+
+        assert len(result) == 2, (
+            f"Expected 2 rows (one per lead), got {len(result)}: "
+            f"{result[['month_in_year', 'model_short', 'horizon_value']].to_dict('records') if not result.empty else '(empty)'}"
+        )
+        assert set(result["horizon_value"].unique()) == {1, 2}
