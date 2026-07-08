@@ -41,6 +41,10 @@ MODEL_TYPE_MAP = {
     # Baseline models (computed in postprocessing)
     "NAIVE MEAN": "Naive Mean",
     "SKILLED MEAN": "Skilled Mean",
+    # DB-form aliases (CSV-fallback read may yield these instead of value-form)
+    "ENSEMBLE_MEAN": "EM",
+    "NAIVE_MEAN": "Naive Mean",
+    "SKILLED_MEAN": "Skilled Mean",
 }
 
 # Map internal horizon type names to API enum values.

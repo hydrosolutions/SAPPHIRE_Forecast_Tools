@@ -50,6 +50,8 @@ def filter_for_highly_skilled_forecasts(
     threshold_sdivsigma: float | str | None = None,
     threshold_accuracy: float | str | None = None,
     threshold_nse: float | str | None = None,
+    *,
+    min_pairs: int | None = None,
 ) -> pd.DataFrame:
     """Filter skill metrics — delegates to skill_metrics module.
 
@@ -66,7 +68,7 @@ def filter_for_highly_skilled_forecasts(
         overrides["accuracy"] = threshold_accuracy
     if threshold_nse is not None:
         overrides["nse"] = threshold_nse
-    return _canonical(skill_stats, **overrides)
+    return _canonical(skill_stats, min_pairs=min_pairs, **overrides)
 
 
 def create_ensemble_forecasts(
