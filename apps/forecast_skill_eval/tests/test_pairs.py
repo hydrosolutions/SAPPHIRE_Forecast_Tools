@@ -1173,9 +1173,14 @@ def test_dedup_one_per_target_keeps_latest_issue(fake_client_factory) -> None:
     assert pairs.iloc[0]["period_key"] == 10
 
 
-def test_dedup_off_by_default_keeps_all_reissues(fake_client_factory) -> None:
+def test_dedup_explicitly_disabled_keeps_all_reissues(fake_client_factory) -> None:
+    # short_term_dedup_one_per_target defaults to True as of D4/#7; this test
+    # covers the explicit opt-out, which must still keep every re-issue.
     client = _reissue_client(fake_client_factory)
-    config = ForecastSkillEvalConfig(station_filter=[STATION_CODE])
+    config = ForecastSkillEvalConfig(
+        station_filter=[STATION_CODE],
+        short_term_dedup_one_per_target=False,
+    )
 
     pairs, _ledger = build_pairs(config, client, "day")
 
@@ -1212,11 +1217,14 @@ def test_long_term_horizons_unaffected_by_short_term_gates(
     assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
 
 
-def test_default_config_run_is_byte_identical_with_leakage_and_reissues(
+def test_default_config_run_dedups_reissues_but_not_leakage(
     fake_client_factory,
 ) -> None:
     # Fixture mixes a leaking issue (pk 6 issued after start) with three re-issues
-    # (pk 10).  With both gates off (default) every row must survive unchanged.
+    # (pk 10).  short_term_issue_before_target still defaults to False, so the
+    # leaking row survives unchanged; short_term_dedup_one_per_target now
+    # defaults to True (D4/#7), so the three pk-10 re-issues collapse to the
+    # single latest-issued row.
     client = fake_client_factory(
         forecasts_rows=[
             _short_forecast(5, 7.0, issue_date="2024-01-01"),
@@ -1236,8 +1244,9 @@ def test_default_config_run_is_byte_identical_with_leakage_and_reissues(
 
     pairs, ledger = build_pairs(config, client, "day")
 
-    assert len(pairs) == 5
-    assert sorted(pairs["period_key"].tolist()) == [5, 6, 10, 10, 10]
+    assert len(pairs) == 3
+    assert sorted(pairs["period_key"].tolist()) == [5, 6, 10]
+    assert pairs.loc[pairs["period_key"] == 10, "issue_date"].iloc[0] == "2024-01-03"
     assert ("pair", "forecast_issue_in_target_period") not in ledger.counts_by_stage_reason()
 
 

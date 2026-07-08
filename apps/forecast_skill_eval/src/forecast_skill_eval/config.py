@@ -76,13 +76,15 @@ class ForecastSkillEvalConfig:
     season_filter: str = "all"
     regime_source: str = "auto"
     # Short-term (day/pentad/decade) forecast-pairing correctness gates.
-    # Both default False so the default pairing behaviour is byte-identical.
     #   * short_term_issue_before_target: drop short-term forecasts issued on or
     #     after their target period start (observation leakage / mislabelled rows).
+    #     Defaults False so the default pairing behaviour is byte-identical.
     #   * short_term_dedup_one_per_target: keep only the latest genuine pre-period
     #     issue per (code, period_key, year, model) for short-term horizons.
+    #     Defaults True (D4/#7) so the default eval run matches the operational
+    #     one-pair-per-target convention; pass False explicitly to opt out.
     short_term_issue_before_target: bool = False
-    short_term_dedup_one_per_target: bool = False
+    short_term_dedup_one_per_target: bool = True
     #   * short_term_lr_repair_issue_indexing: correct historical issue-indexed LR
     #     pentad/decade forecasts to target-indexed at read time.  Default False so
     #     the default read behaviour is byte-identical.

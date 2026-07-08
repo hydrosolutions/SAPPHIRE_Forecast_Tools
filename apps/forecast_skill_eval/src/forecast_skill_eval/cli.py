@@ -167,10 +167,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--short-term-dedup-one-per-target",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "Short-term correctness gate (default off): keep only the latest "
-            "issue per (code, period_key, year, model) for day/pentad/decade."
+            "Short-term correctness gate (default ON): keep only the latest "
+            "issue per (code, period_key, year, model) for day/pentad/decade, "
+            "matching the operational one-pair-per-target convention. Pass "
+            "--no-short-term-dedup-one-per-target to opt out."
         ),
     )
     parser.add_argument(
@@ -197,9 +200,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _config_from_args(args: argparse.Namespace) -> ForecastSkillEvalConfig:
-    # SAPPHIRE_SKILL_FORECAST_ONLY=1/true turns BOTH short-term correctness gates
-    # on, mirroring the existing SAPPHIRE_SKILL_* env-flag convention.  The CLI
-    # flags are OR-ed with it so either mechanism can enable a gate.
+    # SAPPHIRE_SKILL_FORECAST_ONLY=1/true forces BOTH short-term correctness gates
+    # ON, mirroring the existing SAPPHIRE_SKILL_* env-flag convention.  The CLI
+    # flags are OR-ed with it so either mechanism can enable a gate.  Note
+    # short_term_dedup_one_per_target now defaults ON (D4/#7): its arg is a
+    # BooleanOptionalAction defaulting True, so the OR keeps it ON by default and
+    # honours the --no-... opt-out, while FORECAST_ONLY still force-enables it.
     forecast_only = _env_flag("SAPPHIRE_SKILL_FORECAST_ONLY")
     lr_repair = _env_flag("SAPPHIRE_SKILL_LR_REPAIR")
     lt_lead = _env_flag("SAPPHIRE_SKILL_LT_LEAD")
