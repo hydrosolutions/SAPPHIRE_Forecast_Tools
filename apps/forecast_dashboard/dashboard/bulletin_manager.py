@@ -1,4 +1,5 @@
 import calendar
+import contextlib
 
 import pandas as pd
 import panel as pn
@@ -127,6 +128,77 @@ def _site_to_records(horizon_type: str, year: int, horizon_value: int, site) -> 
     return records
 
 
+def _populate_forecast_attributes(site, horizon_type, forecast_year, forecast_horizon):
+    """Populate a site's forecast attributes from its site.forecasts DataFrame.
+
+    Runs the hydrograph-stat hydration and get_*_forecast_attributes_for_site
+    calls for the given horizon. Extracted from _load_bulletin_from_api so it
+    can also be re-invoked at bulletin-write time after in-cell edits.
+    """
+    _ensure_site_defaults(site)
+    if horizon_type == 'month':
+        days_in_month = calendar.monthrange(forecast_year, forecast_horizon)[1]
+        hydrate_month_hydrograph_stats(site, forecast_horizon, db)
+        site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
+        if 'вдхр' in (site.punkt_name_ru or ''):
+            q_df = db.get_long_forecasts_quarter(site.code)
+            if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
+                filtered_q = q_df[q_df["code"] == site.code]
+                if not filtered_q.empty:
+                    filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
+            else:
+                filtered_q = pd.DataFrame()
+            if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
+                vf = pd.to_datetime(filtered_q["valid_from"].values[0])
+                vt = pd.to_datetime(filtered_q["valid_to"].values[0])
+                seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+            else:
+                seconds_in_quarter = 0
+            filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
+            site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
+        else:
+            site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+    elif horizon_type == 'season':
+        # The frozen bulletin record (site.forecasts) holds the same
+        # forecast bounds the API and UI show. Use it for the seasonal
+        # Q_MIN/Q_MAX (mirrors the month branch) so the Excel matches.
+        # get_long_forecasts_season is re-fetched ONLY to derive the
+        # season window (valid_from/valid_to -> seconds_in_season),
+        # because the bulletin record does not carry those. Passing the
+        # bulletin's horizon_value as the forecast issue-lead would
+        # otherwise resolve to a stale (older-lead) forecast.
+        s_df = db.get_long_forecasts_season(site.code, horizon_value=forecast_horizon)
+        if (
+            not s_df.empty
+            and "code" in s_df.columns
+            and "date" in s_df.columns
+        ):
+            filtered_s = s_df[s_df["code"] == site.code]
+            if not filtered_s.empty:
+                filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
+        else:
+            filtered_s = pd.DataFrame()
+        vf = vt = None
+        if (
+            not filtered_s.empty
+            and "valid_from" in filtered_s.columns
+            and "valid_to" in filtered_s.columns
+        ):
+            vf = pd.to_datetime(filtered_s["valid_from"].values[0])
+            vt = pd.to_datetime(filtered_s["valid_to"].values[0])
+            seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+        else:
+            seconds_in_season = 0
+        season_df = site.forecasts.copy()
+        if vf is not None:
+            season_df["valid_from"] = vf
+            season_df["valid_to"] = vt
+        hydrate_season_hydrograph_stats(site, db)
+        site.get_seasonal_forecast_attributes_for_site(_, season_df, seconds_in_season)
+    else:
+        site.get_forecast_attributes_for_site(_, site.forecasts)
+
+
 def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_horizon: int, sites_list) -> list:
     """Fetch bulletin records from the API and reconstruct site objects."""
     try:
@@ -164,68 +236,7 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 for _idx, row in site_df.iterrows()
             ])
             site.forecasts = site.forecasts.where(site.forecasts.notna(), other=float('nan'))
-            _ensure_site_defaults(site)
-            if horizon_type == 'month':
-                days_in_month = calendar.monthrange(forecast_year, forecast_horizon)[1]
-                hydrate_month_hydrograph_stats(site, forecast_horizon, db)
-                site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
-                if 'вдхр' in (site.punkt_name_ru or ''):
-                    q_df = db.get_long_forecasts_quarter(site.code)
-                    if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
-                        filtered_q = q_df[q_df["code"] == site.code]
-                        if not filtered_q.empty:
-                            filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
-                    else:
-                        filtered_q = pd.DataFrame()
-                    if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
-                        vf = pd.to_datetime(filtered_q["valid_from"].values[0])
-                        vt = pd.to_datetime(filtered_q["valid_to"].values[0])
-                        seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-                    else:
-                        seconds_in_quarter = 0
-                    filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
-                    site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
-                else:
-                    site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
-            elif horizon_type == 'season':
-                # The frozen bulletin record (site.forecasts) holds the same
-                # forecast bounds the API and UI show. Use it for the seasonal
-                # Q_MIN/Q_MAX (mirrors the month branch) so the Excel matches.
-                # get_long_forecasts_season is re-fetched ONLY to derive the
-                # season window (valid_from/valid_to -> seconds_in_season),
-                # because the bulletin record does not carry those. Passing the
-                # bulletin's horizon_value as the forecast issue-lead would
-                # otherwise resolve to a stale (older-lead) forecast.
-                s_df = db.get_long_forecasts_season(site.code, horizon_value=forecast_horizon)
-                if (
-                    not s_df.empty
-                    and "code" in s_df.columns
-                    and "date" in s_df.columns
-                ):
-                    filtered_s = s_df[s_df["code"] == site.code]
-                    if not filtered_s.empty:
-                        filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
-                else:
-                    filtered_s = pd.DataFrame()
-                vf = vt = None
-                if (
-                    not filtered_s.empty
-                    and "valid_from" in filtered_s.columns
-                    and "valid_to" in filtered_s.columns
-                ):
-                    vf = pd.to_datetime(filtered_s["valid_from"].values[0])
-                    vt = pd.to_datetime(filtered_s["valid_to"].values[0])
-                    seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-                else:
-                    seconds_in_season = 0
-                season_df = site.forecasts.copy()
-                if vf is not None:
-                    season_df["valid_from"] = vf
-                    season_df["valid_to"] = vt
-                hydrate_season_hydrograph_stats(site, db)
-                site.get_seasonal_forecast_attributes_for_site(_, season_df, seconds_in_season)
-            else:
-                site.get_forecast_attributes_for_site(_, site.forecasts)
+            _populate_forecast_attributes(site, horizon_type, forecast_year, forecast_horizon)
             bulletin_sites.append(site)
 
         logger.info("Loaded %d bulletin sites from API", len(bulletin_sites))
@@ -298,6 +309,7 @@ class BulletinManager:
         wm.add_to_bulletin_m0_button.on_click(self._on_add_m0)
         wm.remove_bulletin_button.on_click(self._on_remove)
         wm.write_bulletin_button.on_click(self._on_write)
+        wm.bulletin_tabulator.on_edit(self._on_bulletin_edit)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -577,6 +589,67 @@ class BulletinManager:
         print("Selected forecasts have been removed from the bulletin.")
         self._show_popup(_("Selected forecasts have been removed from the bulletin."))
     
+    def _on_bulletin_edit(self, event) -> None:
+        """Live-save an in-cell edit of the Forecast bulletin table.
+
+        Writes the edited value straight into the matching site.forecasts row
+        and upserts to the API so it survives reloads and is used verbatim by
+        'Write bulletin'. Identity columns (Hydropost/Model/Basin) are ignored.
+        """
+        field_to_display = {
+            'station_label':        _('Hydropost'),
+            'model_short':          _('Model'),
+            'basin_ru':             _('Basin'),
+            'forecasted_discharge': _('Forecasted discharge'),
+            'fc_lower':             _('Forecast lower bound'),
+            'fc_upper':             _('Forecast upper bound'),
+            'delta':                _('δ'),
+            'sdivsigma':            _('s/σ'),
+            'mae':                  _('MAE'),
+            'accuracy':             _('Accuracy'),
+        }
+        column_display = field_to_display.get(event.column, event.column)
+
+        identity_columns = {_('Hydropost'), _('Model'), _('Basin')}
+        if column_display in identity_columns:
+            return
+
+        try:
+            df = self.wm.bulletin_tabulator.value
+            row = df.iloc[event.row]
+            station_label = row[_('Hydropost')]
+            model = row[_('Model')]
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_on_bulletin_edit: failed to resolve edited row (%s)", exc)
+            return
+
+        site = next((s for s in self.bulletin_sites if s.station_label == station_label), None)
+        if site is None or not hasattr(site, 'forecasts') or site.forecasts is None:
+            logger.warning(
+                "_on_bulletin_edit: no bulletin site/forecasts found for '%s', edit dropped.",
+                station_label,
+            )
+            return
+
+        mask = site.forecasts[_('Model')] == model
+        if not mask.any():
+            logger.warning(
+                "_on_bulletin_edit: no forecasts row for model '%s' on site '%s', edit dropped.",
+                model, station_label,
+            )
+            return
+
+        value = event.value
+        with contextlib.suppress(TypeError, ValueError):
+            value = float(value)
+
+        site.forecasts.loc[mask, column_display] = value
+
+        try:
+            _save_bulletin_to_api(*self._horizon_context(), [site])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_on_bulletin_edit: failed to save edit to API (%s)", exc)
+
     # Function to handle writing bulletin to Excel
     def _on_write(self, event=None) -> None:
         """Handle writing the bulletin to Excel."""
@@ -620,6 +693,17 @@ class BulletinManager:
                     "_on_write: re-hydration step failed (%s); proceeding "
                     "without updated hydrograph stats.", exc,
                 )
+
+            # Refresh each site's forecast attributes from its (possibly edited)
+            # site.forecasts so in-cell edits are reflected in the Excel output.
+            for site in filtered:
+                try:
+                    _populate_forecast_attributes(site, horizon, forecast_year, forecast_horizon)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "_on_write: attribute refresh failed for %s (%s); "
+                        "writing with existing attributes.", getattr(site, 'code', '?'), exc,
+                    )
 
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,

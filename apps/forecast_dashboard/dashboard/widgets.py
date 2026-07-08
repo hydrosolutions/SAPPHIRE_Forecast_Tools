@@ -1,13 +1,13 @@
-import os
-import panel as pn
-import pandas as pd
-import datetime as dt
 import calendar
+import datetime as dt
+import os
 
+import pandas as pd
+import panel as pn
 from src.file_downloader import FileDownloader
 from src.gettext_config import _, p_
-from dashboard.config import import_tag_library
 
+from dashboard.config import import_tag_library
 
 tl = import_tag_library()
 
@@ -561,7 +561,12 @@ def create_bulletin_tabulator():
         selectable='checkbox',  # Allow multiple selections for removal
         sizing_mode='stretch_width',
         groupby=[_('Basin')],  # Enable grouping by 'Basin'
-        layout='fit_columns'
+        layout='fit_columns',
+        editors={
+            _('Hydropost'): None,
+            _('Model'): None,
+            _('Basin'): None,
+        },
     )
     return bulletin_tabulator
 
