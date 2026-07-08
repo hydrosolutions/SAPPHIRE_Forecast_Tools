@@ -12,6 +12,11 @@ CRPS estimator (Design Decision 2):
     for the climatology and persistence reference CRPS (via
     crps_reference_from_samples), making CRPSS unbiased by estimator mismatch.
 
+    M4 (D3/#5+#6, postprocessing skill-correctness campaign): this estimator
+    now lives canonically in iEasyHydroForecast.probabilistic_metrics
+    (crps_single); crps_from_quantiles below is a thin wrapper so this app
+    and postprocessing_forecasts always compute IDENTICAL CRPS values.
+
 Cross-grid comparability (Design Decision 3):
     Raw crps is never ranked across fc_grid_id values.  The dashboard/report
     restrict CRPSS ranking to a single fc_grid_id.
@@ -25,6 +30,7 @@ from typing import Final, Literal
 
 import numpy as np
 import pandas as pd
+import probabilistic_metrics as pm
 
 from forecast_skill_eval.contingency import (
     ALL_BASIN,
@@ -189,6 +195,11 @@ def crps_from_quantiles(
     rewarded).  The IDENTICAL estimator is used for the climatology reference
     via :func:`crps_reference_from_samples`, so CRPSS is estimator-consistent.
 
+    M4 (D3/#5+#6): thin wrapper around the canonical
+    iEasyHydroForecast.probabilistic_metrics.crps_single, so
+    postprocessing_forecasts and forecast_skill_eval always compute
+    IDENTICAL CRPS values from the same (levels, quantiles, observed) input.
+
     Args:
         levels: Quantile probability levels (will be isotonic-repaired).
         quantiles: Corresponding quantile values.
@@ -198,46 +209,7 @@ def crps_from_quantiles(
         Approximate CRPS ≥ 0, or ``math.nan`` when fewer than 2 finite nodes
         remain after isotonic repair or when ``observed`` is non-finite.
     """
-    lev, qval, _ = isotonic_band(levels, quantiles)
-    if len(lev) < 2:
-        return math.nan
-    if not math.isfinite(observed):
-        return math.nan
-
-    obs = observed
-
-    def _pinball(tau: float, q: float) -> float:
-        if obs >= q:
-            return tau * (obs - q)
-        return (1.0 - tau) * (q - obs)
-
-    # --- Middle: trapezoidal integration between adjacent nodes ---
-    middle = 0.0
-    for i in range(len(lev) - 1):
-        dtau = lev[i + 1] - lev[i]
-        middle += dtau * (_pinball(lev[i], qval[i]) + _pinball(lev[i + 1], qval[i + 1])) / 2.0
-
-    # --- Left tail: [0, tau_min] flat at q_min ---
-    tau_min = lev[0]
-    q_min = qval[0]
-    if obs >= q_min:
-        # ∫₀^τ_min τ·(obs - q_min) dτ = (obs - q_min)·τ_min²/2
-        left_tail = (obs - q_min) * tau_min**2 / 2.0
-    else:
-        # ∫₀^τ_min (1-τ)·(q_min - obs) dτ = (q_min - obs)·(τ_min - τ_min²/2)
-        left_tail = (q_min - obs) * (tau_min - tau_min**2 / 2.0)
-
-    # --- Right tail: [tau_max, 1] flat at q_max ---
-    tau_max = lev[-1]
-    q_max = qval[-1]
-    if obs <= q_max:
-        # ∫_τ_max^1 (1-τ)·(q_max - obs) dτ = (q_max - obs)·(1 - τ_max)²/2
-        right_tail = (q_max - obs) * (1.0 - tau_max) ** 2 / 2.0
-    else:
-        # ∫_τ_max^1 τ·(obs - q_max) dτ = (obs - q_max)·(1 - τ_max²)/2
-        right_tail = (obs - q_max) * (1.0 - tau_max**2) / 2.0
-
-    return 2.0 * (left_tail + middle + right_tail)
+    return pm.crps_single(levels, quantiles, observed)
 
 
 def crps_reference_from_samples(

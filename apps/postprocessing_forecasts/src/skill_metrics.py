@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
+import probabilistic_metrics as pm
 from src.model_names import (
     AGGREGATED_EM_RAW_MODELS,
     AGGREGATED_ENSEMBLE_MODELS,
@@ -1124,9 +1125,20 @@ def calculate_crps(
 ) -> float:
     """Continuous Ranked Probability Score from quantile forecasts.
 
-    Uses trapezoidal integration of quantile (pinball) losses:
-        CRPS = (1/N) * sum_i trapz(rho_tau(y_i - q_ij), tau_j)
-    where rho_tau(u) = u * (tau - 1{u<0}) is the pinball loss.
+    Delegates to the canonical textbook estimator shared with
+    forecast_skill_eval (iEasyHydroForecast.probabilistic_metrics), so both
+    apps compute IDENTICAL CRPS values (design decision D3, milestone M4):
+        CRPS = 2 * integral_0^1 pinball_loss(tau, y_i) dtau
+    approximated via trapezoidal integration of the pinball loss between
+    quantile grid nodes PLUS explicit flat-tail terms for [0, tau_min] and
+    [tau_max, 1] (an observation outside the forecast band is still
+    penalised — narrow, overconfident bands are not rewarded).
+
+    NOTE (M4/#5): prior to this change, this function omitted the factor-2
+    term and the tail terms, so it returned roughly HALF the correct CRPS.
+    Stored postprocessing crps values will shift by ~2x on next recalc; this
+    is accepted (CRPS is informational, no gate depends on it — see the
+    postprocessing skill-correctness campaign design doc, D3).
 
     Args:
         observed: shape (N,) — observed values.
@@ -1134,38 +1146,14 @@ def calculate_crps(
         quantile_levels: shape (K,) — e.g. [0.05, 0.10, ..., 0.95].
 
     Returns:
-        Mean CRPS across valid observations (lower is better).
-        Returns NaN if no valid observations.
+        NaN-aware mean CRPS across valid observation rows (lower is better).
+        A row is excluded from the mean when its observation is NaN, or
+        when fewer than 2 finite quantile nodes remain after isotonic
+        repair (M4/#6 — a single bad row no longer poisons the whole
+        group's mean, unlike the previous plain np.mean over rows).
+        Returns NaN only when every row is invalid.
     """
-    observed = np.asarray(observed, dtype=np.float64)
-    quantile_forecasts = np.asarray(quantile_forecasts, dtype=np.float64)
-    quantile_levels = np.asarray(quantile_levels, dtype=np.float64)
-
-    # Mask out NaN observations
-    valid = ~np.isnan(observed)
-    if not np.any(valid):
-        return np.nan
-
-    obs = observed[valid]
-    qf = quantile_forecasts[valid]
-
-    # Compute pinball loss for each (observation, quantile_level) pair
-    # errors shape: (N, K)
-    errors = obs[:, np.newaxis] - qf
-
-    # rho_tau(u) = u * tau  if u >= 0
-    #            = u * (tau - 1)  if u < 0
-    pinball = np.where(
-        errors >= 0,
-        errors * quantile_levels[np.newaxis, :],
-        errors * (quantile_levels[np.newaxis, :] - 1.0),
-    )
-
-    # Integrate pinball loss over quantile levels for each observation
-    # using trapezoidal rule
-    crps_per_obs = np.trapezoid(pinball, quantile_levels, axis=1)
-
-    return float(np.mean(crps_per_obs))
+    return pm.crps_from_quantiles(observed, quantile_forecasts, quantile_levels)
 
 
 def calculate_pit_reliability(
