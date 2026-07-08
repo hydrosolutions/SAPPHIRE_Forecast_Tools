@@ -19,6 +19,9 @@ Key functions:
 | Script | Purpose |
 |--------|---------|
 | `preprocessing_runoff.py` | Main script - orchestrates the preprocessing workflow |
+| `sync_short_horizon_hydrograph.py` | Writes pentad/decade hydrograph actuals; called from `preprocessing_runoff.main()` after the daily hydrograph write |
+| `sync_long_horizon_hydrograph.py` | Writes month/quarter/season hydrograph rows; run yearly via `bin/yearly_runoff_hydrograph_aggregation.sh` |
+| `backfill_discharge_aggregation.py` | Backfills historical hydrograph rows for all five horizons; run via `bin/backfill_discharge_aggregation.sh` |
 | `src/src.py` | Core functions for data processing and statistics |
 | `src/config.py` | Configuration loading (log level, validation, spot-check, site cache settings) |
 | `src/profiling.py` | Performance profiling utilities (enabled via `PREPROCESSING_PROFILING=true`) |
@@ -99,16 +102,57 @@ docker run --rm --network host \
 - On macOS, `host.docker.internal` resolves to the host machine, allowing the container to reach the SSH tunnel
 - The `IEASYHYDROHF_HOST` environment variable overrides the value in the .env file
 
+## Short-Horizon Pentad/Decad Hydrograph
+
+Pentad and decade hydrograph actuals (`current`, `previous`) are written by
+`sync_short_horizon_hydrograph.py`, wired into `preprocessing_runoff.main()`
+immediately after the daily hydrograph write. It runs on every operational
+`preprocessing_runoff` invocation — no separate cron job is needed.
+
+**Method:** `current` and `previous` are computed independently, SDK-first —
+`WDFA` (pentad) / `WDDCA` (decade) from iEasyHydro HF — with an automatic
+fallback to `round_3sf(mean(WDDA over the calendar period))` when at least
+80% of the period's days are present (else `null`). An in-progress
+(not-yet-closed) period never receives a finalized value. Rows are keyed on
+the issue date (last day of the *previous* period).
+
+**Scope: actuals only.** The climatology envelope (`mean`, `min`, `max`,
+`q05`–`q95`) and `norm` are unchanged — reproduced by the same legacy method
+as before; `norm` for pentad/decade still comes from the iEH HF SDK.
+
+`preprocessing_runoff` is the sole writer of hydrograph rows across all
+horizons (day, pentad, decade, month, quarter, season); `linear_regression`
+no longer writes hydrograph rows.
+
 ## Yearly Long-Horizon Hydrograph Aggregation
 
-For the long-horizon (monthly + seasonal) runoff hydrograph table,
-the operator wrapper `bin/yearly_runoff_hydrograph_aggregation.sh`
+For the long-horizon (monthly + quarterly + seasonal) runoff hydrograph
+table, the operator wrapper `bin/yearly_runoff_hydrograph_aggregation.sh`
 runs the long-horizon writer (`sync_long_horizon_hydrograph.py`)
-in a Docker container. The writer pulls monthly discharge norms
-from the iEH HF SDK and, in a single pass, writes the **full
-triad** (`norm` + `previous-year` + `current-year`) for every
-station-month plus a seasonal **April–September** aggregate row
-per station per year.
+in a Docker container.
+
+**Monthly method:** controlled by the `SAPPHIRE_MONTHLY_FROM_DECADAL`
+deployment flag (default `TRUE`):
+- `TRUE` (default): `previous`/`current` = `round_3sf(mean of the 3 rounded
+  decadal actuals)`, `NULL` if fewer than 3 decadal actuals exist.
+- `FALSE`: `previous`/`current` = `round_3sf(mean(WDDA over the calendar
+  month))`, under the same ≥80%-days-present rule used for pentad/decade.
+
+`norm` is unaffected by the flag — it remains the existing unrounded monthly
+climatology mean pulled from the iEH HF SDK.
+
+**Quarter/season:** `previous`/`current` cascade further —
+`round_3sf(mean of the 3 rounded monthly actuals)` for quarter,
+`round_3sf(mean of the 6 rounded monthly actuals)` for the Apr–Sep season —
+`NULL` (all-or-nothing) if any constituent month is missing. This
+round-of-rounded cascade is intentional (it mirrors how these aggregates
+have historically been computed by hand in iEH HF), not a rounding bug.
+`norm` for quarter/season is likewise the existing unrounded mean of the
+constituent monthly norms, unaffected by the cascade.
+
+In a single pass, the writer writes the **full triad** (`norm` +
+`previous-year` + `current-year`) for every station-month, plus a quarterly
+and a seasonal **April–September** aggregate row per station per year.
 
 **Cadence:** once a year, during the yearly maintenance window
 (e.g., 1 January 03:00 UTC).
@@ -141,6 +185,30 @@ and left `previous` / `current` NULL. It is now **deprecated**.
 Operators should switch to
 `bin/yearly_runoff_hydrograph_aggregation.sh` for all yearly
 hydrograph aggregation runs.
+
+## Historical Backfill
+
+`backfill_discharge_aggregation.py` (invoked via
+`bin/backfill_discharge_aggregation.sh`) backfills the prior N years
+(default 3) of hydrograph rows across all five horizons — day, pentad,
+decade, month, quarter, season.
+
+**Safety rails:**
+- `--dry-run`: computes the before→after diff and reports it without
+  writing anything.
+- A pre-write snapshot of the affected rows is written to a timestamped
+  file before any write.
+- A post-write verification re-reads the written rows and fails loudly on
+  any mismatch.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--years N` | Number of prior years to backfill (default: 3) |
+| `--target-year YEAR` | Backfill a specific year instead of the trailing N years |
+| `--dry-run` | Compute and report the diff without writing |
+| `--snapshot-dir PATH` | Directory for the pre-write snapshot file |
 
 ## Data Flow
 

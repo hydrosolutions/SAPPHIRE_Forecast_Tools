@@ -25,3 +25,11 @@ def test_run_locally_preprunoff_maintenance_runs_long_horizon_writer():
     )
     assert "lt_rc -eq 2" in function_body
     assert "Long-horizon hydrograph sync produced no records" in function_body
+    assert "lt_rc -eq 5" in function_body
+    assert "Long-horizon hydrograph sync had API read/write failure(s)" in function_body
+    assert "lt_rc -eq 4" in function_body
+    assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in function_body
+    assert function_body.index("lt_rc -eq 2") < function_body.index("lt_rc -eq 5")
+    assert function_body.index("lt_rc -eq 5") < function_body.index("lt_rc -eq 4")
+    assert "rc=$lt_rc" in function_body[function_body.index("lt_rc -eq 5") :]
+    assert "rc=$lt_rc" in function_body[function_body.index("lt_rc -eq 4") :]

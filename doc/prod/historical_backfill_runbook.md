@@ -2112,6 +2112,22 @@ If one mode fails:
 Populate monthly and April–September seasonal runoff hydrograph rows, including
 norm/previous/current triads.
 
+> **Note — deployments carrying PR #406 (discharge-aggregation parity):** on a
+> server that has the parity change, both this P9 wrapper
+> (`yearly_runoff_hydrograph_aggregation.sh`) and
+> `bin/backfill_discharge_aggregation.sh` call the same updated long-horizon
+> writer, so both emit the 3-significant-figure month/quarter/season actuals.
+> `backfill_discharge_aggregation.sh` (see §3.5 of
+> [`update_deployment_checklist.md`](./update_deployment_checklist.md))
+> **additionally covers pentad and decad** and adds dry-run / pre-write snapshot /
+> post-write verification — prefer it for the one-time parity backfill. This P9
+> wrapper remains the scheduled month/quarter/season regeneration path. Avoid
+> running both over the same target year in one pass.
+>
+> Actuals contract: pentad/decad are SDK-first iEasyHydro HF period actuals;
+> month = mean of three rounded decadal actuals; quarter/season derive from
+> rounded monthly actuals.
+
 ### Files / scripts invoked
 
 ```text

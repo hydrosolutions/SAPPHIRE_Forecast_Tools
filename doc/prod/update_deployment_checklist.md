@@ -1166,6 +1166,62 @@ succeeded and verified`.
 
 ---
 
+### 3.5 Discharge-Aggregation Historical Backfill (one-time, after the iEH HF parity update)
+
+**When to run this step:** Once, after deploying the discharge-aggregation
+parity change (PR #406, merged as `c80e74c2`) that made pentad/decad/month/
+quarter/season **actuals** match iEasyHydro HF to 3 significant figures. The
+parity fix only corrects values written by *new* runs — previously-stored
+aggregate rows keep their old (banded / mean-of-days) values until backfilled.
+Routine tag-bump-only updates do NOT need this step.
+
+**Prerequisites:** run this only after §3.1–§3.3 are green. This wrapper does
+**not** start Docker or open the iEasyHydro HF tunnel — the microservices stack
+must be up (`SAPPHIRE_API_URL` reachable, default `http://localhost:8000`) and
+the iEasyHydro HF SDK / SSH tunnel must be reachable, because the backfill reads
+daily runoff from the preprocessing API and period actuals from the HF SDK.
+The wrapper runs the backfill directly on the host via `uv run` (it does not
+pull or build a Docker image), so the host must also have `uv` installed and
+the `apps/preprocessing_runoff` environment synced (`uv sync` in that
+directory) before running it.
+
+**Reference:** general backfill methodology and idempotency model are in
+[`doc/prod/historical_backfill_runbook.md`](./historical_backfill_runbook.md).
+
+**Safety rails (built into the tool):** a dry-run computes + diffs without
+writing; a live run writes a pre-write snapshot for the rows it can read, writes
+per horizon, then re-reads and **raises on any mismatch**. The backfill is
+**idempotent** — it upserts the same rows on re-run, so it is safe to re-run if
+interrupted. Snapshot reads are best-effort: treat any `snapshot_existing …
+treating as no existing rows` warning as an *incomplete* snapshot and
+investigate before relying on it for rollback. Always dry-run first and inspect
+the diff.
+
+- [ ] Dry-run first (no writes) and review the JSON diff report. Use `--years N`
+      for the N most-recent complete years, or `--target-year YYYY` for one year:
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools
+  bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --years 3 --dry-run
+  # single year instead:
+  # bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --target-year 2025 --dry-run
+  ```
+- [ ] Inspect the dry-run diff — a large `changed`/`added` count is EXPECTED (that
+      is the parity correction being applied to historical rows).
+- [ ] Expect non-fatal iEasyHydro HF **norm** warnings (`No path provided` / SDK
+      norm lookup). These skip only the affected station/horizon rows (mostly
+      monthly), not the whole run — review the summary counts and spot-check the
+      skipped stations rather than treating the warnings as a failure.
+- [ ] Live backfill (writes, with snapshot + post-write verification):
+  ```bash
+  bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --years 3
+  ```
+- [ ] Confirm the run ended with per-year `verification OK`. A verification
+      mismatch raises and stops the run — do NOT ignore it.
+- [ ] Spot-check a few stations' month/decad values in the dashboard against
+      iEasyHydro HF (3 significant figures).
+
+---
+
 ## 4. LOG CLEANUP [Optional]
 
 Clean up old log files to prevent disk space issues.

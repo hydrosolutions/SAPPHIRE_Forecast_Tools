@@ -214,8 +214,28 @@ Each model writes one row per (station, forecast date, target month):
 
 Entry point: `preprocessing_runoff/sync_long_horizon_hydrograph.py`, run once
 per year by `bin/yearly_runoff_hydrograph_aggregation.sh`. The job writes
-long-horizon runoff hydrograph norm rows to the preprocessing `hydrographs`
-table through the sapphire-api-client (`write_hydrograph`).
+long-horizon runoff hydrograph rows (month, quarter, season) to the
+preprocessing `hydrographs` table through the sapphire-api-client
+(`write_hydrograph`).
+
+**Envelope = norm only.** Unlike day/pentad/decade rows, month/quarter/season
+rows carry no quantile-band envelope — `count`, `mean`, `std`, `min`, `max`,
+`q05`–`q95` are not populated. The only climatology field is `norm`.
+
+#### Monthly Actuals (`SAPPHIRE_MONTHLY_FROM_DECADAL`)
+
+Monthly `previous`/`current` are computed by one of two methods, selected by
+the `SAPPHIRE_MONTHLY_FROM_DECADAL` deployment flag (default `TRUE`):
+
+| Flag | Method |
+|------|--------|
+| `TRUE` (default) | `round_3sf(mean of the 3 rounded decadal actuals)`; `NULL` if fewer than 3 decadal actuals are available |
+| `FALSE` | `round_3sf(mean(WDDA over the calendar month))`, under the same ≥80%-days-present rule used for the pentad/decade fallback (see [short-term data flow](data_flow_short_term.md)) |
+
+MONTH writes 12 rows per station. `norm` is unaffected by this flag — it
+remains the existing unrounded monthly climatology mean.
+
+#### Quarter / Season Actuals (Round-of-Rounded Cascade)
 
 QUARTER rows use the same period keys as postprocessing `long_forecasts`
 quarter rows so dashboard consumers can join climatology norms to quarterly
@@ -229,15 +249,23 @@ forecasts.
 | `day_of_year` | Leap-aware first-of-quarter day (`1`, `91/92`, `182/183`, `274/275`) |
 | `horizon_value` | Quarter number `1`-`4` |
 | `horizon_in_year` | Same quarter number `1`-`4` |
-| `norm`, `previous`, `current` | Mean of the 3 constituent monthly values; `NULL` if any constituent month is missing or non-finite |
+| `norm` | Existing unrounded mean of the 3 constituent monthly norms; unchanged |
+| `previous`, `current` | `round_3sf(mean of its 3 rounded monthly actuals)`; `NULL` if any constituent month is missing or non-finite |
 | Stat fields | `NULL` (`count`, `mean`, `std`, `min`, `max`, `q05`-`q95` are not populated) |
 
-MONTH and SEASON rows follow the same norm-only shape. MONTH writes 12 rows per
-station; SEASON writes one Apr-Sep row whose `norm`, `previous`, and `current`
-values are the all-or-nothing mean of Apr through Sep. QUARTER mirrors the
-SEASON all-or-nothing rule. This intentionally differs from postprocessing's
-quarterly forecast aggregation, where `QUARTER_MIN_MONTHS = 2` allows a
-2-of-3-month tolerance.
+SEASON (Apr–Sep) follows the same shape: `norm` is the existing unrounded
+mean of the 6 constituent monthly norms (unchanged); `previous`/`current` are
+`round_3sf(mean of the 6 rounded monthly actuals)`, `NULL` (all-or-nothing) if
+any of the six months is missing. QUARTER mirrors the same all-or-nothing
+rule for `previous`/`current`. This intentionally differs from
+postprocessing's quarterly *forecast* aggregation, where
+`QUARTER_MIN_MONTHS = 2` allows a 2-of-3-month tolerance.
+
+**The round-of-rounded cascade is intentional.** Rounding each monthly
+actual to 3 significant figures before averaging it into the quarter/season
+value mirrors how hydromet services have historically computed these
+aggregates by hand from iEH HF bulletins — it is a deliberate parity choice,
+not a rounding bug.
 
 Consumer join contract: a future dashboard join between preprocessing QUARTER
 hydrograph norms and postprocessing `long_forecasts` QUARTER rows must use
@@ -251,6 +279,19 @@ Deployment prerequisite: sapphire-api-client must include `quarter` in
 `VALID_HORIZONS`, and consumers must re-pin to that client version, before the
 quarter write path and dashboard read path work end-to-end. The preprocessing
 service enum and Alembic migration that add QUARTER are already shipped.
+
+### Discharge Rounding (3sf Contract)
+
+`round_3sf` (3 significant figures, half-up, Decimal-based) and a
+`format_discharge` display formatter — both in
+`iEasyHydroForecast/forecast_library.py` — back both the **stored** value
+(hydrograph `previous`/`current` above, and the pentad/decade actuals in the
+[short-term data flow](data_flow_short_term.md)) and the **displayed** value
+(bulletin and dashboard discharge formatting). Because both paths share the
+same helper, stored and displayed 3sf values never diverge. This replaces
+the older banded `round_discharge*` helpers at the discharge-formatting
+boundary. Forecast predictors, norms, and skill metrics are out of scope —
+this contract applies to discharge *actuals* formatting only.
 
 ### Ensemble Creation
 

@@ -32,17 +32,19 @@
 
 # I/O
 import argparse
+import datetime as dt
 import logging
 import os
 import sys
 import time
 from logging.handlers import TimedRotatingFileHandler
 
+# Local methods
+import sync_short_horizon_hydrograph
+
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 from ieasyhydro_sdk.sdk import IEasyHydroHFSDK, IEasyHydroSDK
-
-# Local methods
 from src import src
 from src.config import (
     get_log_level,
@@ -185,6 +187,60 @@ def get_mode(args) -> str:
     if args.maintenance:
         return "maintenance"
     return os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+
+
+def _write_short_horizon_hydrograph_records(
+    *, ieh_hf_sdk, site_codes, target_year: int, today: dt.date
+) -> str | None:
+    """Write pentad/decad hydrograph rows (M2) for ``site_codes``.
+
+    This is a display/skill-metric artifact, not a forecast-run blocker: a
+    failure here must NEVER abort the operational run, so it is caught here
+    and reported back to the caller instead of raised.
+
+    Args:
+        ieh_hf_sdk: iEasyHydro HF SDK instance (assumed non-None by the caller).
+        site_codes: Station codes to write pentad/decad rows for.
+        target_year: The "current" year for the actuals triad.
+        today: Completeness reference date.
+
+    Returns:
+        None on success. Otherwise a short, greppable error message describing
+        the failure (the caller logs it at ERROR level and, in maintenance
+        mode, may fold it into the post-write validation output).
+    """
+    try:
+        short_horizon_client = sync_short_horizon_hydrograph._get_preprocessing_client()
+        sync_short_horizon_hydrograph.write_short_horizon_hydrograph(
+            codes=site_codes,
+            iehhf_sdk=ieh_hf_sdk,
+            client=short_horizon_client,
+            target_year=target_year,
+            today=today,
+        )
+        logger.info("Pentad/decad hydrograph rows written.")
+        return None
+    except Exception as e:
+        error_message = (
+            f"SHORT_HORIZON_HYDROGRAPH_WRITE_FAILED: pentad/decad hydrograph write "
+            f"failed and was skipped (non-fatal, forecast run continues): "
+            f"{type(e).__name__}: {e}"
+        )
+        logger.error(error_message)
+        return error_message
+
+
+def _maintenance_post_write_note(short_horizon_write_error: str | None) -> None:
+    """Fold a (non-fatal) short-horizon hydrograph write failure into the
+    maintenance-mode post-write validation log output, if one occurred this
+    run. No-op when there was no failure.
+
+    This does not change the validation's pass/fail exit semantics (it
+    already has none tied to this concern) - it only makes the failure
+    visible alongside the existing maintenance-mode validation summary.
+    """
+    if short_horizon_write_error is not None:
+        logger.error(f"[DATA] Post-write validation note: {short_horizon_write_error}")
 
 
 def main():
@@ -481,8 +537,35 @@ def main():
     end_time = time.time()
     time_write_daily_hydrograph_data = end_time - start_time
 
+    # Pentad/decad hydrograph rows (M2): preprocessing_runoff now owns the
+    # short-horizon envelope/norm + current/previous actuals (previously
+    # written by fl.write_pentad_hydrograph_data / write_decad_hydrograph_data),
+    # produced on every operational run right after the daily hydrograph write.
+    start_time = time.time()
+    short_horizon_write_error = None
+    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
+        logger.info(
+            "Skipping pentad/decad hydrograph write: requires the iEasyHydro HF SDK "
+            "(legacy iEasyHydro connection in use)."
+        )
+    elif ieh_hf_sdk is None:
+        logger.info("Skipping pentad/decad hydrograph write: no iEasyHydro HF SDK access.")
+    else:
+        forecast_date = dt.date.today()
+        short_horizon_write_error = _write_short_horizon_hydrograph_records(
+            ieh_hf_sdk=ieh_hf_sdk,
+            site_codes=site_codes,
+            target_year=forecast_date.year,
+            today=forecast_date,
+        )
+    end_time = time.time()
+    time_write_short_horizon_hydrograph_data = end_time - start_time
+
     # Post-write validation (Phase 3) - only in maintenance mode
     if mode == "maintenance":
+        # Surface a (non-fatal) short-horizon write failure in the same
+        # maintenance-mode validation output operators already check.
+        _maintenance_post_write_note(short_horizon_write_error)
         validation_config = get_validation_settings()
         if validation_config.get("enabled", True):
             logger.info("[DATA] Running post-write validation...")
@@ -546,11 +629,16 @@ def main():
 
     overall_end_time = time.time()
     total_time = overall_end_time - overall_start_time
+    time_write_total = (
+        time_write_daily_time_series_data
+        + time_write_daily_hydrograph_data
+        + time_write_short_horizon_hydrograph_data
+    )
     logger.info(
         f"[TIMING] Total: {total_time:.1f}s (config: {time_load_environment:.1f}s, "
         f"sites: {time_get_forecast_sites:.1f}s, data: {time_get_runoff_data:.1f}s, "
         f"process: {time_filter_roughly_for_outliers + time_from_daily_time_series_to_hydrograph:.1f}s, "
-        f"write: {time_write_daily_time_series_data + time_write_daily_hydrograph_data:.1f}s)"
+        f"write: {time_write_total:.1f}s)"
     )
 
     # Output profiling report if enabled (PREPROCESSING_PROFILING=true)
