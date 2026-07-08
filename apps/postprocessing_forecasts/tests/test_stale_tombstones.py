@@ -364,3 +364,226 @@ class TestStaleTombstones:
         assert len(result) == 1
         assert result.iloc[0]["horizon_value"] == 0  # the stale one
         assert result.iloc[0]["n_pairs"] == 0
+
+    # ---------------------------------------------------------------------------
+    # Sentinel horizon_value = 0 injection for quarter/season aggregated frames
+    # ---------------------------------------------------------------------------
+
+    def test_quarter_missing_horizon_value_stale_key_tombstoned(self):
+        """Quarter emitted frame that LACKS horizon_value column: a stale existing
+        key (quarter_in_year=2) NOT in emitted is tombstoned with horizon_value=0.
+        The key present in emitted (quarter_in_year=3) is NOT tombstoned.
+
+        This mirrors the real recalc path where the aggregated quarter/season
+        skill frame groups by [period_col, code, model_short] only, and the DB
+        read side returns horizon_value=0 (sentinel written by api_writer).
+        """
+        # existing — as returned by read_skill_metrics('quarter'); horizon_value=0
+        existing = _df(
+            [
+                {
+                    "code": "19999",
+                    "quarter_in_year": 2,
+                    "horizon_value": 0,
+                    "model_short": "LR_BASE",
+                    "n_pairs": 5,
+                    "sdivsigma": 0.6,
+                    "nse": 0.4,
+                    "delta": 0.1,
+                    "accuracy": 0.75,
+                    "mae": 8.0,
+                },
+                {
+                    "code": "19999",
+                    "quarter_in_year": 3,
+                    "horizon_value": 0,
+                    "model_short": "LR_BASE",
+                    "n_pairs": 6,
+                    "sdivsigma": 0.7,
+                    "nse": 0.5,
+                    "delta": 0.2,
+                    "accuracy": 0.8,
+                    "mae": 7.0,
+                },
+            ]
+        )
+
+        # emitted — aggregated frame; NO horizon_value column
+        emitted = _df(
+            [
+                {
+                    "code": "19999",
+                    "quarter_in_year": 3,  # only quarter 3 present; quarter 2 is stale
+                    "model_short": "LR_BASE",
+                    "n_pairs": 6,
+                    "sdivsigma": 0.7,
+                    "nse": 0.5,
+                    "delta": 0.2,
+                    "accuracy": 0.8,
+                    "mae": 7.0,
+                }
+            ]
+        )
+        assert "horizon_value" not in emitted.columns  # pre-condition: column absent
+
+        result = build_stale_tombstones(existing, emitted, "quarter_in_year")
+
+        # Stale key (quarter 2) must appear as a tombstone with horizon_value=0
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["quarter_in_year"] == 2
+        assert row["horizon_value"] == 0
+        assert row["n_pairs"] == 0
+        assert pd.isna(row["nse"])
+        assert pd.isna(row["sdivsigma"])
+        assert pd.isna(row["mae"])
+        # Non-stale key (quarter 3) must NOT appear
+        assert not (result["quarter_in_year"] == 3).any()
+
+    def test_season_missing_horizon_value_stale_key_tombstoned(self):
+        """Season emitted frame that LACKS horizon_value column: stale key is
+        tombstoned with horizon_value=0; present key is not tombstoned.
+        Uses period_col='season_in_year'."""
+        existing = _df(
+            [
+                {
+                    "code": "19999",
+                    "season_in_year": 1,
+                    "horizon_value": 0,
+                    "model_short": "LR_SM",
+                    "n_pairs": 4,
+                    "sdivsigma": 0.5,
+                    "nse": 0.3,
+                    "delta": 0.15,
+                    "accuracy": 0.7,
+                    "mae": 12.0,
+                },
+                {
+                    "code": "19999",
+                    "season_in_year": 2,
+                    "horizon_value": 0,
+                    "model_short": "LR_SM",
+                    "n_pairs": 5,
+                    "sdivsigma": 0.6,
+                    "nse": 0.4,
+                    "delta": 0.2,
+                    "accuracy": 0.75,
+                    "mae": 10.0,
+                },
+            ]
+        )
+
+        # emitted lacks horizon_value; only season 2 present → season 1 is stale
+        emitted = _df(
+            [
+                {
+                    "code": "19999",
+                    "season_in_year": 2,
+                    "model_short": "LR_SM",
+                    "n_pairs": 5,
+                    "sdivsigma": 0.6,
+                    "nse": 0.4,
+                    "delta": 0.2,
+                    "accuracy": 0.75,
+                    "mae": 10.0,
+                }
+            ]
+        )
+        assert "horizon_value" not in emitted.columns
+
+        result = build_stale_tombstones(existing, emitted, "season_in_year")
+
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["season_in_year"] == 1
+        assert row["horizon_value"] == 0
+        assert row["n_pairs"] == 0
+        assert pd.isna(row["nse"])
+        assert not (result["season_in_year"] == 2).any()
+
+    def test_month_path_unchanged_with_real_horizon_values(self):
+        """MONTH path: emitted carries real horizon_value (leads 0, 1).
+        - A key at hv=1 present in emitted must NOT be tombstoned.
+        - A stale key at hv=2 absent from emitted MUST be tombstoned.
+        Confirms the sentinel-injection logic does not affect month behaviour."""
+        existing = _df(
+            [
+                _make_skill_row(month_in_year=3, horizon_value=1, model_short="LR_BASE"),
+                _make_skill_row(month_in_year=3, horizon_value=2, model_short="LR_BASE"),
+            ]
+        )
+        # emitted has horizon_value column with lead 1 only
+        emitted = _df([_make_skill_row(month_in_year=3, horizon_value=1, model_short="LR_BASE")])
+        assert "horizon_value" in emitted.columns  # pre-condition
+
+        result = build_stale_tombstones(existing, emitted, "month_in_year")
+
+        # Only horizon_value=2 is stale
+        assert len(result) == 1
+        assert result.iloc[0]["horizon_value"] == 2
+        assert result.iloc[0]["n_pairs"] == 0
+        # horizon_value=1 (in emitted) must NOT appear in tombstones
+        assert not (result["horizon_value"] == 1).any()
+
+    def test_still_bails_when_emitted_missing_code(self):
+        """emitted missing 'code' (a truly required key column) → returns empty
+        tombstone set and does NOT raise.  Only horizon_value gets sentinel-0
+        treatment; other key columns always cause bail-out."""
+        existing = _df([_make_skill_row(month_in_year=3, model_short="LR_BASE")])
+        # emitted is missing 'code' (and has horizon_value to isolate the test)
+        emitted = _df(
+            [
+                {
+                    "month_in_year": 3,
+                    "horizon_value": 0,
+                    "model_short": "LR_BASE",
+                    "n_pairs": 5,
+                    "nse": 0.4,
+                }
+            ]
+        )
+        assert "code" not in emitted.columns
+
+        result = build_stale_tombstones(existing, emitted, "month_in_year")
+
+        assert result.empty
+
+    def test_still_bails_when_emitted_missing_model_short(self):
+        """emitted missing 'model_short' → bail-out (not sentinel-patched)."""
+        existing = _df([_make_skill_row(month_in_year=3, model_short="LR_BASE")])
+        emitted = _df(
+            [
+                {
+                    "code": "19999",
+                    "month_in_year": 3,
+                    "horizon_value": 0,
+                    "n_pairs": 5,
+                    "nse": 0.4,
+                }
+            ]
+        )
+        assert "model_short" not in emitted.columns
+
+        result = build_stale_tombstones(existing, emitted, "month_in_year")
+
+        assert result.empty
+
+    def test_still_bails_when_emitted_missing_period_col(self):
+        """emitted missing the period column → bail-out."""
+        existing = _df([_make_skill_row(month_in_year=3, model_short="LR_BASE")])
+        emitted = _df(
+            [
+                {
+                    "code": "19999",
+                    "horizon_value": 0,
+                    "model_short": "LR_BASE",
+                    "n_pairs": 5,
+                    "nse": 0.4,
+                }
+            ]
+        )
+        # month_in_year is absent
+
+        result = build_stale_tombstones(existing, emitted, "month_in_year")
+
+        assert result.empty

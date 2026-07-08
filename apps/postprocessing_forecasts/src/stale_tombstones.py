@@ -73,7 +73,23 @@ def build_stale_tombstones(
         # All existing keys become tombstones.
         stale_existing = existing_canon
     else:
-        # Validate key columns in emitted too.
+        # For quarter/season the aggregated emitted frame lacks horizon_value
+        # (those frames group only by [period_col, code, model_short]).  The
+        # writer stores sentinel horizon_value = 0 for all non-month horizons,
+        # so the read side returns horizon_value = 0 in *existing*.  Inject the
+        # same sentinel into emitted so both sides of the anti-join share the
+        # same key value, instead of bailing.
+        if "horizon_value" not in emitted.columns:
+            emitted = emitted.copy()
+            emitted["horizon_value"] = 0
+            logger.debug(
+                "build_stale_tombstones: emitted lacks horizon_value — "
+                "injecting sentinel 0 for period_col=%s",
+                period_col,
+            )
+
+        # Validate remaining key columns in emitted; bail out only if a
+        # non-horizon_value key column is absent.
         missing_in_emitted = [c for c in key_cols if c not in emitted.columns]
         if missing_in_emitted:
             logger.warning(
