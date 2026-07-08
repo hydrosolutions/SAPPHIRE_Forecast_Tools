@@ -826,21 +826,24 @@ class TestThresholdBehavior:
         )
         assert len(result) == 3, "All should pass when filter disabled"
 
-    def test_threshold_case_sensitive(self, _three_model_skill):
-        """threshold_sdivsigma='false' (lowercase) raises ValueError.
-        Only 'False' (capital F) disables the filter. This documents
-        the case-sensitivity behavior: str('false') != 'False' so it
-        tries float('false') which is invalid."""
-        with pytest.raises(ValueError, match="could not convert"):
-            filter_for_highly_skilled_forecasts(
-                _three_model_skill,
-                threshold_sdivsigma="false",
-                threshold_accuracy=0.0,
-                threshold_nse=0.0,
-            )
+    def test_threshold_case_insensitive_disable(self, _three_model_skill):
+        """threshold_sdivsigma='false' (lowercase) disables the gate.
 
-    def test_exact_boundary_excluded(self):
-        """sdivsigma exactly at threshold (0.6) is excluded (< not <=)."""
+        M2: overrides and env vars are routed through the same lenient
+        parser (_parse_threshold_env), so any case-insensitive disable
+        token ('false', 'False', 'off', ...) disables that gate. With
+        sdivsigma disabled and accuracy/nse gates at 0.0 (inclusive),
+        all three models pass."""
+        result = filter_for_highly_skilled_forecasts(
+            _three_model_skill,
+            threshold_sdivsigma="false",
+            threshold_accuracy=0.0,
+            threshold_nse=0.0,
+        )
+        assert len(result) == 3, "lowercase 'false' should disable the sdivsigma gate"
+
+    def test_exact_boundary_included(self):
+        """sdivsigma exactly at threshold (0.6) is included (M2: inclusive <=)."""
         df = pd.DataFrame(
             [
                 _make_skill_row("10001", 1, "LR", sdivsigma=0.6),
@@ -852,7 +855,8 @@ class TestThresholdBehavior:
             threshold_accuracy=0.0,
             threshold_nse=0.0,
         )
-        assert len(result) == 0, "sdivsigma=0.6 should be excluded (< 0.6 is False)"
+        assert len(result) == 1, "sdivsigma=0.6 should be included (<= 0.6 is True)"
+        assert result.iloc[0]["model_short"] == "LR"
 
     def test_all_thresholds_must_pass(self):
         """Model passes sdivsigma and nse but fails accuracy -> excluded."""

@@ -206,7 +206,9 @@ class TestLongTermOverridesHelper:
                 os.environ.pop(k, None)
             overrides = helper()
         assert set(overrides.keys()) == {"sdivsigma", "nse", "accuracy"}
-        assert float(overrides["nse"]) == pytest.approx(0.0)
+        # M2: long-term NSE default is now a small positive epsilon (not exactly
+        # 0.0) so that under the inclusive `>=` gate, nse == 0.0 still fails.
+        assert 0.0 < float(overrides["nse"]) < 1e-6
         assert str(overrides["sdivsigma"]) == "False"
         assert str(overrides["accuracy"]) == "False"
 

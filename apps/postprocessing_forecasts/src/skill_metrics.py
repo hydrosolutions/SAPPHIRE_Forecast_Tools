@@ -110,8 +110,13 @@ THRESHOLD_METRICS = {
 # keep nse > 0.0 and disable both the sdivsigma and accuracy gates.  The canonical
 # filter treats the exact string "False" as "gate disabled".  These vars are
 # LONG-TERM ONLY — the short-term env vars/defaults are untouched.
+#
+# The canonical filter's boundary is INCLUSIVE (>=), so the NSE default is a
+# small positive epsilon rather than exactly 0.0 — otherwise nse == 0.0 would
+# incorrectly pass the "NSE > 0" gate.
+_LONG_TERM_NSE_EPSILON = 1e-9
 _LONG_TERM_THRESHOLD_ENV = {
-    "nse": ("ieasyhydroforecast_nse_threshold_long_term", "0.0"),
+    "nse": ("ieasyhydroforecast_nse_threshold_long_term", str(_LONG_TERM_NSE_EPSILON)),
     "sdivsigma": ("ieasyhydroforecast_efficiency_threshold_long_term", "False"),
     "accuracy": ("ieasyhydroforecast_accuracy_threshold_long_term", "False"),
 }
@@ -127,7 +132,9 @@ def _parse_threshold_env(raw: str) -> "float | bool":
     map to the boolean ``False`` whose ``str()`` is ``"False"`` — the sentinel
     the canonical filter recognizes as "gate disabled".  Otherwise the value is
     parsed as a float.  An invalid value raises a clear ``ValueError`` naming the
-    offending value, never a bare ``float("banana")`` error.
+    offending value, never a bare ``float("banana")`` error.  Non-finite floats
+    (``nan``/``inf``/``-inf``) are also rejected — they would otherwise silently
+    pass through as a "threshold" that can never gate anything meaningfully.
 
     Args:
         raw: The raw env-var string.
@@ -136,18 +143,24 @@ def _parse_threshold_env(raw: str) -> "float | bool":
         ``False`` for a disable token, otherwise the parsed float.
 
     Raises:
-        ValueError: If *raw* is neither a disable token nor a valid number.
+        ValueError: If *raw* is neither a disable token nor a finite number.
     """
     token = str(raw).strip().lower()
     if token in _THRESHOLD_DISABLE_TOKENS:
         return False
     try:
-        return float(raw)
+        value = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"Invalid long-term skill threshold: {raw!r} (expected a number or a "
             f"disable token like 'false'/'off'/'none')"
         ) from exc
+    if not np.isfinite(value):
+        raise ValueError(
+            f"Invalid long-term skill threshold: {raw!r} (must be a finite number, "
+            f"got non-finite value {value})"
+        )
+    return value
 
 
 def _long_term_threshold_overrides() -> dict:
@@ -155,14 +168,29 @@ def _long_term_threshold_overrides() -> dict:
 
     Reads the long-term-only env vars (defaulting to the NSE>0-only behavior)
     and parses each through :func:`_parse_threshold_env`.  Returns e.g.
-    ``{"nse": 0.0, "sdivsigma": False, "accuracy": False}`` under defaults.
+    ``{"nse": 1e-9, "sdivsigma": False, "accuracy": False}`` under defaults.
     This dict is splatted as ``**overrides`` into
     :func:`filter_for_highly_skilled_forecasts`, which treats a ``False`` value
     (``str(threshold) == "False"``) as a disabled gate.
+
+    The long-term NSE gate may never be disabled — unlike sdivsigma/accuracy,
+    attempting to disable it (e.g. setting its env var to ``"false"``) raises
+    ``ValueError``.
+
+    Raises:
+        ValueError: If the long-term NSE env var resolves to a disable token.
     """
     overrides: dict = {}
     for metric_key, (env_var, default) in _LONG_TERM_THRESHOLD_ENV.items():
-        overrides[metric_key] = _parse_threshold_env(os.getenv(env_var, default))
+        raw_value = os.getenv(env_var, default)
+        parsed = _parse_threshold_env(raw_value)
+        if metric_key == "nse" and parsed is False:
+            raise ValueError(
+                f"The long-term NSE skill gate cannot be disabled (env var "
+                f"{env_var!r} resolved to disable token {raw_value!r}); sdivsigma "
+                f"and accuracy may be disabled long-term, NSE may not."
+            )
+        overrides[metric_key] = parsed
     return overrides
 
 
@@ -1873,16 +1901,20 @@ def filter_for_highly_skilled_forecasts(
     """
     result = skill_stats.copy()
     for name, entry in THRESHOLD_METRICS.items():
-        threshold = overrides.get(name)
-        if threshold is None:
-            threshold = os.getenv(entry["env_var"], entry["default_threshold"])
-        if str(threshold) == "False":
+        raw_threshold = overrides.get(name)
+        if raw_threshold is None:
+            raw_threshold = os.getenv(entry["env_var"], entry["default_threshold"])
+        # Route BOTH the override and env sources through the same lenient parser
+        # so disable-token handling and the isfinite guard apply identically
+        # regardless of where the threshold came from.
+        threshold = _parse_threshold_env(raw_threshold)
+        if threshold is False:
             continue
         threshold = float(threshold)
         if entry["higher_is_better"]:
-            result = result[result[name] > threshold].copy()
+            result = result[result[name] >= threshold].copy()
         else:
-            result = result[result[name] < threshold].copy()
+            result = result[result[name] <= threshold].copy()
     if min_pairs is not None:
         result = result[result["n_pairs"].fillna(0) >= min_pairs].copy()
     return result
