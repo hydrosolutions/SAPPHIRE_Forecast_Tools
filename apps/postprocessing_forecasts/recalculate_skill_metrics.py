@@ -308,11 +308,12 @@ def recalculate_skill_metrics():
                             [monthly_skill, _tombstones_monthly], ignore_index=True
                         )
                 except Exception as _e:
-                    logger.warning(
+                    logger.error(
                         "P1 stale invalidation read/diff failed for monthly, "
                         "saving without tombstones: %s",
                         _e,
                     )
+                    errors.append(f"Monthly stale-tombstone invalidation failed: {_e}")
 
                 ret = file_writer.save_monthly_skill_metrics(monthly_skill, year=skill_metrics_year)
                 if ret is None:
@@ -376,11 +377,12 @@ def recalculate_skill_metrics():
                             [quarterly_skill, _tombstones_quarterly], ignore_index=True
                         )
                 except Exception as _e:
-                    logger.warning(
+                    logger.error(
                         "P1 stale invalidation read/diff failed for quarterly, "
                         "saving without tombstones: %s",
                         _e,
                     )
+                    errors.append(f"Quarterly stale-tombstone invalidation failed: {_e}")
 
                 ret = file_writer.save_quarterly_skill_metrics(
                     quarterly_skill, year=skill_metrics_year
@@ -458,11 +460,12 @@ def recalculate_skill_metrics():
                             [seasonal_skill, _tombstones_seasonal], ignore_index=True
                         )
                 except Exception as _e:
-                    logger.warning(
+                    logger.error(
                         "P1 stale invalidation read/diff failed for seasonal, "
                         "saving without tombstones: %s",
                         _e,
                     )
+                    errors.append(f"Seasonal stale-tombstone invalidation failed: {_e}")
 
                 ret = file_writer.save_seasonal_skill_metrics(
                     seasonal_skill, year=skill_metrics_year

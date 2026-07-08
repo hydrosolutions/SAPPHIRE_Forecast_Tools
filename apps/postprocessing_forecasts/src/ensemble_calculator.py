@@ -289,7 +289,15 @@ def create_monthly_ensemble_forecasts(
     skill_filtered = filter_for_highly_skilled_forecasts(
         skill_stats, min_pairs=_long_term_min_pairs("MONTH")
     )
-    merge_keys = ["month_in_year", "code", "model_short"]
+    # Lead-aware ONLY when horizon_value is present on BOTH sides; a one-sided
+    # presence must keep the 3-key merge (a 4-key merge with horizon_value on
+    # one side only would mismatch and drop every row).
+    _em_use_hv = "horizon_value" in joint.columns and "horizon_value" in skill_filtered.columns
+    merge_keys = (
+        ["month_in_year", "horizon_value", "code", "model_short"]
+        if _em_use_hv
+        else ["month_in_year", "code", "model_short"]
+    )
 
     # Long-term Skilled-Mean pool: relaxed NSE>0 gate.  Split from the EM pool
     # so EM membership/output stays byte-identical while Skilled Mean widens.

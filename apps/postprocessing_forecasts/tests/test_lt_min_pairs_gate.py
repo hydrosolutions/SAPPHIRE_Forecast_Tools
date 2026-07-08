@@ -726,3 +726,148 @@ class TestShortTermUnchanged:
             "Short-term EM must be present — create_ensemble_forecasts must "
             "not apply the long-term min_pairs gate"
         )
+
+
+# ---------------------------------------------------------------------------
+# 9. Monthly EM membership is lead-aware (per-horizon_value)
+# ---------------------------------------------------------------------------
+
+
+class TestMonthlyEMLeadAwareMembership:
+    """Monthly EM pool membership must be per (month_in_year, horizon_value, code, model_short)
+    when horizon_value is present on both the forecast and skill sides.
+
+    Scenario: model LR_SM has n_pairs = K-1 at lead 0 and n_pairs = K at lead 1.
+    Both leads pass the default skill gate (nse, sdivsigma, accuracy).
+    LR_Base has n_pairs = K at both leads (always eligible).
+
+    Expected:
+    - lead 0 EM: LR_Base only (LR_SM excluded by min_pairs floor) → single-model
+      composition → EM is ABSENT (is_multi_model_composition guard).
+    - lead 1 EM: LR_Base + LR_SM (both eligible) → EM IS PRESENT.
+
+    This locks per-lead EM membership under the min_pairs floor.
+    Placeholder station code: ``19999``.
+    """
+
+    _SKILL_COLS = [
+        "month_in_year",
+        "horizon_value",
+        "code",
+        "model_short",
+        "sdivsigma",
+        "nse",
+        "delta",
+        "accuracy",
+        "mae",
+        "n_pairs",
+    ]
+    _FC_COLS = [
+        "code",
+        "year",
+        "month",
+        "month_in_year",
+        "horizon_value",
+        "model_short",
+        "forecasted_discharge",
+        "q05",
+        "q10",
+        "q25",
+        "q50",
+        "q75",
+        "q90",
+        "q95",
+        "valid_from",
+        "valid_to",
+        "date",
+        "flag",
+    ]
+
+    def _fc_row(self, model, q50, *, hv, month=3):
+        """One monthly forecast row with a symmetric quantile fan."""
+        spread = 20.0
+        return (
+            STATION,
+            2025,
+            month,
+            month,
+            hv,
+            model,
+            q50,
+            q50 - spread,
+            q50 - spread * 0.75,
+            q50 - spread * 0.5,
+            q50,
+            q50 + spread * 0.5,
+            q50 + spread * 0.75,
+            q50 + spread,
+            "2025-03-01",
+            "2025-03-31",
+            "2025-03-01",
+            0,
+        )
+
+    def _skill_row(self, model, n_pairs, hv, *, month=3):
+        """One skill row that passes the DEFAULT EM gate (nse=0.9, sdivsigma=0.3,
+        accuracy=0.9) with the given n_pairs."""
+        return (month, hv, STATION, model, 0.30, 0.90, 5.0, 0.90, 2.0, n_pairs)
+
+    def test_lead_aware_em_excludes_model_at_starved_lead(self, monkeypatch):
+        """LR_SM with n_pairs=K-1 at lead 0 must NOT appear in EM at lead 0;
+        the same model with n_pairs=K at lead 1 MUST appear in EM at lead 1.
+
+        This is the locked regression for the EM lead-aware merge_keys fix.
+        """
+        monkeypatch.delenv("ieasyhydroforecast_min_pairs_long_term", raising=False)
+        K = K_MONTH  # 4
+
+        from src.ensemble_calculator import create_monthly_ensemble_forecasts
+
+        skill = pd.DataFrame(
+            [
+                # lead 0: LR_Base eligible (n_pairs=K), LR_SM starved (n_pairs=K-1)
+                self._skill_row("LR_Base", K, hv=0),
+                self._skill_row("LR_SM", K - 1, hv=0),
+                # lead 1: both eligible (n_pairs=K)
+                self._skill_row("LR_Base", K, hv=1),
+                self._skill_row("LR_SM", K, hv=1),
+            ],
+            columns=self._SKILL_COLS,
+        )
+        forecasts = pd.DataFrame(
+            [
+                self._fc_row("LR_Base", 100.0, hv=0),
+                self._fc_row("LR_SM", 105.0, hv=0),
+                self._fc_row("LR_Base", 110.0, hv=1),
+                self._fc_row("LR_SM", 115.0, hv=1),
+            ],
+            columns=self._FC_COLS,
+        )
+
+        result = create_monthly_ensemble_forecasts(forecasts, skill)
+
+        em = result[result["model_short"] == "EM"]
+        em_lead0 = em[em["horizon_value"] == 0]
+        em_lead1 = em[em["horizon_value"] == 1]
+
+        # Lead 0: LR_SM excluded by min_pairs → only LR_Base qualifies →
+        # single-model composition → EM must be absent (is_multi_model_composition).
+        assert em_lead0.empty, (
+            "EM at lead 0 must be absent: LR_SM (n_pairs=K-1) is excluded by "
+            "the per-lead min_pairs floor, leaving only LR_Base — single-model "
+            f"ensembles are discarded. Got: {em_lead0[['composition']].to_dict('records')}"
+        )
+
+        # Lead 1: both LR_Base and LR_SM have n_pairs=K → EM must be present.
+        assert not em_lead1.empty, (
+            "EM at lead 1 must be present: both LR_Base and LR_SM have "
+            f"n_pairs={K} >= K={K} at this lead."
+        )
+        composition_lead1 = em_lead1.iloc[0]["composition"]
+        assert "LR_SM" in composition_lead1, (
+            f"LR_SM must appear in lead-1 EM composition (n_pairs=K), "
+            f"got composition: {composition_lead1!r}"
+        )
+        assert "LR_Base" in composition_lead1, (
+            f"LR_Base must appear in lead-1 EM composition, got composition: {composition_lead1!r}"
+        )
