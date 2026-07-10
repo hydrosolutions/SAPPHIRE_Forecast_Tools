@@ -61,6 +61,42 @@ End the plan with a dependency graph:
 }
 ```
 
+### Multi-Model Review & Verification
+
+Additive to the Orchestration Protocol. The human owner is the terminal authority; an
+implementation agent's "done"/"complete" is **evidence, not approval**. Full procedure, prompt
+templates, and the repo's high-risk coupling points live in
+[`doc/dev/agent_review_workflow.md`](doc/dev/agent_review_workflow.md). Plan/issue **status
+vocabulary is owned by** [`doc/plans/README.md`](doc/plans/README.md) — do not restate it elsewhere.
+
+1. **Mandatory multi-model review.** Any non-trivial plan or patch needs at least two independent
+   perspectives, and at least one must be **out-of-loop**: fresh context, read-only, different
+   tool/model where possible. Default out-of-loop verifier = `codex exec`; fall back to a
+   general-purpose Claude subagent with no prior session context if Codex is unavailable.
+   Post-implementation review is a required gate before PR approval — never approve on the
+   implementer's claim alone. **Work is not "done", review-eligible, or PR-eligible until the full
+   affected-scope tests pass** (`run_tests.sh`, zero fail / zero unexpected skip) — a standing
+   precondition, not a pre-PR afterthought.
+
+2. **Out-of-loop review for high-claim-density artifacts** (plans, designs, audits, multi-file
+   patches). Pass the artifact *in the prompt before committing it*; the reviewer must run an
+   **OPEN-ENDED adversarial pass — find any defect / missing step / edge case, not merely confirm a
+   claim checklist** — against code, tests, docs, and DB/API contracts (claim-verification alone is
+   necessary but not sufficient). Applies to plans as well as implementation diffs. Verifier-found **factual
+   errors** may be applied directly; **scope/design/semantics/security/API-contract** changes
+   **escalate to the human owner**; related bugs found while mapping become `gi_draft_*` plan files
+   under `doc/plans/issues/` (indexed in `doc/plans/module_issues.md`), never inline fixes. After
+   corrections, run one lightweight **confirm-fixes pass**.
+
+3. **Every high-claim-density prompt carries the fitness line** (verbatim): "Every bullet must help
+   an agent know what to inspect, what contract not to break, or what verification proves safety —
+   otherwise cut it." Apply a standing **proportionality lens** that argues for cuts, and **separate
+   implemented vs documented vs drift** — never present aspiration as current behavior.
+
+A cross-vendor orchestration workflow that provides an independent review panel plus a quality gate
+satisfies 1–2 for work run through it; such outputs need no second verifier pass. See
+[`doc/dev/agent_review_workflow.md`](doc/dev/agent_review_workflow.md) for which workflows qualify.
+
 ---
 
 ## Project Architecture
