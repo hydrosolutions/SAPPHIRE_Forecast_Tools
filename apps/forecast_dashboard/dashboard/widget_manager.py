@@ -19,12 +19,14 @@ Usage in forecast_dashboard.py
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import TYPE_CHECKING
 
 import panel as pn
-
-from dashboard import widgets
+from src import db
 from src.site import SapphireSite as Site
+
+from dashboard import bulletin_publish, widgets
 
 if TYPE_CHECKING:
     from dashboard.config import DashboardConfig
@@ -157,6 +159,16 @@ class WidgetManager:
             widgets.create_downloader_and_panel(cfg.horizon)
         )
 
+        # ── Publish bulletin ─────────────────────────────────────────────────
+        self.publish_horizon_multiselect = widgets.create_publish_horizon_multiselect(
+            self._cfg.display_ML_forecasts
+        )
+        self.publish_station_multiselect = widgets.create_publish_station_multiselect(
+            station_dict
+        )
+        self.generate_links_button = widgets.create_generate_links_button()
+        self.publish_results_pane = widgets.create_publish_results_pane()
+
         # ── Horizon info (shown in dashboard header) ────────────────────────
         self.horizon_info_pane = widgets.create_horizon_info_pane()
         self._refresh_horizon_info_pane()
@@ -189,6 +201,7 @@ class WidgetManager:
         # Skill metrics table depends only on horizon, not on station
         self.horizon_selector.param.watch(pm.update_skill_table, "value")
         self.horizon_selector.param.watch(self._refresh_downloader_for_horizon, "value")
+        self.generate_links_button.on_click(self._on_generate_links_click)
 
     def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
         @pn.depends(self.horizon_selector, self.station_selector, self.pentad_selector, self.decad_selector, watch=True)
@@ -343,6 +356,133 @@ class WidgetManager:
             self.forecast_year,
             getattr(self, "last_date", None),
         )
+
+    # ------------------------------------------------------------------
+    # Publish bulletin — "Generate links" button handler
+    # ------------------------------------------------------------------
+    def _on_generate_links_click(self, event=None) -> None:
+        """Assemble + share one bulletin snapshot per selected horizon.
+
+        For each selected horizon: assemble the frozen snapshot for the
+        selected stations (dashboard.bulletin_publish.assemble_bulletin_snapshot)
+        and POST it via src.db._post_bulletin_share. All-or-nothing: any
+        assembly/POST failure aborts immediately and renders an error with
+        no partial links. A horizon with zero resulting stations produces
+        no link, but is reported as a warning (not an error) and does not
+        abort the other horizons.
+        """
+        _ = self._gettext
+        selected_horizons = list(self.publish_horizon_multiselect.value)
+        selected_labels = list(self.publish_station_multiselect.value)
+        selected_codes = [label.split()[0] for label in selected_labels]
+
+        if not selected_horizons:
+            self.publish_results_pane.object = (
+                f"**{_('Warning:')}** {_('Select at least one horizon to publish.')}"
+            )
+            return
+        if not selected_codes:
+            self.publish_results_pane.object = (
+                f"**{_('Warning:')}** {_('Select at least one station to publish.')}"
+            )
+            return
+
+        # Forecast Date Rule: captured once here (the handler is the entry
+        # point for this action) and threaded through as a parameter.
+        forecast_date = dt.datetime.now().date()
+
+        links: list[tuple[str, str, str]] = []
+        empty_horizon_warnings: list[str] = []
+        skipped_by_horizon: dict[str, list[str]] = {}
+
+        for horizon in selected_horizons:
+            try:
+                assembled = bulletin_publish.assemble_bulletin_snapshot(
+                    horizon, selected_codes, self._dm, forecast_date,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Publish bulletin: failed to assemble snapshot for %s (%s)",
+                    horizon, exc,
+                )
+                self.publish_results_pane.object = (
+                    f"**{_('Error:')}** "
+                    + _("Failed to assemble bulletin data for %(horizon)s. "
+                        "No links were generated.") % {"horizon": _(horizon)}
+                )
+                return
+
+            payload = assembled["payload"]
+            skipped_codes = assembled["skipped_codes"]
+            if skipped_codes:
+                skipped_by_horizon[horizon] = skipped_codes
+
+            if not payload["stations"]:
+                empty_horizon_warnings.append(
+                    _("No bulletin data for any selected station under "
+                      "%(horizon)s — no link generated.") % {"horizon": _(horizon)}
+                )
+                continue
+
+            share_request = {
+                "horizon": horizon,
+                "year": payload["year"],
+                "horizon_value": payload["horizon_value"],
+                "expires_at": payload["expires_at"],
+                "payload": payload,
+                "station_codes": [s["code"] for s in payload["stations"]],
+            }
+            try:
+                response = db._post_bulletin_share(share_request)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Publish bulletin: share POST failed for %s (%s)", horizon, exc,
+                )
+                self.publish_results_pane.object = (
+                    f"**{_('Error:')}** "
+                    + _("Failed to generate the share link for %(horizon)s. "
+                        "No links were generated.") % {"horizon": _(horizon)}
+                )
+                return
+
+            links.append((horizon, response.get("url"), response.get("expires_at")))
+
+        self.publish_results_pane.object = self._render_publish_results(
+            links, empty_horizon_warnings, skipped_by_horizon,
+        )
+
+    def _render_publish_results(
+        self,
+        links: list[tuple[str, str, str]],
+        warnings: list[str],
+        skipped_by_horizon: dict[str, list[str]],
+    ) -> str:
+        """Render the Publish-bulletin results pane markdown."""
+        _ = self._gettext
+        lines: list[str] = []
+
+        if links:
+            lines.append(f"**{_('Generated links:')}**")
+            for horizon, url, expires_at in links:
+                lines.append(f"- **{_(horizon)}**: [{url}]({url}) — {_('expires')} {expires_at}")
+
+        if warnings:
+            if lines:
+                lines.append("")
+            lines.append(f"**{_('Warnings:')}**")
+            lines.extend(f"- {w}" for w in warnings)
+
+        if skipped_by_horizon:
+            if lines:
+                lines.append("")
+            lines.append(f"**{_('Skipped stations (no bulletin data):')}**")
+            for horizon, codes in skipped_by_horizon.items():
+                lines.append(f"- {_(horizon)}: {', '.join(codes)}")
+
+        if not lines:
+            lines.append(_("No links were generated."))
+
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Convenience: all widgets auth needs to track for inactivity

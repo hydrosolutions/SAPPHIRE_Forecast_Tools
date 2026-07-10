@@ -690,6 +690,72 @@ def create_downloader_and_panel(horizon):
     bulletin_download_panel = downloader.panel()
     return downloader, bulletin_download_panel
 
+
+# Used inside publish_bulletin_card (see widget_manager.py)
+def create_publish_horizon_multiselect(display_ML_forecasts: bool = True):
+    """Create the multi-horizon selector for the Publish bulletin card.
+
+    Mirrors create_horizon_selector's option set (pentad/decade always
+    available; month/season gated on display_ML_forecasts), but as a
+    CheckBoxGroup so more than one horizon can be selected at once.
+    """
+    horizon_types = {
+        _("pentad"): "pentad",
+        _("decade"): "decade",
+    }
+    if display_ML_forecasts:
+        horizon_types[_("month")] = "month"
+        horizon_types[_("season")] = "season"
+    publish_horizon_multiselect = pn.widgets.CheckBoxGroup(
+        name=_("Select horizons to publish:"),
+        options=horizon_types,
+        value=[],
+        margin=(0, 0, 0, 0),
+    )
+    return publish_horizon_multiselect
+
+
+# Used inside publish_bulletin_card (see widget_manager.py)
+def create_publish_station_multiselect(station_dict):
+    """Create the multi-station selector for the Publish bulletin card.
+
+    Panel's MultiSelect (unlike Select, used by create_station_selector)
+    has no native optgroup/`groups` support, so the basin-grouped
+    station_dict is flattened into one flat options list here. Stations
+    are still drawn from the same basin-ordered pool as station_selector;
+    only the visual basin grouping is not preserved by this widget type.
+    """
+    flat_options = {
+        label: label
+        for labels in (station_dict or {}).values()
+        for label in labels
+    }
+    publish_station_multiselect = pn.widgets.MultiSelect(
+        name=_("Select stations to publish:"),
+        options=flat_options,
+        size=8,
+        margin=(0, 0, 0, 0),
+        sizing_mode="stretch_width",
+    )
+    return publish_station_multiselect
+
+
+# Used inside publish_bulletin_card (see widget_manager.py)
+def create_generate_links_button():
+    """Create the 'Generate links' button for the Publish bulletin card."""
+    generate_links_button = pn.widgets.Button(
+        name=_("Generate links"),
+        button_type="primary",
+    )
+    return generate_links_button
+
+
+# Used inside publish_bulletin_card (see widget_manager.py)
+def create_publish_results_pane():
+    """Create the results pane showing generated links / warnings / errors."""
+    return pn.pane.Markdown("", sizing_mode="stretch_width")
+
+
 # ============================== Widgets for Language and Auth ==============================
 
 # Used in dashboard header

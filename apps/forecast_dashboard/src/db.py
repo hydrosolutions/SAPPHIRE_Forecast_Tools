@@ -198,6 +198,32 @@ def _save_data(service_type: str, data_type: str, records: list[dict]) -> None:
         raise
 
 
+def _post_bulletin_share(payload: dict) -> dict:
+    """POST an assembled bulletin snapshot to the share endpoint.
+
+    Args:
+        payload: The share-request body, e.g.
+            ``{"horizon", "year", "horizon_value", "expires_at", "payload",
+            "station_codes"}`` (see dashboard.bulletin_publish and
+            doc/plans/publish_bulletin_api_design.md).
+
+    Returns:
+        The parsed JSON response body: ``{"token", "url", "expires_at"}``.
+
+    Raises:
+        requests.HTTPError / requests.RequestException: on any failure —
+        the caller (widget_manager's Generate-links handler) treats a
+        raised exception as "no partial links" and aborts the whole batch.
+    """
+    # Path matches the service route exactly: POST /bulletin/share (no
+    # trailing slash), proxied via /api/postprocessing/. A trailing slash
+    # would 307-redirect through the gateway, so keep it exact.
+    url = f"{API_BASE}/postprocessing/bulletin/share"
+    resp = requests.post(url, json=payload, timeout=API_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def _delete_data(service_type: str, data_type: str, params: dict) -> None:
     """Delete a single record via DELETE from the backend API.
 

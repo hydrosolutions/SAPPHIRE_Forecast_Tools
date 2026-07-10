@@ -451,6 +451,17 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
                     sizing_mode="stretch_width",
                     collapsed=True,
                 ),
+                pn.Card(
+                    pn.Column(
+                        wm.publish_horizon_multiselect,
+                        wm.publish_station_multiselect,
+                        wm.generate_links_button,
+                        wm.publish_results_pane,
+                    ),
+                    title=_("Publish bulletin"),
+                    sizing_mode="stretch_width",
+                    collapsed=True,
+                ),
             ),
         ),
         (_("Disclaimer"), disclaimer),
