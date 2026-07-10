@@ -199,6 +199,16 @@ async def preprocessing_proxy(
     )
 
 
+# Public bulletin share route (no API key required — capability-URL token
+# model, see doc/plans/issues/mid_prio_gi_draft_pp_bulletin_share_api.md)
+@app.api_route("/public/bulletin/{token}", methods=["GET"], tags=["Public"])
+async def public_bulletin_proxy(token: str, request: Request):
+    """Proxy the public, unauthenticated bulletin-share read to postprocessing."""
+    return await proxy_request(
+        SERVICES["postprocessing"], f"/public/bulletin/{token}", request, request.method
+    )
+
+
 # Postprocessing service routes
 @app.api_route("/api/postprocessing/{path:path}", methods=["GET", "POST", "DELETE"], tags=["Postprocessing"])
 async def postprocessing_proxy(

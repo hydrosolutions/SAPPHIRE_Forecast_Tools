@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -6,7 +8,7 @@ from typing import List
 
 from app import crud
 from app.database import get_db
-from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate, BulletinResponse, BulletinBulkCreate, LRVisibilityResponse, LRVisibilityBulkCreate
+from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate, BulletinResponse, BulletinBulkCreate, BulletinShareCreate, BulletinShareCreateResponse, LRVisibilityResponse, LRVisibilityBulkCreate
 from app.logger import logger
 from app.config import settings
 
@@ -316,6 +318,52 @@ def delete_bulletin(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete bulletin"
         )
+
+
+@app.post("/bulletin/share",
+          response_model=BulletinShareCreateResponse,
+          status_code=status.HTTP_201_CREATED,
+          tags=["Bulletin"])
+def create_bulletin_share(body: BulletinShareCreate, db: Session = Depends(get_db)):
+    """Store a frozen bulletin snapshot and mint a capability token for it."""
+    try:
+        rec = crud.create_bulletin_share(db, body)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create bulletin share"
+        )
+    url = f"{settings.public_bulletin_base_url.rstrip('/')}/public/bulletin/{rec.token}"
+    return BulletinShareCreateResponse(token=rec.token, url=url, expires_at=rec.expires_at)
+
+
+@app.get("/public/bulletin/{token}", tags=["Public"])
+def get_public_bulletin(token: str, db: Session = Depends(get_db)):
+    """Return the stored bulletin snapshot for a share token.
+
+    410 Gone if the link has expired, 404 if the token is unknown.
+    """
+    try:
+        rec = crud.get_bulletin_share_by_token(db, token)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve bulletin share"
+        )
+    if rec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bulletin share not found"
+        )
+
+    now = datetime.now(timezone.utc)
+    exp = rec.expires_at if rec.expires_at.tzinfo else rec.expires_at.replace(tzinfo=timezone.utc)
+    if now >= exp:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Link expired"
+        )
+    return rec.payload
 
 
 @app.post("/lr-visibility/", response_model=List[LRVisibilityResponse], status_code=status.HTTP_201_CREATED, tags=["LRVisibility"])

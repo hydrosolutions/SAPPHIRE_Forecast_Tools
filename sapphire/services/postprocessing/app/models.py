@@ -1,6 +1,18 @@
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, Date, Float, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy import Enum as SQLEnum
 
 from app.database import Base
@@ -272,6 +284,21 @@ class Bulletin(Base):
             name="uq_bulletins_horizon_year_number_code",
         ),
     )
+
+
+class BulletinShare(Base):
+    __tablename__ = "bulletin_share"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    year = Column(Integer, nullable=False)
+    horizon_value = Column(Integer, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    payload = Column(JSON, nullable=False)  # frozen Excel-equivalent snapshot
+    station_codes = Column(JSON, nullable=True)  # reference only
 
 
 class LRVisibility(Base):

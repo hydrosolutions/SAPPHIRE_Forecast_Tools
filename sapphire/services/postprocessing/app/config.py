@@ -11,5 +11,6 @@ class Settings(BaseSettings):
     batch_size: int
     csv_folder: str
     config_folder: str
+    public_bulletin_base_url: str
 
 settings = Settings()

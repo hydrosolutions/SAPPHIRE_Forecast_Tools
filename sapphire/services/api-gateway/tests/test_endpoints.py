@@ -215,6 +215,33 @@ class TestProxyRoutes:
         resp = client_with_api_key.get("/api/auth/health")
         assert resp.status_code == 200
 
+    @patch("app.main.httpx.AsyncClient")
+    def test_public_bulletin_proxy_no_api_key_required(self, mock_client_class, client_with_api_key):
+        """Public bulletin share route bypasses the API key check even when enabled."""
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client.request.return_value = _mock_httpx_response(
+            200, {"payload": {"stations": []}, "expires_at": "2999-01-01T00:00:00Z"}
+        )
+
+        # No X-API-Key header — should still succeed for the public share route
+        resp = client_with_api_key.get("/public/bulletin/some-opaque-token")
+        assert resp.status_code == 200
+        assert resp.json()["payload"] == {"stations": []}
+
+    @patch("app.main.httpx.AsyncClient")
+    def test_public_bulletin_proxy_reaches_postprocessing(self, mock_client_class, client):
+        """The public route forwards to the postprocessing service URL."""
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client.request.return_value = _mock_httpx_response(200, {"payload": {}})
+
+        resp = client.get("/public/bulletin/abc123")
+        assert resp.status_code == 200
+
+        call_kwargs = mock_client.request.call_args.kwargs
+        assert call_kwargs["url"] == "http://localhost:8003/public/bulletin/abc123"
+
 
 # ---------------------------------------------------------------------------
 # Proxy error handling

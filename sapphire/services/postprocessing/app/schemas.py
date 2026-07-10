@@ -1,4 +1,5 @@
 from datetime import date as DateType
+from datetime import datetime
 
 from pydantic import BaseModel, computed_field
 
@@ -232,6 +233,27 @@ class BulletinResponse(BulletinBase):
 
     class Config:
         from_attributes = True
+
+
+class BulletinShareCreate(BaseModel):
+    horizon: HorizonType
+    year: int
+    horizon_value: int
+    expires_at: datetime
+    payload: dict
+    station_codes: list[str] | None = None
+
+
+class BulletinShareCreateResponse(BaseModel):
+    token: str
+    url: str
+    expires_at: datetime
+
+
+class BulletinSharePublicResponse(BaseModel):
+    # returned verbatim to third parties
+    payload: dict
+    expires_at: datetime
 
 
 class LRVisibilityBase(BaseModel):

@@ -1,10 +1,12 @@
+import secrets
+
 from sqlalchemy import tuple_
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.models import Forecast, LongForecast, LRForecast, SkillMetric, Bulletin, LRVisibility
-from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate, BulletinBulkCreate, LRVisibilityBulkCreate
+from app.models import Forecast, LongForecast, LRForecast, SkillMetric, Bulletin, BulletinShare, LRVisibility
+from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate, BulletinBulkCreate, BulletinShareCreate, LRVisibilityBulkCreate
 from app.logger import logger
 
 
@@ -484,6 +486,54 @@ def delete_bulletin(
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error deleting bulletin: {str(e)}", exc_info=True)
+        raise
+
+
+def create_bulletin_share(db: Session, data: BulletinShareCreate) -> BulletinShare:
+    """Mint a token and store a frozen bulletin snapshot.
+
+    Token is generated with secrets.token_urlsafe(32). On the rare chance of
+    a unique-constraint clash on `token`, retry once with a freshly minted
+    token before giving up.
+    """
+    payload = data.model_dump()
+    horizon_type = payload.pop("horizon")
+
+    for attempt in range(2):
+        token = secrets.token_urlsafe(32)
+        record = BulletinShare(
+            token=token,
+            horizon_type=horizon_type,
+            year=payload["year"],
+            horizon_value=payload["horizon_value"],
+            expires_at=payload["expires_at"],
+            payload=payload["payload"],
+            station_codes=payload["station_codes"],
+        )
+        db.add(record)
+        try:
+            db.commit()
+            db.refresh(record)
+            logger.info(f"Created bulletin share: token={token[:8]}...")
+            return record
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                logger.error("Failed to create bulletin share after retry: token clash")
+                raise
+            logger.warning("Token clash minting bulletin share, retrying with new token")
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Error creating bulletin share: {str(e)}", exc_info=True)
+            raise
+
+
+def get_bulletin_share_by_token(db: Session, token: str) -> Optional[BulletinShare]:
+    """Retrieve a bulletin share record by its token."""
+    try:
+        return db.query(BulletinShare).filter(BulletinShare.token == token).first()
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching bulletin share: {str(e)}", exc_info=True)
         raise
 
 

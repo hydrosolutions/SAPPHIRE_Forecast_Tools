@@ -17,6 +17,7 @@ os.environ["API_BASE_URL"] = "http://localhost:8000"
 os.environ["BATCH_SIZE"] = "1000"
 os.environ["CSV_FOLDER"] = "/tmp"
 os.environ["CONFIG_FOLDER"] = "/tmp"
+os.environ["PUBLIC_BULLETIN_BASE_URL"] = "https://example-bulletins.test"
 
 # Add project root so `from app.xxx import ...` works
 sys.path.insert(0, str(Path(__file__).parent.parent))
