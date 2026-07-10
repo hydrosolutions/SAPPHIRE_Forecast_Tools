@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     batch_size: int
     csv_folder: str
     config_folder: str
-    public_bulletin_base_url: str
+    # Default keeps the service booting without extra config; override per
+    # deployment with the public HTTPS gateway host for real third-party sharing.
+    public_bulletin_base_url: str = "http://localhost:8000"
 
 settings = Settings()

@@ -359,7 +359,7 @@ The server .env and the local repo .env are on different machines, so you need t
   ```
 
 - [ ] **Add new variables**
-  - [ ] `PUBLIC_BULLETIN_BASE_URL` — **required as of the bulletin-share feature (PP-039)**. Set it to the deployment's public HTTPS gateway host (e.g. `https://<gateway-host>`). This is read at startup by the postprocessing service *and* by Alembic's `env.py`, so if it is missing both `alembic upgrade head` and the postprocessing container will fail to start. Add it before pulling images (§2.4) / running migrations.
+  - [ ] `PUBLIC_BULLETIN_BASE_URL` — new with the bulletin-share feature (PP-039). Optional (defaults to `http://localhost:8000`), but set it to the deployment's public HTTPS gateway host (e.g. `https://<gateway-host>`) so shareable bulletin links resolve for third parties. If unset, generated links point at localhost and are not externally reachable.
 - [ ] **Update changed variables**
 - [ ] **Verify Docker image tags are set correctly**
 

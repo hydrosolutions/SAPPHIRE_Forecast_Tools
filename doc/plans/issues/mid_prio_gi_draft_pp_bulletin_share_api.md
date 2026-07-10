@@ -271,9 +271,9 @@ curl http://localhost:8000/public/bulletin/<token>
   `bulletin_share` table, and the required `PUBLIC_BULLETIN_BASE_URL` env var
   under the services table.
 - [x] Configuration docs (`doc/configuration.md`) — added `PUBLIC_BULLETIN_BASE_URL`
-  to the services-side variable table (Required).
-- [x] `doc/prod/update_deployment_checklist.md` — flagged `PUBLIC_BULLETIN_BASE_URL`
-  as a new required var (blocks alembic + postprocessing startup if unset).
+  to the services-side variable table (Optional; default `http://localhost:8000`).
+- [x] `doc/prod/update_deployment_checklist.md` — noted `PUBLIC_BULLETIN_BASE_URL`
+  as a new optional var to set for externally-reachable share links.
 - [x] `.env.example` for postprocessing — added `PUBLIC_BULLETIN_BASE_URL`
   (created the file; api-gateway needed no new setting).
 - [ ] `doc/data_flow_*.md` — deferred; bulletin sharing is a dashboard-triggered
