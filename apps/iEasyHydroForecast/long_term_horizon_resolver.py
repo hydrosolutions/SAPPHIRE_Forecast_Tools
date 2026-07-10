@@ -2,6 +2,7 @@
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ SUPPORTED_MODES_ENV = "ieasyhydroforecast_ml_long_term_supported_modes"
 
 QUARTER_CONFIG_NAME = "quarter"
 OPERATIONAL_MONTH_LEAD_TIME_FIELD = "operational_month_lead_time"
+OPERATIONAL_ISSUE_DAY_FIELD = "operational_issue_day"
 
 _SEASONAL_CONFIG_NAMES_BY_ISSUE_MONTH = {
     1: "seasonal_january",
@@ -26,6 +28,25 @@ class LongTermHorizonResolverError(RuntimeError):
 
 class UnsupportedLongTermModeError(LongTermHorizonResolverError):
     """Raised when the deployment does not support the requested long-term mode."""
+
+
+@dataclass(frozen=True)
+class OperationalSchedule:
+    """Configured operational lead time and issue day for a long-term mode.
+
+    Attributes:
+        mode: The long-term mode/config name (e.g. ``"month_1"``,
+            ``"quarter"``, ``"seasonal_april"``).
+        lead_time: ``operational_month_lead_time`` — the number of whole
+            months between issue and target for this mode's single
+            operational issuance.
+        issue_day: ``operational_issue_day`` — the day-of-month this mode
+            is operationally issued on.
+    """
+
+    mode: str
+    lead_time: int
+    issue_day: int
 
 
 def supported_long_term_modes() -> list[str]:
@@ -57,19 +78,66 @@ def seasonal_horizon_value(issue_month: int) -> int:
 def _horizon_value_for_mode(config_name: str) -> int:
     _ensure_supported_mode(config_name)
     config = _load_long_term_config(config_name)
+    return _require_int_field(config, config_name, OPERATIONAL_MONTH_LEAD_TIME_FIELD)
 
-    if OPERATIONAL_MONTH_LEAD_TIME_FIELD not in config:
+
+def operational_schedule_for_mode(mode: str) -> OperationalSchedule:
+    """Return the configured operational lead time AND issue day for a mode.
+
+    Generic accessor covering every deployment-supported long-term mode
+    (``month_0``..``month_N``, ``quarter``, ``seasonal_*``) — unlike
+    ``quarter_horizon_value``/``seasonal_horizon_value`` (which only read
+    ``operational_month_lead_time``), this requires BOTH
+    ``operational_month_lead_time`` AND ``operational_issue_day`` to be
+    present on the mode's config, since callers need both to identify a
+    row as a genuine operational issuance (see M1 P1 select_operational_
+    issuances in ``postprocessing_forecasts/src/data_reader.py``).
+
+    Args:
+        mode: A deployment-supported long-term mode/config name.
+
+    Returns:
+        OperationalSchedule with the mode's configured lead_time and
+        issue_day.
+
+    Raises:
+        UnsupportedLongTermModeError: If `mode` is not in this
+            deployment's supported long-term modes.
+        LongTermHorizonResolverError: If the mode's config is missing
+            either required field, or a field is not an integer.
+        FileNotFoundError: If the mode's config file does not exist.
+    """
+    _ensure_supported_mode(mode)
+    config = _load_long_term_config(mode)
+    lead_time = _require_int_field(config, mode, OPERATIONAL_MONTH_LEAD_TIME_FIELD)
+    issue_day = _require_int_field(config, mode, OPERATIONAL_ISSUE_DAY_FIELD)
+    return OperationalSchedule(mode=mode, lead_time=lead_time, issue_day=issue_day)
+
+
+def operational_schedules() -> dict[str, OperationalSchedule]:
+    """Return the operational schedule for every deployment-supported mode.
+
+    Raises:
+        LongTermHorizonResolverError: If any supported mode's config is
+            missing ``operational_month_lead_time`` or
+            ``operational_issue_day`` (propagated from
+            `operational_schedule_for_mode`, so the error message
+            identifies which mode is incomplete).
+    """
+    return {mode: operational_schedule_for_mode(mode) for mode in supported_long_term_modes()}
+
+
+def _require_int_field(config: dict[str, Any], config_name: str, field: str) -> int:
+    if field not in config:
         raise LongTermHorizonResolverError(
-            f"Long-term config '{config_name}' is missing required field "
-            f"'{OPERATIONAL_MONTH_LEAD_TIME_FIELD}'."
+            f"Long-term config '{config_name}' is missing required field '{field}'."
         )
 
     try:
-        return int(config[OPERATIONAL_MONTH_LEAD_TIME_FIELD])
+        return int(config[field])
     except (TypeError, ValueError) as exc:
         raise LongTermHorizonResolverError(
-            f"Long-term config '{config_name}' field "
-            f"'{OPERATIONAL_MONTH_LEAD_TIME_FIELD}' must be an integer."
+            f"Long-term config '{config_name}' field '{field}' must be an integer."
         ) from exc
 
 
