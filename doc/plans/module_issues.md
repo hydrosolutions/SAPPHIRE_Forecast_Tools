@@ -201,6 +201,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**PP-036**~~ | ~~ML pentad/decadal skill metrics starved by `horizon='day'` short-circuit in API reader~~ | | Complete | [`archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md`](issues/archive/high_prio_gi_draft_pp_ml_skill_horizon_archive_split.md) | — |
 | **PP-037** | Maintenance `model_short` KeyError on empty DECAD individual-model read (neural ensemble called before empty guard) | Crash fix **High** / P2–P3 **Low** | Phase 1 Complete; P2/P3 deferred | [`review_gi_draft_pp_maintenance_model_short_keyerror.md`](issues/review_gi_draft_pp_maintenance_model_short_keyerror.md) | Phase 1 (ensemble + maintenance + operational empty guards) shipped — crash resolved. Phase 2 (reader contract) and Phase 3 (stale-EM lookback scoping) deferred **low-prio**: defensive hardening / efficiency + an operational coverage decision, not crash fixes. |
 | **PP-038** | Month long-term skill metrics: stratify by forecast lead (`horizon_value` schema change) | **High** | Draft | [`high_prio_gi_draft_pp_month_skill_lead.md`](issues/high_prio_gi_draft_pp_month_skill_lead.md) | Service owner coordination (`sapphire/services/postprocessing`) |
+| **PP-039** | Bulletin Share API — `bulletin_share` table + `POST /bulletin/share` + public `GET /public/bulletin/{token}` + public gateway route | **Medium** | Draft | [`mid_prio_gi_draft_pp_bulletin_share_api.md`](issues/mid_prio_gi_draft_pp_bulletin_share_api.md) | — (companion of FD-017) |
 
 ### Forecast Dashboard (`fd`)
 
@@ -221,6 +222,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-014** | Snow visualization — configurable year start, units & labels | **Medium** | In Progress | [`mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md`](issues/mid_prio_gi_draft_dashboard_snow_visualization_enhancements.md) | Phase 2 blocked on colleague (services) |
 | ~~**FD-015**~~ | ~~Quarter/season skill metrics not rendered in summary table (data layer returns empty `forecast_stats`); reservoir quarterly card on month tab also affected~~ | | Complete | [`archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md`](issues/archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md) | Red-phase verified 2026-05-31 across P1-P4; tajik-deployment visible-impact target |
 | **FD-016** | Month/season bulletin: label an absent monthly norm as "N/A — monthly norm unavailable" (never 0/blank/dash) | **Medium** | Draft | [`mid_prio_gi_draft_fd_month_norm_na_labeling.md`](issues/mid_prio_gi_draft_fd_month_norm_na_labeling.md) | Split from PREPQ-009 (fix #5/P-FD). Depends on PREPQ-009 (norm-less rows now exist in base). Presentation-only; norms fill in once PREPQ-010 lands. |
+| **FD-017** | Publish bulletin — multi-horizon/multi-station UI to generate shareable JSON snapshot links (frozen, expire at next period) | **Medium** | Draft | [`mid_prio_gi_draft_fd_publish_bulletin.md`](issues/mid_prio_gi_draft_fd_publish_bulletin.md) | Blocks on PP-039 (share API contract) |
 
 ### iEasyHydro HF Migration
 
