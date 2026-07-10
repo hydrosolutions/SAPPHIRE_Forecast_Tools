@@ -137,6 +137,14 @@ FastAPI microservices with PostgreSQL backends (managed by colleague — see Own
 | `user` | 8004 | User management |
 | `auth` | 8005 | Authentication and authorization |
 
+**Public bulletin share route.** The postprocessing service exposes a
+capability-URL endpoint, `GET /public/bulletin/{token}`, proxied by the gateway
+at `/public/bulletin/{token}` **without** the `X-API-Key` check (mirroring
+`/api/auth/`). It returns a frozen bulletin snapshot (created via
+`POST /bulletin/share`, stored in the `bulletin_share` table) until its
+`expires_at`. The public base URL is set via the required `PUBLIC_BULLETIN_BASE_URL`
+env var. See `doc/plans/issues/*_pp_bulletin_share_api.md`.
+
 ### Data I/O Transition
 
 The `apps/` modules interact with `sapphire/services/` via REST API. The codebase is transitioning from CSV-based I/O to database-backed storage:

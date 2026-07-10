@@ -267,14 +267,19 @@ curl http://localhost:8000/public/bulletin/<token>
 
 ## Documentation Impact
 
-- [ ] `CLAUDE.md` — services table / API patterns if a new public route class is
-  worth noting; add the migration + the new env var to relevant docs.
-- [ ] Configuration docs (`doc/configuration.md`) — new `PUBLIC_BULLETIN_BASE_URL`
-  (and confirm per-deployment value).
-- [ ] `doc/data_flow_*.md` — if the bulletin sharing path should appear.
-- [ ] `.env.example` for postprocessing + gateway — add `PUBLIC_BULLETIN_BASE_URL`.
-- [ ] Claude memory — note the new public route + token model if it becomes a
-  stable pattern.
+- [x] `CLAUDE.md` — noted the public `/public/bulletin/{token}` route, the
+  `bulletin_share` table, and the required `PUBLIC_BULLETIN_BASE_URL` env var
+  under the services table.
+- [x] Configuration docs (`doc/configuration.md`) — added `PUBLIC_BULLETIN_BASE_URL`
+  to the services-side variable table (Required).
+- [x] `doc/prod/update_deployment_checklist.md` — flagged `PUBLIC_BULLETIN_BASE_URL`
+  as a new required var (blocks alembic + postprocessing startup if unset).
+- [x] `.env.example` for postprocessing — added `PUBLIC_BULLETIN_BASE_URL`
+  (created the file; api-gateway needed no new setting).
+- [ ] `doc/data_flow_*.md` — deferred; bulletin sharing is a dashboard-triggered
+  export, not part of the pipeline data flow. Revisit with FD-017 if useful.
+- [ ] Claude memory — hold until merged/deployed, then note the public
+  capability-URL route + token model.
 
 ---
 

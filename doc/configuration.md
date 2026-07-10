@@ -295,6 +295,7 @@ Services-side variables (loaded by the FastAPI stack — in production they sit 
 | `INTERMEDIATE_DATA_PATH` | Optional | services | Path to intermediate data (container side) | — |
 | `CONFIG_PATH` | Optional | services | Path to config (container side) | — |
 | `CONFIG_FOLDER` | Optional | services | Mount point inside containers | `/config` |
+| `PUBLIC_BULLETIN_BASE_URL` | Required | services (postprocessing) | Public HTTPS base used to build shareable bulletin-share links returned by `POST /bulletin/share` (e.g. `https://<gateway-host>`). Must be internet-reachable in production. | — (postprocessing will not start if unset) |
 
 Internal / Docker-only variables injected by the dashboard or Luigi at runtime (`SAPPHIRE_FORECAST_DATE`, `SAPPHIRE_PREDICTION_MODE`, `IN_DOCKER_CONTAINER`, `SAPPHIRE_OPDEV_ENV`) are documented separately under [Internal Docker environment variables](#internal-docker-environment-variables) and are not meant to be set in `.env`.
 
