@@ -80,6 +80,20 @@ _QUARTERLY_FC_COLS = [
 ]
 
 
+def _quarterly_fc_output_cols() -> list[str]:
+    """Return the canonical quarterly forecast output columns.
+
+    Under SAPPHIRE_SKILL_LEAD_AWARE, extends the base column list with
+    "horizon_value" and "date" so the per-lead selection made by
+    select_operational_issuances() survives into the final output. Flag
+    OFF returns _QUARTERLY_FC_COLS unchanged (columns not present in the
+    frame are filtered out by callers anyway).
+    """
+    if skill_lead_aware_enabled():
+        return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
+    return _QUARTERLY_FC_COLS
+
+
 def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFrame:
     """Keep supported quarter/season raw models plus existing ensemble rows."""
     if df.empty or "model_short" not in df.columns:
@@ -3086,6 +3100,8 @@ def read_quarterly_forecasts(
         # drop_duplicates(keep="last") prefers direct.
         combined = pd.concat([aggregated, direct], ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+            dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
@@ -3097,7 +3113,7 @@ def read_quarterly_forecasts(
         return pd.DataFrame(columns=empty_cols)
 
     # Select canonical output columns
-    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
 
     # Normalize valid_from/valid_to to strings for consistency
     for col in ("valid_from", "valid_to"):
@@ -3257,26 +3273,76 @@ def read_latest_quarterly_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    # Source 1: aggregate monthly forecasts to quarterly
-    raw_m = _read_long_forecasts_api(codes, start_year, end_year)
-    if raw_m is not None and not raw_m.empty:
-        df_m = _normalize_monthly_forecasts(raw_m)
-        if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
-            df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-        aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+    # Source 1: aggregate monthly forecasts to quarterly.
+    #
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), aggregate the
+    # OPERATIONALLY-SELECTED monthly rows -- route through
+    # read_monthly_forecasts (which performs the flag-ON window
+    # expansion + select_operational_issuances + trim) so a same-target
+    # backfill/reissue monthly row cannot leak into the latest quarterly
+    # output. This mirrors read_quarterly_forecasts' Source 1. Flag OFF
+    # keeps the pre-existing raw path (unfiltered monthly read) unchanged.
+    if skill_lead_aware_enabled():
+        df_m = read_monthly_forecasts(codes, start_year, end_year)
+        if df_m is not None and not df_m.empty:
+            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
+                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
+            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+        else:
+            aggregated = pd.DataFrame()
     else:
-        aggregated = pd.DataFrame()
+        raw_m = _read_long_forecasts_api(codes, start_year, end_year)
+        if raw_m is not None and not raw_m.empty:
+            df_m = _normalize_monthly_forecasts(raw_m)
+            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
+                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
+            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+        else:
+            aggregated = pd.DataFrame()
 
-    # Source 2: direct quarterly forecasts from API
-    raw_q = _read_long_forecasts_api(
-        codes,
-        start_year,
-        end_year,
-        horizon_type="quarter",
-        horizon_value=quarter_horizon_value(),
-    )
+    # Source 2: direct quarterly forecasts from API.
+    #
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), read WITHOUT the
+    # horizon_value filter (read-then-derive-then-filter), expand the
+    # read window backward by the configured quarter lead, and reduce to
+    # one operational-issuance row per (code, model, target year, target
+    # quarter) -- mirroring read_quarterly_forecasts' direct branch. Flag
+    # OFF keeps the pre-existing single-lead API filter unchanged
+    # (quarter_horizon_value()).
+    lead_aware = skill_lead_aware_enabled()
+    quarter_schedules: dict[str, OperationalSchedule] | None = None
+    q_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        quarter_schedules = _operational_schedules_for_horizon_type("quarter")
+        max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
+        q_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    if lead_aware and quarter_schedules:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            q_start_year,
+            end_year,
+            horizon_type="quarter",
+        )
+    else:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            start_year,
+            end_year,
+            horizon_type="quarter",
+            horizon_value=quarter_horizon_value(),
+        )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        if lead_aware and quarter_schedules and not direct.empty:
+            direct = select_operational_issuances(
+                direct,
+                quarter_schedules,
+                target_year_col="year",
+                target_period_col="quarter_in_year",
+            )
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
     else:
         direct = pd.DataFrame()
 
@@ -3292,6 +3358,8 @@ def read_latest_quarterly_forecasts(
     else:
         combined = pd.concat([aggregated, direct], ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+            dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
@@ -3303,7 +3371,7 @@ def read_latest_quarterly_forecasts(
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
     # Select canonical output columns
-    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
 
     # Normalize valid_from/valid_to to strings
     for col in ("valid_from", "valid_to"):
@@ -3411,10 +3479,15 @@ def read_quarterly_combined_forecasts(
     Returns:
         DataFrame with combined quarterly forecasts, or empty DataFrame.
     """
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, read ALL leads written for quarter
+    # (omit the single-lead deployment-config filter) so per-lead gap
+    # detection / gap-fill downstream sees every lead. Flag OFF: unchanged
+    # single-lead filter.
+    lead_aware = skill_lead_aware_enabled()
     df = _read_long_combined_forecasts_api(
         "quarter",
         codes,
-        horizon_value=quarter_horizon_value(),
+        horizon_value=None if lead_aware else quarter_horizon_value(),
     )
     if df is not None and not df.empty:
         logger.info("Read %d quarterly combined forecast rows from API", len(df))
@@ -3586,7 +3659,11 @@ def _normalize_combined_forecasts(
         "horizon_type",
         "model_type_description",
     ]
-    if horizon_type != "season":
+    # Quarter drops the raw horizon_value (single-lead deployment config
+    # historically made it redundant); season always keeps it. Under
+    # SAPPHIRE_SKILL_LEAD_AWARE, quarter keeps it too so the per-lead
+    # selection made by select_operational_issuances() survives.
+    if horizon_type != "season" and not skill_lead_aware_enabled():
         drop_cols.append("horizon_value")
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 

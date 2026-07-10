@@ -497,6 +497,271 @@ class TestMaintenanceLongTerm:
                 (saved["season_in_year"] == 3) & (saved["forecasted_discharge"] == 999.0)
             ).any()
 
+    @pytest.mark.parametrize("flag_on", [True, False])
+    def test_quarterly_gap_fill_dedup_lead_aware(
+        self,
+        monkeypatch,
+        combined_with_models,
+        gap_tuples,
+        forecasts_for_gaps,
+        ensemble_result,
+        skill_stats,
+        flag_on,
+    ):
+        """M1 P1b: the quarterly gap-fill dedup keeps two rows sharing
+
+        (year, quarter_in_year, code, model_short) but differing in
+        horizon_value when the flag is ON, vs. collapsing them (today's
+        behavior) when OFF.
+        """
+        if flag_on:
+            monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        else:
+            monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
+        mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
+        mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
+        mock_file_writer.save_monthly_forecast_data.return_value = None
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        # Two existing quarterly rows for the SAME (year, quarter, code,
+        # model_short) but DIFFERENT horizon_value (leads) -- the case
+        # this dedup must not silently collapse under the flag.
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_Base"],
+                "horizon_value": [0, 1],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["EM"],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        q_fc = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["EM"],
+                "forecasted_discharge": [105.0],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return skill_stats
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_fc
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+            lr_base_rows = saved[saved["model_short"] == "LR_Base"]
+            if flag_on:
+                assert len(lr_base_rows) == 2
+                assert set(lr_base_rows["horizon_value"]) == {0, 1}
+            else:
+                assert len(lr_base_rows) == 1
+
+    @pytest.mark.parametrize("flag_on", [True, False])
+    def test_quarterly_gap_fill_only_writes_gap_leads(
+        self,
+        monkeypatch,
+        combined_with_models,
+        gap_tuples,
+        forecasts_for_gaps,
+        ensemble_result,
+        skill_stats,
+        flag_on,
+    ):
+        """FIX 4: under the flag, freshly-generated ensemble rows are
+
+        filtered to the ACTUAL missing gap keys before merge, so a NON-gap
+        lead's existing ensemble row is not overwritten (keep="last") by a
+        regenerated row for a lead that was never a gap. Flag OFF keeps
+        today's (unfiltered) behavior.
+        """
+        if flag_on:
+            monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        else:
+            monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
+        mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
+        mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
+        mock_file_writer.save_monthly_forecast_data.return_value = None
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        # Existing lead-0 EM (NOT a gap) with a distinctive discharge.
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["EM"],
+                "horizon_value": [0],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        # ONLY the lead-1 EM is reported missing.
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["EM"],
+                "horizon_value": [1],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        q_fc = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "horizon_value": [1],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        # Ensemble output regenerates EM for BOTH leads; the lead-0 EM has
+        # a DIFFERENT discharge (999) so an overwrite would be observable.
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["EM", "EM"],
+                "horizon_value": [0, 1],
+                "forecasted_discharge": [999.0, 111.0],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return skill_stats
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_fc
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+            em_rows = saved[saved["model_short"] == "EM"]
+
+            if flag_on:
+                # Both leads present, and the NON-gap lead-0 EM keeps its
+                # ORIGINAL discharge (100), NOT the regenerated 999.
+                assert set(em_rows["horizon_value"]) == {0, 1}
+                lead0 = em_rows[em_rows["horizon_value"] == 0]
+                lead1 = em_rows[em_rows["horizon_value"] == 1]
+                assert len(lead0) == 1
+                assert float(lead0.iloc[0]["forecasted_discharge"]) == 100.0
+                assert len(lead1) == 1
+                assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
+            else:
+                # Flag OFF: today's behavior -- leads collapse (no
+                # horizon_value in dedup key), one EM row kept.
+                assert len(em_rows) == 1
+
     def test_deduplication_works(
         self,
         gap_tuples,

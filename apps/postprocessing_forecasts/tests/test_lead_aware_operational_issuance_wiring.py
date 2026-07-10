@@ -250,3 +250,6 @@ class TestReadQuarterlyForecastsQ1Boundary:
         assert len(result) == 1
         assert result.iloc[0]["year"] == target_year
         assert result.iloc[0]["quarter_in_year"] == 1
+        # P1b: horizon_value must survive the rest of the quarter path
+        # (previously silently stripped by column selection / normalization).
+        assert result.iloc[0]["horizon_value"] == 1

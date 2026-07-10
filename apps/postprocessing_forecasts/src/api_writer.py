@@ -14,6 +14,7 @@ import os
 import pandas as pd
 import tag_library as tl
 from long_term_horizon_resolver import quarter_horizon_value
+from skill_lead_aware_flag import skill_lead_aware_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -1090,7 +1091,14 @@ def _write_aggregated_forecasts_to_api(
                 valid_from = f"{year}-{start_month:02d}-01"
                 last_day = calendar.monthrange(year, end_month)[1]
                 valid_to = f"{year}-{end_month:02d}-{last_day:02d}"
-                horizon_value = quarter_horizon_value()
+                # Under SAPPHIRE_SKILL_LEAD_AWARE, prefer the row's own
+                # per-lead horizon_value (set by select_operational_issuances
+                # / carried through per-lead aggregation) over the single
+                # deployment-configured lead. Flag OFF: unchanged.
+                if skill_lead_aware_enabled() and pd.notna(row.get("horizon_value")):
+                    horizon_value = int(row["horizon_value"])
+                else:
+                    horizon_value = quarter_horizon_value()
             else:  # season
                 season_year = int(row.get("season_year", row.get("year")))
                 season_months = get_season_months()
@@ -1115,7 +1123,10 @@ def _write_aggregated_forecasts_to_api(
                 valid_to = str(row["valid_to"])[:10]
 
             record_date = valid_from
-            if horizon_type == "season" and pd.notna(row.get("date")):
+            if (
+                horizon_type == "season"
+                or (horizon_type == "quarter" and skill_lead_aware_enabled())
+            ) and pd.notna(row.get("date")):
                 record_date = str(row["date"])[:10]
 
             record = {
