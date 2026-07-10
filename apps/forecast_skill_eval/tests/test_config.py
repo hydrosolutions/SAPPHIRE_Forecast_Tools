@@ -101,11 +101,15 @@ def test_invalid_config_inputs_are_rejected(kwargs: dict[str, object]) -> None:
 
 
 def test_short_term_gate_flags_default_off() -> None:
-    """Both short-term correctness gates must default to False (byte-identical)."""
+    """The issue-before-target gate defaults to False (byte-identical).
+
+    ``short_term_dedup_one_per_target`` defaults to True as of D4/#7 (one pair
+    per target, matching the operational side) -- see
+    ``test_short_term_dedup_default.py`` for the locked default-value test.
+    """
     config = ForecastSkillEvalConfig()
 
     assert config.short_term_issue_before_target is False
-    assert config.short_term_dedup_one_per_target is False
 
 
 def test_short_term_gate_flags_can_be_enabled() -> None:

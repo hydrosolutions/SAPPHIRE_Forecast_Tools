@@ -2,6 +2,18 @@
 
 Step 4 of Phase 4a: Monthly skill metrics.
 TDD — tests written before implementation.
+
+M4 (design decision D3, findings #5 + #6, postprocessing skill-correctness
+campaign): calculate_crps now delegates to the canonical, textbook
+crps_from_quantiles in iEasyHydroForecast.probabilistic_metrics (factor-2
+trapezoidal integration + explicit flat-tail terms). The previous estimator
+omitted the factor-2 term and the tail terms, so it returned roughly HALF
+the correct CRPS — the hand-calculated expectations in
+TestCrpsHandCalculated below are re-baselined accordingly (see each test's
+docstring for the old vs. new value). It also only masked NaN
+*observations*, not rows with NaN *quantiles*, so a single incomplete
+quantile row poisoned the whole group's mean via plain np.mean — see
+TestCrpsNaNQuantilePoisoning for the regression coverage of that fix (#6).
 """
 
 import os
@@ -11,7 +23,9 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 
+from probabilistic_metrics import crps_from_quantiles as shared_crps_from_quantiles
 from src.skill_metrics import calculate_crps
 
 # Standard quantile levels used in SAPPHIRE long-term forecasts
@@ -121,62 +135,41 @@ class TestCrpsHandCalculated:
     """
 
     def test_single_observation_above_all_quantiles(self):
-        """Observation above all quantile forecasts.
+        """Observation above a DETERMINISTIC (point) quantile band.
 
-        observed = 200, all quantiles = 100
-        For each level tau: u = 200 - 100 = 100 > 0
-            rho_tau(100) = 100 * tau
+        observed = 200, all quantiles = 100.
 
-        Pinball losses at each tau:
-            tau=0.05: 100*0.05 = 5.0
-            tau=0.10: 100*0.10 = 10.0
-            tau=0.25: 100*0.25 = 25.0
-            tau=0.50: 100*0.50 = 50.0
-            tau=0.75: 100*0.75 = 75.0
-            tau=0.90: 100*0.90 = 90.0
-            tau=0.95: 100*0.95 = 95.0
+        Textbook property: for a point band, CRPS = |obs - q| exactly,
+        independent of the specific quantile grid — because the flat-tail
+        terms and the factor-2 middle term combine algebraically to cancel
+        every level-dependent term. So expected = |200 - 100| = 100.0.
 
-        Trapezoidal integration over [0.05, 0.95]:
-            = sum of trapezoids between consecutive tau levels
+        RE-BASELINED (M4/D3/#5): the OLD estimator omitted the factor-2 term
+        and the flat-tail terms and only integrated the middle trapezoid,
+        giving trapz(100*tau, tau) = 45.0 — roughly HALF the correct value.
         """
         observed = np.array([200.0])
         quantile_forecasts = np.array([[100.0] * 7])
 
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
 
-        # Calculate expected via trapezoidal integration
-        taus = QUANTILE_LEVELS
-        losses = 100.0 * taus  # all u > 0 so rho = u * tau
-        expected = np.trapezoid(losses, taus)
-
-        assert result == pytest.approx(expected, rel=1e-6)
+        assert result == pytest.approx(100.0, rel=1e-9)
 
     def test_single_observation_below_all_quantiles(self):
-        """Observation below all quantile forecasts.
+        """Observation below a DETERMINISTIC (point) quantile band.
 
-        observed = 0, all quantiles = 100
-        For each level tau: u = 0 - 100 = -100 < 0
-            rho_tau(-100) = -100 * (tau - 1) = 100 * (1 - tau)
+        observed = 0, all quantiles = 100 -> expected = |0 - 100| = 100.0
+        (same textbook point-band property as the test above).
 
-        Pinball losses:
-            tau=0.05: 100*0.95 = 95.0
-            tau=0.10: 100*0.90 = 90.0
-            tau=0.25: 100*0.75 = 75.0
-            tau=0.50: 100*0.50 = 50.0
-            tau=0.75: 100*0.25 = 25.0
-            tau=0.90: 100*0.10 = 10.0
-            tau=0.95: 100*0.05 = 5.0
+        RE-BASELINED (M4/D3/#5): the OLD estimator gave
+        trapz(100*(1-tau), tau) = 45.0 — roughly HALF the correct value.
         """
         observed = np.array([0.0])
         quantile_forecasts = np.array([[100.0] * 7])
 
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
 
-        taus = QUANTILE_LEVELS
-        losses = 100.0 * (1.0 - taus)  # all u < 0 so rho = |u| * (1 - tau)
-        expected = np.trapezoid(losses, taus)
-
-        assert result == pytest.approx(expected, rel=1e-6)
+        assert result == pytest.approx(100.0, rel=1e-9)
 
     def test_symmetric_quantiles_observation_at_median(self):
         """Symmetric quantile distribution with observation at median.
@@ -184,7 +177,8 @@ class TestCrpsHandCalculated:
         observed = 100
         quantiles = [60, 70, 85, 100, 115, 130, 140]
 
-        For each (tau, q):
+        Per-node pinball losses (unchanged by the estimator fix — only the
+        AGGREGATION changed):
             tau=0.05, q=60:  u=40, rho = 40*0.05 = 2.0
             tau=0.10, q=70:  u=30, rho = 30*0.10 = 3.0
             tau=0.25, q=85:  u=15, rho = 15*0.25 = 3.75
@@ -192,15 +186,97 @@ class TestCrpsHandCalculated:
             tau=0.75, q=115: u=-15, rho = -15*(0.75-1) = 15*0.25 = 3.75
             tau=0.90, q=130: u=-30, rho = -30*(0.90-1) = 30*0.10 = 3.0
             tau=0.95, q=140: u=-40, rho = -40*(0.95-1) = 40*0.05 = 2.0
+
+        middle = trapz(losses, taus) = 2.2 (this is the OLD estimator's
+        entire result — RE-BASELINED below, M4/D3/#5).
+
+        Textbook estimator adds the flat tails and the factor 2:
+            left_tail  = (obs - q_min) * tau_min^2 / 2
+                       = (100-60) * 0.05^2 / 2 = 0.05
+            right_tail = (q_max - obs) * (1-tau_max)^2 / 2
+                       = (140-100) * 0.05^2 / 2 = 0.05
+            CRPS = 2 * (0.05 + 2.2 + 0.05) = 2 * 2.3 = 4.6
         """
         observed = np.array([100.0])
         quantile_forecasts = np.array([[60.0, 70.0, 85.0, 100.0, 115.0, 130.0, 140.0]])
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
 
-        losses = np.array([2.0, 3.0, 3.75, 0.0, 3.75, 3.0, 2.0])
-        expected = np.trapezoid(losses, QUANTILE_LEVELS)
+        assert result == pytest.approx(4.6, rel=1e-6)
 
-        assert result == pytest.approx(expected, rel=1e-6)
+    def test_deterministic_band_matches_textbook_abs_diff(self):
+        """Locked M4 regression test (task spec 'the deterministic band'
+        case): all quantiles == 100.0, observed == 130.0 -> CRPS == 30.0.
+
+        The OLD (WRONG) postprocessing estimator returned ~13.5 for this
+        input (trapz(30*tau, tau) over the 7-level SAPPHIRE grid, no
+        factor-2, no tails) — exactly half the correct answer plus the
+        missing tail contribution. This is the textbook sanity check that
+        motivated milestone M4 (D3/#5).
+        """
+        observed = np.array([130.0])
+        quantile_forecasts = np.array([[100.0] * 7])
+
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+
+        assert result == pytest.approx(30.0, abs=1e-9)
+
+    def test_matches_shared_canonical_estimator(self):
+        """calculate_crps must delegate to (produce identical values to) the
+        canonical iEasyHydroForecast.probabilistic_metrics.crps_from_quantiles
+        — the M4 'same value at both call sites' contract. forecast_skill_eval
+        delegates to the same shared primitive (see
+        forecast_skill_eval/tests/test_prob_metrics.py), so this indirectly
+        proves both apps agree.
+        """
+        observed = np.array([100.0, 130.0, 80.0])
+        quantile_forecasts = np.array(
+            [
+                [80, 85, 92, 100, 108, 115, 120],
+                [100.0] * 7,
+                [60, 65, 72, 80, 88, 95, 100],
+            ],
+            dtype=float,
+        )
+
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+        expected = shared_crps_from_quantiles(observed, quantile_forecasts, QUANTILE_LEVELS)
+
+        assert result == pytest.approx(expected, rel=1e-12)
+
+
+class TestCrpsNaNQuantilePoisoning:
+    """Regression tests for #6: a single row with NaN quantiles must not
+    null the whole group's mean CRPS (the OLD estimator masked NaN
+    *observations* but not NaN *quantile rows*, so np.mean(crps_per_obs)
+    propagated a single bad row's NaN to the entire group)."""
+
+    def test_one_all_nan_quantile_row_does_not_poison_group(self):
+        # Row 0: perfectly valid, observed matches every quantile -> CRPS 0.
+        # Row 1: every quantile is NaN -> unscoreable on its own, but must
+        # not null row 0's contribution to the group mean.
+        observed = np.array([100.0, 100.0])
+        quantile_forecasts = np.array(
+            [
+                [100.0] * 7,
+                [np.nan] * 7,
+            ]
+        )
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+        assert np.isfinite(result), (
+            "A single fully-NaN quantile row must not poison the group's CRPS mean"
+        )
+        assert result == pytest.approx(0.0, abs=1e-9)
+
+    def test_valid_row_scores_correctly_alongside_a_nan_quantile_row(self):
+        observed = np.array([130.0, 100.0])
+        quantile_forecasts = np.array(
+            [
+                [100.0] * 7,  # deterministic band, |130-100| = 30.0
+                [np.nan] * 7,  # unscoreable
+            ]
+        )
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+        assert result == pytest.approx(30.0, abs=1e-9)
 
 
 class TestCrpsEdgeCases:

@@ -42,6 +42,7 @@ include = [
     "__init__.py",
     "forecast_library.py",
     "long_term_horizon_resolver.py",
+    "probabilistic_metrics.py",
     "setup_library.py",
     "tag_library.py",
 ]

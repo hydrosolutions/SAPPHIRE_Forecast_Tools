@@ -607,14 +607,19 @@ class TestOperationalDataRouting:
         # Date 2026-01-10: mean(LR=120.0, TFT=130.0) = 125.0
         assert abs(em_sorted.iloc[1]["forecasted_discharge"] - 125.0) < 0.01
 
-    def test_threshold_boundary_values_excluded(
+    def test_threshold_boundary_values_included(
         self,
         pentad_observed,
         env_setup,
     ):
-        """Metrics exactly at boundary are excluded (strict < / >)."""
-        # sdivsigma=0.6 (not < 0.6), accuracy=0.8 (not > 0.8),
-        # nse=0.8 (not > 0.8)
+        """Metrics exactly at boundary are INCLUDED (inclusive >= / <=).
+
+        M2 design decision D1: the skilled-forecast gate is inclusive, so a
+        model sitting exactly on every short-term default threshold
+        (sdivsigma=0.6, nse=0.8, accuracy=0.8) now PASSES. Both LR and TFT
+        qualify, so an EM row is created.
+        """
+        # sdivsigma=0.6 (<= 0.6), accuracy=0.8 (>= 0.8), nse=0.8 (>= 0.8)
         boundary_skill = pd.DataFrame(
             {
                 "pentad_in_year": [1, 1],
@@ -640,7 +645,12 @@ class TestOperationalDataRouting:
         )
 
         joint, _ = _make_ensemble(forecasts, boundary_skill)
-        assert "EM" not in joint["model_short"].values
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert not em_rows.empty, (
+            "Boundary-exact models must PASS the inclusive gate and produce EM"
+        )
+        # EM = mean(LR=100.0, TFT=110.0) = 105.0
+        assert abs(em_rows.iloc[0]["forecasted_discharge"] - 105.0) < 0.01
 
     def test_three_stations_heterogeneous_outcomes(
         self,

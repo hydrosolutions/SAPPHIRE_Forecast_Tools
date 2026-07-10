@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
+import probabilistic_metrics as pm
 from src.model_names import (
     AGGREGATED_EM_RAW_MODELS,
     AGGREGATED_ENSEMBLE_MODELS,
@@ -110,8 +111,13 @@ THRESHOLD_METRICS = {
 # keep nse > 0.0 and disable both the sdivsigma and accuracy gates.  The canonical
 # filter treats the exact string "False" as "gate disabled".  These vars are
 # LONG-TERM ONLY — the short-term env vars/defaults are untouched.
+#
+# The canonical filter's boundary is INCLUSIVE (>=), so the NSE default is a
+# small positive epsilon rather than exactly 0.0 — otherwise nse == 0.0 would
+# incorrectly pass the "NSE > 0" gate.
+_LONG_TERM_NSE_EPSILON = 1e-9
 _LONG_TERM_THRESHOLD_ENV = {
-    "nse": ("ieasyhydroforecast_nse_threshold_long_term", "0.0"),
+    "nse": ("ieasyhydroforecast_nse_threshold_long_term", str(_LONG_TERM_NSE_EPSILON)),
     "sdivsigma": ("ieasyhydroforecast_efficiency_threshold_long_term", "False"),
     "accuracy": ("ieasyhydroforecast_accuracy_threshold_long_term", "False"),
 }
@@ -127,7 +133,9 @@ def _parse_threshold_env(raw: str) -> "float | bool":
     map to the boolean ``False`` whose ``str()`` is ``"False"`` — the sentinel
     the canonical filter recognizes as "gate disabled".  Otherwise the value is
     parsed as a float.  An invalid value raises a clear ``ValueError`` naming the
-    offending value, never a bare ``float("banana")`` error.
+    offending value, never a bare ``float("banana")`` error.  Non-finite floats
+    (``nan``/``inf``/``-inf``) are also rejected — they would otherwise silently
+    pass through as a "threshold" that can never gate anything meaningfully.
 
     Args:
         raw: The raw env-var string.
@@ -136,18 +144,24 @@ def _parse_threshold_env(raw: str) -> "float | bool":
         ``False`` for a disable token, otherwise the parsed float.
 
     Raises:
-        ValueError: If *raw* is neither a disable token nor a valid number.
+        ValueError: If *raw* is neither a disable token nor a finite number.
     """
     token = str(raw).strip().lower()
     if token in _THRESHOLD_DISABLE_TOKENS:
         return False
     try:
-        return float(raw)
+        value = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"Invalid long-term skill threshold: {raw!r} (expected a number or a "
             f"disable token like 'false'/'off'/'none')"
         ) from exc
+    if not np.isfinite(value):
+        raise ValueError(
+            f"Invalid long-term skill threshold: {raw!r} (must be a finite number, "
+            f"got non-finite value {value})"
+        )
+    return value
 
 
 def _long_term_threshold_overrides() -> dict:
@@ -155,14 +169,29 @@ def _long_term_threshold_overrides() -> dict:
 
     Reads the long-term-only env vars (defaulting to the NSE>0-only behavior)
     and parses each through :func:`_parse_threshold_env`.  Returns e.g.
-    ``{"nse": 0.0, "sdivsigma": False, "accuracy": False}`` under defaults.
+    ``{"nse": 1e-9, "sdivsigma": False, "accuracy": False}`` under defaults.
     This dict is splatted as ``**overrides`` into
     :func:`filter_for_highly_skilled_forecasts`, which treats a ``False`` value
     (``str(threshold) == "False"``) as a disabled gate.
+
+    The long-term NSE gate may never be disabled — unlike sdivsigma/accuracy,
+    attempting to disable it (e.g. setting its env var to ``"false"``) raises
+    ``ValueError``.
+
+    Raises:
+        ValueError: If the long-term NSE env var resolves to a disable token.
     """
     overrides: dict = {}
     for metric_key, (env_var, default) in _LONG_TERM_THRESHOLD_ENV.items():
-        overrides[metric_key] = _parse_threshold_env(os.getenv(env_var, default))
+        raw_value = os.getenv(env_var, default)
+        parsed = _parse_threshold_env(raw_value)
+        if metric_key == "nse" and parsed is False:
+            raise ValueError(
+                f"The long-term NSE skill gate cannot be disabled (env var "
+                f"{env_var!r} resolved to disable token {raw_value!r}); sdivsigma "
+                f"and accuracy may be disabled long-term, NSE may not."
+            )
+        overrides[metric_key] = parsed
     return overrides
 
 
@@ -938,6 +967,15 @@ def calculate_all_skill_metrics(
         pd.Series with keys:
             sdivsigma, nse, mae, n_pairs, delta, accuracy,
             pbias, kgelf, nse_log
+
+        sdivsigma/nse/mae/pbias/kgelf/nse_log are point metrics computed
+        over rows where obs+sim are both finite (they do not use delta
+        at all, matching sdivsigma_nse()/mae()). n_pairs is the count of
+        those obs/sim-valid rows. accuracy/delta are computed over the
+        independently-filtered subset where obs, sim, AND delta are all
+        finite (matching forecast_accuracy_hydromet()) — that subset can
+        be smaller than n_pairs when delta is NaN/inf for some otherwise
+        obs/sim-valid rows.
     """
     nan_result = pd.Series(
         [0 if name == "n_pairs" else np.nan for name in METRIC_ORDER],
@@ -954,27 +992,21 @@ def calculate_all_skill_metrics(
     simulated = data[simulated_col].to_numpy(dtype=np.float64)
     delta_values = data[delta_col].to_numpy(dtype=np.float64)
 
-    # Common NaN/inf mask for all metrics
-    mask = (
-        ~np.isnan(observed)
-        & ~np.isnan(simulated)
-        & ~np.isnan(delta_values)
-        & ~np.isinf(observed)
-        & ~np.isinf(simulated)
-        & ~np.isinf(delta_values)
+    # Point-metric mask: obs/sim only. mae/sdivsigma/nse/pbias/kgelf/
+    # nse_log don't use delta at all, so they must not be starved by a
+    # NaN delta on an otherwise-valid obs/sim row (matches
+    # sdivsigma_nse()/mae(), which never look at delta).
+    obs_sim_mask = (
+        ~np.isnan(observed) & ~np.isnan(simulated) & ~np.isinf(observed) & ~np.isinf(simulated)
     )
-    if not np.any(mask):
-        return nan_result
-
-    obs = observed[mask]
-    sim = simulated[mask]
-    deltas = delta_values[mask]
-    n = len(obs)
-
-    # --- MAE + n_pairs (need >= 1 point) ---
+    n = int(obs_sim_mask.sum())
     if n < 1:
         return nan_result
 
+    obs = observed[obs_sim_mask]
+    sim = simulated[obs_sim_mask]
+
+    # --- MAE (need >= 1 obs/sim-valid point) ---
     differences = obs - sim
     abs_diff = np.abs(differences)
 
@@ -985,30 +1017,43 @@ def calculate_all_skill_metrics(
     except (RuntimeWarning, FloatingPointError):
         mae_value = np.nan
 
-    # --- Accuracy + delta (need >= 1 point) ---
-    try:
-        accuracy = float(np.mean(abs_diff <= deltas))
-        # Delta is constant per (code, period_in_year) by design.
-        # Use first value; warn if they vary unexpectedly.
-        delta = float(deltas[0])
-        delta_range = float(np.ptp(deltas))
-        if delta_range > 1e-6:
-            logger.warning(
-                "Delta values vary within group: range=%.6f, "
-                "min=%.6f, max=%.6f (using first value %.6f)",
-                delta_range,
-                float(np.min(deltas)),
-                float(np.max(deltas)),
-                delta,
-            )
-        if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+    # --- Accuracy + delta: independent obs/sim/delta mask (need >= 1
+    # delta-valid point). This subset can be strictly smaller than
+    # obs_sim_mask when delta is NaN/inf for some obs/sim-valid rows —
+    # accuracy/delta must reflect only the delta-valid rows, exactly as
+    # forecast_accuracy_hydromet() does.
+    delta_mask = obs_sim_mask & ~np.isnan(delta_values) & ~np.isinf(delta_values)
+    if np.any(delta_mask):
+        try:
+            obs_d = observed[delta_mask]
+            sim_d = simulated[delta_mask]
+            deltas = delta_values[delta_mask]
+            abs_diff_d = np.abs(obs_d - sim_d)
+            accuracy = float(np.mean(abs_diff_d <= deltas))
+            # Delta is constant per (code, period_in_year) by design.
+            # Use first value; warn if they vary unexpectedly.
+            delta = float(deltas[0])
+            delta_range = float(np.ptp(deltas))
+            if delta_range > 1e-6:
+                logger.warning(
+                    "Delta values vary within group: range=%.6f, "
+                    "min=%.6f, max=%.6f (using first value %.6f)",
+                    delta_range,
+                    float(np.min(deltas)),
+                    float(np.max(deltas)),
+                    delta,
+                )
+            if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+                accuracy = np.nan
+                delta = np.nan
+        except (RuntimeWarning, FloatingPointError):
             accuracy = np.nan
             delta = np.nan
-    except (RuntimeWarning, FloatingPointError):
+    else:
         accuracy = np.nan
         delta = np.nan
 
-    # --- sdivsigma + NSE (need >= 2 points for std) ---
+    # --- sdivsigma + NSE (need >= 2 obs/sim-valid points for std) ---
     if n < 2:
         return pd.Series(
             [np.nan, np.nan, mae_value, n, delta, accuracy, np.nan, np.nan, np.nan],
@@ -1080,9 +1125,20 @@ def calculate_crps(
 ) -> float:
     """Continuous Ranked Probability Score from quantile forecasts.
 
-    Uses trapezoidal integration of quantile (pinball) losses:
-        CRPS = (1/N) * sum_i trapz(rho_tau(y_i - q_ij), tau_j)
-    where rho_tau(u) = u * (tau - 1{u<0}) is the pinball loss.
+    Delegates to the canonical textbook estimator shared with
+    forecast_skill_eval (iEasyHydroForecast.probabilistic_metrics), so both
+    apps compute IDENTICAL CRPS values (design decision D3, milestone M4):
+        CRPS = 2 * integral_0^1 pinball_loss(tau, y_i) dtau
+    approximated via trapezoidal integration of the pinball loss between
+    quantile grid nodes PLUS explicit flat-tail terms for [0, tau_min] and
+    [tau_max, 1] (an observation outside the forecast band is still
+    penalised — narrow, overconfident bands are not rewarded).
+
+    NOTE (M4/#5): prior to this change, this function omitted the factor-2
+    term and the tail terms, so it returned roughly HALF the correct CRPS.
+    Stored postprocessing crps values will shift by ~2x on next recalc; this
+    is accepted (CRPS is informational, no gate depends on it — see the
+    postprocessing skill-correctness campaign design doc, D3).
 
     Args:
         observed: shape (N,) — observed values.
@@ -1090,38 +1146,14 @@ def calculate_crps(
         quantile_levels: shape (K,) — e.g. [0.05, 0.10, ..., 0.95].
 
     Returns:
-        Mean CRPS across valid observations (lower is better).
-        Returns NaN if no valid observations.
+        NaN-aware mean CRPS across valid observation rows (lower is better).
+        A row is excluded from the mean when its observation is NaN, or
+        when fewer than 2 finite quantile nodes remain after isotonic
+        repair (M4/#6 — a single bad row no longer poisons the whole
+        group's mean, unlike the previous plain np.mean over rows).
+        Returns NaN only when every row is invalid.
     """
-    observed = np.asarray(observed, dtype=np.float64)
-    quantile_forecasts = np.asarray(quantile_forecasts, dtype=np.float64)
-    quantile_levels = np.asarray(quantile_levels, dtype=np.float64)
-
-    # Mask out NaN observations
-    valid = ~np.isnan(observed)
-    if not np.any(valid):
-        return np.nan
-
-    obs = observed[valid]
-    qf = quantile_forecasts[valid]
-
-    # Compute pinball loss for each (observation, quantile_level) pair
-    # errors shape: (N, K)
-    errors = obs[:, np.newaxis] - qf
-
-    # rho_tau(u) = u * tau  if u >= 0
-    #            = u * (tau - 1)  if u < 0
-    pinball = np.where(
-        errors >= 0,
-        errors * quantile_levels[np.newaxis, :],
-        errors * (quantile_levels[np.newaxis, :] - 1.0),
-    )
-
-    # Integrate pinball loss over quantile levels for each observation
-    # using trapezoidal rule
-    crps_per_obs = np.trapezoid(pinball, quantile_levels, axis=1)
-
-    return float(np.mean(crps_per_obs))
+    return pm.crps_from_quantiles(observed, quantile_forecasts, quantile_levels)
 
 
 def calculate_pit_reliability(
@@ -1873,16 +1905,20 @@ def filter_for_highly_skilled_forecasts(
     """
     result = skill_stats.copy()
     for name, entry in THRESHOLD_METRICS.items():
-        threshold = overrides.get(name)
-        if threshold is None:
-            threshold = os.getenv(entry["env_var"], entry["default_threshold"])
-        if str(threshold) == "False":
+        raw_threshold = overrides.get(name)
+        if raw_threshold is None:
+            raw_threshold = os.getenv(entry["env_var"], entry["default_threshold"])
+        # Route BOTH the override and env sources through the same lenient parser
+        # so disable-token handling and the isfinite guard apply identically
+        # regardless of where the threshold came from.
+        threshold = _parse_threshold_env(raw_threshold)
+        if threshold is False:
             continue
         threshold = float(threshold)
         if entry["higher_is_better"]:
-            result = result[result[name] > threshold].copy()
+            result = result[result[name] >= threshold].copy()
         else:
-            result = result[result[name] < threshold].copy()
+            result = result[result[name] <= threshold].copy()
     if min_pairs is not None:
         result = result[result["n_pairs"].fillna(0) >= min_pairs].copy()
     return result

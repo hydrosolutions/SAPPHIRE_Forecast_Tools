@@ -826,21 +826,24 @@ class TestThresholdBehavior:
         )
         assert len(result) == 3, "All should pass when filter disabled"
 
-    def test_threshold_case_sensitive(self, _three_model_skill):
-        """threshold_sdivsigma='false' (lowercase) raises ValueError.
-        Only 'False' (capital F) disables the filter. This documents
-        the case-sensitivity behavior: str('false') != 'False' so it
-        tries float('false') which is invalid."""
-        with pytest.raises(ValueError, match="could not convert"):
-            filter_for_highly_skilled_forecasts(
-                _three_model_skill,
-                threshold_sdivsigma="false",
-                threshold_accuracy=0.0,
-                threshold_nse=0.0,
-            )
+    def test_threshold_case_insensitive_disable(self, _three_model_skill):
+        """threshold_sdivsigma='false' (lowercase) disables the gate.
 
-    def test_exact_boundary_excluded(self):
-        """sdivsigma exactly at threshold (0.6) is excluded (< not <=)."""
+        M2: overrides and env vars are routed through the same lenient
+        parser (_parse_threshold_env), so any case-insensitive disable
+        token ('false', 'False', 'off', ...) disables that gate. With
+        sdivsigma disabled and accuracy/nse gates at 0.0 (inclusive),
+        all three models pass."""
+        result = filter_for_highly_skilled_forecasts(
+            _three_model_skill,
+            threshold_sdivsigma="false",
+            threshold_accuracy=0.0,
+            threshold_nse=0.0,
+        )
+        assert len(result) == 3, "lowercase 'false' should disable the sdivsigma gate"
+
+    def test_exact_boundary_included(self):
+        """sdivsigma exactly at threshold (0.6) is included (M2: inclusive <=)."""
         df = pd.DataFrame(
             [
                 _make_skill_row("10001", 1, "LR", sdivsigma=0.6),
@@ -852,7 +855,8 @@ class TestThresholdBehavior:
             threshold_accuracy=0.0,
             threshold_nse=0.0,
         )
-        assert len(result) == 0, "sdivsigma=0.6 should be excluded (< 0.6 is False)"
+        assert len(result) == 1, "sdivsigma=0.6 should be included (<= 0.6 is True)"
+        assert result.iloc[0]["model_short"] == "LR"
 
     def test_all_thresholds_must_pass(self):
         """Model passes sdivsigma and nse but fails accuracy -> excluded."""
@@ -1182,10 +1186,15 @@ class TestDeltaEdgeCases:
     """
 
     def test_nan_delta_excluded_from_skill_metrics(self):
-        """NaN delta: calculate_all_skill_metrics filters row via NaN mask.
+        """NaN delta: only accuracy/delta filter the NaN-delta row.
 
-        Row 0: delta=NaN -> filtered
-        Row 1-2: valid -> n_pairs=2, metrics computed from those only.
+        Re-baselined for M3 (finding #2, doc/plans/postprocessing_skill_correctness_design.md):
+        obs/sim are valid on all 3 rows, so point metrics (n_pairs, mae)
+        use all 3 rows -- only accuracy/delta use the delta-valid
+        subset (rows 1-2), matching forecast_accuracy_hydromet().
+
+        Row 0: delta=NaN -> excluded from accuracy/delta only
+        Row 1-2: delta valid -> accuracy computed from those only.
         """
         data = pd.DataFrame(
             {
@@ -1195,10 +1204,11 @@ class TestDeltaEdgeCases:
             }
         )
         result = skill_metrics.calculate_all_skill_metrics(data, "obs", "sim", "delta")
-        assert result["n_pairs"] == 2, "NaN delta row should be filtered, leaving 2 valid pairs"
-        # MAE from valid rows: mean(|110-108|, |105-106|) = mean(2, 1) = 1.5
-        assert abs(result["mae"] - 1.5) < 1e-10
-        # Both within delta=5: accuracy = 1.0
+        assert result["n_pairs"] == 3, "NaN delta must not drop an obs/sim-valid row from n_pairs"
+        # MAE from all 3 obs/sim-valid rows: mean(|100-102|, |110-108|, |105-106|)
+        # = mean(2, 2, 1) = 1.666...
+        assert abs(result["mae"] - (5.0 / 3.0)) < 1e-10
+        # accuracy uses the delta-valid subset only (rows 1-2), both within delta=5.
         assert result["accuracy"] == 1.0
 
     def test_zero_delta_strict_matching(self):

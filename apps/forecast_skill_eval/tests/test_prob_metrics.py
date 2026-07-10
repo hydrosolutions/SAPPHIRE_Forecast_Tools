@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
+from probabilistic_metrics import crps_from_quantiles as shared_crps_from_quantiles
+from probabilistic_metrics import crps_single as shared_crps_single
 
 from forecast_skill_eval.prob_metrics import (
     PROB_METRIC_COLUMNS,
@@ -246,6 +249,48 @@ class TestCrpsFromQuantiles:
         crps_near = crps_from_quantiles(self._LEVELS, self._QVALS, 85.0)
         crps_far = crps_from_quantiles(self._LEVELS, self._QVALS, 150.0)
         assert crps_far > crps_near
+
+
+# ===========================================================================
+# crps_from_quantiles — M4 (D3/#5+#6) canonical shared-estimator contract
+# ===========================================================================
+
+
+class TestCrpsFromQuantilesCanonicalDelegation:
+    """crps_from_quantiles must delegate to (produce identical values to) the
+    canonical iEasyHydroForecast.probabilistic_metrics estimator, so
+    postprocessing_forecasts and forecast_skill_eval always agree (M4 'same
+    value at both call sites' contract). See
+    postprocessing_forecasts/tests/test_crps.py for the mirrored check on
+    the other call site."""
+
+    _QUANTILE_LEVELS = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
+
+    def test_deterministic_band_matches_textbook_abs_diff(self):
+        """Locked M4 regression test: all quantiles == 100.0, observed ==
+        130.0 -> CRPS == 30.0. The OLD postprocessing_forecasts estimator
+        returned ~13.5 for the equivalent input (missing factor-2 + tails);
+        forecast_skill_eval's estimator already got this right."""
+        result = crps_from_quantiles(self._QUANTILE_LEVELS, [100.0] * 7, 130.0)
+        assert result == pytest.approx(30.0, abs=1e-9)
+
+    def test_matches_shared_crps_single_directly(self):
+        qvals = [20, 40, 60, 80, 100, 120, 140]
+        result = crps_from_quantiles(self._QUANTILE_LEVELS, qvals, 95.0)
+        expected = shared_crps_single(self._QUANTILE_LEVELS, qvals, 95.0)
+        assert result == pytest.approx(expected, rel=1e-12)
+
+    def test_matches_shared_batched_entry_point_for_one_row(self):
+        """Same value whether scored via the per-pair entry point used here,
+        or the (N,K) batched entry point used by postprocessing_forecasts —
+        proves the two call-site shapes agree, not just the two apps."""
+        observed = np.array([130.0])
+        quantile_forecasts = np.array([[100.0] * 7])
+        batched = shared_crps_from_quantiles(
+            observed, quantile_forecasts, np.array(self._QUANTILE_LEVELS)
+        )
+        single = crps_from_quantiles(self._QUANTILE_LEVELS, [100.0] * 7, 130.0)
+        assert single == pytest.approx(batched, rel=1e-12)
 
 
 # ===========================================================================

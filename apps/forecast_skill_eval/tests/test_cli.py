@@ -154,11 +154,14 @@ def test_regime_source_cli_arg_parses_into_config() -> None:
 
 
 def test_short_term_gate_flags_default_off_in_cli() -> None:
+    # issue-before-target still defaults OFF in the CLI; dedup now defaults ON
+    # (D4/#7) -- its CLI default/opt-out is locked in
+    # test_short_term_dedup_default.py.
     parser = cli._parser()
     args = parser.parse_args([])
     config = cli._config_from_args(args)
     assert config.short_term_issue_before_target is False
-    assert config.short_term_dedup_one_per_target is False
+    assert config.short_term_dedup_one_per_target is True
 
 
 def test_short_term_gate_flags_parse_into_config() -> None:
@@ -207,13 +210,15 @@ def test_forecast_only_env_enables_both_short_term_gates(monkeypatch) -> None:
     assert config.short_term_dedup_one_per_target is True
 
 
-def test_forecast_only_env_unset_leaves_gates_off(monkeypatch) -> None:
+def test_forecast_only_env_unset_leaves_gates_at_their_defaults(monkeypatch) -> None:
+    # With FORECAST_ONLY unset, each gate keeps its own default: issue-before-target
+    # OFF, dedup ON (D4/#7).  FORECAST_ONLY only force-enables; it never disables.
     monkeypatch.delenv("SAPPHIRE_SKILL_FORECAST_ONLY", raising=False)
     parser = cli._parser()
     args = parser.parse_args([])
     config = cli._config_from_args(args)
     assert config.short_term_issue_before_target is False
-    assert config.short_term_dedup_one_per_target is False
+    assert config.short_term_dedup_one_per_target is True
 
 
 def test_lr_repair_cli_default_is_off(monkeypatch) -> None:
