@@ -271,8 +271,15 @@ def assemble_bulletin_snapshot(horizon: str, selected_codes, dm, forecast_date) 
             the horizon multiselect).
         selected_codes: Iterable of bare station codes selected by the
             user (e.g. ``["90001", "90002"]``).
-        dm: The dashboard's ``DataManager`` — used for
-            ``get_bulletin_metadata`` and ``sites_list``.
+        dm: The dashboard's ``DataManager`` — used only for
+            ``sites_list``. The ``(forecast_year, forecast_horizon)``
+            period is derived from the PERSISTED bulletin records via the
+            API (below), never from ``dm.get_bulletin_metadata`` /
+            ``dm.forecasts_all``: those only hold data for the
+            dashboard's currently ACTIVE horizon (the main
+            ``horizon_selector``), so publishing a horizon other than the
+            active one would ``KeyError`` on a missing ``*_in_year``
+            column.
         forecast_date: The forecast date (Forecast Date Rule) — used to
             derive ``generated_at``; never read via ``date.today()``.
 
@@ -284,20 +291,58 @@ def assemble_bulletin_snapshot(horizon: str, selected_codes, dm, forecast_date) 
         bulletin data for this horizon). ``skipped_codes`` lists selected
         codes with no bulletin data for this horizon — they are omitted
         from ``payload["stations"]``.
+
+        If no persisted bulletin record exists for this horizon among the
+        selected stations, ``payload["stations"]`` is ``[]``, the other
+        payload fields are ``None``, and every selected code is reported
+        in ``skipped_codes`` — no exception is raised.
     """
-    # Deferred import: dashboard.bulletin_manager imports `panel` at
-    # module scope. Keeping this import inside the function body means
+    # Deferred imports: dashboard.bulletin_manager imports `panel` at
+    # module scope. Keeping both imports inside the function body means
     # merely importing `bulletin_publish` never requires Panel.
+    from src import db
+
     from dashboard.bulletin_manager import _load_bulletin_from_api
 
-    last_date, forecast_horizon, forecast_year = dm.get_bulletin_metadata(horizon)
-    del last_date  # unused here; get_bulletin_metadata's return is a 3-tuple
+    selected_set = {str(code) for code in selected_codes}
+
+    # Query the bulletin resource for this horizon (no year/horizon_value
+    # filter yet — the latest period is determined below from the rows
+    # that actually belong to the selected stations).
+    bdf = db._read_data("postprocessing", "bulletin", {"horizon": horizon, "limit": 1000})
+
+    # Scope to the selected station codes BEFORE choosing the period: the
+    # postprocessing DB is shared across deployments locally, so an
+    # unscoped max() could pick a foreign deployment's row.
+    if bdf.empty or "code" not in bdf.columns:
+        bdf = bdf.iloc[0:0]
+    else:
+        bdf = bdf[bdf["code"].astype(str).isin(selected_set)]
+
+    if bdf.empty:
+        # No persisted bulletin for these stations under this horizon —
+        # report all selected codes as skipped rather than raising.
+        payload = {
+            "horizon": horizon,
+            "year": None,
+            "horizon_value": None,
+            "valid_from": None,
+            "valid_to": None,
+            "generated_at": None,
+            "expires_at": None,
+            "stations": [],
+        }
+        return {"payload": payload, "skipped_codes": sorted(selected_set)}
+
+    # Pick the latest period among the selected stations' persisted rows.
+    latest = bdf.sort_values(["year", "horizon_value"]).tail(1)
+    forecast_year = int(latest["year"].values[0])
+    forecast_horizon = int(latest["horizon_value"].values[0])
 
     bulletin_sites = _load_bulletin_from_api(
         horizon, forecast_year, forecast_horizon, dm.sites_list
     )
 
-    selected_set = {str(code) for code in selected_codes}
     found_codes: set[str] = set()
     stations = []
     for site in bulletin_sites:

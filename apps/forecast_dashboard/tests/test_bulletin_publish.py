@@ -8,7 +8,13 @@ Covers:
      month/season field sets, NaN -> None JSON-safety.
   3. dashboard.bulletin_publish.assemble_bulletin_snapshot — selected
      code with bulletin data is included; selected code without data is
-     reported in skipped_codes and omitted from the payload.
+     reported in skipped_codes and omitted from the payload; the
+     (year, horizon_value) period is derived from the persisted bulletin
+     records for the selected stations (via db._read_data), never from
+     dm.get_bulletin_metadata/dm.forecasts_all; a horizon with no
+     persisted bulletin rows for the selected codes yields an empty
+     ``stations`` list and reports every selected code as skipped
+     (no exception).
   4. dashboard.widget_manager.WidgetManager._on_generate_links_click —
      the "Generate links" button handler: N selected horizons -> N
      POSTs -> N links surfaced; an empty horizon produces no link plus a
@@ -34,6 +40,7 @@ import os
 import sys
 import types
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -43,6 +50,7 @@ import dashboard.widget_manager as widget_manager  # noqa: E402
 from dashboard import bulletin_publish as bp  # noqa: E402
 from dashboard import widgets  # noqa: E402
 from dashboard.widget_manager import WidgetManager  # noqa: E402
+from src import db  # noqa: E402 - same module object bp's deferred import binds to
 
 UTC = dt.UTC
 
@@ -219,15 +227,24 @@ class TestSerializeSite:
 
 
 class _FakeDataManager:
-    """Minimal DataManager stand-in: only the two members
-    assemble_bulletin_snapshot touches."""
+    """Minimal DataManager stand-in: assemble_bulletin_snapshot only
+    touches `sites_list` — the (year, horizon_value) period now comes
+    from db._read_data, not dm.get_bulletin_metadata."""
 
-    def __init__(self, last_date, forecast_horizon, forecast_year, sites_list):
-        self._metadata = (last_date, forecast_horizon, forecast_year)
+    def __init__(self, sites_list):
         self.sites_list = sites_list
 
-    def get_bulletin_metadata(self, horizon):
-        return self._metadata
+
+def _bulletin_records_df(rows):
+    """Build a synthetic bulletin DataFrame as db._read_data would return.
+
+    `rows` is a list of dicts with at least `code`, `year`,
+    `horizon_value` (as db._read_data("postprocessing", "bulletin", ...)
+    would return for the "bulletin" resource).
+    """
+    if not rows:
+        return pd.DataFrame(columns=["code", "year", "horizon_value"])
+    return pd.DataFrame(rows)
 
 
 class TestAssembleBulletinSnapshot:
@@ -244,7 +261,14 @@ class TestAssembleBulletinSnapshot:
             perc_norm=100.0,
         )
         monkeypatch.setattr(bulletin_manager, "_load_bulletin_from_api", lambda *a, **k: [site])
-        dm = _FakeDataManager(dt.date(2026, 3, 2), 13, 2026, [site])
+        monkeypatch.setattr(
+            db,
+            "_read_data",
+            lambda *a, **k: _bulletin_records_df(
+                [{"code": "90001", "year": 2026, "horizon_value": 13}]
+            ),
+        )
+        dm = _FakeDataManager([site])
 
         result = bp.assemble_bulletin_snapshot("pentad", ["90001"], dm, dt.date(2026, 3, 1))
 
@@ -262,7 +286,14 @@ class TestAssembleBulletinSnapshot:
     def test_selected_code_without_data_is_skipped(self, monkeypatch):
         site = _site_with_attrs(code="90001", forecast_expected=10.0)
         monkeypatch.setattr(bulletin_manager, "_load_bulletin_from_api", lambda *a, **k: [site])
-        dm = _FakeDataManager(dt.date(2026, 3, 2), 13, 2026, [site])
+        monkeypatch.setattr(
+            db,
+            "_read_data",
+            lambda *a, **k: _bulletin_records_df(
+                [{"code": "90001", "year": 2026, "horizon_value": 13}]
+            ),
+        )
+        dm = _FakeDataManager([site])
 
         result = bp.assemble_bulletin_snapshot(
             "pentad", ["90001", "90002"], dm, dt.date(2026, 3, 1)
@@ -272,14 +303,77 @@ class TestAssembleBulletinSnapshot:
         codes_in_payload = [s["code"] for s in result["payload"]["stations"]]
         assert codes_in_payload == ["90001"]
 
-    def test_no_selected_codes_have_data_yields_empty_stations(self, monkeypatch):
-        monkeypatch.setattr(bulletin_manager, "_load_bulletin_from_api", lambda *a, **k: [])
-        dm = _FakeDataManager(dt.date(2026, 3, 2), 13, 2026, [])
+    def test_no_bulletin_records_for_selected_codes_yields_empty_stations(self, monkeypatch):
+        """A horizon whose bulletin query returns no rows for the
+        selected codes (e.g. no bulletin has ever been produced for this
+        horizon/station combo, or the active dashboard horizon differs
+        from the one being published) must not raise — it should report
+        an empty snapshot and skip every selected code."""
+        load_calls = []
+        monkeypatch.setattr(
+            bulletin_manager,
+            "_load_bulletin_from_api",
+            lambda *a, **k: load_calls.append(a) or [],
+        )
+        # Bulletin rows exist for this horizon, but only for a different
+        # (foreign) station code — none for the selected codes.
+        monkeypatch.setattr(
+            db,
+            "_read_data",
+            lambda *a, **k: _bulletin_records_df(
+                [{"code": "99999", "year": 2026, "horizon_value": 4}]
+            ),
+        )
+        dm = _FakeDataManager([])
 
-        result = bp.assemble_bulletin_snapshot("pentad", ["90001"], dm, dt.date(2026, 3, 1))
+        result = bp.assemble_bulletin_snapshot("month", ["90001"], dm, dt.date(2026, 3, 1))
 
         assert result["payload"]["stations"] == []
         assert result["skipped_codes"] == ["90001"]
+        assert result["payload"]["horizon"] == "month"
+        assert result["payload"]["year"] is None
+        assert result["payload"]["horizon_value"] is None
+        assert result["payload"]["valid_from"] is None
+        assert result["payload"]["expires_at"] is None
+        # No point querying _load_bulletin_from_api once we know there is
+        # no data for the selected stations.
+        assert load_calls == []
+
+    def test_period_is_taken_from_bulletin_records_not_from_dm(self, monkeypatch):
+        """The active dashboard horizon (whatever dm would return via the
+        legacy get_bulletin_metadata) must NOT influence the resolved
+        (year, horizon_value) — only the persisted bulletin records for
+        the selected stations under the horizon being published do. Using
+        a dm without get_bulletin_metadata at all proves it is never
+        called."""
+        site = _site_with_attrs(code="90001", forecast_expected=5.0)
+        seen_args = []
+
+        def fake_load(horizon, forecast_year, forecast_horizon, sites_list):
+            seen_args.append((horizon, forecast_year, forecast_horizon))
+            return [site]
+
+        monkeypatch.setattr(bulletin_manager, "_load_bulletin_from_api", fake_load)
+        # Two rows for the selected station under the "month" horizon —
+        # 2025/9 and the later 2026/4 — the LATEST one must be picked.
+        monkeypatch.setattr(
+            db,
+            "_read_data",
+            lambda *a, **k: _bulletin_records_df(
+                [
+                    {"code": "90001", "year": 2025, "horizon_value": 9},
+                    {"code": "90001", "year": 2026, "horizon_value": 4},
+                ]
+            ),
+        )
+        dm = _FakeDataManager([site])  # no get_bulletin_metadata attribute at all
+
+        result = bp.assemble_bulletin_snapshot("month", ["90001"], dm, dt.date(2026, 3, 1))
+
+        assert seen_args == [("month", 2026, 4)]
+        assert result["payload"]["year"] == 2026
+        assert result["payload"]["horizon_value"] == 4
+        assert result["payload"]["valid_from"] == "2026-04-01"
 
 
 # ---------------------------------------------------------------------------
