@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 import probabilistic_metrics as pm
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import (
     AGGREGATED_EM_RAW_MODELS,
     AGGREGATED_ENSEMBLE_MODELS,
@@ -2267,11 +2268,20 @@ def calculate_quarterly_skill_metrics(
     Returns:
         (skill_stats_df, joint_forecasts_df, timing_stats)
     """
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, quarter_in_year is the TARGET quarter,
+    # not the issue lead — multiple leads can share the same target. Add
+    # horizon_value to the ensemble time-grouping so EM/Naive/Skilled Mean
+    # are generated per lead instead of pooling across leads (P2; the
+    # earlier P1b work only carried horizon_value through, it did not yet
+    # gate the grouping on it).
+    time_group_cols = ["year", "quarter_in_year", "code"]
+    if skill_lead_aware_enabled():
+        time_group_cols = ["year", "quarter_in_year", "horizon_value", "code"]
     return _calculate_aggregated_skill_metrics(
         observations,
         forecasts,
         period_col="quarter_in_year",
-        time_group_cols=["year", "quarter_in_year", "code"],
+        time_group_cols=time_group_cols,
         merge_cols=["code", "year", "quarter_in_year"],
         timing_stats=timing_stats,
     )
@@ -2303,6 +2313,14 @@ def calculate_seasonal_skill_metrics(
     Returns:
         (skill_stats_df, joint_forecasts_df, timing_stats)
     """
+    # season_in_year already IS the lead (0-3) pre-lead-aware, so this
+    # grouping is partition-equivalent either way. Under the flag we still
+    # add horizon_value explicitly so the output schema/merge keys match
+    # quarter/month and the #411 floor + P2b tombstone keys can rely on a
+    # single canonical `horizon_value` column across all three horizons.
+    time_group_cols = ["season_year", "season_in_year", "code", "date"]
+    if skill_lead_aware_enabled():
+        time_group_cols = ["season_year", "season_in_year", "horizon_value", "code", "date"]
     return _calculate_aggregated_skill_metrics(
         observations,
         forecasts,
@@ -2311,7 +2329,7 @@ def calculate_seasonal_skill_metrics(
         # dates; group by `date` so each issue forms its own ensemble (one
         # EM per issue = clean 2-model mean) instead of collapsing distinct
         # issue dates into a single blended row.
-        time_group_cols=["season_year", "season_in_year", "code", "date"],
+        time_group_cols=time_group_cols,
         merge_cols=["code", "season_year"],
         timing_stats=timing_stats,
     )
@@ -2320,6 +2338,94 @@ def calculate_seasonal_skill_metrics(
 # ===================================================================
 # Shared implementation for quarterly/seasonal skill metrics
 # ===================================================================
+
+
+def _exclude_null_lead_rows(df: pd.DataFrame, context: str) -> pd.DataFrame:
+    """Drop rows with NULL/non-numeric ``horizon_value`` before a lead-aware
+    groupby, warning on the count.
+
+    Under ``SAPPHIRE_SKILL_LEAD_AWARE`` the aggregated skill/ensemble paths
+    add ``horizon_value`` to the groupby key. pandas ``groupby(dropna=True)``
+    silently omits rows whose key is NaN, so legacy or partially-migrated
+    rows with a NULL/non-numeric lead would either crash the CRPS merge
+    (all-NULL → empty keyless frame) or vanish from the output (mixed).
+    Excluding them explicitly — with a loud warning naming the count —
+    mirrors P1b's gap-detector treatment of legacy NULL-lead rows.
+
+    ``horizon_value`` is coerced to numeric so downstream groupbys see a
+    clean numeric key.
+
+    Args:
+        df: Frame with a ``horizon_value`` column.
+        context: Short label for the warning (e.g. ``"quarter_in_year"``).
+
+    Returns:
+        A copy of *df* keeping only rows with a finite numeric
+        ``horizon_value``. Returns *df* unchanged if the column is absent.
+    """
+    if "horizon_value" not in df.columns:
+        return df
+    df = df.copy()
+    df["horizon_value"] = pd.to_numeric(df["horizon_value"], errors="coerce")
+    valid = df["horizon_value"].notna()
+    n_dropped = int((~valid).sum())
+    if n_dropped:
+        logger.warning(
+            "%d legacy NULL-lead %s rows skipped from lead-aware skill/ensemble — need migration",
+            n_dropped,
+            context,
+        )
+    return df[valid].copy()
+
+
+def _crps_records_for_groups(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    """Compute CRPS/reliability/sharpness per group, arity-agnostic.
+
+    Shared by the point-forecast, EM, Naive Mean, and Skilled Mean CRPS
+    passes in the aggregated (quarter/season) skill path. ``group_cols``
+    is normally 3 columns (``period_col``, ``code``, ``model_short``) but
+    grows to 4 (``horizon_value`` inserted after ``period_col``) under
+    ``SAPPHIRE_SKILL_LEAD_AWARE``. A previous ``len(group_key) == 3``
+    guard hard-coded the 3-column case and silently mis-unpacked a 4th
+    column; this generalizes via ``dict(zip(...))`` instead.
+
+    Args:
+        df: Merged forecast+observation rows with a ``discharge_avg``
+            column and quantile columns.
+        group_cols: Columns to group by; each becomes a key in every
+            output record.
+
+    Returns:
+        DataFrame with ``group_cols`` plus ``crps``, ``reliability_score``,
+        ``sharpness_90``, ``sharpness_50`` — one row per group. Empty
+        (no columns) if ``df`` has no rows.
+    """
+    records = []
+    for group_key, grp in df.groupby(group_cols):
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        key_map = dict(zip(group_cols, group_key, strict=True))
+        obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
+        qf_cols = [c for c in _QUANTILE_COLS if c in grp.columns]
+        if len(qf_cols) == len(_QUANTILE_COLS):
+            qf = grp[qf_cols].to_numpy(dtype=np.float64)
+            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
+            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+        else:
+            crps_val = np.nan
+            pit = {"reliability_score": np.nan}
+            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+        records.append(
+            {
+                **key_map,
+                "crps": crps_val,
+                "reliability_score": pit["reliability_score"],
+                "sharpness_90": sharp["sharpness_90"],
+                "sharpness_50": sharp["sharpness_50"],
+            }
+        )
+    return pd.DataFrame(records)
 
 
 def _calculate_aggregated_skill_metrics(
@@ -2340,10 +2446,20 @@ def _calculate_aggregated_skill_metrics(
         is_multi_model_composition,
     )
 
-    metric_group_cols = [period_col, "code", "model_short"]
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, stratify the aggregated skill/ensemble
+    # grouping by the operational lead (horizon_value), matching monthly's
+    # GROUP_COLS (PP-038). Flag OFF, or horizon_value absent from the input
+    # (legacy CSV, pre-P1b callers), falls back to the pre-lead-aware 3-key
+    # grouping unchanged.
+    lead_aware = skill_lead_aware_enabled() and "horizon_value" in forecasts.columns
+    metric_group_cols = (
+        [period_col, "horizon_value", "code", "model_short"]
+        if lead_aware
+        else [period_col, "code", "model_short"]
+    )
 
     empty_stats = pd.DataFrame(
-        columns=[period_col, "code", "model_short"]
+        columns=metric_group_cols
         + METRIC_ORDER
         + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
     )
@@ -2390,6 +2506,17 @@ def _calculate_aggregated_skill_metrics(
     if merged.empty:
         return empty_stats, empty_joint, timing_stats
 
+    # Under the flag, exclude NULL/non-numeric-lead rows BEFORE the
+    # lead-aware groupby: pandas groupby(dropna=True) would silently omit
+    # them (mixed frame → dropped skill/ensemble rows) or leave the CRPS
+    # frame keyless (all-NULL frame → KeyError on merge). An all-NULL (or
+    # otherwise empty-after-exclusion) frame returns the proper empty
+    # schema. Flag-OFF (3-key grouping) is unchanged.
+    if lead_aware:
+        merged = _exclude_null_lead_rows(merged, period_col)
+        if merged.empty:
+            return empty_stats, empty_joint, timing_stats
+
     # Restrict the ensemble grouping to columns actually present. Seasonal
     # callers pass `date` so each issue date forms its own ensemble; date-less
     # frames (quarter, legacy CSV) fall back to period-level grouping
@@ -2409,36 +2536,7 @@ def _calculate_aggregated_skill_metrics(
     )
 
     # --- 3. CRPS per group ---
-    crps_records = []
-    for group_key, grp in merged.groupby(metric_group_cols):
-        if isinstance(group_key, tuple) and len(group_key) == 3:
-            piy, code, model = group_key
-        else:
-            piy, code, model = 1, group_key[0], group_key[1]
-        obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-        qf_cols = [c for c in _QUANTILE_COLS if c in grp.columns]
-        if len(qf_cols) == len(_QUANTILE_COLS):
-            qf = grp[qf_cols].to_numpy(dtype=np.float64)
-            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
-            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
-            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
-        else:
-            crps_val = np.nan
-            pit = {"reliability_score": np.nan}
-            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
-        crps_records.append(
-            {
-                period_col: piy,
-                "code": code,
-                "model_short": model,
-                "crps": crps_val,
-                "reliability_score": pit["reliability_score"],
-                "sharpness_90": sharp["sharpness_90"],
-                "sharpness_50": sharp["sharpness_50"],
-            }
-        )
-
-    crps_df = pd.DataFrame(crps_records)
+    crps_df = _crps_records_for_groups(merged, metric_group_cols)
     skill_stats = skill_stats.merge(crps_df, on=metric_group_cols, how="left")
 
     # --- 4. Ensemble Mean (EM) ---
@@ -2484,7 +2582,7 @@ def _calculate_aggregated_skill_metrics(
                 em_with_obs = em_with_obs.drop(columns=[obs_suffix])
 
             em_skill = (
-                em_with_obs.groupby([period_col, "code", "model_short", "composition"])[
+                em_with_obs.groupby([*metric_group_cols, "composition"])[
                     ["discharge_avg", "forecasted_discharge", "delta"]
                 ]
                 .apply(
@@ -2496,35 +2594,8 @@ def _calculate_aggregated_skill_metrics(
                 .reset_index()
             )
 
-            qf_cols = [c for c in _QUANTILE_COLS if c in em_with_obs.columns]
-            if len(qf_cols) == len(_QUANTILE_COLS):
-                em_crps = []
-                for group_key, grp in em_with_obs.groupby([period_col, "code", "model_short"]):
-                    piy, code, model = group_key
-                    obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-                    qf = grp[qf_cols].to_numpy(dtype=np.float64)
-                    crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
-                    pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
-                    sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
-                    em_crps.append(
-                        {
-                            period_col: piy,
-                            "code": code,
-                            "model_short": model,
-                            "crps": crps_val,
-                            "reliability_score": pit["reliability_score"],
-                            "sharpness_90": sharp["sharpness_90"],
-                            "sharpness_50": sharp["sharpness_50"],
-                        }
-                    )
-                em_crps_df = pd.DataFrame(em_crps)
-                em_skill = em_skill.merge(
-                    em_crps_df,
-                    on=[period_col, "code", "model_short"],
-                    how="left",
-                )
-            else:
-                em_skill["crps"] = np.nan
+            em_crps_df = _crps_records_for_groups(em_with_obs, metric_group_cols)
+            em_skill = em_skill.merge(em_crps_df, on=metric_group_cols, how="left")
 
             skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
             em_avg["flag"] = 0
@@ -2540,6 +2611,7 @@ def _calculate_aggregated_skill_metrics(
         time_group_cols,
         period_col,
         joint_forecasts,
+        metric_group_cols,
     )
 
     # --- 5. Naive Mean ---
@@ -2553,6 +2625,7 @@ def _calculate_aggregated_skill_metrics(
         period_col,
         timing_stats,
         joint_forecasts,
+        metric_group_cols,
     )
 
     # --- 6. Drop rows with n_pairs < K (quarter/season K=5) ---
@@ -2585,8 +2658,11 @@ def _add_naive_mean_aggregated(
     period_col,
     timing_stats,
     joint_forecasts,
+    metric_group_cols=None,
 ):
     """Naive Mean for quarterly/seasonal: unweighted all-model average."""
+    if metric_group_cols is None:
+        metric_group_cols = [period_col, "code", "model_short"]
     from src.ensemble_calculator import (
         composition_agg,
         is_multi_model_composition,
@@ -2640,7 +2716,7 @@ def _add_naive_mean_aggregated(
         return skill_stats, joint_forecasts, timing_stats
 
     naive_skill = (
-        naive_with_obs.groupby([period_col, "code", "model_short", "composition"])[
+        naive_with_obs.groupby([*metric_group_cols, "composition"])[
             ["discharge_avg", "forecasted_discharge", "delta"]
         ]
         .apply(
@@ -2652,35 +2728,8 @@ def _add_naive_mean_aggregated(
         .reset_index()
     )
 
-    qf_cols = [c for c in _QUANTILE_COLS if c in naive_with_obs.columns]
-    if len(qf_cols) == len(_QUANTILE_COLS):
-        crps_records = []
-        for group_key, grp in naive_with_obs.groupby([period_col, "code", "model_short"]):
-            piy, code, model = group_key
-            obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-            qf = grp[qf_cols].to_numpy(dtype=np.float64)
-            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
-            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
-            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
-            crps_records.append(
-                {
-                    period_col: piy,
-                    "code": code,
-                    "model_short": model,
-                    "crps": crps_val,
-                    "reliability_score": pit["reliability_score"],
-                    "sharpness_90": sharp["sharpness_90"],
-                    "sharpness_50": sharp["sharpness_50"],
-                }
-            )
-        crps_df = pd.DataFrame(crps_records)
-        naive_skill = naive_skill.merge(
-            crps_df,
-            on=[period_col, "code", "model_short"],
-            how="left",
-        )
-    else:
-        naive_skill["crps"] = np.nan
+    naive_crps_df = _crps_records_for_groups(naive_with_obs, metric_group_cols)
+    naive_skill = naive_skill.merge(naive_crps_df, on=metric_group_cols, how="left")
 
     parts = [df for df in [skill_stats, naive_skill] if not df.empty]
     skill_stats = pd.concat(parts, ignore_index=True) if parts else naive_skill
@@ -2699,6 +2748,7 @@ def _add_skilled_mean_aggregated(
     time_group_cols,
     period_col,
     joint_forecasts,
+    metric_group_cols=None,
 ):
     """Skilled Mean for quarterly/seasonal: 1/MAE weighted average."""
     from src.ensemble_calculator import (
@@ -2708,6 +2758,9 @@ def _add_skilled_mean_aggregated(
 
     if skill_stats.empty or merged.empty:
         return skill_stats, joint_forecasts
+
+    if metric_group_cols is None:
+        metric_group_cols = [period_col, "code", "model_short"]
 
     # Derive the horizon type from period_col so min_pairs is horizon-specific.
     _PERIOD_COL_TO_HORIZON = {
@@ -2726,7 +2779,6 @@ def _add_skilled_mean_aggregated(
     if filtered.empty:
         return skill_stats, joint_forecasts
 
-    metric_group_cols = [period_col, "code", "model_short"]
     mae_df = filtered[metric_group_cols + ["mae"]].copy()
     mae_df = mae_df.dropna(subset=["mae"])
     if mae_df.empty:
@@ -2794,7 +2846,7 @@ def _add_skilled_mean_aggregated(
         sm_with_obs = sm_with_obs.drop(columns=[obs_suffix])
 
     sm_skill = (
-        sm_with_obs.groupby([period_col, "code", "model_short", "composition"])[
+        sm_with_obs.groupby([*metric_group_cols, "composition"])[
             ["discharge_avg", "forecasted_discharge", "delta"]
         ]
         .apply(
@@ -2806,35 +2858,8 @@ def _add_skilled_mean_aggregated(
         .reset_index()
     )
 
-    qf_cols = [c for c in _QUANTILE_COLS if c in sm_with_obs.columns]
-    if len(qf_cols) == len(_QUANTILE_COLS):
-        sm_crps = []
-        for group_key, grp in sm_with_obs.groupby([period_col, "code", "model_short"]):
-            piy, code, model = group_key
-            obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-            qf = grp[qf_cols].to_numpy(dtype=np.float64)
-            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
-            pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
-            sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
-            sm_crps.append(
-                {
-                    period_col: piy,
-                    "code": code,
-                    "model_short": model,
-                    "crps": crps_val,
-                    "reliability_score": pit["reliability_score"],
-                    "sharpness_90": sharp["sharpness_90"],
-                    "sharpness_50": sharp["sharpness_50"],
-                }
-            )
-        sm_crps_df = pd.DataFrame(sm_crps)
-        sm_skill = sm_skill.merge(
-            sm_crps_df,
-            on=[period_col, "code", "model_short"],
-            how="left",
-        )
-    else:
-        sm_skill["crps"] = np.nan
+    sm_crps_df = _crps_records_for_groups(sm_with_obs, metric_group_cols)
+    sm_skill = sm_skill.merge(sm_crps_df, on=metric_group_cols, how="left")
 
     skill_stats = pd.concat([skill_stats, sm_skill], ignore_index=True)
     sm_avg["flag"] = 0

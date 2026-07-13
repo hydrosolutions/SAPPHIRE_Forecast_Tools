@@ -1,5 +1,6 @@
 """Tests for src/gap_detector.py — find missing ensemble forecasts."""
 
+import logging
 import os
 import sys
 from unittest.mock import patch
@@ -517,6 +518,112 @@ class TestDetectMissingMonthlyEnsembles:
         result = detect_missing_monthly_ensembles(df, lookback_months=3)
         assert len(result) == 1
         assert result.iloc[0]["model_short"] == "EM"
+
+
+class TestDetectMissingMonthlyEnsemblesLeadAware:
+    """M1 P5b: under SAPPHIRE_SKILL_LEAD_AWARE the MONTHLY detector keys on
+
+    horizon_value (mirroring the quarterly detector) so a missing ensemble
+    at one lead is detected even when another lead is present for the same
+    target month. Flag OFF, or horizon_value absent, is unchanged.
+    """
+
+    def test_flag_on_detects_per_lead_gap(self, monkeypatch):
+        """EM present at lead 0 but MISSING at lead 1 -> lead-1 EM is a gap."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        combined = pd.DataFrame(
+            {
+                "year": [2025, 2025, 2025, 2025, 2025],
+                "month": [1, 1, 1, 1, 1],
+                "code": ["19999"] * 5,
+                "model_short": ["LR_Base", "LR_SM", "EM", "LR_Base", "LR_SM"],
+                "horizon_value": [0, 0, 0, 1, 1],
+                "forecasted_discharge": [100.0, 110.0, 105.0, 90.0, 95.0],
+            }
+        )
+        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
+        assert len(gaps) == 1
+        assert gaps.iloc[0]["model_short"] == "EM"
+        assert int(gaps.iloc[0]["horizon_value"]) == 1
+        assert int(gaps.iloc[0]["month"]) == 1
+        assert str(gaps.iloc[0]["code"]) == "19999"
+
+    def test_flag_off_conflates_leads(self, monkeypatch):
+        """Companion: flag OFF keeps today's behavior -- the lead-0 EM
+
+        satisfies the (year, month, code) grain for BOTH leads, so no gap
+        is detected (leads conflated).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        combined = pd.DataFrame(
+            {
+                "year": [2025, 2025, 2025, 2025, 2025],
+                "month": [1, 1, 1, 1, 1],
+                "code": ["19999"] * 5,
+                "model_short": ["LR_Base", "LR_SM", "EM", "LR_Base", "LR_SM"],
+                "horizon_value": [0, 0, 0, 1, 1],
+                "forecasted_discharge": [100.0, 110.0, 105.0, 90.0, 95.0],
+            }
+        )
+        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
+        assert gaps.empty
+        # Flag OFF: legacy period-only grain, no horizon_value column emitted.
+        assert list(gaps.columns) == ["year", "month", "code", "model_short"]
+
+    def test_flag_off_byte_identity_representative_input(self, monkeypatch):
+        """Flag OFF byte-identity: output equals the legacy period-only
+
+        result on a representative multi-lead input (columns, values, order).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        combined = pd.DataFrame(
+            {
+                "year": [2025, 2025, 2025, 2025],
+                "month": [2, 2, 2, 2],
+                "code": ["19999", "19999", "18888", "18888"],
+                "model_short": ["LR_Base", "LR_SM", "LR_Base", "EM"],
+                "horizon_value": [0, 1, 0, 0],
+                "forecasted_discharge": [100.0, 90.0, 80.0, 82.0],
+            }
+        )
+        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
+        expected = pd.DataFrame(
+            {
+                "year": [2025],
+                "month": [2],
+                "code": ["19999"],
+                "model_short": ["EM"],
+            }
+        )
+        pd.testing.assert_frame_equal(gaps.reset_index(drop=True), expected, check_dtype=False)
+
+    def test_flag_on_null_lead_row_skipped_with_warning(self, monkeypatch, caplog):
+        """Parity with the quarterly detector: a legacy NULL-lead row is
+
+        EXCLUDED from the lead-aware gap universe (no phantom gap) and a
+        WARNING naming the skipped count is emitted.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        combined = pd.DataFrame(
+            {
+                "year": [2025, 2025, 2025],
+                "month": [1, 1, 1],
+                "code": ["19999", "19999", "19999"],
+                "model_short": ["LR_Base", "LR_Base", "EM"],
+                "horizon_value": [None, 0, 0],
+                "forecasted_discharge": [100.0, 100.0, 100.0],
+            }
+        )
+        with caplog.at_level(logging.WARNING):
+            gaps = detect_missing_monthly_ensembles(
+                combined, lookback_months=3, ensemble_models={"EM"}
+            )
+        # hv=0 has its EM; the NULL-lead row is excluded (no phantom gap).
+        assert gaps.empty
+        assert (gaps["horizon_value"] >= 0).all()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings, "expected a WARNING for the skipped NULL-lead row"
+        assert any("1" in r.getMessage() for r in warnings)
 
 
 # ---------------------------------------------------------------------------

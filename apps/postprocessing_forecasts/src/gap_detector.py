@@ -8,6 +8,7 @@ missing within a lookback window.
 import logging
 
 import pandas as pd
+from skill_lead_aware_flag import skill_lead_aware_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -247,12 +248,26 @@ def detect_missing_monthly_ensembles(
     if ensemble_models is None:
         ensemble_models = {"EM"}
 
-    empty = pd.DataFrame(columns=["year", "month", "code", "model_short"])
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, detect gaps per-lead -- mirrors the
+    # quarterly detector's horizon_value key -- instead of conflating
+    # distinct horizon_value leads into one (year, month, code) grain, so a
+    # missing ensemble at a specific lead is detected even when another lead
+    # is present for the same target month. Flag OFF, or horizon_value absent
+    # from the input, is unchanged.
+    lead_aware = skill_lead_aware_enabled() and (
+        not combined_forecasts.empty and "horizon_value" in combined_forecasts.columns
+    )
+
+    key_cols = ["year", "month", "code"]
+    if lead_aware:
+        key_cols = [*key_cols, "horizon_value"]
+    cols = [*key_cols, "model_short"]
+    empty = pd.DataFrame(columns=cols)
 
     if combined_forecasts.empty:
         return empty
 
-    required = {"year", "month", "code", "model_short"}
+    required = set(key_cols) | {"model_short"}
     if not required.issubset(combined_forecasts.columns):
         logger.warning(
             "Monthly combined forecasts missing required columns: %s",
@@ -263,9 +278,30 @@ def detect_missing_monthly_ensembles(
     df = combined_forecasts.copy()
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month"] = pd.to_numeric(df["month"], errors="coerce")
-    df = df.dropna(subset=["year", "month"])
-    df["year"] = df["year"].astype(int)
-    df["month"] = df["month"].astype(int)
+    numeric_cols = ["year", "month"]
+    if lead_aware:
+        # Legacy rows with a NULL/non-numeric horizon_value cannot be keyed
+        # to a real lead. Manufacturing an "unknown-lead" sentinel gap only
+        # yields a PHANTOM gap that downstream maintenance -- which
+        # regenerates ensembles at REAL leads (0/1/...) -- can never fill,
+        # so it would recur every run. Instead, EXCLUDE such rows from the
+        # lead-aware gap universe, but emit a WARNING naming the count so
+        # they are surfaced (not silently dropped). (Monthly rows normally
+        # arrive with horizon_value already coerced to a clean int upstream
+        # by _normalize_monthly_forecasts; this mirrors the quarterly
+        # detector for parity/robustness.)
+        df["horizon_value"] = pd.to_numeric(df["horizon_value"], errors="coerce")
+        null_lead_count = int(df["horizon_value"].isna().sum())
+        if null_lead_count:
+            logger.warning(
+                "%d legacy NULL-lead month rows skipped from lead-aware "
+                "gap detection -- need migration",
+                null_lead_count,
+            )
+        numeric_cols = [*numeric_cols, "horizon_value"]
+    df = df.dropna(subset=numeric_cols)
+    for col in numeric_cols:
+        df[col] = df[col].astype(int)
 
     if df.empty:
         return empty
@@ -295,23 +331,21 @@ def detect_missing_monthly_ensembles(
     if recent.empty:
         return empty
 
-    # Find all (year, month, code) pairs with any forecasts
-    all_pairs = recent[["year", "month", "code"]].drop_duplicates()
+    # Find all key-grain pairs with any forecasts
+    all_pairs = recent[key_cols].drop_duplicates()
 
     # Check each ensemble model
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent["model_short"] == model][
-            ["year", "month", "code"]
-        ].drop_duplicates()
+        model_pairs = recent[recent["model_short"] == model][key_cols].drop_duplicates()
 
         merged = all_pairs.merge(
             model_pairs,
-            on=["year", "month", "code"],
+            on=key_cols,
             how="left",
             indicator=True,
         )
-        gaps = merged[merged["_merge"] == "left_only"][["year", "month", "code"]].copy()
+        gaps = merged[merged["_merge"] == "left_only"][key_cols].copy()
         if not gaps.empty:
             gaps["model_short"] = model
             missing_parts.append(gaps)
@@ -330,7 +364,7 @@ def detect_missing_monthly_ensembles(
     return pd.concat(
         missing_parts,
         ignore_index=True,
-    )[["year", "month", "code", "model_short"]]
+    )[cols]
 
 
 def detect_missing_quarterly_ensembles(
@@ -353,13 +387,25 @@ def detect_missing_quarterly_ensembles(
     if ensemble_models is None:
         ensemble_models = {"EM"}
 
-    cols = ["year", "quarter_in_year", "code", "model_short"]
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, detect gaps per-lead -- mirrors
+    # detect_missing_seasonal_ensembles' unconditional season_in_year key
+    # -- instead of conflating distinct horizon_value leads into one
+    # (year, quarter, code) grain. Flag OFF, or horizon_value absent from
+    # the input, is unchanged.
+    lead_aware = skill_lead_aware_enabled() and (
+        not combined_forecasts.empty and "horizon_value" in combined_forecasts.columns
+    )
+
+    key_cols = ["year", "quarter_in_year", "code"]
+    if lead_aware:
+        key_cols = [*key_cols, "horizon_value"]
+    cols = [*key_cols, "model_short"]
     empty = pd.DataFrame(columns=cols)
 
     if combined_forecasts.empty:
         return empty
 
-    required = {"year", "quarter_in_year", "code", "model_short"}
+    required = set(key_cols) | {"model_short"}
     if not required.issubset(combined_forecasts.columns):
         logger.warning(
             "Quarterly combined forecasts missing columns: %s",
@@ -370,9 +416,28 @@ def detect_missing_quarterly_ensembles(
     df = combined_forecasts.copy()
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["quarter_in_year"] = pd.to_numeric(df["quarter_in_year"], errors="coerce")
-    df = df.dropna(subset=["year", "quarter_in_year"])
-    df["year"] = df["year"].astype(int)
-    df["quarter_in_year"] = df["quarter_in_year"].astype(int)
+    numeric_cols = ["year", "quarter_in_year"]
+    if lead_aware:
+        # Legacy rows with a NULL/non-numeric horizon_value cannot be keyed
+        # to a real lead. Manufacturing an "unknown-lead" sentinel gap only
+        # yields a PHANTOM gap that downstream maintenance -- which
+        # regenerates ensembles at REAL leads (0/1/...) -- can never fill,
+        # so it would recur every run. Instead, EXCLUDE such rows from the
+        # lead-aware gap universe, but emit a WARNING naming the count so
+        # they are surfaced (not silently dropped): they need migration
+        # (FIX 5, revised).
+        df["horizon_value"] = pd.to_numeric(df["horizon_value"], errors="coerce")
+        null_lead_count = int(df["horizon_value"].isna().sum())
+        if null_lead_count:
+            logger.warning(
+                "%d legacy NULL-lead quarter rows skipped from lead-aware "
+                "gap detection -- need migration",
+                null_lead_count,
+            )
+        numeric_cols = [*numeric_cols, "horizon_value"]
+    df = df.dropna(subset=numeric_cols)
+    for col in numeric_cols:
+        df[col] = df[col].astype(int)
 
     if df.empty:
         return empty
@@ -399,21 +464,19 @@ def detect_missing_quarterly_ensembles(
     if recent.empty:
         return empty
 
-    all_pairs = recent[["year", "quarter_in_year", "code"]].drop_duplicates()
+    all_pairs = recent[key_cols].drop_duplicates()
 
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent["model_short"] == model][
-            ["year", "quarter_in_year", "code"]
-        ].drop_duplicates()
+        model_pairs = recent[recent["model_short"] == model][key_cols].drop_duplicates()
 
         merged = all_pairs.merge(
             model_pairs,
-            on=["year", "quarter_in_year", "code"],
+            on=key_cols,
             how="left",
             indicator=True,
         )
-        gaps = merged[merged["_merge"] == "left_only"][["year", "quarter_in_year", "code"]].copy()
+        gaps = merged[merged["_merge"] == "left_only"][key_cols].copy()
         if not gaps.empty:
             gaps["model_short"] = model
             missing_parts.append(gaps)

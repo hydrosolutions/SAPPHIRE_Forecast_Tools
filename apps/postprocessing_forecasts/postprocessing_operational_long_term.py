@@ -27,6 +27,7 @@ from long_term_horizon_resolver import (
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import data_reader, ensemble_calculator, file_writer
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
@@ -66,6 +67,45 @@ def _seasonal_issue_leads_for_date(forecast_date: dt.date) -> list[int]:
     if seasonal_config_name(issue_month) not in supported_long_term_modes():
         return []
     return [seasonal_horizon_value(issue_month)]
+
+
+def _dedup_quarterly_joint(quarterly_joint: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicate quarterly ensemble rows on the combined-forecast key.
+
+    Quarter is SINGLE-LEAD per deployment config: every row for a given
+    (year, quarter, code, model) shares the one configured lead, so the
+    legacy 4-column key is always correct and is used under BOTH flag states.
+
+    The subset must NOT be keyed on ``horizon_value`` — not even under the
+    lead-aware flag — because the quarterly combined reader drops
+    ``horizon_value`` from the persisted rows (``_normalize_combined_forecasts``,
+    "single-lead deployment config"). After ``pd.concat([existing_q, fresh])``
+    the stale ``existing_q`` rows therefore carry ``horizon_value=NaN`` while the
+    fresh ensemble rows carry the real configured lead. Keying the dedup on
+    ``horizon_value`` would treat the NaN (stale) row as distinct from the
+    fresh real-lead row for the same (year, quarter, code, model), so the stale
+    row would survive ``keep="last"`` and later duplicate on write at the real
+    lead's key. The 4-column key collapses old-vs-new correctly (fresh wins).
+    """
+    subset = ["year", "quarter_in_year", "code", "model_short"]
+    return quarterly_joint.drop_duplicates(subset=subset, keep="last")
+
+
+def _dedup_seasonal_joint(seasonal_joint: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicate seasonal ensemble rows on the combined-forecast key.
+
+    As for the quarterly path, under the lead-aware flag distinct
+    ``horizon_value`` leads for the same (season_year, season, code, model)
+    must survive, so ``horizon_value`` is added to the dedup key when
+    present. Flag OFF keeps the exact legacy key for byte-identical
+    behavior. The subset is filtered to columns actually present, matching
+    the pre-existing seasonal behavior.
+    """
+    dedup = ["season_year", "season_in_year", "code", "model_short"]
+    if skill_lead_aware_enabled() and "horizon_value" in seasonal_joint.columns:
+        dedup = [*dedup, "horizon_value"]
+    available = [c for c in dedup if c in seasonal_joint.columns]
+    return seasonal_joint.drop_duplicates(subset=available, keep="last")
 
 
 def _read_station_codes():
@@ -183,15 +223,7 @@ def postprocessing_operational_long_term():
                             [existing_q, quarterly_joint],
                             ignore_index=True,
                         )
-                        quarterly_joint = quarterly_joint.drop_duplicates(
-                            subset=[
-                                "year",
-                                "quarter_in_year",
-                                "code",
-                                "model_short",
-                            ],
-                            keep="last",
-                        )
+                        quarterly_joint = _dedup_quarterly_joint(quarterly_joint)
                     file_writer.save_quarterly_forecast_data(quarterly_joint)
                     logger.info("Quarterly ensembles saved.")
                 else:
@@ -242,12 +274,7 @@ def postprocessing_operational_long_term():
                             [existing_s, seasonal_joint],
                             ignore_index=True,
                         )
-                        dedup = ["season_year", "season_in_year", "code", "model_short"]
-                        available = [c for c in dedup if c in seasonal_joint.columns]
-                        seasonal_joint = seasonal_joint.drop_duplicates(
-                            subset=available,
-                            keep="last",
-                        )
+                        seasonal_joint = _dedup_seasonal_joint(seasonal_joint)
                     file_writer.save_seasonal_forecast_data(seasonal_joint)
                     logger.info("Seasonal ensembles saved.")
                 else:

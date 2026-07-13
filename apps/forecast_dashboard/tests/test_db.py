@@ -471,6 +471,54 @@ class TestGetLongForecasts:
         assert "valid_from" in result.columns
 
 
+# ── get_long_forecasts: M1 P3 lead-aware horizon_value preservation ───────
+
+
+class TestGetLongForecastsLeadAware:
+    """M1 P3: under SAPPHIRE_SKILL_LEAD_AWARE, horizon_value (lead) survives
+    get_long_forecasts so callers can merge/dedup on the lead key instead of
+    collapsing all leads together."""
+
+    def test_horizon_value_preserved_when_flag_on(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_LONG_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts(station="99001", horizon_value=1)
+
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].iloc[0] == 1
+
+    def test_empty_schema_declares_horizon_value_when_flag_on(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts(station="99001", horizon_value=1)
+
+        assert result.empty
+        assert "horizon_value" in result.columns
+
+    def test_horizon_value_still_dropped_when_flag_explicitly_off(self, monkeypatch):
+        """An explicit falsey token behaves identically to unset (byte-identical golden)."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_LONG_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts(station="99001", horizon_value=1)
+
+        assert "horizon_value" not in result.columns
+
+
 # ── get_forecast_stats ────────────────────────────────────────────────────
 
 
@@ -981,6 +1029,424 @@ class TestGetDataMonthly:
         assert data["long_forecasts_m0"].empty
 
 
+# ── _get_data_monthly: M1 P3 config-driven per-lead monthly display ───────
+
+
+class TestGetDataMonthlyLeadAware:
+    """M1 P3: monthly display becomes config-driven over ALL supported
+    month_N leads under the flag, instead of hardcoding horizon_value=1/0.
+
+    Critical org concern: taj month_1 == LEAD 0 (kyg month_1 == lead 1).
+    Hardcoding horizon_value=1 for the primary monthly tile silently hides
+    taj's flagship monthly forecast.
+    """
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _write_month_config(self, config_dir, mode, lead, issue_day=25):
+        (config_dir / f"{mode}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead, "operational_issue_day": issue_day})
+        )
+
+    def test_taj_style_month1_lead0_forecast_visible_when_flag_on(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """taj: month_1's TRUE operational lead is 0. The flag must resolve
+        the lead from config instead of hardcoding horizon_value=1."""
+        config_dir = _long_term_resolver_env
+        self._write_month_config(config_dir, "month_1", lead=0, issue_day=1)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        taj_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 0}
+        taj_skill = _skill_metric_record_with_lead(4, "GBT", 0, delta=1.0)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 0:
+                    return _make_mock_response([taj_forecast])
+                return _make_mock_response([])
+            if "/skill-metric/" in url:
+                return _make_mock_response([taj_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "month", "19999", pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+        )
+
+        fa = data["forecasts_all"]
+        assert not fa.empty, "taj lead-0 monthly forecast must be visible, not filtered out"
+        assert (fa["horizon_value"] == 0).all()
+        assert fa["delta"].iloc[0] == 1.0  # skill metrics correctly attached to lead 0
+
+    def test_taj_style_month1_lead0_forecast_hidden_when_flag_off(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """Documents the pre-M1 bug: flag OFF hardcodes horizon_value=1, so
+        taj's lead-0 forecast (only queryable at horizon_value=0) comes back
+        empty. This is the flag-OFF golden — it must NOT change."""
+        config_dir = _long_term_resolver_env
+        self._write_month_config(config_dir, "month_1", lead=0, issue_day=1)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
+        # SAPPHIRE_SKILL_LEAD_AWARE intentionally left unset (default OFF).
+
+        taj_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 0}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 0:
+                    return _make_mock_response([taj_forecast])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "month", "19999", pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+        )
+
+        assert data["forecasts_all"].empty
+
+    def test_month2_and_month3_leads_available_via_by_mode_dict_when_flag_on(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """kyg-style: month_1/2/3 == lead 1/2/3. hv2/hv3 must be reachable
+        and each carry their own lead's forecasts + skill metrics."""
+        config_dir = _long_term_resolver_env
+        self._write_month_config(config_dir, "month_1", lead=1)
+        self._write_month_config(config_dir, "month_2", lead=2)
+        self._write_month_config(config_dir, "month_3", lead=3)
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "month_1,month_2,month_3"
+        )
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        def forecast_for_lead(lead):
+            return {
+                **_LONG_FORECAST_RECORD,
+                "code": "19999",
+                "horizon_value": lead,
+                "id": 100 + lead,
+            }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                lead = params.get("horizon_value")
+                if lead in (1, 2, 3):
+                    return _make_mock_response([forecast_for_lead(lead)])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "month", "19999", pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+        )
+
+        # month_1 stays on the dedicated "forecasts_all" key.
+        assert not data["forecasts_all"].empty
+        assert (data["forecasts_all"]["horizon_value"] == 1).all()
+
+        by_mode = data["long_forecasts_by_month_mode"]
+        assert set(by_mode) == {"month_2", "month_3"}
+        assert not by_mode["month_2"].empty
+        assert (by_mode["month_2"]["horizon_value"] == 2).all()
+        assert not by_mode["month_3"].empty
+        assert (by_mode["month_3"]["horizon_value"] == 3).all()
+
+    def test_by_mode_dict_absent_when_flag_off(self, monkeypatch, _long_term_resolver_env):
+        """Flag-OFF golden: the new by-mode dict key must not appear at all
+        (dict shape stays byte-identical to pre-M1 behavior)."""
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "month_1,month_2,month_3"
+        )
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "month", "99001", pd.DataFrame({"code": ["99001"], "station_labels": ["x"]})
+        )
+
+        assert "long_forecasts_by_month_mode" not in data
+
+
+# ── _get_data_monthly: M1 P3 review fixes — resolver robustness ───────────
+
+
+class TestGetDataMonthlyLeadAwareResolverRobustness:
+    """Regression tests for the P3 review findings.
+
+    A dashboard READ must never crash just because a deployment's monthly
+    config carries only ``operational_month_lead_time`` (the taj shape) and
+    no ``operational_issue_day``. The monthly display path needs only the
+    lead, so it must resolve via ``operational_lead_for_mode`` (lead-only)
+    rather than ``operational_schedule_for_mode`` (which additionally
+    requires ``operational_issue_day`` + the config file to exist).
+    """
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _write_lead_only_config(self, config_dir, mode, lead):
+        """Config with ONLY operational_month_lead_time (no issue_day)."""
+        (config_dir / f"{mode}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead})
+        )
+
+    def _write_full_config(self, config_dir, mode, lead, issue_day=25):
+        (config_dir / f"{mode}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead, "operational_issue_day": issue_day})
+        )
+
+    def _all_19999(self):
+        return pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+
+    # ── #1: month_1 config missing operational_issue_day must not crash ──
+    def test_month1_lead_only_config_does_not_crash_flag_on(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """#1: primary monthly tile must resolve the lead from a lead-only
+        config (no operational_issue_day) instead of raising."""
+        config_dir = _long_term_resolver_env
+        self._write_lead_only_config(config_dir, "month_1", lead=1)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 1:
+                    return _make_mock_response([forecast])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        fa = data["forecasts_all"]
+        assert not fa.empty, "lead-only month_1 config must not hide the primary forecast"
+        assert (fa["horizon_value"] == 1).all()
+
+    # ── #2: month_0 config missing operational_issue_day must not crash ──
+    def test_month0_lead_only_config_does_not_crash_flag_on(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """#2: month_0 block must resolve its lead from a lead-only config;
+        month_1 still loads and long_forecasts_m0 degrades gracefully."""
+        config_dir = _long_term_resolver_env
+        self._write_full_config(config_dir, "month_1", lead=1)
+        self._write_lead_only_config(config_dir, "month_0", lead=0)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        m1_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1, "id": 71}
+        m0_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 0, "id": 70}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 1:
+                    return _make_mock_response([m1_forecast])
+                if params.get("horizon_value") == 0:
+                    return _make_mock_response([m0_forecast])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        assert not data["forecasts_all"].empty
+        assert (data["forecasts_all"]["horizon_value"] == 1).all()
+        m0 = data["long_forecasts_m0"]
+        assert not m0.empty, "month_0 lead-only config must resolve to lead 0"
+        assert (m0["horizon_value"] == 0).all()
+
+    # ── #3: flag-ON always keys merge on horizon_value (month_1 absent) ──
+    def test_merge_keys_include_horizon_value_even_without_month1(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """#3: with month_1 absent from supported_modes, the primary merge
+        must still key on horizon_value so a lead-1 forecast does not fan
+        out against (or inherit the skill of) other leads' stats rows."""
+        config_dir = _long_term_resolver_env
+        self._write_full_config(config_dir, "month_2", lead=2)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_2")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 1:
+                    return _make_mock_response([forecast])
+                return _make_mock_response([])
+            if "/skill-metric/" in url:
+                # Two stats rows for the same period/model, different leads —
+                # NEITHER is lead 1.
+                return _make_mock_response(
+                    [
+                        _skill_metric_record_with_lead(4, "GBT", 2, delta=2.0),
+                        _skill_metric_record_with_lead(4, "GBT", 3, delta=3.0),
+                    ]
+                )
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        fa = data["forecasts_all"]
+        assert len(fa) == 1, (
+            "lead-1 forecast fanned out against non-matching-lead stats rows: "
+            f"{fa[['code', 'model_short', 'horizon_value']].to_dict('records')}"
+        )
+        assert pd.isna(fa["delta"].iloc[0]), "no wrong-lead skill metric may attach"
+
+    # ── #4: supported_modes tokens are stripped before membership check ──
+    def test_supported_modes_with_spaces_recognizes_month1(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """#4: 'quarter, month_1' (space before month_1) must recognize
+        month_1 after strip and resolve its (taj-style lead-0) lead."""
+        config_dir = _long_term_resolver_env
+        self._write_lead_only_config(config_dir, "month_1", lead=0)
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "quarter, month_1"
+        )
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        taj_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 0}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 0:
+                    return _make_mock_response([taj_forecast])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        fa = data["forecasts_all"]
+        assert not fa.empty, "spaced 'month_1' token must be recognized after strip"
+        assert (fa["horizon_value"] == 0).all()
+
+    # ── #5: by-mode loop skips (not crashes) a mode with an absent file ──
+    def test_by_mode_missing_config_file_is_skipped_not_crash(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """#5: a supported month_N whose config FILE is absent must be
+        skipped with a warning, not raise FileNotFoundError."""
+        config_dir = _long_term_resolver_env
+        self._write_full_config(config_dir, "month_1", lead=1)
+        # month_2 intentionally has NO config file written.
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1,month_2")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        m1_forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                if params.get("horizon_value") == 1:
+                    return _make_mock_response([m1_forecast])
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        assert not data["forecasts_all"].empty
+        by_mode = data["long_forecasts_by_month_mode"]
+        assert "month_2" not in by_mode, "mode with missing config file must be skipped"
+
+    # ── flag-OFF golden: lead-only config path is untouched by the fix ──
+    def test_flag_off_lead_only_config_unchanged(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """Flag-OFF golden: the legacy path never reads month_1's lead from
+        config (hardcodes horizon_value=1), filters stats to lead 1, keeps
+        no horizon_value merge key, and emits no by-mode dict."""
+        config_dir = _long_term_resolver_env
+        self._write_lead_only_config(config_dir, "month_1", lead=0)
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
+        # SAPPHIRE_SKILL_LEAD_AWARE intentionally unset (default OFF).
+
+        seen_leads = []
+        forecast = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1}
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                seen_leads.append(params.get("horizon_value"))
+                if params.get("horizon_value") == 1:
+                    return _make_mock_response([forecast])
+                return _make_mock_response([])
+            if "/skill-metric/" in url:
+                return _make_mock_response(
+                    [
+                        _skill_metric_record_with_lead(4, "GBT", 1, delta=1.0),
+                        _skill_metric_record_with_lead(4, "GBT", 2, delta=2.0),
+                    ]
+                )
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_19999())
+
+        # Legacy path hardcodes horizon_value=1 regardless of config lead=0.
+        assert 1 in seen_leads
+        fa = data["forecasts_all"]
+        assert not fa.empty
+        # Stats filtered to lead 1 → lead-1 delta attaches, single row.
+        assert len(fa) == 1
+        assert fa["delta"].iloc[0] == 1.0
+        # No by-mode dict under flag OFF.
+        assert "long_forecasts_by_month_mode" not in data
+
+
 # ── get_long_forecasts_quarter / get_long_forecasts_season ────────────────
 
 _QUARTER_FORECAST_RECORD = {
@@ -1098,6 +1564,59 @@ class TestGetLongForecastsQuarter:
 
         assert result.empty
         assert "quarter_in_year" in result.columns
+
+
+class TestGetLongForecastsQuarterLeadAware:
+    """M1 P3: under the flag, quarter forecast dedup keys on lead too so
+    distinct-lead rows for the same code/model are not silently collapsed."""
+
+    def test_horizon_value_preserved_when_flag_on(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([_QUARTER_FORECAST_RECORD])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="99001")
+
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].iloc[0] == 1
+
+    def test_distinct_leads_not_collapsed_when_flag_on(self, monkeypatch):
+        """Two rows, same code/model, different lead — both must survive."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        lead0 = {**_QUARTER_FORECAST_RECORD, "id": 5, "horizon_value": 0, "date": "2026-03-01"}
+        lead1 = {**_QUARTER_FORECAST_RECORD, "id": 6, "horizon_value": 1, "date": "2026-03-02"}
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lead0, lead1])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="99001")
+
+        assert len(result) == 2, (
+            f"Expected both leads to survive, got {len(result)}: "
+            f"{result[['code', 'model_short', 'horizon_value']].to_dict('records')}"
+        )
+        assert set(result["horizon_value"]) == {0, 1}
+
+    def test_flag_off_still_collapses_to_single_latest_row(self, monkeypatch):
+        """Flag-OFF golden: distinct leads still collapse to the latest-dated row."""
+        lead0 = {**_QUARTER_FORECAST_RECORD, "id": 5, "horizon_value": 0, "date": "2026-03-01"}
+        lead1 = {**_QUARTER_FORECAST_RECORD, "id": 6, "horizon_value": 1, "date": "2026-03-02"}
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lead0, lead1])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="99001")
+
+        assert len(result) == 1
+        assert "horizon_value" not in result.columns
+        assert str(result["date"].iloc[0].date()) == "2026-03-02"
 
 
 class TestGetLongForecastsSeason:
@@ -1322,6 +1841,110 @@ class TestGetDataQuarter:
         data = db.get_data("quarter", "99001", self._all_stations_df())
 
         assert "forecasted_discharge" in data["forecasts_all"].columns
+
+
+class TestGetDataQuarterLeadAware:
+    """M1 P3: quarter stats merges were period-only; under the flag they
+    must key on lead too (hv0/hv1 coexisting for the same target period)."""
+
+    def _patch_processing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph",
+            lambda df, stations: df,
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def test_stats_merge_keyed_by_lead_not_just_period(self, monkeypatch):
+        """ONE lead-0 forecast row for LR_Base, but the API's skill-metric
+        table holds BOTH a lead-0 and a lead-1 stats row for LR_Base/same
+        target quarter (e.g. hindcast + operational coexist). Merging on
+        period+model alone would fan the single forecast row out into 2
+        duplicate rows (one per matching stats row) and could attach the
+        WRONG lead's skill metrics. Keying on lead too must pick exactly
+        the matching (hv0) row."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        forecast_lead0 = {
+            **_QUARTER_FORECAST_RECORD_19999,
+            "id": 50,
+            "model_type": "LR_Base",
+            "horizon_value": 0,
+        }
+        skill_lead0 = {
+            **_skill_metric_record_19999("quarter", 2, "LR_Base", 5.0),
+            "horizon_value": 0,
+        }
+        skill_lead1 = {
+            **_skill_metric_record_19999("quarter", 2, "LR_Base", 9.0),
+            "horizon_value": 1,
+        }
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([forecast_lead0])
+            if "/skill-metric/" in url:
+                return _make_mock_response([skill_lead0, skill_lead1])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "quarter", "19999", pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+        )
+
+        fa = data["forecasts_all"]
+        assert len(fa) == 1, (
+            f"Expected exactly 1 row (no Cartesian duplication across leads), "
+            f"got {len(fa)}: {fa[['model_short', 'horizon_value', 'delta']].to_dict('records')}"
+        )
+        assert fa["horizon_value"].iloc[0] == 0
+        assert fa["delta"].iloc[0] == 5.0  # the hv0 stats row, not hv1's 9.0
+
+    def test_flag_off_golden_shows_the_pre_m1_cartesian_merge_baseline(self, monkeypatch):
+        """Flag-OFF golden: documents that WITHOUT the flag, the same setup
+        as above still fans out into duplicate rows (pre-existing baseline
+        behavior — kept byte-identical, not fixed, when the flag is off).
+        """
+        forecast_lead0 = {
+            **_QUARTER_FORECAST_RECORD_19999,
+            "id": 50,
+            "model_type": "LR_Base",
+            "horizon_value": 0,
+        }
+        skill_lead0 = {
+            **_skill_metric_record_19999("quarter", 2, "LR_Base", 5.0),
+            "horizon_value": 0,
+        }
+        skill_lead1 = {
+            **_skill_metric_record_19999("quarter", 2, "LR_Base", 9.0),
+            "horizon_value": 1,
+        }
+
+        def mock_get(url, **kwargs):
+            if "/long-forecast/" in url:
+                return _make_mock_response([forecast_lead0])
+            if "/skill-metric/" in url:
+                return _make_mock_response([skill_lead0, skill_lead1])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data(
+            "quarter", "19999", pd.DataFrame({"code": ["19999"], "station_labels": ["x"]})
+        )
+
+        fa = data["forecasts_all"]
+        # Pre-M1 baseline: the single lead-0 forecast fans out into 2 rows
+        # (one per matching stats row) because horizon_value is not part of
+        # the merge key — a duplication that the flag fixes (see the
+        # companion flag-ON test above).
+        assert len(fa) == 2
+        assert set(fa["delta"]) == {5.0, 9.0}
 
 
 class TestGetDataSeason:
@@ -1789,3 +2412,118 @@ class TestGetForecastStatsTombstoneSuppression:
             f"{result[['month_in_year', 'model_short', 'horizon_value']].to_dict('records') if not result.empty else '(empty)'}"
         )
         assert set(result["horizon_value"].unique()) == {1, 2}
+
+    # ── M1 P3: full-lead-key tombstone filtering ───────────────────────────
+    #
+    # A tombstone must be excluded by its OWN (code, period, horizon_value,
+    # model_short) key — never by (code, period, model_short) alone, else a
+    # tombstoned lead-2 row could mask (or be masked by) a live lead-1 row
+    # for the same period/model and silently "look fine".
+
+    def test_tombstoned_lead_excluded_live_lead_for_same_period_survives(self, monkeypatch):
+        """Same period/code/model, two leads: lead-1 live, lead-2 tombstoned.
+        Only the live lead-1 row must survive — the tombstone must not mask
+        it, and must not itself masquerade as data."""
+        live_lead1 = _skill_metric_record_with_lead(4, "GBT", 1, delta=1.0)
+        tombstoned_lead2 = _tombstone_skill_record("month", 4, "GBT", horizon_value=2)
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([live_lead1, tombstoned_lead2])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        assert len(result) == 1, (
+            f"Expected only the live lead-1 row to survive, got: "
+            f"{result[['model_short', 'horizon_value', 'n_pairs']].to_dict('records') if not result.empty else '(empty)'}"
+        )
+        assert result["horizon_value"].iloc[0] == 1
+        assert result["delta"].iloc[0] == 1.0
+
+    def test_later_dated_tombstone_does_not_mask_earlier_live_row_of_different_lead(
+        self, monkeypatch
+    ):
+        """Regression: a LATER-dated tombstone for lead-2 must not win a
+        keep='last' dedup against an EARLIER live row for lead-1 sharing the
+        same period/model — proving tombstone exclusion is keyed on the
+        FULL (code, period, horizon_value, model_short) tuple, not merely
+        (code, period, model_short)."""
+        live_lead1 = {
+            **_skill_metric_record_with_lead(4, "GBT", 1, delta=1.0),
+            "date": "2026-03-01",
+        }
+        tombstoned_lead2_later = _tombstone_skill_record(
+            "month", 4, "GBT", horizon_value=2, date="2026-03-20"
+        )
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([live_lead1, tombstoned_lead2_later])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_forecast_stats("month", "19999")
+
+        assert len(result) == 1
+        assert result["horizon_value"].iloc[0] == 1
+        assert result["delta"].iloc[0] == 1.0
+
+    def test_tombstoned_lead_in_month_by_mode_merge_has_no_leaked_skill_metrics(
+        self, monkeypatch, _long_term_resolver_env
+    ):
+        """Integration: a tombstoned month_2 skill row must not attach to
+        month_2's forecast via a stray cross-lead merge, and must not mask
+        month_1's live skill metrics in the primary tile."""
+        config_dir = _long_term_resolver_env
+        (config_dir / "month_1.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
+        )
+        (config_dir / "month_2.json").write_text(
+            json.dumps({"operational_month_lead_time": 2, "operational_issue_day": 25})
+        )
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1,month_2")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+
+        forecast_lead1 = {**_LONG_FORECAST_RECORD, "code": "19999", "horizon_value": 1}
+        forecast_lead2 = {
+            **_LONG_FORECAST_RECORD,
+            "id": 2,
+            "code": "19999",
+            "horizon_value": 2,
+        }
+        live_lead1 = _skill_metric_record_with_lead(4, "GBT", 1, delta=1.0)
+        tombstoned_lead2 = _tombstone_skill_record("month", 4, "GBT", horizon_value=2)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url:
+                lead = params.get("horizon_value")
+                if lead == 1:
+                    return _make_mock_response([forecast_lead1])
+                if lead == 2:
+                    return _make_mock_response([forecast_lead2])
+                return _make_mock_response([])
+            if "/skill-metric/" in url:
+                return _make_mock_response([live_lead1, tombstoned_lead2])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        monkeypatch.setattr("src.db.processing.add_labels_to_hydrograph", lambda df, s: df)
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+        data = db.get_data(
+            "month",
+            "19999",
+            pd.DataFrame({"code": ["19999"], "station_labels": ["Test River B"]}),
+        )
+
+        fa = data["forecasts_all"]  # month_1, primary tile
+        assert not fa.empty
+        assert fa["delta"].iloc[0] == 1.0
+
+        month2 = data["long_forecasts_by_month_mode"]["month_2"]
+        assert not month2.empty  # the month_2 forecast itself is still visible
+        assert pd.isna(month2["delta"].iloc[0])  # but no skill metrics — tombstoned

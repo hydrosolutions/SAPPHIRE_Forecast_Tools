@@ -104,10 +104,12 @@ def _make_monthly_obs(rows):
     return pd.DataFrame(rows, columns=["code", "year", "month", "discharge_avg"])
 
 
-def _make_monthly_fc(rows, with_quantiles=True):
+def _make_monthly_fc(rows, with_quantiles=True, with_horizon_value=False):
     """Build monthly forecast DataFrame.
 
     Each row: (code, year, month, model_short, q50) or with full quantiles.
+    When ``with_horizon_value`` is True, each row must carry one extra
+    trailing element and an "horizon_value" column is appended.
     """
     if with_quantiles:
         cols = [
@@ -125,6 +127,8 @@ def _make_monthly_fc(rows, with_quantiles=True):
         ]
     else:
         cols = ["code", "year", "month", "model_short", "q50"]
+    if with_horizon_value:
+        cols = cols + ["horizon_value"]
     df = pd.DataFrame(rows, columns=cols)
     if "forecasted_discharge" not in df.columns and "q50" in df.columns:
         df["forecasted_discharge"] = df["q50"].astype(float)
@@ -407,3 +411,125 @@ class TestAggregateMonthlyFcToQuarterly:
         result = aggregate_monthly_fc_to_quarterly(fc)
         assert "forecasted_discharge" in result.columns
         assert abs(result.iloc[0]["forecasted_discharge"] - 45.0) < 1e-6
+
+    # ===============================================================
+    # M1 P1b: lead-aware (SAPPHIRE_SKILL_LEAD_AWARE) per-lead grouping
+    # ===============================================================
+
+    def test_flag_on_mixed_leads_stay_separate_rows(self, monkeypatch):
+        """KEY REGRESSION: under the flag, distinct horizon_value leads in
+
+        the monthly input must NOT be collapsed into a single quarterly
+        row -- each lead gets its own quarterly row.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        fc = _make_monthly_fc(
+            [
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
+                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
+                ("S1", 2024, 2, "M1", 21, 31, 41, 51, 61, 71, 81, 1),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert len(result) == 2
+        assert set(result["horizon_value"]) == {0, 1}
+
+    def test_flag_off_mixed_leads_still_collapse(self, monkeypatch):
+        """Flag OFF: byte-identical to today -- mixed leads collapse into
+
+        one quarterly row (control for the above regression, must never
+        break).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fc = _make_monthly_fc(
+            [
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
+                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
+                ("S1", 2024, 2, "M1", 21, 31, 41, 51, 61, 71, 81, 1),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert len(result) == 1
+
+    def test_flag_on_coverage_filter_applies_per_lead(self, monkeypatch):
+        """Under the flag, QUARTER_MIN_MONTHS applies PER LEAD: a lead with
+
+        only 1 of 3 months present is dropped even though another lead
+        covers 2 of 3 months -- no cross-lead mixing to satisfy coverage.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        fc = _make_monthly_fc(
+            [
+                # lead 0: 2 of 3 months -> kept
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
+                # lead 1: 1 of 3 months -> dropped
+                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert len(result) == 1
+        assert result.iloc[0]["horizon_value"] == 0
+
+    def test_flag_on_carries_representative_issue_date_lead1(self, monkeypatch):
+        """FIX 6: under the flag, an aggregated-quarter row carries a
+
+        representative issue ``date`` = valid_from - horizon_value months,
+        so a lead-aware read derives EXACTLY horizon_value from it (no
+        self-contradicting date/lead pair that the writer would fabricate
+        from valid_from otherwise).
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        fc = _make_monthly_fc(
+            [
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 1),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 1),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["valid_from"] == "2024-01-01"
+        # lead 1 -> date one month before the quarter's first month.
+        assert row["date"] == "2023-12-01"
+        vf = pd.Timestamp(row["valid_from"])
+        d = pd.Timestamp(row["date"])
+        derived_lead = (vf.year - d.year) * 12 + (vf.month - d.month)
+        assert derived_lead == int(row["horizon_value"]) == 1
+
+    def test_flag_on_lead0_date_equals_valid_from(self, monkeypatch):
+        """FIX 6: at lead 0 the representative date equals valid_from."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        fc = _make_monthly_fc(
+            [
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["date"] == row["valid_from"] == "2024-01-01"
+
+    def test_flag_off_adds_no_date_column(self, monkeypatch):
+        """FIX 6 control: flag OFF adds no ``date`` column (byte-identical
+
+        to today's aggregation output).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fc = _make_monthly_fc(
+            [
+                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 1),
+                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 1),
+            ],
+            with_horizon_value=True,
+        )
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert "date" not in result.columns

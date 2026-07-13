@@ -338,6 +338,7 @@ The server .env and the local repo .env are on different machines, so you need t
 | `ieasyhydroforecast_run_ML_models` | Enable ML forecasting | `true` or `false` |
 | `ieasyhydroforecast_run_CM_models` | Enable conceptual models | `true` or `false` |
 | `ieasyhydroforecast_organization` | Organization identifier | `${ORG_SLUG}` |
+| `SAPPHIRE_SKILL_LEAD_AWARE` | Per-lead skill & ensembles — **default OFF, opt-in per deployment**. See [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md) § *Lead-aware skill*. | `true` **only** if this deployment's long-term configs carry `operational_issue_day` **and** a full recalc is planned; otherwise leave absent/`false` (uzb: not ready) |
 
 **Variables to preserve** (don't overwrite with repo values):
 - `IEASYHYDRO_HOST` - Server-specific API endpoint
