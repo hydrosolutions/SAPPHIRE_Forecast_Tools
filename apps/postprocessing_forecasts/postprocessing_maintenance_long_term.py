@@ -201,25 +201,55 @@ def postprocessing_maintenance_long_term():
         # create_monthly_ensemble_forecasts creates all 3 types for
         # every period, but we only want those that were actually
         # missing (per the gap detector).
-        gap_keys = set(
-            gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
-        )
         ensemble_models = {"EM", "Skilled Mean", "Naive Mean"}
         new_ensemble = joint[joint["model_short"].isin(ensemble_models)].copy()
-        new_ensemble = new_ensemble[
-            new_ensemble.apply(
-                lambda r: (
-                    (
-                        r["year"],
-                        r["month"],
-                        str(r["code"]),
-                        r["model_short"],
-                    )
-                    in gap_keys
-                ),
-                axis=1,
+        # Under SAPPHIRE_SKILL_LEAD_AWARE, key the gap filter per-lead --
+        # mirroring the quarterly block's q_gap_keys -- so a regenerated
+        # ensemble row for a lead that was NEVER a gap does not survive the
+        # filter (and, via keep="last" in the merge dedup, silently overwrite
+        # an existing non-gap ensemble at that lead). The gap detector emits
+        # per-lead gaps under the flag and create_monthly_ensemble_forecasts
+        # stamps each ensemble row with its own horizon_value, so restricting
+        # to the actual missing (year, month, code, model, lead) keys also
+        # guarantees each gap-filled row keeps the lead it was detected
+        # missing at. Flag OFF: unchanged (period-only key, no lead).
+        if (
+            skill_lead_aware_enabled()
+            and "horizon_value" in gaps.columns
+            and "horizon_value" in new_ensemble.columns
+        ):
+            gap_key_cols = ["year", "month", "code", "model_short", "horizon_value"]
+            gap_keys = set(
+                gaps[gap_key_cols]
+                .assign(code=lambda d: d["code"].astype(str))
+                .itertuples(index=False, name=None)
             )
-        ]
+            new_ensemble = new_ensemble[
+                new_ensemble.apply(
+                    lambda r, _keys=gap_keys, _cols=gap_key_cols: (
+                        tuple(str(r[c]) if c == "code" else r[c] for c in _cols) in _keys
+                    ),
+                    axis=1,
+                )
+            ]
+        else:
+            gap_keys = set(
+                gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
+            )
+            new_ensemble = new_ensemble[
+                new_ensemble.apply(
+                    lambda r: (
+                        (
+                            r["year"],
+                            r["month"],
+                            str(r["code"]),
+                            r["model_short"],
+                        )
+                        in gap_keys
+                    ),
+                    axis=1,
+                )
+            ]
 
         if new_ensemble.empty:
             logger.info("No new monthly ensemble rows created. Nothing to save.")

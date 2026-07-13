@@ -762,6 +762,153 @@ class TestMaintenanceLongTerm:
                 # horizon_value in dedup key), one EM row kept.
                 assert len(em_rows) == 1
 
+    @pytest.mark.parametrize("flag_on", [True, False])
+    def test_monthly_gap_fill_only_writes_gap_leads(self, monkeypatch, flag_on):
+        """M1 P5b: under the flag, the freshly-generated MONTHLY ensemble
+
+        rows are filtered to the ACTUAL missing per-lead gap keys before
+        merge, so a NON-gap lead's existing ensemble row is not overwritten
+        (keep="last") by a regenerated row for a lead that was never a gap.
+        The gap-filled EM is stamped at the lead it was detected missing
+        (lead 1) and survives merge-back without collapsing the existing
+        lead-0 EM. Flag OFF keeps today's (period-key) behavior, under which
+        the non-gap lead-0 EM IS overwritten.
+        """
+        if flag_on:
+            monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        else:
+            monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        # Existing combined: lead-0 EM (NOT a gap) with a distinctive
+        # discharge (100), plus LR_Base at leads 0 and 1.
+        combined = pd.DataFrame(
+            {
+                "year": [2025, 2025, 2025],
+                "month": [1, 1, 1],
+                "code": ["19999", "19999", "19999"],
+                "model_short": ["EM", "LR_Base", "LR_Base"],
+                "horizon_value": [0, 0, 1],
+                "forecasted_discharge": [100.0, 100.0, 90.0],
+                "month_in_year": [1, 1, 1],
+            }
+        )
+        # ONLY the lead-1 EM is reported missing.
+        if flag_on:
+            gaps = pd.DataFrame(
+                {
+                    "year": [2025],
+                    "month": [1],
+                    "code": ["19999"],
+                    "model_short": ["EM"],
+                    "horizon_value": [1],
+                }
+            )
+        else:
+            # Flag OFF: real detector emits period-only gaps (no lead col).
+            gaps = pd.DataFrame(
+                {
+                    "year": [2025],
+                    "month": [1],
+                    "code": ["19999"],
+                    "model_short": ["EM"],
+                }
+            )
+        forecasts = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "month": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_Base"],
+                "horizon_value": [0, 1],
+                "q50": [100.0, 90.0],
+                "valid_from": ["2025-01-01", "2025-01-01"],
+                "valid_to": ["2025-01-31", "2025-01-31"],
+                "date": ["2025-01-01", "2025-01-01"],
+                "flag": [0, 0],
+            }
+        )
+        # Ensemble output regenerates EM for BOTH leads; the lead-0 EM has a
+        # DIFFERENT discharge (999) so an overwrite would be observable.
+        joint = pd.concat(
+            [
+                forecasts.assign(month_in_year=1, forecasted_discharge=forecasts["q50"]),
+                pd.DataFrame(
+                    {
+                        "year": [2025, 2025],
+                        "month": [1, 1],
+                        "code": ["19999", "19999"],
+                        "model_short": ["EM", "EM"],
+                        "horizon_value": [0, 1],
+                        "forecasted_discharge": [999.0, 111.0],
+                        "month_in_year": [1, 1],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined
+        mock_gap_detector.detect_missing_monthly_ensembles.return_value = gaps
+        mock_data_reader.read_monthly_forecasts.return_value = forecasts
+        mock_data_reader.read_skill_metrics.return_value = _make_skill()
+        mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = joint
+        mock_file_writer.save_monthly_forecast_data.return_value = None
+        # Quarterly + seasonal paths are no-ops for this monthly-focused test.
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_monthly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_monthly_forecast_data.call_args.args[0]
+            em_rows = saved[saved["model_short"] == "EM"]
+
+            if flag_on:
+                # Both leads present; the gap-filled EM is stamped lead 1
+                # (discharge 111), and the NON-gap lead-0 EM keeps its
+                # ORIGINAL discharge (100), NOT the regenerated 999.
+                assert set(em_rows["horizon_value"]) == {0, 1}
+                lead0 = em_rows[em_rows["horizon_value"] == 0]
+                lead1 = em_rows[em_rows["horizon_value"] == 1]
+                assert len(lead0) == 1
+                assert float(lead0.iloc[0]["forecasted_discharge"]) == 100.0
+                assert len(lead1) == 1
+                assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
+            else:
+                # Flag OFF: today's behavior -- period-only gap filter keeps
+                # BOTH regenerated EM rows, so the non-gap lead-0 EM IS
+                # overwritten (keep="last") to 999.
+                lead0 = em_rows[em_rows["horizon_value"] == 0]
+                lead1 = em_rows[em_rows["horizon_value"] == 1]
+                assert len(lead0) == 1
+                assert float(lead0.iloc[0]["forecasted_discharge"]) == 999.0
+                assert len(lead1) == 1
+                assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
+
     def test_deduplication_works(
         self,
         gap_tuples,
