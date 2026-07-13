@@ -20,6 +20,7 @@ No real station codes / discharge values: synthetic ``17999`` (Tajik-shaped) and
 """
 
 import datetime
+import json
 import sys
 import types
 from unittest.mock import MagicMock
@@ -111,6 +112,27 @@ def _patch_processing(monkeypatch):
     monkeypatch.setattr(
         "src.db.processing.internationalize_forecast_model_names",
         lambda fn, df, **kw: df,
+    )
+
+
+def _setup_config(monkeypatch, tmp_path, name, modes):
+    """Write per-mode config JSONs and point the resolver env at them.
+
+    modes: dict {config_mode_name: operational_month_lead_time}.
+    Sets supported_modes = the mode names (comma-joined).  Mirrors the helper in
+    test_monthly_lead_regression.py so the guard tests are forward-compatible
+    with the resolver the fix introduces.
+    """
+    config_dir = tmp_path / name
+    config_dir.mkdir()
+    for mode_name, lead in modes.items():
+        (config_dir / f"{mode_name}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead})
+        )
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", name)
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes", ",".join(modes.keys())
     )
 
 
@@ -222,6 +244,82 @@ class TestGetDataMonthMultiLeadCurrent:
         )
         assert m0["delta"].iloc[0] == 5.0, (
             "m0 currently merges the lead-1-filtered stats (Defect F, locked as flag-off)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Flag-ON invariants (GUARD) — kghm must stay lead-1 under the FIX path.
+# Green today (flag ignored) AND after the fix (resolver → same result).  These
+# are NOT xfail: they are invariants that a naive "always resolve hv0" fix would
+# break, catching a regression the tjhm xfail alone cannot.
+# ---------------------------------------------------------------------------
+
+class TestGetDataMonthLeadGuards:
+    def test_kghm_main_panel_stays_hv1_under_flag_on(self, monkeypatch, tmp_path):
+        """kghm, flag ON, config-resolved: the main panel must select the lead-1
+        product (hv1, q=111) — the resolver returns 1 for kghm's month_1.
+
+        Guards against a hardcoded-hv0 fix that would pass the tjhm→hv0
+        regression while silently breaking kghm.  Green now (flag ignored → hv1)
+        and green after (resolver → hv1).
+        """
+        monkeypatch.setenv(FLAG, "true")
+        # kghm: month_1.json → lead 1 (flagship, day 25), month_0.json → lead 0 (day 10).
+        _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
+        code = "15999"
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                hv = params.get("horizon_value")
+                if hv == 1:
+                    return _mock_response([_long_forecast_record(code, 1, 111.0)])
+                if hv == 0:
+                    return _mock_response([_long_forecast_record(code, 0, 222.0)])
+                return _mock_response([])
+            return _mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        _patch_processing(monkeypatch)
+        all_stations = pd.DataFrame({"code": [code], "station_labels": ["Test Reservoir K"]})
+
+        data = db.get_data("month", code, all_stations)
+
+        fa = data["forecasts_all"]
+        assert list(fa["forecasted_discharge"]) == [111.0], (
+            "kghm main panel must stay lead 1 (hv1, q=111) under the fix — "
+            f"got {list(fa['forecasted_discharge'])}"
+        )
+
+    def test_tjhm_month0_card_absent_under_flag_on(self, monkeypatch, tmp_path):
+        """tjhm (no month_0 in supported_modes), flag ON: the month_0 card is
+        absent — long_forecasts_m0 is empty.  The month_0 gate holds for tjhm
+        regardless of the flag.  Green now and after the fix.
+        """
+        monkeypatch.setenv(FLAG, "true")
+        # tjhm: month_1.json → lead 0 (flagship, day 1), month_2.json → lead 1. No month_0.
+        _setup_config(monkeypatch, tmp_path, "tjhm", {"month_1": 0, "month_2": 1})
+        code = "17999"
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                hv = params.get("horizon_value")
+                if hv == 1:
+                    return _mock_response([_long_forecast_record(code, 1, 111.0)])
+                if hv == 0:
+                    return _mock_response([_long_forecast_record(code, 0, 222.0)])
+                return _mock_response([])
+            return _mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        _patch_processing(monkeypatch)
+        all_stations = pd.DataFrame({"code": [code], "station_labels": ["Test River T"]})
+
+        data = db.get_data("month", code, all_stations)
+
+        assert data["long_forecasts_m0"].empty, (
+            "tjhm has no month_0 mode → the m0 card must be absent regardless of the flag"
         )
 
 

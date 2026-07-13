@@ -247,6 +247,13 @@ class TestMonth0CardStatsFiltering:
         data = db.get_data("month", code, all_stations)
 
         m0 = data["long_forecasts_m0"]
+        # No duplicate rows: an unfiltered merge can leave the lead-0 row first
+        # while still duplicating the (code, model) row — a single-cell delta
+        # check alone would false-pass.  The m0 frame must stay 1:1.
+        assert len(m0) == 1, (
+            f"m0 frame must have exactly one (code, model) row; got {len(m0)}: "
+            f"{m0[['code', 'model_short', 'horizon_value']].to_dict('records') if 'horizon_value' in m0.columns else m0[['code', 'model_short']].to_dict('records')}"
+        )
         assert m0["delta"].iloc[0] == 1.0, (
             "m0 card must carry the lead-0 skill (delta=1.0), not the lead-1 skill (delta=5.0)"
         )
@@ -284,6 +291,14 @@ class TestMonth0CardStatsFiltering:
         data = db.get_data("month", code, all_stations)
 
         m0 = data["long_forecasts_m0"]
+        # The lead-0 FORECAST row must be RETAINED — a fix that simply drops the
+        # whole m0 row (and its columns) must not false-pass the blank check.
+        assert list(m0["forecasted_discharge"]) == [222.0], (
+            f"the lead-0 m0 forecast row (q=222) must be retained; got "
+            f"{list(m0['forecasted_discharge']) if 'forecasted_discharge' in m0.columns else '(no forecast column)'}"
+        )
+        # ... and its skill metric must be blank (NaN / absent), not borrowed
+        # from lead-1 (delta=5.0).
         blank = ("delta" not in m0.columns) or pd.isna(m0["delta"].iloc[0])
         assert blank, (
             "m0 card must be blank for its lead (lead-0) when no lead-0 stats exist, "
@@ -343,6 +358,25 @@ class TestBulletinTargetMonthYear:
 # ===========================================================================
 # month_horizon_value resolver — authored in P1 (signature does not exist yet).
 # ===========================================================================
+
+@pytest.mark.skip(
+    reason="authored in P1: _format_forecast_info needs the resolved-lead signature"
+)
+def test_format_forecast_info_uses_resolved_lead_target():
+    """INTENDED (author in P1, once _format_forecast_info takes the resolved lead
+    — do not guess the new signature here):
+
+    The caption must name the target month from the RESOLVED lead, not from the
+    mode-name string:
+    - tjhm lead-0 forecast issued 2026-07-01 → names July (the issue month),
+      NOT August.
+    - kghm lead-1 forecast issued 2026-07-01 → names August (issue_month + 1).
+
+    The current signature is _format_forecast_info(issue_date, horizon_label) and
+    branches on the "month_1"/"month_0" literal; the fix threads the resolved
+    lead in instead.  Assert once that signature lands.
+    """
+
 
 @pytest.mark.skip(reason="authored in P1: needs month_horizon_value")
 def test_month_horizon_value_resolves_lead_per_config():

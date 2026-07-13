@@ -118,8 +118,11 @@ deliberately deferred to that PR so the reference never describes a var that doe
 **Files:** new tests under `apps/forecast_dashboard/tests/`.
 **Agents:** 1.
 **Acceptance:**
-- Golden (green now): kghm main tile = single lead-1 row; kghm m0 card uses lead-0 skill; kghm header
-  month/year today. Under flag-off these must never change.
+- Golden (green now): kghm main tile = single lead-1 row; kghm m0 card **currently annotated from the
+  lead-1 stats frame** (Defect F's bug, locked as the kill-switch/flag-off contract — *not* lead-0);
+  kghm header month/year today. Under flag-off these must never change. Plus two **invariant guards**
+  (green now *and* after the fix, flag-on): kghm main panel stays lead-1, and tjhm (no `month_0`) has no
+  m0 card — these catch a hardcoded-hv0 fix that would pass the tjhm regression but break kghm.
 - Regression (red now, target the phase): tjhm main resolves lead 0 (A); `format_horizon_info` uses the
   passed target month+year instead of recomputing (J); m0 merges only lead-0 stats and blanks when
   absent — both `_op_mask.any()` branches (F); m0 bulletin hydration from the m0 frame (G); bulletin
