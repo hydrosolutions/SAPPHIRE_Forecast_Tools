@@ -77,6 +77,50 @@ def _json_safe(value):
     return value
 
 
+def _round_discharge(value):
+    """3-significant-figure hydrological rounding for discharge/volume
+    fields, matching the Excel bulletin (forecast_library.round_3sf via
+    round_discharge_to_comma_separated_string). Returns None for
+    None/NaN/Inf and for negative values (the Excel discharge formatter
+    renders a blank cell for negatives; None is the JSON equivalent).
+    round_3sf is imported lazily because forecast_library pulls heavy deps
+    (sklearn) this module must stay importable without.
+    """
+    safe = _json_safe(value)
+    if safe is None:
+        return None
+    fv = float(safe)
+    if fv < 0.0:
+        return None
+    from forecast_library import round_3sf
+
+    return round_3sf(fv)
+
+
+def _round_2dp(value):
+    """Round to 2 decimals, matching the Excel DELTA / SDIVSIGMA cells
+    (`round(x, 2)`). Returns None for None/NaN/Inf.
+    """
+    safe = _json_safe(value)
+    if safe is None:
+        return None
+    return round(float(safe), 2)
+
+
+def _round_percent(value):
+    """Round a percentage to an integer, matching the Excel PERC_NORM cell
+    (round_percentage_to_integer_string == round(value); negative -> None).
+    Returns None for None/NaN/Inf/negative.
+    """
+    safe = _json_safe(value)
+    if safe is None:
+        return None
+    fv = float(safe)
+    if fv < 0.0:
+        return None
+    return round(fv)
+
+
 # ---------------------------------------------------------------------------
 # Period-boundary helpers
 # ---------------------------------------------------------------------------
@@ -235,24 +279,24 @@ def serialize_site(site, horizon: str) -> dict:
     }
     if horizon in _LONG_TERM_HORIZONS:
         base.update(
-            forecasted_discharge=_json_safe(getattr(site, "forecast_expected", None)),
-            q_min=_json_safe(getattr(site, "forecast_q_min", None)),
-            q_max=_json_safe(getattr(site, "forecast_q_max", None)),
-            v_min=_json_safe(getattr(site, "forecast_v_min", None)),
-            v_max=_json_safe(getattr(site, "forecast_v_max", None)),
-            norm=_json_safe(getattr(site, "forecast_norm", None)),
-            perc_norm=_json_safe(getattr(site, "perc_norm", None)),
+            forecasted_discharge=_round_discharge(getattr(site, "forecast_expected", None)),
+            q_min=_round_discharge(getattr(site, "forecast_q_min", None)),
+            q_max=_round_discharge(getattr(site, "forecast_q_max", None)),
+            v_min=_round_discharge(getattr(site, "forecast_v_min", None)),
+            v_max=_round_discharge(getattr(site, "forecast_v_max", None)),
+            norm=_round_discharge(getattr(site, "forecast_norm", None)),
+            perc_norm=_round_percent(getattr(site, "perc_norm", None)),
         )
     else:
         base.update(
-            forecasted_discharge=_json_safe(getattr(site, "forecast_expected", None)),
-            fc_lower=_json_safe(getattr(site, "forecast_lower_bound", None)),
-            fc_upper=_json_safe(getattr(site, "forecast_upper_bound", None)),
-            delta=_json_safe(getattr(site, "forecast_delta", None)),
-            sdivsigma=_json_safe(getattr(site, "forecast_sdivsigma", None)),
+            forecasted_discharge=_round_discharge(getattr(site, "forecast_expected", None)),
+            fc_lower=_round_discharge(getattr(site, "forecast_lower_bound", None)),
+            fc_upper=_round_discharge(getattr(site, "forecast_upper_bound", None)),
+            delta=_round_2dp(getattr(site, "forecast_delta", None)),
+            sdivsigma=_round_2dp(getattr(site, "forecast_sdivsigma", None)),
             mae=_json_safe(getattr(site, "forecast_mae", None)),
             accuracy=_json_safe(getattr(site, "forecast_accuracy", None)),
-            perc_norm=_json_safe(getattr(site, "perc_norm", None)),
+            perc_norm=_round_percent(getattr(site, "perc_norm", None)),
         )
     return base
 
