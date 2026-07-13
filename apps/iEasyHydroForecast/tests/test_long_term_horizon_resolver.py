@@ -225,6 +225,56 @@ def test_operational_schedules_returns_all_supported_modes(monkeypatch, tmp_path
         )
 
 
+# ---------------------------------------------------------------------------
+# M1 P3 review fix: operational_lead_for_mode (lead-only, no issue_day)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("lead", [0, 1, 2])
+def test_operational_lead_for_mode_reads_lead_without_issue_day(monkeypatch, tmp_path, lead):
+    """The lead-only accessor resolves from a config that has NO issue_day.
+
+    operational_schedule_for_mode would raise on this config; the read-path
+    accessor must not, since it never needs operational_issue_day.
+    """
+    _set_long_term_env(monkeypatch, tmp_path, ["month_1"])
+    _write_config(tmp_path, "month_1", {"operational_month_lead_time": lead})
+
+    assert resolver.operational_lead_for_mode("month_1") == lead
+
+
+def test_operational_lead_for_mode_ignores_issue_day_when_present(monkeypatch, tmp_path):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_1"])
+    _write_config(
+        tmp_path, "month_1", {"operational_month_lead_time": 2, "operational_issue_day": 25}
+    )
+
+    assert resolver.operational_lead_for_mode("month_1") == 2
+
+
+def test_operational_lead_for_mode_rejects_unsupported_mode(monkeypatch, tmp_path):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_1"])
+    _write_config(tmp_path, "month_1", {"operational_month_lead_time": 1})
+
+    with pytest.raises(resolver.UnsupportedLongTermModeError, match="not supported"):
+        resolver.operational_lead_for_mode("month_2")
+
+
+def test_operational_lead_for_mode_raises_for_missing_config_file(monkeypatch, tmp_path):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_2"])
+
+    with pytest.raises(FileNotFoundError, match="month_2"):
+        resolver.operational_lead_for_mode("month_2")
+
+
+def test_operational_lead_for_mode_raises_for_missing_lead_field(monkeypatch, tmp_path):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_1"])
+    _write_config(tmp_path, "month_1", {"operational_issue_day": 25})
+
+    with pytest.raises(resolver.LongTermHorizonResolverError, match="operational_month_lead_time"):
+        resolver.operational_lead_for_mode("month_1")
+
+
 def test_operational_schedules_propagates_error_for_incomplete_mode(monkeypatch, tmp_path):
     """One incomplete mode config among several fails the whole enumeration,
 

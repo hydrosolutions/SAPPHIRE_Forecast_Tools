@@ -81,6 +81,34 @@ def _horizon_value_for_mode(config_name: str) -> int:
     return _require_int_field(config, config_name, OPERATIONAL_MONTH_LEAD_TIME_FIELD)
 
 
+def operational_lead_for_mode(mode: str) -> int:
+    """Return a mode's operational lead using ONLY its lead-time field.
+
+    Read-path accessor for callers that need just the operational month
+    lead (e.g. resolving which ``horizon_value`` to query/display) and not
+    the issue day. Unlike ``operational_schedule_for_mode`` — which
+    additionally requires ``operational_issue_day`` to be present — this
+    reads only ``operational_month_lead_time``, so it succeeds on the
+    taj-style configs that omit ``operational_issue_day`` and would
+    otherwise crash a dashboard read.
+
+    Args:
+        mode: A deployment-supported long-term mode/config name
+            (e.g. ``"month_0"``, ``"month_1"``, ``"quarter"``).
+
+    Returns:
+        The configured ``operational_month_lead_time`` for the mode.
+
+    Raises:
+        UnsupportedLongTermModeError: If `mode` is not in this
+            deployment's supported long-term modes.
+        LongTermHorizonResolverError: If the mode's config is missing
+            ``operational_month_lead_time``, or the field is not an integer.
+        FileNotFoundError: If the mode's config file does not exist.
+    """
+    return _horizon_value_for_mode(mode)
+
+
 def operational_schedule_for_mode(mode: str) -> OperationalSchedule:
     """Return the configured operational lead time AND issue day for a mode.
 
