@@ -537,3 +537,10 @@ msgstr "Пропущенные станции (нет данных бюллет�
 
 msgid "No links were generated."
 msgstr "Ссылки не созданы."
+
+# Write-bulletin confirmation popup (FD)
+msgid "Bulletin saved successfully"
+msgstr "Бюллетень успешно сохранён"
+
+msgid "Failed to write bulletin"
+msgstr "Не удалось сохранить бюллетень"

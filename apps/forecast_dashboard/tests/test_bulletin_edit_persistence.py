@@ -400,6 +400,110 @@ class TestOnBulletinEditGracefulFailure:
 # ---------------------------------------------------------------------------
 
 
+def _make_write_popup_stub():
+    """A minimal `self.wm.write_bulletin_popup` stand-in (a real `pn.pane.Alert`
+    in production, here a plain namespace with the attrs `_show_write_popup`
+    sets)."""
+    return types.SimpleNamespace(object=None, alert_type=None, visible=False)
+
+
+def _make_write_manager_stub(sites, basin_selector_value="All basins", horizon="pentad"):
+    """A lightweight fake `self` sufficient to call `_on_write` unbound.
+
+    Constructing a real BulletinManager is impractical here (see
+    `_make_manager_stub`); `_on_write` only touches `self.bulletin_sites`,
+    `self.wm`, `self.dm`, `self._processing`, `self._write_to_excel`, and
+    `self._show_write_popup`, so a SimpleNamespace with just those attributes
+    is enough to exercise the real method body via
+    `BulletinManager._on_write(fake_self, event)`.
+    """
+    wm = types.SimpleNamespace(
+        basin_selector=types.SimpleNamespace(value=basin_selector_value),
+        horizon_selector=types.SimpleNamespace(value=horizon),
+        write_bulletin_popup=_make_write_popup_stub(),
+        downloader=types.SimpleNamespace(refresh_file_list=MagicMock()),
+    )
+    dm = types.SimpleNamespace(
+        get_bulletin_metadata=MagicMock(return_value=(pd.Timestamp("2026-07-01"), 26, 2026)),
+        forecasts_all=pd.DataFrame(),
+        sites_list=sites,
+    )
+    cfg = types.SimpleNamespace(env_file_path="/tmp/env")
+    processing = types.SimpleNamespace(get_bulletin_header_info=MagicMock(return_value={}))
+    return types.SimpleNamespace(
+        wm=wm,
+        dm=dm,
+        cfg=cfg,
+        _processing=processing,
+        bulletin_sites=sites,
+        _write_to_excel=MagicMock(),
+        _show_write_popup=MagicMock(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _show_write_popup (transient "Write bulletin" result alert)
+# ---------------------------------------------------------------------------
+
+
+class TestShowWritePopup:
+    def test_show_write_popup_sets_message_and_visible(self, monkeypatch):
+        periodic_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager.pn.state, "add_periodic_callback", periodic_mock)
+        wm = types.SimpleNamespace(write_bulletin_popup=_make_write_popup_stub())
+        fake_self = types.SimpleNamespace(wm=wm)
+
+        BulletinManager._show_write_popup(fake_self, "X")
+
+        assert fake_self.wm.write_bulletin_popup.object == "X"
+        assert fake_self.wm.write_bulletin_popup.alert_type == "success"
+        assert fake_self.wm.write_bulletin_popup.visible is True
+        periodic_mock.assert_called_once()
+        assert periodic_mock.call_args.args[1] == 3000
+        assert periodic_mock.call_args.kwargs.get("count") == 1
+
+    def test_show_write_popup_danger_type(self, monkeypatch):
+        periodic_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager.pn.state, "add_periodic_callback", periodic_mock)
+        wm = types.SimpleNamespace(write_bulletin_popup=_make_write_popup_stub())
+        fake_self = types.SimpleNamespace(wm=wm)
+
+        BulletinManager._show_write_popup(fake_self, "Y", alert_type="danger")
+
+        assert fake_self.wm.write_bulletin_popup.alert_type == "danger"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _on_write calls _show_write_popup on success / error
+# ---------------------------------------------------------------------------
+
+
+class TestOnWriteShowsWritePopup:
+    def test_on_write_success_shows_success_popup(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "_populate_forecast_attributes", MagicMock())
+        site = types.SimpleNamespace(code="99001", forecasts=pd.DataFrame())
+        fake_self = _make_write_manager_stub([site])
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._show_write_popup.assert_called_once_with("Bulletin saved successfully")
+        fake_self.wm.downloader.refresh_file_list.assert_called_once()
+
+    def test_on_write_error_shows_danger_popup(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "_populate_forecast_attributes", MagicMock())
+        site = types.SimpleNamespace(code="99001", forecasts=pd.DataFrame())
+        fake_self = _make_write_manager_stub([site])
+        fake_self._write_to_excel = MagicMock(side_effect=RuntimeError("disk full"))
+
+        BulletinManager._on_write(fake_self, event=None)  # must not raise
+
+        fake_self._show_write_popup.assert_called_once_with(
+            "Failed to write bulletin", alert_type="danger"
+        )
+
+
 class TestPopulateForecastAttributesShortTermBranch:
     """Exercises the real SapphireSite.get_forecast_attributes_for_site via
     the extracted _populate_forecast_attributes helper (the `else` branch,

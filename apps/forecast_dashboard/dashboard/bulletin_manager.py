@@ -380,6 +380,15 @@ class BulletinManager:
             2000, count=1,
         )
 
+    def _show_write_popup(self, message: str, alert_type: str = "success") -> None:
+        self.wm.write_bulletin_popup.object = message
+        self.wm.write_bulletin_popup.alert_type = alert_type
+        self.wm.write_bulletin_popup.visible = True
+        pn.state.add_periodic_callback(
+            lambda: setattr(self.wm.write_bulletin_popup, 'visible', False),
+            3000, count=1,
+        )
+
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
@@ -712,8 +721,10 @@ class BulletinManager:
             print("DEBUG: Bulletin written to Excel successfully.")
             # Refresh the file downloader panel
             self.wm.downloader.refresh_file_list()
+            self._show_write_popup(_("Bulletin saved successfully"))
         except Exception as e:
             logger.error("Error writing bulletin to Excel: %s", e, exc_info=True)
+            self._show_write_popup(_("Failed to write bulletin"), alert_type="danger")
 
 
 # ---------------------------------------------------------------------------

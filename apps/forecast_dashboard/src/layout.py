@@ -439,6 +439,7 @@ def define_tabs_2(_, wm, pm, cfg, disclaimer):
                     pn.Column(
                         wm.bulletin_table,
                         wm.write_bulletin_button,
+                        wm.write_bulletin_popup,
                     ),
                     title=_("Forecast bulletin"),
                     sizing_mode="stretch_width",
