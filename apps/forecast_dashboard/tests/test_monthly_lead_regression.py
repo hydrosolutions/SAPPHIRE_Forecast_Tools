@@ -134,7 +134,6 @@ def _setup_config(monkeypatch, tmp_path, name, modes):
 # ===========================================================================
 
 class TestMainPanelResolvesLead:
-    @pytest.mark.xfail(strict=True, reason="P1/A: main panel must resolve lead 0 for tjhm")
     def test_tjhm_main_panel_selects_hv0(self, monkeypatch, tmp_path):
         """tjhm (no month_0): the main monthly panel must select the lead-0
         flagship (hv0), not the hard-coded lead-1 product."""
@@ -173,9 +172,6 @@ class TestMainPanelResolvesLead:
 # ===========================================================================
 
 class TestFormatHorizonInfoUsesPassedTarget:
-    @pytest.mark.xfail(
-        strict=True, reason="P1/J: header must use passed target month+year (Dec lead-1 rollover)"
-    )
     def test_december_lead1_rolls_to_january_next_year(self, monkeypatch):
         """A December-issued lead-1 forecast targets January of the FOLLOWING
         year; the header must name that month AND year."""
@@ -190,9 +186,6 @@ class TestFormatHorizonInfoUsesPassedTarget:
         expected = "month: January 2027, produced on Dec 30, 2026"
         assert result == expected, f"Expected {expected!r}, got {result!r}"
 
-    @pytest.mark.xfail(
-        strict=True, reason="P1/J: header must use passed target month (tjhm lead-0)"
-    )
     def test_tjhm_lead0_uses_issue_month_as_target(self, monkeypatch):
         """tjhm lead-0: target month = issue month (July), not the recomputed
         month+1 (August)."""
@@ -212,16 +205,14 @@ class TestFormatHorizonInfoUsesPassedTarget:
 # ===========================================================================
 
 class TestMonth0CardStatsFiltering:
-    @pytest.mark.xfail(
-        strict=True, reason="P2/F(a): m0 card must merge lead-0 stats, not lead-1"
-    )
-    def test_m0_card_merges_lead0_stats_when_both_present(self, monkeypatch):
+    def test_m0_card_merges_lead0_stats_when_both_present(self, monkeypatch, tmp_path):
         """kghm, both leads' skill present: the m0 (lead-0) card must merge the
         lead-0 skill (delta=1.0), not the lead-1 skill (delta=5.0)."""
         monkeypatch.setenv(FLAG, "true")
-        monkeypatch.setenv(
-            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
-        )
+        # kghm config: month_1 → lead 1 (main panel), month_0 → lead 0 (m0 card).
+        # Flag-on resolves the main lead from config (no silent fallback), so a
+        # resolvable config must be present — as in production.
+        _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
         code = "15999"
 
         def mock_get(url, **kwargs):
@@ -258,16 +249,14 @@ class TestMonth0CardStatsFiltering:
             "m0 card must carry the lead-0 skill (delta=1.0), not the lead-1 skill (delta=5.0)"
         )
 
-    @pytest.mark.xfail(
-        strict=True, reason="P2/F(b): m0 card must blank when its lead has no stats"
-    )
-    def test_m0_card_blank_when_no_lead0_stats(self, monkeypatch):
+    def test_m0_card_blank_when_no_lead0_stats(self, monkeypatch, tmp_path):
         """kghm, only lead-1 skill present: the m0 (lead-0) card must render its
         metric columns blank/NaN — never filled from another lead."""
         monkeypatch.setenv(FLAG, "true")
-        monkeypatch.setenv(
-            "ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1"
-        )
+        # kghm config: month_1 → lead 1 (main panel), month_0 → lead 0 (m0 card).
+        # Flag-on resolves the main lead from config (no silent fallback), so a
+        # resolvable config must be present — as in production.
+        _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
         code = "15999"
 
         def mock_get(url, **kwargs):
@@ -311,9 +300,6 @@ class TestMonth0CardStatsFiltering:
 # ===========================================================================
 
 class TestBulletinTargetMonthYear:
-    @pytest.mark.xfail(
-        strict=True, reason="P3/year: Dec lead-1 bulletin forecast_year must roll to next year"
-    )
     def test_december_lead1_forecast_year_rolls_to_next_year(self, monkeypatch):
         """A December-issued lead-1 forecast targets January of the following
         year, so get_bulletin_metadata('month') must return that target year."""
@@ -336,57 +322,79 @@ class TestBulletinTargetMonthYear:
             "Dec-issued lead-1 targets January of the FOLLOWING year (2027), not the issue year"
         )
 
-    @pytest.mark.skip(
-        reason="authored in P3: needs m0-frame bulletin hydration signature "
-        "(get_bulletin_metadata / _month_hydration_params m0 variant)"
-    )
-    def test_m0_bulletin_hydrates_from_m0_frame_target_month(self):
-        """INTENDED (author in P3):
+    def test_m0_bulletin_hydrates_from_m0_frame_target_month(self, monkeypatch):
+        """The month_0 bulletin must hydrate from the m0 frame's target month,
+        not the main panel's.
 
-        The month_0 bulletin must hydrate from the m0 frame's target month, not
-        the main panel's.  Concretely, with a kghm deployment where the main
-        panel is lead 1 (target month N+1) and the m0 card is lead 0 (target
-        month N), adding the m0 card to the bulletin must resolve the norm and
-        month length for month N (the m0 target), not N+1.
-
-        This needs an m0-aware hydration entry point (e.g. a horizon/frame
-        argument to get_bulletin_metadata or a dedicated _month0_hydration_params)
-        that does not exist yet — assert once that signature lands.
+        kghm deployment: the main panel is lead 1 (target month 8, August) and
+        the m0 card is lead 0 (target month 7, July).  The m0-aware hydration
+        entry point (``get_bulletin_metadata(..., forecasts_all=<m0 frame>)``)
+        must resolve the m0 target (July), not the main panel's August.
         """
+        monkeypatch.setenv(FLAG, "true")
+
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame(
+                {"date": pd.to_datetime(["2026-07-25"]), "month_in_year": [8]}
+            ),
+            long_forecasts_m0=pd.DataFrame(
+                {"date": pd.to_datetime(["2026-07-10"]), "month_in_year": [7]}
+            ),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        # Reading the main panel yields the lead-1 target (August, month 8).
+        _ld_main, main_horizon, _yr_main = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+        assert main_horizon == 8
+
+        # Reading the m0 frame yields the lead-0 target (July, month 7) — the
+        # m0 card's own target, not the main panel's.
+        _ld_m0, m0_horizon, m0_year = DataManager.get_bulletin_metadata(
+            fake, "month", forecasts_all=fake.long_forecasts_m0
+        )
+        assert m0_horizon == 7, (
+            "m0 bulletin must hydrate from the m0 frame's target month (July), "
+            "not the main panel's (August)"
+        )
+        assert m0_year == 2026
 
 
 # ===========================================================================
 # month_horizon_value resolver — authored in P1 (signature does not exist yet).
 # ===========================================================================
 
-@pytest.mark.skip(
-    reason="authored in P1: _format_forecast_info needs the resolved-lead signature"
-)
 def test_format_forecast_info_uses_resolved_lead_target():
-    """INTENDED (author in P1, once _format_forecast_info takes the resolved lead
-    — do not guess the new signature here):
+    """The caption names the target month from the RESOLVED lead threaded into
+    ``_format_forecast_info(issue_date, horizon_label, lead=...)``, not from the
+    mode-name string literal."""
+    from dashboard.plot_manager import _format_forecast_info
 
-    The caption must name the target month from the RESOLVED lead, not from the
-    mode-name string:
-    - tjhm lead-0 forecast issued 2026-07-01 → names July (the issue month),
-      NOT August.
-    - kghm lead-1 forecast issued 2026-07-01 → names August (issue_month + 1).
+    # tjhm lead-0 issued 2026-07-01 → names July (the issue month), NOT August.
+    tjhm = _format_forecast_info(datetime.date(2026, 7, 1), "month_1", lead=0)
+    assert tjhm.startswith("Monthly runoff forecast for July"), tjhm
 
-    The current signature is _format_forecast_info(issue_date, horizon_label) and
-    branches on the "month_1"/"month_0" literal; the fix threads the resolved
-    lead in instead.  Assert once that signature lands.
-    """
+    # kghm lead-1 issued 2026-07-01 → names August (issue_month + 1).
+    kghm = _format_forecast_info(datetime.date(2026, 7, 1), "month_1", lead=1)
+    assert kghm.startswith("Monthly runoff forecast for August"), kghm
 
 
-@pytest.mark.skip(reason="authored in P1: needs month_horizon_value")
-def test_month_horizon_value_resolves_lead_per_config():
-    """INTENDED (author in P1, once long_term_horizon_resolver.month_horizon_value
-    exists — do not guess its signature here):
+def test_month_horizon_value_resolves_lead_per_config(monkeypatch, tmp_path):
+    """long_term_horizon_resolver.month_horizon_value resolves the per-config
+    lead, mirroring quarter/season, and raises for an unsupported mode."""
+    from long_term_horizon_resolver import (
+        UnsupportedLongTermModeError,
+        month_horizon_value,
+    )
 
-    - tjhm-shaped config: month_horizon_value("month_1") -> 0
-    - kghm-shaped config: month_horizon_value("month_1") -> 1
-    - kghm-shaped config: month_horizon_value("month_0") -> 0
-    - tjhm-shaped config: month_horizon_value("month_0") -> raises
-      UnsupportedLongTermModeError (mode absent from supported_modes); the caller
-      must membership-check before calling, mirroring quarter/season.
-    """
+    # tjhm-shaped: month_1 → lead 0; month_0 is not supported.
+    _setup_config(monkeypatch, tmp_path, "tjhm", {"month_1": 0, "month_2": 1})
+    assert month_horizon_value("month_1") == 0
+    with pytest.raises(UnsupportedLongTermModeError):
+        month_horizon_value("month_0")
+
+    # kghm-shaped: month_1 → lead 1; month_0 → lead 0.
+    _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
+    assert month_horizon_value("month_1") == 1
+    assert month_horizon_value("month_0") == 0

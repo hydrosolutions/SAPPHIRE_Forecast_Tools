@@ -4,6 +4,7 @@ import os
 
 import pandas as pd
 import panel as pn
+from src.environment import is_dash_lead_aware
 from src.file_downloader import FileDownloader
 from src.gettext_config import _, p_
 
@@ -626,10 +627,17 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
             "num": forecast_horizon,
         }
     elif horizon == "month":
-        target_month_num = (production_date.month % 12) + 1
+        # Defect J: use the resolved target month/year passed in (lead-aware);
+        # the legacy kill-switch recomputes them from the production date.
+        if is_dash_lead_aware():
+            target_month_num = forecast_horizon
+            target_year = forecast_year
+        else:
+            target_month_num = (production_date.month % 12) + 1
+            target_year = production_date.year
         body = _("month: %(month)s %(year)s") % {
             "month": month_name(target_month_num, "nominative"),
-            "year": production_date.year,
+            "year": target_year,
         }
     elif horizon == "season":
         body = _("season: April–September")

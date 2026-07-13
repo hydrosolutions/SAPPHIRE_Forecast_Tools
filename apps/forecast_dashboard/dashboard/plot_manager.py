@@ -5,13 +5,25 @@ Centralises all plot pane creation, update, tab-rendering logic,
 and rendering-related callback wiring.
 """
 
+import os
+
 import panel as pn
 import holoviews as hv
 from calendar import month_abbr, month_name
 
 from dashboard.logger import setup_logger
+from src.db import _resolve_primary_month_lead
+from src.environment import is_dash_lead_aware
 
 logger = setup_logger()
+
+
+def _primary_month_lead() -> int:
+    """Resolve the deployment's primary monthly lead for caption/visibility."""
+    supported_modes = os.getenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes", ""
+    ).split(",")
+    return _resolve_primary_month_lead(supported_modes)
 
 
 def _ordinal(n: int) -> str:
@@ -21,14 +33,19 @@ def _ordinal(n: int) -> str:
     return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
 
 
-def _format_forecast_info(issue_date, horizon_label: str) -> str:
+def _format_forecast_info(issue_date, horizon_label: str, lead: int | None = None) -> str:
     """Build the info text for a monthly forecast card.
 
     Args:
         issue_date: The forecast issue date (datetime-like with .month, .day, .year).
-        horizon_label: "month_1" or "month_0".
+        horizon_label: "month_1" or "month_0" (kept verbatim in the rendered text).
+        lead: The resolved operational lead. When provided (lead-aware path), the
+            target month is issue_month + lead with year rollover. When None
+            (legacy kill-switch), the target is derived from ``horizon_label``.
     """
-    if horizon_label == "month_1":
+    if lead is not None:
+        target_month_num = ((issue_date.month - 1 + lead) % 12) + 1
+    elif horizon_label == "month_1":
         target_month_num = (issue_date.month % 12) + 1
     else:
         target_month_num = issue_date.month
@@ -281,8 +298,9 @@ class PlotManager:
             df = self._dm.forecasts_all
             if df is not None and not df.empty:
                 issue_date = df['date'].max()
+                lead = _primary_month_lead() if is_dash_lead_aware() else None
                 self._wm.forecast_info_m1.object = _format_forecast_info(
-                    issue_date, "month_1")
+                    issue_date, "month_1", lead=lead)
             else:
                 self._wm.forecast_info_m1.object = ""
         else:
@@ -298,7 +316,11 @@ class PlotManager:
         if forecasts_all is None or forecasts_all.empty:
             self.summary_table_m0_card.visible = False
             return
-        summary_target_month = (forecasts_all['date'].max().month % 12) + 1
+        _issue_month = forecasts_all['date'].max().month
+        if is_dash_lead_aware():
+            summary_target_month = ((_issue_month - 1 + _primary_month_lead()) % 12) + 1
+        else:
+            summary_target_month = (_issue_month % 12) + 1
         m0_target_month = m0['date'].max().month
         if summary_target_month != m0_target_month:
             self.summary_table_m0_card.visible = False
@@ -319,9 +341,10 @@ class PlotManager:
             self._wm.range_slider,
             self._wm.forecast_tabulator_m0,
         )
-        # Update m0 info text
+        # Update m0 info text (the m0 card is always the lead-0 product)
+        m0_lead = 0 if is_dash_lead_aware() else None
         self._wm.forecast_info_m0.object = _format_forecast_info(
-            m0_max_date, "month_0")
+            m0_max_date, "month_0", lead=m0_lead)
 
     def update_quarterly_summary_tabulator(self):
         """Update the quarterly summary table card.

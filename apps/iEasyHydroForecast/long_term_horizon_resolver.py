@@ -49,6 +49,17 @@ def quarter_horizon_value() -> int:
     return _horizon_value_for_mode(QUARTER_CONFIG_NAME)
 
 
+def month_horizon_value(mode: str) -> int:
+    """Return the configured operational month lead time for a monthly mode.
+
+    Mirrors :func:`quarter_horizon_value` for the per-config monthly modes
+    (e.g. ``"month_0"``, ``"month_1"``). Performs the supported-mode membership
+    check and raises :class:`UnsupportedLongTermModeError` when ``mode`` is not
+    offered by this deployment.
+    """
+    return _horizon_value_for_mode(mode)
+
+
 def seasonal_horizon_value(issue_month: int) -> int:
     """Return the configured operational month lead time for a seasonal issue month."""
     return _horizon_value_for_mode(seasonal_config_name(issue_month))

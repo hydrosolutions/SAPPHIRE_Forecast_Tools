@@ -18,6 +18,7 @@ import param
 
 from src.site import SapphireSite as Site
 from src import db
+from src.environment import is_dash_lead_aware
 import src.processing as processing
 from dashboard import utils
 from dashboard.logger import setup_logger
@@ -330,10 +331,19 @@ class DataManager(param.Parameterized):
     # Bulletin helpers
     # ------------------------------------------------------------------
 
-    def get_bulletin_metadata(self, horizon):
-        """Return (last_date, forecast_horizon, forecast_year) for bulletin saving."""
+    def get_bulletin_metadata(self, horizon, forecasts_all=None):
+        """Return (last_date, forecast_horizon, forecast_year) for bulletin saving.
+
+        Args:
+            horizon: The active horizon ("pentad"/"decade"/"month"/"quarter"/"season").
+            forecasts_all: Frame to read from; defaults to the main panel's
+                ``self.forecasts_all``. The m0 bulletin passes the lead-0 frame so
+                the target month/year come from the card it actually displays
+                (Defect G).
+        """
+        fa = self.forecasts_all if forecasts_all is None else forecasts_all
         # Get the last available date in the data
-        max_date = self.forecasts_all['date'].max()
+        max_date = fa['date'].max()
         if not isinstance(max_date, (dt.date, dt.datetime)) or pd.isna(max_date):
             raise ValueError("No valid forecast dates available")
         last_date = max_date + dt.timedelta(days=1)
@@ -347,7 +357,7 @@ class DataManager(param.Parameterized):
             # the target quarter: 1, 4, 7, or 10). Convert to quarter-in-year
             # (1-4) so the stored value matches the forecasted quarter, not the
             # calendar quarter at save time.
-            start_month = int(self.forecasts_all["month_in_year"].tail(1).values[0])
+            start_month = int(fa["month_in_year"].tail(1).values[0])
             forecast_horizon = ((start_month - 1) // 3) + 1
         else:
             # The forecast is produced on the day before the first day of the
@@ -356,9 +366,19 @@ class DataManager(param.Parameterized):
             # period (pentad_in_year, decad_in_year, or month_in_year) — not the
             # calendar month at save time.
             forecast_horizon = int(
-                self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
+                fa[self.horizon_in_year(horizon)].tail(1).values[0]
             )
-        return last_date, forecast_horizon, last_date.year
+
+        # Defect G / year-rollover: a monthly forecast with lead >= 1 issued late
+        # in the year targets a month in the NEXT calendar year (e.g. Dec-issued
+        # lead-1 → January). The target month (forecast_horizon = month_in_year)
+        # is authoritative; roll the year when it precedes the issue month.
+        forecast_year = last_date.year
+        if is_dash_lead_aware() and horizon == "month":
+            forecast_year = (
+                max_date.year + 1 if forecast_horizon < max_date.month else max_date.year
+            )
+        return last_date, forecast_horizon, forecast_year
 
     # @property
     # def linreg_datatable(self):

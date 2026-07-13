@@ -934,6 +934,9 @@ class TestGetDataMonthly:
 
     def test_merges_skill_metrics_into_month0_forecasts(self, monkeypatch):
         """Skill metric columns appear in long_forecasts_m0 when month_0 is enabled."""
+        # Legacy (flag-off) contract: the m0 card is annotated from the lead-1
+        # stats frame; asserted here without providing a monthly config.
+        monkeypatch.setenv("SAPPHIRE_LTF_DASH_LEAD_AWARE", "false")
         monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1")
         self._make_dispatch_mock(monkeypatch)
         self._patch_processing(monkeypatch)
@@ -953,6 +956,8 @@ class TestGetDataMonthly:
 
     def test_month0_without_skill_metrics_still_returns_forecasts(self, monkeypatch):
         """When skill-metric API returns nothing, month_0 forecasts are still present."""
+        # Legacy (flag-off) contract: asserted without a monthly config present.
+        monkeypatch.setenv("SAPPHIRE_LTF_DASH_LEAD_AWARE", "false")
         monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_0,month_1")
 
         def mock_get(url, **kwargs):
@@ -972,6 +977,8 @@ class TestGetDataMonthly:
 
     def test_month0_disabled_returns_empty_dataframe(self, monkeypatch):
         """When month_0 is not in supported modes, long_forecasts_m0 is empty."""
+        # Legacy (flag-off) contract: asserted without a monthly config present.
+        monkeypatch.setenv("SAPPHIRE_LTF_DASH_LEAD_AWARE", "false")
         monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1")
         self._make_dispatch_mock(monkeypatch)
         self._patch_processing(monkeypatch)

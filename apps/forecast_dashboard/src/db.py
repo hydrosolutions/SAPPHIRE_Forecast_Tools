@@ -9,10 +9,12 @@ import requests
 from dashboard.logger import setup_logger
 from src import processing
 from src.discharge_formatting import round_3sf
+from src.environment import is_dash_lead_aware
 from src.gettext_config import _
 from src.snow_window import snow_display_window
 
 from long_term_horizon_resolver import (
+    month_horizon_value,
     quarter_horizon_value,
     seasonal_config_name,
     seasonal_horizon_value,
@@ -80,6 +82,38 @@ def _resolve_quarter_horizon_value(horizon_value: int | None = None) -> int:
     if horizon_value is not None:
         return int(horizon_value)
     return quarter_horizon_value()
+
+
+def _resolve_primary_month_lead(supported_modes: list[str]) -> int:
+    """Resolve the deployment's primary monthly lead (the ``month_1`` product).
+
+    Returns the configured ``operational_month_lead_time`` for ``month_1``
+    (kghm → 1, tjhm → 0). When ``month_1`` is not offered by this deployment,
+    returns the legacy lead 1 (the D3-endorsed membership guard).
+
+    A genuine config-read error is NOT caught: the resolver is allowed to raise,
+    exactly like the quarter/season resolvers (``db.py`` calls
+    ``quarter_horizon_value`` / ``seasonal_horizon_value`` with no fallback).
+    Swallowing it would silently reintroduce a hidden hard-coded lead — the very
+    bug this change fixes.
+    """
+    if "month_1" not in supported_modes:
+        return 1
+    return month_horizon_value("month_1")
+
+
+def _filter_month_stats_to_lead(forecast_stats: pd.DataFrame, lead: int) -> pd.DataFrame:
+    """Filter monthly skill stats to a single displayed lead (Defect F).
+
+    Returns only the rows whose ``horizon_value`` equals ``lead`` so a card
+    merges its own lead's skill and nothing else; an empty result leaves the
+    card's metric columns blank after the left merge. When the stats carry no
+    ``horizon_value`` column (pre-PP-038) or are empty, the frame is returned
+    unchanged — there is no per-lead distinction to make.
+    """
+    if forecast_stats.empty or "horizon_value" not in forecast_stats.columns:
+        return forecast_stats
+    return forecast_stats[forecast_stats["horizon_value"] == lead].copy()
 
 
 def _supported_seasonal_issue_months() -> list[int]:
@@ -920,32 +954,48 @@ def _get_data_monthly(
     supported_modes = os.getenv(
         "ieasyhydroforecast_ml_long_term_supported_modes", ""
     ).split(",")
+    lead_aware = is_dash_lead_aware()
 
-    forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=1)))
+    # Defect A: resolve the deployment's primary monthly lead from config when
+    # lead-aware (kghm → 1, tjhm → 0); otherwise the legacy hard-coded lead 1.
+    primary_lead = _resolve_primary_month_lead(supported_modes) if lead_aware else 1
+
+    forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=primary_lead)))
     forecast_stats = i18n_models(get_forecast_stats("month", station))
-
-    # PP-038: get_forecast_stats now preserves per-lead rows (one per horizon_value).
-    # Filter to the operational lead (horizon_value=1) that matches the displayed
-    # forecasts so the tile merge is 1:1 and forecast rows are not duplicated.
-    # This mirrors season's single-lead selection via _resolve_seasonal_horizon_value.
-    if not forecast_stats.empty and "horizon_value" in forecast_stats.columns:
-        _op_lead = 1
-        _op_mask = forecast_stats["horizon_value"] == _op_lead
-        if _op_mask.any():
-            forecast_stats = forecast_stats[_op_mask].copy()
 
     # Merge skill metrics into forecasts (same pattern as pentad/decad in get_data)
     hin = "month_in_year"
     merge_keys = ["code", hin, "model_short"]
+
+    # PP-038: get_forecast_stats preserves per-lead rows (one per horizon_value).
+    # Defect F: each card merges only its displayed lead's skill so the tile
+    # merge is 1:1 and forecast rows are not duplicated.
+    if lead_aware:
+        # Main panel merges the primary lead's stats; the m0 card merges lead-0
+        # stats from a SEPARATE frame; a card whose lead has no stats stays blank
+        # (never another lead's, never an unfiltered merge, never dropped).
+        main_stats = _filter_month_stats_to_lead(forecast_stats, primary_lead)
+        m0_stats = _filter_month_stats_to_lead(forecast_stats, 0)
+    else:
+        # Legacy kill-switch: a single lead-1 filter is reused for BOTH the main
+        # panel and the m0 card (Defect F's bug, locked as the flag-off contract).
+        if not forecast_stats.empty and "horizon_value" in forecast_stats.columns:
+            _op_lead = 1
+            _op_mask = forecast_stats["horizon_value"] == _op_lead
+            if _op_mask.any():
+                forecast_stats = forecast_stats[_op_mask].copy()
+        main_stats = forecast_stats
+        m0_stats = forecast_stats
+
     can_merge = (
         not forecasts_all.empty
-        and not forecast_stats.empty
+        and not main_stats.empty
         and all(k in forecasts_all.columns for k in merge_keys)
-        and all(k in forecast_stats.columns for k in merge_keys)
+        and all(k in main_stats.columns for k in merge_keys)
     )
     if can_merge:
         forecasts_all = forecasts_all.merge(
-            forecast_stats,
+            main_stats,
             on=merge_keys,
             how="left",
             suffixes=("", "_stats"),
@@ -983,7 +1033,7 @@ def _get_data_monthly(
         "ml_forecast":          pd.DataFrame(),
         "linreg_predictor":     pd.DataFrame(),
         "forecasts_all":        forecasts_all,
-        "forecast_stats":       forecast_stats,
+        "forecast_stats":       main_stats,
         "long_forecasts_m0":    pd.DataFrame(),
         "long_forecasts_quarter": long_forecasts_quarter,
     }
@@ -991,13 +1041,13 @@ def _get_data_monthly(
         m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=0)))
         can_merge_m0 = (
             not m0.empty
-            and not forecast_stats.empty
+            and not m0_stats.empty
             and all(k in m0.columns for k in merge_keys)
-            and all(k in forecast_stats.columns for k in merge_keys)
+            and all(k in m0_stats.columns for k in merge_keys)
         )
         if can_merge_m0:
             m0 = m0.merge(
-                forecast_stats,
+                m0_stats,
                 on=merge_keys,
                 how="left",
                 suffixes=("", "_stats"),
