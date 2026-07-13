@@ -599,7 +599,28 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
         # NULL (never TRUE), causing pile-up duplicate inserts for every recalc
         # run across ALL horizons (cross-horizon NULL-tuple hazard).
         if "horizon_value" in df_rec.columns:
-            df_rec["horizon_value"] = df_rec["horizon_value"].fillna(0).astype(int)
+            if skill_lead_aware_enabled():
+                # Lead-aware: a NaN horizon_value cannot be keyed to a real
+                # lead. Coercing it to 0 would masquerade as a genuine lead-0
+                # row and, via the upsert-key dedup below, could collapse or
+                # overwrite a true lead-0 record. Instead EXCLUDE such rows,
+                # emitting a WARNING naming the count so they are surfaced
+                # (not silently dropped): they need migration. Mirrors the
+                # NULL-lead WARN-exclude idiom in gap_detector
+                # detect_missing_quarterly_ensembles (FIX 5, revised).
+                df_rec["horizon_value"] = pd.to_numeric(df_rec["horizon_value"], errors="coerce")
+                null_lead_count = int(df_rec["horizon_value"].isna().sum())
+                if null_lead_count:
+                    logger.warning(
+                        "%d NULL-lead %s skill metric rows skipped from "
+                        "lead-aware API write -- need migration",
+                        null_lead_count,
+                        horizon_type,
+                    )
+                    df_rec = df_rec[df_rec["horizon_value"].notna()]
+                df_rec["horizon_value"] = df_rec["horizon_value"].astype(int)
+            else:
+                df_rec["horizon_value"] = df_rec["horizon_value"].fillna(0).astype(int)
         else:
             df_rec["horizon_value"] = 0
 
