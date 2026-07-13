@@ -1527,7 +1527,26 @@ def read_latest_monthly_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), reduce raw model rows
+    # to one operational-issuance row per (code, model, target year, target
+    # month) BEFORE the latest-(year, month) filter -- read WITHOUT the
+    # horizon_value filter (read-then-derive-then-filter), with the issue-
+    # date read window expanded backward by the max configured monthly lead
+    # so a latest-target month whose operational issuance was made in a
+    # prior calendar year is not missed, then trim the SELECTED rows back to
+    # [start_year, end_year]. Mirrors read_monthly_forecasts /
+    # read_latest_quarterly_forecasts. Flag OFF keeps the pre-existing
+    # unfiltered read + no selection unchanged.
+    lead_aware = skill_lead_aware_enabled()
+    month_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        month_schedules = _operational_schedules_for_horizon_type("month")
+        max_lead = max((s.lead_time for s in month_schedules.values()), default=0)
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    raw = _read_long_forecasts_api(codes, read_start_year, end_year)
     if raw is None or raw.empty:
         logger.warning("No recent monthly forecast data available")
         return pd.DataFrame()
@@ -1535,6 +1554,14 @@ def read_latest_monthly_forecasts(
     df = _normalize_monthly_forecasts(raw)
     if df.empty:
         return df
+
+    if lead_aware and month_schedules:
+        df = select_operational_issuances(
+            df, month_schedules, target_year_col="year", target_period_col="month"
+        )
+        df = _trim_to_target_year_range(df, "year", start_year, end_year)
+        if df.empty:
+            return df
 
     # Add month_in_year
     if "month_in_year" not in df.columns and "month" in df.columns:
@@ -3419,12 +3446,44 @@ def read_latest_seasonal_forecasts(
     start_year = start_date.year
     end_year = today.year
 
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), reduce raw model rows
+    # to one operational-issuance row per (code, model, target season_year)
+    # BEFORE the latest-season filter -- read WITHOUT the horizon_value
+    # filter (read-then-derive-then-filter), with the issue-date read
+    # window expanded backward by the configured seasonal lead(s). When
+    # horizon_value is given, selection is restricted to the schedule(s)
+    # matching that lead so a caller's per-lead loop still yields one frame
+    # per configured seasonal lead. Mirrors read_seasonal_forecasts. Flag
+    # OFF is byte-identical to the pre-existing single-horizon_value read.
+    lead_aware = skill_lead_aware_enabled()
+    season_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    read_horizon_value = horizon_value
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        all_season_schedules = _operational_schedules_for_horizon_type("season")
+
+        if horizon_value is not None:
+            candidate_schedules = {
+                mode: sched
+                for mode, sched in all_season_schedules.items()
+                if sched.lead_time == horizon_value
+            }
+        else:
+            candidate_schedules = all_season_schedules
+
+        if candidate_schedules:
+            season_schedules = candidate_schedules
+            max_lead = max(s.lead_time for s in season_schedules.values())
+            read_start_year = start_year - _read_window_expansion_years(max_lead)
+            read_horizon_value = None
+
     raw = _read_long_forecasts_api(
         codes,
-        start_year,
+        read_start_year,
         end_year,
         horizon_type="season",
-        horizon_value=horizon_value,
+        horizon_value=read_horizon_value,
     )
     if raw is None or raw.empty:
         logger.warning("No recent seasonal forecast data from API")
@@ -3433,6 +3492,21 @@ def read_latest_seasonal_forecasts(
     df = _normalize_combined_forecasts(raw, "season")
     if df.empty:
         return pd.DataFrame(columns=_SEASONAL_FC_COLS)
+
+    if lead_aware and season_schedules:
+        # season_in_year IS the lead key (one irrigation season/year), so
+        # target unit is (code, model, season_year) and the derived lead is
+        # written into BOTH horizon_value AND season_in_year.
+        df = select_operational_issuances(
+            df,
+            season_schedules,
+            target_year_col="season_year",
+            target_period_col=None,
+            lead_output_cols=("horizon_value", "season_in_year"),
+        )
+        df = _trim_to_target_year_range(df, "season_year", start_year, end_year)
+        if df.empty:
+            return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 
     df = _filter_supported_aggregated_forecast_models(df)
     if df.empty:
