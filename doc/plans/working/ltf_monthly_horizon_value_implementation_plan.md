@@ -120,11 +120,30 @@ deliberately deferred to that PR so the reference never describes a var that doe
 **Acceptance:**
 - Golden (green now): kghm main tile = single lead-1 row; kghm m0 card uses lead-0 skill; kghm header
   month/year today. Under flag-off these must never change.
-- Regression (red now, target the phase): tjhm main resolves lead 0 (A); `_format_forecast_info` and
-  `format_horizon_info` month+year at lead 0 and Dec-lead-1 (J); m0 merges only lead-0 stats and blanks
-  when absent — both `_op_mask.any()` branches (F); m0 bulletin hydration from the m0 frame (G);
-  bulletin `forecast_year` rolls to the following year for Dec-lead-1.
+- Regression (red now, target the phase): tjhm main resolves lead 0 (A); `format_horizon_info` uses the
+  passed target month+year instead of recomputing (J); m0 merges only lead-0 stats and blanks when
+  absent — both `_op_mask.any()` branches (F); m0 bulletin hydration from the m0 frame (G); bulletin
+  `forecast_year` rolls to the following year for Dec-lead-1.
 - No vacuous skips hide the new assertions.
+
+**Strategy (forward-compatible flag pattern) — decided 2026-07-13.** The flag/`month_horizon_value`
+do not exist yet, so tests are written to be stable across the fix:
+- **Golden** tests `monkeypatch.setenv("SAPPHIRE_LTF_DASH_LEAD_AWARE", "false")` and assert **current**
+  behaviour. The env var is ignored today (green now) and pins the kill-switch path after P1 (still
+  green). This includes locking the *current bug* as flag-off behaviour (e.g. kghm m0 card currently
+  merges lead-1 stats) — that is intentional; it proves the kill-switch reproduces `maxat`.
+- **Regression** tests `monkeypatch.setenv(..., "true")`, assert the **desired** behaviour, and are
+  marked `@pytest.mark.xfail(strict=True, reason="<phase>: …")`. They fail now (env ignored → buggy
+  path); when the phase lands (flag-on → correct path) they pass, and `strict=True` turns the
+  unexpected pass into a failure that forces removing the marker. This is the phase's pass criterion.
+- **New-signature** cases (`month_horizon_value(...)`, and any changed `_format_forecast_info`
+  signature) are authored in their implementing phase, not here — leave a `@pytest.mark.skip(
+  reason="authored in P1: needs month_horizon_value")` stub listing the intended assertions
+  (tjhm `month_1`→0, kghm `month_1`→1/`month_0`→0, tjhm `month_0`→raises) so intent is captured.
+- Test entry points that need **no** new signature and carry the fix internally: `db.get_data("month",
+  …)` (A main-panel selection + F stats filter/m0 merge), `format_horizon_info(...)` (J — the fix makes
+  it *use* the passed `forecast_horizon`/`forecast_year` it currently ignores), `get_bulletin_metadata`
+  + `_month_hydration_params` (G + year). Prefer these for the xfail-strict regressions.
 
 ---
 
