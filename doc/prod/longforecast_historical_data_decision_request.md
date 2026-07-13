@@ -109,3 +109,44 @@ changing that pipeline would be undone by the next operational run.
 the config-lead `horizon_value` (quarter: kyg 1 / taj 0; season per issue: kyg 3/2/1/0, taj 0). This
 becomes phase **P-PIPE**, a hard prerequisite for the data cleanup (P3/P4). All `long_forecasts`
 mutation remains held until P-PIPE ships. P-PIPE gets its own planner + reviewer pass.
+
+---
+
+## ADDENDUM (2026-07-13, forecast-tools side) — additional findings from the dashboard investigation
+
+Surfaced while diagnosing a separate Tajik dashboard symptom ("wrong monthly target month", branch
+`develop_ltf_monthly_horizon_value`). These are **prod-observed once, aggregate-only, and need prod
+re-verification** — the local dev DB shows a different month pattern. They add to the datasets above,
+they do not change the resolved convention. **P-PIPE appears to have LANDED on `maxat_sapphire_2`**
+(monthly writer `api_writer.py:896` now falls back to a `0` sentinel, quarter writer `:1093` stamps
+`quarter_horizon_value()`), so no further ensemble-writer change is needed for those two paths.
+
+### Dataset C (NEW) — MONTH aggregate rows carrying the calendar month as `horizon_value` (prod)
+The datasets above cover quarter and season; **month has the same pathology and is not yet listed.**
+On the Tajik prod `long_forecasts`, the `ENSEMBLE_MEAN` / `SKILLED_MEAN` / `NAIVE_MEAN` month rows
+were written with `horizon_value = calendar month (1..12)` instead of the config lead — **1,781 rows**,
+all issued 2016–2023 (they stop where the pre-fix writer stopped). This is the month analogue of the
+`QUARTER hv1-4` block and warrants the **same keep / quarantine / re-stamp / delete decision**. The
+current (fixed) writer emits `0`, so this is bounded historical data, not an ongoing leak. A naive
+"re-stamp `horizon_value := derived lead`" is **unsafe for these** the same way it is for quarter (see
+below) — re-derive from the target period, not from a `date`-based lead.
+
+### Tajik MONTH coverage gap (relevant to any month backfill decision)
+- The Tajik prod month series runs 2016–2023, then **2024 and 2025 are entirely empty** (a ~32-month
+  gap), then a single operational issue date **2026-07-01**. If continuous monthly skill/history is
+  wanted for Tajik, that gap needs a backfill decision.
+- The 2026-07-01 operational run wrote base-model leads 0/1/2 but **no `ENSEMBLE_MEAN` / `SKILLED_MEAN`
+  / `NAIVE_MEAN` aggregates at all**, and `MC_ALD` only at lead 0 (no quantile bands for leads 1–2).
+  Worth checking whether the operational aggregation step and `MC_ALD` multi-lead path are healthy on
+  the server.
+
+### Note on re-stamping vs the collision-safe approach above
+A blanket "`horizon_value := lead derived from the row" collides heavily — on local `QUARTER`, 15,935
+of 97,462 rows collapse onto the same unique key, because the quarter writer sets `date = valid_from`,
+so a `date`-based lead is 0 for every row and the true issue lead is unrecoverable from the data. This
+**confirms** the per-dataset, per-model re-stamp approach already chosen above (which reported 0
+collisions) is the right one; a naive derive-and-flip is not viable. Any month re-stamp (Dataset C)
+must likewise target a specific model/issue subset with a verified 0-collision scope, not a formula.
+
+All figures aggregate-only; no station codes or discharge values recorded. Prod numbers observed once
+and should be re-run on the server before acting.
