@@ -38,6 +38,7 @@ from long_term_horizon_resolver import (
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
 from src.horizon_config import ShortTermHorizonConfig
@@ -112,6 +113,48 @@ def _supported_seasonal_issue_leads() -> list[int]:
             if lead not in leads:
                 leads.append(lead)
     return leads
+
+
+def _long_term_horizon_supported(horizon_type: str) -> bool:
+    """Whether this long-term horizon ("month"|"quarter"|"season") should be
+    recalculated for this deployment under the lead-aware flag.
+
+    Flag OFF -> always True (preserve legacy behavior, byte-identical).
+    Flag ON  -> True iff the deployment configures >=1 operational mode for the
+    horizon. When ON and no mode is configured, log a warning and return False so
+    the caller SKIPS the block (avoids computing empty skill that would tombstone
+    all stored skill for the horizon). Propagates LongTermHorizonResolverError
+    (fail-loud) when a configured mode's config is incomplete (missing
+    operational_issue_day) -- do NOT swallow it.
+
+    Season note: "supported" for the season horizon is derived from
+    ``_supported_seasonal_issue_leads()`` -- the SAME source the seasonal recalc
+    block reads its leads from (which enumerates only the 4 canonical modes
+    seasonal_january..april) -- rather than the reader's looser ``seasonal_*``
+    match. This keeps the gate consistent with the block's actual reads, so a
+    mis-named seasonal mode cannot open the gate on a horizon the block will read
+    nothing for (which would tombstone all stored season skill). Fail-loud on an
+    incomplete configured mode is still enforced by the reader when a valid lead
+    is read. Month/quarter continue to use the reader's operational schedules.
+    """
+    if not skill_lead_aware_enabled():
+        return True
+    if horizon_type == "season":
+        supported = bool(_supported_seasonal_issue_leads())
+    else:
+        supported = bool(data_reader._operational_schedules_for_horizon_type(horizon_type))
+    if supported:
+        return True
+    logger.warning(
+        "Skipping %s long-term skill recalc under SAPPHIRE_SKILL_LEAD_AWARE: no "
+        "operational '%s' mode configured (check "
+        "ieasyhydroforecast_ml_long_term_supported_modes); existing stored %s "
+        "skill is left intact.",
+        horizon_type,
+        horizon_type,
+        horizon_type,
+    )
+    return False
 
 
 def _read_station_codes(config):
@@ -255,7 +298,7 @@ def recalculate_skill_metrics():
                 codes=codes,
             )
 
-        if prediction_mode in ["MONTHLY", "ALL"]:
+        if prediction_mode in ["MONTHLY", "ALL"] and _long_term_horizon_supported("month"):
             current_year = dt.date.today().year
             start_year = int(
                 os.getenv(
@@ -324,7 +367,7 @@ def recalculate_skill_metrics():
 
             pt.log_most_recent_forecasts_monthly(monthly_joint)
 
-        if prediction_mode in ["QUARTERLY", "ALL"]:
+        if prediction_mode in ["QUARTERLY", "ALL"] and _long_term_horizon_supported("quarter"):
             current_year = dt.date.today().year
             start_year = int(
                 os.getenv(
@@ -393,7 +436,7 @@ def recalculate_skill_metrics():
                     logger.error(f"Error saving quarterly skill metrics: {ret}")
                     errors.append(f"Quarterly skill metrics save failed: {ret}")
 
-        if prediction_mode in ["SEASONAL", "ALL"]:
+        if prediction_mode in ["SEASONAL", "ALL"] and _long_term_horizon_supported("season"):
             current_year = dt.date.today().year
             start_year = int(
                 os.getenv(

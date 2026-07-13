@@ -356,6 +356,10 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
     Returns:
         None
     """
+    if data is None or data.empty:
+        logger.info("No monthly skill metrics to save")
+        return None
+
     data = data.round(4)
 
     if "code" in data.columns:

@@ -286,11 +286,12 @@ class TestSaveMonthlySkillMetrics:
         em_row = saved[saved["model_short"] == "EM"].iloc[0]
         assert em_row["composition"] == "GBT, LR_Base"
 
-    def test_empty_dataframe_handled(self):
-        """Empty DataFrame doesn't crash save_monthly_skill_metrics.
+    def test_empty_dataframe_guarded_no_write(self):
+        """Empty DataFrame is guarded: returns None and does NOT touch the CSV.
 
-        An empty DataFrame with correct columns should produce a valid
-        (empty) CSV file without raising on .astype(int).
+        Mirrors save_quarterly/seasonal_skill_metrics. A transient empty read
+        must not overwrite an existing monthly skill CSV empty (data loss).
+        The guard returns before any CSV or API write is attempted.
         """
         data = pd.DataFrame(
             {
@@ -306,13 +307,83 @@ class TestSaveMonthlySkillMetrics:
                 "crps": pd.Series([], dtype=float),
             }
         )
+        csv_path = os.path.join(str(self.tmp_path), "skill_monthly.csv")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch("src.file_writer.atomic_write_csv") as mock_write,
+        ):
+            result = file_writer.save_monthly_skill_metrics(data)
+
+        assert result is None
+        mock_write.assert_not_called()
+        # No CSV created by the guarded call.
+        assert not os.path.exists(csv_path)
+
+    def test_empty_dataframe_preserves_existing_csv(self):
+        """A transient empty frame leaves a previously-written CSV intact."""
+        csv_path = os.path.join(str(self.tmp_path), "skill_monthly.csv")
+        # Pre-existing good CSV on disk.
+        good = pd.DataFrame(
+            {
+                "month_in_year": [6],
+                "code": ["19999"],
+                "model_short": ["GBT"],
+                "sdivsigma": [0.3],
+                "nse": [0.9],
+                "delta": [5.0],
+                "accuracy": [0.9],
+                "mae": [2.0],
+                "n_pairs": [10],
+                "crps": [12.0],
+            }
+        )
+        good.to_csv(csv_path, index=False)
+
+        empty = pd.DataFrame(
+            {
+                "month_in_year": pd.Series([], dtype=float),
+                "code": pd.Series([], dtype=str),
+                "model_short": pd.Series([], dtype=str),
+                "sdivsigma": pd.Series([], dtype=float),
+                "nse": pd.Series([], dtype=float),
+                "delta": pd.Series([], dtype=float),
+                "accuracy": pd.Series([], dtype=float),
+                "mae": pd.Series([], dtype=float),
+                "n_pairs": pd.Series([], dtype=float),
+                "crps": pd.Series([], dtype=float),
+            }
+        )
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
+            file_writer.save_monthly_skill_metrics(empty)
+
+        saved = pd.read_csv(csv_path, dtype={"code": str})
+        assert len(saved) == 1
+        assert saved.iloc[0]["code"] == "19999"
+
+    def test_nonempty_dataframe_still_writes(self):
+        """Non-empty frame still writes the CSV (guard does not regress the
+        happy path)."""
+        data = pd.DataFrame(
+            {
+                "month_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["GBT"],
+                "sdivsigma": [0.3],
+                "nse": [0.9],
+                "delta": [5.0],
+                "accuracy": [0.9],
+                "mae": [2.0],
+                "n_pairs": [10],
+                "crps": [12.0],
+            }
+        )
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
             file_writer.save_monthly_skill_metrics(data)
 
         csv_path = os.path.join(str(self.tmp_path), "skill_monthly.csv")
         assert os.path.exists(csv_path)
-        saved = pd.read_csv(csv_path)
-        assert len(saved) == 0
+        saved = pd.read_csv(csv_path, dtype={"code": str})
+        assert len(saved) == 1
 
     def test_crps_nan_written_to_csv(self, monthly_skill_data):
         """NaN CRPS values (from EM/Naive Mean) are written to CSV.

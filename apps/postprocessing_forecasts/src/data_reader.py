@@ -1371,6 +1371,14 @@ def read_monthly_forecasts(
         # month_N mode missing operational_issue_day) must NOT silently
         # fall back to an unfiltered read that retains backfill rows.
         month_schedules = _operational_schedules_for_horizon_type("month")
+        if lead_aware and not month_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational month "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return empty
         max_lead = max((s.lead_time for s in month_schedules.values()), default=0)
         read_start_year = start_year - _read_window_expansion_years(max_lead)
 
@@ -1543,6 +1551,14 @@ def read_latest_monthly_forecasts(
     if lead_aware:
         # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
         month_schedules = _operational_schedules_for_horizon_type("month")
+        if lead_aware and not month_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational month "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame()
         max_lead = max((s.lead_time for s in month_schedules.values()), default=0)
         read_start_year = start_year - _read_window_expansion_years(max_lead)
 
@@ -3083,6 +3099,14 @@ def read_quarterly_forecasts(
     if lead_aware:
         # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
         quarter_schedules = _operational_schedules_for_horizon_type("quarter")
+        if lead_aware and not quarter_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational quarter "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=empty_cols)
         max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
         q_start_year = start_year - _read_window_expansion_years(max_lead)
 
@@ -3210,11 +3234,20 @@ def read_seasonal_forecasts(
         else:
             candidate_schedules = all_season_schedules
 
-        if candidate_schedules:
-            season_schedules = candidate_schedules
-            max_lead = max(s.lead_time for s in season_schedules.values())
-            read_start_year = start_year - _read_window_expansion_years(max_lead)
-            read_horizon_value = None
+        if not candidate_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational season "
+                "schedules are configured for this read (no seasonal modes "
+                "configured, or no seasonal mode at the requested lead; check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return empty
+
+        season_schedules = candidate_schedules
+        max_lead = max(s.lead_time for s in season_schedules.values())
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+        read_horizon_value = None
 
     raw = _read_long_forecasts_api(
         codes,
@@ -3342,6 +3375,14 @@ def read_latest_quarterly_forecasts(
     if lead_aware:
         # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
         quarter_schedules = _operational_schedules_for_horizon_type("quarter")
+        if lead_aware and not quarter_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational quarter "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
         max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
         q_start_year = start_year - _read_window_expansion_years(max_lead)
 
@@ -3472,11 +3513,20 @@ def read_latest_seasonal_forecasts(
         else:
             candidate_schedules = all_season_schedules
 
-        if candidate_schedules:
-            season_schedules = candidate_schedules
-            max_lead = max(s.lead_time for s in season_schedules.values())
-            read_start_year = start_year - _read_window_expansion_years(max_lead)
-            read_horizon_value = None
+        if not candidate_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational season "
+                "schedules are configured for this read (no seasonal modes "
+                "configured, or no seasonal mode at the requested lead; check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=_SEASONAL_FC_COLS)
+
+        season_schedules = candidate_schedules
+        max_lead = max(s.lead_time for s in season_schedules.values())
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+        read_horizon_value = None
 
     raw = _read_long_forecasts_api(
         codes,
