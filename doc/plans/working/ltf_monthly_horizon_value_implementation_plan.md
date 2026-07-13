@@ -39,13 +39,28 @@ Small, because the convention is already settled. Decisions to record here:
   (kghm yes; tjhm no). This is the display decision the convention does not cover.
 - **D2 — flag name.** Confirm `SAPPHIRE_LTF_DASH_LEAD_AWARE` (or chosen); gates all five sites together,
   default off.
-- **D3 — pre-flight (must pass before P1):** confirm the dashboard container has
-  `ieasyhydroforecast_configuration_path` + `ieasyhydroforecast_ml_long_term_configuration` at runtime,
-  and that `long_term_horizon_resolver` import already used for quarter/season works for month. If the
-  config dir is not mounted, the resolver must degrade to current behaviour, not crash — decide the
-  fallback here.
+- **D3 — pre-flight: PASSED (2026-07-13).**
+  - The dashboard container **mounts the config dir** (`sapphire/docker-compose.yml:243` →
+    `${data_ref_dir}/config:${container_data_ref_dir}/config`) and loads env via
+    `ieasyhydroforecast_env_file_path`. Both taj and kyg env files set the three vars the resolver
+    reads: `ieasyforecast_configuration_path` (**note: no "hydro" — corrected from the earlier draft,
+    which wrongly said `ieasyhydroforecast_configuration_path`**), `ieasyhydroforecast_ml_long_term_configuration`,
+    `ieasyhydroforecast_ml_long_term_supported_modes`.
+  - The dashboard **already** hard-depends on this resolver for quarter/season with **no fallback**
+    (`db.py:725,778` call `quarter_horizon_value()` / `seasonal_horizon_value()` directly). Since
+    quarter/season cards render in production, config availability is already proven. Month adds no new
+    dependency.
+  - **Empirical run** of the resolver's month path against the real configs returns the convention
+    exactly: **tjhm** `month_1→0, month_2→1, month_3→2, quarter→0`, `month_0`→raises
+    `UnsupportedLongTermModeError`; **kghm** `month_0→0, month_1→1, month_2→2, month_3→3, quarter→1`.
+  - **Fallback decision:** because the resolver *raises* for an absent mode (tjhm `month_0`), the
+    caller **must membership-check `mode ∈ supported_modes` before calling it** (already in P1 guards).
+    A broad try/except that silently returns a default is **not** wanted — it would reintroduce a
+    hidden hard-coded lead. Match the existing quarter/season pattern: resolve directly, let a genuine
+    config error surface (the dashboard already behaves this way).
 
-**P0 acceptance:** D1–D3 answered in writing in this file.
+**P0 acceptance:** D1–D3 answered in writing in this file. **D3 done.** D1 (card mapping) and D2 (flag
+name) still need user sign-off.
 
 ---
 
