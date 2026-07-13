@@ -20,6 +20,7 @@ two deployments differ — see the parameter table below.
 | b | Two-model ensemble: quarter/season `EM = mean(LR_Base, LR_SM)`, de-skill-gated; reader drops 7 deprecated quarter models | `apps/postprocessing_forecasts/src/{ensemble_calculator,skill_metrics,data_reader,model_names}.py` |
 | c | From-file importer accepts quarter/season + code-scoped gap-fill | `bin/utils/migration_py/long_forecast.py` |
 | d | Seasonal Excel bulletin export | `apps/forecast_dashboard/src/bulletins.py` |
+| e | Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`, **default OFF, opt-in per deployment**) | `apps/postprocessing_forecasts/`, `apps/forecast_dashboard/src/db.py`, `apps/iEasyHydroForecast/{long_term_horizon_resolver,skill_lead_aware_flag}.py` — see the dedicated section below |
 
 > **Note on (d):** the seasonal-bulletin env var
 > `ieasyforecast_template_season_bulletin_file` has been correct in the code
@@ -50,6 +51,69 @@ These configs live in the per-deployment data repo, **not** in this repo.
 | **Kyrgyz (kyg)** | `1` | `seasonal_january`/`february`/`march`/`april` → `hv 3 / 2 / 1 / 0` |
 
 Issue identity is in `date`; the target season is in `valid_from`/`valid_to`.
+
+---
+
+## Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`) — opt-in per deployment
+
+**Status:** shipped **flag-gated, default OFF**. Merging the code changes
+**nothing** in a deployment until this flag is explicitly set — a golden
+byte-identity test enforces that flag-OFF output is identical to before. You
+must therefore **turn it on per deployment**, once that deployment is ready.
+
+**What it does when ON:** skill metrics and EM / Naive Mean / Skilled Mean
+ensembles are computed and stored **per operational lead** (`horizon_value`)
+instead of collapsed — month keeps one row per lead `0..N`, quarter stays
+single-lead per deployment, season keeps one row per seasonal issue lead. The
+operational "latest" readers and the maintenance gap-fill also select only the
+configured operational issuance (by `operational_month_lead_time` +
+`operational_issue_day`) instead of blending re-issues / backfills. It also
+un-hides Tajik's flagship monthly forecast (`month_1` = lead 0), previously
+masked by a hard-coded `horizon_value=1`.
+
+**⛔ Enable prerequisite (hard — fail-loud):** every long-term config JSON for the
+deployment must carry BOTH `operational_month_lead_time` AND
+`operational_issue_day`. Under the flag the write path **raises and aborts** if
+`operational_issue_day` is missing (by design — it must never silently score the
+wrong rows). Verify on the server:
+
+```bash
+for f in "$ieasyforecast_configuration_path/$ieasyhydroforecast_ml_long_term_configuration"/*.json; do
+  [ -f "$f" ] || continue
+  printf '%-22s lead=%s issue_day=%s\n' "$(basename "$f")" \
+    "$(grep -c operational_month_lead_time "$f")" \
+    "$(grep -c operational_issue_day "$f")"
+done
+# every row must show lead=1 issue_day=1 (present). issue_day=0 => NOT READY; do not enable.
+```
+
+**Per-deployment readiness (as of 2026-07-13):**
+
+| Deployment | long-term configs | `operational_issue_day` | Safe to enable? |
+|------------|-------------------|-------------------------|-----------------|
+| Kyrgyz (kyg) | 9 (month_0-3, quarter, seasonal_jan-apr) | all present | **yes** (with recalc) |
+| Tajik (taj) | 5 (month_1-3, quarter, seasonal_april) | all present | **yes** (with recalc) |
+| Uzbek (uzb) | **none present** | — | **NO** — add long-term configs first |
+
+**To enable (per deployment):**
+
+1. Confirm the prerequisite check above passes for THIS deployment.
+2. Add to the deployment `.env` (this is the one line that turns it on):
+   ```
+   SAPPHIRE_SKILL_LEAD_AWARE=true
+   ```
+3. Run the **full-history recalc (Phase 3)** right after enabling, so the stored
+   skill/ensemble rows are **consistently per-lead**. Existing rows were written
+   single-lead; without a recalc the DB stays a mix of single-lead and per-lead
+   until the next natural recalc.
+4. Verify per-lead rows exist (aggregate-only, sentinel codes — see Phase 4).
+
+**To roll back:** set `SAPPHIRE_SKILL_LEAD_AWARE=false` (or remove the line) in
+the `.env`; the code reverts to the pre-feature single-lead behavior. Re-run the
+recalc if you need the stored rows collapsed back.
+
+**Do NOT enable** on a deployment whose configs lack `operational_issue_day`
+(e.g. uzb today): the flag-ON recalc will hard-error by design.
 
 ---
 
@@ -153,6 +217,11 @@ for m in quarter seasonal_january seasonal_february seasonal_march seasonal_apri
               || printf '%-20s (no config — expected for taj Jan/Feb/Mar)\n' "$m"
 done
 ```
+
+> **If enabling `SAPPHIRE_SKILL_LEAD_AWARE`** (see the *Lead-aware skill* section
+> above): the same config JSONs must ALSO carry `operational_issue_day`, and the
+> `.env` must set `SAPPHIRE_SKILL_LEAD_AWARE=true`. The flag-ON recalc fails loud
+> without the field. Run the prerequisite check in that section before Phase 3.
 
 **Seasonal bulletin template (change d):** verify the seasonal template var is set
 and the file exists (this is the var behind the recent "bulletin won't update"
