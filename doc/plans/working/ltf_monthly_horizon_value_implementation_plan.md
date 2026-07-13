@@ -20,8 +20,10 @@ is owned by the MIG-008 data-governance track; neither is built here. See the is
 1. **Orchestrator writes no implementation code.** Each phase is delegated to Sonnet agents with an
    explicit file allow-list and the standard constraint: *"Do NOT change existing function signatures,
    data-flow, or control-flow; changes are additive or limited to the specific behaviour described."*
-2. **Feature-flagged, default-off.** All behaviour change sits behind a `SAPPHIRE_*` flag (name in P0).
-   Flag-off must be **byte-identical** to `maxat`; kghm must not move until the flag flips.
+2. **Feature-flagged, default-ON, with a kill-switch.** All behaviour change sits behind
+   `SAPPHIRE_LTF_DASH_LEAD_AWARE` (see "Flag specification" below). Setting it to a false value
+   (`SAPPHIRE_LTF_DASH_LEAD_AWARE=false`) must be **byte-identical to `maxat`** (the legacy hard-coded
+   lead 1) — that is the kill-switch. Absent/on = the corrected behaviour.
 3. **Tests before code (P-TEST).** Golden tests lock current kghm behaviour; red regression tests per
    defect land before the fix.
 4. **`apps/forecast_dashboard` only.** No `sapphire/services/`, no `postprocessing_forecasts`, no
@@ -37,8 +39,12 @@ Small, because the convention is already settled. Decisions to record here:
 - **D1 — card mapping.** Confirm: main monthly panel = the deployment's **primary** product
   (kghm `hv1`, tjhm `hv0`); the `month_0` card shows lead 0 **only when a distinct lower lead exists**
   (kghm yes; tjhm no). This is the display decision the convention does not cover.
-- **D2 — flag name.** Confirm `SAPPHIRE_LTF_DASH_LEAD_AWARE` (or chosen); gates all five sites together,
-  default off.
+- **D2 — flag: DECIDED (2026-07-13).** `SAPPHIRE_LTF_DASH_LEAD_AWARE`, **default ON**, gating all five
+  sites together, documented as a temporary kill-switch to be removed after a validation cycle. See
+  "Flag specification" below. Rationale: kyg is a *beneficiary* (its `month_0` card + bulletins are
+  corrected), not just protected, so default-on delivers the fix to both deployments on deploy; the
+  switch exists because kyg operators will see the `month_0` skill numbers change, and a runtime
+  revert (no redeploy) is cheap insurance for an operator-facing tool.
 - **D3 — pre-flight: PASSED (2026-07-13).**
   - The dashboard container **mounts the config dir** (`sapphire/docker-compose.yml:243` →
     `${data_ref_dir}/config:${container_data_ref_dir}/config`) and loads env via
@@ -59,8 +65,50 @@ Small, because the convention is already settled. Decisions to record here:
     hidden hard-coded lead. Match the existing quarter/season pattern: resolve directly, let a genuine
     config error surface (the dashboard already behaves this way).
 
-**P0 acceptance:** D1–D3 answered in writing in this file. **D3 done.** D1 (card mapping) and D2 (flag
-name) still need user sign-off.
+**P0 acceptance:** D1–D3 answered in writing in this file. **P0 COMPLETE (2026-07-13):** D1 approved,
+D2 decided, D3 passed.
+
+---
+
+## Flag specification — `SAPPHIRE_LTF_DASH_LEAD_AWARE`
+
+| | |
+|---|---|
+| **Name** | `SAPPHIRE_LTF_DASH_LEAD_AWARE` |
+| **Type** | boolean env var (truthy: `true`/`1`/`yes`, case-insensitive; falsy: `false`/`0`/`no`) |
+| **Default** | **ON** — *absent or unset ⇒ enabled* (the corrected, config-resolved behaviour) |
+| **Kill-switch** | set `=false` ⇒ legacy behaviour, **byte-identical to `maxat`** (hard-coded monthly lead 1) |
+| **Scope** | `apps/forecast_dashboard` only; gates all five fixed sites together (main-panel select + caption, m0 stat filter, m0 bulletin hydration, header, bulletin year) |
+| **Read location** | one helper (e.g. `dashboard/config.py` or a small `is_dash_lead_aware()`), read once; do not scatter `os.getenv` across the five sites |
+| **Lifecycle** | **temporary.** Remove the flag and the legacy branch in a follow-up once both deployments have run a validation cycle. Tracked as a P-CLEANUP follow-up. |
+
+**Behaviour by deployment (flag ON):** kghm main panel unchanged (config resolves lead 1, same as
+today); kghm `month_0` card + bulletins **corrected** (lead-0 skill/norms instead of lead-1); tjhm main
+panel **corrected** to the lead-0 flagship. Flag OFF reproduces today's behaviour for both.
+
+### Deployment action (when updating deployments) — do NOT action until the PR merges
+
+Because the default is ON, **the fix applies without any `.env` change** — you do *not* need to add the
+var for the corrected behaviour to take effect. The var only needs to be present to **disable** it.
+Recommended, so operators know the switch exists:
+
+- Add a **commented** line to the env templates and per-deployment env files, documenting the switch
+  and its default:
+  ```
+  # Dashboard monthly-lead resolution (fixes tjhm target month + kghm month_0 skill/bulletins).
+  # Default ON when unset. Set to false to revert to the legacy hard-coded lead-1 behaviour.
+  # SAPPHIRE_LTF_DASH_LEAD_AWARE=false
+  ```
+- Files: `apps/config/.env`, `apps/config/.env_develop`, `apps/config/.env_develop_kghm` (templates),
+  and the per-deployment `taj_data_forecast_tools/config/.env_develop_tjhm` /
+  `kyg_data_forecast_tools/config/.env_develop_kghm` (+ their `*_server` variants).
+- If any deployment wants to **stage** the visible kyg `month_0` change, set
+  `SAPPHIRE_LTF_DASH_LEAD_AWARE=false` there first, then flip to on after operator sign-off.
+
+This deployment step is an **acceptance item of the implementing PR** (see P1) — the PR must also update
+`doc/configuration.md` (the canonical env-var reference) and the deployment checklist
+(`doc/prod/update_deployment_checklist.md`). Documenting the var in `doc/configuration.md` is
+deliberately deferred to that PR so the reference never describes a var that does nothing yet.
 
 ---
 
@@ -89,8 +137,13 @@ name) still need user sign-off.
 `apps/forecast_dashboard/dashboard/plot_manager.py`; `.../widgets.py`.
 **Agents:** 2 — (a) resolver + `db.py` selection; (b) caption `plot_manager` + header `widgets`.
 **Guards:** membership-check `month_0 ∈ supported_modes` before calling the resolver
-(`_ensure_supported_mode` raises otherwise); resolver failure degrades to current behaviour (D3).
-**Acceptance:** A/J reds green; kghm goldens green; flag-off byte-identical.
+(`_ensure_supported_mode` raises otherwise). Per D3, do **not** wrap in a silent try/except default —
+resolve directly and let a genuine config error surface, matching the existing quarter/season pattern.
+Introduce the flag helper here (single read point) so all five sites gate on it.
+**Acceptance:** A/J reds green; kghm goldens green; **flag-off (`=false`) byte-identical to `maxat`**;
+the implementing PR also (a) adds the commented `SAPPHIRE_LTF_DASH_LEAD_AWARE` line to the env
+templates + per-deployment env files, (b) documents the var in `doc/configuration.md`, and (c) notes it
+in `doc/prod/update_deployment_checklist.md` (see "Flag specification → Deployment action").
 
 ## P2 — Per-lead skill-stat filtering (Defect F). Depends on: P0, P-TEST. Ships with P1.
 
@@ -108,6 +161,15 @@ name) still need user sign-off.
 **Acceptance:** G red green; a Dec-lead-1 bulletin carries January of the following year in the saved
 key and the hydration params.
 
+## P-CLEANUP — Remove the flag (follow-up, after validation). Depends on: P1–P3 deployed + validated.
+
+**Goal:** delete `SAPPHIRE_LTF_DASH_LEAD_AWARE` and the legacy hard-coded-lead-1 branch once both
+deployments have run a validation cycle with no operator concerns. Not part of the initial PR —
+tracked so the temporary flag does not become permanent dual-path debt.
+**Files:** the five sites + the flag helper + the flag's golden tests + the env-template comments +
+`doc/configuration.md`.
+**Acceptance:** flag gone; only the corrected behaviour remains; full suite green.
+
 ---
 
 ## Sequencing
@@ -115,17 +177,19 @@ key and the hydration params.
 ```json
 {
   "phases": {
-    "P0":     { "depends_on": [], "parallel_agents": 0 },
-    "P-TEST": { "depends_on": ["P0"], "parallel_agents": 1 },
-    "P1":     { "depends_on": ["P0", "P-TEST"], "parallel_agents": 2 },
-    "P2":     { "depends_on": ["P0", "P-TEST"], "parallel_agents": 1 },
-    "P3":     { "depends_on": ["P0", "P-TEST"], "parallel_agents": 1 }
+    "P0":         { "depends_on": [], "parallel_agents": 0 },
+    "P-TEST":     { "depends_on": ["P0"], "parallel_agents": 1 },
+    "P1":         { "depends_on": ["P0", "P-TEST"], "parallel_agents": 2 },
+    "P2":         { "depends_on": ["P0", "P-TEST"], "parallel_agents": 1 },
+    "P3":         { "depends_on": ["P0", "P-TEST"], "parallel_agents": 1 },
+    "P-CLEANUP":  { "depends_on": ["P1", "P2", "P3"], "parallel_agents": 1 }
   }
 }
 ```
 
 P1+P2+P3 all ship together as one flag-gated change (they are the same user-visible fix); they are
-split only for delegation. All are read-path, reversible by revert / flag-off.
+split only for delegation. All are read-path, reversible by revert / flag-off. P-CLEANUP is a separate
+later PR, gated on server validation.
 
 ---
 

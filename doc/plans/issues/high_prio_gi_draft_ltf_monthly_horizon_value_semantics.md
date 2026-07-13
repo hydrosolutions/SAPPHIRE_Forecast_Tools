@@ -123,8 +123,10 @@ Re-verifying against `origin/maxat_sapphire_2` collapsed it:
 
 - With `tjhm` config: the main monthly panel shows the lead-0 product; caption **and** header name the
   **issue month** as target; no second card.
-- With `kghm` config: main panel lead 1, `month_0` card lead 0 — **byte-identical to today** under
-  flag-off.
+- With `kghm` config: main panel lead 1 (unchanged); `month_0` card + bulletins **corrected** to lead-0
+  skill/norms (kyg is a beneficiary, not just protected). The kill-switch
+  `SAPPHIRE_LTF_DASH_LEAD_AWARE=false` reproduces today's behaviour **byte-identical to `maxat`**.
+  Flag defaults **on** (see the implementation plan's "Flag specification").
 - Each card merges skill stats filtered to the lead it displays; blank (never another lead's, never an
   unfiltered merge) when that lead has no stats — covers both `_op_mask.any()` branches (Defect F).
 - The m0 bulletin hydrates from the m0 frame's target month/year (Defect G).
