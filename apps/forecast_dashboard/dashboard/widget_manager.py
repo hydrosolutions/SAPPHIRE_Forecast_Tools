@@ -65,6 +65,10 @@ class WidgetManager:
         self.last_date, self.forecast_horizon, self.forecast_year = (
             dm.get_bulletin_metadata(self.horizon_selector.value)
         )
+        # Tracks which horizon the (last_date, forecast_horizon, forecast_year)
+        # triple above was resolved for, so a later failed refresh (see
+        # _on_change) can be told apart from a stale cross-horizon value.
+        self._metadata_horizon = self.horizon_selector.value
         self.pentad_selector = widgets.create_pentad_selector(self.last_date)
         self.decad_selector = widgets.create_decad_selector(self.last_date)
 
@@ -241,8 +245,14 @@ class WidgetManager:
                 self.last_date, self.forecast_horizon, self.forecast_year = (
                     dm.get_bulletin_metadata(horizon)
                 )
+                self._metadata_horizon = horizon
             except (KeyError, IndexError, TypeError, ValueError):
-                pass  # no data for this horizon yet; bulletin callback handles it
+                # No data for this horizon yet; bulletin callback handles it.
+                # self.last_date/forecast_horizon/forecast_year deliberately
+                # stay stale (from the previous horizon) — mark them as not
+                # belonging to `horizon` so consumers (format_horizon_info)
+                # don't mistake e.g. a stale pentad_in_year for a month index.
+                self._metadata_horizon = None
             self.refresh_warnings()
             self._refresh_horizon_info_pane()
 
@@ -351,11 +361,15 @@ class WidgetManager:
 
     def _refresh_horizon_info_pane(self) -> None:
         """Recompute the header horizon-info text from current metadata."""
+        current_horizon = self.horizon_selector.value
         self.horizon_info_pane.object = widgets.format_horizon_info(
-            self.horizon_selector.value,
+            current_horizon,
             self.forecast_horizon,
             self.forecast_year,
             getattr(self, "last_date", None),
+            metadata_is_current=(
+                getattr(self, "_metadata_horizon", None) == current_horizon
+            ),
         )
 
     # ------------------------------------------------------------------

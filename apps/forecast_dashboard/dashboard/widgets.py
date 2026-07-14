@@ -584,8 +584,20 @@ def create_forecast_info_pane():
     return pn.pane.Markdown("", sizing_mode="stretch_width")
 
 
-def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
+def format_horizon_info(
+    horizon, forecast_horizon, forecast_year, last_date, metadata_is_current=True,
+):
     """Build the header label describing the active forecast horizon.
+
+    Args:
+        metadata_is_current: Whether (forecast_horizon, forecast_year) were
+            actually resolved for `horizon` (vs. left stale from a
+            previously-selected horizon after a failed metadata refresh —
+            see widget_manager._on_change). Only consulted by the
+            flag-gated "month" branch, where trusting a stale cross-horizon
+            period number as a month index can crash or silently mislabel
+            the month; defaults to True so all other callers (and every
+            other horizon branch) are unaffected.
 
     See widget_manager._refresh_horizon_info_pane for the call site.
     """
@@ -630,6 +642,11 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
         # Defect J: use the resolved target month/year passed in (lead-aware);
         # the legacy kill-switch recomputes them from the production date.
         if skill_lead_aware_enabled():
+            if not metadata_is_current:
+                # forecast_horizon/forecast_year were resolved for a
+                # DIFFERENT horizon (the refresh for this one failed and the
+                # cache was left stale) — do not render a month from them.
+                return ""
             target_month_num = forecast_horizon
             target_year = forecast_year
         else:

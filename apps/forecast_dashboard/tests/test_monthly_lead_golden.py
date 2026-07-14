@@ -31,11 +31,9 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 import requests
-
-from src import db
-from dashboard import widgets
+from dashboard import plot_manager, widgets
 from dashboard.data_manager import DataManager
-from dashboard.plot_manager import _format_forecast_info
+from src import db
 
 FLAG = "SAPPHIRE_SKILL_LEAD_AWARE"
 
@@ -140,33 +138,201 @@ def _setup_config(monkeypatch, tmp_path, name, modes):
 
 
 # ---------------------------------------------------------------------------
-# Pure function: _format_forecast_info (plot_manager) — Defect A caption site
+# _format_forecast_info's callers (plot_manager) — Defect A caption sites.
+#
+# _format_forecast_info itself does not read SAPPHIRE_SKILL_LEAD_AWARE — the
+# gate lives in the CALLERS (update_forecast_tabulator:296 for month_1,
+# update_forecast_tabulator_m0:340 for month_0). Calling _format_forecast_info
+# directly with monkeypatch.setenv(FLAG, ...) is decorative: it never
+# exercises those gates, so a caller that resolved the lead unconditionally
+# (breaking the kill-switch) would still leave a directly-called test green.
+# These tests drive the real callers and spy on the `lead` kwarg the caller
+# passes down, so the gate itself is what's being pinned.
 # ---------------------------------------------------------------------------
 
 class TestFormatForecastInfoCurrent:
-    def test_month1_current_caption(self, monkeypatch):
-        """month_1 currently captions the month AFTER the issue month (lead-1)."""
+    def test_month1_caption_flag_off_passes_lead_none(self, monkeypatch):
+        """update_forecast_tabulator (plot_manager.py:296): flag OFF must pass
+        lead=None into _format_forecast_info regardless of the resolved
+        operational lead — the legacy month_1 caption always assumes lead-1
+        via the horizon_label fallback, never the resolved lead."""
+        monkeypatch.setenv(FLAG, "false")
+        # tjhm-shaped: resolved lead is 0; flag-off must still ignore it.
+        monkeypatch.setattr(plot_manager, "_primary_month_lead", lambda: 0)
+
+        calls = []
+
+        def _spy_format_forecast_info(issue_date, horizon_label, lead=None):
+            calls.append({"issue_date": issue_date, "horizon_label": horizon_label, "lead": lead})
+            return "STUBBED"
+
+        monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
+
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                horizon_selector=types.SimpleNamespace(value="month"),
+                station_selector=MagicMock(),
+                date_picker=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator=MagicMock(),
+                forecast_info_m1=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all),
+        )
+
+        plot_manager.PlotManager.update_forecast_tabulator(fake_self)
+
+        assert calls == [
+            {"issue_date": forecasts_all["date"].max(), "horizon_label": "month_1", "lead": None}
+        ], f"Expected lead=None (flag off), got {calls!r}"
+        assert fake_self._wm.forecast_info_m1.object == "STUBBED"
+
+    def test_month0_caption_flag_off_passes_lead_none(self, monkeypatch):
+        """update_forecast_tabulator_m0 (plot_manager.py:340): flag OFF must
+        pass lead=None into _format_forecast_info (the month_0 branch then
+        falls back to the issue month itself)."""
         monkeypatch.setenv(FLAG, "false")
 
-        result = _format_forecast_info(datetime.date(2026, 7, 1), "month_1")
+        calls = []
 
-        expected = (
-            "Monthly runoff forecast for August  \n"
-            "Forecast issue date: 1st of July 2026 (month_1)"
+        def _spy_format_forecast_info(issue_date, horizon_label, lead=None):
+            calls.append({"issue_date": issue_date, "horizon_label": horizon_label, "lead": lead})
+            return "STUBBED"
+
+        monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
+
+        # Legacy (flag-off) m0 visibility gate: summary_target_month =
+        # (issue_month % 12) + 1. Issue in July (7) -> gate expects August (8),
+        # so m0's own frame must carry an August date to pass it (this is the
+        # pre-existing Defect F quirk — locked as the kill-switch path
+        # elsewhere in this file; irrelevant to the lead kwarg under test).
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        m0 = pd.DataFrame({"date": pd.to_datetime(["2026-08-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                station_selector=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator_m0=MagicMock(),
+                forecast_info_m0=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all, long_forecasts_m0=m0),
+            summary_table_m0_card=types.SimpleNamespace(visible=None),
         )
-        assert result == expected, f"Expected {expected!r}, got {result!r}"
 
-    def test_month0_current_caption(self, monkeypatch):
-        """month_0 currently captions the issue month itself (lead-0)."""
-        monkeypatch.setenv(FLAG, "false")
+        plot_manager.PlotManager.update_forecast_tabulator_m0(fake_self)
 
-        result = _format_forecast_info(datetime.date(2026, 7, 10), "month_0")
-
-        expected = (
-            "Monthly runoff forecast for July  \n"
-            "Forecast issue date: 10th of July 2026 (month_0)"
+        assert fake_self.summary_table_m0_card.visible is True, (
+            "fixture must reach the _format_forecast_info call, not the "
+            "early-return visibility gate"
         )
-        assert result == expected, f"Expected {expected!r}, got {result!r}"
+        assert calls == [
+            {"issue_date": m0["date"].max().date(), "horizon_label": "month_0", "lead": None}
+        ], f"Expected lead=None (flag off), got {calls!r}"
+        assert fake_self._wm.forecast_info_m0.object == "STUBBED"
+
+
+class TestFormatForecastInfoGuardOn:
+    """Companion flag-ON cases — prove the same callers pass a real lead once
+    the flag is on (guards a naive always-off mutation, symmetric to the
+    flag-off checks above)."""
+
+    def test_month1_caption_flag_on_passes_resolved_lead(self, monkeypatch):
+        monkeypatch.setenv(FLAG, "true")
+        monkeypatch.setattr(plot_manager, "_primary_month_lead", lambda: 1)
+
+        calls = []
+
+        def _spy_format_forecast_info(issue_date, horizon_label, lead=None):
+            calls.append({"issue_date": issue_date, "horizon_label": horizon_label, "lead": lead})
+            return "STUBBED"
+
+        monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
+
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                horizon_selector=types.SimpleNamespace(value="month"),
+                station_selector=MagicMock(),
+                date_picker=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator=MagicMock(),
+                forecast_info_m1=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all),
+        )
+
+        plot_manager.PlotManager.update_forecast_tabulator(fake_self)
+
+        assert calls == [
+            {"issue_date": forecasts_all["date"].max(), "horizon_label": "month_1", "lead": 1}
+        ], f"Expected lead=1 (flag on, resolved), got {calls!r}"
+
+    def test_month0_caption_flag_on_passes_lead_zero(self, monkeypatch):
+        monkeypatch.setenv(FLAG, "true")
+        monkeypatch.setattr(plot_manager, "_primary_month_lead", lambda: 1)
+
+        calls = []
+
+        def _spy_format_forecast_info(issue_date, horizon_label, lead=None):
+            calls.append({"issue_date": issue_date, "horizon_label": horizon_label, "lead": lead})
+            return "STUBBED"
+
+        monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
+
+        # Flag-on m0 visibility gate: summary_target_month =
+        # ((issue_month - 1 + primary_lead) % 12) + 1 = ((7-1+1)%12)+1 = 8.
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        m0 = pd.DataFrame({"date": pd.to_datetime(["2026-08-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                station_selector=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator_m0=MagicMock(),
+                forecast_info_m0=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all, long_forecasts_m0=m0),
+            summary_table_m0_card=types.SimpleNamespace(visible=None),
+        )
+
+        plot_manager.PlotManager.update_forecast_tabulator_m0(fake_self)
+
+        assert fake_self.summary_table_m0_card.visible is True
+        assert calls == [
+            {"issue_date": m0["date"].max().date(), "horizon_label": "month_0", "lead": 0}
+        ], f"Expected lead=0 (m0 card is always the lead-0 product), got {calls!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +498,27 @@ class TestGetDataMonthLeadGuards:
 # ---------------------------------------------------------------------------
 
 class TestBulletinMetadataCurrent:
-    def test_forecast_year_is_issue_year(self, monkeypatch):
-        """get_bulletin_metadata('month') currently returns forecast_year =
-        last_date.year (the issue year), read directly from the main panel."""
+    def test_forecast_year_is_issue_year_for_dec_issued_lead1(self, monkeypatch):
+        """get_bulletin_metadata('month') flag OFF currently returns
+        forecast_year = last_date.year (the issue year) — it never rolls the
+        year, even for a December-issued forecast that targets January of the
+        FOLLOWING year.
+
+        Discriminating fixture (kghm-shaped: issued 2026-12-25, targeting
+        January [month_in_year=1]): flag ON rolls this to 2027 (see
+        test_monthly_lead_regression.py::
+        TestBulletinTargetMonthYear::test_december_lead1_forecast_year_rolls_to_next_year).
+        A fixture where the roll is a no-op (e.g. a mid-year issue date, or a
+        target month that doesn't precede the issue month) would pass this
+        assertion under EITHER flag value — deleting the
+        skill_lead_aware_enabled() guard at data_manager.py:377 must turn
+        this RED.
+        """
         monkeypatch.setenv(FLAG, "false")
 
         fake = types.SimpleNamespace(
             forecasts_all=pd.DataFrame(
-                {"date": pd.to_datetime(["2026-07-01"]), "month_in_year": [8]}
+                {"date": pd.to_datetime(["2026-12-25"]), "month_in_year": [1]}
             ),
             horizon_in_year=lambda horizon: "month_in_year",
         )
@@ -348,39 +527,163 @@ class TestBulletinMetadataCurrent:
             fake, "month"
         )
 
-        # last_date = issue date + 1 day; forecast_horizon read from month_in_year.
-        assert forecast_horizon == 8
-        assert forecast_year == last_date.year, (
-            "current rule: forecast_year is the issue year (last_date.year)"
+        # last_date = issue date + 1 day = 2026-12-26 (still December).
+        assert forecast_horizon == 1
+        assert forecast_year == last_date.year == 2026, (
+            "flag-off (kill-switch) rule: forecast_year is the issue year "
+            "(last_date.year), NOT rolled to 2027 even though the target "
+            "month (January) precedes the issue month (December)"
         )
-        assert forecast_year == 2026
 
+
+class TestLastDateYearVsMaxDateYearAsymmetry:
+    """Pins a real discrepancy the adversarial review flagged while
+    re-fixturing the test above: get_bulletin_metadata's flag-OFF branch
+    derives the year from `last_date` (= max_date + 1 day), while the
+    flag-ON branch derives it from `max_date` directly (data_manager.py:376-380).
+    These normally agree, but diverge when the +1-day arithmetic itself
+    crosses a calendar-year boundary: a Dec-31-issued, LEAD-0 forecast
+    (target month = December, the same month/year as the issue).
+
+    Flag ON is correct here: the target month (12) does not precede the
+    issue month (12), so no rollover should happen -> 2026. Flag OFF
+    (last_date.year) rolls anyway, purely as an artifact of the +1-day
+    arithmetic landing on Jan 1 -> 2027, which is wrong for a lead-0 target.
+    This is a pre-existing kill-switch quirk (present on trunk, not
+    introduced by this branch) and is intentionally NOT fixed here — fixing
+    data_manager.py would violate the flag-off byte-identical-to-trunk
+    contract this branch must uphold. See report for the explicit verdict.
+    """
+
+    def test_dec31_lead0_flag_on_does_not_roll_year(self, monkeypatch):
+        monkeypatch.setenv(FLAG, "true")
+
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame(
+                {"date": pd.to_datetime(["2026-12-31"]), "month_in_year": [12]}
+            ),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 12
+        assert forecast_year == 2026, (
+            "flag-ON (correct/lead-aware): a Dec-31 lead-0 forecast targets "
+            "December of the SAME year — must not roll to 2027"
+        )
+
+    def test_dec31_lead0_flag_off_rolls_year_anyway_known_quirk(self, monkeypatch):
+        monkeypatch.setenv(FLAG, "false")
+
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame(
+                {"date": pd.to_datetime(["2026-12-31"]), "month_in_year": [12]}
+            ),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        # last_date = 2026-12-31 + 1 day = 2027-01-01 -> .year is 2027, purely
+        # from the +1-day arithmetic, NOT from any lead/target reasoning.
+        assert last_date.year == 2027
+        assert forecast_horizon == 12
+        assert forecast_year == 2027, (
+            "flag-OFF (kill-switch, known quirk): diverges from the flag-ON "
+            "result (2026) for a Dec-31 lead-0 issue — locked as-is because "
+            "flag-off must stay byte-identical to trunk"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _on_add_m0's caller-level hydration gate (bulletin_manager.py:549) —
+# Defect G. _month_hydration_params / _month0_hydration_params themselves do
+# not read the flag; the gate lives in the CALLER (_on_add_m0). Calling
+# either helper directly with monkeypatch.setenv(FLAG, ...) never exercises
+# that gate, so the setenv is decorative — a caller that always picked
+# _month_hydration_params (breaking the kill-switch) would still leave a
+# directly-called test green. These tests drive _on_add_m0 and spy on which
+# helper it calls.
+# ---------------------------------------------------------------------------
 
 class TestMonthHydrationParamsCurrent:
-    def test_uses_main_panel_bulletin_metadata(self, monkeypatch):
-        """_month_hydration_params currently hydrates from the MAIN-panel
-        get_bulletin_metadata('month'), not the m0 frame."""
+    @staticmethod
+    def _make_fake_bulletin_manager(called):
+        site = MagicMock()
+        site.code = "17999"
+        site.station_label = "17999 - Test"
+        site.punkt_name_ru = "Тест"  # non-reservoir: skip the quarterly-hydration branch
+
+        fake = types.SimpleNamespace(
+            cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    app_state=types.SimpleNamespace(pipeline_running=False)
+                )
+            ),
+            wm=types.SimpleNamespace(
+                forecast_tabulator_m0=types.SimpleNamespace(
+                    value=pd.DataFrame({"a": [1]}), selection=[],
+                ),
+                station_selector=types.SimpleNamespace(value=site.station_label),
+                horizon_selector=types.SimpleNamespace(value="month"),
+            ),
+            dm=types.SimpleNamespace(sites_list=[site]),
+            bulletin_sites=[],
+            _month_hydration_params=lambda: (called.append("main"), (8, 2026, 31))[1],
+            _month0_hydration_params=lambda: (called.append("m0"), (7, 2026, 31))[1],
+            _horizon_context=lambda: ("month", 2026, 8),
+            _update_bulletin_table=lambda: None,
+            _show_popup_m0=lambda *a, **k: None,
+        )
+        return fake
+
+    def test_add_m0_flag_off_uses_main_panel_hydration(self, monkeypatch):
+        """_on_add_m0 currently (flag OFF) hydrates the m0 bulletin from the
+        MAIN-panel _month_hydration_params, not the m0-aware
+        _month0_hydration_params."""
         monkeypatch.setenv(FLAG, "false")
 
         BulletinManager = _import_bulletin_manager()
+        from dashboard import bulletin_manager
 
-        called_horizons = []
+        monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
 
-        def _get_bulletin_metadata(horizon):
-            called_horizons.append(horizon)
-            # (last_date, target_month_in_year, target_year) — August target.
-            return datetime.date(2026, 7, 2), 8, 2026
+        called = []
+        fake = self._make_fake_bulletin_manager(called)
 
-        fake = types.SimpleNamespace(
-            dm=types.SimpleNamespace(get_bulletin_metadata=_get_bulletin_metadata)
+        BulletinManager._on_add_m0(fake, event=None)
+
+        assert called == ["main"], (
+            "current: flag-off m0 bulletin hydrates from the main panel's "
+            f"_month_hydration_params, not the m0 frame; got {called!r}"
         )
 
-        target_month, target_year, days_in_month = BulletinManager._month_hydration_params(fake)
+    def test_add_m0_flag_on_uses_m0_frame_hydration(self, monkeypatch):
+        """Guard: flag ON must route through the m0-aware
+        _month0_hydration_params instead (Defect G fix)."""
+        monkeypatch.setenv(FLAG, "true")
 
-        assert called_horizons == ["month"], (
-            "current: m0 bulletin hydrates from the main 'month' panel metadata"
+        BulletinManager = _import_bulletin_manager()
+        from dashboard import bulletin_manager
+
+        monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+
+        called = []
+        fake = self._make_fake_bulletin_manager(called)
+
+        BulletinManager._on_add_m0(fake, event=None)
+
+        assert called == ["m0"], (
+            f"flag-on m0 bulletin must hydrate from the m0 frame's own "
+            f"target month, not the main panel; got {called!r}"
         )
-        assert (target_month, target_year, days_in_month) == (8, 2026, 31)  # Aug 2026
 
 
 # ---------------------------------------------------------------------------

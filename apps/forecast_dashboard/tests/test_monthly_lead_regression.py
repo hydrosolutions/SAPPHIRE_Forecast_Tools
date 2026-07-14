@@ -26,12 +26,13 @@ import types
 from unittest.mock import MagicMock
 
 import pandas as pd
+import panel as pn
 import pytest
 import requests
-
-from src import db
 from dashboard import widgets
 from dashboard.data_manager import DataManager
+from dashboard.widget_manager import WidgetManager
+from src import db
 
 FLAG = "SAPPHIRE_SKILL_LEAD_AWARE"
 
@@ -401,3 +402,153 @@ def test_operational_lead_for_mode_resolves_lead_per_config(monkeypatch, tmp_pat
     _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
     assert operational_lead_for_mode("month_1") == 1
     assert operational_lead_for_mode("month_0") == 0
+
+
+# ===========================================================================
+# Defect 1 (adversarial review) — a stale cross-horizon period number must
+# not leak into the month header on a failed metadata refresh.
+#
+# widget_manager._on_change deliberately leaves self.forecast_horizon stale
+# when dm.get_bulletin_metadata(horizon) raises for the newly-selected
+# horizon (no data yet). Under the flag, widgets.format_horizon_info's month
+# branch trusts forecast_horizon as a 1..12 month index — so a stale
+# pentad_in_year (1..72) or quarter_in_year (1..4) either crashes
+# (months_en[30] → IndexError) or silently renders the wrong month
+# (months_en[3] == "March" when the stale value happens to be <= 12).
+# ===========================================================================
+
+class _FakeDM:
+    """Minimal dm stand-in for driving WidgetManager._on_change directly."""
+
+    def __init__(self, fail_horizons):
+        self.forecasts_all = pd.DataFrame()
+        self._fail_horizons = fail_horizons
+
+    def load_station(self, horizon, code):
+        pass
+
+    def update_sites_for_pentad(self, _, horizon, pentad, decad):
+        pass
+
+    def invalidate_render_cache(self):
+        pass
+
+    def get_bulletin_metadata(self, horizon):
+        if horizon in self._fail_horizons:
+            # Mirrors data_manager.get_bulletin_metadata's real failure mode
+            # when forecasts_all has no valid dates for this horizon yet.
+            raise ValueError("No valid forecast dates available")
+        return (datetime.date(2026, 8, 1), 8, 2026)
+
+
+class TestOnChangeStaleMetadataGuard:
+    """widget_manager._on_change / widgets.format_horizon_info: when
+    dm.get_bulletin_metadata(horizon) raises for the newly-selected horizon,
+    the PREVIOUS horizon's cached (last_date, forecast_horizon, forecast_year)
+    triple must not be trusted for the month header — no crash, no silently
+    wrong month.
+    """
+
+    @staticmethod
+    def _make_wm(initial_horizon, stale_forecast_horizon, stale_forecast_year, stale_last_date):
+        """A lightweight fake WidgetManager `self` carrying stale bulletin
+        metadata left over from a previously-selected horizon — sufficient to
+        call WidgetManager._wire_station_period_change(fake_self, dm, pm) and
+        then invoke the resulting closure directly. Mirrors the fake_self
+        pattern in test_bulletin_publish.py (constructing a real WidgetManager
+        is impractical: its __init__ needs a full DataManager,
+        DashboardConfig, and station_dict)."""
+        fake_self = types.SimpleNamespace(
+            _gettext=lambda s: s,
+            horizon_selector=pn.widgets.Select(
+                options=["pentad", "decade", "month", "quarter", "season"],
+                value=initial_horizon,
+            ),
+            station_selector=pn.widgets.Select(
+                options=["19999 - Test River"], value="19999 - Test River"
+            ),
+            pentad_selector=pn.widgets.Select(options=[30], value=30),
+            decad_selector=pn.widgets.Select(options=[10], value=10),
+            date_picker=types.SimpleNamespace(value=None),
+            forecast_card=types.SimpleNamespace(visible=False),
+            horizon_info_pane=types.SimpleNamespace(object=""),
+            _dashboard_tabs=types.SimpleNamespace(active=1),
+            _post_load_callbacks=[],
+            # Stale metadata left over from the PREVIOUS (initial_horizon) selection.
+            _metadata_horizon=initial_horizon,
+            forecast_horizon=stale_forecast_horizon,
+            forecast_year=stale_forecast_year,
+            last_date=stale_last_date,
+        )
+        fake_self.refresh_model_checkbox = lambda: None
+        fake_self.refresh_warnings = lambda: None
+        fake_self._refresh_horizon_info_pane = lambda: (
+            WidgetManager._refresh_horizon_info_pane(fake_self)
+        )
+        return fake_self
+
+    def test_switch_to_month_with_no_data_does_not_crash(self, monkeypatch):
+        """Repro: on 'pentad' (forecast_horizon=30), switch to 'month' with no
+        monthly forecast data yet → get_bulletin_metadata('month') raises
+        ValueError. Flag ON: this must not crash (months_en[30] is an
+        IndexError before the fix) and must not render a bogus month."""
+        monkeypatch.setenv(FLAG, "true")
+        fake_self = self._make_wm(
+            "pentad", stale_forecast_horizon=30, stale_forecast_year=2026,
+            stale_last_date=datetime.date(2026, 7, 26),
+        )
+        dm = _FakeDM(fail_horizons={"month"})
+        pm = MagicMock()
+
+        WidgetManager._wire_station_period_change(fake_self, dm, pm)
+        # Simulate the user picking "month" in the selector — this fires the
+        # pn.depends(watch=True) watcher synchronously, exactly as Panel does.
+        # The assignment itself must not raise — that is the crash regression
+        # check.
+        fake_self.horizon_selector.value = "month"
+
+        assert fake_self.horizon_info_pane.object == "", (
+            "no valid metadata for 'month' yet — header must be blank, "
+            f"got {fake_self.horizon_info_pane.object!r}"
+        )
+
+    def test_switch_to_month_with_stale_in_range_value_not_silently_wrong(self, monkeypatch):
+        """Same failure, but the stale value (quarter_in_year=3) is <= 12 and
+        would silently pass a naive '1 <= n <= 12' range check, rendering
+        'March' instead of being recognised as belonging to a different
+        horizon."""
+        monkeypatch.setenv(FLAG, "true")
+        fake_self = self._make_wm(
+            "quarter", stale_forecast_horizon=3, stale_forecast_year=2026,
+            stale_last_date=datetime.date(2026, 7, 1),
+        )
+        dm = _FakeDM(fail_horizons={"month"})
+        pm = MagicMock()
+
+        WidgetManager._wire_station_period_change(fake_self, dm, pm)
+        fake_self.horizon_selector.value = "month"
+
+        assert fake_self.horizon_info_pane.object == "", (
+            "stale quarter_in_year=3 must not be silently rendered as March — "
+            f"got {fake_self.horizon_info_pane.object!r}"
+        )
+
+    def test_successful_switch_still_renders_month_header(self, monkeypatch):
+        """Control: when get_bulletin_metadata succeeds for the new horizon,
+        the month header renders normally (the guard must not suppress the
+        valid case)."""
+        monkeypatch.setenv(FLAG, "true")
+        fake_self = self._make_wm(
+            "pentad", stale_forecast_horizon=30, stale_forecast_year=2026,
+            stale_last_date=datetime.date(2026, 7, 26),
+        )
+        dm = _FakeDM(fail_horizons=set())  # get_bulletin_metadata succeeds
+        pm = MagicMock()
+
+        WidgetManager._wire_station_period_change(fake_self, dm, pm)
+        fake_self.horizon_selector.value = "month"
+
+        assert fake_self.horizon_info_pane.object != "", (
+            "a successful metadata refresh must still render the month header"
+        )
+        assert "August" in fake_self.horizon_info_pane.object
