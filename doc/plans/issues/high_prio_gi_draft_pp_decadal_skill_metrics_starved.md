@@ -21,44 +21,49 @@
 > (`skill_metrics.py:2030`) is therefore **correct by construction** — there is no issue/target
 > misalignment to fix.
 >
-> **Refutation 2 — the data. The DECADE code path pairs fine; the starvation does not reproduce.**
-> In the local DB, DECADE skill is as healthy as PENTAD (`NEURAL_ENSEMBLE`: DECADE `max_n_pairs`=17,
-> `avg`≈13; PENTAD `max`=17, `avg`≈13). Day-of-month distributions agree on both sides
-> (10 / 20 / end-of-month). So this is **not** a decade-specific algorithm defect.
+> **Refutation 2 — the data. The DECADE code path pairs fine where the archive exists.** For the
+> **Kyrgyz** stations, DECADE skill is as healthy as PENTAD (`NEURAL_ENSEMBLE`: DECADE
+> `max_n_pairs`=17, `avg`≈13). Day-of-month distributions agree on both sides
+> (10 / 20 / end-of-month). The decade merge demonstrably pairs — so this is **not** a
+> decade-specific algorithm defect.
 >
-> ## Actual cause (high confidence): the TAJIK ML FORECAST ARCHIVE IS SPARSE
+> ## Actual cause — PROVEN, not inferred: THE ML FORECAST ARCHIVE IS EMPTY FOR 15/16 TAJIK STATIONS
 >
-> The observations are abundant; the **forecasts** are missing. Local DB, aggregate only:
+> Per-station, local DB, `NEURAL_ENSEMBLE`, Tajik (station identities withheld — counts only):
 >
-> | Org prefix | Horizon | Stations | Forecast rows (ML) |
-> |------------|---------|----------|--------------------|
-> | 15 (kyg)   | PENTAD  | 27       | 103,877            |
-> | 16 (kyg)   | PENTAD  | 27       | 125,297            |
-> | **17 (taj)** | PENTAD | 16      | **4,984**          |
-> | **17 (taj)** | DECADE | 16      | **2,566**          |
+> | Forecast rows | Forecast years | Stations | max `n_pairs` |
+> |---------------|----------------|----------|---------------|
+> | **1**         | **1**          | **15**   | **1**         |
+> | 693 (DECADE) / 1,333 (PENTAD) | 18 | 1 | **17** |
 >
-> Tajik is **~12× thinner per station** than Kyrgyz. Meanwhile Tajik *observed* DECADE runoff is
-> healthy (35,900 non-null rows, 87 years). `n_pairs` starves because **there are barely any Tajik
-> forecasts to pair against** — not because pairing is broken.
+> **The correlation is exact and has a built-in control.** Every station with a single forecast row
+> starves to `n_pairs`=1; the one station with a real archive reaches `n_pairs`=17. Same pattern in
+> BOTH horizons. Nothing about the pairing code varies between these stations — only the amount of
+> forecast data. Meanwhile Tajik *observed* DECADE runoff is healthy (35,900 non-null rows, 87
+> years), so the observations are not the constraint. **`n_pairs` starves for want of forecasts to
+> pair against.**
 >
-> This matches the operational history: the observation was made **mid-backfill** on the Tajik server
-> (2026-06-17), that backfill was **interrupted** by a server restart, and pentad ML skill
-> "recovered" while decade did not — i.e. the decade half of the ML archive migration never
-> completed. See [[ml_fromfile_combinedforecast_migration]].
+> **Why the server looked DECADE-specific while this dev DB starves BOTH horizons:** on tjhm the
+> pentad half of the ML archive migration completed (hence "pentad skill recovered") and the decade
+> half did not — the run was interrupted by a server restart. On this dev machine neither half was
+> loaded for those 15 stations. Same mechanism, different migration progress. See
+> [[ml_fromfile_combinedforecast_migration]].
 >
 > ## What to do instead
 >
 > 1. **Do NOT change `calculate_skill_metrics`.** The merge is correct.
-> 2. **Complete the Tajik ML decade forecast archive** (the from-file combined-CSV migration), then
->    re-run the skill recalc and re-measure `n_pairs`.
-> 3. **Re-verify on the Tajik SERVER, not locally** — local does not reproduce. Measure decade
->    forecast rows/station on tjhm before and after.
-> 4. Until the archive is complete, the PR #411 min-n gate will correctly suppress the thin decade
->    rows. That is the gate working as designed, not a second bug.
+> 2. **Complete the Tajik ML forecast archive** (the from-file combined-CSV migration), then re-run
+>    the skill recalc and re-measure `n_pairs`.
+> 3. **Measure tjhm to size the remaining work.** Cause is now established; the server query is only
+>    needed to know how much of the archive is actually present there (dev is not representative —
+>    its Tajik ML archive is absent for both horizons).
+> 4. Until the archive is complete, the PR #411 min-n gate will correctly suppress the thin rows.
+>    That is the gate working as designed, not a second bug.
 >
-> **Remaining uncertainty (be honest):** the local DB does not reproduce the server symptom, so the
-> sparse-archive explanation is inferred, not directly observed on tjhm. The server measurement in
-> step 3 is what would close this out.
+> **Correction (2026-07-14):** an earlier revision of this file claimed the starvation "does not
+> reproduce locally". **That was wrong** — it reproduces exactly, for 15 of 16 Tajik stations. The
+> error came from reading an aggregate `max(n_pairs)` across all orgs, which was dominated by the
+> healthy Kyrgyz stations and masked the Tajik collapse. Always split skill aggregates by org prefix.
 
 ## Problem
 
