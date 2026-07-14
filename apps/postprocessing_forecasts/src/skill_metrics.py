@@ -1205,6 +1205,9 @@ def calculate_sharpness(
     Returns:
         Dict with 'sharpness_90' (mean q95-q05 width) and
         'sharpness_50' (mean q75-q25 width). NaN if levels missing.
+        Rows with crossed quantiles (upper < lower, a non-monotonic
+        quantile forecast) are excluded from the mean, with a warning
+        logged, rather than contributing a negative width.
     """
     level_idx = {round(float(lev), 4): i for i, lev in enumerate(quantile_levels)}
     result = {}
@@ -1215,6 +1218,14 @@ def calculate_sharpness(
             widths = (
                 quantile_forecasts[:, level_idx[hi_key]] - quantile_forecasts[:, level_idx[lo_key]]
             )
+            crossed = widths < 0
+            if np.any(crossed):
+                logger.warning(
+                    "%s: %d row(s) have crossed quantiles (upper < lower); excluded from sharpness mean",
+                    name,
+                    int(np.sum(crossed)),
+                )
+                widths = np.where(crossed, np.nan, widths)
             valid = ~np.isnan(widths)
             result[name] = float(np.mean(widths[valid])) if np.any(valid) else np.nan
         else:

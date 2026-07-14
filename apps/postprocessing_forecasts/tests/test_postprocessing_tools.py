@@ -829,3 +829,27 @@ class TestCalculateSharpness:
         result = calculate_sharpness(quantile_forecasts, quantile_levels)
         assert result["sharpness_90"] == pytest.approx(30.0)  # 35 - 5
         assert result["sharpness_50"] == pytest.approx(10.0)  # 25 - 15
+
+    def test_crossed_quantiles_excluded_not_averaged_in(self):
+        """A row with q95 < q05 (quantile crossing) must not corrupt the mean width."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array(
+            [
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 90.0],  # normal row: 90-10=80
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 5.0],  # crossed row: 5-10=-5 (q95 < q05)
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_90"] == pytest.approx(80.0)
+        assert result["sharpness_90"] >= 0
+
+    def test_all_rows_crossed_gives_nan(self):
+        """All rows crossed => mean over an empty valid set => NaN."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[10.0, 5.0]])  # q95 < q05
+        quantile_levels = np.array([0.05, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert np.isnan(result["sharpness_90"])
