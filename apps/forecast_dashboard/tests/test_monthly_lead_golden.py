@@ -24,12 +24,10 @@ No real station codes / discharge values: synthetic ``17999`` (Tajik-shaped) and
 
 import datetime
 import json
-import sys
 import types
 from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 import requests
 from dashboard import plot_manager, widgets
 from dashboard.data_manager import DataManager
@@ -598,43 +596,3 @@ class TestLastDateYearVsMaxDateYearAsymmetry:
             "result (2026) for a Dec-31 lead-0 issue — locked as-is because "
             "flag-off must stay byte-identical to trunk"
         )
-
-
-# ---------------------------------------------------------------------------
-# Import helper: bring in BulletinManager with heavy deps stubbed if absent.
-# Mirrors the bootstrap in tests/test_bulletin_month_hydration.py.
-# ---------------------------------------------------------------------------
-
-def _import_bulletin_manager():
-    fake_keys = [
-        "panel", "panel.viewable", "panel.widgets", "panel.layout",
-        "panel.pane", "panel.template", "src.gettext_config",
-        "dashboard.logger", "src.db",
-    ]
-    saved = {k: sys.modules[k] for k in fake_keys if k in sys.modules}
-    try:
-        for mod in [
-            "panel", "panel.viewable", "panel.widgets", "panel.layout",
-            "panel.pane", "panel.template",
-        ]:
-            if mod not in sys.modules:
-                sys.modules[mod] = MagicMock()
-        if "src.gettext_config" not in sys.modules:
-            gc = types.ModuleType("src.gettext_config")
-            gc._ = lambda x: x
-            gc.translation_manager = MagicMock()
-            sys.modules["src.gettext_config"] = gc
-        if "dashboard.logger" not in sys.modules:
-            lg = types.ModuleType("dashboard.logger")
-            lg.setup_logger = MagicMock(return_value=MagicMock())
-            sys.modules["dashboard.logger"] = lg
-        if "src.db" not in sys.modules:
-            sys.modules["src.db"] = MagicMock()
-        from dashboard.bulletin_manager import BulletinManager
-        return BulletinManager
-    finally:
-        for k in fake_keys:
-            if k in saved:
-                sys.modules[k] = saved[k]
-            elif k in sys.modules:
-                del sys.modules[k]

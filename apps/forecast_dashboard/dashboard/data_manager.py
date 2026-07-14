@@ -360,8 +360,8 @@ class DataManager(param.Parameterized):
                 self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
             )
 
-        # Defect G / year-rollover: a monthly forecast with lead >= 1 issued late
-        # in the year targets a month in the NEXT calendar year (e.g. Dec-issued
+        # Year-rollover: a monthly forecast with lead >= 1 issued late in the
+        # year targets a month in the NEXT calendar year (e.g. Dec-issued
         # lead-1 → January). The target month (forecast_horizon = month_in_year)
         # is authoritative; roll the year when it precedes the issue month.
         forecast_year = last_date.year
