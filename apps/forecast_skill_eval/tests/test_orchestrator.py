@@ -305,6 +305,76 @@ def test_compute_event_contingencies_includes_below_norm_100_when_requested() ->
     pd.testing.assert_frame_equal(bn_rows, bn_only_rows)
 
 
+def _rp_pairs() -> pd.DataFrame:
+    """Build a pentad pairs frame with 20 years of increasing observed values.
+
+    Mirrors ``test_events._rp_pairs``: a clear linear trend gives a
+    non-degenerate GEV fit so ``compute_return_levels`` produces a usable
+    entry for this ``(code, horizon, period_key)`` group.
+    """
+    rows = []
+    for i in range(20):
+        val = 10.0 + i * 5.0
+        rows.append(
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "basin": "other",
+                "period_key": 1,
+                "year": 2000 + i,
+                "model": "model-a",
+                "regime": "hindcast",
+                "season": "irrigation",
+                "lead": None,
+                "issue_date": None,
+                "forecast_value": val,
+                "observed_value": val,
+                "norm": 50.0,
+                "norm_provenance": "calculated",
+                "fc_class": "normal",
+                "obs_class": "normal",
+                "contingency": "TN",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_compute_event_contingencies_includes_rp_events_when_requested() -> None:
+    """rp5 must produce contingency rows when requested with return_levels supplied.
+
+    Guards against the bug where return-period events (rp5/rp10/rp30/rp100)
+    pass config validation but are never iterated in
+    ``_compute_event_contingencies``, silently producing zero rows for any
+    station regardless of data volume.
+    """
+    from forecast_skill_eval.events import compute_return_levels
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+    min_years = 10
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=min_years)
+    assert return_levels, "guard: return_levels must be non-empty for this fixture"
+
+    result = _compute_event_contingencies(pairs, {}, ("rp5",), return_levels)
+
+    assert (result["event"] == "rp5").any()
+
+
+def test_compute_event_contingencies_return_levels_param_is_optional() -> None:
+    """Calling with only 3 positional args (no return_levels) must not raise.
+
+    Backward-compatibility guard for the new trailing parameter added to
+    ``_compute_event_contingencies``.
+    """
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _below_norm_pairs()
+
+    result = _compute_event_contingencies(pairs, {}, ("below_norm",))
+
+    assert set(result["event"].unique()) == {"below_norm"}
+
+
 def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object]]:
     rows = []
     day = date(year, month, 1)

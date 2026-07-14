@@ -28,10 +28,13 @@ from forecast_skill_eval.economic_value import (
 )
 from forecast_skill_eval.events import (
     _NORM_FACTOR_EVENTS,
+    _RP_EVENTS,
     ALL_EVENTS,
     compute_percentile_thresholds,
+    compute_return_levels,
     event_by_name,
     reclassify_pairs_for_event,
+    reclassify_pairs_for_rp_event,
 )
 from forecast_skill_eval.ledger import ExclusionLedger
 from forecast_skill_eval.metrics import METRIC_COLUMNS, add_metrics
@@ -155,7 +158,23 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
 
     all_pairs = _concat_pairs(pair_frames)
     thresholds = compute_percentile_thresholds(all_pairs, config.min_years)
-    contingency = _compute_event_contingencies(all_pairs, thresholds, config.events_filter)
+
+    # Return-period (GEV) events are expensive and opt-in: only fit the GEV
+    # distributions when a caller actually requested an rp* event.
+    requested_rp_events = tuple(event for event in _RP_EVENTS if event.name in config.events_filter)
+    return_levels = (
+        compute_return_levels(
+            all_pairs,
+            return_periods=tuple(event.return_period for event in requested_rp_events),
+            min_years=config.min_years,
+        )
+        if requested_rp_events
+        else {}
+    )
+
+    contingency = _compute_event_contingencies(
+        all_pairs, thresholds, config.events_filter, return_levels
+    )
     baselines = _concat_baselines(
         [
             build_climatology_baseline(all_pairs),
@@ -253,6 +272,7 @@ def _compute_event_contingencies(
     pairs: pd.DataFrame,
     thresholds: dict[tuple[str, str, int], dict[float, float]],
     events_filter: tuple[str, ...],
+    return_levels: dict[tuple[str, str, int], dict[float, float]] | None = None,
 ) -> pd.DataFrame:
     """Compute contingency metrics for each requested event and tag with event name.
 
@@ -265,17 +285,27 @@ def _compute_event_contingencies(
     the empirical thresholds.  Percentile events for which no thresholds are
     available (stations with fewer years than ``min_years``) produce no rows
     (those rows are silently dropped by :func:`reclassify_pairs_for_event`).
+    Return-period events (rp5/rp10/rp30/rp100) recompute ``fc_class``/
+    ``obs_class`` from the GEV return levels in *return_levels*; groups without
+    an available return level (station/period did not meet the ``min_years``
+    gate, or the GEV fit failed) likewise produce no rows.
 
     Args:
         pairs: All-horizons pair DataFrame.
         thresholds: Per-``(code, horizon, period_key)`` percentile thresholds.
         events_filter: Ordered sequence of event names to include in the output.
+        return_levels: Per-``(code, horizon, period_key)`` GEV return-level
+            mappings as returned by :func:`events.compute_return_levels`, used
+            only for the return-period events (rp5/rp10/rp30/rp100). Defaults to
+            an empty mapping, which yields no rp* rows -- callers that never
+            requested an rp* event may omit this argument entirely.
 
     Returns:
         Contingency metrics DataFrame with an ``event`` column.  Columns follow
         ``OUTPUT_COLUMNS + METRIC_COLUMNS + ("event",)``.  An empty DataFrame
         with the same schema is returned when no events produce rows.
     """
+    return_levels = return_levels or {}
     events_set = frozenset(events_filter)
     frames: list[pd.DataFrame] = []
 
@@ -283,6 +313,16 @@ def _compute_event_contingencies(
         if event.name not in events_set:
             continue
         event_pairs = reclassify_pairs_for_event(pairs, event, thresholds)
+        if event_pairs.empty:
+            continue
+        ct = add_metrics(count_contingencies(event_pairs))
+        ct["event"] = event.name
+        frames.append(ct)
+
+    for event in _RP_EVENTS:
+        if event.name not in events_set:
+            continue
+        event_pairs = reclassify_pairs_for_rp_event(pairs, event, return_levels)
         if event_pairs.empty:
             continue
         ct = add_metrics(count_contingencies(event_pairs))
