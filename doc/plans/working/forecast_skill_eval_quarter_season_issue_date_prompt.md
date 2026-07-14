@@ -17,6 +17,32 @@ one skill number, it conflates different-lead products and the headline skill is
 not interpretable. Confirm or refute this, and recommend the concrete grouping
 change.
 
+> ## ✅ OWNER DECISION 2026-07-14 — the QUARTER half of this prompt is ANSWERED. Do not investigate it.
+>
+> The product semantics (from the owner) settle what no code reading could:
+>
+> | Horizon | What we actually publish | Consequence for skill |
+> |---------|--------------------------|------------------------|
+> | **month** | **Kyrgyz Hydromet CHOOSES the lead** to put in the bulletin | Skill **must be per-lead**; the display must show the skill of the lead the operator selected. Collapsing leads at compute time destroys what the bulletin needs. → see **FD-018** + `SAPPHIRE_SKILL_LEAD_AWARE`. |
+> | **quarter** | We provide only the **lowest available lead** (no operator choice) | One issuance per target quarter is ever published, so collapsing to the smallest lead is **CORRECT** — it scores the product we actually ship. |
+>
+> **So the quarter dedup in `pairs.py:292-307` is right by design, not by accident.** It picks the
+> smallest lead *present* = lead 0 when it exists, lead 1 when it does not — exactly the published
+> product. **Do not "fix" it to per-lead.** What it needs is *documentation* (the rule currently
+> lives only in a code comment) and *enforcement*: `DEFAULT_OPERATIONAL_ISSUE_DAYS = ()`
+> (`config.py:44`) is **empty**, so nothing actually pins the operational issuance — it is assumed,
+> not checked.
+>
+> **The hypothesis in the paragraph above is therefore REFUTED for quarter** ("must be grouped by
+> issue date / lead" — no; we publish one lead). It stands only for **month**, which is already
+> tracked as FD-018 / the lead-aware work.
+>
+> **STILL OPEN — season.** The owner statement covered month and quarter only. `season` currently
+> RETAINS genuine leads 0–3 (`pairs.py:292-307`). Whether that is right depends on the same
+> question: **does the seasonal bulletin publish one issuance (lowest lead) or several?** If one,
+> season should collapse like quarter and the current per-lead retention is wrong. **Ask the owner
+> before touching season.** That is the only live question left in this file.
+>
 > ## ⚠️ CORRECTIONS 2026-07-14 — do NOT hand this prompt to an investigator unchanged
 >
 > An out-of-loop review found the "take as given" block below contains **false premises**. That is

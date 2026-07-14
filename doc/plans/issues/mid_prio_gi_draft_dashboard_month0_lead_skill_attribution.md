@@ -13,12 +13,27 @@
 > flag off, the wrong-lead merge described below is the live behavior, and tests pin that as golden
 > (`apps/forecast_dashboard/tests/test_db.py:1404`).
 >
-> **So there are two ways to close this, and it is an owner decision — do NOT just patch the
-> flag-off path:**
-> 1. **Enable `SAPPHIRE_SKILL_LEAD_AWARE` per deployment** (requires a full skill recalc — see
->    `doc/prod/long_term_deploy_runbook.md:57`). This makes the issue moot without a code change.
-> 2. **Fix the flag-off path** — but that changes golden behavior locked by tests, so it needs
->    explicit sign-off.
+> ## ✅ OWNER DECISION 2026-07-14 — close this by ENABLING the flag, not by patching the flag-off path.
+>
+> The product semantics decide it: **for MONTHLY forecasts, Kyrgyz Hydromet chooses which lead goes
+> into the bulletin.** (Quarterly is different — we publish only the lowest available lead, so it
+> needs no per-lead skill.) If the operator can *choose* the monthly lead, then a single collapsed
+> skill number is structurally wrong: when they publish lead 1, the skill shown must be **lead 1's**
+> skill. Skill must be computed **per lead**, with the display selecting to match the published
+> forecast — which is exactly what the lead-aware path already does.
+>
+> So: **enable `SAPPHIRE_SKILL_LEAD_AWARE`** (requires a full skill recalc —
+> `doc/prod/long_term_deploy_runbook.md:57`). Do **not** patch the flag-off path: it would change
+> golden behavior locked by tests, and it would still deliver one number for a product whose lead is
+> operator-selectable. The flag-on path *is* the requirement, not a nice-to-have.
+>
+> **⛔ SEQUENCING — do not enable the flag yet.** Enabling requires a full recalc, and if **PP-040**
+> (skill pairing joins on issue date, not target date) is real, that recalc bakes the broken pairing
+> into every lead-stratified row — after which the min-n gate (PR #411) tombstones the starved
+> results and **blanks the very tiles the flag was enabled to fill.** Required order:
+>
+> **PP-040 (verify `forecasts.target` population → fix pairing) → full recalc → enable
+> `SAPPHIRE_SKILL_LEAD_AWARE` → FD-018 closes.**
 >
 > **Test scope:** the month_0 regression this draft asks for is still missing (existing tests prove
 > lead-aware merging and lead-0 *month_1*, but never a month_0 row with distinct lead-0 vs lead-1

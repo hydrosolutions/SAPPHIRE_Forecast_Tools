@@ -13,8 +13,19 @@
 >
 > **What remains is rollout, not code:** `SAPPHIRE_SKILL_LEAD_AWARE` **defaults to OFF**
 > (`skill_lead_aware_flag.py`), so no deployment gets lead-aware skill until it opts in *and* runs a
-> full recalc. Enabling it is a per-deployment decision — and the migration/deploy status of the
-> service schema needs coordination with the service owner. Read the rest of this file as history.
+> full recalc. The migration/deploy status of the service schema needs coordination with the service
+> owner. Read the rest of this file as history.
+>
+> **✅ ROLLOUT DECIDED 2026-07-14 — the flag WILL be enabled.** Rationale: for **monthly** forecasts
+> Kyrgyz Hydromet **chooses which lead** goes into the bulletin, so skill must be per-lead and the
+> display must show the skill of the lead actually published. (Quarterly needs no per-lead skill — we
+> publish only the lowest available lead.) This closes **FD-018**.
+>
+> **⛔ Do NOT enable yet — sequencing.** Enabling requires a full skill recalc. If **PP-040** (skill
+> pairing joins on issue date rather than target date) is real, that recalc bakes the broken pairing
+> into every lead-stratified row, and the min-n gate (PR #411) then tombstones the starved results —
+> blanking the tiles the flag was turned on to fill. Required order:
+> **PP-040 → full recalc → enable `SAPPHIRE_SKILL_LEAD_AWARE` → FD-018 closes.**
 
 Implements issue `doc/plans/issues/high_prio_gi_draft_pp_skill_lead_pooling.md`.
 Revised after a 5-lens adversarial review (verdict: **REVISE** — proceed only after
