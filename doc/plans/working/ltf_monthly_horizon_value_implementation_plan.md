@@ -2,7 +2,9 @@
 
 **Branch:** `develop_ltf_monthly_horizon_value` (off `origin/maxat_sapphire_2` @ `3be4dbf5`)
 **Diagnosis:** `doc/plans/issues/high_prio_gi_draft_ltf_monthly_horizon_value_semantics.md` (revision 7)
-**Status:** Planning. No implementation code until P0 is signed off.
+**Status:** **STALE — superseded by the actual merge outcome below.** This file is kept as a
+provenance record of the original plan; it does **not** describe current behaviour. See
+"What actually shipped" for the ground truth.
 
 **Scope (narrowed after re-baselining against `maxat_sapphire_2`):** the **dashboard read-side** only —
 resolve the monthly forecast lead from config instead of hard-coding 1, across the five sites that
@@ -15,15 +17,74 @@ is owned by the MIG-008 data-governance track; neither is built here. See the is
 
 ---
 
-## Ground rules (every phase)
+## What actually shipped (read this first — 2026-07-14)
+
+This branch was written and merged in two independent efforts that landed on the **same fix
+via different flags**, and were then reconciled onto one:
+
+1. **This branch** originally implemented the fix behind its **own** new flag
+   `SAPPHIRE_LTF_DASH_LEAD_AWARE` (default **ON**), with its own resolver accessor
+   `month_horizon_value(mode)` in `long_term_horizon_resolver.py` and its own
+   `is_dash_lead_aware()` helper. This is what the rest of this file (below this section)
+   describes, and it is **no longer true**.
+2. Meanwhile, trunk (`origin/maxat_sapphire_2`, PR #414, "M1 P3") independently shipped the
+   **same `src/db.py` main-panel-selection fix** behind the **pre-existing** flag
+   `SAPPHIRE_SKILL_LEAD_AWARE` (**default OFF**), using the resolver accessor
+   `operational_lead_for_mode(mode)` (`apps/iEasyHydroForecast/long_term_horizon_resolver.py`).
+3. This branch was **merged with trunk and converged onto the single flag**
+   `SAPPHIRE_SKILL_LEAD_AWARE`. The branch's own flag, `is_dash_lead_aware()`, and
+   `month_horizon_value()` were **deleted**. `apps/forecast_dashboard/src/db.py` and
+   `apps/iEasyHydroForecast/long_term_horizon_resolver.py` are now **byte-identical to
+   trunk**.
+
+**What this branch still uniquely contributes on top of trunk's `db.py` fix:**
+- `apps/forecast_dashboard/src/month_lead.py` — a new, importable lead accessor
+  (`primary_month_lead()`, `month_lead_for_mode()`) for the **UI layer** (captions, headers,
+  bulletin hydration), mirroring the nested `_safe_lead` closure inside `db.py`'s
+  `_get_data_monthly` that isn't importable from outside that function.
+- The monthly header/caption target month + year fix (Defect J) —
+  `apps/forecast_dashboard/dashboard/plot_manager.py`, `.../widgets.py`,
+  `.../widget_manager.py`.
+- The Dec→Jan bulletin year rollover fix (`apps/forecast_dashboard/dashboard/data_manager.py`
+  `get_bulletin_metadata`).
+- A stale-cross-horizon-metadata crash guard.
+- A golden/regression test harness (kghm/tjhm invariant guards + flag-gated test coverage).
+
+**What did NOT ship from this branch** (attempted, then reverted as ineffective):
+- The m0 bulletin per-site target-month hydration fix (`_month0_hydration_params`, calling
+  `get_bulletin_metadata("month", forecasts_all=self.dm.long_forecasts_m0)`). It only touched
+  `_on_add_m0`'s initial hydration and was silently overwritten by `_on_write` /
+  `_load_bulletin_from_api`, which re-derive one bulletin-wide target period from the main
+  panel for every site. **Split out as its own issue:**
+  `doc/plans/issues/mid_prio_gi_draft_fd_m0_bulletin_per_site_target_month.md` (FD-018).
+  `_on_add_m0` now calls the same `_month_hydration_params()` as the main add-path (no
+  m0-specific branch); `get_bulletin_metadata` no longer takes a `forecasts_all` override.
+
+**The `P-CLEANUP` phase below (remove the flag) is now moot as originally scoped** — the
+branch's own flag no longer exists to remove. What remains is a **shared-flag** cleanup: once
+both deployments have validated `SAPPHIRE_SKILL_LEAD_AWARE=true` (write-side AND
+display-side), removing the legacy flag-OFF branches is a decision for whoever owns
+`SAPPHIRE_SKILL_LEAD_AWARE` end-to-end (it also gates `postprocessing_forecasts` skill/ensemble
+behaviour — see `doc/prod/long_term_deploy_runbook.md`), **not something this branch can do
+unilaterally**. Do not schedule flag removal from this branch's follow-up backlog without
+coordinating with whoever owns the flag's other call sites.
+
+The env-template breadcrumb step described below (adding commented
+`SAPPHIRE_LTF_DASH_LEAD_AWARE=false` lines to `.env` templates) is **dropped — not
+applicable**. `SAPPHIRE_SKILL_LEAD_AWARE` is documented once, centrally, in
+`doc/prod/long_term_deploy_runbook.md` ("Lead-aware skill & ensembles" section); it does not
+need a second, dashboard-specific breadcrumb, and no second flag exists to breadcrumb.
+
+---
+
+## Ground rules (every phase) — historical, as originally written
 
 1. **Orchestrator writes no implementation code.** Each phase is delegated to Sonnet agents with an
    explicit file allow-list and the standard constraint: *"Do NOT change existing function signatures,
    data-flow, or control-flow; changes are additive or limited to the specific behaviour described."*
-2. **Feature-flagged, default-ON, with a kill-switch.** All behaviour change sits behind
-   `SAPPHIRE_LTF_DASH_LEAD_AWARE` (see "Flag specification" below). Setting it to a false value
-   (`SAPPHIRE_LTF_DASH_LEAD_AWARE=false`) must be **byte-identical to `maxat`** (the legacy hard-coded
-   lead 1) — that is the kill-switch. Absent/on = the corrected behaviour.
+2. **Feature-flagged, default-ON, with a kill-switch.** ~~All behaviour change sits behind
+   `SAPPHIRE_LTF_DASH_LEAD_AWARE`~~ **Superseded: converged onto `SAPPHIRE_SKILL_LEAD_AWARE`,
+   default OFF (not ON) — see "What actually shipped" above.**
 3. **Tests before code (P-TEST).** Golden tests lock current kghm behaviour; red regression tests per
    defect land before the fix.
 4. **`apps/forecast_dashboard` only.** No `sapphire/services/`, no `postprocessing_forecasts`, no
@@ -32,19 +93,20 @@ is owned by the MIG-008 data-governance track; neither is built here. See the is
 
 ---
 
-## P0 — Decision gate (NO CODE)
+## P0 — Decision gate (NO CODE) — historical
 
 Small, because the convention is already settled. Decisions to record here:
 
 - **D1 — card mapping.** Confirm: main monthly panel = the deployment's **primary** product
   (kghm `hv1`, tjhm `hv0`); the `month_0` card shows lead 0 **only when a distinct lower lead exists**
   (kghm yes; tjhm no). This is the display decision the convention does not cover.
-- **D2 — flag: DECIDED (2026-07-13).** `SAPPHIRE_LTF_DASH_LEAD_AWARE`, **default ON**, gating all five
-  sites together, documented as a temporary kill-switch to be removed after a validation cycle. See
-  "Flag specification" below. Rationale: kyg is a *beneficiary* (its `month_0` card + bulletins are
-  corrected), not just protected, so default-on delivers the fix to both deployments on deploy; the
-  switch exists because kyg operators will see the `month_0` skill numbers change, and a runtime
-  revert (no redeploy) is cheap insurance for an operator-facing tool.
+- **D2 — flag: DECIDED (2026-07-13), then superseded (2026-07-14).** Originally
+  `SAPPHIRE_LTF_DASH_LEAD_AWARE`, default ON, gating all five sites together. **Converged onto
+  `SAPPHIRE_SKILL_LEAD_AWARE`, default OFF**, during the merge with trunk's independently-shipped
+  `db.py` fix (PR #414, M1 P3) — see "What actually shipped" above. Rationale for the convergence:
+  one flag governing one behaviour (dashboard read-side lead resolution) end-to-end, rather than two
+  flags that could disagree with each other across write-side (`postprocessing_forecasts`) and
+  read-side (`forecast_dashboard`).
 - **D3 — pre-flight: PASSED (2026-07-13).**
   - The dashboard container **mounts the config dir** (`sapphire/docker-compose.yml:243` →
     `${data_ref_dir}/config:${container_data_ref_dir}/config`) and loads env via
@@ -63,56 +125,50 @@ Small, because the convention is already settled. Decisions to record here:
     caller **must membership-check `mode ∈ supported_modes` before calling it** (already in P1 guards).
     A broad try/except that silently returns a default is **not** wanted — it would reintroduce a
     hidden hard-coded lead. Match the existing quarter/season pattern: resolve directly, let a genuine
-    config error surface (the dashboard already behaves this way).
+    config error surface (the dashboard already behaves this way). **Note:** the shipped
+    `month_lead.py` / `db.py`'s `_safe_lead` closure DO catch and fall back with a warning (see "What
+    actually shipped") — this is a deliberate deviation from D3's original "no silent fallback"
+    instruction, made necessary by trunk's independent `db.py` implementation; flag as a fact, not a
+    re-litigation.
 
-**P0 acceptance:** D1–D3 answered in writing in this file. **P0 COMPLETE (2026-07-13):** D1 approved,
-D2 decided, D3 passed.
+**P0 acceptance:** D1–D3 answered in writing in this file. **P0 COMPLETE (2026-07-13);
+superseded by the merge on 2026-07-14 — see "What actually shipped."**
 
 ---
 
-## Flag specification — `SAPPHIRE_LTF_DASH_LEAD_AWARE`
+## Flag specification — HISTORICAL, describes the deleted `SAPPHIRE_LTF_DASH_LEAD_AWARE`
+
+**This entire section describes a flag that no longer exists in the codebase.** It is kept for
+provenance only. For the flag that actually ships, see
+`doc/prod/long_term_deploy_runbook.md` § "Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`)".
 
 | | |
 |---|---|
-| **Name** | `SAPPHIRE_LTF_DASH_LEAD_AWARE` |
+| **Name** | ~~`SAPPHIRE_LTF_DASH_LEAD_AWARE`~~ *(deleted; converged onto `SAPPHIRE_SKILL_LEAD_AWARE`)* |
 | **Type** | boolean env var (truthy: `true`/`1`/`yes`, case-insensitive; falsy: `false`/`0`/`no`) |
-| **Default** | **ON** — *absent or unset ⇒ enabled* (the corrected, config-resolved behaviour) |
-| **Kill-switch** | set `=false` ⇒ legacy behaviour, **byte-identical to `maxat`** (hard-coded monthly lead 1) |
-| **Scope** | `apps/forecast_dashboard` only; gates all five fixed sites together (main-panel select + caption, m0 stat filter, m0 bulletin hydration, header, bulletin year) |
-| **Read location** | one helper (e.g. `dashboard/config.py` or a small `is_dash_lead_aware()`), read once; do not scatter `os.getenv` across the five sites |
-| **Lifecycle** | **temporary.** Remove the flag and the legacy branch in a follow-up once both deployments have run a validation cycle. Tracked as a P-CLEANUP follow-up. |
+| **Default** | ~~ON~~ *(the surviving flag, `SAPPHIRE_SKILL_LEAD_AWARE`, defaults **OFF**)* |
+| **Kill-switch** | set `=false` ⇒ legacy behaviour, byte-identical to `maxat` (hard-coded monthly lead 1) — **this part still holds true for `SAPPHIRE_SKILL_LEAD_AWARE=false`** |
+| **Scope** | `apps/forecast_dashboard` only; gated all five originally-fixed sites together (main-panel select + caption, m0 stat filter, m0 bulletin hydration, header, bulletin year) — **m0 bulletin hydration did not ship (FD-018); the other four did, under `SAPPHIRE_SKILL_LEAD_AWARE`** |
+| **Read location** | ~~`is_dash_lead_aware()`~~ *(deleted)*; the surviving read point is `skill_lead_aware_flag.skill_lead_aware_enabled()` (`apps/iEasyHydroForecast/skill_lead_aware_flag.py`) |
+| **Lifecycle** | ~~temporary, this branch's own cleanup item~~ *(N/A — `SAPPHIRE_SKILL_LEAD_AWARE` is a shared flag with other owners; its removal is not this branch's call — see "What actually shipped")* |
 
-**Behaviour by deployment (flag ON):** kghm main panel unchanged (config resolves lead 1, same as
-today); kghm `month_0` card + bulletins **corrected** (lead-0 skill/norms instead of lead-1); tjhm main
-panel **corrected** to the lead-0 flagship. Flag OFF reproduces today's behaviour for both.
+### Deployment action — HISTORICAL, do not follow
 
-### Deployment action (when updating deployments) — do NOT action until the PR merges
-
-Because the default is ON, **the fix applies without any `.env` change** — you do *not* need to add the
-var for the corrected behaviour to take effect. The var only needs to be present to **disable** it.
-Recommended, so operators know the switch exists:
-
-- Add a **commented** line to the env templates and per-deployment env files, documenting the switch
-  and its default:
-  ```
-  # Dashboard monthly-lead resolution (fixes tjhm target month + kghm month_0 skill/bulletins).
-  # Default ON when unset. Set to false to revert to the legacy hard-coded lead-1 behaviour.
-  # SAPPHIRE_LTF_DASH_LEAD_AWARE=false
-  ```
-- Files: `apps/config/.env`, `apps/config/.env_develop`, `apps/config/.env_develop_kghm` (templates),
-  and the per-deployment `taj_data_forecast_tools/config/.env_develop_tjhm` /
-  `kyg_data_forecast_tools/config/.env_develop_kghm` (+ their `*_server` variants).
-- If any deployment wants to **stage** the visible kyg `month_0` change, set
-  `SAPPHIRE_LTF_DASH_LEAD_AWARE=false` there first, then flip to on after operator sign-off.
-
-This deployment step is an **acceptance item of the implementing PR** (see P1) — the PR must also update
-`doc/configuration.md` (the canonical env-var reference) and the deployment checklist
-(`doc/prod/update_deployment_checklist.md`). Documenting the var in `doc/configuration.md` is
-deliberately deferred to that PR so the reference never describes a var that does nothing yet.
+~~Add a commented `SAPPHIRE_LTF_DASH_LEAD_AWARE=false` line to env templates~~ — **this step is
+dropped.** There is no second flag to breadcrumb. `SAPPHIRE_SKILL_LEAD_AWARE`'s enable procedure
+(one `.env` line + recalc) is documented once, centrally, in
+`doc/prod/long_term_deploy_runbook.md`.
 
 ---
 
-## P-TEST — Pre-code test harness (Depends on: P0)
+## P-TEST — Pre-code test harness (Depends on: P0) — historical plan; see status below
+
+**Status:** implemented, converged onto the shared flag's test suite. The golden/invariant-guard
+tests (kghm main panel stays lead-1 under flag-off; tjhm has no m0 card) and the flag-gated
+regression tests both exist, keyed on `SAPPHIRE_SKILL_LEAD_AWARE` rather than the originally-planned
+`SAPPHIRE_LTF_DASH_LEAD_AWARE`. The `xfail(strict=True)` forward-compatible pattern described below
+was the authoring strategy used before the flag existed; by the time of the merge the flag existed
+and most of these were converted to plain green assertions under both flag states.
 
 **Goal:** lock current-correct behaviour; add red regression tests.
 **Files:** new tests under `apps/forecast_dashboard/tests/`.
@@ -125,12 +181,12 @@ deliberately deferred to that PR so the reference never describes a var that doe
   m0 card — these catch a hardcoded-hv0 fix that would pass the tjhm regression but break kghm.
 - Regression (red now, target the phase): tjhm main resolves lead 0 (A); `format_horizon_info` uses the
   passed target month+year instead of recomputing (J); m0 merges only lead-0 stats and blanks when
-  absent — both `_op_mask.any()` branches (F); m0 bulletin hydration from the m0 frame (G); bulletin
-  `forecast_year` rolls to the following year for Dec-lead-1.
+  absent — both `_op_mask.any()` branches (F); ~~m0 bulletin hydration from the m0 frame (G)~~ **did not
+  ship — see FD-018**; bulletin `forecast_year` rolls to the following year for Dec-lead-1.
 - No vacuous skips hide the new assertions.
 
-**Strategy (forward-compatible flag pattern) — decided 2026-07-13.** The flag/`month_horizon_value`
-do not exist yet, so tests are written to be stable across the fix:
+**Strategy (forward-compatible flag pattern) — decided 2026-07-13, historical wording kept
+verbatim below (substitute the flag name mentally):**
 - **Golden** tests `monkeypatch.setenv("SAPPHIRE_LTF_DASH_LEAD_AWARE", "false")` and assert **current**
   behaviour. The env var is ignored today (green now) and pins the kill-switch path after P1 (still
   green). This includes locking the *current bug* as flag-off behaviour (e.g. kghm m0 card currently
@@ -143,6 +199,8 @@ do not exist yet, so tests are written to be stable across the fix:
   signature) are authored in their implementing phase, not here — leave a `@pytest.mark.skip(
   reason="authored in P1: needs month_horizon_value")` stub listing the intended assertions
   (tjhm `month_1`→0, kghm `month_1`→1/`month_0`→0, tjhm `month_0`→raises) so intent is captured.
+  **Note: `month_horizon_value` itself was deleted in the merge; the surviving accessor is
+  `operational_lead_for_mode` (trunk) / `primary_month_lead` (`src/month_lead.py`, this branch).**
 - Test entry points that need **no** new signature and carry the fix internally: `db.get_data("month",
   …)` (A main-panel selection + F stats filter/m0 merge), `format_horizon_info(...)` (J — the fix makes
   it *use* the passed `forecast_horizon`/`forecast_year` it currently ignores), `get_bulletin_metadata`
@@ -150,51 +208,74 @@ do not exist yet, so tests are written to be stable across the fix:
 
 ---
 
-## P1 — Add the month lead resolver + route the display sites (Defects A, J). Depends on: P0, P-TEST.
+## P1 — Add the month lead resolver + route the display sites (Defects A, J) — IMPLEMENTED
+
+**Status:** implemented, but via a **different resolver accessor than planned.** Trunk's
+`operational_lead_for_mode` (`apps/iEasyHydroForecast/long_term_horizon_resolver.py`) shipped
+instead of this branch's originally-planned `month_horizon_value`; this branch's
+`apps/forecast_dashboard/src/month_lead.py` wraps it for UI callers. `plot_manager.py` and
+`widgets.py`/`widget_manager.py` were fixed for the caption/header (Defect J) as planned.
 
 **Goal:** the dashboard resolves and labels the correct monthly lead per deployment.
-**Files (allow-list):** `apps/iEasyHydroForecast/long_term_horizon_resolver.py` (add public
-`month_horizon_value`); `apps/forecast_dashboard/src/db.py` (main-panel forecast selection + the
-`month_0` gate — forecast frame only, **not** the stats filter, which is P2);
-`apps/forecast_dashboard/dashboard/plot_manager.py`; `.../widgets.py`.
+**Files (allow-list):** ~~`apps/iEasyHydroForecast/long_term_horizon_resolver.py` (add public
+`month_horizon_value`)~~ *(superseded — trunk's `operational_lead_for_mode` used instead)*;
+`apps/forecast_dashboard/src/db.py` (main-panel forecast selection + the
+`month_0` gate); `apps/forecast_dashboard/dashboard/plot_manager.py`; `.../widgets.py`;
+`.../widget_manager.py`; `apps/forecast_dashboard/src/month_lead.py` (new).
 **Agents:** 2 — (a) resolver + `db.py` selection; (b) caption `plot_manager` + header `widgets`.
 **Guards:** membership-check `month_0 ∈ supported_modes` before calling the resolver
-(`_ensure_supported_mode` raises otherwise). Per D3, do **not** wrap in a silent try/except default —
-resolve directly and let a genuine config error surface, matching the existing quarter/season pattern.
-Introduce the flag helper here (single read point) so all five sites gate on it.
-**Acceptance:** A/J reds green; kghm goldens green; **flag-off (`=false`) byte-identical to `maxat`**;
-the implementing PR also (a) adds the commented `SAPPHIRE_LTF_DASH_LEAD_AWARE` line to the env
-templates + per-deployment env files, (b) documents the var in `doc/configuration.md`, and (c) notes it
-in `doc/prod/update_deployment_checklist.md` (see "Flag specification → Deployment action").
+(`_ensure_supported_mode` raises otherwise). ~~Per D3, do **not** wrap in a silent try/except
+default~~ — **superseded: the shipped `_safe_lead`/`month_lead_for_mode` DO catch and fall back
+with a warning; see the D3 note above.**
+**Acceptance:** A/J reds green; kghm goldens green; **flag-off (`SAPPHIRE_SKILL_LEAD_AWARE=false`)
+byte-identical to `maxat`**. ~~The implementing PR also (a) adds the commented
+`SAPPHIRE_LTF_DASH_LEAD_AWARE` line to the env templates + per-deployment env files~~ *(dropped —
+no second flag)*; (b) documents the var — done centrally in
+`doc/prod/long_term_deploy_runbook.md`, not `doc/configuration.md` (the var predates this branch
+and is not newly introduced); (c) noted in `doc/prod/long_term_deploy_runbook.md`'s deploy table
+row (e) and "What it does when ON" section (done as part of this doc pass).
 
-## P2 — Per-lead skill-stat filtering (Defect F). Depends on: P0, P-TEST. Ships with P1.
+## P2 — Per-lead skill-stat filtering (Defect F) — IMPLEMENTED. Depends on: P0, P-TEST. Ships with P1.
 
 **Goal:** each card merges only its displayed lead's skill stats; blank when that lead has none.
-**Files:** `apps/forecast_dashboard/src/db.py` (`forecast_stats` handling, `:931-935` and the m0 merge).
+**Files:** `apps/forecast_dashboard/src/db.py` (`forecast_stats` handling and the m0 merge).
 **Agents:** 1. Handle both `_op_mask.any()` branches; never merge the unfiltered frame.
 **Acceptance:** F reds (both branches) green; no card that shows data today goes blank under flag-off.
 
-## P3 — Bulletin target month/year (Defects G + year-rollover). Depends on: P0, P-TEST.
+## P3 — Bulletin target month/year (Defects G + year-rollover) — PARTIALLY IMPLEMENTED. Depends on: P0, P-TEST.
 
-**Goal:** the m0 bulletin hydrates from its own frame; `forecast_year` reflects the target year.
+**Status:** the **year-rollover** half shipped (`get_bulletin_metadata` in
+`apps/forecast_dashboard/dashboard/data_manager.py` rolls a Dec-issued lead≥1 bulletin to the
+following year). The **m0 per-site hydration** half (Defect G — "the m0 bulletin hydrates from its
+own frame") was attempted (`_month0_hydration_params`) and then **reverted as ineffective**: it only
+patched the add-time hydration in `_on_add_m0`; `_on_write` and `_load_bulletin_from_api` still
+re-derive one bulletin-wide target period from the main panel for every site, overwriting it. This
+needs a real per-site data-model change (each bulletin site remembering its own target month/year),
+not a one-line rehydration call. **Split out and re-scoped as its own issue:**
+`doc/plans/issues/mid_prio_gi_draft_fd_m0_bulletin_per_site_target_month.md` (FD-018). Not part of
+this branch's remaining scope.
+
+**Goal (original):** the m0 bulletin hydrates from its own frame; `forecast_year` reflects the target
+year.
 **Files:** `apps/forecast_dashboard/dashboard/bulletin_manager.py` (`_month_hydration_params`,
 `_on_add_m0`), `apps/forecast_dashboard/dashboard/data_manager.py` (`get_bulletin_metadata`).
 **Agents:** 1.
-**Acceptance:** G red green; a Dec-lead-1 bulletin carries January of the following year in the saved
-key and the hydration params.
+**Acceptance:** ~~G red green~~ **G NOT shipped — see FD-018**; a Dec-lead-1 bulletin carries January
+of the following year in the saved key and the hydration params — **this half shipped.**
 
-## P-CLEANUP — Remove the flag (follow-up, after validation). Depends on: P1–P3 deployed + validated.
+## P-CLEANUP — Remove the flag (follow-up, after validation) — MOOT AS ORIGINALLY SCOPED
 
-**Goal:** delete `SAPPHIRE_LTF_DASH_LEAD_AWARE` and the legacy hard-coded-lead-1 branch once both
-deployments have run a validation cycle with no operator concerns. Not part of the initial PR —
-tracked so the temporary flag does not become permanent dual-path debt.
-**Files:** the five sites + the flag helper + the flag's golden tests + the env-template comments +
-`doc/configuration.md`.
-**Acceptance:** flag gone; only the corrected behaviour remains; full suite green.
+**This branch's own flag (`SAPPHIRE_LTF_DASH_LEAD_AWARE`) no longer exists** — it was deleted in the
+merge, so there is nothing of this branch's own to clean up. What remains is the **shared**
+`SAPPHIRE_SKILL_LEAD_AWARE` flag's eventual removal, which also gates
+`apps/postprocessing_forecasts/` write-side behaviour (see
+`doc/prod/long_term_deploy_runbook.md`). Its removal is **not this branch's decision to make
+unilaterally** — coordinate with whoever owns the flag's other call sites before scheduling that
+work. Do not re-open this phase from this branch without that coordination.
 
 ---
 
-## Sequencing
+## Sequencing — historical (see per-phase status notes above for what actually shipped)
 
 ```json
 {
@@ -209,9 +290,8 @@ tracked so the temporary flag does not become permanent dual-path debt.
 }
 ```
 
-P1+P2+P3 all ship together as one flag-gated change (they are the same user-visible fix); they are
-split only for delegation. All are read-path, reversible by revert / flag-off. P-CLEANUP is a separate
-later PR, gated on server validation.
+P1+P2+P3 all shipped together as one flag-gated change (P3 partial — see status above). P-CLEANUP is
+moot as this branch's item (see above); a shared-flag cleanup remains someone else's call.
 
 ---
 
@@ -219,11 +299,14 @@ later PR, gated on server validation.
 
 - All P-TEST reds green; all kghm goldens green.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh` zero failures / zero unexpected skips.
-- Flag-off byte-identical to `origin/maxat_sapphire_2`; kghm dashboard unchanged.
+- Flag-off (`SAPPHIRE_SKILL_LEAD_AWARE=false`) byte-identical to `origin/maxat_sapphire_2`; kghm
+  dashboard unchanged.
 - Manual check (or `apps/run_locally.sh` dashboard): with a tjhm-shaped config + flag on, the main
   panel shows the lead-0 product captioned with the issue month; with kghm, unchanged.
 - No `sapphire/services/`, `postprocessing_forecasts`, or `forecast_skill_eval` files touched.
 - No real station codes / discharge values in any committed file.
+- **Known gap, not blocking this branch's done-ness:** m0 bulletin per-site hydration (FD-018) is
+  filed as a separate follow-up, not required for this branch's merge.
 
 ---
 
@@ -235,3 +318,4 @@ later PR, gated on server validation.
   `doc/prod/longforecast_historical_data_decision_request.md` (addendum 2026-07-13).
 - Quarter/season semantics: settled by the owner's convention; quarter/season already resolve their
   lead from config in the dashboard.
+- m0 bulletin per-site target-month hydration: split out as FD-018 (see P3 status above).
