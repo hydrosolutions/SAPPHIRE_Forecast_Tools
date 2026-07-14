@@ -48,21 +48,23 @@ change.
 >   (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:73-81`). Quarter behaves the same way via
 >   `quarter_horizon_value()`. So the display already shows only the shortest lead.
 > - **Evaluator: season RETAINS leads 0–3** (`pairs.py:292-307`), unlike quarter (which collapses to
->   the smallest lead present). **Owner decision: leave it.** The retained per-lead rows are richer,
->   not wrong — but see the caveat below.
+>   the smallest lead present). **This is INTENDED, not a defect.**
 >
-> **Caveat for whoever writes the seasonal headline number:** because the evaluator keeps every lead
-> while only the **shortest** lead is ever published, a headline that pools or averages the retained
-> season leads would report skill for products nobody uses. **Select the shortest lead for any
-> published/headline season figure**, matching what the bulletin shows. (Quarter needs no such care —
-> the evaluator already collapses it.)
+> **Why the two systems differ on season — and why that is correct.** `forecast_skill_eval` is an
+> **analysis tool, not an operational forecasting tool** (owner, 2026-07-14). It *should* evaluate
+> every lead, including leads that are never published: that is what makes it useful for assessing
+> forecast quality across the lead spectrum. The dashboard, by contrast, serves the operational
+> bulletin and therefore shows only the lead that is actually published (the shortest). **The
+> divergence is by design — do not "reconcile" them.** The only thing to be explicit about is that a
+> seasonal figure quoted from the evaluator is *per lead*, so any single number lifted out of it must
+> say which lead it refers to.
 >
-> **⚠️ Separately noted (NOT decided — see "no availability fallback" below):** "available" in the
-> owner rule ("lead 0 if available, else lead 1") is implemented as **configured**, not **present in
-> the data**. There is no runtime fallback anywhere in `long_term_horizon_resolver.py`: if the
-> configured shortest-lead rows are missing, the dashboard returns an **empty frame** rather than
-> falling back to the next-longest lead. If the intent is data-availability fallback, that is
-> **unimplemented** and needs its own issue.
+> **"Availability" / no runtime fallback — ACCEPTED 2026-07-14, no issue to file.** "Available" in the
+> owner rule ("lead 0 if available, else lead 1") means **configured** (the deployment runs that
+> mode), not **present in the data**. There is deliberately no runtime data-availability fallback in
+> `long_term_horizon_resolver.py`: the dashboard resolves the configured
+> `operational_month_lead_time` and queries exactly that `horizon_value`. **Owner decision: current
+> behavior stands for quarterly; leave it as-is.**
 >
 > ## ⚠️ CORRECTIONS 2026-07-14 — do NOT hand this prompt to an investigator unchanged
 >
