@@ -46,6 +46,22 @@ class TestMonthLeadForMode:
         assert month_lead_for_mode("month_0", default=99) == 0
         assert month_lead_for_mode("month_1", default=99) == 1
 
+    def test_resolves_nonzero_configured_month0_lead(self, monkeypatch, tmp_path):
+        """month_0 is not guaranteed to be lead 0 — a deployment may
+        configure it with a non-zero operational lead, and
+        month_lead_for_mode must return THAT resolved value verbatim.
+
+        Discriminating mutation: an implementation that special-cases
+        month_0 (e.g. ``if mode == "month_0": return 0`` before consulting
+        the config) would pass every other case in this class — they all
+        configure month_0's lead as 0 — but this test configures month_0
+        with lead 2 and goes RED (returns 0 instead of 2) against that
+        mutation.
+        """
+        _set_env(monkeypatch, tmp_path, "custom_hm", {"month_0": 2, "month_1": 3})
+
+        assert month_lead_for_mode("month_0", default=99) == 2
+
     def test_falls_back_to_default_when_mode_unsupported(self, monkeypatch, tmp_path):
         """An unsupported mode (UnsupportedLongTermModeError, a
         LongTermHorizonResolverError subclass) degrades to the default rather

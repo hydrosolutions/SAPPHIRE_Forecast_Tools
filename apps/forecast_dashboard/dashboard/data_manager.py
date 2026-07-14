@@ -30,6 +30,47 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _monthly_target_year_from_valid_from(forecasts_all, forecast_horizon, max_date):
+    """Return the monthly bulletin's target year from ``valid_from``, the
+    target period's own data — falling back to month-number arithmetic (and
+    logging a warning) only when ``valid_from`` is absent or NaT.
+
+    Comparing month numbers (``forecast_horizon < max_date.month``) is only
+    valid for leads 0..11: it silently returns the wrong year for a
+    configured lead >= 12 or a negative lead (``long_term_horizon_resolver
+    ._require_int_field`` does not range-check the config's
+    ``operational_month_lead_time``). ``valid_from`` is a real datetime and
+    its ``.year`` is the target year with no arithmetic, so it is immune to
+    that whole class of defect — see FD-019.
+
+    A dashboard READ must not raise, so this never propagates a parsing
+    error; it degrades to the legacy heuristic instead.
+
+    Args:
+        forecasts_all: The monthly forecasts DataFrame (module-level so test
+            doubles can pass a bare DataFrame without a full DataManager).
+        forecast_horizon: The target month-in-year (1-12), used only by the
+            fallback heuristic.
+        max_date: The issue date, used only by the fallback heuristic.
+
+    Returns:
+        The target calendar year.
+    """
+    if "valid_from" in forecasts_all.columns:
+        valid_from_tail = forecasts_all["valid_from"].tail(1)
+        if not valid_from_tail.empty:
+            valid_from_value = pd.to_datetime(valid_from_tail.values[0])
+            if not pd.isna(valid_from_value):
+                return valid_from_value.year
+
+    logger.warning(
+        "get_bulletin_metadata: 'valid_from' missing or NaT for the "
+        "monthly forecast; falling back to month-number year-rollover "
+        "heuristic (valid only for leads 0..11)."
+    )
+    return max_date.year + 1 if forecast_horizon < max_date.month else max_date.year
+
+
 class DataManager(param.Parameterized):
     """
     Single source of truth for all dashboard data.
@@ -362,12 +403,18 @@ class DataManager(param.Parameterized):
 
         # Year-rollover: a monthly forecast with lead >= 1 issued late in the
         # year targets a month in the NEXT calendar year (e.g. Dec-issued
-        # lead-1 → January). The target month (forecast_horizon = month_in_year)
-        # is authoritative; roll the year when it precedes the issue month.
+        # lead-1 → January). The target year must come from the target
+        # period's own data (``valid_from``), never from comparing month
+        # numbers — that comparison is only valid for leads 0..11 and is
+        # wrong for a lead >= 12 or a negative lead (see FD-019). Read the
+        # year off the same row that supplies ``forecast_horizon``
+        # (month_in_year) so the bulletin key and the card caption
+        # (plot_manager._format_forecast_info, which does full-year
+        # arithmetic on valid_from) cannot disagree.
         forecast_year = last_date.year
         if horizon == "month" and skill_lead_aware_enabled():
-            forecast_year = (
-                max_date.year + 1 if forecast_horizon < max_date.month else max_date.year
+            forecast_year = _monthly_target_year_from_valid_from(
+                self.forecasts_all, forecast_horizon, max_date
             )
         return last_date, forecast_horizon, forecast_year
 

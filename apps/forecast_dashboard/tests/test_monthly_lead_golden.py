@@ -36,6 +36,29 @@ from src import db
 FLAG = "SAPPHIRE_SKILL_LEAD_AWARE"
 
 
+def _setup_config(monkeypatch, tmp_path, name, modes):
+    """Write per-mode config JSONs and point the resolver env at them.
+
+    modes: dict {config_mode_name: operational_month_lead_time}.
+    Sets supported_modes = the mode names (comma-joined). Mirrors the
+    identically-named helper in test_monthly_lead_regression.py so this
+    file's flag-ON companion tests can drive the REAL resolver chain
+    (long_term_horizon_resolver.operational_lead_for_mode) instead of
+    relying on its no-config exception-fallback default.
+    """
+    config_dir = tmp_path / name
+    config_dir.mkdir()
+    for mode_name, lead in modes.items():
+        (config_dir / f"{mode_name}.json").write_text(
+            json.dumps({"operational_month_lead_time": lead})
+        )
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", name)
+    monkeypatch.setenv(
+        "ieasyhydroforecast_ml_long_term_supported_modes", ",".join(modes.keys())
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / builders (synthetic codes 15999 / 17999, arbitrary discharge)
 # ---------------------------------------------------------------------------
@@ -290,9 +313,26 @@ class TestFormatForecastInfoGuardOn:
             {"issue_date": forecasts_all["date"].max(), "horizon_label": "month_1", "lead": 1}
         ], f"Expected lead=1 (flag on, resolved), got {calls!r}"
 
-    def test_month0_caption_flag_on_passes_lead_zero(self, monkeypatch):
+    def test_month0_caption_flag_on_passes_lead_zero(self, monkeypatch, tmp_path):
+        """Drives the REAL resolver chain (kghm-shaped config: month_0 -> lead
+        0, month_1 -> lead 1) — nothing stubbed except the caption spy. A
+        prior version of this test supplied no config and did not stub
+        ``month_lead_for_mode``, so ``lead=0`` reached the caption purely via
+        ``month_lead_for_mode``'s no-config exception-fallback default, not a
+        genuinely resolved config value.
+
+        Discriminating mutation: hardcode ``m0_lead = 0`` in
+        ``update_forecast_tabulator_m0`` instead of calling
+        ``month_lead_for_mode("month_0", 0)`` — with this real config in
+        place the resolved value is still 0, so that specific mutation would
+        not be caught by the VALUE alone; but a mutation that instead reuses
+        ``_primary_month_lead()`` (1, from month_1's config) for m0 -- the
+        documented "m0 merges lead-1" bug class this whole module exists to
+        fix -- mismatches the visibility gate's target months (August vs
+        July) and this test goes RED (card hidden, caption never reached).
+        """
         monkeypatch.setenv(FLAG, "true")
-        monkeypatch.setattr(plot_manager, "_primary_month_lead", lambda: 1)
+        _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
 
         calls = []
 
@@ -303,7 +343,9 @@ class TestFormatForecastInfoGuardOn:
         monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
 
         # Flag-on m0 visibility gate: summary_target_month =
-        # ((issue_month - 1 + primary_lead) % 12) + 1 = ((7-1+1)%12)+1 = 8.
+        # ((issue_month - 1 + primary_lead) % 12) + 1 = ((7-1+1)%12)+1 = 8,
+        # where primary_lead=1 is now RESOLVED from month_1's real config
+        # (not stubbed).
         forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
         m0 = pd.DataFrame({"date": pd.to_datetime(["2026-08-01"])})
         fake_self = types.SimpleNamespace(

@@ -322,6 +322,187 @@ class TestBulletinTargetMonthYear:
         assert forecast_year == 2027, (
             "Dec-issued lead-1 targets January of the FOLLOWING year (2027), not the issue year"
         )
+        # Note: this fixture carries no 'valid_from' column, so it exercises
+        # the FALLBACK month-number heuristic in _monthly_target_year_from_
+        # valid_from — see TestBulletinTargetYearFromValidFrom below for the
+        # primary (valid_from-driven) path and its lead>=12 fix.
+
+
+# ===========================================================================
+# Second adversarial review, MEDIUM defect — the bulletin/header target year
+# must come from valid_from (the target period's own data), never from
+# comparing month numbers. Month-number comparison
+# (forecast_horizon < max_date.month) is only valid for leads 0..11 — it is
+# silently wrong for a configured lead >= 12 or a negative lead, and nothing
+# range-checks operational_month_lead_time
+# (long_term_horizon_resolver._require_int_field takes any int). See
+# doc/plans/issues/mid_prio_gi_draft_fd_bulletin_target_year_derivation.md
+# (FD-019).
+# ===========================================================================
+
+class TestBulletinTargetYearFromValidFrom:
+    def test_lead12_target_year_is_read_from_valid_from_not_guessed(self, monkeypatch):
+        """Issued 2026-01-25 with a configured lead of 12: month_in_year is 1
+        (January) and valid_from is 2027-01-01. The month-number heuristic
+        (``1 < 1`` is False) would wrongly keep the issue year (2026); the
+        year must instead come from valid_from.year (2027).
+
+        Discriminating mutation: revert forecast_year to the month-number
+        heuristic (``max_date.year + 1 if forecast_horizon < max_date.month
+        else max_date.year``) instead of reading valid_from — this test goes
+        RED (returns 2026 instead of 2027).
+        """
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-01-25"]),
+                "month_in_year": [1],
+                "valid_from": pd.to_datetime(["2027-01-01"]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 1
+        assert forecast_year == 2027, (
+            "lead-12 target (valid_from=2027-01-01) must come from valid_from, "
+            f"got {forecast_year}"
+        )
+
+    def test_negative_lead_target_year_is_read_from_valid_from(self, monkeypatch):
+        """Issued 2026-01-25 with a configured lead of -1: month_in_year is 12
+        (December) and valid_from is 2025-12-01. The month-number heuristic
+        (``12 < 1`` is False) would wrongly keep the issue year (2026); the
+        real target year is 2025.
+        """
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-01-25"]),
+                "month_in_year": [12],
+                "valid_from": pd.to_datetime(["2025-12-01"]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 12
+        assert forecast_year == 2025
+
+    def test_kyrgyz_december_lead1_still_rolls_to_next_year(self, monkeypatch):
+        """Normal case still holds: Kyrgyz-shaped lead-1 issued in December
+        rolls to the following year — now driven by valid_from rather than
+        arithmetic."""
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-12-25"]),
+                "month_in_year": [1],
+                "valid_from": pd.to_datetime(["2027-01-01"]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 1
+        assert forecast_year == 2027
+
+    def test_same_year_lead1_forecast_keeps_issue_year(self, monkeypatch):
+        """Normal case still holds: a same-year lead-1 forecast (issued July,
+        targeting August) keeps the issue year."""
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-07-01"]),
+                "month_in_year": [8],
+                "valid_from": pd.to_datetime(["2026-08-01"]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 8
+        assert forecast_year == 2026
+
+    def test_missing_valid_from_column_falls_back_without_raising(self, monkeypatch):
+        """No 'valid_from' column at all (e.g. an older/thinner frame): must
+        degrade to the month-number heuristic rather than raising — a
+        dashboard READ must not crash."""
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-12-25"]),
+                "month_in_year": [1],
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 1
+        assert forecast_year == 2027  # fallback heuristic: 1 < 12 -> next year
+
+    def test_nat_valid_from_falls_back_without_raising(self, monkeypatch):
+        """'valid_from' present but NaT (unparseable/missing value): must
+        degrade to the month-number heuristic rather than raising."""
+        monkeypatch.setenv(FLAG, "true")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-12-25"]),
+                "month_in_year": [1],
+                "valid_from": pd.to_datetime([pd.NaT]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        _last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 1
+        assert forecast_year == 2027  # fallback heuristic: 1 < 12 -> next year
+
+    def test_flag_off_ignores_valid_from_and_stays_byte_identical(self, monkeypatch):
+        """HARD CONTRACT: flag OFF must be byte-identical to trunk regardless
+        of a 'valid_from' column being present — forecast_year stays
+        last_date.year even though valid_from says something else.
+
+        Discriminating mutation: drop the ``skill_lead_aware_enabled()``
+        guard (read valid_from unconditionally) — this test goes RED
+        (forecast_year would become 2027 instead of the issue year 2026).
+        """
+        monkeypatch.setenv(FLAG, "false")
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame({
+                "date": pd.to_datetime(["2026-01-25"]),
+                "month_in_year": [1],
+                "valid_from": pd.to_datetime(["2027-01-01"]),
+            }),
+            horizon_in_year=lambda horizon: "month_in_year",
+        )
+
+        last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "month"
+        )
+
+        assert forecast_horizon == 1
+        assert forecast_year == last_date.year == 2026, (
+            "flag-off must ignore valid_from entirely and keep the issue year"
+        )
 
 
 # ===========================================================================
@@ -591,6 +772,67 @@ class TestM0CardResolvesOwnLead:
         assert calls == [
             {"issue_date": m0["date"].max().date(), "horizon_label": "month_0", "lead": 1}
         ], f"Expected the resolved m0 lead (1), not hardcoded 0: {calls!r}"
+
+    def test_m0_visibility_and_caption_use_resolved_m0_lead__real_resolver(
+        self, monkeypatch, tmp_path
+    ):
+        """Companion to the test above, which stubs ``month_lead_for_mode``
+        and ``_primary_month_lead`` directly -- so it proves the CALLER
+        wires the resolved value through, but not that the resolver chain
+        itself (``operational_lead_for_mode`` -> real config files) is
+        correctly reached from ``update_forecast_tabulator_m0``. This test
+        drives the REAL resolver chain end-to-end (a config where month_0's
+        lead is 1, not 0) with nothing stubbed except the eventual caption
+        text is read directly rather than spied -- covering the wiring gap.
+
+        Discriminating mutation: hardcode ``m0_lead = 0`` in
+        ``update_forecast_tabulator_m0`` (ignoring config entirely) --
+        m0_target_month becomes July, mismatching the summary's August
+        target, so the card is hidden and this test goes RED (both the
+        visibility assertion and the "August" substring check fail).
+        """
+        monkeypatch.setenv(FLAG, "true")
+        # A deployment shape where BOTH month_0 and month_1 resolve to lead 1
+        # (unusual, but nothing prevents it -- see the class docstring).
+        _setup_config(monkeypatch, tmp_path, "custom_hm", {"month_0": 1, "month_1": 1})
+
+        # Main panel: issued July: real primary_month_lead() (from month_1's
+        # config) resolves to 1 -> target August.
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        # m0's own issue date is ALSO July (same pipeline run). With the
+        # REAL resolved m0 lead (1, from month_0's config), m0's target is
+        # August too.
+        m0 = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                station_selector=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator_m0=MagicMock(),
+                forecast_info_m0=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all, long_forecasts_m0=m0),
+            summary_table_m0_card=types.SimpleNamespace(visible=None),
+        )
+
+        plot_manager.PlotManager.update_forecast_tabulator_m0(fake_self)
+
+        assert fake_self.summary_table_m0_card.visible is True, (
+            "real-config m0 target (August, lead=1) matches the real-config "
+            "summary target (August, primary lead=1) -- card must be visible"
+        )
+        caption = fake_self._wm.forecast_info_m0.object
+        assert "August" in caption and "(month_0)" in caption, (
+            "the REAL resolved m0 lead (1, from config) must name August, "
+            f"not July (hardcoded lead=0): {caption!r}"
+        )
 
 
 # ===========================================================================
