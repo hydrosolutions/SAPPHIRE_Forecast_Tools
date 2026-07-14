@@ -11,8 +11,8 @@ import datetime as dt
 from src import db as dashboard_db
 
 
-TEST_PENTAD = False
-TEST_DECAD = False
+TEST_PENTAD = os.getenv("TEST_PENTAD", "").lower() == "true"
+TEST_DECAD = os.getenv("TEST_DECAD", "").lower() == "true"
 TEST_LOCAL = os.getenv("TEST_LOCAL", "").lower() == "true"
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
@@ -1719,11 +1719,8 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
         )
 
 
+@pytest.mark.skipif(not TEST_PENTAD, reason="live integration test; set TEST_PENTAD=true (and run against a live server) to enable")
 def test_pentad(page: Page):
-    if not TEST_PENTAD:
-        print("#### Skipping PENTAD test...")
-        return
-
     page.goto(PENTAD_URL)
 
     print("#### Testing PENTAD started...")
@@ -1747,11 +1744,8 @@ def test_pentad(page: Page):
     # time.sleep(SLEEP)
 
 
+@pytest.mark.skipif(not TEST_DECAD, reason="live integration test; set TEST_DECAD=true (and run against a live server) to enable")
 def test_decad(page: Page):
-    if not TEST_DECAD:
-        print("#### Skipping DECAD test...")
-        return
-
     page.goto(DECAD_URL)
 
     print("#### Testing DECAD started...")
@@ -1775,11 +1769,8 @@ def test_decad(page: Page):
     time.sleep(SLEEP)
 
 
+@pytest.mark.skipif(not TEST_LOCAL, reason="live integration test; set TEST_LOCAL=true (and run against a live server) to enable")
 def test_local(snow_stats_available, page: Page):
-    if not TEST_LOCAL:
-        print("#### Skipping LOCAL test...")
-        return
-
     # Set default timeouts at the start of the test
     page.set_default_timeout(60000)  # 60 seconds for all actions
     page.set_default_navigation_timeout(60000)  # 60 seconds for navigation
