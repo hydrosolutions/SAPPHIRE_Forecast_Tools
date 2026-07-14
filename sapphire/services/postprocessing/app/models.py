@@ -65,6 +65,40 @@ class ModelType(str, Enum):
         }
         return descriptions.get(self.value, self.value)
 
+    @classmethod
+    def coerce(cls, value):
+        """Resolve a raw ``model_type`` input to the matching enum member.
+
+        The DB column stores the enum NAME (e.g. "TIDE") while the API
+        schema validates against the enum VALUE (e.g. "TiDE"). Some
+        callers (e.g. the data migrator, which posts ``model_short``
+        as-is) pass the NAME, or an arbitrarily-cased form of either.
+        This resolves, in order:
+
+        1. an exact match on the enum value (the existing happy path);
+        2. an exact match on the enum name;
+        3. a case-insensitive match against either the value or the name.
+
+        Anything that still doesn't resolve is returned unchanged so
+        that Pydantic's normal enum validation continues to reject it.
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            try:
+                return cls(value)
+            except ValueError:
+                pass
+            try:
+                return cls[value]
+            except KeyError:
+                pass
+            lowered = value.lower()
+            for member in cls:
+                if member.value.lower() == lowered or member.name.lower() == lowered:
+                    return member
+        return value
+
 
 class Forecast(Base):
     __tablename__ = "forecasts"
