@@ -86,7 +86,10 @@ vocabulary is owned by** [`doc/plans/README.md`](doc/plans/README.md) — do not
    errors** may be applied directly; **scope/design/semantics/security/API-contract** changes
    **escalate to the human owner**; related bugs found while mapping become `gi_draft_*` plan files
    under `doc/plans/issues/` (indexed in `doc/plans/module_issues.md`), never inline fixes. After
-   corrections, run one lightweight **confirm-fixes pass**.
+   corrections, run one lightweight **confirm-fixes pass**. For diffs specifically, use the
+   diff-attack template in `doc/dev/agent_review_workflow.md` § "Attack axes for code diffs" (the
+   `adversarial-review` skill runs it in one step) — the artifact template above verifies claims, not
+   behavior.
 
 3. **Every high-claim-density prompt carries the fitness line** (verbatim): "Every bullet must help
    an agent know what to inspect, what contract not to break, or what verification proves safety —
