@@ -16,6 +16,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
@@ -248,9 +249,16 @@ def aggregate_monthly_fc_to_quarterly(
     if "q" in df.columns:
         agg_dict["q"] = ("q", "mean")
 
-    grouped = (
-        df.groupby(["code", "year", "quarter_in_year", "model_short"]).agg(**agg_dict).reset_index()
-    )
+    group_cols = ["code", "year", "quarter_in_year", "model_short"]
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, keep distinct monthly leads
+    # (horizon_value) as separate quarterly rows instead of averaging
+    # them together. The QUARTER_MIN_MONTHS coverage filter below then
+    # naturally applies PER LEAD, since n_months is counted within each
+    # group. Flag OFF, or horizon_value absent, is unchanged.
+    if skill_lead_aware_enabled() and "horizon_value" in df.columns:
+        group_cols.append("horizon_value")
+
+    grouped = df.groupby(group_cols).agg(**agg_dict).reset_index()
     count_quantile_crossings(grouped, _FC_QUANTILE_COLS, label="monthly→quarterly")
 
     # Require >= QUARTER_MIN_MONTHS
@@ -271,6 +279,24 @@ def aggregate_monthly_fc_to_quarterly(
         lambda r: _quarter_end_date(int(r["year"]), int(r["quarter_in_year"])),
         axis=1,
     )
+
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, carry a representative issue `date`
+    # = valid_from - horizon_value months. This is the issue date a
+    # lead-`hv` forecast for the quarter's first month would carry, so a
+    # lead-aware round-trip read derives EXACTLY `hv` from (date,
+    # valid_from) -- rather than the writer fabricating date=valid_from
+    # (lead 0) that contradicts the per-lead horizon_value. Deterministic
+    # regardless of which constituent months are present (NOT min() of
+    # constituent dates, which is off-by-one when the first quarter month
+    # is absent). Flag OFF, or horizon_value absent: no `date` column
+    # added (byte-identical to today). (FIX 6)
+    if skill_lead_aware_enabled() and "horizon_value" in grouped.columns:
+        grouped["date"] = grouped.apply(
+            lambda r: (
+                pd.Timestamp(r["valid_from"]) - pd.DateOffset(months=int(r["horizon_value"]))
+            ).strftime("%Y-%m-%d"),
+            axis=1,
+        )
 
     # Ensure forecasted_discharge exists (q first, q50 fallback)
     if "forecasted_discharge" not in grouped.columns:

@@ -491,3 +491,56 @@ msgstr "месяц"
 
 msgid "Select forecast horizon:"
 msgstr "Выберите горизонт прогнозирования:"
+
+# Publish bulletin card (FD-017)
+msgid "Publish bulletin"
+msgstr "Опубликовать бюллетень"
+
+msgid "Select horizons to publish:"
+msgstr "Выберите горизонты для публикации:"
+
+msgid "Select stations to publish:"
+msgstr "Выберите станции для публикации:"
+
+msgid "Generate links"
+msgstr "Создать ссылки"
+
+msgid "Select at least one horizon to publish."
+msgstr "Выберите хотя бы один горизонт для публикации."
+
+msgid "Select at least one station to publish."
+msgstr "Выберите хотя бы одну станцию для публикации."
+
+msgid "Error:"
+msgstr "Ошибка:"
+
+msgid "Failed to assemble bulletin data for %(horizon)s. No links were generated."
+msgstr "Не удалось собрать данные бюллетеня для %(horizon)s. Ссылки не созданы."
+
+msgid "No bulletin data for any selected station under %(horizon)s — no link generated."
+msgstr "Нет данных бюллетеня ни по одной выбранной станции для %(horizon)s — ссылка не создана."
+
+msgid "Failed to generate the share link for %(horizon)s. No links were generated."
+msgstr "Не удалось создать ссылку для %(horizon)s. Ссылки не созданы."
+
+msgid "Generated links:"
+msgstr "Созданные ссылки:"
+
+msgid "expires"
+msgstr "истекает"
+
+msgid "Warnings:"
+msgstr "Предупреждения:"
+
+msgid "Skipped stations (no bulletin data):"
+msgstr "Пропущенные станции (нет данных бюллетеня):"
+
+msgid "No links were generated."
+msgstr "Ссылки не созданы."
+
+# Write-bulletin confirmation popup (FD)
+msgid "Bulletin saved successfully"
+msgstr "Бюллетень успешно сохранён"
+
+msgid "Failed to write bulletin"
+msgstr "Не удалось сохранить бюллетень"

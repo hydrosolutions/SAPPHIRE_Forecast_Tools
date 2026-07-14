@@ -4,7 +4,7 @@ import os
 
 import pandas as pd
 import panel as pn
-from src.environment import is_dash_lead_aware
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.file_downloader import FileDownloader
 from src.gettext_config import _, p_
 
@@ -629,7 +629,7 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
     elif horizon == "month":
         # Defect J: use the resolved target month/year passed in (lead-aware);
         # the legacy kill-switch recomputes them from the production date.
-        if is_dash_lead_aware():
+        if skill_lead_aware_enabled():
             target_month_num = forecast_horizon
             target_year = forecast_year
         else:

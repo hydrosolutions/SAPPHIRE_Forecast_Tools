@@ -16,9 +16,9 @@ import pandas as pd
 import panel as pn
 import param
 
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.site import SapphireSite as Site
 from src import db
-from src.environment import is_dash_lead_aware
 import src.processing as processing
 from dashboard import utils
 from dashboard.logger import setup_logger
@@ -374,7 +374,7 @@ class DataManager(param.Parameterized):
         # lead-1 → January). The target month (forecast_horizon = month_in_year)
         # is authoritative; roll the year when it precedes the issue month.
         forecast_year = last_date.year
-        if is_dash_lead_aware() and horizon == "month":
+        if skill_lead_aware_enabled() and horizon == "month":
             forecast_year = (
                 max_date.year + 1 if forecast_horizon < max_date.month else max_date.year
             )

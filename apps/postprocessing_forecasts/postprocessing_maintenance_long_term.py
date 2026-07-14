@@ -29,6 +29,7 @@ from long_term_horizon_resolver import (
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import data_reader, ensemble_calculator, file_writer, gap_detector
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
@@ -200,23 +201,55 @@ def postprocessing_maintenance_long_term():
         # create_monthly_ensemble_forecasts creates all 3 types for
         # every period, but we only want those that were actually
         # missing (per the gap detector).
-        gap_keys = set(
-            gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
-        )
         ensemble_models = {"EM", "Skilled Mean", "Naive Mean"}
         new_ensemble = joint[joint["model_short"].isin(ensemble_models)].copy()
-        new_ensemble = new_ensemble[
-            new_ensemble.apply(
-                lambda r: (
-                    r["year"],
-                    r["month"],
-                    str(r["code"]),
-                    r["model_short"],
-                )
-                in gap_keys,
-                axis=1,
+        # Under SAPPHIRE_SKILL_LEAD_AWARE, key the gap filter per-lead --
+        # mirroring the quarterly block's q_gap_keys -- so a regenerated
+        # ensemble row for a lead that was NEVER a gap does not survive the
+        # filter (and, via keep="last" in the merge dedup, silently overwrite
+        # an existing non-gap ensemble at that lead). The gap detector emits
+        # per-lead gaps under the flag and create_monthly_ensemble_forecasts
+        # stamps each ensemble row with its own horizon_value, so restricting
+        # to the actual missing (year, month, code, model, lead) keys also
+        # guarantees each gap-filled row keeps the lead it was detected
+        # missing at. Flag OFF: unchanged (period-only key, no lead).
+        if (
+            skill_lead_aware_enabled()
+            and "horizon_value" in gaps.columns
+            and "horizon_value" in new_ensemble.columns
+        ):
+            gap_key_cols = ["year", "month", "code", "model_short", "horizon_value"]
+            gap_keys = set(
+                gaps[gap_key_cols]
+                .assign(code=lambda d: d["code"].astype(str))
+                .itertuples(index=False, name=None)
             )
-        ]
+            new_ensemble = new_ensemble[
+                new_ensemble.apply(
+                    lambda r, _keys=gap_keys, _cols=gap_key_cols: (
+                        tuple(str(r[c]) if c == "code" else r[c] for c in _cols) in _keys
+                    ),
+                    axis=1,
+                )
+            ]
+        else:
+            gap_keys = set(
+                gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
+            )
+            new_ensemble = new_ensemble[
+                new_ensemble.apply(
+                    lambda r: (
+                        (
+                            r["year"],
+                            r["month"],
+                            str(r["code"]),
+                            r["model_short"],
+                        )
+                        in gap_keys
+                    ),
+                    axis=1,
+                )
+            ]
 
         if new_ensemble.empty:
             logger.info("No new monthly ensemble rows created. Nothing to save.")
@@ -286,17 +319,58 @@ def postprocessing_maintenance_long_term():
                                 "Naive Mean",
                             }
                             q_new = q_joint[q_joint["model_short"].isin(q_ens_models)].copy()
-                            q_merged = pd.concat(
-                                [q_combined, q_new],
-                                ignore_index=True,
-                            )
-                            q_merged = q_merged.drop_duplicates(
-                                subset=[
+                            # Under SAPPHIRE_SKILL_LEAD_AWARE, restrict the
+                            # freshly-generated ensemble rows to the ACTUAL
+                            # missing gap keys before merge -- mirroring the
+                            # seasonal block's s_gap_keys filter -- so a
+                            # non-gap (year, quarter, code, model[, lead])
+                            # ensemble row already present in q_combined is
+                            # not silently overwritten (keep="last") by a
+                            # regenerated row for a lead that was never a gap.
+                            # Flag OFF: unchanged (no q_new filtering).
+                            if skill_lead_aware_enabled() and not q_new.empty:
+                                q_key_cols = [
                                     "year",
                                     "quarter_in_year",
                                     "code",
                                     "model_short",
-                                ],
+                                ]
+                                if (
+                                    "horizon_value" in q_gaps.columns
+                                    and "horizon_value" in q_new.columns
+                                ):
+                                    q_key_cols.append("horizon_value")
+                                q_gap_keys = set(
+                                    q_gaps[q_key_cols]
+                                    .assign(code=lambda d: d["code"].astype(str))
+                                    .itertuples(index=False, name=None)
+                                )
+                                q_new = q_new[
+                                    q_new.apply(
+                                        lambda r, _keys=q_gap_keys, _cols=q_key_cols: (
+                                            tuple(str(r[c]) if c == "code" else r[c] for c in _cols)
+                                            in _keys
+                                        ),
+                                        axis=1,
+                                    )
+                                ]
+                            q_merged = pd.concat(
+                                [q_combined, q_new],
+                                ignore_index=True,
+                            )
+                            q_dedup_subset = [
+                                "year",
+                                "quarter_in_year",
+                                "code",
+                                "model_short",
+                            ]
+                            # Under SAPPHIRE_SKILL_LEAD_AWARE, keep distinct
+                            # horizon_value leads as separate rows instead of
+                            # collapsing them. Flag OFF: unchanged.
+                            if skill_lead_aware_enabled() and "horizon_value" in q_merged.columns:
+                                q_dedup_subset.append("horizon_value")
+                            q_merged = q_merged.drop_duplicates(
+                                subset=q_dedup_subset,
                                 keep="last",
                             )
                             file_writer.save_quarterly_forecast_data(q_merged)
@@ -360,11 +434,13 @@ def postprocessing_maintenance_long_term():
                             fc_for_lead = fc_for_lead[
                                 fc_for_lead.apply(
                                     lambda r, _gap_set=lead_gap_set: (
-                                        r["season_year"],
-                                        r["season_in_year"],
-                                        str(r["code"]),
-                                    )
-                                    in _gap_set,
+                                        (
+                                            r["season_year"],
+                                            r["season_in_year"],
+                                            str(r["code"]),
+                                        )
+                                        in _gap_set
+                                    ),
                                     axis=1,
                                 )
                             ].copy()
@@ -399,12 +475,14 @@ def postprocessing_maintenance_long_term():
                             s_new = s_new[
                                 s_new.apply(
                                     lambda r: (
-                                        r["season_year"],
-                                        r["season_in_year"],
-                                        str(r["code"]),
-                                        r["model_short"],
-                                    )
-                                    in s_gap_keys,
+                                        (
+                                            r["season_year"],
+                                            r["season_in_year"],
+                                            str(r["code"]),
+                                            r["model_short"],
+                                        )
+                                        in s_gap_keys
+                                    ),
                                     axis=1,
                                 )
                             ]

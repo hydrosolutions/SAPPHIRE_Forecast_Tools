@@ -5,25 +5,20 @@ Centralises all plot pane creation, update, tab-rendering logic,
 and rendering-related callback wiring.
 """
 
-import os
-
 import panel as pn
 import holoviews as hv
 from calendar import month_abbr, month_name
 
 from dashboard.logger import setup_logger
-from src.db import _resolve_primary_month_lead
-from src.environment import is_dash_lead_aware
+from skill_lead_aware_flag import skill_lead_aware_enabled
+from src.month_lead import primary_month_lead
 
 logger = setup_logger()
 
 
 def _primary_month_lead() -> int:
     """Resolve the deployment's primary monthly lead for caption/visibility."""
-    supported_modes = os.getenv(
-        "ieasyhydroforecast_ml_long_term_supported_modes", ""
-    ).split(",")
-    return _resolve_primary_month_lead(supported_modes)
+    return primary_month_lead()
 
 
 def _ordinal(n: int) -> str:
@@ -298,7 +293,7 @@ class PlotManager:
             df = self._dm.forecasts_all
             if df is not None and not df.empty:
                 issue_date = df['date'].max()
-                lead = _primary_month_lead() if is_dash_lead_aware() else None
+                lead = _primary_month_lead() if skill_lead_aware_enabled() else None
                 self._wm.forecast_info_m1.object = _format_forecast_info(
                     issue_date, "month_1", lead=lead)
             else:
@@ -317,7 +312,7 @@ class PlotManager:
             self.summary_table_m0_card.visible = False
             return
         _issue_month = forecasts_all['date'].max().month
-        if is_dash_lead_aware():
+        if skill_lead_aware_enabled():
             summary_target_month = ((_issue_month - 1 + _primary_month_lead()) % 12) + 1
         else:
             summary_target_month = (_issue_month % 12) + 1
@@ -342,7 +337,7 @@ class PlotManager:
             self._wm.forecast_tabulator_m0,
         )
         # Update m0 info text (the m0 card is always the lead-0 product)
-        m0_lead = 0 if is_dash_lead_aware() else None
+        m0_lead = 0 if skill_lead_aware_enabled() else None
         self._wm.forecast_info_m0.object = _format_forecast_info(
             m0_max_date, "month_0", lead=m0_lead)
 

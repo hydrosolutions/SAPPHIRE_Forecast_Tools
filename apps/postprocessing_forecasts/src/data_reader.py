@@ -11,10 +11,18 @@ import calendar
 import datetime as dt
 import logging
 import os
+import re
 
 import pandas as pd
-from long_term_horizon_resolver import quarter_horizon_value
+from long_term_horizon_resolver import (
+    OperationalSchedule,
+    operational_schedule_for_mode,
+    quarter_horizon_value,
+    supported_long_term_modes,
+)
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import (
+    AGGREGATED_ENSEMBLE_MODELS,
     AGGREGATED_SUPPORTED_MODELS,
     canonical_model_short_series,
 )
@@ -72,6 +80,20 @@ _QUARTERLY_FC_COLS = [
 ]
 
 
+def _quarterly_fc_output_cols() -> list[str]:
+    """Return the canonical quarterly forecast output columns.
+
+    Under SAPPHIRE_SKILL_LEAD_AWARE, extends the base column list with
+    "horizon_value" and "date" so the per-lead selection made by
+    select_operational_issuances() survives into the final output. Flag
+    OFF returns _QUARTERLY_FC_COLS unchanged (columns not present in the
+    frame are filtered out by callers anyway).
+    """
+    if skill_lead_aware_enabled():
+        return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
+    return _QUARTERLY_FC_COLS
+
+
 def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFrame:
     """Keep supported quarter/season raw models plus existing ensemble rows."""
     if df.empty or "model_short" not in df.columns:
@@ -100,6 +122,280 @@ def _drop_tombstone_rows(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "n_pairs" not in df.columns:
         return df
     return df[df["n_pairs"].notna() & (df["n_pairs"] > 0)].copy()
+
+
+# ===================================================================
+# M1 P1: lead-aware operational-issuance selection
+#
+# Flag-gated (SAPPHIRE_SKILL_LEAD_AWARE, default OFF) config-driven
+# selection of exactly one "operational" issuance per (code, model,
+# target year, target period) from raw long-forecast rows, applied
+# immediately after read+normalize and BEFORE aggregation/skill/
+# ensemble generation. See
+# doc/plans/issues/high_prio_gi_draft_pp_lead_aware_skill.md (P1).
+# ===================================================================
+
+_MONTH_MODE_NAME_RE = re.compile(r"^month_\d+$")
+
+
+def _operational_schedules_for_horizon_type(
+    horizon_type: str,
+) -> dict[str, OperationalSchedule]:
+    """Return configured operational schedules for the modes belonging to
+
+    one long-forecast horizon type, using the deployment mode-naming
+    convention: ``month_<N>`` modes for "month", the single ``quarter``
+    mode for "quarter", and ``seasonal_*`` modes for "season" (see
+    `long_term_horizon_resolver` and the M1 plan's mode taxonomy).
+
+    Args:
+        horizon_type: One of "month", "quarter", "season".
+
+    Returns:
+        Mapping of mode name -> OperationalSchedule, restricted to modes
+        this deployment actually supports (may be empty, e.g. a
+        deployment with no seasonal modes configured).
+
+    Raises:
+        ValueError: If `horizon_type` is not one of the three supported
+            long-forecast horizon types.
+        LongTermHorizonResolverError: Propagated from
+            `operational_schedule_for_mode` if a relevant mode's config
+            is missing `operational_month_lead_time` or
+            `operational_issue_day`.
+    """
+    modes = supported_long_term_modes()
+    if horizon_type == "month":
+        relevant = [m for m in modes if _MONTH_MODE_NAME_RE.match(m)]
+    elif horizon_type == "quarter":
+        relevant = [m for m in modes if m == "quarter"]
+    elif horizon_type == "season":
+        relevant = [m for m in modes if m.startswith("seasonal_")]
+    else:
+        raise ValueError(
+            f"Unsupported horizon_type for operational schedules: {horizon_type!r} "
+            f"(expected 'month', 'quarter', or 'season')."
+        )
+    return {mode: operational_schedule_for_mode(mode) for mode in relevant}
+
+
+def _read_window_expansion_years(max_lead_months: int) -> int:
+    """Return how many extra years to read backward to capture the
+
+    earliest issuance for a maximum configured lead expressed in months.
+
+    The API issue-date read window is expressed in whole years
+    (start_year/end_year), while `select_operational_issuances` needs to
+    see issuances up to `max_lead_months` before the target period
+    starts. Expanding by whole years (ceil-divided) is a conservative
+    over-read; callers must trim the SELECTED rows back down to the
+    requested target-year range by `valid_from` (or `season_year`)
+    afterward -- this function only widens the READ window.
+
+    Args:
+        max_lead_months: The largest configured `operational_month_lead_time`
+            across the relevant schedules. Non-positive values need no
+            expansion.
+
+    Returns:
+        Number of years (>= 0) to subtract from `start_year` before
+        reading.
+    """
+    if max_lead_months <= 0:
+        return 0
+    return -(-max_lead_months // 12)  # ceil division, stdlib-only
+
+
+def _trim_to_target_year_range(
+    df: pd.DataFrame,
+    year_col: str,
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Trim rows to the requested target-year range after a read-window
+
+    expansion. A no-op if `df` is empty or lacks `year_col`.
+    """
+    if df.empty or year_col not in df.columns:
+        return df
+    years = pd.to_numeric(df[year_col], errors="coerce")
+    return df[(years >= start_year) & (years <= end_year)].copy()
+
+
+def select_operational_issuances(
+    df: pd.DataFrame,
+    schedules: dict[str, OperationalSchedule],
+    *,
+    target_year_col: str,
+    target_period_col: str | None = None,
+    lead_output_cols: tuple[str, ...] = ("horizon_value",),
+    date_col: str = "date",
+    valid_from_col: str = "valid_from",
+    code_col: str = "code",
+    model_col: str = "model_short",
+) -> pd.DataFrame:
+    """Select the operational-issuance row(s) per target unit and lead
+
+    from raw long-forecast rows.
+
+    A PURE selection step: applied to raw long-forecast rows immediately
+    after read+normalization and BEFORE aggregation/skill/ensemble
+    generation (M1 P1). Does not mutate `df`.
+
+    Baseline/ensemble rows (EM/Naive/Skilled Mean -- identified by
+    canonical model-name via `AGGREGATED_ENSEMBLE_MODELS`, NOT by a
+    missing-issue-date heuristic) carry no independent issue date and are
+    DROPPED from the output entirely: they are recomputed downstream by
+    the per-lead ensemble generation (P2), so passing the OLD ensemble
+    rows through would double-count / stamp them with a stale lead.
+
+    For every remaining (raw model) row, the operational lead is
+    *derived* -- never trusted from an existing `horizon_value` column --
+    as ``(valid_from.year - date.year) * 12 + (valid_from.month -
+    date.month)``. A row is an operational candidate only if BOTH its
+    derived lead AND its issue day (``date.day``) exactly match one of
+    the configured `schedules` (no implicit tolerance -- an explicit
+    tolerance would be a caller-side concern if ever configured).
+
+    The selected UNIT is ``(code, model, target_year[, target_period],
+    derived_lead)`` -- crucially INCLUDING the lead, so two distinct
+    configured leads for the SAME target period (e.g. monthly month_0 at
+    lead 0 and month_1 at lead 1, both targeting the same calendar month)
+    are kept as SEPARATE rows rather than collapsed into one. Within a
+    single unit:
+
+    - Units with ZERO matching candidates are DROPPED and logged (the
+      drop/log is reported at the coarser (code, model, target_year[,
+      target_period]) grain, i.e. targets with no operational issuance at
+      any configured lead) -- there is NO fallback to a non-operational
+      (backfill/hindcast) row.
+    - More than one candidate for the same unit (e.g. a duplicate same-day
+      reissue) resolves deterministically: latest `date` wins; identical
+      `date` keeps the LAST row in input order (stable sort).
+
+    The selected lead is written into every column named in
+    `lead_output_cols`, overwriting whatever those columns previously
+    held (e.g. ``horizon_value`` for all horizons, plus ``season_in_year``
+    for seasonal -- where the "period within year" IS the lead and must
+    stay consistent with `horizon_value`).
+
+    Args:
+        df: Raw, normalized long-forecast rows (post `_normalize_*`).
+        schedules: Mapping of mode name -> OperationalSchedule relevant to
+            this horizon type (see `_operational_schedules_for_horizon_type`).
+        target_year_col: Column identifying the target year (e.g. "year"
+            for month/quarter, "season_year" for season).
+        target_period_col: Column identifying an independent target period
+            within the year (e.g. "month", "quarter_in_year"). Pass None
+            for horizons where the "period" column is itself the lead (the
+            single irrigation season): the target unit is then just
+            (code, model, target_year) and distinct leads separate the
+            rows.
+        lead_output_cols: Columns overwritten with the derived lead on
+            selected rows. Default ("horizon_value",); seasonal callers
+            add "season_in_year".
+        date_col: Issue-date column name. Default "date".
+        valid_from_col: Target-period start column name. Default
+            "valid_from".
+        code_col: Station code column name. Default "code".
+        model_col: Model identifier column name. Default "model_short".
+
+    Returns:
+        DataFrame of the selected raw-model rows only (baseline/ensemble
+        rows removed), at most one per (unit, lead). Empty input is
+        returned unchanged; input missing a required column is returned
+        unchanged with a warning; a valid input yielding no operational
+        candidate returns an empty frame with the input's columns.
+    """
+    if df.empty:
+        return df
+
+    required_cols = {date_col, valid_from_col, code_col, model_col, target_year_col}
+    if target_period_col is not None:
+        required_cols.add(target_period_col)
+    missing = required_cols - set(df.columns)
+    if missing:
+        logger.warning(
+            "select_operational_issuances: input missing required column(s) %s; "
+            "returning input unchanged",
+            sorted(missing),
+        )
+        return df
+
+    empty_result = df.iloc[0:0].copy()
+
+    canonical = canonical_model_short_series(df[model_col])
+    baseline_mask = canonical.isin(AGGREGATED_ENSEMBLE_MODELS)
+    # Baseline/ensemble rows are dropped entirely (recomputed downstream).
+    candidates = df[~baseline_mask].copy()
+
+    if candidates.empty:
+        return empty_result
+
+    candidates[date_col] = pd.to_datetime(candidates[date_col])
+    candidates[valid_from_col] = pd.to_datetime(candidates[valid_from_col])
+
+    # Target-unit grain (for drop/log reporting): does NOT include the lead.
+    unit_cols = [code_col, model_col, target_year_col]
+    if target_period_col is not None:
+        unit_cols.append(target_period_col)
+    all_units = set(
+        map(tuple, candidates[unit_cols].drop_duplicates().itertuples(index=False, name=None))
+    )
+
+    derived_lead = (candidates[valid_from_col].dt.year - candidates[date_col].dt.year) * 12 + (
+        candidates[valid_from_col].dt.month - candidates[date_col].dt.month
+    )
+    issue_day = candidates[date_col].dt.day
+
+    allowed_schedules = {(s.lead_time, s.issue_day) for s in schedules.values()}
+    is_candidate = [
+        (lead, day) in allowed_schedules for lead, day in zip(derived_lead, issue_day, strict=True)
+    ]
+    candidates = candidates.assign(_pp1_derived_lead=derived_lead)[
+        pd.Series(is_candidate, index=candidates.index)
+    ]
+
+    if candidates.empty:
+        remaining_units: set[tuple] = set()
+    else:
+        remaining_units = set(
+            map(
+                tuple,
+                candidates[unit_cols].drop_duplicates().itertuples(index=False, name=None),
+            )
+        )
+
+    dropped_units = all_units - remaining_units
+    if dropped_units:
+        logger.info(
+            "select_operational_issuances: dropped %d target unit(s) with no operational "
+            "candidate matching a configured (lead, issue_day) schedule -- "
+            "%s: %s",
+            len(dropped_units),
+            tuple(unit_cols),
+            sorted(dropped_units, key=lambda g: tuple(str(x) for x in g)),
+        )
+
+    if candidates.empty:
+        return empty_result
+
+    # Selection key INCLUDES the derived lead so distinct configured leads
+    # for one target period survive as separate rows (CRITICAL fix).
+    selection_key_cols = [*unit_cols, "_pp1_derived_lead"]
+
+    # Deterministic tie-break: stable sort by issue date ascending, then
+    # keep the LAST row per (unit, lead) -- i.e. the latest-dated
+    # candidate; identical-date ties keep the last-occurring input row.
+    candidates = candidates.sort_values(by=date_col, kind="stable")
+    candidates = candidates.drop_duplicates(subset=selection_key_cols, keep="last")
+
+    lead_values = candidates["_pp1_derived_lead"].astype(int)
+    for col in lead_output_cols:
+        candidates[col] = lead_values
+    candidates = candidates.drop(columns=["_pp1_derived_lead"])
+
+    return candidates.reset_index(drop=True)
 
 
 def read_skill_metrics(
@@ -1055,11 +1351,39 @@ def read_monthly_forecasts(
         DataFrame with columns: [code, year, month, model_short,
         q50, q05, q10, q25, q75, q90, q95, valid_from, valid_to,
         date, flag]. Empty DataFrame if no data available.
+
+    Under ``SAPPHIRE_SKILL_LEAD_AWARE`` (default OFF), raw model rows are
+    additionally reduced to one operational-issuance row per (code,
+    model, target year, target month) via `select_operational_issuances`
+    -- the API issue-date read window is expanded backward by the
+    deployment's max configured monthly lead to capture the earliest
+    possible operational issuance, then selected rows are trimmed back
+    to [start_year, end_year] by `valid_from`. Flag OFF is byte-identical
+    to the pre-existing (unfiltered horizon_type="month") read.
     """
     empty = pd.DataFrame()
 
+    lead_aware = skill_lead_aware_enabled()
+    month_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON: a config-resolution error (e.g. a
+        # month_N mode missing operational_issue_day) must NOT silently
+        # fall back to an unfiltered read that retains backfill rows.
+        month_schedules = _operational_schedules_for_horizon_type("month")
+        if lead_aware and not month_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational month "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return empty
+        max_lead = max((s.lead_time for s in month_schedules.values()), default=0)
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+
     try:
-        raw = _read_long_forecasts_api(codes, start_year, end_year)
+        raw = _read_long_forecasts_api(codes, read_start_year, end_year)
     except Exception as e:
         logger.error("Failed to read monthly forecasts: %s", e)
         return empty
@@ -1068,7 +1392,15 @@ def read_monthly_forecasts(
         logger.warning("No monthly forecast data available")
         return empty
 
-    return _normalize_monthly_forecasts(raw)
+    df = _normalize_monthly_forecasts(raw)
+
+    if lead_aware and month_schedules:
+        df = select_operational_issuances(
+            df, month_schedules, target_year_col="year", target_period_col="month"
+        )
+        df = _trim_to_target_year_range(df, "year", start_year, end_year)
+
+    return df
 
 
 def _read_long_forecasts_api(
@@ -1203,7 +1535,34 @@ def read_latest_monthly_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), reduce raw model rows
+    # to one operational-issuance row per (code, model, target year, target
+    # month) BEFORE the latest-(year, month) filter -- read WITHOUT the
+    # horizon_value filter (read-then-derive-then-filter), with the issue-
+    # date read window expanded backward by the max configured monthly lead
+    # so a latest-target month whose operational issuance was made in a
+    # prior calendar year is not missed, then trim the SELECTED rows back to
+    # [start_year, end_year]. Mirrors read_monthly_forecasts /
+    # read_latest_quarterly_forecasts. Flag OFF keeps the pre-existing
+    # unfiltered read + no selection unchanged.
+    lead_aware = skill_lead_aware_enabled()
+    month_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        month_schedules = _operational_schedules_for_horizon_type("month")
+        if lead_aware and not month_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational month "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame()
+        max_lead = max((s.lead_time for s in month_schedules.values()), default=0)
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    raw = _read_long_forecasts_api(codes, read_start_year, end_year)
     if raw is None or raw.empty:
         logger.warning("No recent monthly forecast data available")
         return pd.DataFrame()
@@ -1211,6 +1570,14 @@ def read_latest_monthly_forecasts(
     df = _normalize_monthly_forecasts(raw)
     if df.empty:
         return df
+
+    if lead_aware and month_schedules:
+        df = select_operational_issuances(
+            df, month_schedules, target_year_col="year", target_period_col="month"
+        )
+        df = _trim_to_target_year_range(df, "year", start_year, end_year)
+        if df.empty:
+            return df
 
     # Add month_in_year
     if "month_in_year" not in df.columns and "month" in df.columns:
@@ -2718,16 +3085,56 @@ def read_quarterly_forecasts(
     else:
         aggregated = pd.DataFrame()
 
-    # Source 2: direct quarterly forecasts from API
-    raw_q = _read_long_forecasts_api(
-        codes,
-        start_year,
-        end_year,
-        horizon_type="quarter",
-        horizon_value=quarter_horizon_value(),
-    )
+    # Source 2: direct quarterly forecasts from API.
+    #
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), read WITHOUT the
+    # horizon_value filter (read-then-derive-then-filter), expand the
+    # read window backward by the configured quarter lead, and reduce
+    # to one operational-issuance row per (code, model, target year,
+    # target quarter). Flag OFF keeps the pre-existing single-lead API
+    # filter unchanged (quarter_horizon_value()).
+    lead_aware = skill_lead_aware_enabled()
+    quarter_schedules: dict[str, OperationalSchedule] | None = None
+    q_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        quarter_schedules = _operational_schedules_for_horizon_type("quarter")
+        if lead_aware and not quarter_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational quarter "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=empty_cols)
+        max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
+        q_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    if lead_aware and quarter_schedules:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            q_start_year,
+            end_year,
+            horizon_type="quarter",
+        )
+    else:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            start_year,
+            end_year,
+            horizon_type="quarter",
+            horizon_value=quarter_horizon_value(),
+        )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        if lead_aware and quarter_schedules and not direct.empty:
+            direct = select_operational_issuances(
+                direct,
+                quarter_schedules,
+                target_year_col="year",
+                target_period_col="quarter_in_year",
+            )
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
     else:
         direct = pd.DataFrame()
 
@@ -2744,6 +3151,8 @@ def read_quarterly_forecasts(
         # drop_duplicates(keep="last") prefers direct.
         combined = pd.concat([aggregated, direct], ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+            dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
@@ -2755,7 +3164,7 @@ def read_quarterly_forecasts(
         return pd.DataFrame(columns=empty_cols)
 
     # Select canonical output columns
-    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
 
     # Normalize valid_from/valid_to to strings for consistency
     for col in ("valid_from", "valid_to"):
@@ -2787,6 +3196,17 @@ def read_seasonal_forecasts(
         DataFrame with columns: [code, season_year, season_in_year,
         horizon_value, date, model_short, q05-q95,
         forecasted_discharge, valid_from, valid_to].
+
+    Under ``SAPPHIRE_SKILL_LEAD_AWARE`` (default OFF), raw model rows are
+    additionally reduced to one operational-issuance row per (code,
+    model, target season_year, target season_in_year) via
+    `select_operational_issuances` -- read WITHOUT the `horizon_value`
+    API filter (read-then-derive-then-filter), with the read window
+    expanded backward by the configured seasonal lead(s). When `horizon_value`
+    is given, selection is restricted to the schedule(s) matching that
+    lead so the caller's per-lead loop (see `recalculate_skill_metrics.py`)
+    still yields one frame per configured seasonal lead. Flag OFF is
+    byte-identical to the pre-existing single-`horizon_value`-filtered read.
     """
     empty = pd.DataFrame(
         columns=[
@@ -2797,12 +3217,44 @@ def read_seasonal_forecasts(
         ]
     )
 
+    lead_aware = skill_lead_aware_enabled()
+    season_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    read_horizon_value = horizon_value
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        all_season_schedules = _operational_schedules_for_horizon_type("season")
+
+        if horizon_value is not None:
+            candidate_schedules = {
+                mode: sched
+                for mode, sched in all_season_schedules.items()
+                if sched.lead_time == horizon_value
+            }
+        else:
+            candidate_schedules = all_season_schedules
+
+        if not candidate_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational season "
+                "schedules are configured for this read (no seasonal modes "
+                "configured, or no seasonal mode at the requested lead; check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return empty
+
+        season_schedules = candidate_schedules
+        max_lead = max(s.lead_time for s in season_schedules.values())
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+        read_horizon_value = None
+
     raw = _read_long_forecasts_api(
         codes,
-        start_year,
+        read_start_year,
         end_year,
         horizon_type="season",
-        horizon_value=horizon_value,
+        horizon_value=read_horizon_value,
     )
     if raw is None or raw.empty:
         logger.info("No seasonal forecast data from API for %d-%d", start_year, end_year)
@@ -2811,6 +3263,23 @@ def read_seasonal_forecasts(
     df = _normalize_combined_forecasts(raw, "season")
     if df.empty:
         return empty
+
+    if lead_aware and season_schedules:
+        # season_in_year IS the lead key (one irrigation season/year), so
+        # it is NOT an independent target period: target unit is
+        # (code, model, season_year) and the derived lead is written into
+        # BOTH horizon_value AND season_in_year so downstream seasonal
+        # skill keys on the correct lead (not the stored sentinel 0).
+        df = select_operational_issuances(
+            df,
+            season_schedules,
+            target_year_col="season_year",
+            target_period_col=None,
+            lead_output_cols=("horizon_value", "season_in_year"),
+        )
+        df = _trim_to_target_year_range(df, "season_year", start_year, end_year)
+        if df.empty:
+            return empty
 
     df = _filter_supported_aggregated_forecast_models(df)
     if df.empty:
@@ -2864,26 +3333,84 @@ def read_latest_quarterly_forecasts(
     start_year = start_date.year
     end_year = today.year
 
-    # Source 1: aggregate monthly forecasts to quarterly
-    raw_m = _read_long_forecasts_api(codes, start_year, end_year)
-    if raw_m is not None and not raw_m.empty:
-        df_m = _normalize_monthly_forecasts(raw_m)
-        if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
-            df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-        aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+    # Source 1: aggregate monthly forecasts to quarterly.
+    #
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), aggregate the
+    # OPERATIONALLY-SELECTED monthly rows -- route through
+    # read_monthly_forecasts (which performs the flag-ON window
+    # expansion + select_operational_issuances + trim) so a same-target
+    # backfill/reissue monthly row cannot leak into the latest quarterly
+    # output. This mirrors read_quarterly_forecasts' Source 1. Flag OFF
+    # keeps the pre-existing raw path (unfiltered monthly read) unchanged.
+    if skill_lead_aware_enabled():
+        df_m = read_monthly_forecasts(codes, start_year, end_year)
+        if df_m is not None and not df_m.empty:
+            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
+                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
+            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+        else:
+            aggregated = pd.DataFrame()
     else:
-        aggregated = pd.DataFrame()
+        raw_m = _read_long_forecasts_api(codes, start_year, end_year)
+        if raw_m is not None and not raw_m.empty:
+            df_m = _normalize_monthly_forecasts(raw_m)
+            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
+                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
+            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+        else:
+            aggregated = pd.DataFrame()
 
-    # Source 2: direct quarterly forecasts from API
-    raw_q = _read_long_forecasts_api(
-        codes,
-        start_year,
-        end_year,
-        horizon_type="quarter",
-        horizon_value=quarter_horizon_value(),
-    )
+    # Source 2: direct quarterly forecasts from API.
+    #
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), read WITHOUT the
+    # horizon_value filter (read-then-derive-then-filter), expand the
+    # read window backward by the configured quarter lead, and reduce to
+    # one operational-issuance row per (code, model, target year, target
+    # quarter) -- mirroring read_quarterly_forecasts' direct branch. Flag
+    # OFF keeps the pre-existing single-lead API filter unchanged
+    # (quarter_horizon_value()).
+    lead_aware = skill_lead_aware_enabled()
+    quarter_schedules: dict[str, OperationalSchedule] | None = None
+    q_start_year = start_year
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        quarter_schedules = _operational_schedules_for_horizon_type("quarter")
+        if lead_aware and not quarter_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational quarter "
+                "schedules are configured (check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+        max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
+        q_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    if lead_aware and quarter_schedules:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            q_start_year,
+            end_year,
+            horizon_type="quarter",
+        )
+    else:
+        raw_q = _read_long_forecasts_api(
+            codes,
+            start_year,
+            end_year,
+            horizon_type="quarter",
+            horizon_value=quarter_horizon_value(),
+        )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        if lead_aware and quarter_schedules and not direct.empty:
+            direct = select_operational_issuances(
+                direct,
+                quarter_schedules,
+                target_year_col="year",
+                target_period_col="quarter_in_year",
+            )
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
     else:
         direct = pd.DataFrame()
 
@@ -2899,6 +3426,8 @@ def read_latest_quarterly_forecasts(
     else:
         combined = pd.concat([aggregated, direct], ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
+        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+            dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
 
@@ -2910,7 +3439,7 @@ def read_latest_quarterly_forecasts(
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
     # Select canonical output columns
-    combined = combined[[c for c in _QUARTERLY_FC_COLS if c in combined.columns]]
+    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
 
     # Normalize valid_from/valid_to to strings
     for col in ("valid_from", "valid_to"):
@@ -2958,12 +3487,53 @@ def read_latest_seasonal_forecasts(
     start_year = start_date.year
     end_year = today.year
 
+    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), reduce raw model rows
+    # to one operational-issuance row per (code, model, target season_year)
+    # BEFORE the latest-season filter -- read WITHOUT the horizon_value
+    # filter (read-then-derive-then-filter), with the issue-date read
+    # window expanded backward by the configured seasonal lead(s). When
+    # horizon_value is given, selection is restricted to the schedule(s)
+    # matching that lead so a caller's per-lead loop still yields one frame
+    # per configured seasonal lead. Mirrors read_seasonal_forecasts. Flag
+    # OFF is byte-identical to the pre-existing single-horizon_value read.
+    lead_aware = skill_lead_aware_enabled()
+    season_schedules: dict[str, OperationalSchedule] | None = None
+    read_start_year = start_year
+    read_horizon_value = horizon_value
+    if lead_aware:
+        # Fail LOUD under flag-ON (no silent fallback to an unfiltered read).
+        all_season_schedules = _operational_schedules_for_horizon_type("season")
+
+        if horizon_value is not None:
+            candidate_schedules = {
+                mode: sched
+                for mode, sched in all_season_schedules.items()
+                if sched.lead_time == horizon_value
+            }
+        else:
+            candidate_schedules = all_season_schedules
+
+        if not candidate_schedules:
+            logger.warning(
+                "SAPPHIRE_SKILL_LEAD_AWARE is enabled but no operational season "
+                "schedules are configured for this read (no seasonal modes "
+                "configured, or no seasonal mode at the requested lead; check "
+                "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
+                "operational forecasts."
+            )
+            return pd.DataFrame(columns=_SEASONAL_FC_COLS)
+
+        season_schedules = candidate_schedules
+        max_lead = max(s.lead_time for s in season_schedules.values())
+        read_start_year = start_year - _read_window_expansion_years(max_lead)
+        read_horizon_value = None
+
     raw = _read_long_forecasts_api(
         codes,
-        start_year,
+        read_start_year,
         end_year,
         horizon_type="season",
-        horizon_value=horizon_value,
+        horizon_value=read_horizon_value,
     )
     if raw is None or raw.empty:
         logger.warning("No recent seasonal forecast data from API")
@@ -2972,6 +3542,21 @@ def read_latest_seasonal_forecasts(
     df = _normalize_combined_forecasts(raw, "season")
     if df.empty:
         return pd.DataFrame(columns=_SEASONAL_FC_COLS)
+
+    if lead_aware and season_schedules:
+        # season_in_year IS the lead key (one irrigation season/year), so
+        # target unit is (code, model, season_year) and the derived lead is
+        # written into BOTH horizon_value AND season_in_year.
+        df = select_operational_issuances(
+            df,
+            season_schedules,
+            target_year_col="season_year",
+            target_period_col=None,
+            lead_output_cols=("horizon_value", "season_in_year"),
+        )
+        df = _trim_to_target_year_range(df, "season_year", start_year, end_year)
+        if df.empty:
+            return pd.DataFrame(columns=_SEASONAL_FC_COLS)
 
     df = _filter_supported_aggregated_forecast_models(df)
     if df.empty:
@@ -3018,10 +3603,15 @@ def read_quarterly_combined_forecasts(
     Returns:
         DataFrame with combined quarterly forecasts, or empty DataFrame.
     """
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, read ALL leads written for quarter
+    # (omit the single-lead deployment-config filter) so per-lead gap
+    # detection / gap-fill downstream sees every lead. Flag OFF: unchanged
+    # single-lead filter.
+    lead_aware = skill_lead_aware_enabled()
     df = _read_long_combined_forecasts_api(
         "quarter",
         codes,
-        horizon_value=quarter_horizon_value(),
+        horizon_value=None if lead_aware else quarter_horizon_value(),
     )
     if df is not None and not df.empty:
         logger.info("Read %d quarterly combined forecast rows from API", len(df))
@@ -3193,7 +3783,11 @@ def _normalize_combined_forecasts(
         "horizon_type",
         "model_type_description",
     ]
-    if horizon_type != "season":
+    # Quarter drops the raw horizon_value (single-lead deployment config
+    # historically made it redundant); season always keeps it. Under
+    # SAPPHIRE_SKILL_LEAD_AWARE, quarter keeps it too so the per-lead
+    # selection made by select_operational_issuances() survives.
+    if horizon_type != "season" and not skill_lead_aware_enabled():
         drop_cols.append("horizon_value")
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 

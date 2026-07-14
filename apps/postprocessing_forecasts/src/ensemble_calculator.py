@@ -9,6 +9,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
@@ -554,11 +555,18 @@ def create_quarterly_ensemble_forecasts(
     Returns:
         DataFrame with ensemble rows appended to input forecasts.
     """
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, quarter_in_year is the TARGET quarter,
+    # not the issue lead. Add horizon_value to the grouping so EM/Naive/
+    # Skilled Mean are generated per lead instead of pooling across leads
+    # (mirrors the P2 change in skill_metrics.calculate_quarterly_skill_metrics).
+    time_group_cols = ["year", "quarter_in_year", "code"]
+    if skill_lead_aware_enabled():
+        time_group_cols = ["year", "quarter_in_year", "horizon_value", "code"]
     return _create_aggregated_ensemble_forecasts(
         forecasts,
         skill_stats,
         period_col="quarter_in_year",
-        time_group_cols=["year", "quarter_in_year", "code"],
+        time_group_cols=time_group_cols,
     )
 
 
@@ -581,6 +589,14 @@ def create_seasonal_ensemble_forecasts(
     Returns:
         DataFrame with ensemble rows appended to input forecasts.
     """
+    # season_in_year already IS the lead pre-lead-aware (see
+    # calculate_seasonal_skill_metrics), so this grouping is
+    # partition-equivalent either way. Under the flag we still add
+    # horizon_value explicitly so the output schema/merge keys match
+    # quarter/month.
+    time_group_cols = ["season_year", "season_in_year", "code", "date"]
+    if skill_lead_aware_enabled():
+        time_group_cols = ["season_year", "season_in_year", "horizon_value", "code", "date"]
     return _create_aggregated_ensemble_forecasts(
         forecasts,
         skill_stats,
@@ -588,7 +604,7 @@ def create_seasonal_ensemble_forecasts(
         # Group by `date` so each (re-)issued seasonal forecast forms its own
         # ensemble (one EM per issue = clean 2-model mean) rather than
         # collapsing distinct issue dates into one blended row.
-        time_group_cols=["season_year", "season_in_year", "code", "date"],
+        time_group_cols=time_group_cols,
     )
 
 
@@ -669,6 +685,58 @@ def _create_aggregated_ensemble_forecasts(
     if "code" in skill_filtered.columns:
         skill_filtered["code"] = skill_filtered["code"].astype(str)
 
+    # The forecast-side groupbys (EM / Naive / Skilled Mean aggregation) key
+    # on `time_group_cols`, which the wrappers extend with `horizon_value`
+    # under the flag (then filtered above to columns present in `joint`). So
+    # the grouping USES the lead whenever `horizon_value` survived into
+    # `time_group_cols` — this single condition MUST also drive the null-lead
+    # coercion/warn/exclusion. Gating exclusion on skill_stats ALSO carrying
+    # the lead (the old `_hv_aware`) let a legacy 3-key skill_stats bypass
+    # exclusion while the groupby still keyed on `horizon_value`, silently
+    # dropping NULL-lead rows and letting non-numeric leads leak into
+    # ensembles. Drive both off the grouping condition instead.
+    _group_uses_hv = skill_lead_aware_enabled() and "horizon_value" in time_group_cols
+
+    # Under the flag, exclude NULL/non-numeric-lead rows from ensemble
+    # GROUPING before the lead-aware groupby (pandas groupby(dropna=True)
+    # would otherwise silently drop them, so NULL-lead groups would get no
+    # EM/Naive/Skilled Mean whereas flag-OFF's 3-key grouping generates
+    # them). The excluded raw rows are preserved as passthrough (restored
+    # at the end), matching the skill path's joint_forecasts handling.
+    # Flag-OFF (3-key grouping) is unchanged.
+    _null_lead_passthrough = None
+    if _group_uses_hv:
+        joint["horizon_value"] = pd.to_numeric(joint["horizon_value"], errors="coerce")
+        _valid_lead = joint["horizon_value"].notna()
+        _n_null = int((~_valid_lead).sum())
+        if _n_null:
+            logger.warning(
+                "%d legacy NULL-lead %s rows skipped from lead-aware "
+                "skill/ensemble — need migration",
+                _n_null,
+                period_col,
+            )
+            _null_lead_passthrough = joint[~_valid_lead].copy()
+            joint = joint[_valid_lead].copy()
+
+    # The Skilled-Mean weight join reads `skill_stats`, so it can only key on
+    # the lead when skill_stats ALSO carries `horizon_value`. With a legacy
+    # 3-key skill_stats (no lead) we fall back to a (period, code, model)
+    # weight join — weights are then SHARED across leads (documented) — while
+    # the SM aggregation still stratifies per lead via `time_group_cols`.
+    # This keeps Skilled Mean coherent instead of dropping every row on a
+    # one-sided 4-key merge.
+    _hv_in_skill = _group_uses_hv and "horizon_value" in skill_filtered.columns
+    if _hv_in_skill:
+        skill_filtered["horizon_value"] = pd.to_numeric(
+            skill_filtered["horizon_value"], errors="coerce"
+        )
+    metric_group_cols = (
+        [period_col, "horizon_value", "code", "model_short"]
+        if _hv_in_skill
+        else [period_col, "code", "model_short"]
+    )
+
     model_keys = canonical_model_short_series(joint["model_short"])
     qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
@@ -710,6 +778,7 @@ def _create_aggregated_ensemble_forecasts(
         _QUANTILE_COLS,
         period_col,
         time_group_cols,
+        metric_group_cols,
     )
 
     # --- Naive Mean (unweighted) ---
@@ -721,6 +790,12 @@ def _create_aggregated_ensemble_forecasts(
         time_group_cols,
     )
 
+    # Restore the NULL-lead raw rows excluded from grouping so they remain
+    # in the passthrough output (consistent with the skill path). They carry
+    # no generated ensemble; a later migration/writer decides their fate.
+    if _null_lead_passthrough is not None and not _null_lead_passthrough.empty:
+        joint = pd.concat([joint, _null_lead_passthrough], ignore_index=True)
+
     return joint
 
 
@@ -731,13 +806,17 @@ def _add_skilled_mean_aggregated_ens(
     quantile_cols,
     period_col,
     time_group_cols,
+    metric_group_cols=None,
 ):
     """Add Skilled Mean rows for quarterly/seasonal ensemble creation."""
+    if metric_group_cols is None:
+        metric_group_cols = [period_col, "code", "model_short"]
+
     filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
         return joint
 
-    mae_df = filtered[[period_col, "code", "model_short", "mae"]].copy()
+    mae_df = filtered[[*metric_group_cols, "mae"]].copy()
     mae_df = mae_df.dropna(subset=["mae"])
     if mae_df.empty:
         return joint
@@ -746,12 +825,12 @@ def _add_skilled_mean_aggregated_ens(
     eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
     mae_df["weight"] = 1.0 / (mae_df["mae"] + eps)
 
-    qualifying_keys = mae_df[[period_col, "code", "model_short"]].drop_duplicates()
+    qualifying_keys = mae_df[metric_group_cols].drop_duplicates()
 
     pool = joint[~joint["model_short"].isin(baselines)].copy()
     pool = pool.merge(
         qualifying_keys,
-        on=[period_col, "code", "model_short"],
+        on=metric_group_cols,
         how="inner",
     )
     pool = pool.dropna(subset=["forecasted_discharge"]).copy()
@@ -759,8 +838,8 @@ def _add_skilled_mean_aggregated_ens(
         return joint
 
     pool = pool.merge(
-        mae_df[[period_col, "code", "model_short", "weight"]],
-        on=[period_col, "code", "model_short"],
+        mae_df[[*metric_group_cols, "weight"]],
+        on=metric_group_cols,
         how="left",
     )
 

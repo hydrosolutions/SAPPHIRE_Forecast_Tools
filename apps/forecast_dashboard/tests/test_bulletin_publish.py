@@ -207,7 +207,7 @@ class TestSerializeSite:
         assert row["v_min"] == 3.0
         assert row["v_max"] == 4.0
         assert row["norm"] == 6.0
-        assert row["perc_norm"] == 83.3
+        assert row["perc_norm"] == 83
         # Short-term-only fields must not leak into the long-term set.
         assert "fc_lower" not in row
         assert "delta" not in row
@@ -219,6 +219,88 @@ class TestSerializeSite:
         assert row["forecasted_discharge"] is None
         # forecast_lower_bound was never set on this bare site.
         assert row["fc_lower"] is None
+
+
+class TestSerializeSiteRounding:
+    """Non-round inputs must come out rounded exactly as the Excel
+    bulletin would render them (see apps/forecast_dashboard/src/bulletins.py):
+    discharge/volume fields -> 3 significant figures (round_3sf), DELTA/
+    SDIVSIGMA -> round(x, 2), PERC_NORM -> round(x) (int). mae/accuracy
+    have no Excel column and must stay raw.
+    """
+
+    def test_short_term_rounding(self):
+        site = _site_with_attrs(
+            forecast_expected=12.34567,
+            forecast_lower_bound=9.876,
+            forecast_upper_bound=1234.5,
+            forecast_delta=1.239,
+            forecast_sdivsigma=0.677,
+            forecast_mae=0.4321,
+            forecast_accuracy=88.0,
+            perc_norm=83.6,
+        )
+        row = bp.serialize_site(site, "pentad")
+
+        assert row["forecasted_discharge"] == 12.3
+        assert row["fc_lower"] == 9.88
+        assert row["fc_upper"] == 1230
+        assert row["delta"] == 1.24
+        assert row["sdivsigma"] == 0.68
+        assert row["perc_norm"] == 84
+        # mae/accuracy have no Excel column - they stay RAW (full precision).
+        assert row["mae"] == 0.4321
+        assert row["accuracy"] == 88.0
+
+    @pytest.mark.parametrize("horizon", ["month", "season"])
+    def test_long_term_rounding(self, horizon):
+        site = _site_with_attrs(
+            forecast_expected=5.0,
+            forecast_q_min=12.34567,
+            forecast_q_max=2.0,
+            forecast_v_min=1234.5,
+            forecast_v_max=4.0,
+            forecast_norm=6.0,
+            perc_norm=83.3,
+        )
+        row = bp.serialize_site(site, horizon)
+
+        assert row["q_min"] == 12.3
+        assert row["v_min"] == 1230
+        assert row["perc_norm"] == 83
+
+    def test_negative_discharge_becomes_none(self):
+        """Excel's round_discharge_to_comma_separated_string renders a
+        blank cell for ANY negative value, before rounding — a legitimate
+        case for forecast_lower_bound on low-flow forecasts. None is the
+        JSON equivalent of that blank cell."""
+        site = _site_with_attrs(
+            forecast_expected=10.0,
+            forecast_lower_bound=-3.2,
+        )
+        row = bp.serialize_site(site, "pentad")
+        assert row["fc_lower"] is None
+        assert row["forecasted_discharge"] == 10.0
+
+        long_term_site = _site_with_attrs(forecast_q_min=-1.5)
+        long_term_row = bp.serialize_site(long_term_site, "month")
+        assert long_term_row["q_min"] is None
+
+    def test_perc_norm_banker_rounding(self):
+        """PERC_NORM uses Python's round() (banker's rounding to even),
+        matching Excel's round_percentage_to_integer_string."""
+        site_down = _site_with_attrs(forecast_expected=10.0, perc_norm=84.5)
+        assert bp.serialize_site(site_down, "pentad")["perc_norm"] == 84
+
+        site_up = _site_with_attrs(forecast_expected=10.0, perc_norm=85.5)
+        assert bp.serialize_site(site_up, "pentad")["perc_norm"] == 86
+
+    def test_round_2dp_handles_nan_none(self):
+        site = _site_with_attrs(forecast_expected=10.0, forecast_delta=float("nan"))
+        # forecast_sdivsigma intentionally left unset -> missing attribute.
+        row = bp.serialize_site(site, "pentad")
+        assert row["delta"] is None
+        assert row["sdivsigma"] is None
 
 
 # ---------------------------------------------------------------------------

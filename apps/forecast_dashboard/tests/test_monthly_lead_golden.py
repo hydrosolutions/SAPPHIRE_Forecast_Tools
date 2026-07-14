@@ -3,17 +3,20 @@
 These lock the CURRENT behaviour of the dashboard's monthly-lead handling on
 ``origin/maxat_sapphire_2`` (hard-coded lead 1 in five places).  They are all
 GREEN today and must stay green under the kill-switch
-``SAPPHIRE_LTF_DASH_LEAD_AWARE=false`` after the fix lands (P1-P3): flag-off must
+``SAPPHIRE_SKILL_LEAD_AWARE=false`` (default) after the fix lands: flag-off must
 be byte-identical to ``maxat``.
 
-Every test sets ``SAPPHIRE_LTF_DASH_LEAD_AWARE=false`` — ignored today (the flag
-does not exist yet), meaningful after P1.  Some of these assertions intentionally
-lock a KNOWN BUG (e.g. the ``month_0`` card currently merges lead-1 skill) — that
-is deliberate: the golden proves the kill-switch reproduces today's behaviour.
+Every test sets ``SAPPHIRE_SKILL_LEAD_AWARE=false`` explicitly (matching the
+flag's default-OFF value) so the legacy path is exercised. Some of these
+assertions intentionally lock a KNOWN BUG (e.g. the ``month_0`` card currently
+merges lead-1 skill) — that is deliberate: the golden proves the kill-switch
+reproduces today's behaviour.
 
 See:
 - doc/plans/working/ltf_monthly_horizon_value_implementation_plan.md  (P-TEST)
 - doc/plans/issues/high_prio_gi_draft_ltf_monthly_horizon_value_semantics.md
+- doc/plans/issues/high_prio_gi_draft_pp_lead_aware_skill.md  (M1 P3, trunk's
+  db.py implementation this branch converged onto)
 
 No real station codes / discharge values: synthetic ``17999`` (Tajik-shaped) and
 ``15999`` (Kyrgyz-shaped) codes and arbitrary discharge numbers.
@@ -34,7 +37,7 @@ from dashboard import widgets
 from dashboard.data_manager import DataManager
 from dashboard.plot_manager import _format_forecast_info
 
-FLAG = "SAPPHIRE_LTF_DASH_LEAD_AWARE"
+FLAG = "SAPPHIRE_SKILL_LEAD_AWARE"
 
 
 # ---------------------------------------------------------------------------

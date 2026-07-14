@@ -6,25 +6,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Falsy values for boolean env vars (case-insensitive). Any other value — and
-# an unset/blank var — reads as True (the default-ON convention).
-_FALSY_ENV_VALUES = {"false", "0", "no", "off"}
-
-
-def is_dash_lead_aware() -> bool:
-    """Whether the dashboard resolves the monthly forecast lead from config.
-
-    Single read point for the ``SAPPHIRE_LTF_DASH_LEAD_AWARE`` kill-switch.
-    **Default ON:** returns True when the variable is unset or blank. Returns
-    False only for an explicit falsy value (case-insensitive ``"false"``,
-    ``"0"``, ``"no"``, ``"off"``). When False, the dashboard's monthly-lead
-    handling is byte-identical to the legacy hard-coded lead-1 behaviour.
-    """
-    raw = os.getenv("SAPPHIRE_LTF_DASH_LEAD_AWARE")
-    if raw is None:
-        return True
-    return raw.strip().lower() not in _FALSY_ENV_VALUES
-
 
 def load_configuration(env_file_path: str=None) -> None:
     """

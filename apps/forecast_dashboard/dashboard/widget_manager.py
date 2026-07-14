@@ -146,6 +146,7 @@ class WidgetManager:
         self.remove_bulletin_button, self.write_bulletin_button = (
             widgets.create_bulletin_buttons()
         )
+        self.write_bulletin_popup = widgets.create_add_to_bulletin_popup()
         self.bulletin_tabulator = widgets.create_bulletin_tabulator()
         self.add_to_bulletin_popup = widgets.create_add_to_bulletin_popup()
         self.bulletin_table = widgets.create_bulletin_table(

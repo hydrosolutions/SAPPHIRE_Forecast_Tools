@@ -14,6 +14,7 @@ import os
 import pandas as pd
 import tag_library as tl
 from long_term_horizon_resolver import quarter_horizon_value
+from skill_lead_aware_flag import skill_lead_aware_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +599,28 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
         # NULL (never TRUE), causing pile-up duplicate inserts for every recalc
         # run across ALL horizons (cross-horizon NULL-tuple hazard).
         if "horizon_value" in df_rec.columns:
-            df_rec["horizon_value"] = df_rec["horizon_value"].fillna(0).astype(int)
+            if skill_lead_aware_enabled():
+                # Lead-aware: a NaN horizon_value cannot be keyed to a real
+                # lead. Coercing it to 0 would masquerade as a genuine lead-0
+                # row and, via the upsert-key dedup below, could collapse or
+                # overwrite a true lead-0 record. Instead EXCLUDE such rows,
+                # emitting a WARNING naming the count so they are surfaced
+                # (not silently dropped): they need migration. Mirrors the
+                # NULL-lead WARN-exclude idiom in gap_detector
+                # detect_missing_quarterly_ensembles (FIX 5, revised).
+                df_rec["horizon_value"] = pd.to_numeric(df_rec["horizon_value"], errors="coerce")
+                null_lead_count = int(df_rec["horizon_value"].isna().sum())
+                if null_lead_count:
+                    logger.warning(
+                        "%d NULL-lead %s skill metric rows skipped from "
+                        "lead-aware API write -- need migration",
+                        null_lead_count,
+                        horizon_type,
+                    )
+                    df_rec = df_rec[df_rec["horizon_value"].notna()]
+                df_rec["horizon_value"] = df_rec["horizon_value"].astype(int)
+            else:
+                df_rec["horizon_value"] = df_rec["horizon_value"].fillna(0).astype(int)
         else:
             df_rec["horizon_value"] = 0
 
@@ -1090,7 +1112,14 @@ def _write_aggregated_forecasts_to_api(
                 valid_from = f"{year}-{start_month:02d}-01"
                 last_day = calendar.monthrange(year, end_month)[1]
                 valid_to = f"{year}-{end_month:02d}-{last_day:02d}"
-                horizon_value = quarter_horizon_value()
+                # Under SAPPHIRE_SKILL_LEAD_AWARE, prefer the row's own
+                # per-lead horizon_value (set by select_operational_issuances
+                # / carried through per-lead aggregation) over the single
+                # deployment-configured lead. Flag OFF: unchanged.
+                if skill_lead_aware_enabled() and pd.notna(row.get("horizon_value")):
+                    horizon_value = int(row["horizon_value"])
+                else:
+                    horizon_value = quarter_horizon_value()
             else:  # season
                 season_year = int(row.get("season_year", row.get("year")))
                 season_months = get_season_months()
@@ -1115,7 +1144,10 @@ def _write_aggregated_forecasts_to_api(
                 valid_to = str(row["valid_to"])[:10]
 
             record_date = valid_from
-            if horizon_type == "season" and pd.notna(row.get("date")):
+            if (
+                horizon_type == "season"
+                or (horizon_type == "quarter" and skill_lead_aware_enabled())
+            ) and pd.notna(row.get("date")):
                 record_date = str(row["date"])[:10]
 
             record = {

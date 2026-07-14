@@ -1,20 +1,20 @@
-"""REGRESSION tests — DESIRED monthly-lead behaviour (red now, green after fix).
+"""REGRESSION tests — DESIRED monthly-lead behaviour (the corrected contract).
 
-These assert the CORRECTED behaviour the fix (P1-P3) must produce.  They are RED
-today (the flag / month resolver do not exist yet, so the buggy path runs) and
-are marked ``@pytest.mark.xfail(strict=True)``: they fail now, pass when the
-phase lands, and ``strict=True`` turns the eventual unexpected pass into a
-failure that forces removing the marker — that is the phase's pass criterion.
+These assert the CORRECTED behaviour the fix must produce under the flag. The
+fix originally landed on this branch behind ``SAPPHIRE_LTF_DASH_LEAD_AWARE``
+(default ON); trunk (PR #414, "M1 P3") independently shipped the same ``db.py``
+fix behind the pre-existing ``SAPPHIRE_SKILL_LEAD_AWARE`` flag (default OFF),
+using ``operational_lead_for_mode`` instead of the (now-removed)
+``month_horizon_value``. This branch converged onto trunk's flag/accessor —
+these tests now assert the same corrected contract via that flag/accessor.
 
-Cases that need a not-yet-existing signature (``month_horizon_value``) are left
-as ``@pytest.mark.skip`` stubs documenting the intended assertions; those are
-authored in the implementing phase.
-
-Every test sets ``SAPPHIRE_LTF_DASH_LEAD_AWARE=true``.
+Every test sets ``SAPPHIRE_SKILL_LEAD_AWARE=true``.
 
 See:
 - doc/plans/working/ltf_monthly_horizon_value_implementation_plan.md  (P-TEST)
 - doc/plans/issues/high_prio_gi_draft_ltf_monthly_horizon_value_semantics.md
+- doc/plans/issues/high_prio_gi_draft_pp_lead_aware_skill.md  (M1 P3, trunk's
+  db.py implementation this branch converged onto)
 
 No real station codes / discharge values: synthetic ``17999`` (Tajik-shaped) and
 ``15999`` (Kyrgyz-shaped) codes and arbitrary discharge numbers.
@@ -33,7 +33,7 @@ from src import db
 from dashboard import widgets
 from dashboard.data_manager import DataManager
 
-FLAG = "SAPPHIRE_LTF_DASH_LEAD_AWARE"
+FLAG = "SAPPHIRE_SKILL_LEAD_AWARE"
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +362,8 @@ class TestBulletinTargetMonthYear:
 
 
 # ===========================================================================
-# month_horizon_value resolver — authored in P1 (signature does not exist yet).
+# operational_lead_for_mode resolver (trunk M1 P3's accessor — supersedes this
+# branch's now-removed month_horizon_value, which did the same job).
 # ===========================================================================
 
 def test_format_forecast_info_uses_resolved_lead_target():
@@ -380,21 +381,23 @@ def test_format_forecast_info_uses_resolved_lead_target():
     assert kghm.startswith("Monthly runoff forecast for August"), kghm
 
 
-def test_month_horizon_value_resolves_lead_per_config(monkeypatch, tmp_path):
-    """long_term_horizon_resolver.month_horizon_value resolves the per-config
-    lead, mirroring quarter/season, and raises for an unsupported mode."""
+def test_operational_lead_for_mode_resolves_lead_per_config(monkeypatch, tmp_path):
+    """long_term_horizon_resolver.operational_lead_for_mode resolves the
+    per-config lead, mirroring quarter/season, and raises for an unsupported
+    mode. Mirrors this module's src.month_lead helpers, which wrap this same
+    accessor with graceful degradation for the UI layer."""
     from long_term_horizon_resolver import (
         UnsupportedLongTermModeError,
-        month_horizon_value,
+        operational_lead_for_mode,
     )
 
     # tjhm-shaped: month_1 → lead 0; month_0 is not supported.
     _setup_config(monkeypatch, tmp_path, "tjhm", {"month_1": 0, "month_2": 1})
-    assert month_horizon_value("month_1") == 0
+    assert operational_lead_for_mode("month_1") == 0
     with pytest.raises(UnsupportedLongTermModeError):
-        month_horizon_value("month_0")
+        operational_lead_for_mode("month_0")
 
     # kghm-shaped: month_1 → lead 1; month_0 → lead 0.
     _setup_config(monkeypatch, tmp_path, "kghm", {"month_0": 0, "month_1": 1})
-    assert month_horizon_value("month_1") == 1
-    assert month_horizon_value("month_0") == 0
+    assert operational_lead_for_mode("month_1") == 1
+    assert operational_lead_for_mode("month_0") == 0

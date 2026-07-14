@@ -7,19 +7,19 @@ import numpy as np
 import pandas as pd
 import requests
 from dashboard.logger import setup_logger
-from src import processing
-from src.discharge_formatting import round_3sf
-from src.environment import is_dash_lead_aware
-from src.gettext_config import _
-from src.snow_window import snow_display_window
-
 from long_term_horizon_resolver import (
-    month_horizon_value,
+    LongTermHorizonResolverError,
+    operational_lead_for_mode,
     quarter_horizon_value,
     seasonal_config_name,
     seasonal_horizon_value,
     supported_long_term_modes,
 )
+from skill_lead_aware_flag import skill_lead_aware_enabled
+from src import processing
+from src.discharge_formatting import round_3sf
+from src.gettext_config import _
+from src.snow_window import snow_display_window
 
 logger = setup_logger()
 
@@ -82,38 +82,6 @@ def _resolve_quarter_horizon_value(horizon_value: int | None = None) -> int:
     if horizon_value is not None:
         return int(horizon_value)
     return quarter_horizon_value()
-
-
-def _resolve_primary_month_lead(supported_modes: list[str]) -> int:
-    """Resolve the deployment's primary monthly lead (the ``month_1`` product).
-
-    Returns the configured ``operational_month_lead_time`` for ``month_1``
-    (kghm → 1, tjhm → 0). When ``month_1`` is not offered by this deployment,
-    returns the legacy lead 1 (the D3-endorsed membership guard).
-
-    A genuine config-read error is NOT caught: the resolver is allowed to raise,
-    exactly like the quarter/season resolvers (``db.py`` calls
-    ``quarter_horizon_value`` / ``seasonal_horizon_value`` with no fallback).
-    Swallowing it would silently reintroduce a hidden hard-coded lead — the very
-    bug this change fixes.
-    """
-    if "month_1" not in supported_modes:
-        return 1
-    return month_horizon_value("month_1")
-
-
-def _filter_month_stats_to_lead(forecast_stats: pd.DataFrame, lead: int) -> pd.DataFrame:
-    """Filter monthly skill stats to a single displayed lead (Defect F).
-
-    Returns only the rows whose ``horizon_value`` equals ``lead`` so a card
-    merges its own lead's skill and nothing else; an empty result leaves the
-    card's metric columns blank after the left merge. When the stats carry no
-    ``horizon_value`` column (pre-PP-038) or are empty, the frame is returned
-    unchanged — there is no per-lead distinction to make.
-    """
-    if forecast_stats.empty or "horizon_value" not in forecast_stats.columns:
-        return forecast_stats
-    return forecast_stats[forecast_stats["horizon_value"] == lead].copy()
 
 
 def _supported_seasonal_issue_months() -> list[int]:
@@ -725,16 +693,22 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
     if code:
         params["code"] = code
 
+    lead_aware = skill_lead_aware_enabled()
     df = _read_data("postprocessing", "long-forecast", params)
     if df.empty or "date" not in df.columns:
         logger.warning("get_long_forecasts: no data for station %s", code)
-        return pd.DataFrame(columns=[
+        columns = [
             "code", "date", "Date", "year",
             "model_short", "model_long",
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
             "valid_from", "month_in_year",
-        ])
+        ]
+        # M1 P3: under the flag, preserve horizon_value (lead) so callers can
+        # merge/filter per-lead rows instead of collapsing all leads to one.
+        if lead_aware:
+            columns.append("horizon_value")
+        return pd.DataFrame(columns=columns)
 
     df.rename(columns={
         "model_type": "model_short",
@@ -743,7 +717,10 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
         "q05": "Q5", "q10": "Q10", "q25": "Q25",
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
-    df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    drop_cols = ["id", "horizon_type"]
+    if not lead_aware:
+        drop_cols.append("horizon_value")
+    df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
     df["Date"] = df["date"]
@@ -767,16 +744,20 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
     if code:
         params["code"] = code
 
+    lead_aware = skill_lead_aware_enabled()
     df = _read_data("postprocessing", "long-forecast", params)
     if df.empty or "date" not in df.columns:
         logger.warning("get_long_forecasts_quarter: no data for station %s", code)
-        return pd.DataFrame(columns=[
+        columns = [
             "code", "date", "Date", "year",
             "model_short", "model_long",
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
             "valid_from", "month_in_year", "quarter_in_year",
-        ])
+        ]
+        if lead_aware:
+            columns.append("horizon_value")
+        return pd.DataFrame(columns=columns)
 
     df.rename(columns={
         "model_type": "model_short",
@@ -785,17 +766,25 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
         "q05": "Q5", "q10": "Q10", "q25": "Q25",
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
-    df.drop(columns=["id", "horizon_type", "horizon_value"], inplace=True, errors="ignore")
+    drop_cols = ["id", "horizon_type"]
+    if not lead_aware:
+        drop_cols.append("horizon_value")
+    df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
     df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
-    # Keep only the latest-by-date row per (code, model_short)
+    # Keep only the latest-by-date row per (code, model_short) — under the
+    # flag, also key on horizon_value (lead) so distinct-lead quarter rows
+    # for the same code/model are not collapsed into one another.
     if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
+        dedup_subset = ["code", "model_short"]
+        if lead_aware and "horizon_value" in df.columns:
+            dedup_subset = dedup_subset + ["horizon_value"]
         df = (
             df.sort_values("date", ascending=False)
-              .drop_duplicates(subset=["code", "model_short"], keep="first")
+              .drop_duplicates(subset=dedup_subset, keep="first")
               .reset_index(drop=True)
         )
     return _convert_na_to_nan(df.sort_values("Date"))
@@ -951,51 +940,80 @@ def _get_data_monthly(
     snow_display_start_day: int = 1,
 ) -> dict:
     """Load data for monthly horizon — only long forecasts + daily hydrograph."""
-    supported_modes = os.getenv(
-        "ieasyhydroforecast_ml_long_term_supported_modes", ""
-    ).split(",")
-    lead_aware = is_dash_lead_aware()
+    # M1 P3 review #4: strip each token so a whitespace-padded env value
+    # (e.g. "month_0, month_1") still matches literal membership checks and
+    # yields clean mode names for iteration below.
+    supported_modes = [
+        m.strip()
+        for m in os.getenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", ""
+        ).split(",")
+    ]
+    lead_aware = skill_lead_aware_enabled()
 
-    # Defect A: resolve the deployment's primary monthly lead from config when
-    # lead-aware (kghm → 1, tjhm → 0); otherwise the legacy hard-coded lead 1.
-    primary_lead = _resolve_primary_month_lead(supported_modes) if lead_aware else 1
-
-    forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=primary_lead)))
-    forecast_stats = i18n_models(get_forecast_stats("month", station))
+    # M1 P3 review #1: resolve an operational lead using ONLY the config's
+    # lead-time field (operational_lead_for_mode), not the schedule accessor
+    # that also requires operational_issue_day. A taj-style monthly config
+    # carries only the lead, so requiring issue_day here would crash a
+    # dashboard READ. On any resolution failure, fall back to `default` and
+    # warn rather than propagate.
+    def _safe_lead(mode, default):
+        try:
+            return operational_lead_for_mode(mode)
+        except (LongTermHorizonResolverError, FileNotFoundError):
+            logger.warning(
+                "_get_data_monthly: could not resolve lead for %s; falling back to %s",
+                mode,
+                default,
+            )
+            return default
 
     # Merge skill metrics into forecasts (same pattern as pentad/decad in get_data)
     hin = "month_in_year"
     merge_keys = ["code", hin, "model_short"]
 
-    # PP-038: get_forecast_stats preserves per-lead rows (one per horizon_value).
-    # Defect F: each card merges only its displayed lead's skill so the tile
-    # merge is 1:1 and forecast rows are not duplicated.
+    forecast_stats = i18n_models(get_forecast_stats("month", station))
+
     if lead_aware:
-        # Main panel merges the primary lead's stats; the m0 card merges lead-0
-        # stats from a SEPARATE frame; a card whose lead has no stats stays blank
-        # (never another lead's, never an unfiltered merge, never dropped).
-        main_stats = _filter_month_stats_to_lead(forecast_stats, primary_lead)
-        m0_stats = _filter_month_stats_to_lead(forecast_stats, 0)
+        # M1 P3: resolve month_1's TRUE operational lead from the
+        # deployment's long-term config instead of assuming it is always
+        # horizon_value=1. taj month_1 == lead 0; kyg month_1 == lead 1 —
+        # hardcoding horizon_value=1 hides taj's flagship monthly forecast
+        # entirely (it is stored/queried under horizon_value=0). When
+        # month_1 is not a supported mode, fall back to lead 1 (the
+        # by-mode loop below covers whichever month_N modes are configured).
+        primary_lead = _safe_lead("month_1", 1) if "month_1" in supported_modes else 1
+        # M1 P3 review #3: keep forecast_stats at full multi-lead resolution
+        # and ALWAYS join on the lead key under the flag (not gated on
+        # "month_1" being supported), so each mode's forecasts merge only
+        # against their OWN lead's skill row. This avoids both the Cartesian/
+        # duplicate-row bug (matching a forecast against every lead's stats
+        # row for the same period) and the wrong-lead-attached bug.
+        merge_keys = merge_keys + ["horizon_value"]
     else:
-        # Legacy kill-switch: a single lead-1 filter is reused for BOTH the main
-        # panel and the m0 card (Defect F's bug, locked as the flag-off contract).
+        primary_lead = 1
+        # PP-038 (pre-M1, unconditional baseline): get_forecast_stats now
+        # preserves per-lead rows (one per horizon_value). Filter to the
+        # operational lead (horizon_value=1) that matches the displayed
+        # forecasts so the tile merge is 1:1 and forecast rows are not
+        # duplicated. This mirrors season's single-lead selection via
+        # _resolve_seasonal_horizon_value.
         if not forecast_stats.empty and "horizon_value" in forecast_stats.columns:
-            _op_lead = 1
-            _op_mask = forecast_stats["horizon_value"] == _op_lead
+            _op_mask = forecast_stats["horizon_value"] == 1
             if _op_mask.any():
                 forecast_stats = forecast_stats[_op_mask].copy()
-        main_stats = forecast_stats
-        m0_stats = forecast_stats
+
+    forecasts_all = i18n_models(add_labels(get_long_forecasts(station, horizon_value=primary_lead)))
 
     can_merge = (
         not forecasts_all.empty
-        and not main_stats.empty
+        and not forecast_stats.empty
         and all(k in forecasts_all.columns for k in merge_keys)
-        and all(k in main_stats.columns for k in merge_keys)
+        and all(k in forecast_stats.columns for k in merge_keys)
     )
     if can_merge:
         forecasts_all = forecasts_all.merge(
-            main_stats,
+            forecast_stats,
             on=merge_keys,
             how="left",
             suffixes=("", "_stats"),
@@ -1005,6 +1023,11 @@ def _get_data_monthly(
     quarter_forecast_stats = pd.DataFrame()
     quarter_hin = _horizon_in_year_col("quarter")
     quarter_merge_keys = ["code", quarter_hin, "model_short"]
+    if lead_aware:
+        # M1 P3: quarter stats merges were period-only; key on lead too so a
+        # period with multiple stored leads doesn't fan out into duplicate
+        # rows or attach the wrong lead's skill metrics.
+        quarter_merge_keys = quarter_merge_keys + ["horizon_value"]
     if "quarter" in supported_modes:
         long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station)))
         quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
@@ -1033,26 +1056,65 @@ def _get_data_monthly(
         "ml_forecast":          pd.DataFrame(),
         "linreg_predictor":     pd.DataFrame(),
         "forecasts_all":        forecasts_all,
-        "forecast_stats":       main_stats,
+        "forecast_stats":       forecast_stats,
         "long_forecasts_m0":    pd.DataFrame(),
         "long_forecasts_quarter": long_forecasts_quarter,
     }
     if "month_0" in supported_modes:
-        m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=0)))
+        m0_lead = _safe_lead("month_0", 0) if lead_aware else 0
+        m0 = i18n_models(add_labels(get_long_forecasts(station, horizon_value=m0_lead)))
         can_merge_m0 = (
             not m0.empty
-            and not m0_stats.empty
+            and not forecast_stats.empty
             and all(k in m0.columns for k in merge_keys)
-            and all(k in m0_stats.columns for k in merge_keys)
+            and all(k in forecast_stats.columns for k in merge_keys)
         )
         if can_merge_m0:
             m0 = m0.merge(
-                m0_stats,
+                forecast_stats,
                 on=merge_keys,
                 how="left",
                 suffixes=("", "_stats"),
             )
         data["long_forecasts_m0"] = m0
+
+    if lead_aware:
+        # M1 P3: config-driven coverage of ALL supported month_N modes, not
+        # just month_0/month_1 — so month_2/month_3 (or any other
+        # deployment-configured monthly lead) are fetchable/mergeable too.
+        # month_0 and month_1 are handled above (they have dedicated,
+        # UI-wired keys); this covers the rest generically.
+        by_mode = {}
+        for mode in supported_modes:
+            mode = mode.strip()
+            if not mode.startswith("month_") or mode in ("month_0", "month_1"):
+                continue
+            try:
+                mode_lead = operational_lead_for_mode(mode)
+            except (LongTermHorizonResolverError, FileNotFoundError):
+                # M1 P3 review #5: a missing config FILE (FileNotFoundError)
+                # must also trigger skip+warning here, not crash the read.
+                logger.warning(
+                    "_get_data_monthly: skipping unconfigured mode %s", mode
+                )
+                continue
+            mode_df = i18n_models(add_labels(get_long_forecasts(station, horizon_value=mode_lead)))
+            can_merge_mode = (
+                not mode_df.empty
+                and not forecast_stats.empty
+                and all(k in mode_df.columns for k in merge_keys)
+                and all(k in forecast_stats.columns for k in merge_keys)
+            )
+            if can_merge_mode:
+                mode_df = mode_df.merge(
+                    forecast_stats,
+                    on=merge_keys,
+                    how="left",
+                    suffixes=("", "_stats"),
+                )
+            by_mode[mode] = mode_df
+        data["long_forecasts_by_month_mode"] = by_mode
+
     return data
 
 
@@ -1070,6 +1132,11 @@ def _get_data_quarter(
 
     hin = _horizon_in_year_col("quarter")
     merge_keys = ["code", hin, "model_short"]
+    if skill_lead_aware_enabled():
+        # M1 P3: quarter stats merges were period-only; key on lead too so a
+        # period with multiple stored leads doesn't fan out into duplicate
+        # rows or attach the wrong lead's skill metrics.
+        merge_keys = merge_keys + ["horizon_value"]
     can_merge = (
         not forecasts_all.empty
         and not forecast_stats.empty
