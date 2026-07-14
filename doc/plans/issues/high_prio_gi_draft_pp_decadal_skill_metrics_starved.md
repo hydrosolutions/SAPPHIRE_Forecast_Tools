@@ -1,44 +1,64 @@
 # High priority: DECADE skill metrics under-paired (n_pairs starved) despite full forecast history
 
 **Status:** Draft — observed during the Tajik (tjhm) historical backfill on
-2026-06-17. ~~Root cause not yet confirmed.~~ **Root cause identified 2026-07-14** (out-of-loop
-Codex review) — see below.
+2026-06-17. **VERIFIED 2026-07-14: this is a DATA-COMPLETENESS problem, not a code defect.**
 
-> ## Root cause (identified 2026-07-14; verify with the regression test before fixing)
+> ## ⚠️ Do NOT "fix the pairing". A proposed root cause was investigated and REFUTED.
 >
-> **Skill pairing joins forecasts to observations on the raw `["code", "date"]` tuple**
-> (`apps/postprocessing_forecasts/src/skill_metrics.py:2030`):
+> An out-of-loop review proposed: *"skill pairing merges on raw `[code, date]`, but a forecast's
+> `date` is the ISSUE date while the observation sits on the TARGET period, so pairs only survive
+> where they coincide."* This was checked against both code and data and is **WRONG**.
+> **Implementing it would have BROKEN the pentad skill that currently works.**
 >
-> ```python
-> skill_metrics_df = pd.merge(
->     simulated, observed[["code", "date", "discharge_avg", "delta"]], on=["code", "date"]
-> )
-> ```
+> **Refutation 1 — the code. Both sides of the merge are ISSUE-date indexed, so the join is correct.**
+> `runoffs.discharge` (= `discharge_avg`) is built in
+> `apps/iEasyHydroForecast/forecast_library.py:790-855`: the frame is **reversed**
+> (`data_df.iloc[::-1]`), shifted, then rolled — so `discharge_avg` at date D is the mean of the
+> **NEXT** 5 days (the forward-looking upcoming-period average). The final line,
+> `data_df.loc[~data_df["issue_date"], "discharge_avg"] = np.nan`, **nulls it on every non-issue
+> date**. So an observed row is keyed by ISSUE date and *already carries the TARGET period's mean*.
+> The forecast is keyed by issue date too. `pd.merge(..., on=["code","date"])`
+> (`skill_metrics.py:2030`) is therefore **correct by construction** — there is no issue/target
+> misalignment to fix.
 >
-> But a forecast's `date` is its **ISSUE date**, while the observation it should be scored against
-> sits on the **TARGET period** (`Forecast.date` vs `target` /`date + 1`;
-> `sapphire/services/postprocessing/app/models.py:78`, `apps/postprocessing_forecasts/src/api_writer.py:345`).
-> A pair therefore only survives where issue date and observation date happen to **coincide** —
-> which is why `n_pairs` collapses toward 1 instead of erroring.
+> **Refutation 2 — the data. The DECADE code path pairs fine; the starvation does not reproduce.**
+> In the local DB, DECADE skill is as healthy as PENTAD (`NEURAL_ENSEMBLE`: DECADE `max_n_pairs`=17,
+> `avg`≈13; PENTAD `max`=17, `avg`≈13). Day-of-month distributions agree on both sides
+> (10 / 20 / end-of-month). So this is **not** a decade-specific algorithm defect.
 >
-> **This reframes the issue — it is NOT a DECADE-specific algorithm.** PENTAD and DECADE run the
-> same recalc path and the same `calculate_skill_metrics` merge
-> (`recalculate_skill_metrics.py:71`, `:216`); only config columns/functions differ. It is an
-> **issue-date vs target-date pairing defect** that starves DECADE hardest given the shape of the
-> decade archive. Do not "fix decade" — fix the pairing.
+> ## Actual cause (high confidence): the TAJIK ML FORECAST ARCHIVE IS SPARSE
 >
-> **Fix direction:** pair on an explicit target/verification date, while **preserving
-> `Forecast.date` as the issue date** (that is the stored contract — changing its meaning is a
-> service/API semantics change and must be escalated to the service owner, since
-> `sapphire/services/` is colleague-managed).
+> The observations are abundant; the **forecasts** are missing. Local DB, aggregate only:
 >
-> **Why existing tests missed it (important):** the ML integration tests construct observations on
-> the *same* boundary/issue dates as the forecasts, so a raw `code+date` merge pairs perfectly and
-> the production contract is never exercised
-> (`tests/test_ml_horizon_archive_split.py:396`, `tests/test_integration_postprocessing.py:3775`).
-> **Any regression test must issue-date the forecasts and place observed runoff on the period
-> start** — otherwise it passes against the broken code and proves nothing. Add the regression for
-> **PENTAD and DECADE**.
+> | Org prefix | Horizon | Stations | Forecast rows (ML) |
+> |------------|---------|----------|--------------------|
+> | 15 (kyg)   | PENTAD  | 27       | 103,877            |
+> | 16 (kyg)   | PENTAD  | 27       | 125,297            |
+> | **17 (taj)** | PENTAD | 16      | **4,984**          |
+> | **17 (taj)** | DECADE | 16      | **2,566**          |
+>
+> Tajik is **~12× thinner per station** than Kyrgyz. Meanwhile Tajik *observed* DECADE runoff is
+> healthy (35,900 non-null rows, 87 years). `n_pairs` starves because **there are barely any Tajik
+> forecasts to pair against** — not because pairing is broken.
+>
+> This matches the operational history: the observation was made **mid-backfill** on the Tajik server
+> (2026-06-17), that backfill was **interrupted** by a server restart, and pentad ML skill
+> "recovered" while decade did not — i.e. the decade half of the ML archive migration never
+> completed. See [[ml_fromfile_combinedforecast_migration]].
+>
+> ## What to do instead
+>
+> 1. **Do NOT change `calculate_skill_metrics`.** The merge is correct.
+> 2. **Complete the Tajik ML decade forecast archive** (the from-file combined-CSV migration), then
+>    re-run the skill recalc and re-measure `n_pairs`.
+> 3. **Re-verify on the Tajik SERVER, not locally** — local does not reproduce. Measure decade
+>    forecast rows/station on tjhm before and after.
+> 4. Until the archive is complete, the PR #411 min-n gate will correctly suppress the thin decade
+>    rows. That is the gate working as designed, not a second bug.
+>
+> **Remaining uncertainty (be honest):** the local DB does not reproduce the server symptom, so the
+> sparse-archive explanation is inferred, not directly observed on tjhm. The server measurement in
+> step 3 is what would close this out.
 
 ## Problem
 

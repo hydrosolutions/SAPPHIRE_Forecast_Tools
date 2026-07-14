@@ -21,11 +21,15 @@
 > display must show the skill of the lead actually published. (Quarterly needs no per-lead skill — we
 > publish only the lowest available lead.) This closes **FD-018**.
 >
-> **⛔ Do NOT enable yet — sequencing.** Enabling requires a full skill recalc. If **PP-040** (skill
-> pairing joins on issue date rather than target date) is real, that recalc bakes the broken pairing
-> into every lead-stratified row, and the min-n gate (PR #411) then tombstones the starved results —
-> blanking the tiles the flag was turned on to fill. Required order:
-> **PP-040 → full recalc → enable `SAPPHIRE_SKILL_LEAD_AWARE` → FD-018 closes.**
+> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this banner said **PP-040 must land
+> before enabling the flag**. **Retracted — that was wrong.** PP-040 is *short-term* (pentad/decade)
+> skill while this flag governs *long-term monthly* skill, and PP-040 proved not to be a code defect
+> at all (the pairing is correct; the Tajik ML forecast archive is merely sparse). **PP-040 does not
+> block this rollout.**
+>
+> What still applies: enabling requires a **full long-term skill recalc**, and the PR #411 min-n gate
+> will suppress any lead whose sample is too thin. Confirm the monthly archive is adequately
+> populated for the deployment **before** enabling, or tiles will render empty for correct reasons.
 
 Implements issue `doc/plans/issues/high_prio_gi_draft_pp_skill_lead_pooling.md`.
 Revised after a 5-lens adversarial review (verdict: **REVISE** — proceed only after

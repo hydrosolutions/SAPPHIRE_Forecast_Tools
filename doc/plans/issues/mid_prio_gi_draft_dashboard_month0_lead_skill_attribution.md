@@ -27,13 +27,16 @@
 > golden behavior locked by tests, and it would still deliver one number for a product whose lead is
 > operator-selectable. The flag-on path *is* the requirement, not a nice-to-have.
 >
-> **⛔ SEQUENCING — do not enable the flag yet.** Enabling requires a full recalc, and if **PP-040**
-> (skill pairing joins on issue date, not target date) is real, that recalc bakes the broken pairing
-> into every lead-stratified row — after which the min-n gate (PR #411) tombstones the starved
-> results and **blanks the very tiles the flag was enabled to fill.** Required order:
+> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this file claimed **PP-040 must be
+> fixed before enabling the flag**. **That was wrong, and is retracted.** PP-040 concerns
+> *short-term* (pentad/decade) skill, whereas this flag governs *long-term monthly* skill — largely
+> independent code paths. And PP-040 turned out **not to be a code defect at all** (the pairing is
+> correct; the Tajik ML forecast archive is simply sparse). **PP-040 does not block this.**
 >
-> **PP-040 (verify `forecasts.target` population → fix pairing) → full recalc → enable
-> `SAPPHIRE_SKILL_LEAD_AWARE` → FD-018 closes.**
+> What *does* still apply: enabling the flag requires a **full long-term skill recalc**, and the
+> min-n gate (PR #411) will suppress any lead whose sample is too thin — so confirm the monthly
+> archive is adequately populated for the deployment **before** enabling, or tiles will render empty
+> for legitimate (gate-working-as-designed) reasons.
 >
 > **Test scope:** the month_0 regression this draft asks for is still missing (existing tests prove
 > lead-aware merging and lead-0 *month_1*, but never a month_0 row with distinct lead-0 vs lead-1
