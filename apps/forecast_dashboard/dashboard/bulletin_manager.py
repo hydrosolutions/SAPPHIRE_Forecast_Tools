@@ -88,7 +88,7 @@ def _reshape_long_forecast_for_bulletin(q_df: pd.DataFrame, _) -> pd.DataFrame:
     return out
 
 
-def _resolve_month_target_period(source_df, site):
+def _resolve_month_target_period(source_df, site, date_bound=None):
     """Resolve a site's own (month, year) monthly target period from its data.
 
     FD-018: a bulletin site carries no target period of its own unless one is
@@ -107,11 +107,50 @@ def _resolve_month_target_period(source_df, site):
     row for a different model). `site.forecasts` — set by `_on_add` /
     `_on_add_m0` to the operator's own selected tabulator row(s) BEFORE this
     is called — carries the model(s) actually picked, so we narrow
-    `source_df` to those models first. `site.forecasts` never carries
-    `valid_from` itself (the tabulator's summary table drops it), so the
-    period still has to come from `source_df`; narrowing by model, then by
-    the latest issue date within that model, ties the resolved period to
-    the operator's actual selection instead of the whole frame.
+    `source_df` to those models first.
+
+    FD-018 review #5: narrowing by model is not enough — the operator's
+    tabulator selection was ALSO bounded by the date picker
+    (`create_forecast_summary_table`, vizualization.py: `date <=
+    date_picker + 1 day`, then the max date WITHIN that bounded subset).
+    Without reproducing that bound here, a later, unrelated issue-date row
+    for the SAME model elsewhere in this wide `source_df` outranks the row
+    the operator actually saw and picked when they wound the date picker
+    back to an earlier issue date. `date_bound` must be the exact value the
+    tabulator that produced `site.forecasts` was built with: `wm.date_
+    picker.value` for the main panel (`_on_add`), or the m0 frame's own max
+    date for the m0 card (`_on_add_m0`, mirroring `PlotManager.update_
+    forecast_tabulator_m0`, which passes `m0['date'].max()` instead of the
+    shared date picker). `site.forecasts` never carries `valid_from` itself
+    (the tabulator's summary table drops it), so the period still has to
+    come from `source_df`; narrowing by model, then by the date-picker
+    bound, then by the latest issue date within that bounded/model-narrowed
+    subset, ties the resolved period to the operator's actual selection
+    instead of the whole frame.
+
+    FD-018 review #5 (kill switch, not silent fallback): if `site.forecasts`
+    IS set but the selected model(s) cannot be determined from it (e.g. a
+    missing/renamed `Model` column) or none of them match a row for this
+    site, that is a broken invariant — not a legacy caller. Returning the
+    whole (model-un-narrowed) station frame in that case would silently
+    resolve to a possibly-wrong model/date; this function returns `None`
+    instead, so the caller falls back to the bulletin-wide period AND the
+    operator sees the existing "could not be confirmed" warning (see
+    `_on_add` / `_on_add_m0` / `_on_write`). This only applies when `site.
+    forecasts` is actually present — a caller that never sets it at all
+    (the pre-FD-018 legacy shape) still gets the whole-frame resolution,
+    unchanged.
+
+    FD-018 review #5 (multi-model disagreement): if the operator's
+    selection spans more than one model and, after date-bound + max-date
+    narrowing, those models resolve to DIFFERENT (month, year) pairs, this
+    is treated as unresolved (`None`) rather than silently picking one.
+    Structurally this should not happen — every row in one issue-date batch
+    is produced by the same monthly forecast run and targets the same
+    calendar month — so reaching this branch indicates a data anomaly, not
+    normal operation. (It is also not reachable via the tabulator itself:
+    `create_forecast_summary_table` already collapses to a single `date ==
+    max(date)` batch before the operator ever sees a row to select.)
 
     Args:
         source_df: A `get_long_forecasts()`-shaped DataFrame (must carry
@@ -122,13 +161,20 @@ def _resolve_month_target_period(source_df, site):
             `site.station_label`. If `site.forecasts` is already set (the
             operator's selected row(s)), it is used to narrow `source_df` to
             the selected model(s) before resolving.
+        date_bound: The date-picker bound the tabulator that produced
+            `site.forecasts` was built with (see above). `None` skips bound
+            filtering entirely — only correct for legacy/test callers whose
+            `source_df` carries no `date` column to bound in the first
+            place.
 
     Returns:
         `(month, year)` tuple, or `None` if the frame is missing/empty, has
-        no rows for this site, or the resolved `valid_from` is NaT/invalid.
-        Callers must treat `None` as "fall back to the bulletin-wide period"
-        — this function never raises (data-shape problems are handled
-        defensively; it does not swallow programming errors).
+        no rows for this site, the selected model(s) could not be resolved
+        to a row, the selected models disagree on target period, or the
+        resolved `valid_from` is NaT/invalid. Callers must treat `None` as
+        "fall back to the bulletin-wide period" — this function never
+        raises (data-shape problems are handled defensively; it does not
+        swallow programming errors).
     """
     if (
         source_df is None
@@ -144,26 +190,47 @@ def _resolve_month_target_period(source_df, site):
     if site_rows.empty:
         return None
 
-    # Narrow to the operator's own selected model(s), if known.
+    # Narrow to the operator's own selected model(s). `site.forecasts`
+    # absent entirely means a legacy caller that never captured a selection
+    # — fall through and resolve from the whole (station-scoped) frame, as
+    # always. `site.forecasts` PRESENT but unusable (no Model column, or no
+    # matching rows) means the selection can't be confirmed — return None
+    # rather than silently reusing the un-narrowed, possibly-wrong-model
+    # frame (FD-018 review #5).
     selected_forecasts = getattr(site, "forecasts", None)
     model_col = _('Model')
-    if (
-        selected_forecasts is not None
-        and not selected_forecasts.empty
-        and model_col in selected_forecasts.columns
-        and "model_short" in site_rows.columns
-    ):
+    if selected_forecasts is not None and not selected_forecasts.empty:
+        if model_col not in selected_forecasts.columns or "model_short" not in site_rows.columns:
+            return None
         selected_models = set(selected_forecasts[model_col].dropna().unique())
-        if selected_models:
-            model_matched = site_rows[site_rows["model_short"].isin(selected_models)]
-            if not model_matched.empty:
-                site_rows = model_matched
+        if not selected_models:
+            return None
+        site_rows = site_rows[site_rows["model_short"].isin(selected_models)]
+        if site_rows.empty:
+            return None
 
-    # Narrow to the latest ISSUE date within the (possibly model-narrowed)
-    # subset — the same `date == max(date)` batch the tabulator itself drew
-    # the operator's selection from (see create_forecast_summary_table).
-    # This stops an unrelated, differently-dated row elsewhere in the wide
-    # history from outranking the row the operator actually picked.
+    # Mirror the tabulator's date-picker bound EXACTLY (vizualization.py
+    # create_forecast_summary_table: `date <= date_picker + 1 day`) before
+    # taking the max date — otherwise a later, unrelated issue-date row for
+    # the same (narrowed) model(s) outranks the row the operator actually
+    # saw and picked while the date picker was wound back (FD-018 review
+    # #5, the surviving defect in the original add-time-capture fix).
+    if "date" in site_rows.columns and date_bound is not None:
+        try:
+            dates = pd.to_datetime(site_rows["date"])
+            bound = pd.Timestamp(date_bound) + pd.Timedelta(days=1)
+        except (TypeError, ValueError):
+            return None
+        site_rows = site_rows[dates <= bound]
+        if site_rows.empty:
+            return None
+
+    # Narrow to the latest ISSUE date within the (bounded, possibly
+    # model-narrowed) subset — the same `date == max(date)` batch the
+    # tabulator itself drew the operator's selection from (see
+    # create_forecast_summary_table). This stops an unrelated, differently
+    # -dated row elsewhere in the wide history from outranking the row the
+    # operator actually picked.
     if "date" in site_rows.columns:
         max_date = site_rows["date"].max()
         if pd.notna(max_date):
@@ -173,12 +240,25 @@ def _resolve_month_target_period(source_df, site):
     if raw.empty:
         return None
     try:
-        ts = pd.Timestamp(sorted(raw)[-1])
+        parsed = [pd.Timestamp(v) for v in raw]
     except (TypeError, ValueError):
         return None
-    if pd.isna(ts):
+    parsed = [ts for ts in parsed if pd.notna(ts)]
+    if not parsed:
         return None
-    return int(ts.month), int(ts.year)
+    periods = {(int(ts.month), int(ts.year)) for ts in parsed}
+    if len(periods) > 1:
+        # Selected models disagree on target month/year within the same
+        # batch -- see docstring: structurally shouldn't happen, so treat
+        # as unresolved rather than silently picking one.
+        logger.warning(
+            "_resolve_month_target_period: selected model(s) for site "
+            "'%s' resolve to different target periods within the same "
+            "batch (%s); treating as unresolved.",
+            getattr(site, "code", "?"), sorted(periods),
+        )
+        return None
+    return next(iter(periods))
 
 
 def _ensure_site_defaults(site) -> None:
@@ -594,8 +674,19 @@ class BulletinManager:
             # valid_from) is not fatal — it just leaves the site without an
             # override, so write falls back to the bulletin-wide period as
             # before.
+            #
+            # FD-018 review #5: the date-picker bound must be the SAME one
+            # `create_forecast_summary_tabulator` built `wm.forecast_tabulator`
+            # with for the main panel — `wm.date_picker.value`
+            # (`PlotManager.update_forecast_tabulator` passes `self._wm.
+            # date_picker`). Without it, a later, unrelated issue-date row
+            # for the same model elsewhere in `dm.forecasts_all` outranks
+            # the row the operator actually saw and picked while the date
+            # picker was wound back to an earlier issue date.
             if skill_lead_aware_enabled():
-                period = _resolve_month_target_period(self.dm.forecasts_all, selected_site)
+                period = _resolve_month_target_period(
+                    self.dm.forecasts_all, selected_site, self.wm.date_picker.value,
+                )
                 selected_site.bulletin_target_period = period
                 if period is None:
                     logger.warning(
@@ -709,8 +800,23 @@ class BulletinManager:
             # _on_add for the symmetric main-panel capture, and its comment
             # above about the write-only (not reload) scope of this
             # override.
+            #
+            # FD-018 review #5: the m0 card has no shared date-picker bound
+            # of its own — `PlotManager.update_forecast_tabulator_m0` builds
+            # `wm.forecast_tabulator_m0` using the m0 frame's OWN max date
+            # (`m0['date'].max()`) instead of `wm.date_picker`, precisely
+            # because the m0 card always shows the latest available m0
+            # data. Mirror that here rather than reusing `wm.date_picker`
+            # (the main panel's bound), which would be the wrong source for
+            # this frame.
             if skill_lead_aware_enabled():
-                period = _resolve_month_target_period(self.dm.long_forecasts_m0, selected_site)
+                m0_df = self.dm.long_forecasts_m0
+                m0_date_bound = None
+                if m0_df is not None and not m0_df.empty and "date" in m0_df.columns:
+                    m0_date_bound = m0_df["date"].max()
+                period = _resolve_month_target_period(
+                    m0_df, selected_site, m0_date_bound,
+                )
                 selected_site.bulletin_target_period = period
                 if period is None:
                     logger.warning(

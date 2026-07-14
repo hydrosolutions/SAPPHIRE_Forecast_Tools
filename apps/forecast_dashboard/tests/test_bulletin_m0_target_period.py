@@ -151,14 +151,27 @@ def _tabulator_rows(model="LR", discharge=100.0, lower=90.0, upper=110.0):
     )
 
 
-def _make_add_manager_stub(site, sites_list, dm_forecasts_all, dm_long_forecasts_m0, tabulator_rows):
+def _make_add_manager_stub(
+    site, sites_list, dm_forecasts_all, dm_long_forecasts_m0, tabulator_rows,
+    date_picker_value=None,
+):
     """Fake `self` sufficient to call `_on_add` / `_on_add_m0` unbound."""
+    if date_picker_value is None:
+        date_picker_value = pd.Timestamp("2099-01-01")
     tabulator = types.SimpleNamespace(value=tabulator_rows, selection=[])
     wm = types.SimpleNamespace(
         forecast_tabulator=tabulator,
         forecast_tabulator_m0=tabulator,
         station_selector=types.SimpleNamespace(value=site.station_label),
         horizon_selector=types.SimpleNamespace(value="month"),
+        # FD-018 review #5: `_on_add` reads this to bound the main-panel
+        # target-period resolution the same way `wm.date_picker` bounds
+        # `create_forecast_summary_tabulator`. None of the fixtures in this
+        # module give `dm_forecasts_all` a `date` column, so this value is
+        # inert for all EXISTING tests (the bound-filter step is skipped
+        # whenever there is no `date` column to bound) — it only matters for
+        # the new date-picker-bound tests below, which override it.
+        date_picker=types.SimpleNamespace(value=date_picker_value),
     )
     dm = types.SimpleNamespace(
         sites_list=sites_list,
@@ -320,6 +333,170 @@ class TestResolveMonthTargetPeriod:
 
 
 # ---------------------------------------------------------------------------
+# _resolve_month_target_period — FD-018 review #5: the surviving defect.
+# The resolver must reproduce the SAME date-picker bound
+# `create_forecast_summary_table` (vizualization.py ~:3037-3047) applies
+# before taking the max-date row, not just narrow by model over the whole
+# (undeduplicated) frame.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveMonthTargetPeriodDatePickerBound:
+    def test_date_picker_bound_excludes_later_same_model_row(self):
+        """The operator wound the date picker BACK to an earlier issue date
+        and (at that setting) picked the model's row targeting July. The
+        SAME model also has a LATER row elsewhere in the wide frame
+        targeting August — the row the operator did NOT see because the
+        date picker excluded it at the time. The resolver must honour the
+        date-picker bound and resolve July, not the globally-latest row for
+        that model.
+
+        This is the exact scenario named in the FD-018 review: model-only
+        narrowing (already fixed) is not sufficient when the SAME model has
+        multiple issue dates and the operator's bound excludes the later
+        one.
+
+        Discriminating mutation: dropping the `date_bound` filtering block
+        in `_resolve_month_target_period` (i.e. going back to taking the
+        max date over the whole model-narrowed subset, unbounded) makes
+        this RED — result becomes (8, 2026).
+        """
+        site = _make_site(station_label="99001 - Test Site")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0]}
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-07-31"),
+                    "valid_from": pd.Timestamp("2026-08-01"),
+                },
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-06-30"),
+                    "valid_from": pd.Timestamp("2026-07-01"),
+                },
+            ]
+        )
+
+        # Operator wound the date picker back to 2026-06-30.
+        result = _resolve_month_target_period(df, site, pd.Timestamp("2026-06-30"))
+
+        assert result == (7, 2026), (
+            f"Expected the operator's own (bounded) July selection, got {result}"
+        )
+
+    def test_missing_model_column_returns_none_not_whole_frame(self):
+        """FD-018 review #5 (kill the silent fallback): if `site.forecasts`
+        is present but lacks the localized `Model` column (e.g. renamed or
+        misconfigured upstream), the resolver must NOT silently fall back
+        to resolving from the whole (model-un-narrowed) station frame —
+        that is exactly the "wrong model/row silently wins" hazard this
+        function exists to prevent. It must return `None` so the caller
+        falls back to the bulletin-wide period and the operator sees the
+        existing "could not be confirmed" warning (`_on_add` / `_on_add_m0`
+        / `_on_write`).
+
+        Discriminating mutation: relaxing the `model_col not in
+        selected_forecasts.columns` guard to instead skip narrowing and
+        keep resolving from the un-narrowed `site_rows` (the pre-fix
+        shape) makes this RED — the result becomes (8, 2026), the globally
+        -latest row's month, instead of `None`.
+        """
+        site = _make_site(station_label="99001 - Test Site")
+        # Present and non-empty, but the wrong column name.
+        site.forecasts = pd.DataFrame(
+            {"ModelName": ["LR"], "Forecasted discharge": [50.0]}
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-06-30"),
+                    "valid_from": pd.Timestamp("2026-07-01"),
+                },
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "GBT",
+                    "date": pd.Timestamp("2026-07-31"),
+                    "valid_from": pd.Timestamp("2026-08-01"),
+                },
+            ]
+        )
+
+        result = _resolve_month_target_period(df, site, pd.Timestamp("2026-07-31"))
+
+        assert result is None
+
+    def test_ordinary_latest_row_unaffected_by_bound_fix(self):
+        """Control: the ordinary case — one model, one row, no date-picker
+        games — must resolve exactly as before. The bound fix must not
+        change behavior when there is nothing to exclude."""
+        site = _make_site(station_label="99001 - Test Site")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [100.0]}
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-07-31"),
+                    "valid_from": pd.Timestamp("2026-08-01"),
+                },
+            ]
+        )
+
+        # date_bound == the same (latest) issue date, as it would be when
+        # the operator has NOT touched the date picker.
+        result = _resolve_month_target_period(df, site, pd.Timestamp("2026-07-31"))
+
+        assert result == (8, 2026)
+
+    def test_multiple_selected_models_disagreeing_on_target_period_is_unresolved(self):
+        """If the operator's selection somehow spans models that resolve to
+        DIFFERENT target periods within the same bounded/max-dated batch,
+        the resolver must not silently pick one — it returns `None`
+        (falling back to the bulletin-wide period with the existing
+        warning). This is a defensive branch: structurally, one issue-date
+        batch is produced by a single monthly forecast run and every model
+        in it targets the same calendar month, so this should not be
+        reachable via the tabulator itself (`create_forecast_summary_table`
+        already collapses to one `date == max(date)` batch before the
+        operator ever sees a row) — reaching it indicates a data anomaly,
+        not normal two-model selection.
+        """
+        site = _make_site(station_label="99001 - Test Site")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR", "GBT"], "Forecasted discharge": [50.0, 55.0]}
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-06-30"),
+                    "valid_from": pd.Timestamp("2026-07-01"),
+                },
+                {
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "GBT",
+                    "date": pd.Timestamp("2026-06-30"),
+                    "valid_from": pd.Timestamp("2026-08-01"),  # anomalous
+                },
+            ]
+        )
+
+        result = _resolve_month_target_period(df, site, pd.Timestamp("2026-06-30"))
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
 # _populate_forecast_attributes: target_period override (additive param)
 # ---------------------------------------------------------------------------
 
@@ -464,6 +641,81 @@ class TestOnAddCapturesOwnTargetPeriod:
         BulletinManager._on_add_m0(fake_self, event=None)  # must not raise
 
         assert site.bulletin_target_period is None
+
+    def test_on_add_date_picker_wound_back_excludes_later_same_model_row(self, monkeypatch):
+        """End-to-end version of the FD-018 review #5 defect: the operator
+        winds `wm.date_picker` back to an earlier issue date and — at that
+        setting — the tabulator shows (and the operator selects) the row
+        targeting July. `dm.forecasts_all` (the wide, undeduplicated
+        history) also carries a LATER row for the SAME model targeting
+        August, which the operator never saw at that date-picker setting.
+
+        `_on_add` must capture July, and a subsequent `_on_write` must
+        hydrate with July's month, not August's.
+
+        This was RED before the fix: `_on_add` called
+        `_resolve_month_target_period(self.dm.forecasts_all, selected_site)`
+        with no date-picker bound at all, so the model-narrowed subset's
+        globally-latest row (August) always won regardless of the date
+        picker.
+
+        Discriminating mutation: drop the `self.wm.date_picker.value`
+        argument from `_on_add`'s call to `_resolve_month_target_period`
+        (reverting to the 2-arg call) — `bulletin_target_period` becomes
+        (8, 2026) and the write's hydrate call receives month=8 instead of
+        7.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
+
+        site = _make_site(station_label="99001 - Test Site")
+        main_df = pd.DataFrame(
+            [
+                {  # the LATER row for the SAME model — must NOT win.
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-07-31"),
+                    "valid_from": pd.Timestamp("2026-08-01"),
+                    "forecasted_discharge": 100.0,
+                },
+                {  # the row the operator actually saw (date picker wound
+                   # back) and picked.
+                    "station_labels": "99001 - Test Site",
+                    "model_short": "LR",
+                    "date": pd.Timestamp("2026-06-30"),
+                    "valid_from": pd.Timestamp("2026-07-01"),
+                    "forecasted_discharge": 50.0,
+                },
+            ]
+        )
+        m0_df = pd.DataFrame()  # unused by _on_add
+
+        fake_self = _make_add_manager_stub(
+            site, [site], main_df, m0_df,
+            _tabulator_rows(model="LR", discharge=50.0, lower=40.0, upper=60.0),
+            date_picker_value=pd.Timestamp("2026-06-30"),  # wound back
+        )
+
+        BulletinManager._on_add(fake_self, event=None)
+
+        assert site.bulletin_target_period == (7, 2026), (
+            f"Expected the operator's own July selection, got "
+            f"{site.bulletin_target_period}"
+        )
+
+        # And the write itself must use July's hydration, not the
+        # bulletin-wide (August) period.
+        hydrate_calls = []
+        monkeypatch.setattr(
+            bulletin_manager,
+            "hydrate_month_hydrograph_stats",
+            lambda s, month, db: hydrate_calls.append(month),
+        )
+        write_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+        BulletinManager._on_write(write_self, event=None)
+
+        assert hydrate_calls == [7], f"Expected July (7), got {hydrate_calls}"
 
 
 # ---------------------------------------------------------------------------
