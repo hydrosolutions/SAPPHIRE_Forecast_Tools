@@ -328,6 +328,23 @@ class TestBinaryContingency:
         assert result["fp"] == 0
         assert np.isnan(result["f1"])
 
+    def test_zero_hits_with_defined_precision_and_recall_gives_f1_zero(self):
+        """Zero hits but precision/recall both well-defined (nonzero denominators) => F1 = 0.0, not NaN.
+
+        Distinct from test_all_misses (tp+fp=0 there -> precision is NaN) and
+        test_no_observed_events (tp+fn=0 there -> recall is NaN): here BOTH
+        predicted and observed positives exist, they just never overlap.
+        """
+        obs = np.array([100, 100, 1, 1], dtype=float)
+        sim = np.array([1, 1, 100, 100], dtype=float)
+        result = binary_contingency(obs, sim, threshold=50.0)
+        assert result["tp"] == 0
+        assert result["fp"] == 2
+        assert result["fn"] == 2
+        assert result["precision"] == pytest.approx(0.0)
+        assert result["recall"] == pytest.approx(0.0)
+        assert result["f1"] == pytest.approx(0.0)
+
 
 # ===================================================================
 # TestLowflowQuantiles

@@ -739,8 +739,10 @@ def binary_contingency(
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
     recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
-    if np.isnan(precision) or np.isnan(recall) or (precision + recall) == 0:
+    if np.isnan(precision) or np.isnan(recall):
         f1 = np.nan
+    elif (precision + recall) == 0:
+        f1 = 0.0
     else:
         f1 = 2.0 * precision * recall / (precision + recall)
     csi = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else np.nan
