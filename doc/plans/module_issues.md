@@ -225,6 +225,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **FD-018** | m0 bulletin card hydrates from the MAIN panel's target month, not its own — `_on_write`/`_load_bulletin_from_api` re-derive one bulletin-wide period and overwrite the m0 site's hydration (Kyrgyz-only) | **Medium** | Draft | [`mid_prio_gi_draft_fd_m0_bulletin_per_site_target_month.md`](issues/mid_prio_gi_draft_fd_m0_bulletin_per_site_target_month.md) | Split from `develop_ltf_monthly_horizon_value` Defect G; branch's attempted fix (`_month0_hydration_params`) found ineffective and reverted. Depends on `SAPPHIRE_SKILL_LEAD_AWARE`. |
 | **FD-017** | Publish bulletin — multi-horizon/multi-station UI to generate shareable JSON snapshot links (frozen, expire at next period) | **Medium** | Review | [`mid_prio_gi_draft_fd_publish_bulletin.md`](issues/mid_prio_gi_draft_fd_publish_bulletin.md) | PP-039 contract done; impl on branch `develop_fd_publish_bulletin`; 499 tests pass; live Panel UI + end-to-end not yet run |
 | **FD-019** | `get_bulletin_metadata` derives `forecast_year` from issue-time arithmetic, not the target period — quarter never rolls the year (currently latent, UI can't select quarter); flag-OFF (default) legacy path rolls wrong for a Dec-31 lead-0 forecast | **Medium** | Draft | [`mid_prio_gi_draft_fd_bulletin_target_year_derivation.md`](issues/mid_prio_gi_draft_fd_bulletin_target_year_derivation.md) | Pre-existing on trunk; found during `develop_ltf_monthly_horizon_value` adversarial review. Flag-OFF fix must update `test_dec31_lead0_flag_off_rolls_year_anyway_known_quirk` in `test_monthly_lead_golden.py`, not delete it. |
+| **FD-020** | Two dashboard robustness bugs: (1) `widget_manager.refresh_warnings` still passes stale cross-horizon `forecast_horizon`/`forecast_year` into the period-outdated warning after a failed metadata refresh, even though the header already suppresses on the same staleness marker; (2) `db._get_data_quarter` reads the fail-loud `skill_lead_aware_enabled()` flag unconditionally, so a typo'd `SAPPHIRE_SKILL_LEAD_AWARE` crashes the quarter data path (currently latent — quarter is not UI-selectable, per FD-019) | **Low** | Draft | [`low_prio_gi_draft_fd_stale_metadata_and_flag_parse_robustness.md`](issues/low_prio_gi_draft_fd_stale_metadata_and_flag_parse_robustness.md) | Pre-existing on trunk; found during `develop_ltf_monthly_horizon_value` adversarial review. Bug 2's fix must decide (open question, not resolved) whether the flag's fail-loud contract should differ on read vs. write paths. |
 
 ### iEasyHydro HF Migration
 
@@ -382,7 +383,11 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-07-14 — Added FD-019 (bulletin `forecast_year` derived from issue-time
+*Last updated: 2026-07-14 — Added FD-020 (two dashboard robustness bugs: stale cross-horizon
+metadata reaching the forecast warning pane after a failed refresh, and a fail-loud flag
+parser unconditionally read on the latent quarter data path; both pre-existing on trunk,
+found during `develop_ltf_monthly_horizon_value` adversarial review). Same day, earlier:
+Added FD-019 (bulletin `forecast_year` derived from issue-time
 arithmetic instead of the target period; quarter never rolls the year, flag-OFF legacy path
 rolls wrong for Dec-31 lead-0; pre-existing on trunk, found during
 `develop_ltf_monthly_horizon_value` review). Earlier same day: Added FD-018 (m0 bulletin
