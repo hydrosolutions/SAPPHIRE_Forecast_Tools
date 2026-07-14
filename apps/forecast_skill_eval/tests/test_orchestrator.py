@@ -361,18 +361,67 @@ def test_compute_event_contingencies_includes_rp_events_when_requested() -> None
 
 
 def test_compute_event_contingencies_return_levels_param_is_optional() -> None:
-    """Calling with only 3 positional args (no return_levels) must not raise.
+    """Calling with only 3 positional args (no return_levels) must not raise
+    -- AS LONG AS no return-period (rp*) event is requested.
 
     Backward-compatibility guard for the new trailing parameter added to
-    ``_compute_event_contingencies``.
+    ``_compute_event_contingencies``: the omitted-4th-arg call must behave
+    identically to explicitly passing ``return_levels={}``, and must not
+    silently swallow non-rp events either.
+
+    Discriminating mutation: reverting PP-review fix #3 (rp*-with-no-
+    return_levels must raise) does not affect this test, by design -- it
+    only exercises non-rp events. What makes THIS version discriminating
+    (vs. the pre-review version) is the direct comparison against an
+    explicit ``return_levels={}`` call: a mutation that gave the omitted
+    argument some OTHER default (e.g. ``None`` handled differently from
+    ``{}``, or a stale/incorrect default) would make the two calls diverge
+    and fail the equality assertion below, whereas the original version
+    could not detect any change to the default's value at all.
     """
     from forecast_skill_eval.orchestrator import _compute_event_contingencies
 
     pairs = _below_norm_pairs()
 
-    result = _compute_event_contingencies(pairs, {}, ("below_norm",))
+    result_omitted = _compute_event_contingencies(pairs, {}, ("below_norm",))
+    result_explicit_empty = _compute_event_contingencies(pairs, {}, ("below_norm",), {})
 
-    assert set(result["event"].unique()) == {"below_norm"}
+    assert set(result_omitted["event"].unique()) == {"below_norm"}
+    pd.testing.assert_frame_equal(result_omitted, result_explicit_empty)
+
+
+def test_compute_event_contingencies_rp_event_without_return_levels_raises() -> None:
+    """PP-review fix #3: requesting an rp* event with no return_levels must
+    raise, never silently produce zero rows.
+
+    Before this fix, ``_compute_event_contingencies`` defaulted
+    ``return_levels`` to ``None``, coerced it to ``{}``, and then iterated
+    the rp-event loop over that empty mapping -- ``reclassify_pairs_for_rp_event``
+    finds no matching group and returns an empty frame, which is silently
+    skipped (``if event_pairs.empty: continue``). A caller who forgets (or
+    a test that never calls) ``compute_return_levels`` first gets a
+    contingency frame with simply no rp5 rows and no signal that anything
+    went wrong -- indistinguishable from "the model has zero rp5 skill".
+
+    Discriminating mutation: removing the new guard (or replacing `raise`
+    with `pass`/`continue`) makes this test fail (no exception raised),
+    while test_compute_event_contingencies_includes_rp_events_when_requested
+    (which supplies real, non-empty return_levels) stays green -- proving
+    the two tests together pin both the "must work when supplied" and
+    "must fail loudly when not supplied" halves of the contract.
+    """
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("below_norm", "rp5"))
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("rp5",), {})
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("rp5",), None)
 
 
 def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object]]:

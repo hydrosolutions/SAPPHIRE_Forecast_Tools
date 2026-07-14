@@ -288,7 +288,8 @@ def _compute_event_contingencies(
     Return-period events (rp5/rp10/rp30/rp100) recompute ``fc_class``/
     ``obs_class`` from the GEV return levels in *return_levels*; groups without
     an available return level (station/period did not meet the ``min_years``
-    gate, or the GEV fit failed) likewise produce no rows.
+    gate, or the GEV fit failed) likewise produce no rows for THAT group --
+    but see the ``Raises`` note below for the all-or-nothing case.
 
     Args:
         pairs: All-horizons pair DataFrame.
@@ -296,17 +297,42 @@ def _compute_event_contingencies(
         events_filter: Ordered sequence of event names to include in the output.
         return_levels: Per-``(code, horizon, period_key)`` GEV return-level
             mappings as returned by :func:`events.compute_return_levels`, used
-            only for the return-period events (rp5/rp10/rp30/rp100). Defaults to
-            an empty mapping, which yields no rp* rows -- callers that never
-            requested an rp* event may omit this argument entirely.
+            only for the return-period events (rp5/rp10/rp30/rp100). Callers
+            that never request an rp* event may omit this argument entirely
+            (or pass ``{}``/``None``) -- it is simply unused in that case.
 
     Returns:
         Contingency metrics DataFrame with an ``event`` column.  Columns follow
         ``OUTPUT_COLUMNS + METRIC_COLUMNS + ("event",)``.  An empty DataFrame
         with the same schema is returned when no events produce rows.
+
+    Raises:
+        ValueError: If *events_filter* requests one or more return-period
+            events (rp5/rp10/rp30/rp100) but *return_levels* is ``None`` or
+            empty. This is deliberately loud rather than silent: an rp*
+            event with no return levels at all would otherwise produce a
+            contingency frame with zero rows for that event, which reads
+            exactly like "the model has no rp skill here" -- there is no
+            way for a downstream reader to tell "we never computed GEV
+            return levels" apart from "we computed them and this station
+            genuinely has none". Callers must call
+            :func:`events.compute_return_levels` first and pass its
+            result, or drop the rp* event(s) from *events_filter* if
+            return-period contingencies are not wanted for this dataset.
     """
     return_levels = return_levels or {}
     events_set = frozenset(events_filter)
+    requested_rp_names = [event.name for event in _RP_EVENTS if event.name in events_set]
+    if requested_rp_names and not return_levels:
+        raise ValueError(
+            f"Return-period event(s) {requested_rp_names} were requested via "
+            "events_filter, but return_levels is empty (None or {}). "
+            "Silently producing zero contingency rows for these events would "
+            "be indistinguishable from 'the model has no rp skill here'. "
+            "Call events.compute_return_levels(...) first and pass its "
+            "result as return_levels, or remove the rp* event(s) from "
+            "events_filter."
+        )
     frames: list[pd.DataFrame] = []
 
     for event in (*ALL_EVENTS, *_NORM_FACTOR_EVENTS):
