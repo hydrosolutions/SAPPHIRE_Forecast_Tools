@@ -3,7 +3,6 @@ import contextlib
 
 import pandas as pd
 import panel as pn
-from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import db  # _read_data, _save_data, _delete_data live here
 from src.gettext_config import _
 
@@ -405,20 +404,6 @@ class BulletinManager:
         days_in_month = calendar.monthrange(target_year, target_month)[1]
         return target_month, target_year, days_in_month
 
-    def _month0_hydration_params(self):
-        """Target (month, year, days_in_month) for the m0 bulletin (Defect G).
-
-        Unlike :meth:`_month_hydration_params` (which reads the main, higher-lead
-        panel), this hydrates from the m0 (lead-0) frame's own target month/year
-        so the norm and month length resolve for the month the m0 card displays,
-        not the main panel's target month.
-        """
-        _last_date, target_month, target_year = self.dm.get_bulletin_metadata(
-            "month", forecasts_all=self.dm.long_forecasts_m0
-        )
-        days_in_month = calendar.monthrange(target_year, target_month)[1]
-        return target_month, target_year, days_in_month
-
     # Function to handle adding the current selection to the bulletin
     def _on_add(self, event=None) -> None:
         if self.cfg.viz.app_state.pipeline_running:
@@ -544,12 +529,7 @@ class BulletinManager:
         selected_site.forecasts = selected_rows.reset_index(drop=True)
         horizon = self.wm.horizon_selector.value
         if horizon == "month":
-            # Defect G: hydrate the m0 bulletin from the m0 frame's own target
-            # month/year (lead-aware); the legacy kill-switch reads the main panel.
-            if skill_lead_aware_enabled():
-                target_month, _target_year, days_in_month = self._month0_hydration_params()
-            else:
-                target_month, _target_year, days_in_month = self._month_hydration_params()
+            target_month, _target_year, days_in_month = self._month_hydration_params()
             hydrate_month_hydrograph_stats(selected_site, target_month, db)
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,

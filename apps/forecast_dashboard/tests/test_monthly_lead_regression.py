@@ -323,44 +323,6 @@ class TestBulletinTargetMonthYear:
             "Dec-issued lead-1 targets January of the FOLLOWING year (2027), not the issue year"
         )
 
-    def test_m0_bulletin_hydrates_from_m0_frame_target_month(self, monkeypatch):
-        """The month_0 bulletin must hydrate from the m0 frame's target month,
-        not the main panel's.
-
-        kghm deployment: the main panel is lead 1 (target month 8, August) and
-        the m0 card is lead 0 (target month 7, July).  The m0-aware hydration
-        entry point (``get_bulletin_metadata(..., forecasts_all=<m0 frame>)``)
-        must resolve the m0 target (July), not the main panel's August.
-        """
-        monkeypatch.setenv(FLAG, "true")
-
-        fake = types.SimpleNamespace(
-            forecasts_all=pd.DataFrame(
-                {"date": pd.to_datetime(["2026-07-25"]), "month_in_year": [8]}
-            ),
-            long_forecasts_m0=pd.DataFrame(
-                {"date": pd.to_datetime(["2026-07-10"]), "month_in_year": [7]}
-            ),
-            horizon_in_year=lambda horizon: "month_in_year",
-        )
-
-        # Reading the main panel yields the lead-1 target (August, month 8).
-        _ld_main, main_horizon, _yr_main = DataManager.get_bulletin_metadata(
-            fake, "month"
-        )
-        assert main_horizon == 8
-
-        # Reading the m0 frame yields the lead-0 target (July, month 7) — the
-        # m0 card's own target, not the main panel's.
-        _ld_m0, m0_horizon, m0_year = DataManager.get_bulletin_metadata(
-            fake, "month", forecasts_all=fake.long_forecasts_m0
-        )
-        assert m0_horizon == 7, (
-            "m0 bulletin must hydrate from the m0 frame's target month (July), "
-            "not the main panel's (August)"
-        )
-        assert m0_year == 2026
-
 
 # ===========================================================================
 # operational_lead_for_mode resolver (trunk M1 P3's accessor — supersedes this

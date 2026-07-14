@@ -331,19 +331,10 @@ class DataManager(param.Parameterized):
     # Bulletin helpers
     # ------------------------------------------------------------------
 
-    def get_bulletin_metadata(self, horizon, forecasts_all=None):
-        """Return (last_date, forecast_horizon, forecast_year) for bulletin saving.
-
-        Args:
-            horizon: The active horizon ("pentad"/"decade"/"month"/"quarter"/"season").
-            forecasts_all: Frame to read from; defaults to the main panel's
-                ``self.forecasts_all``. The m0 bulletin passes the lead-0 frame so
-                the target month/year come from the card it actually displays
-                (Defect G).
-        """
-        fa = self.forecasts_all if forecasts_all is None else forecasts_all
+    def get_bulletin_metadata(self, horizon):
+        """Return (last_date, forecast_horizon, forecast_year) for bulletin saving."""
         # Get the last available date in the data
-        max_date = fa['date'].max()
+        max_date = self.forecasts_all['date'].max()
         if not isinstance(max_date, (dt.date, dt.datetime)) or pd.isna(max_date):
             raise ValueError("No valid forecast dates available")
         last_date = max_date + dt.timedelta(days=1)
@@ -357,7 +348,7 @@ class DataManager(param.Parameterized):
             # the target quarter: 1, 4, 7, or 10). Convert to quarter-in-year
             # (1-4) so the stored value matches the forecasted quarter, not the
             # calendar quarter at save time.
-            start_month = int(fa["month_in_year"].tail(1).values[0])
+            start_month = int(self.forecasts_all["month_in_year"].tail(1).values[0])
             forecast_horizon = ((start_month - 1) // 3) + 1
         else:
             # The forecast is produced on the day before the first day of the
@@ -366,7 +357,7 @@ class DataManager(param.Parameterized):
             # period (pentad_in_year, decad_in_year, or month_in_year) — not the
             # calendar month at save time.
             forecast_horizon = int(
-                fa[self.horizon_in_year(horizon)].tail(1).values[0]
+                self.forecasts_all[self.horizon_in_year(horizon)].tail(1).values[0]
             )
 
         # Defect G / year-rollover: a monthly forecast with lead >= 1 issued late
