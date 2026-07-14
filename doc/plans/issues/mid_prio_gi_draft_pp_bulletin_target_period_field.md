@@ -17,9 +17,23 @@ bulletin — whether it came from the main monthly panel (Kyrgyz `month_1`, targ
 month + 1) or from the m0 card (lead-0, target = the issue month itself) — carries the
 identical `horizon_value`, because that value is bulletin-wide, not per-lead. After a
 save-then-reload, nothing in the persisted record can tell the dashboard which target month
-a given row actually belongs to. The dashboard works around this with a best-effort
-heuristic that matches persisted `(model_type, forecasted_discharge)` values against both
-source frames; it is described in detail below and is **explicitly a guess**, not a fix.
+a given row actually belongs to.
+
+**Update 2026-07-14 (owner decision, branch `fix_fd_m0_bulletin_target_month`):** the
+dashboard previously worked around this with a best-effort heuristic
+(`_resolve_reload_month_target_period`) that matched persisted `(model_type,
+forecasted_discharge)` values against both source frames. An adversarial review found the
+heuristic actively **worse than trunk** — not merely unhelpful — in three ways: (1) it could
+confidently resolve to the WRONG frame when an operator-edited discharge happened to coincide
+with the other frame's value; (2) `site.bulletin_target_period` could go stale, because
+`DataManager.load_station` reuses site objects across station/horizon/date switches
+(`_sites_list` is not rebuilt), so a value cached by an earlier m0 add could leak into a later,
+unrelated reload; (3) a malformed `valid_from` in a matched row raised inside the resolver, and
+the caller's broad `except Exception` then silently discarded the whole saved bulletin. **The
+heuristic has been deleted.** Reload is now intentionally byte-identical to trunk (always the
+bulletin-wide period, both flag states); the add-time capture + write-time override (the part
+of FD-018 that IS correct) is unaffected and stays. The schema ask below is unchanged and still
+needed — it is the only sound way to make reload per-site-correct.
 
 ## Problem
 
@@ -91,32 +105,16 @@ semantics.
 ### 3. Consequence: the correct target period is unrecoverable after reload
 
 Because no persisted field distinguishes an m0 row from a main-panel row, a genuine cold
-reload (`_load_bulletin_from_api`, `bulletin_manager.py:457-556`) cannot determine which
-target month a given site's forecast actually applies to. The dashboard's current
-workaround (`_resolve_reload_month_target_period`, `bulletin_manager.py:219-327`) is a
-**best-effort heuristic**, not a correct reconstruction:
-
-- It matches each reloaded site's persisted `(model, forecasted_discharge)` pairs
-  (`site.forecasts`, populated from the API response) against **both** `main_df`
-  (`dm.forecasts_all`) and `m0_df` (`dm.long_forecasts_m0`).
-- A station whose persisted discharge is found **only** in `m0_df` is treated as a
-  confident m0-card match and its target period is used.
-- Any other outcome — matched in both frames (ambiguous), matched in neither (the
-  underlying forecast has since been recalculated), or no m0 data available for this
-  deployment/station at all — falls back to the bulletin-wide default target month, which
-  is exactly today's (safe but wrong-for-m0) pre-existing behavior.
-- On write, if a site's target period could not be confidently resolved this session,
-  `_on_write` (`bulletin_manager.py:1057-1100`) collects it into `unresolved_codes` and
-  surfaces a warning popup (`"Bulletin saved, but the target month could not be confirmed
-  for: <codes>"`) instead of silently writing a bulletin that may carry the wrong month's
-  norm/day-count for that station.
-
-This heuristic is **never worse than trunk's pre-FD-018 behavior** (which always used the
-bulletin-wide month for every site, silently) — worst case it falls back to the same
-bulletin-wide value it always used, now with an operator-visible warning. But it is
-fundamentally a guess: it can misfire whenever the underlying forecast values change between
-save and reload (a re-run with different discharge, differing float rounding, etc.), and it
-cannot be made reliable without a schema change.
+reload (`_load_bulletin_from_api`) cannot determine which target month a given site's
+forecast actually applies to. As of 2026-07-14 the dashboard no longer attempts to guess this
+(the `_resolve_reload_month_target_period` heuristic described in earlier drafts of this issue
+has been **deleted** — see the Update note above): reload always uses the bulletin-wide
+target period, exactly like pre-FD-018 trunk, for every site regardless of which card added
+it. The write-time path is unaffected: if a site's own add-time target-period resolution
+failed (missing/NaT `valid_from`), `_on_write` collects it into `unresolved_codes` and surfaces
+a warning popup (`"Bulletin saved, but the target month could not be confirmed for: <codes>"`)
+instead of silently writing a bulletin that may carry the wrong month's norm/day-count for that
+station — this part is unchanged by the heuristic's removal.
 
 ## The Ask
 
@@ -141,15 +139,14 @@ implementation plan for the service side.
 
 ### Dashboard-side follow-up (once the field exists)
 
-Once `Bulletin` carries a real target-period field, three dashboard changes become
-straightforward and the heuristic can be deleted entirely:
+The heuristic is already deleted (2026-07-14); no further dashboard cleanup is blocked on
+that. Once `Bulletin` carries a real target-period field, two dashboard changes make reload
+genuinely per-site-correct:
 
-- `_site_to_records` (`bulletin_manager.py:345-368`) — write the site's captured target
-  period into the new field.
-- `_load_bulletin_from_api` (`bulletin_manager.py:457-556`) — read the field back directly
-  instead of calling `_resolve_reload_month_target_period`.
-- `_resolve_reload_month_target_period` and its helper `_forecast_value_matches`
-  (`bulletin_manager.py:184-327`) — delete; no longer needed.
+- `_site_to_records` (`bulletin_manager.py`) — write the site's captured target period into
+  the new field.
+- `_load_bulletin_from_api` (`bulletin_manager.py`) — read the field back directly and use it
+  as `target_period`, instead of always falling back to the bulletin-wide period.
 
 ## Acceptance Criteria
 
@@ -160,10 +157,12 @@ straightforward and the heuristic can be deleted entirely:
 - [ ] `BulletinCreate`/`BulletinResponse` schemas updated to include the new field(s).
 - [ ] Service tests cover create/read of the new field(s) (mirror
       `sapphire/services/postprocessing/tests/test_endpoints.py` bulletin test class).
-- [ ] Dashboard-side follow-up (see above) tracked as a linked task once the field ships;
-      `_resolve_reload_month_target_period` and `_forecast_value_matches` deleted, and the
-      `test_bulletin_m0_target_period.py` reload tests updated to assert on the real field
-      instead of the heuristic's match/fallback behavior.
+- [x] Reload heuristic (`_resolve_reload_month_target_period` / `_forecast_value_matches`)
+      deleted 2026-07-14 (owner decision — proven worse than trunk); reload now always uses
+      the bulletin-wide period, byte-identical to pre-FD-018 trunk.
+- [ ] Dashboard-side follow-up (see above) tracked as a linked task once the field ships: read
+      the new field in `_load_bulletin_from_api` and use it as `target_period` instead of the
+      bulletin-wide fallback.
 - [ ] No station codes or discharge values committed in code, fixtures, or docs (use
       `19999` for any example station code).
 
@@ -176,10 +175,10 @@ straightforward and the heuristic can be deleted entirely:
 
 ## References
 
-- Dashboard-side heuristic and its docstring: `apps/forecast_dashboard/dashboard/bulletin_manager.py:219-327`
-- Operator-facing warning on write: `apps/forecast_dashboard/dashboard/bulletin_manager.py:1057-1100`
-- Reload-time resolution: `apps/forecast_dashboard/dashboard/bulletin_manager.py:507-544`
+- Reload (now trunk-identical, with stale-cache clearing): `apps/forecast_dashboard/dashboard/bulletin_manager.py::_load_bulletin_from_api`
+- Add-time capture (unaffected by this update, still the real fix): `apps/forecast_dashboard/dashboard/bulletin_manager.py::_resolve_month_target_period`, `_on_add`, `_on_add_m0`
+- Operator-facing warning on write: `apps/forecast_dashboard/dashboard/bulletin_manager.py::_on_write`
 - `Bulletin` model: `sapphire/services/postprocessing/app/models.py:253-286`
 - `LongForecast` model (has the fields being proposed here): `sapphire/services/postprocessing/app/models.py:117-146`
 - Current Alembic head: `sapphire/services/postprocessing/alembic/versions/b2c3d4e5f6a7_add_bulletin_share.py`
-- Tests locking current (heuristic) behavior: `apps/forecast_dashboard/tests/test_bulletin_m0_target_period.py`
+- Tests: `apps/forecast_dashboard/tests/test_bulletin_m0_target_period.py`

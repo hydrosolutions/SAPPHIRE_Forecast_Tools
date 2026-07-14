@@ -181,152 +181,6 @@ def _resolve_month_target_period(source_df, site):
     return int(ts.month), int(ts.year)
 
 
-def _forecast_value_matches(df, station_label, model, discharge, tol=1e-6):
-    """Return the (month, year) target period of the row in `df` matching
-    (station_label, model, forecasted_discharge), or `None` if there is no
-    such row.
-
-    Used by `_resolve_reload_month_target_period` (see there for why this
-    value-matching fallback exists at all) to test whether a RELOADED site's
-    persisted forecast could plausibly have come from a given source frame.
-    """
-    if (
-        df is None
-        or df.empty
-        or "station_labels" not in df.columns
-        or "model_short" not in df.columns
-        or "forecasted_discharge" not in df.columns
-        or "valid_from" not in df.columns
-        or model is None
-    ):
-        return None
-    rows = df[(df["station_labels"] == station_label) & (df["model_short"] == model)]
-    if rows.empty:
-        return None
-    discharge_num = pd.to_numeric(rows["forecasted_discharge"], errors="coerce")
-    close = rows[(discharge_num - discharge).abs() <= tol]
-    if close.empty:
-        return None
-    raw = close["valid_from"].dropna()
-    if raw.empty:
-        return None
-    ts = pd.Timestamp(sorted(raw)[-1])
-    if pd.isna(ts):
-        return None
-    return int(ts.month), int(ts.year)
-
-
-def _resolve_reload_month_target_period(site, main_df, m0_df):
-    """Resolve a RELOADED site's own monthly target period with no
-    per-record persistence available (FD-018 review finding #1).
-
-    `Bulletin.horizon_value` (sapphire/services/postprocessing/app/models.py)
-    is NOT a per-lead value like `LongForecast.horizon_value`. It is the
-    bulletin-WIDE save/query key: `_load_bulletin_from_api` fetches every
-    record with one `_read_data(..., {"horizon_value": forecast_horizon,
-    ...})` filter, and `_site_to_records` mirrors that same caller-supplied
-    scalar into every saved row (`BulletinManager._horizon_context()` reads
-    a single `wm.forecast_horizon` shared by BOTH `_on_add` and
-    `_on_add_m0`). So every row loaded together carries the identical
-    `horizon_value` regardless of which card added it — there is no field
-    in the persisted record that says "this came from the m0 card". (An
-    earlier draft of this fix assumed `horizon_value` was the lead; verified
-    false against `sapphire/services/postprocessing/app/models.py::Bulletin`,
-    which has no `valid_from`/`valid_to` columns at all, unlike
-    `LongForecast`.)
-
-    Since no service-side change is in scope, this is a best-effort
-    reconciliation using only what the API already returns: the site's
-    persisted `(model, forecasted_discharge)` pairs (`site.forecasts`,
-    already populated by the caller from the API response) are matched
-    against BOTH `main_df` (the main month_1 panel's current source frame)
-    and `m0_df` (the m0 card's). A station whose persisted discharge is
-    found ONLY in `m0_df` is confidently an m0-card site. Anything else —
-    matches both (ambiguous), matches neither (the underlying forecast has
-    since changed), or `m0_df` has nothing for this deployment/station at
-    all — is left to the existing bulletin-wide fallback, which is exactly
-    today's (safe) behavior.
-
-    This is a genuine, irreducible limitation of the current schema: a
-    resolution can come back ambiguous even though the site truly is an m0
-    site, if the underlying forecast values have been recalculated since
-    the bulletin was saved. Callers must surface `attempted=True,
-    period=None` to the operator rather than treating it the same as
-    "nothing needed resolving" — see `_on_write`.
-
-    Args:
-        site: The reloaded site; `site.forecasts` must already be populated
-            from the API response (model + forecasted_discharge).
-        main_df: `dm.forecasts_all`-shaped frame, or `None`.
-        m0_df: `dm.long_forecasts_m0`-shaped frame, or `None`. Deployments
-            without month_0 support (e.g. Tajik) always have this empty.
-
-    Returns:
-        `(period, attempted)` tuple:
-          - `(None, False)`: nothing needed resolving — no month_0 data for
-            this deployment/station, or nothing to match against. Caller
-            must NOT set `site.bulletin_target_period` at all.
-          - `((month, year), True)`: confidently resolved to the m0 card.
-          - `(None, True)`: disambiguation WAS necessary but could not be
-            confidently resolved (ambiguous or stale). Caller should set
-            `site.bulletin_target_period = None` so `_on_write` can warn
-            the operator instead of silently using the bulletin-wide month.
-    """
-    if m0_df is None or m0_df.empty:
-        return None, False
-
-    forecasts = getattr(site, "forecasts", None)
-    model_col = _('Model')
-    discharge_col = _('Forecasted discharge')
-    if (
-        forecasts is None
-        or forecasts.empty
-        or model_col not in forecasts.columns
-        or discharge_col not in forecasts.columns
-    ):
-        return None, False
-
-    station_label = getattr(site, "station_label", None)
-    if not station_label:
-        return None, False
-
-    m0_periods = set()
-    matched_main = False
-    for _idx, row in forecasts.iterrows():
-        model = row.get(model_col)
-        discharge = row.get(discharge_col)
-        if model is None or pd.isna(discharge):
-            continue
-        try:
-            discharge = float(discharge)
-        except (TypeError, ValueError):
-            continue
-
-        m0_period = _forecast_value_matches(m0_df, station_label, model, discharge)
-        if m0_period is not None:
-            m0_periods.add(m0_period)
-        if _forecast_value_matches(main_df, station_label, model, discharge) is not None:
-            matched_main = True
-
-    if not m0_periods and not matched_main:
-        # Neither frame had anything to compare against — nothing was
-        # actually disambiguated (e.g. the forecast has since been
-        # superseded in both frames, or this station has no current data).
-        return None, False
-
-    if m0_periods and not matched_main and len(m0_periods) == 1:
-        return m0_periods.pop(), True
-
-    if matched_main and not m0_periods:
-        # Confidently a plain main-panel site — nothing to override, the
-        # existing bulletin-wide default already IS this site's period.
-        return None, False
-
-    # Ambiguous (matched both) or inconsistent (models disagree on the m0
-    # period) — cannot confidently resolve.
-    return None, True
-
-
 def _ensure_site_defaults(site) -> None:
     """Set hydrograph/predictor attributes to None if not yet hydrated.
 
@@ -455,19 +309,37 @@ def _populate_forecast_attributes(
 
 
 def _load_bulletin_from_api(
-    horizon_type: str, forecast_year: int, forecast_horizon: int, sites_list, dm=None,
+    horizon_type: str, forecast_year: int, forecast_horizon: int, sites_list,
 ) -> list:
     """Fetch bulletin records from the API and reconstruct site objects.
 
-    Args:
-        dm: FD-018 review #1 — the `DataManager`, used ONLY (under the flag,
-            for the 'month' horizon) to resolve a reloaded site's own target
-            period via `_resolve_reload_month_target_period` when it isn't
-            already known in-memory. Optional and defaults to `None` so
-            existing callers that have no `DataManager` on hand (flag-OFF
-            paths, `bulletin_publish.py`'s public-share snapshot) are
-            unaffected — they just don't get the per-site override, which is
-            exactly the pre-existing bulletin-wide behavior.
+    FD-018 review #3: an earlier draft of this function tried to guess a
+    reloaded site's own monthly target period (`_resolve_reload_month_target_
+    period`, since deleted) by matching its persisted `(model,
+    forecasted_discharge)` against both the main and m0 source frames. That
+    heuristic was worse than doing nothing: it could confidently resolve to
+    the WRONG frame (an edited discharge coinciding with the other frame's
+    value), and a malformed `valid_from` in a matched row could raise and
+    (via the broad `except Exception` below) silently discard the entire
+    saved bulletin. `Bulletin` (sapphire/services/postprocessing/app/
+    models.py), unlike `LongForecast`, has no `valid_from`/`valid_to` and no
+    per-record marker for which card a row was added from, so there is no
+    sound way to reconstruct this from the persisted record alone — see
+    PP-040 (filed for the service owner) for the schema change a correct fix
+    needs.
+
+    Until PP-040 lands, reload is intentionally IDENTICAL to trunk: every
+    reloaded site is hydrated from the bulletin-wide `(forecast_horizon,
+    forecast_year)`, regardless of the `SAPPHIRE_SKILL_LEAD_AWARE` flag.
+
+    Stale-cache note: `site` objects come from `dm.sites_list`, which is
+    reused across station/horizon/date switches (`DataManager.load_station`
+    replaces `_data` but not `_sites_list`). A site touched here may still
+    carry a `bulletin_target_period` cached by an earlier in-session
+    `_on_add`/`_on_add_m0` call for a *different* bulletin (e.g. an m0 add
+    for July, followed by navigating to a MAIN-panel August bulletin for the
+    same station code). That cached value must never leak into this reload,
+    so it is unconditionally cleared below before repopulating the site.
     """
     try:
         df = db._read_data(_SERVICE, _RESOURCE, {
@@ -504,47 +376,14 @@ def _load_bulletin_from_api(
                 for _idx, row in site_df.iterrows()
             ])
             site.forecasts = site.forecasts.where(site.forecasts.notna(), other=float('nan'))
-            # FD-018: honour the site's OWN target period instead of always
-            # re-deriving one bulletin-wide period from the caller's args.
-            # Gated on the flag so flag-OFF reload is byte-identical to
-            # trunk.
-            #
-            # FD-018 review #1: `site` objects from `dm.sites_list` are
-            # rebuilt fresh on every page load / new session, so
-            # `bulletin_target_period` normally does NOT survive a reload —
-            # `hasattr` is only True here mid-session, when this exact site
-            # object already went through `_on_add`/`_on_add_m0` or an
-            # earlier reload in the SAME session. On a genuine cold reload,
-            # resolve it fresh via `_resolve_reload_month_target_period`
-            # (see its docstring for why persistence isn't available) and
-            # cache the result on the site so later same-session reloads and
-            # `_on_write` don't need to re-resolve it.
-            target_period = None
-            if skill_lead_aware_enabled() and horizon_type == "month":
-                if hasattr(site, "bulletin_target_period"):
-                    target_period = site.bulletin_target_period
-                else:
-                    main_df = dm.forecasts_all if dm is not None else None
-                    m0_df = dm.long_forecasts_m0 if dm is not None else None
-                    period, attempted = _resolve_reload_month_target_period(
-                        site, main_df, m0_df,
-                    )
-                    if attempted:
-                        site.bulletin_target_period = period
-                        if period is None:
-                            logger.warning(
-                                "_load_bulletin_from_api: site '%s' has m0 "
-                                "data but its persisted forecast could not "
-                                "be confidently matched to either the m0 or "
-                                "main frame — falling back to the "
-                                "bulletin-wide period; this will be "
-                                "surfaced to the operator on write.",
-                                getattr(site, "code", "?"),
-                            )
-                    target_period = period
-            _populate_forecast_attributes(
-                site, horizon_type, forecast_year, forecast_horizon, target_period,
-            )
+            # Kill the stale-cache hazard: never trust a `bulletin_target_period`
+            # left on this (possibly reused) site object from an earlier
+            # in-session add/reload — see the docstring above. Reload always
+            # uses the bulletin-wide (forecast_horizon, forecast_year), same
+            # as trunk, for both flag states.
+            if hasattr(site, "bulletin_target_period"):
+                del site.bulletin_target_period
+            _populate_forecast_attributes(site, horizon_type, forecast_year, forecast_horizon)
             bulletin_sites.append(site)
 
         logger.info("Loaded %d bulletin sites from API", len(bulletin_sites))
@@ -598,7 +437,6 @@ class BulletinManager:
             wm.forecast_year,
             wm.forecast_horizon,
             dm.sites_list,
-            dm=dm,
         )
 
         # --- Disable "Add to Bulletin" while pipeline runs ---
@@ -655,7 +493,6 @@ class BulletinManager:
         self.bulletin_sites = _load_bulletin_from_api(
             horizon, forecast_year, forecast_horizon,
             self.dm.sites_list,
-            dm=self.dm,
         )
         self._update_bulletin_table()
 
@@ -746,21 +583,25 @@ class BulletinManager:
                 _, selected_rows, days_in_month,
             )
             # FD-018: capture this site's OWN target period (from the main
-            # panel's own forecast data, via valid_from) so a later bulletin
-            # write/reload can honour it instead of re-deriving a single
-            # bulletin-wide period from whatever station happens to be
-            # loaded at that later time. Gated on the flag; a resolution
-            # failure (missing/NaT valid_from) is not fatal — it just leaves
-            # the site without an override, so write/reload fall back to the
-            # bulletin-wide period as before.
+            # panel's own forecast data, via valid_from) so a later
+            # same-session bulletin WRITE can honour it instead of
+            # re-deriving a single bulletin-wide period from whatever
+            # station happens to be loaded at that later time. A RELOAD
+            # never honours this — see `_load_bulletin_from_api`, which
+            # always clears it and uses the bulletin-wide period (identical
+            # to trunk; a correct per-site reload needs a schema change,
+            # PP-040). Gated on the flag; a resolution failure (missing/NaT
+            # valid_from) is not fatal — it just leaves the site without an
+            # override, so write falls back to the bulletin-wide period as
+            # before.
             if skill_lead_aware_enabled():
                 period = _resolve_month_target_period(self.dm.forecasts_all, selected_site)
                 selected_site.bulletin_target_period = period
                 if period is None:
                     logger.warning(
                         "_on_add: could not resolve site '%s' own target "
-                        "month from valid_from; write/reload will fall back "
-                        "to the bulletin-wide target month.", selected_site.code,
+                        "month from valid_from; write will fall back to the "
+                        "bulletin-wide target month.", selected_site.code,
                     )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
@@ -865,15 +706,17 @@ class BulletinManager:
             # card's own forecast data (dm.long_forecasts_m0), NOT from the
             # main panel — the m0 target month can and does diverge from the
             # main panel's target month once the calendar rolls over. See
-            # _on_add for the symmetric main-panel capture.
+            # _on_add for the symmetric main-panel capture, and its comment
+            # above about the write-only (not reload) scope of this
+            # override.
             if skill_lead_aware_enabled():
                 period = _resolve_month_target_period(self.dm.long_forecasts_m0, selected_site)
                 selected_site.bulletin_target_period = period
                 if period is None:
                     logger.warning(
                         "_on_add_m0: could not resolve site '%s' own target "
-                        "month from valid_from; write/reload will fall back "
-                        "to the bulletin-wide target month.", selected_site.code,
+                        "month from valid_from; write will fall back to the "
+                        "bulletin-wide target month.", selected_site.code,
                     )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
@@ -1046,11 +889,17 @@ class BulletinManager:
 
             # Refresh each site's forecast attributes from its (possibly edited)
             # site.forecasts so in-cell edits are reflected in the Excel output.
-            # FD-018 review #4: `unresolved_codes` collects sites whose target
-            # period was genuinely unresolvable this write (as opposed to
-            # sites that never needed resolving at all — see
-            # `_resolve_reload_month_target_period`'s `attempted` contract).
-            # The write still proceeds (never block on this), but the
+            # FD-018 review #4: `unresolved_codes` collects sites whose OWN
+            # add-time target-period resolution genuinely failed — i.e.
+            # `site.bulletin_target_period is None`, set explicitly by
+            # `_on_add`/`_on_add_m0` when `_resolve_month_target_period`
+            # couldn't find a usable `valid_from` (see there). A site that
+            # never went through an add this session (or was reloaded — see
+            # `_load_bulletin_from_api`, which always clears any cached
+            # `bulletin_target_period`) has no such attribute at all and is
+            # NOT reported here: reload has nothing to confirm or fail, it
+            # always uses the bulletin-wide period, same as trunk. The write
+            # still proceeds either way (never block on this), but the
             # operator is told which station(s) may carry the wrong month's
             # norm/day-count instead of silently seeing "Bulletin saved
             # successfully".
@@ -1058,11 +907,12 @@ class BulletinManager:
             for site in filtered:
                 try:
                     # FD-018: honour this site's own captured target period
-                    # (set at add-time, or resolved on reload) instead of the
-                    # single bulletin-wide period derived above from
-                    # whichever station/panel is currently loaded. Gated on
-                    # the flag; flag-OFF keeps the exact trunk behavior
-                    # (always the bulletin-wide period).
+                    # (set at add-time by _on_add/_on_add_m0, in THIS
+                    # session) instead of the single bulletin-wide period
+                    # derived above from whichever station/panel is
+                    # currently loaded. Gated on the flag; flag-OFF keeps
+                    # the exact trunk behavior (always the bulletin-wide
+                    # period).
                     target_period = None
                     if (
                         skill_lead_aware_enabled()

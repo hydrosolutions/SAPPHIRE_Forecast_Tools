@@ -13,10 +13,25 @@ Fix: each bulletin site gets its own `(month, year)` target period, captured
 from the site's OWN forecast data's `valid_from` at add-time
 (`_resolve_month_target_period`, `_on_add` / `_on_add_m0`), stored as
 `site.bulletin_target_period`, and honoured (not re-derived) by `_on_write`
-and `_load_bulletin_from_api` via the new `_populate_forecast_attributes(...,
-target_period=...)` parameter. All of this is gated on
-`SAPPHIRE_SKILL_LEAD_AWARE` (default OFF) — flag-OFF must stay byte-identical
-to trunk's bulletin-wide behavior.
+via the new `_populate_forecast_attributes(..., target_period=...)`
+parameter. All of this is gated on `SAPPHIRE_SKILL_LEAD_AWARE` (default OFF)
+— flag-OFF must stay byte-identical to trunk's bulletin-wide behavior.
+
+FD-018 review #3 (owner decision, see `doc/plans/issues/mid_prio_gi_draft_
+pp_bulletin_target_period_field.md`, PP-040): an earlier draft also
+had `_load_bulletin_from_api` try to GUESS a reloaded site's target period
+(`_resolve_reload_month_target_period`, matching persisted `(model,
+discharge)` against the main/m0 frames). That heuristic was proven worse
+than trunk — it could confidently resolve to the WRONG frame, and a
+malformed row could raise and silently discard the whole saved bulletin —
+and has been DELETED. Reload is now intentionally IDENTICAL to trunk (always
+the bulletin-wide period, for both flag states) until PP-040 (a `Bulletin`
+schema field) lands. `_load_bulletin_from_api` additionally guards against a
+site-object-reuse hazard: `site` objects come from `dm.sites_list`, which
+`DataManager.load_station` reuses across station/horizon/date switches, so a
+`bulletin_target_period` cached by an earlier in-session add must be cleared
+on reload rather than silently ignored (ignoring alone would still let it
+leak into a later `_on_write` for the same site object).
 
 bulletin_manager.py imports `panel as pn` which is not installed in the test
 environment. We mock the heavy dependencies at import time so the module can
@@ -80,8 +95,6 @@ try:
     BulletinManager = bulletin_manager.BulletinManager
     _populate_forecast_attributes = bulletin_manager._populate_forecast_attributes
     _resolve_month_target_period = bulletin_manager._resolve_month_target_period
-    _resolve_reload_month_target_period = bulletin_manager._resolve_reload_month_target_period
-    _forecast_value_matches = bulletin_manager._forecast_value_matches
     _load_bulletin_from_api = bulletin_manager._load_bulletin_from_api
 
 finally:
@@ -590,11 +603,13 @@ class TestOnWriteHonoursPerSiteTargetPeriod:
 
 
 # ---------------------------------------------------------------------------
-# _load_bulletin_from_api: honours each site's own captured target period
+# _load_bulletin_from_api: reload matches trunk, ignores/clears any cached
+# per-site target period (the reload heuristic is DELETED — see module
+# docstring and PP-040)
 # ---------------------------------------------------------------------------
 
 
-class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
+class TestLoadBulletinFromApiMatchesTrunk:
     def _api_rows_df(self, code, model="LR", discharge=50.0):
         return pd.DataFrame(
             [
@@ -612,20 +627,21 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
             ]
         )
 
-    def test_reload_honours_target_period_already_known_in_memory(self, monkeypatch):
-        """Mid-session reload (e.g. flipping horizon tabs and back, on the
-        SAME site objects) must trust an already-resolved
-        `bulletin_target_period` rather than re-deriving it — this is
-        `hasattr(site, "bulletin_target_period")` being True, a genuinely
-        different case from the cold-reload / fresh-object case covered by
-        `TestGenuineReloadRoundTrip` below.
+    @pytest.mark.parametrize("flag", ["true", "false"])
+    def test_reload_ignores_and_clears_cached_target_period(self, monkeypatch, flag):
+        """Reload must be identical to trunk regardless of the flag: a
+        `bulletin_target_period` left on the site object (as if cached by an
+        earlier in-session add) must be neither honoured NOR merely
+        skipped — it must be actively cleared, so it cannot leak into a
+        subsequent `_on_write` call for this same (reused) site object.
 
-        Discriminating mutation: dropping the per-site
-        `getattr(site, "bulletin_target_period", None)` lookup (always
-        passing None/using the passed-in forecast_horizon) makes the
-        hydrate call receive month=8 instead of 7.
+        Discriminating mutation: reverting to the deleted heuristic's
+        `hasattr(site, "bulletin_target_period"): target_period =
+        site.bulletin_target_period` mid-session branch makes this RED
+        under flag="true" — hydrate would receive month=7 instead of 8, and
+        the attribute would still be present afterwards.
         """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", flag)
         hydrate_calls = []
         monkeypatch.setattr(
             bulletin_manager,
@@ -633,7 +649,7 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
             lambda site, month, db: hydrate_calls.append(month),
         )
         site = _make_site(code="99001", station_label="99001 - Test Site")
-        site.bulletin_target_period = (7, 2026)  # already resolved earlier this session
+        site.bulletin_target_period = (7, 2026)  # stale/cached from an earlier add
 
         monkeypatch.setattr(
             bulletin_manager.db, "_read_data", MagicMock(return_value=self._api_rows_df("99001"))
@@ -642,32 +658,16 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
         result = _load_bulletin_from_api("month", 2026, 8, [site])
 
         assert len(result) == 1
-        assert hydrate_calls == [7], f"Expected July (7), got {hydrate_calls}"
-
-    def test_reload_flag_off_uses_bulletin_wide_month(self, monkeypatch):
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
-        hydrate_calls = []
-        monkeypatch.setattr(
-            bulletin_manager,
-            "hydrate_month_hydrograph_stats",
-            lambda site, month, db: hydrate_calls.append(month),
-        )
-        site = _make_site(code="99001", station_label="99001 - Test Site")
-        site.bulletin_target_period = (7, 2026)
-
-        monkeypatch.setattr(
-            bulletin_manager.db, "_read_data", MagicMock(return_value=self._api_rows_df("99001"))
+        assert hydrate_calls == [8], f"Expected bulletin-wide August (8), got {hydrate_calls}"
+        assert not hasattr(site, "bulletin_target_period"), (
+            "a cached target period must be cleared on reload, not just ignored"
         )
 
-        _load_bulletin_from_api("month", 2026, 8, [site])
-
-        assert hydrate_calls == [8]
-
-    def test_reload_two_sites_keep_different_months_already_in_memory(self, monkeypatch):
-        """Mid-session counterpart of the round trip in
-        `TestGenuineReloadRoundTrip` — both sites already carry a resolved
-        `bulletin_target_period` (same-session case), so no re-derivation
-        against `dm` is needed or attempted."""
+    def test_reload_two_sites_both_use_bulletin_wide_month_regardless_of_cache(self, monkeypatch):
+        """Two sites, each carrying a DIFFERENT stale cached target period
+        (as if one came from an earlier m0 add and the other from a main
+        add) — reload must give BOTH the same bulletin-wide month, never
+        their individually cached ones."""
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         hydrate_calls = {}
         monkeypatch.setattr(
@@ -675,22 +675,28 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
             "hydrate_month_hydrograph_stats",
             lambda site, month, db: hydrate_calls.setdefault(site.code, []).append(month),
         )
-        site_main = _make_site(code="99001", station_label="99001 - Main Site")
-        site_main.bulletin_target_period = (8, 2026)
-        site_m0 = _make_site(code="99002", station_label="99002 - M0 Site")
-        site_m0.bulletin_target_period = (7, 2026)
+        site_a = _make_site(code="99001", station_label="99001 - Site A")
+        site_a.bulletin_target_period = (8, 2026)
+        site_b = _make_site(code="99002", station_label="99002 - Site B")
+        site_b.bulletin_target_period = (7, 2026)
 
         rows = pd.concat(
             [self._api_rows_df("99001"), self._api_rows_df("99002")], ignore_index=True
         )
         monkeypatch.setattr(bulletin_manager.db, "_read_data", MagicMock(return_value=rows))
 
-        _load_bulletin_from_api("month", 2026, 8, [site_main, site_m0])
+        _load_bulletin_from_api("month", 2026, 8, [site_a, site_b])
 
         assert hydrate_calls["99001"] == [8]
-        assert hydrate_calls["99002"] == [7]
+        assert hydrate_calls["99002"] == [8]
+        assert not hasattr(site_a, "bulletin_target_period")
+        assert not hasattr(site_b, "bulletin_target_period")
 
     def test_reload_missing_target_period_falls_back_without_raising(self, monkeypatch):
+        """A site with no `bulletin_target_period` attribute at all (the
+        ordinary case — see `DataManager.__init__` /
+        `Site.get_site_attribues_from_iehhf_dataframe`) must not raise and
+        must use the bulletin-wide period, exactly like trunk."""
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         hydrate_calls = []
         monkeypatch.setattr(
@@ -699,8 +705,6 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
             lambda site, month, db: hydrate_calls.append(month),
         )
         site = _make_site(code="99001", station_label="99001 - Test Site")
-        # No bulletin_target_period attribute at all (legacy/never-added-
-        # this-session site).
 
         monkeypatch.setattr(
             bulletin_manager.db, "_read_data", MagicMock(return_value=self._api_rows_df("99001"))
@@ -713,134 +717,12 @@ class TestLoadBulletinFromApiHonoursPerSiteTargetPeriod:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_reload_month_target_period / _forecast_value_matches
-# (FD-018 review finding #1 — pure-function coverage)
-# ---------------------------------------------------------------------------
-
-
-class TestForecastValueMatches:
-    def test_matches_on_station_model_and_discharge(self):
-        df = _forecast_frame("99001 - Test Site", "2026-07-01", model="LR", discharge=50.0)
-        result = _forecast_value_matches(df, "99001 - Test Site", "LR", 50.0)
-        assert result == (7, 2026)
-
-    def test_no_match_when_discharge_differs(self):
-        df = _forecast_frame("99001 - Test Site", "2026-07-01", model="LR", discharge=50.0)
-        assert _forecast_value_matches(df, "99001 - Test Site", "LR", 51.0) is None
-
-    def test_no_match_when_model_differs(self):
-        df = _forecast_frame("99001 - Test Site", "2026-07-01", model="LR", discharge=50.0)
-        assert _forecast_value_matches(df, "99001 - Test Site", "GBT", 50.0) is None
-
-    def test_none_for_empty_or_malformed_frame(self):
-        assert _forecast_value_matches(pd.DataFrame(), "x", "LR", 1.0) is None
-        assert _forecast_value_matches(None, "x", "LR", 1.0) is None
-
-
-class TestResolveReloadMonthTargetPeriod:
-    def test_no_m0_data_means_nothing_attempted(self):
-        """Tajik-style deployments: `m0_df` is always empty (no month_0
-        mode). Must not be attempted at all — contract used by `_on_write`
-        to distinguish 'nothing to report' from 'resolution failed'."""
-        site = _make_site(station_label="99001 - Test Site")
-        site.forecasts = pd.DataFrame(
-            {"Model": ["LR"], "Forecasted discharge": [50.0]}
-        )
-        period, attempted = _resolve_reload_month_target_period(
-            site, pd.DataFrame(), pd.DataFrame()
-        )
-        assert (period, attempted) == (None, False)
-
-    def test_confident_m0_only_match_resolves_to_m0_period(self):
-        """The persisted discharge is found ONLY in the m0 frame — this is
-        the exact case FD-018 needs to fix: a reloaded m0-card site must
-        resolve to its own (July) period, not the bulletin-wide one."""
-        site = _make_site(station_label="99001 - Test Site")
-        site.forecasts = pd.DataFrame(
-            {"Model": ["LR"], "Forecasted discharge": [50.0]}
-        )
-        main_df = _forecast_frame(
-            "99001 - Test Site", "2026-08-01", model="LR", discharge=999.0
-        )
-        m0_df = _forecast_frame(
-            "99001 - Test Site", "2026-07-01", model="LR", discharge=50.0
-        )
-        period, attempted = _resolve_reload_month_target_period(site, main_df, m0_df)
-        assert (period, attempted) == ((7, 2026), True)
-
-    def test_main_only_match_leaves_bulletin_wide_default(self):
-        """The persisted discharge is found ONLY in the main frame — a
-        plain main-panel site. Nothing to override; the caller's existing
-        bulletin-wide default is already correct."""
-        site = _make_site(station_label="99001 - Test Site")
-        site.forecasts = pd.DataFrame(
-            {"Model": ["LR"], "Forecasted discharge": [100.0]}
-        )
-        main_df = _forecast_frame(
-            "99001 - Test Site", "2026-08-01", model="LR", discharge=100.0
-        )
-        m0_df = _forecast_frame(
-            "99001 - Test Site", "2026-07-01", model="LR", discharge=999.0
-        )
-        period, attempted = _resolve_reload_month_target_period(site, main_df, m0_df)
-        assert (period, attempted) == (None, False)
-
-    def test_ambiguous_match_in_both_frames_reports_attempted_failure(self):
-        """The persisted discharge happens to match BOTH frames — cannot
-        confidently disambiguate. Must be reported as `attempted=True,
-        period=None` (a genuine, surfaced failure), not silently swallowed
-        as 'nothing to resolve'.
-
-        Discriminating mutation: collapsing this branch into
-        `(None, False)` (treating ambiguous the same as 'not needed') would
-        make `_on_write`'s operator alert (see
-        TestOnWriteSurfacesUnresolvedTargetPeriod) never fire for a
-        genuinely unresolved site.
-        """
-        site = _make_site(station_label="99001 - Test Site")
-        site.forecasts = pd.DataFrame(
-            {"Model": ["LR"], "Forecasted discharge": [50.0]}
-        )
-        main_df = _forecast_frame(
-            "99001 - Test Site", "2026-08-01", model="LR", discharge=50.0
-        )
-        m0_df = _forecast_frame(
-            "99001 - Test Site", "2026-07-01", model="LR", discharge=50.0
-        )
-        period, attempted = _resolve_reload_month_target_period(site, main_df, m0_df)
-        assert (period, attempted) == (None, True)
-
-    def test_no_match_in_either_frame_means_nothing_attempted(self):
-        """The underlying forecast has since changed in both frames (e.g. a
-        new pipeline run) — there is genuinely nothing left to compare
-        against, so this is 'not needed', not 'failed'."""
-        site = _make_site(station_label="99001 - Test Site")
-        site.forecasts = pd.DataFrame(
-            {"Model": ["LR"], "Forecasted discharge": [12345.0]}
-        )
-        main_df = _forecast_frame(
-            "99001 - Test Site", "2026-08-01", model="LR", discharge=100.0
-        )
-        m0_df = _forecast_frame(
-            "99001 - Test Site", "2026-07-01", model="LR", discharge=50.0
-        )
-        period, attempted = _resolve_reload_month_target_period(site, main_df, m0_df)
-        assert (period, attempted) == (None, False)
-
-
-# ---------------------------------------------------------------------------
-# Genuine save -> reload round trip (FD-018 review finding #1)
-#
-# The tests above (TestLoadBulletinFromApiHonoursPerSiteTargetPeriod) only
-# ever exercise the "already resolved this session" branch by manually
-# seeding `site.bulletin_target_period` before calling
-# `_load_bulletin_from_api` — that never touches the actually-broken path,
-# because a genuinely fresh `SapphireSite` (as `dm.sites_list` builds on
-# every new session — see `DataManager.__init__` /
-# `Site.get_site_attribues_from_iehhf_dataframe`) has no such attribute.
-# These tests drive add -> save -> reload through BRAND NEW site objects,
-# with `db._save_data` / `db._read_data` backed by a real (in-memory)
-# upsert store instead of being replaced by a `MagicMock`.
+# Stale-cache regression (FD-018 review finding #2): `dm.sites_list` reuses
+# site objects across station/horizon/date switches
+# (`DataManager.load_station` replaces `_data`, not `_sites_list`). An m0 add
+# earlier in the session must never leak its cached target period into a
+# LATER reload of a different (e.g. main-panel) bulletin for the SAME
+# station code.
 # ---------------------------------------------------------------------------
 
 
@@ -882,19 +764,20 @@ class _FakeBulletinStore:
         return pd.DataFrame(rows)
 
 
-class TestGenuineReloadRoundTrip:
-    def test_m0_site_survives_reload_as_fresh_object(self, monkeypatch):
-        """The heart of FD-018 review finding #1: add a station from the m0
-        card, save it, then reload into a BRAND NEW `SapphireSite` object
-        (as a fresh browser session / `BulletinManager.__init__` really
-        does) — the July target month must survive, even though the
-        bulletin-wide (main panel) period is August.
+class TestReloadClearsStaleCachedTargetPeriod:
+    def test_m0_add_then_later_main_reload_same_code_uses_main_month(self, monkeypatch):
+        """The exact hazard named in the FD-018 review: add station 99001
+        from the m0 card (July), then — WITHOUT the site object being
+        rebuilt, since `dm.sites_list` persists across station/horizon
+        switches — reload a MAIN-panel bulletin for the SAME code that now
+        targets August. August's norm/day-count must be used, not July's.
 
-        This must be RED before the fix. Discriminating mutation: dropping
-        the `_resolve_reload_month_target_period` lookup in
-        `_load_bulletin_from_api` (i.e. always passing `target_period=None`
-        for a site with no in-memory `bulletin_target_period`) makes the
-        hydrate call receive month=8 instead of 7.
+        Discriminating mutation: removing the
+        `if hasattr(site, "bulletin_target_period"): del
+        site.bulletin_target_period` clear in `_load_bulletin_from_api`
+        makes this RED — the hydrate call would receive month=7 (July)
+        instead of 8 (August), and 'Bulletin saved successfully' would
+        silently carry August's discharge with July's norm.
         """
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         store = _FakeBulletinStore()
@@ -903,101 +786,52 @@ class TestGenuineReloadRoundTrip:
         monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
 
         station_label = "99001 - Test Site"
-        main_df = _forecast_frame(station_label, "2026-08-01", model="LR", discharge=999.0)
         m0_df = _forecast_frame(station_label, "2026-07-01", model="LR", discharge=50.0)
+        main_df_at_add_time = _forecast_frame(
+            station_label, "2026-07-01", model="LR", discharge=999.0
+        )
 
-        add_site = _make_site(code="99001", station_label=station_label)
+        site = _make_site(code="99001", station_label=station_label)
         fake_add_self = _make_add_manager_stub(
-            add_site, [add_site], main_df, m0_df,
+            site, [site], main_df_at_add_time, m0_df,
             _tabulator_rows(model="LR", discharge=50.0, lower=40.0, upper=60.0),
         )
         BulletinManager._on_add_m0(fake_add_self, event=None)
 
-        assert store.rows, "expected the m0 add to have saved a bulletin record"
-        assert add_site.bulletin_target_period == (7, 2026)
+        assert site.bulletin_target_period == (7, 2026)
+        assert store.rows and store.rows[0]["code"] == "99001"
 
-        # --- Reload: brand new site object, never touched by _on_add_m0 ---
-        fresh_site = _make_site(code="99001", station_label=station_label)
-        assert not hasattr(fresh_site, "bulletin_target_period")
+        # --- Simulate: operator switches station/horizon (dm.sites_list
+        # reuses this SAME `site` object — see DataManager.load_station),
+        # then comes back to a MAIN-panel bulletin for this station that has
+        # since rolled over to August. ---
+        store.rows = [
+            {
+                "horizon_type": "month", "year": 2026, "horizon_value": 8,
+                "code": "99001", "model_type": "LR",
+                "forecasted_discharge": 100.0, "fc_lower": 90.0, "fc_upper": 110.0,
+                "delta": 1.0, "sdivsigma": 2.0, "mae": 3.0, "accuracy": 90.0,
+            }
+        ]
 
-        dm_reload = types.SimpleNamespace(forecasts_all=main_df, long_forecasts_m0=m0_df)
         hydrate_calls = []
         monkeypatch.setattr(
             bulletin_manager,
             "hydrate_month_hydrograph_stats",
-            lambda site, month, db: hydrate_calls.append(month),
+            lambda s, month, db: hydrate_calls.append(month),
         )
 
-        result = _load_bulletin_from_api("month", 2026, 8, [fresh_site], dm=dm_reload)
+        result = _load_bulletin_from_api("month", 2026, 8, [site])
 
         assert len(result) == 1
-        assert hydrate_calls == [7], (
-            f"Expected July (7) — the m0 site's OWN target month — even "
-            f"though the bulletin-wide (main panel) period is August; "
-            f"got {hydrate_calls}"
+        assert hydrate_calls == [8], (
+            f"Expected August (8) for the reloaded MAIN-panel bulletin; "
+            f"the stale July m0 cache leaked in: {hydrate_calls}"
         )
-        assert fresh_site.bulletin_target_period == (7, 2026)
-
-    def test_main_and_m0_sites_keep_different_months_after_fresh_reload(self, monkeypatch):
-        """Two DIFFERENT stations in the same bulletin — one added from the
-        main panel, one from the m0 card — must each keep their own target
-        period after a cold reload into fresh site objects."""
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        store = _FakeBulletinStore()
-        monkeypatch.setattr(bulletin_manager.db, "_save_data", store.save)
-        monkeypatch.setattr(bulletin_manager.db, "_read_data", store.read)
-        monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
-
-        main_label = "99001 - Main Site"
-        m0_label = "99002 - M0 Site"
-
-        main_df_for_main_site = _forecast_frame(main_label, "2026-08-01", model="LR", discharge=100.0)
-        m0_df_for_main_site = _forecast_frame(main_label, "2026-07-01", model="LR", discharge=999.0)
-        main_site = _make_site(code="99001", station_label=main_label)
-        fake_add_main = _make_add_manager_stub(
-            main_site, [main_site], main_df_for_main_site, m0_df_for_main_site,
-            _tabulator_rows(model="LR", discharge=100.0, lower=90.0, upper=110.0),
+        assert not hasattr(site, "bulletin_target_period"), (
+            "stale bulletin_target_period must be cleared, or it would also "
+            "leak into a later _on_write call for this same site object"
         )
-        BulletinManager._on_add(fake_add_main, event=None)
-
-        main_df_for_m0_site = _forecast_frame(m0_label, "2026-08-01", model="LR", discharge=999.0)
-        m0_df_for_m0_site = _forecast_frame(m0_label, "2026-07-01", model="LR", discharge=70.0)
-        m0_site = _make_site(code="99002", station_label=m0_label)
-        fake_add_m0 = _make_add_manager_stub(
-            m0_site, [m0_site], main_df_for_m0_site, m0_df_for_m0_site,
-            _tabulator_rows(model="LR", discharge=70.0, lower=60.0, upper=80.0),
-        )
-        BulletinManager._on_add_m0(fake_add_m0, event=None)
-
-        assert {r["code"] for r in store.rows} == {"99001", "99002"}
-
-        # --- Reload: fresh site objects, combined source frames (as the
-        # real dm.forecasts_all / dm.long_forecasts_m0 would carry both
-        # stations at once) ---
-        fresh_main = _make_site(code="99001", station_label=main_label)
-        fresh_m0 = _make_site(code="99002", station_label=m0_label)
-
-        combined_main_df = pd.concat(
-            [main_df_for_main_site, main_df_for_m0_site], ignore_index=True
-        )
-        combined_m0_df = pd.concat(
-            [m0_df_for_main_site, m0_df_for_m0_site], ignore_index=True
-        )
-        dm_reload = types.SimpleNamespace(
-            forecasts_all=combined_main_df, long_forecasts_m0=combined_m0_df
-        )
-
-        hydrate_calls = {}
-        monkeypatch.setattr(
-            bulletin_manager,
-            "hydrate_month_hydrograph_stats",
-            lambda site, month, db: hydrate_calls.setdefault(site.code, []).append(month),
-        )
-
-        _load_bulletin_from_api("month", 2026, 8, [fresh_main, fresh_m0], dm=dm_reload)
-
-        assert hydrate_calls["99001"] == [8]
-        assert hydrate_calls["99002"] == [7]
 
     def test_same_station_both_cards_collides_at_the_api_not_just_in_memory(self, monkeypatch):
         """FD-018 review finding #3, documented as a locked-down (not
@@ -1012,7 +846,8 @@ class TestGenuineReloadRoundTrip:
         This is intentionally NOT a bug this fix redesigns — it pins the
         current (safe: no exception, no duplicate rows) behavior so a
         future fix for finding #3 has a locked contract to change
-        deliberately.
+        deliberately. Unrelated to the deleted reload heuristic: this test
+        never calls `_load_bulletin_from_api` at all.
         """
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         store = _FakeBulletinStore()
@@ -1053,12 +888,12 @@ class TestGenuineReloadRoundTrip:
 
 class TestOnWriteSurfacesUnresolvedTargetPeriod:
     def test_unresolved_target_period_warns_operator_but_still_writes(self, monkeypatch):
-        """A site whose `bulletin_target_period` is explicitly `None`
-        (disambiguation was attempted and failed — see
-        `_resolve_reload_month_target_period`'s `attempted` contract) must
-        not produce a plain 'Bulletin saved successfully'. The write must
-        still happen (never block), but the operator must be told this
-        site's month could not be confirmed.
+        """A site whose `bulletin_target_period` is explicitly `None` (this
+        site's own add-time resolution genuinely failed — see
+        `_resolve_month_target_period` returning `None` in `_on_add`/
+        `_on_add_m0`) must not produce a plain 'Bulletin saved
+        successfully'. The write must still happen (never block), but the
+        operator must be told this site's month could not be confirmed.
 
         Discriminating mutation: dropping the `unresolved_codes` tracking
         (i.e. always calling
