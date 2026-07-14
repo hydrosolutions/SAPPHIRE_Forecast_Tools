@@ -1220,34 +1220,93 @@ def calculate_sharpness(
         quantile_levels: shape (K,) — must include 0.05/0.25/0.75/0.95.
 
     Returns:
-        Dict with 'sharpness_90' (mean q95-q05 width) and
-        'sharpness_50' (mean q75-q25 width). NaN if levels missing.
+        Dict with:
+          'sharpness_90' (mean q95-q05 width), 'sharpness_50' (mean
+              q75-q25 width). NaN if the required levels are missing,
+              or if every row was excluded (see below).
+          'sharpness_n_90' / 'sharpness_n_50': the EFFECTIVE number of
+              rows that actually contributed to each mean. Callers MUST
+              report this alongside the sharpness value rather than
+              reusing the point-metric n_pairs (obs/sim-valid row
+              count) — a row can be obs/sim-valid yet excluded here, so
+              n_pairs can overstate the sharpness sample size.
+          'sharpness_crossed_90' / 'sharpness_crossed_50': count of
+              rows excluded in this call because of a genuine quantile
+              crossing (upper < lower). Internal — for callers that
+              invoke this inside a groupby loop to accumulate a single
+              aggregate warning after the loop (see
+              _new_sharpness_tally/_tally_sharpness/_log_sharpness_tally)
+              instead of logging once per group (log spam over a large
+              frame). This function itself does not log.
+
         Rows with crossed quantiles (upper < lower, a non-monotonic
-        quantile forecast) are excluded from the mean, with a warning
-        logged, rather than contributing a negative width.
+        quantile forecast) are excluded from the mean rather than
+        contributing a negative width. If EVERY row in a group is
+        crossed, the mean is over zero rows and is reported as NaN —
+        not 0.0. 0.0 would claim "the interval collapsed to a point",
+        which is a different (and false) statement from "we have no
+        usable interval to measure".
     """
     level_idx = {round(float(lev), 4): i for i, lev in enumerate(quantile_levels)}
     result = {}
     for name, lo, hi in [("sharpness_90", 0.05, 0.95), ("sharpness_50", 0.25, 0.75)]:
         lo_key = round(lo, 4)
         hi_key = round(hi, 4)
+        suffix = name.rsplit("_", 1)[-1]  # "90" or "50"
+        n_key = f"sharpness_n_{suffix}"
+        crossed_key = f"sharpness_crossed_{suffix}"
         if lo_key in level_idx and hi_key in level_idx:
             widths = (
                 quantile_forecasts[:, level_idx[hi_key]] - quantile_forecasts[:, level_idx[lo_key]]
             )
             crossed = widths < 0
-            if np.any(crossed):
-                logger.warning(
-                    "%s: %d row(s) have crossed quantiles (upper < lower); excluded from sharpness mean",
-                    name,
-                    int(np.sum(crossed)),
-                )
-                widths = np.where(crossed, np.nan, widths)
-            valid = ~np.isnan(widths)
-            result[name] = float(np.mean(widths[valid])) if np.any(valid) else np.nan
+            widths_clean = np.where(crossed, np.nan, widths)
+            valid = ~np.isnan(widths_clean)
+            n_valid = int(np.sum(valid))
+            result[name] = float(np.mean(widths_clean[valid])) if n_valid > 0 else np.nan
+            result[n_key] = n_valid
+            result[crossed_key] = int(np.sum(crossed))
         else:
             result[name] = np.nan
+            result[n_key] = 0
+            result[crossed_key] = 0
     return result
+
+
+def _new_sharpness_tally() -> dict:
+    """New accumulator for aggregating sharpness quantile-crossing counts
+    across a whole groupby loop.
+
+    calculate_sharpness() itself never logs (it may be called hundreds or
+    thousands of times per recalculation run, once per group) — callers
+    that invoke it inside a loop must accumulate crossed-row counts here
+    and call _log_sharpness_tally() once after the loop, so a run with
+    crossed quantiles produces a single summary warning instead of one
+    warning per group.
+    """
+    return {"crossed_90": 0, "crossed_50": 0, "groups": 0}
+
+
+def _tally_sharpness(tally: dict, sharp: dict) -> None:
+    """Accumulate one group's crossed-row counts into `tally`."""
+    tally["groups"] += 1
+    tally["crossed_90"] += sharp.get("sharpness_crossed_90", 0)
+    tally["crossed_50"] += sharp.get("sharpness_crossed_50", 0)
+
+
+def _log_sharpness_tally(tally: dict, context: str) -> None:
+    """Log one aggregate warning if any group in `tally` had crossed
+    quantiles; otherwise log nothing."""
+    if tally["crossed_90"] or tally["crossed_50"]:
+        logger.warning(
+            "%s: excluded %d row(s) with crossed sharpness_90 quantiles and "
+            "%d row(s) with crossed sharpness_50 quantiles (upper < lower) "
+            "across %d group(s); excluded from their respective sharpness means",
+            context,
+            tally["crossed_90"],
+            tally["crossed_50"],
+            tally["groups"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1355,7 +1414,14 @@ def calculate_monthly_skill_metrics(
     empty_stats = pd.DataFrame(
         columns=["month_in_year", "horizon_value", "code", "model_short"]
         + METRIC_ORDER
-        + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
+        + [
+            "crps",
+            "reliability_score",
+            "sharpness_90",
+            "sharpness_50",
+            "sharpness_n_90",
+            "sharpness_n_50",
+        ]
     )
     empty_joint = pd.DataFrame()
 
@@ -1428,6 +1494,7 @@ def calculate_monthly_skill_metrics(
 
     # --- 3. CRPS per group ---
     crps_records = []
+    sharpness_tally = _new_sharpness_tally()
     for (miy, hv, code, model), grp in merged.groupby(GROUP_COLS):
         obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
         qf_cols = [c for c in _QUANTILE_COLS if c in grp.columns]
@@ -1436,10 +1503,16 @@ def calculate_monthly_skill_metrics(
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
             pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
             sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+            _tally_sharpness(sharpness_tally, sharp)
         else:
             crps_val = np.nan
             pit = {"reliability_score": np.nan}
-            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+            sharp = {
+                "sharpness_90": np.nan,
+                "sharpness_50": np.nan,
+                "sharpness_n_90": 0,
+                "sharpness_n_50": 0,
+            }
         crps_records.append(
             {
                 "month_in_year": miy,
@@ -1450,8 +1523,11 @@ def calculate_monthly_skill_metrics(
                 "reliability_score": pit["reliability_score"],
                 "sharpness_90": sharp["sharpness_90"],
                 "sharpness_50": sharp["sharpness_50"],
+                "sharpness_n_90": sharp["sharpness_n_90"],
+                "sharpness_n_50": sharp["sharpness_n_50"],
             }
         )
+    _log_sharpness_tally(sharpness_tally, "calculate_monthly_skill_metrics (point metrics)")
 
     crps_df = pd.DataFrame(crps_records)
     skill_stats = skill_stats.merge(
@@ -1536,12 +1612,14 @@ def calculate_monthly_skill_metrics(
             qf_cols = [c for c in _QUANTILE_COLS if c in em_with_obs.columns]
             if len(qf_cols) == len(_QUANTILE_COLS):
                 em_crps = []
+                em_sharpness_tally = _new_sharpness_tally()
                 for (miy, hv, code, model), grp in em_with_obs.groupby(GROUP_COLS):
                     obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
                     qf = grp[qf_cols].to_numpy(dtype=np.float64)
                     crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
                     pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
                     sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+                    _tally_sharpness(em_sharpness_tally, sharp)
                     em_crps.append(
                         {
                             "month_in_year": miy,
@@ -1552,8 +1630,11 @@ def calculate_monthly_skill_metrics(
                             "reliability_score": pit["reliability_score"],
                             "sharpness_90": sharp["sharpness_90"],
                             "sharpness_50": sharp["sharpness_50"],
+                            "sharpness_n_90": sharp["sharpness_n_90"],
+                            "sharpness_n_50": sharp["sharpness_n_50"],
                         }
                     )
+                _log_sharpness_tally(em_sharpness_tally, "calculate_monthly_skill_metrics (EM)")
                 em_crps_df = pd.DataFrame(em_crps)
                 em_skill = em_skill.merge(
                     em_crps_df,
@@ -1681,12 +1762,14 @@ def _add_naive_mean(
     qf_cols = [c for c in _QUANTILE_COLS if c in naive_with_obs.columns]
     if len(qf_cols) == len(_QUANTILE_COLS):
         crps_records = []
+        naive_sharpness_tally = _new_sharpness_tally()
         for (miy, hv, code, model), grp in naive_with_obs.groupby(GROUP_COLS):
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
             pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
             sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+            _tally_sharpness(naive_sharpness_tally, sharp)
             crps_records.append(
                 {
                     "month_in_year": miy,
@@ -1697,8 +1780,11 @@ def _add_naive_mean(
                     "reliability_score": pit["reliability_score"],
                     "sharpness_90": sharp["sharpness_90"],
                     "sharpness_50": sharp["sharpness_50"],
+                    "sharpness_n_90": sharp["sharpness_n_90"],
+                    "sharpness_n_50": sharp["sharpness_n_50"],
                 }
             )
+        _log_sharpness_tally(naive_sharpness_tally, "calculate_monthly_skill_metrics (Naive Mean)")
         crps_df = pd.DataFrame(crps_records)
         naive_skill = naive_skill.merge(
             crps_df,
@@ -1871,12 +1957,14 @@ def _add_skilled_mean(
     qf_cols = [c for c in _QUANTILE_COLS if c in sm_with_obs.columns]
     if len(qf_cols) == len(_QUANTILE_COLS):
         sm_crps = []
+        sm_sharpness_tally = _new_sharpness_tally()
         for (miy, hv, code, model), grp in sm_with_obs.groupby(GROUP_COLS):
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
             qf = grp[qf_cols].to_numpy(dtype=np.float64)
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
             pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
             sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+            _tally_sharpness(sm_sharpness_tally, sharp)
             sm_crps.append(
                 {
                     "month_in_year": miy,
@@ -1887,8 +1975,11 @@ def _add_skilled_mean(
                     "reliability_score": pit["reliability_score"],
                     "sharpness_90": sharp["sharpness_90"],
                     "sharpness_50": sharp["sharpness_50"],
+                    "sharpness_n_90": sharp["sharpness_n_90"],
+                    "sharpness_n_50": sharp["sharpness_n_50"],
                 }
             )
+        _log_sharpness_tally(sm_sharpness_tally, "calculate_monthly_skill_metrics (Skilled Mean)")
         sm_crps_df = pd.DataFrame(sm_crps)
         sm_skill = sm_skill.merge(
             sm_crps_df,
@@ -2118,6 +2209,7 @@ def calculate_skill_metrics(
 
         # --- CRPS for individual models (short-term) ---
         crps_records = []
+        sharpness_tally = _new_sharpness_tally()
         for group_key, grp in skill_metrics_df.groupby([period_col, "code", "model_short"]):
             p, code, model = group_key
             obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
@@ -2127,10 +2219,16 @@ def calculate_skill_metrics(
                 crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
                 pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
                 sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
+                _tally_sharpness(sharpness_tally, sharp)
             else:
                 crps_val = np.nan
                 pit = {"reliability_score": np.nan}
-                sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+                sharp = {
+                    "sharpness_90": np.nan,
+                    "sharpness_50": np.nan,
+                    "sharpness_n_90": 0,
+                    "sharpness_n_50": 0,
+                }
             crps_records.append(
                 {
                     period_col: p,
@@ -2140,8 +2238,13 @@ def calculate_skill_metrics(
                     "reliability_score": pit["reliability_score"],
                     "sharpness_90": sharp["sharpness_90"],
                     "sharpness_50": sharp["sharpness_50"],
+                    "sharpness_n_90": sharp["sharpness_n_90"],
+                    "sharpness_n_50": sharp["sharpness_n_50"],
                 }
             )
+        _log_sharpness_tally(
+            sharpness_tally, f"calculate_skill_metrics_{config.name} (point metrics)"
+        )
         if crps_records:
             crps_df = pd.DataFrame(crps_records)
             skill_stats = skill_stats.merge(
@@ -2194,6 +2297,7 @@ def calculate_skill_metrics(
 
                 # --- CRPS for EM (short-term) ---
                 em_crps_records = []
+                em_sharpness_tally = _new_sharpness_tally()
                 for group_key, grp in ensemble_skill_metrics_df.groupby(
                     [period_col, "code", "model_short", "composition"]
                 ):
@@ -2205,10 +2309,16 @@ def calculate_skill_metrics(
                         crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
                         pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
                         sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
+                        _tally_sharpness(em_sharpness_tally, sharp)
                     else:
                         crps_val = np.nan
                         pit = {"reliability_score": np.nan}
-                        sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+                        sharp = {
+                            "sharpness_90": np.nan,
+                            "sharpness_50": np.nan,
+                            "sharpness_n_90": 0,
+                            "sharpness_n_50": 0,
+                        }
                     em_crps_records.append(
                         {
                             period_col: p,
@@ -2219,8 +2329,13 @@ def calculate_skill_metrics(
                             "reliability_score": pit["reliability_score"],
                             "sharpness_90": sharp["sharpness_90"],
                             "sharpness_50": sharp["sharpness_50"],
+                            "sharpness_n_90": sharp["sharpness_n_90"],
+                            "sharpness_n_50": sharp["sharpness_n_50"],
                         }
                     )
+                _log_sharpness_tally(
+                    em_sharpness_tally, f"calculate_skill_metrics_{config.name} (EM)"
+                )
                 if em_crps_records:
                     em_crps_df = pd.DataFrame(em_crps_records)
                     ensemble_skill_stats = ensemble_skill_stats.merge(
@@ -2408,7 +2523,9 @@ def _exclude_null_lead_rows(df: pd.DataFrame, context: str) -> pd.DataFrame:
     return df[valid].copy()
 
 
-def _crps_records_for_groups(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+def _crps_records_for_groups(
+    df: pd.DataFrame, group_cols: list[str], context: str = "_crps_records_for_groups"
+) -> pd.DataFrame:
     """Compute CRPS/reliability/sharpness per group, arity-agnostic.
 
     Shared by the point-forecast, EM, Naive Mean, and Skilled Mean CRPS
@@ -2424,13 +2541,23 @@ def _crps_records_for_groups(df: pd.DataFrame, group_cols: list[str]) -> pd.Data
             column and quantile columns.
         group_cols: Columns to group by; each becomes a key in every
             output record.
+        context: Label used in the single aggregate crossed-quantiles
+            warning (if any), so a caller-specific name (e.g. "quarterly
+            EM") shows up in the log instead of a generic one.
 
     Returns:
         DataFrame with ``group_cols`` plus ``crps``, ``reliability_score``,
-        ``sharpness_90``, ``sharpness_50`` — one row per group. Empty
-        (no columns) if ``df`` has no rows.
+        ``sharpness_90``, ``sharpness_50``, ``sharpness_n_90``,
+        ``sharpness_n_50`` — one row per group. ``sharpness_n_90``/
+        ``sharpness_n_50`` are the EFFECTIVE row counts behind the
+        sharpness means (rows with crossed quantiles excluded) and must
+        not be confused with ``n_pairs`` (the obs/sim-valid row count
+        from calculate_all_skill_metrics), which can be larger. Empty
+        (no columns) if ``df`` has no rows. Logs a single aggregate
+        warning (not one per group) if any group had crossed quantiles.
     """
     records = []
+    sharpness_tally = _new_sharpness_tally()
     for group_key, grp in df.groupby(group_cols):
         if not isinstance(group_key, tuple):
             group_key = (group_key,)
@@ -2442,10 +2569,16 @@ def _crps_records_for_groups(df: pd.DataFrame, group_cols: list[str]) -> pd.Data
             crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
             pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
             sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
+            _tally_sharpness(sharpness_tally, sharp)
         else:
             crps_val = np.nan
             pit = {"reliability_score": np.nan}
-            sharp = {"sharpness_90": np.nan, "sharpness_50": np.nan}
+            sharp = {
+                "sharpness_90": np.nan,
+                "sharpness_50": np.nan,
+                "sharpness_n_90": 0,
+                "sharpness_n_50": 0,
+            }
         records.append(
             {
                 **key_map,
@@ -2453,8 +2586,11 @@ def _crps_records_for_groups(df: pd.DataFrame, group_cols: list[str]) -> pd.Data
                 "reliability_score": pit["reliability_score"],
                 "sharpness_90": sharp["sharpness_90"],
                 "sharpness_50": sharp["sharpness_50"],
+                "sharpness_n_90": sharp["sharpness_n_90"],
+                "sharpness_n_50": sharp["sharpness_n_50"],
             }
         )
+    _log_sharpness_tally(sharpness_tally, context)
     return pd.DataFrame(records)
 
 
@@ -2491,7 +2627,14 @@ def _calculate_aggregated_skill_metrics(
     empty_stats = pd.DataFrame(
         columns=metric_group_cols
         + METRIC_ORDER
-        + ["crps", "reliability_score", "sharpness_90", "sharpness_50"]
+        + [
+            "crps",
+            "reliability_score",
+            "sharpness_90",
+            "sharpness_50",
+            "sharpness_n_90",
+            "sharpness_n_50",
+        ]
     )
     empty_joint = pd.DataFrame()
 
@@ -2566,7 +2709,11 @@ def _calculate_aggregated_skill_metrics(
     )
 
     # --- 3. CRPS per group ---
-    crps_df = _crps_records_for_groups(merged, metric_group_cols)
+    crps_df = _crps_records_for_groups(
+        merged,
+        metric_group_cols,
+        context=f"_calculate_aggregated_skill_metrics({period_col}) point metrics",
+    )
     skill_stats = skill_stats.merge(crps_df, on=metric_group_cols, how="left")
 
     # --- 4. Ensemble Mean (EM) ---
@@ -2624,7 +2771,11 @@ def _calculate_aggregated_skill_metrics(
                 .reset_index()
             )
 
-            em_crps_df = _crps_records_for_groups(em_with_obs, metric_group_cols)
+            em_crps_df = _crps_records_for_groups(
+                em_with_obs,
+                metric_group_cols,
+                context=f"_calculate_aggregated_skill_metrics({period_col}) EM",
+            )
             em_skill = em_skill.merge(em_crps_df, on=metric_group_cols, how="left")
 
             skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
@@ -2758,7 +2909,11 @@ def _add_naive_mean_aggregated(
         .reset_index()
     )
 
-    naive_crps_df = _crps_records_for_groups(naive_with_obs, metric_group_cols)
+    naive_crps_df = _crps_records_for_groups(
+        naive_with_obs,
+        metric_group_cols,
+        context=f"_calculate_aggregated_skill_metrics({period_col}) Naive Mean",
+    )
     naive_skill = naive_skill.merge(naive_crps_df, on=metric_group_cols, how="left")
 
     parts = [df for df in [skill_stats, naive_skill] if not df.empty]
@@ -2888,7 +3043,11 @@ def _add_skilled_mean_aggregated(
         .reset_index()
     )
 
-    sm_crps_df = _crps_records_for_groups(sm_with_obs, metric_group_cols)
+    sm_crps_df = _crps_records_for_groups(
+        sm_with_obs,
+        metric_group_cols,
+        context=f"_calculate_aggregated_skill_metrics({period_col}) Skilled Mean",
+    )
     sm_skill = sm_skill.merge(sm_crps_df, on=metric_group_cols, how="left")
 
     skill_stats = pd.concat([skill_stats, sm_skill], ignore_index=True)

@@ -853,3 +853,128 @@ class TestCalculateSharpness:
         quantile_levels = np.array([0.05, 0.95])
         result = calculate_sharpness(quantile_forecasts, quantile_levels)
         assert np.isnan(result["sharpness_90"])
+
+    def test_effective_count_reports_only_valid_rows(self):
+        """PP #14-review defect: sharpness_n_90/50 must report the number
+        of rows that actually contributed to the mean, NOT the full row
+        count -- so a downstream reader never sees a sharpness value that
+        looks like it came from more pairs than it did.
+
+        Mutation that would escape this test: reporting len(widths)
+        (total rows) instead of the post-exclusion valid count for
+        sharpness_n_90/50 -- e.g. hard-coding `result["sharpness_n_90"] =
+        quantile_forecasts.shape[0]`. That mutation keeps sharpness_90
+        correct (still 80.0, still >= 0) while silently reporting n=2
+        for a mean that was actually computed over 1 row, which is
+        exactly the bug under test.
+        """
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array(
+            [
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 90.0],  # normal row
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 5.0],  # crossed row (excluded)
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_90"] == pytest.approx(80.0)
+        assert result["sharpness_n_90"] == 1  # only the uncrossed row counted
+        # sharpness_50 (q25/q75) is unaffected by the q05/q95 crossing above
+        assert result["sharpness_n_50"] == 2
+
+    def test_effective_count_zero_when_all_rows_crossed(self):
+        """A fully-crossed group must report n=0, matching the NaN mean
+        (a 0.0 count would be consistent with "no data"; anything > 0
+        would contradict the NaN and imply a mean was computed)."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[10.0, 5.0]])  # q95 < q05
+        quantile_levels = np.array([0.05, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert np.isnan(result["sharpness_90"])
+        assert result["sharpness_n_90"] == 0
+
+    def test_effective_count_present_even_without_crossing(self):
+        """No crossings at all -> n equals the full row count (the
+        effective count must not just default to 0 or omit the key in
+        the common/no-crossing case)."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array(
+            [
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+                [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+            ]
+        )
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert result["sharpness_n_90"] == 2
+        assert result["sharpness_n_50"] == 2
+
+    def test_effective_count_zero_when_levels_missing(self):
+        """Missing levels (not a crossing) also reports n=0, consistent
+        with the NaN sharpness value."""
+        from src.skill_metrics import calculate_sharpness
+
+        quantile_forecasts = np.array([[20.0, 40.0]])
+        quantile_levels = np.array([0.25, 0.75])
+        result = calculate_sharpness(quantile_forecasts, quantile_levels)
+        assert np.isnan(result["sharpness_90"])
+        assert result["sharpness_n_90"] == 0
+
+
+class TestSharpnessTallyHelpers:
+    """Tests for the aggregate-warning helpers used by pipeline loops that
+    call calculate_sharpness() once per group. These exist so a run with
+    many crossed groups logs ONE summary warning instead of spamming a
+    warning per group (log spam over a large frame).
+    """
+
+    def test_tally_accumulates_across_groups_and_logs_once(self, caplog):
+        import logging
+
+        from src.skill_metrics import (
+            _log_sharpness_tally,
+            _new_sharpness_tally,
+            _tally_sharpness,
+            calculate_sharpness,
+        )
+
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        crossed_group = np.array([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 5.0]])
+        clean_group = np.array([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]])
+
+        tally = _new_sharpness_tally()
+        with caplog.at_level(logging.WARNING, logger="src.skill_metrics"):
+            for grp in (crossed_group, clean_group, crossed_group):
+                sharp = calculate_sharpness(grp, quantile_levels)
+                _tally_sharpness(tally, sharp)
+            _log_sharpness_tally(tally, "test-context")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        # Exactly ONE aggregate warning for the whole loop, not one per
+        # crossed group (there were 2 crossed groups).
+        assert len(warnings) == 1
+        assert "2" in warnings[0].message or tally["crossed_90"] == 2
+
+    def test_tally_logs_nothing_when_no_crossings(self, caplog):
+        import logging
+
+        from src.skill_metrics import (
+            _log_sharpness_tally,
+            _new_sharpness_tally,
+            _tally_sharpness,
+            calculate_sharpness,
+        )
+
+        quantile_levels = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+        clean_group = np.array([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]])
+
+        tally = _new_sharpness_tally()
+        with caplog.at_level(logging.WARNING, logger="src.skill_metrics"):
+            sharp = calculate_sharpness(clean_group, quantile_levels)
+            _tally_sharpness(tally, sharp)
+            _log_sharpness_tally(tally, "test-context")
+
+        assert len(caplog.records) == 0
