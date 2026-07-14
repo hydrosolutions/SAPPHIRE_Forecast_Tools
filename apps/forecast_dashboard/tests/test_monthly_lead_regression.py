@@ -29,7 +29,7 @@ import pandas as pd
 import panel as pn
 import pytest
 import requests
-from dashboard import widgets
+from dashboard import plot_manager, widgets
 from dashboard.data_manager import DataManager
 from dashboard.widget_manager import WidgetManager
 from src import db
@@ -514,3 +514,235 @@ class TestOnChangeStaleMetadataGuard:
             "a successful metadata refresh must still render the month header"
         )
         assert "August" in fake_self.horizon_info_pane.object
+
+
+# ===========================================================================
+# Adversarial-review Defect 1 — the m0 card must resolve ITS OWN lead from
+# config (mirroring src/db.py's ``_safe_lead("month_0", 0)``), not assume
+# lead 0. Nothing enforces "month_0 always means lead 0"; a deployment that
+# configures month_0 with a non-zero ``operational_month_lead_time`` must
+# still get a self-consistent visibility gate + caption.
+# ===========================================================================
+
+class TestM0CardResolvesOwnLead:
+    def test_m0_visibility_and_caption_use_resolved_m0_lead(self, monkeypatch):
+        """A deployment where month_0's configured lead is 1 (not 0): the m0
+        card's visibility gate must compare like-with-like TARGET months
+        (issue + resolved m0 lead), and the caption must be passed that same
+        resolved lead -- not hardcoded 0.
+
+        m0's own issue date is July (same pipeline run as the main panel).
+        With the resolved m0 lead (1), m0's real target is August -- which
+        matches the main summary's target (also August, primary lead 1) --
+        so the card must be visible and the caption must show lead=1.
+
+        Discriminating mutation: revert to the hardcoded/legacy computation
+        (``m0_lead = 0`` and ``m0_target_month = m0['date'].max().month``
+        used directly as the target) -- the mismatched target months
+        (August vs July) trip the visibility gate, the card is hidden, and
+        the caption is never reached -- both assertions go RED.
+        """
+        monkeypatch.setenv(FLAG, "true")
+        monkeypatch.setattr(plot_manager, "_primary_month_lead", lambda: 1)
+        monkeypatch.setattr(
+            plot_manager,
+            "month_lead_for_mode",
+            lambda mode, default: 1 if mode == "month_0" else default,
+        )
+
+        calls = []
+
+        def _spy_format_forecast_info(issue_date, horizon_label, lead=None):
+            calls.append({"issue_date": issue_date, "horizon_label": horizon_label, "lead": lead})
+            return "STUBBED"
+
+        monkeypatch.setattr(plot_manager, "_format_forecast_info", _spy_format_forecast_info)
+
+        # Main panel: issued July, primary lead 1 -> target August.
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        # m0 frame's own issue date is ALSO July (same pipeline run). With the
+        # resolved m0 lead of 1, m0's TARGET is August too.
+        m0 = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                station_selector=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator_m0=MagicMock(),
+                forecast_info_m0=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all, long_forecasts_m0=m0),
+            summary_table_m0_card=types.SimpleNamespace(visible=None),
+        )
+
+        plot_manager.PlotManager.update_forecast_tabulator_m0(fake_self)
+
+        assert fake_self.summary_table_m0_card.visible is True, (
+            "m0's resolved target month (August, lead=1) matches the summary's "
+            "target month (August, primary lead=1) -- card must be visible"
+        )
+        assert calls == [
+            {"issue_date": m0["date"].max().date(), "horizon_label": "month_0", "lead": 1}
+        ], f"Expected the resolved m0 lead (1), not hardcoded 0: {calls!r}"
+
+
+# ===========================================================================
+# Adversarial-review Defect 2 — the flag must be read INSIDE the monthly
+# gate, not before it. skill_lead_aware_enabled() raises ValueError on an
+# unrecognised token; calling it unconditionally leaks that crash into
+# non-monthly horizons.
+# ===========================================================================
+
+class TestBulletinMetadataFlagGuardOrder:
+    def test_pentad_horizon_with_invalid_flag_value_does_not_raise(self, monkeypatch):
+        """A typo'd SAPPHIRE_SKILL_LEAD_AWARE value must not break bulletin
+        metadata for a non-monthly horizon. skill_lead_aware_enabled() fails
+        loudly (ValueError) on an unrecognised token -- get_bulletin_metadata
+        must not call it at all unless horizon == 'month'.
+
+        Discriminating mutation: swap the guard back to
+        ``skill_lead_aware_enabled() and horizon == 'month'`` (flag read
+        first) -- the ValueError propagates out of get_bulletin_metadata for
+        the pentad horizon and this test goes RED.
+        """
+        monkeypatch.setenv(FLAG, "tru")  # neither a truthy nor falsey token
+
+        fake = types.SimpleNamespace(
+            forecasts_all=pd.DataFrame(
+                {"date": pd.to_datetime(["2026-07-26"]), "pentad_in_year": [42]}
+            ),
+            horizon_in_year=lambda horizon: "pentad_in_year",
+        )
+
+        last_date, forecast_horizon, forecast_year = DataManager.get_bulletin_metadata(
+            fake, "pentad"
+        )
+
+        assert forecast_horizon == 42
+        assert forecast_year == last_date.year
+
+
+# ===========================================================================
+# Adversarial-review Defect 3 — the monthly card caption must show the
+# TARGET year when a lead crosses a Dec->Jan boundary, not just the issue
+# year.
+# ===========================================================================
+
+class TestFormatForecastInfoTargetYear:
+    def test_december_lead1_shows_target_year_when_it_differs(self, monkeypatch):
+        """Kyrgyz-shaped: lead 1, issued late December -- the target
+        (January) rolls into the FOLLOWING calendar year. The caption must
+        name that year, not silently pair "January" with the issue year
+        (2026).
+
+        Discriminating mutation: drop the target-year branch (always render
+        just the bare month name) -- the caption reads "...for January  \\n"
+        with no year, and this test goes RED.
+        """
+        monkeypatch.setenv(FLAG, "true")
+        from dashboard.plot_manager import _format_forecast_info
+
+        result = _format_forecast_info(datetime.date(2026, 12, 25), "month_1", lead=1)
+
+        expected = (
+            "Monthly runoff forecast for January 2027  \n"
+            "Forecast issue date: 25th of December 2026 (month_1)"
+        )
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_same_year_target_does_not_append_year(self, monkeypatch):
+        """Control: when the target month falls in the same calendar year as
+        the issue date, no year is appended -- keeps the common case
+        unchanged (and guards against an over-eager fix that always appends
+        a year)."""
+        monkeypatch.setenv(FLAG, "true")
+        from dashboard.plot_manager import _format_forecast_info
+
+        result = _format_forecast_info(datetime.date(2026, 7, 1), "month_1", lead=1)
+
+        expected = (
+            "Monthly runoff forecast for August  \n"
+            "Forecast issue date: 1st of July 2026 (month_1)"
+        )
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_flag_off_legacy_string_unaffected(self, monkeypatch):
+        """Flag-OFF (lead=None) path: byte-identical to today regardless of
+        this fix -- no year is ever appended on the legacy path."""
+        monkeypatch.setenv(FLAG, "false")
+        from dashboard.plot_manager import _format_forecast_info
+
+        result = _format_forecast_info(datetime.date(2026, 12, 25), "month_1", lead=None)
+
+        expected = (
+            "Monthly runoff forecast for January  \n"
+            "Forecast issue date: 25th of December 2026 (month_1)"
+        )
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+
+# ===========================================================================
+# TEST GAP (adversarial review) — caller-level coverage for the Tajik
+# regression. The existing golden/regression caption tests stub
+# _primary_month_lead() to return the value they then assert was passed --
+# so a caller that hardcoded lead=1 would still make those tests pass. This
+# test drives the REAL caller (PlotManager.update_forecast_tabulator) with a
+# genuine Tajik-style config (month_1 -> lead 0) and the REAL
+# _primary_month_lead / _format_forecast_info -- nothing stubbed -- so it can
+# only pass if the caller actually resolves and uses the config's lead.
+# ===========================================================================
+
+class TestUpdateForecastTabulatorCallerUsesRealResolvedLead:
+    def test_tjhm_caller_names_issue_month_itself_not_hardcoded_next_month(
+        self, monkeypatch, tmp_path
+    ):
+        """tjhm month_1 -> lead 0: end-to-end through the real resolver chain
+        (no stubs), the rendered caption must name the issue month itself
+        (July), not the next month (August) a hardcoded lead=1 would produce.
+
+        Discriminating mutation: hardcode ``lead = 1`` in
+        ``update_forecast_tabulator`` (instead of calling
+        ``_primary_month_lead()``) -- the caption becomes "...for August..."
+        and this test goes RED, even though a test that stubs
+        _primary_month_lead() to return 1 would stay falsely GREEN.
+        """
+        monkeypatch.setenv(FLAG, "true")
+        _setup_config(monkeypatch, tmp_path, "tjhm", {"month_1": 0, "month_2": 1})
+
+        forecasts_all = pd.DataFrame({"date": pd.to_datetime(["2026-07-01"])})
+        fake_self = types.SimpleNamespace(
+            _=lambda s: s,
+            _cfg=types.SimpleNamespace(
+                viz=types.SimpleNamespace(
+                    create_forecast_summary_tabulator=lambda *a, **k: None
+                )
+            ),
+            _wm=types.SimpleNamespace(
+                horizon_selector=types.SimpleNamespace(value="month"),
+                station_selector=MagicMock(),
+                date_picker=MagicMock(),
+                model_checkbox=MagicMock(),
+                range_selector=MagicMock(),
+                range_slider=MagicMock(),
+                forecast_tabulator=MagicMock(),
+                forecast_info_m1=types.SimpleNamespace(object=""),
+            ),
+            _dm=types.SimpleNamespace(forecasts_all=forecasts_all),
+        )
+
+        from dashboard import plot_manager as pm_mod
+
+        pm_mod.PlotManager.update_forecast_tabulator(fake_self)
+
+        caption = fake_self._wm.forecast_info_m1.object
+        assert caption.startswith("Monthly runoff forecast for July"), (
+            "tjhm month_1 resolves to lead 0 (real config, no stubs) -- "
+            f"caption must name the issue month (July) itself; got {caption!r}"
+        )

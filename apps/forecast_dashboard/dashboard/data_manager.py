@@ -365,7 +365,7 @@ class DataManager(param.Parameterized):
         # lead-1 → January). The target month (forecast_horizon = month_in_year)
         # is authoritative; roll the year when it precedes the issue month.
         forecast_year = last_date.year
-        if skill_lead_aware_enabled() and horizon == "month":
+        if horizon == "month" and skill_lead_aware_enabled():
             forecast_year = (
                 max_date.year + 1 if forecast_horizon < max_date.month else max_date.year
             )
