@@ -1,0 +1,91 @@
+# Investigator-LLM Prompt — Should quarter & season skill metrics be grouped by forecast issue date?
+
+Copy everything below the line into an investigator LLM with access to the
+SAPPHIRE_forecast_tools repo and the postprocessing DB (local dev is fine).
+Read-only screening. Cite `path:line`. Report aggregate counts only — never raw
+station codes or discharge values.
+
+---
+
+You are auditing how **quarterly** and **seasonal** forecast skill metrics are
+grouped in SAPPHIRE. The hypothesis to test: like monthly forecasts, quarter and
+season forecasts are issued **multiple times per target period at different
+leads / issue dates** (a distinct forecast product per issuance), so their skill
+metrics must be grouped by **forecast issue date (or lead / `horizon_value`)**.
+If the current computation pools all issuances of a target quarter/season into
+one skill number, it conflates different-lead products and the headline skill is
+not interpretable. Confirm or refute this, and recommend the concrete grouping
+change.
+
+## Established context (take as given — do not re-derive)
+
+- `horizon_value` = **lead** (months ahead from issue date to target period
+  start); per `apps/long_term_forecasting/config_forecast.py:227` and the per-mode
+  configs. Long-term modes run at multiple leads: the local daily pipeline logged
+  "active modes: month_1 month_2 month_3 quarter", i.e. quarter/season targets
+  are forecast from several issue dates.
+- The **monthly** skill computation already has this latent pooling problem:
+  `apps/postprocessing_forecasts/src/skill_metrics.py` groups point metrics by
+  `["month_in_year", "code", "model_short"]` (`:1194`, `:1208`, `:1235`) — the
+  merged frame carries `valid_from`/`valid_to`/`date`/`flag`/`horizon_value`
+  (`:1086`) but **none of these is in the group key**. Filed as a coordination
+  item: `doc/plans/issues/high_prio_gi_draft_pp_skill_lead_pooling.md`.
+- The new evaluator `apps/forecast_skill_eval` already stratifies long-term skill
+  by lead (its month/quarter/season contingency rows are per-`lead`). Use it as
+  the contrast/reference for the intended behavior.
+- `apps/postprocessing_forecasts/` and `sapphire/services/` are colleague-managed
+  — this is read-only; propose changes, do not implement.
+
+## Questions to answer (each with `path:line` evidence)
+
+1. **Where are quarter and season skill metrics computed and grouped?** Find the
+   quarterly/seasonal skill functions invoked by
+   `apps/postprocessing_forecasts/recalculate_skill_metrics.py` (QUARTERLY /
+   SEASONAL modes) and the aggregation in `src/aggregation.py`
+   (`aggregate_monthly_obs_to_quarterly` `:96`, `aggregate_monthly_obs_to_seasonal`
+   `:148`) and `src/skill_metrics.py`. State the exact groupby keys used to
+   produce each quarter/season skill row.
+2. **Is forecast issue date / lead in the grouping key?** Do the quarter/season
+   skill rows key on `[quarter_in_year, code, model_short]` /
+   `[season_in_year, code, model_short]` only (analogous to monthly), or do they
+   include `horizon_value`/`date`/issue-date? Quote it.
+3. **Do quarter/season forecasts actually have multiple issuances per target
+   period?** From the DB `long_forecasts` (`horizon_type` in {quarter, season}),
+   tabulate, per target period, the number of distinct issue dates / `horizon_value`
+   values per `(code, model_type, target period)`. Report counts (no codes). If
+   >1, pooling is real and conflates leads.
+4. **What is the consequence of the current grouping?** If issue date/lead is
+   absent from the key, quantify: how many quarter/season skill rows pool ≥2
+   distinct leads, and what is the implied inflation of `n_pairs` / distortion of
+   the metric. Relate to the just-run recalc (quarter median `n_pairs`≈17, season
+   median≈3) — would per-lead grouping change those?
+5. **Aggregation order.** Quarter/season are aggregated from monthly. Determine
+   WHEN issue date would need to be preserved: is monthly aggregated to
+   quarter/season **before** or **after** the forecast↔obs pairing, and does the
+   aggregation (`aggregation.py`) drop `horizon_value`/`date` so that a later
+   per-lead grouping becomes impossible? If the lead is lost during aggregation,
+   the fix must preserve it upstream.
+6. **Recommendation.** Should quarter and season skill be grouped by issue
+   date/lead? If yes, give the concrete minimal change: which groupby key(s) to
+   extend (e.g. add `horizon_value`), where in the aggregation pipeline the lead
+   must be carried through, and whether the API/DB skill-metric schema already
+   has a column to hold the lead dimension (check
+   `sapphire/services/postprocessing/app/models.py` / `schemas.py` for a
+   `horizon_value`-like field on the skill-metric model). Flag any API-contract
+   change needed (these are colleague-owned).
+
+## Output
+
+- A table: horizon (monthly / quarter / season) → current skill groupby key →
+  includes issue-date/lead? (yes/no) → `path:line`.
+- The per-target-period issuance counts from question 3 (aggregates only).
+- A verdict per horizon: pooling problem present (yes/no) and severity.
+- A concrete, minimal recommended grouping change for quarter and season,
+  consistent with the monthly fix, distinguishing apps-side vs colleague-owned
+  service/API changes.
+- Any check you could not perform (e.g. needs a DB query you lack access to) —
+  state it as an open risk; do not guess.
+
+Constraints: read-only; cite `path:line` and config/DB column names you verify;
+report counts not codes; if the lead is genuinely lost before pairing, say so
+plainly rather than assuming it can be grouped late.
