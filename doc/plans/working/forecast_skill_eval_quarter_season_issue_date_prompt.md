@@ -37,11 +37,32 @@ change.
 > issue date / lead" — no; we publish one lead). It stands only for **month**, which is already
 > tracked as FD-018 / the lead-aware work.
 >
-> **STILL OPEN — season.** The owner statement covered month and quarter only. `season` currently
-> RETAINS genuine leads 0–3 (`pairs.py:292-307`). Whether that is right depends on the same
-> question: **does the seasonal bulletin publish one issuance (lowest lead) or several?** If one,
-> season should collapse like quarter and the current per-lead retention is wrong. **Ask the owner
-> before touching season.** That is the only live question left in this file.
+> **SEASON — RESOLVED 2026-07-14: keep current behavior, no code change.** Season *can* in principle
+> be published at several leads, but hydromets always pick the shortest. Verified against the code:
+>
+> - **Dashboard (what hydromets see): already single-lead = the shortest.**
+>   `_default_seasonal_issue_month()` picks the LATEST supported seasonal issue month ≤ the current
+>   month (`apps/forecast_dashboard/src/db.py:97-104`), and the latest issue month is the one closest
+>   to the season — i.e. the shortest lead. `_resolve_seasonal_horizon_value` then resolves that
+>   mode's configured `operational_month_lead_time`
+>   (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:73-81`). Quarter behaves the same way via
+>   `quarter_horizon_value()`. So the display already shows only the shortest lead.
+> - **Evaluator: season RETAINS leads 0–3** (`pairs.py:292-307`), unlike quarter (which collapses to
+>   the smallest lead present). **Owner decision: leave it.** The retained per-lead rows are richer,
+>   not wrong — but see the caveat below.
+>
+> **Caveat for whoever writes the seasonal headline number:** because the evaluator keeps every lead
+> while only the **shortest** lead is ever published, a headline that pools or averages the retained
+> season leads would report skill for products nobody uses. **Select the shortest lead for any
+> published/headline season figure**, matching what the bulletin shows. (Quarter needs no such care —
+> the evaluator already collapses it.)
+>
+> **⚠️ Separately noted (NOT decided — see "no availability fallback" below):** "available" in the
+> owner rule ("lead 0 if available, else lead 1") is implemented as **configured**, not **present in
+> the data**. There is no runtime fallback anywhere in `long_term_horizon_resolver.py`: if the
+> configured shortest-lead rows are missing, the dashboard returns an **empty frame** rather than
+> falling back to the next-longest lead. If the intent is data-availability fallback, that is
+> **unimplemented** and needs its own issue.
 >
 > ## ⚠️ CORRECTIONS 2026-07-14 — do NOT hand this prompt to an investigator unchanged
 >
