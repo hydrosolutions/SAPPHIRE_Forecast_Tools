@@ -202,6 +202,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-037** | Maintenance `model_short` KeyError on empty DECAD individual-model read (neural ensemble called before empty guard) | Crash fix **High** / P2–P3 **Low** | Phase 1 Complete; P2/P3 deferred | [`review_gi_draft_pp_maintenance_model_short_keyerror.md`](issues/review_gi_draft_pp_maintenance_model_short_keyerror.md) | Phase 1 (ensemble + maintenance + operational empty guards) shipped — crash resolved. Phase 2 (reader contract) and Phase 3 (stale-EM lookback scoping) deferred **low-prio**: defensive hardening / efficiency + an operational coverage decision, not crash fixes. |
 | **PP-038** | Month long-term skill metrics: stratify by forecast lead (`horizon_value` schema change) | **High** | Draft | [`high_prio_gi_draft_pp_month_skill_lead.md`](issues/high_prio_gi_draft_pp_month_skill_lead.md) | Service owner coordination (`sapphire/services/postprocessing`) |
 | **PP-039** | Bulletin Share API — `bulletin_share` table + `POST /bulletin/share` + public `GET /public/bulletin/{token}` + public gateway route | **Medium** | Review | [`mid_prio_gi_draft_pp_bulletin_share_api.md`](issues/mid_prio_gi_draft_pp_bulletin_share_api.md) | Impl on branch `develop_fd_publish_bulletin`; 123 pp + 20 gw tests pass; real-Postgres upgrade not yet run |
+| **PP-040** | `Bulletin` schema has no per-site target period — reload heuristic in the dashboard is a best-effort guess, not a fix | **Medium** | Draft | [`mid_prio_gi_draft_pp_bulletin_target_period_field.md`](issues/mid_prio_gi_draft_pp_bulletin_target_period_field.md) | Service owner coordination (`sapphire/services/postprocessing`) — needs a discussion + Alembic migration before any code, per `CLAUDE.md` ownership boundary. Found during FD-018 review. |
 
 ### Forecast Dashboard (`fd`)
 
@@ -223,6 +224,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ~~**FD-015**~~ | ~~Quarter/season skill metrics not rendered in summary table (data layer returns empty `forecast_stats`); reservoir quarterly card on month tab also affected~~ | | Complete | [`archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md`](issues/archive/high_prio_gi_draft_dashboard_long_horizon_skill_summary.md) | Red-phase verified 2026-05-31 across P1-P4; tajik-deployment visible-impact target |
 | **FD-016** | Month/season bulletin: label an absent monthly norm as "N/A — monthly norm unavailable" (never 0/blank/dash) | **Medium** | Draft | [`mid_prio_gi_draft_fd_month_norm_na_labeling.md`](issues/mid_prio_gi_draft_fd_month_norm_na_labeling.md) | Split from PREPQ-009 (fix #5/P-FD). Depends on PREPQ-009 (norm-less rows now exist in base). Presentation-only; norms fill in once PREPQ-010 lands. |
 | **FD-017** | Publish bulletin — multi-horizon/multi-station UI to generate shareable JSON snapshot links (frozen, expire at next period) | **Medium** | Review | [`mid_prio_gi_draft_fd_publish_bulletin.md`](issues/mid_prio_gi_draft_fd_publish_bulletin.md) | PP-039 contract done; impl on branch `develop_fd_publish_bulletin`; 499 tests pass; live Panel UI + end-to-end not yet run |
+| **FD-019** | Bulletin cannot hold both the m0 and main-panel forecast for the same station — one row per station per bulletin, enforced in-memory and at the DB unique key | **Low** | Draft | [`low_prio_gi_draft_fd_bulletin_same_station_both_cards.md`](issues/low_prio_gi_draft_fd_bulletin_same_station_both_cards.md) | Product question for hydrologists (not asserted as a bug); any fix depends on PP-040. Found during FD-018 review; locked by `test_same_station_both_cards_collides_at_the_api_not_just_in_memory`. |
 
 ### iEasyHydro HF Migration
 
@@ -380,7 +382,13 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-06-19 — Added ML-016 (standalone run_locally.sh machine_learning crashes on empty SAPPHIRE_PREDICTION_MODE) + ML-017 (single missing ERA5 day → NaN cascade across all short-term ML; prepg interior-gap + ML covariate guard; found in local review tjhm+kghm). Earlier: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*
+*Last updated: 2026-07-14 — Added PP-040 (`Bulletin` schema has no per-site target period;
+reload heuristic is a guess) and FD-019 (bulletin cannot hold both m0 and main-panel forecast
+for the same station; product question), both found during FD-018 review on branch
+`fix_fd_m0_bulletin_target_month`. Note: FD-018 itself (m0 bulletin per-site target month) is
+implemented on this branch but not yet filed as its own row here — the label is already used
+in this branch's commit history; file it separately when this branch is reviewed/merged.
+Earlier: 2026-06-19 — Added ML-016 (standalone run_locally.sh machine_learning crashes on empty SAPPHIRE_PREDICTION_MODE) + ML-017 (single missing ERA5 day → NaN cascade across all short-term ML; prepg interior-gap + ML covariate guard; found in local review tjhm+kghm). Earlier: 2026-06-16 — Added PP-037 (maintenance `model_short` KeyError on empty DECAD read, Ready — plan through two review cycles; Phase 1 is the minimum-safe production fix). 2026-04-16 — SEC-006 Draft→Review (PR #330); P-005/P-006 Complete; LTF-005 Draft→Review; added P-004, FD-014, PP-028b.*
 
 ### Issue iEHF-SKILL-EVAL: forecast_skill_eval Phase-2 + Phase-3 — **Complete (PR #397, merged 2026-07-01)**
 **Status**: Complete
