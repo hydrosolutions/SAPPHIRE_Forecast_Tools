@@ -2,7 +2,23 @@
 
 **Created:** 2026-07-02
 **Owner branch (proposed):** `develop_forecast_skill_eval_below_norm` (off `maxat_sapphire_2`)
-**Status:** planned — not started. Gated on user go + local DB availability.
+**Status:** ~~planned — not started~~ → **IMPLEMENTED (code). Awaiting review only.**
+
+> **⚠️ Phase 1 has SHIPPED — DO NOT RE-IMPLEMENT.**
+> Verified against `origin/maxat_sapphire_2` on 2026-07-14 (out-of-loop Codex review). The opt-in
+> `below_norm_100` event is defined at
+> `apps/forecast_skill_eval/src/forecast_skill_eval/events.py:56-59` and `:116-118`, reclassified at
+> `:307-357`, and wired into baselines/prob/value at
+> `apps/forecast_skill_eval/src/forecast_skill_eval/orchestrator.py:167-198`, `:210-220`. Additivity
+> is pinned by tests at `apps/forecast_skill_eval/tests/test_orchestrator.py:266-305` and `:674-725`.
+>
+> **The artifact target below is stale.** The plan writes to
+> `artifacts/rerun_2026-07-02_both_thresholds/`, but
+> `doc/plans/working/forecast_skill_eval_report_draft.md:7-12` says that run is **superseded**, and
+> that draft already documents both thresholds (`:57-72`). Do not rerun or report from the July-2
+> path unless you are deliberately recreating old artifacts.
+>
+> **What may remain is the run + report refresh, not the code.** Read the rest as history.
 
 ## Motivation
 

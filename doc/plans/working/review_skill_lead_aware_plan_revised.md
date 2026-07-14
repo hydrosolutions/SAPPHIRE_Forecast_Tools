@@ -1,5 +1,21 @@
 # Revised plan — lead-aware long-term skill metrics (post adversarial review)
 
+> **⚠️ IMPLEMENTED — DO NOT RE-IMPLEMENT. Awaiting review only.**
+> Verified against `origin/maxat_sapphire_2` on 2026-07-14 (out-of-loop Codex review): the work
+> this plan describes has **shipped**.
+> - The plan says "no service edits" (below), but the **service already changed**:
+>   `SkillMetric.horizon_value` (`sapphire/services/postprocessing/app/models.py:213-220`), the
+>   unique key including it (`:241-249`), schemas (`schemas.py:162-168`), CRUD (`crud.py:279-323`),
+>   and the Alembic migration (`alembic/versions/a1b2c3d4e5f6_add_horizon_value_to_skill_metrics.py`).
+> - P3/P5 grouping/writer work is **done**: flag helper
+>   `apps/iEasyHydroForecast/skill_lead_aware_flag.py:29-60`; writer normalization/dedup/write
+>   carries `horizon_value` at `apps/postprocessing_forecasts/src/api_writer.py:594-700`.
+>
+> **What remains is rollout, not code:** `SAPPHIRE_SKILL_LEAD_AWARE` **defaults to OFF**
+> (`skill_lead_aware_flag.py`), so no deployment gets lead-aware skill until it opts in *and* runs a
+> full recalc. Enabling it is a per-deployment decision — and the migration/deploy status of the
+> service schema needs coordination with the service owner. Read the rest of this file as history.
+
 Implements issue `doc/plans/issues/high_prio_gi_draft_pp_skill_lead_pooling.md`.
 Revised after a 5-lens adversarial review (verdict: **REVISE** — proceed only after
 the changes below). All blockers were verified against code. Workflow run

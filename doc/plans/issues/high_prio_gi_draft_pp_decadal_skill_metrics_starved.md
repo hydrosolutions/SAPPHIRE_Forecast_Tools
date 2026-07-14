@@ -1,8 +1,44 @@
 # High priority: DECADE skill metrics under-paired (n_pairs starved) despite full forecast history
 
 **Status:** Draft — observed during the Tajik (tjhm) historical backfill on
-2026-06-17. Captured for later investigation and refinement; root cause not yet
-confirmed.
+2026-06-17. ~~Root cause not yet confirmed.~~ **Root cause identified 2026-07-14** (out-of-loop
+Codex review) — see below.
+
+> ## Root cause (identified 2026-07-14; verify with the regression test before fixing)
+>
+> **Skill pairing joins forecasts to observations on the raw `["code", "date"]` tuple**
+> (`apps/postprocessing_forecasts/src/skill_metrics.py:2030`):
+>
+> ```python
+> skill_metrics_df = pd.merge(
+>     simulated, observed[["code", "date", "discharge_avg", "delta"]], on=["code", "date"]
+> )
+> ```
+>
+> But a forecast's `date` is its **ISSUE date**, while the observation it should be scored against
+> sits on the **TARGET period** (`Forecast.date` vs `target` /`date + 1`;
+> `sapphire/services/postprocessing/app/models.py:78`, `apps/postprocessing_forecasts/src/api_writer.py:345`).
+> A pair therefore only survives where issue date and observation date happen to **coincide** —
+> which is why `n_pairs` collapses toward 1 instead of erroring.
+>
+> **This reframes the issue — it is NOT a DECADE-specific algorithm.** PENTAD and DECADE run the
+> same recalc path and the same `calculate_skill_metrics` merge
+> (`recalculate_skill_metrics.py:71`, `:216`); only config columns/functions differ. It is an
+> **issue-date vs target-date pairing defect** that starves DECADE hardest given the shape of the
+> decade archive. Do not "fix decade" — fix the pairing.
+>
+> **Fix direction:** pair on an explicit target/verification date, while **preserving
+> `Forecast.date` as the issue date** (that is the stored contract — changing its meaning is a
+> service/API semantics change and must be escalated to the service owner, since
+> `sapphire/services/` is colleague-managed).
+>
+> **Why existing tests missed it (important):** the ML integration tests construct observations on
+> the *same* boundary/issue dates as the forecasts, so a raw `code+date` merge pairs perfectly and
+> the production contract is never exercised
+> (`tests/test_ml_horizon_archive_split.py:396`, `tests/test_integration_postprocessing.py:3775`).
+> **Any regression test must issue-date the forecasts and place observed runoff on the period
+> start** — otherwise it passes against the broken code and proves nothing. Add the regression for
+> **PENTAD and DECADE**.
 
 ## Problem
 

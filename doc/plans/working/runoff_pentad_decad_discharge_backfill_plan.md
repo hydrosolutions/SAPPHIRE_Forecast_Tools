@@ -1,6 +1,37 @@
 # Plan — Backfill pentad/decad `runoffs.discharge` (LR maintenance refresh)
 
-**Status:** GO-WITH-CHANGES (planner → reviewer → orchestrator-amended). Awaiting owner sign-off before execution.
+> ## ⛔ BLOCKED — do not execute this backfill yet (2026-07-14, out-of-loop review)
+>
+> **1. BLOCKER — [PREPQ-011](../issues/high_prio_gi_draft_runoff_read_merge_pagination_clobber.md):
+> the read-merge-write this plan relies on is broken past row 100.** The whole safety argument below
+> is "read-merge-write means we never clobber a non-null `discharge`/`predictor` with NULL". In
+> shipped code that read is **unpaginated** (`forecast_library.py:3761`) while client and service
+> both default to `limit=100` — so every existing row past the 100th reads as *absent*, the outgoing
+> `None` is written, and the service's full-column upsert (`crud.py:33-36`) overwrites the stored
+> value with `NULL`. Worse, the service orders by `(code, date)` (`crud.py:80`), so the 100 rows that
+> *are* protected are the **oldest**. Over a multi-year archive that leaves **~91% of rows exposed**
+> — i.e. running this plan today would cause exactly the data loss it was written to prevent.
+> **Fix PREPQ-011 first.**
+>
+> **2. Phase A is ALREADY IMPLEMENTED — do not re-implement.** The early-`sys.exit(0)` root cause
+> described below is fixed on `origin/maxat_sapphire_2`: `hindcast_caught_up` is set at
+> `apps/linear_regression/linear_regression.py:718-724`, pentad/decad runoff is written at
+> `:765-801`, and the exit happens after at `:809-811`. Tests pin it
+> (`apps/linear_regression/test/test_integration_main.py:396-425`, and no-LR-forecast-writes at
+> `:430-454`). Keep Phase A only as verification/runbook notes.
+>
+> **3. The one-shot `initial` commands below are WRONG as written.** They prefix
+> `SAPPHIRE_SYNC_MODE=initial` onto `maintenance:linear_regression`, but that target **injects
+> `SAPPHIRE_SYNC_MODE=maintenance`** itself (`apps/run_locally.sh:765-772`; `run_in_venv` appends
+> env at `:440-447`), so the prefix does not win and you silently get a maintenance-mode run. A
+> dedicated initial-safe command/target is needed before any full backfill.
+>
+> **4. The merge is not atomic.** App-side read-then-write against a full-column service upsert has
+> no lock. Enforce a single-writer maintenance window, or escalate a service-side
+> partial-update/COALESCE design to the service owner (`sapphire/services/` is colleague-managed).
+> That would also remove the whole clobber class — see PREPQ-011's "Related".
+
+**Status:** ~~GO-WITH-CHANGES~~ → **BLOCKED on PREPQ-011** (planner → reviewer → orchestrator-amended). Awaiting owner sign-off before execution.
 **Target branch:** `develop_forecast_skill_eval` (the current working tree; also contains the `forecast_skill_eval` consumers this affects). All line numbers in this plan were confirmed against this branch.
 **Owner protocol:** Orchestrator delegates all code to Sonnet 4.6 agents; reviews every diff. No edits under `sapphire/services/`.
 

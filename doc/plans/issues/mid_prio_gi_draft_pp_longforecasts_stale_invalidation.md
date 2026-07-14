@@ -7,11 +7,23 @@
 forecast-side analogue (plan phase **P1b**), consciously deferred 2026-07-08 with owner
 sign-off to land the high-impact P2+P1 fixes first.
 
+> **Correction 2026-07-14 (out-of-loop review) — the natural key below was WRONG.**
+> This draft originally gave the `long_forecasts` unique key as
+> `(horizon_type, code, model_type, date, target)`. **`long_forecasts` has no `target` column.**
+> The real unique key is
+> **`(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`**
+> (`sapphire/services/postprocessing/app/models.py:159`; CRUD `crud.py:107`) — it is corrected
+> inline below. **Any stale-diff keyed on the old tuple would not match a single row.** Note the key
+> carries `horizon_value` (the lead) and the validity interval, so the diff must be computed per
+> lead and per `valid_from`/`valid_to`, not per "target".
+
 ## Problem
 `long_forecasts` ensemble rows (EM / Skilled Mean / Naive Mean) are written upsert-only
 (`api_writer.py` `write_long_forecasts` → service CRUD `crud.py:105-152`, unique key
-`(horizon_type, code, model_type, date, target)`, `models.py:147-156`). When
-`ensemble_calculator` discards a single-model/empty ensemble at a given `(code, date, target)`
+`(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`,
+`models.py:159`). When
+`ensemble_calculator` discards a single-model/empty ensemble at a given
+`(code, date, horizon_value, valid_from, valid_to)`
 (`ensemble_calculator.py:183-195` monthly; aggregated analogue), the prior run's ensemble
 **forecast** row survives — a stale forecast value that the dashboard/bulletins still display,
 even though the skill-side is now correctly tombstoned.

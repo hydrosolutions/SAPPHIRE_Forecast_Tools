@@ -17,11 +17,32 @@ one skill number, it conflates different-lead products and the headline skill is
 not interpretable. Confirm or refute this, and recommend the concrete grouping
 change.
 
+> ## ⚠️ CORRECTIONS 2026-07-14 — do NOT hand this prompt to an investigator unchanged
+>
+> An out-of-loop review found the "take as given" block below contains **false premises**. That is
+> the most damaging place for an error, because the investigator is explicitly told not to
+> re-derive it. Fix these before reuse:
+>
+> - **`horizon_value` is NOT the lead for quarter/season.** The evaluator states the stored
+>   `horizon_value` is not a lead for these horizons and derives the lead instead
+>   (`apps/forecast_skill_eval/src/forecast_skill_eval/pairs.py:30-35`;
+>   `config.py:92-100`). The bullet below asserting `horizon_value` = lead is wrong for exactly the
+>   two horizons this prompt is about.
+> - **The evaluator does NOT uniformly "already stratify by lead".** The semantics are *split*:
+>   **quarter** dedups to the smallest-lead issuance and reports by target quarter, while **season**
+>   keeps genuine leads (`pairs.py:292-307`; tests `test_pairs.py:1320-1366`, `:1368-1403`,
+>   `:1449-1520`). So it cannot be used as a clean "reference for intended behavior".
+>
+> **This makes the prompt's core question an OWNER DECISION, not an investigation:** should quarter
+> keep the *smallest-lead headline* (one interpretable number per target quarter) or expose
+> *per-genuine-lead* detail like season? Decide that first — an investigator cannot derive it from
+> the code, and the current split may well be deliberate.
+
 ## Established context (take as given — do not re-derive)
 
-- `horizon_value` = **lead** (months ahead from issue date to target period
-  start); per `apps/long_term_forecasting/config_forecast.py:227` and the per-mode
-  configs. Long-term modes run at multiple leads: the local daily pipeline logged
+- ~~`horizon_value` = **lead**~~ — **FALSE for quarter/season; see corrections above.** For
+  month, `horizon_value` carries the lead; for quarter/season the stored value is not a lead and the
+  evaluator derives one. Long-term modes do run at multiple leads: the local daily pipeline logged
   "active modes: month_1 month_2 month_3 quarter", i.e. quarter/season targets
   are forecast from several issue dates.
 - The **monthly** skill computation already has this latent pooling problem:
@@ -30,9 +51,13 @@ change.
   merged frame carries `valid_from`/`valid_to`/`date`/`flag`/`horizon_value`
   (`:1086`) but **none of these is in the group key**. Filed as a coordination
   item: `doc/plans/issues/high_prio_gi_draft_pp_skill_lead_pooling.md`.
-- The new evaluator `apps/forecast_skill_eval` already stratifies long-term skill
+- ~~The new evaluator `apps/forecast_skill_eval` already stratifies long-term skill
   by lead (its month/quarter/season contingency rows are per-`lead`). Use it as
-  the contrast/reference for the intended behavior.
+  the contrast/reference for the intended behavior.~~ — **FALSE as stated; see corrections above.**
+  The evaluator's long-term semantics are split: **quarter** dedups to the smallest-lead issuance
+  (reported by target quarter), **season** keeps genuine leads (`pairs.py:292-307`). It is therefore
+  *not* a clean reference for "intended behavior" — which of those two is intended is precisely the
+  open question.
 - `apps/postprocessing_forecasts/` and `sapphire/services/` are colleague-managed
   — this is read-only; propose changes, do not implement.
 

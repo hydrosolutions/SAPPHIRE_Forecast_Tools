@@ -1,9 +1,27 @@
-# PP skill: ensemble-exclusion form inconsistency (latent, defensive fix)
+# PP skill: ensemble-exclusion form inconsistency (monthly latent; quarter/season EXPOSED)
 
-**Priority:** mid (latent — not currently manifesting; see "Operational evidence").
+**Priority:** mid.
 **Module:** `apps/postprocessing_forecasts` (fair game).
 **Found:** 2026-07-07, during LT Skilled-Mean NSE>0 validation (branch
 `feature_lt_skilled_mean_nse_threshold`). Line numbers from that branch's tree.
+
+> **Correction 2026-07-14 (out-of-loop review) — "latent" is only true for MONTHLY.**
+> The original framing ("latent — not currently manifesting") is right for the monthly path and
+> **wrong for quarter/season**:
+> - **Monthly is protected.** There is an upstream *canonical* exclusion that catches aggregate
+>   names in BOTH display-form and DB-form (`skill_metrics.py:1356`, helper
+>   `apps/postprocessing_forecasts/src/model_names.py:7`). For monthly this is defensive cleanup only.
+> - **Quarter/season are NOT.** They use the display-form `_AGGREGATED_BASELINES`
+>   (`skill_metrics.py:1235`) and display-form exclusions downstream (`:2477`, `:2674`, `:2777`), so
+>   DB-form `ENSEMBLE_MEAN` / `NAIVE_MEAN` / `SKILLED_MEAN` values **pass straight through the
+>   filter** if they reach the function — the prior run's aggregates re-enter the aggregate pool and
+>   an ensemble gets computed over ensembles.
+>
+> **Fix accordingly:** apply the canonical exclusion at the top of
+> `_calculate_aggregated_skill_metrics` and use the canonical helper in the downstream filters —
+> do not just harden monthly. **Tests:** existing coverage only injects *display-form* stale rows
+> (`tests/test_quarterly_skill_metrics.py:380`); add **DB-form** injected rows for quarter AND
+> season, which is the case that currently slips through.
 
 ## Summary
 

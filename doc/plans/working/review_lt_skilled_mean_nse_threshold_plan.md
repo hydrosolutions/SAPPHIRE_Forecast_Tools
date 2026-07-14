@@ -1,5 +1,18 @@
 # Plan v3 — Long-term Skilled Mean: relax skill gate to "NSE > 0 only"
 
+> **⚠️ IMPLEMENTED — DO NOT RE-IMPLEMENT. Awaiting review only.**
+> Verified against `origin/maxat_sapphire_2` on 2026-07-14 (out-of-loop Codex review). Shipped via
+> PR #405. The long-term overrides and env parsing are at
+> `apps/postprocessing_forecasts/src/skill_metrics.py:107-196`; the long-term Skilled Mean call
+> sites use them at `skill_metrics.py:2772-2775` and
+> `apps/postprocessing_forecasts/src/ensemble_calculator.py:303-308`, `:668-676`.
+>
+> **One correction to the text below:** it documents the long-term default as `nse=0.0`. The
+> shipped default is **`1e-9`**, because the shared filter is inclusive (`>=`) — see
+> `skill_metrics.py:116-119` and `:1919-1922`. A literal `0.0` would have admitted models with
+> exactly NSE == 0. The effective gate is "**NSE > 0** via epsilon", not threshold `0.0`.
+> Short-term stays at 0.8. Read the rest of this file as history.
+
 **Status:** v3. v1 review = NO-GO (4 conceptual blockers, all fixed in v2); v2 review =
 **GO-WITH-CHANGES** (4 refinements — shared env parser, both-sides lead-value fallback, explicit
 single-model=discard, EM forecast-output regression — all folded in below). Ready to implement.
