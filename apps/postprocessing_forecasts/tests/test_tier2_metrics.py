@@ -175,6 +175,38 @@ class TestFdcFlv:
         assert fdc_flv(obs, sim_over) > 0
         assert fdc_flv(obs, sim_under) < 0
 
+    def test_sign_flips_when_low_flows_are_below_1(self):
+        """PP #14-review defect: the docstring claimed "sim > obs -> positive"
+        unconditionally, but fdc_flv() divides by sum(log(obs_low)) without
+        constraining its sign. For valid, positive low flows below 1.0,
+        log(obs_low) < 0, so sum_log_obs < 0 and the sign in the previous
+        test (obs on [1, 50], denominator > 0) INVERTS here even though the
+        model bias direction (sim = 1.5x obs, still an overestimate) is
+        identical. This is a characterization test, not a bug-fix test —
+        the arithmetic is intentionally unchanged (do not "correct" the
+        sign here without a coordinated migration of stored flv values,
+        same reasoning as the docstring's NOTE ON PROVENANCE). It exists so
+        the sign's dependence on the MAGNITUDE/UNITS of the observations
+        (not just the model's bias direction) is pinned and cannot regress
+        silently -- e.g. a well-intentioned "fix" that normalizes the sign
+        by dividing by abs(sum_log_obs) instead of sum_log_obs would flip
+        both assertions below and must fail loudly.
+
+        Mutation that would escape a test using only obs > 1 (the
+        pre-existing test_sign_convention_matches_docstring): changing the
+        denominator from `sum_log_obs` to `abs(sum_log_obs)`. On obs > 1,
+        sum_log_obs is already positive, so abs() is a no-op there and
+        that test still passes -- only an obs < 1 fixture (this test)
+        exercises the negative-denominator branch and catches the flip.
+        """
+        obs = np.linspace(0.01, 0.5, 60)  # all low flows < 1.0 -> log negative
+        sim_over = obs * 1.5  # same relative overestimate as the obs>1 case
+        sim_under = obs * 0.5
+        # Sign is INVERTED relative to test_sign_convention_matches_docstring
+        # even though sim_over/sim_under encode the identical bias direction.
+        assert fdc_flv(obs, sim_over) < 0
+        assert fdc_flv(obs, sim_under) > 0
+
 
 # ===================================================================
 # TestEstimateReturnPeriodThresholds

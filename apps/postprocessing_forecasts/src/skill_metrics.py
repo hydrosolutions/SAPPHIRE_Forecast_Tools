@@ -633,8 +633,30 @@ def fdc_flv(obs: np.ndarray, sim: np.ndarray) -> float:
     log-transformed flow duration curve: 100 * (sum(log(sim_low)) -
     sum(log(obs_low))) / sum(log(obs_low)).
 
-    Positive = simulated low flows exceed observed (log-magnitude sense);
-    negative = simulated low flows are below observed.
+    SIGN IS CONDITIONAL ON THE SIGN OF THE DENOMINATOR (sum(log(obs_low))),
+    NOT ONLY ON THE MODEL'S BIAS DIRECTION — it is NOT simply "positive =
+    sim exceeds obs". The denominator's sign flips with the MAGNITUDE/
+    UNITS of the observations:
+      - If every obs_low > 1.0 (log(obs_low) > 0, denominator positive):
+        "simulated low flows exceed observed" -> POSITIVE FLV, since the
+        numerator (sum(log(sim_low)) - sum(log(obs_low))) is positive
+        too. This is the case exercised by
+        test_sign_convention_matches_docstring (obs on [1, 50]).
+      - If obs_low values are BELOW 1.0 (log(obs_low) < 0, denominator
+        negative), the identical relative overestimate (e.g. sim = 1.5 *
+        obs) produces a NEGATIVE FLV instead — the numerator is still
+        positive (sim still exceeds obs), but dividing by a negative
+        denominator inverts the reported sign. Pinned by
+        test_sign_flips_when_low_flows_are_below_1 in
+        tests/test_tier2_metrics.py.
+    Practically: whether "model overestimates low flows" reads as a
+    positive or negative FLV depends on the scale of the observations
+    (m^3/s vs mm/d, a small headwater station vs a large river), not
+    only on the model's bias. This is a metric-design property of this
+    simplified variant (a real limitation for a metric persisted across
+    stations of very different scale), not something to silently
+    "correct" here — see NOTE ON PROVENANCE below on why the arithmetic
+    must not change without a coordinated migration.
 
     NOTE ON PROVENANCE: this is a SIMPLIFIED variant inspired by Yilmaz
     et al. (2008) Eq. 4, not a literal implementation of it. The original
