@@ -3,6 +3,7 @@ import contextlib
 
 import pandas as pd
 import panel as pn
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import db  # _read_data, _save_data, _delete_data live here
 from src.gettext_config import _
 
@@ -87,6 +88,57 @@ def _reshape_long_forecast_for_bulletin(q_df: pd.DataFrame, _) -> pd.DataFrame:
     return out
 
 
+def _resolve_month_target_period(source_df, site):
+    """Resolve a site's own (month, year) monthly target period from its data.
+
+    FD-018: a bulletin site carries no target period of its own unless one is
+    captured here. `valid_from` on the site's OWN forecast frame (the frame
+    the site was actually added from — the main `month_1` panel or the m0
+    card) is the target period, by definition: it is the first day of the
+    month the forecast is FOR. This must never be derived from lead
+    arithmetic or from whichever panel happens to be on screen later.
+
+    Args:
+        source_df: A `get_long_forecasts()`-shaped DataFrame (must carry
+            `station_labels` and `valid_from`) — pass the site's own source
+            frame (`dm.forecasts_all` for the main panel, `dm.long_forecasts_m0`
+            for the m0 card).
+        site: The site being added to the bulletin; matched by
+            `site.station_label`.
+
+    Returns:
+        `(month, year)` tuple, or `None` if the frame is missing/empty, has
+        no rows for this site, or the resolved `valid_from` is NaT/invalid.
+        Callers must treat `None` as "fall back to the bulletin-wide period"
+        — this function never raises.
+    """
+    try:
+        if (
+            source_df is None
+            or source_df.empty
+            or "valid_from" not in source_df.columns
+            or "station_labels" not in source_df.columns
+        ):
+            return None
+        site_rows = source_df[source_df["station_labels"] == site.station_label]
+        if site_rows.empty:
+            return None
+        raw = site_rows["valid_from"].dropna()
+        if raw.empty:
+            return None
+        ts = pd.Timestamp(sorted(raw)[-1])
+        if pd.isna(ts):
+            return None
+        return int(ts.month), int(ts.year)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "_resolve_month_target_period: failed to resolve target period "
+            "for site '%s' — falling back to bulletin-wide period.",
+            getattr(site, "code", "?"), exc_info=True,
+        )
+        return None
+
+
 def _ensure_site_defaults(site) -> None:
     """Set hydrograph/predictor attributes to None if not yet hydrated.
 
@@ -128,17 +180,32 @@ def _site_to_records(horizon_type: str, year: int, horizon_value: int, site) -> 
     return records
 
 
-def _populate_forecast_attributes(site, horizon_type, forecast_year, forecast_horizon):
+def _populate_forecast_attributes(
+    site, horizon_type, forecast_year, forecast_horizon, target_period=None,
+):
     """Populate a site's forecast attributes from its site.forecasts DataFrame.
 
     Runs the hydrograph-stat hydration and get_*_forecast_attributes_for_site
     calls for the given horizon. Extracted from _load_bulletin_from_api so it
     can also be re-invoked at bulletin-write time after in-cell edits.
+
+    Args:
+        target_period: FD-018 — optional `(month, year)` override for the
+            'month' horizon, used instead of `(forecast_horizon, forecast_year)`
+            when a bulletin site has its own resolved target period (e.g. an
+            m0-card site whose target month differs from the main panel's).
+            `None` (the default) preserves the original bulletin-wide
+            behavior exactly — required for existing callers and for the
+            `SAPPHIRE_SKILL_LEAD_AWARE` flag-OFF kill switch.
     """
     _ensure_site_defaults(site)
     if horizon_type == 'month':
-        days_in_month = calendar.monthrange(forecast_year, forecast_horizon)[1]
-        hydrate_month_hydrograph_stats(site, forecast_horizon, db)
+        month_for_calc, year_for_calc = (
+            target_period if target_period is not None
+            else (forecast_horizon, forecast_year)
+        )
+        days_in_month = calendar.monthrange(year_for_calc, month_for_calc)[1]
+        hydrate_month_hydrograph_stats(site, month_for_calc, db)
         site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
         if 'вдхр' in (site.punkt_name_ru or ''):
             q_df = db.get_long_forecasts_quarter(site.code)
@@ -236,7 +303,18 @@ def _load_bulletin_from_api(horizon_type: str, forecast_year: int, forecast_hori
                 for _idx, row in site_df.iterrows()
             ])
             site.forecasts = site.forecasts.where(site.forecasts.notna(), other=float('nan'))
-            _populate_forecast_attributes(site, horizon_type, forecast_year, forecast_horizon)
+            # FD-018: honour the site's OWN target period (captured at
+            # add-time on `site.bulletin_target_period`) instead of always
+            # re-deriving one bulletin-wide period from the caller's args.
+            # Gated on the flag so flag-OFF reload is byte-identical to
+            # trunk. `None` (attribute absent, e.g. a legacy/never-added-
+            # this-session site) falls back to the bulletin-wide value.
+            target_period = None
+            if skill_lead_aware_enabled() and horizon_type == "month":
+                target_period = getattr(site, "bulletin_target_period", None)
+            _populate_forecast_attributes(
+                site, horizon_type, forecast_year, forecast_horizon, target_period,
+            )
             bulletin_sites.append(site)
 
         logger.info("Loaded %d bulletin sites from API", len(bulletin_sites))
@@ -435,6 +513,23 @@ class BulletinManager:
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
+            # FD-018: capture this site's OWN target period (from the main
+            # panel's own forecast data, via valid_from) so a later bulletin
+            # write/reload can honour it instead of re-deriving a single
+            # bulletin-wide period from whatever station happens to be
+            # loaded at that later time. Gated on the flag; a resolution
+            # failure (missing/NaT valid_from) is not fatal — it just leaves
+            # the site without an override, so write/reload fall back to the
+            # bulletin-wide period as before.
+            if skill_lead_aware_enabled():
+                period = _resolve_month_target_period(self.dm.forecasts_all, selected_site)
+                selected_site.bulletin_target_period = period
+                if period is None:
+                    logger.warning(
+                        "_on_add: could not resolve site '%s' own target "
+                        "month from valid_from; write/reload will fall back "
+                        "to the bulletin-wide target month.", selected_site.code,
+                    )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
                 q_df = db.get_long_forecasts_quarter(selected_site.code)
@@ -534,6 +629,20 @@ class BulletinManager:
             selected_site.get_monthly_forecast_attributes_for_site(
                 _, selected_rows, days_in_month,
             )
+            # FD-018: capture this site's OWN target period from the m0
+            # card's own forecast data (dm.long_forecasts_m0), NOT from the
+            # main panel — the m0 target month can and does diverge from the
+            # main panel's target month once the calendar rolls over. See
+            # _on_add for the symmetric main-panel capture.
+            if skill_lead_aware_enabled():
+                period = _resolve_month_target_period(self.dm.long_forecasts_m0, selected_site)
+                selected_site.bulletin_target_period = period
+                if period is None:
+                    logger.warning(
+                        "_on_add_m0: could not resolve site '%s' own target "
+                        "month from valid_from; write/reload will fall back "
+                        "to the bulletin-wide target month.", selected_site.code,
+                    )
             # Populate quarterly attributes for reservoir sites
             if 'вдхр' in (selected_site.punkt_name_ru or ''):
                 q_df = db.get_long_forecasts_quarter(selected_site.code)
@@ -707,7 +816,17 @@ class BulletinManager:
             # site.forecasts so in-cell edits are reflected in the Excel output.
             for site in filtered:
                 try:
-                    _populate_forecast_attributes(site, horizon, forecast_year, forecast_horizon)
+                    # FD-018: honour this site's own captured target period
+                    # (set at add-time) instead of the single bulletin-wide
+                    # period derived above from whichever station/panel is
+                    # currently loaded. Gated on the flag; flag-OFF keeps the
+                    # exact trunk behavior (always the bulletin-wide period).
+                    target_period = None
+                    if skill_lead_aware_enabled() and horizon == "month":
+                        target_period = getattr(site, "bulletin_target_period", None)
+                    _populate_forecast_attributes(
+                        site, horizon, forecast_year, forecast_horizon, target_period,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "_on_write: attribute refresh failed for %s (%s); "
