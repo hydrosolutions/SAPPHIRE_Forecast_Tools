@@ -629,10 +629,27 @@ def fdc_fhv(obs: np.ndarray, sim: np.ndarray) -> float:
 def fdc_flv(obs: np.ndarray, sim: np.ndarray) -> float:
     """FDC Low Volume bias (%). Bottom 30% of log-FDC.
 
-    Measures how well the model reproduces low-flow volume using
-    the log-transformed flow duration curve.
-    Positive = overestimation, negative = underestimation.
-    Yilmaz et al. (2008), Eq. 4.
+    Measures how well the model reproduces low-flow volume using the
+    log-transformed flow duration curve: 100 * (sum(log(sim_low)) -
+    sum(log(obs_low))) / sum(log(obs_low)).
+
+    Positive = simulated low flows exceed observed (log-magnitude sense);
+    negative = simulated low flows are below observed.
+
+    NOTE ON PROVENANCE: this is a SIMPLIFIED variant inspired by Yilmaz
+    et al. (2008) Eq. 4, not a literal implementation of it. The original
+    formula subtracts a per-series minimum-of-segment anchor before
+    summing (and carries a leading -1), which makes it invariant to a
+    uniform multiplicative bias and turns it into a measure of low-flow
+    log-FDC *shape* (baseflow-recession curvature) rather than magnitude.
+    This implementation omits that anchor, so it behaves as a plain
+    log-magnitude bias ratio instead, and its values are NOT directly
+    comparable to FLV values reported by papers/tools using the anchored
+    formula (e.g. the canonical metric is commonly cited with the
+    OPPOSITE headline sign convention: positive = underestimation). The
+    sign here is intentional and should not be "corrected" to match the
+    anchored formula without a deliberate, coordinated migration of
+    historically stored flv values.
 
     Args:
         obs: Observed daily discharge (NaN-free).

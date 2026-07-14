@@ -161,6 +161,20 @@ class TestFdcFlv:
         result = fdc_flv(obs, obs.copy())
         assert result == pytest.approx(0.0)
 
+    def test_sign_convention_matches_docstring(self):
+        """Locks in fdc_flv's actual sign convention: sim > obs (low flows) -> positive.
+
+        Characterization test, not a bug-fix test: the code's math is
+        intentionally unchanged (see the docstring's NOTE ON PROVENANCE).
+        This test exists so a future edit cannot silently flip the sign
+        without a failing test forcing a second look at the rationale.
+        """
+        obs = np.linspace(1.0, 50.0, 60)
+        sim_over = obs * 1.5
+        sim_under = obs * 0.5
+        assert fdc_flv(obs, sim_over) > 0
+        assert fdc_flv(obs, sim_under) < 0
+
 
 # ===================================================================
 # TestEstimateReturnPeriodThresholds
