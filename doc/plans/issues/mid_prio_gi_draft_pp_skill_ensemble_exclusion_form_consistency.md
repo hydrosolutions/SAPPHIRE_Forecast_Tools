@@ -67,20 +67,27 @@ forecasts = forecasts[
 **both** DB-form and display-form. This upstream filter is what actually protects the
 **monthly** path today — the display-form exclusions downstream are redundant.
 
-## Operational evidence (why this is latent, not active)
+## Operational evidence — structurally exposed, not currently manifesting
 
-Verified on the local `postprocessing_db` after a clean recalc from the fixed branch:
+Reconcile with the correction banner above: **monthly is latent (protected); quarter/season are
+structurally exposed** (their filters are display-form only, `:2477/:2674/:2777`, so a DB-form
+`ENSEMBLE_MEAN`/`NAIVE_MEAN`/`SKILLED_MEAN` is NOT excluded there). "Exposed" is a **code-path**
+statement — it does not assert a leak is happening now.
+
+Empirically, no leak currently manifests:
 - **0** aggregate rows (EM/NM/SM) list an ensemble name as a member — checked across
   `MONTH`, `QUARTER`, `SEASON` (`(', '||composition||', ') LIKE '%, ENSEMBLE_MEAN, %'`
-  etc., all forms). No leak manifests anywhere.
-- Monthly path is provably protected by the `:1279-1283` canonical filter.
+  etc., all forms) on the local `postprocessing_db` after a clean recalc.
+- Monthly is provably protected by the `:1279-1283` canonical filter; quarter/season happen not to
+  receive DB-form aggregate rows at the vulnerable filter in the local data, so nothing leaks
+  **today** — but that is an upstream-conditions accident, not a guarantee from the code.
 
-So there is **no current correctness impact**. The risk is a **silent regression**:
-if the upstream canonical filter at `:1279-1283` is ever moved/refactored, or a new
-horizon path is added without it, the downstream display-form exclusions will fail
-silently and reintroduce a non-idempotent feedback loop.
+So the impact is **latent for monthly and a live structural exposure for quarter/season that is not
+currently triggering**. Priority stays **mid**: no observed corruption, but the quarter/season fix
+is a real correctness hardening (not purely cosmetic), and the risk is a **silent regression** if
+upstream conditions change or a new horizon path is added.
 
-## Proposed fix (purely defensive; no behavior change today)
+## Proposed fix (quarter/season = real hardening; monthly = defensive cleanup)
 
 1. Replace the four display-form `excluded = {"EM","Naive Mean","Skilled Mean"}`
    filters (`:1370`, `:1507`, `:1645`, `:2489`, `:2604`) with the canonical form:

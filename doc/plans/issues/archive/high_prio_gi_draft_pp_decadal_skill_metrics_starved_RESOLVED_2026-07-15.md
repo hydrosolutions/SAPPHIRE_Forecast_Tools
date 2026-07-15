@@ -86,7 +86,9 @@
 > stops suppressing these rows once the sample is real (gate working as designed).
 >
 > **Remaining work is purely operational:** complete the ML forecast archive on the **tjhm server**
-> (its decade half never finished — interrupted backfill), then recalc there. No `pp` code change.
+> (per ops notes, the backfill was interrupted by a server restart and the decade half is believed
+> unfinished — the server-inventory query above would confirm before/after), then recalc there. No
+> `pp` code change.
 
 ## Problem
 
