@@ -1290,3 +1290,149 @@ class TestOnWriteSurfacesUnresolvedTargetPeriod:
         BulletinManager._on_write(fake_self, event=None)
 
         fake_self._show_write_popup.assert_called_once_with("Bulletin saved successfully")
+
+
+# ---------------------------------------------------------------------------
+# _on_write review findings (round-4, adversarial review of c194e249):
+#
+#  A) the except-path warning append must ALSO be gated on
+#     `horizon == "month"`, not just the flag — a flag-ON refresh failure on
+#     a non-month horizon (e.g. season) must stay a plain success, not the
+#     month-specific "target month could not be confirmed" text.
+#  B) a site that is BOTH `bulletin_target_period is None` (main block
+#     appends) AND raises on refresh (except appends again) must appear only
+#     ONCE in `unresolved_codes` / the warning message, not twice.
+#  C) `skill_lead_aware_enabled()` itself can raise `ValueError` on a
+#     typo'd `SAPPHIRE_SKILL_LEAD_AWARE`. It must be evaluated exactly ONCE,
+#     before the per-site loop, so a typo fails the whole write loudly and
+#     immediately (never mid-loop, never swallowed into "OFF").
+# ---------------------------------------------------------------------------
+
+
+class TestOnWriteReviewRoundFourFindings:
+    def test_non_month_horizon_refresh_failure_does_not_warn(self, monkeypatch):
+        """Finding A. A SEASON bulletin site whose attribute refresh throws
+        must NOT be reported through the month-specific warning path — the
+        main target-period block itself is gated on `horizon == "month"`,
+        so the except-path append must honour the same gate. Before the
+        fix, the except only checked the flag, so this season site's
+        refresh failure was folded into `unresolved_codes` and the operator
+        saw the month-only text ("target month could not be confirmed")
+        for a season bulletin.
+
+        Discriminating mutation: re-introducing `if skill_lead_aware_enabled():`
+        (dropping the `horizon == "month"` conjunct) in the except branch
+        makes this RED — `_show_write_popup` would be called with
+        `alert_type="warning"` and the site code in the message instead of
+        the plain success call.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(
+            bulletin_manager,
+            "_populate_forecast_attributes",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+
+        site = _make_site(code="99001")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+
+        fake_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+        fake_self.wm.horizon_selector.value = "season"
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._write_to_excel.assert_called_once()
+        fake_self._show_write_popup.assert_called_once_with("Bulletin saved successfully")
+
+    def test_none_period_and_refresh_failure_code_appears_once(self, monkeypatch):
+        """Finding B. A month site that is BOTH
+        `bulletin_target_period is None` (main block appends its code) AND
+        raises inside `_populate_forecast_attributes` (except appends again)
+        must be named only ONCE in the warning message — not duplicated.
+
+        Discriminating mutation: removing any de-duplication (plain
+        unconditional `unresolved_codes.append(...)` in both the main block
+        and the except) makes this RED — the message would contain "99001"
+        twice and/or `unresolved_codes` would have length 2.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(
+            bulletin_manager,
+            "_populate_forecast_attributes",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+
+        site = _make_site(code="99001")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+        site.bulletin_target_period = None  # main block: genuinely unresolved
+
+        fake_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._write_to_excel.assert_called_once()
+        fake_self._show_write_popup.assert_called_once()
+        args, kwargs = fake_self._show_write_popup.call_args
+        assert kwargs.get("alert_type") == "warning"
+        assert args[0].count("99001") == 1, (
+            f"expected '99001' exactly once in the warning message, got: {args[0]!r}"
+        )
+
+    def test_typo_flag_fails_loudly_once_before_the_loop(self, monkeypatch):
+        """Finding C. A typo'd `SAPPHIRE_SKILL_LEAD_AWARE` must fail the
+        whole write loudly (consistent with `skill_lead_aware_enabled()`'s
+        own fail-loud-on-typo design), and it must fail at a SINGLE
+        top-level evaluation before the per-site loop runs — not be caught
+        per-site and re-raised out of an `except` mid-loop.
+
+        The externally-visible "write aborts loudly" symptom is, by
+        itself, NOT a discriminator: on the current (pre-fix) code, a
+        typo'd flag already aborts the whole write too, just via a buggy
+        path — the main block's `skill_lead_aware_enabled()` call raises
+        inside the per-site `try`, gets caught by that site's `except`, and
+        then the except's OWN `skill_lead_aware_enabled()` call raises a
+        SECOND time, uncaught, escaping to the outer handler. So the real
+        discriminator is call COUNT: fixed code evaluates the flag exactly
+        ONCE (before the loop); pre-fix code evaluates it twice (once in
+        the main block, once again in the except) before giving up on the
+        very first site.
+
+        Discriminating mutation: any call site for
+        `skill_lead_aware_enabled()` inside the per-site `try`/`except`
+        (instead of a single call before the loop) makes the call-count
+        assertion RED (2 instead of 1), even though the "write failed
+        loudly" assertions alone would stay green either way.
+        """
+        flag_mock = MagicMock(side_effect=ValueError("bad token"))
+        monkeypatch.setattr(bulletin_manager, "skill_lead_aware_enabled", flag_mock)
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        populate_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager, "_populate_forecast_attributes", populate_mock)
+
+        site = _make_site(code="99001")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+        site.bulletin_target_period = (7, 2026)
+
+        fake_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        assert flag_mock.call_count == 1, (
+            f"expected exactly one flag evaluation, got {flag_mock.call_count}"
+        )
+        populate_mock.assert_not_called()
+        fake_self._write_to_excel.assert_not_called()
+        fake_self._show_write_popup.assert_called_once_with(
+            "Failed to write bulletin", alert_type="danger"
+        )

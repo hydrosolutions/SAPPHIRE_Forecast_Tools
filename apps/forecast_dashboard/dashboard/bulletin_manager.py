@@ -993,6 +993,20 @@ class BulletinManager:
                     "without updated hydrograph stats.", exc,
                 )
 
+            # FD-018 review round-4 (finding C): evaluate the flag exactly
+            # ONCE, here, before the per-site loop. `skill_lead_aware_enabled()`
+            # raises `ValueError` on a typo'd `SAPPHIRE_SKILL_LEAD_AWARE` by
+            # design (fail loud on misconfiguration, not silently OFF). A
+            # single top-level evaluation means a typo aborts the whole
+            # write immediately and predictably (caught by the outer
+            # `except` below -> "Failed to write bulletin"), instead of
+            # being evaluated again inside a per-site `except` where a
+            # second raise would escape that handler uncaught. Reusing one
+            # `lead_aware` boolean in both the main block and the except
+            # path also means the except itself can never raise from this
+            # call, whatever a site's refresh outcome is.
+            lead_aware = skill_lead_aware_enabled()
+
             # Refresh each site's forecast attributes from its (possibly edited)
             # site.forecasts so in-cell edits are reflected in the Excel output.
             # FD-018 review #4: `unresolved_codes` collects sites whose OWN
@@ -1021,13 +1035,15 @@ class BulletinManager:
                     # period).
                     target_period = None
                     if (
-                        skill_lead_aware_enabled()
+                        lead_aware
                         and horizon == "month"
                         and hasattr(site, "bulletin_target_period")
                     ):
                         target_period = site.bulletin_target_period
                         if target_period is None:
-                            unresolved_codes.append(getattr(site, "code", "?"))
+                            code = getattr(site, "code", "?")
+                            if code not in unresolved_codes:
+                                unresolved_codes.append(code)
                     _populate_forecast_attributes(
                         site, horizon, forecast_year, forecast_horizon, target_period,
                     )
@@ -1036,16 +1052,27 @@ class BulletinManager:
                         "_on_write: attribute refresh failed for %s (%s); "
                         "writing with existing attributes.", getattr(site, 'code', '?'), exc,
                     )
-                    # FD-018 review #6 (round-3): a refresh failure here means
-                    # the site keeps its stale add-time attributes (e.g. the
-                    # wrong month's norm/day-count), the exact "silent
-                    # wrong-but-plausible success" this feature exists to
-                    # eliminate. Fold it into the same unresolved_codes ->
-                    # warning-popup path as a `None` target period. Gated on
-                    # the flag so a flag-OFF refresh failure stays byte-
-                    # identical to trunk (log-and-swallow, plain success).
-                    if skill_lead_aware_enabled():
-                        unresolved_codes.append(getattr(site, "code", "?"))
+                    # FD-018 review #6 (round-3, refined round-4): a refresh
+                    # failure here means the site keeps its stale add-time
+                    # attributes (e.g. the wrong month's norm/day-count),
+                    # the exact "silent wrong-but-plausible success" this
+                    # feature exists to eliminate. Fold it into the same
+                    # unresolved_codes -> warning-popup path as a `None`
+                    # target period, but ONLY for the same `lead_aware and
+                    # horizon == "month"` case the main block above reports
+                    # on — a non-month horizon (e.g. season) has no
+                    # per-site target period to confirm in the first place,
+                    # so a refresh failure there is not this warning (finding
+                    # A). De-duplicate against the main block's append so a
+                    # site that is both `bulletin_target_period is None` AND
+                    # throws on refresh is named once, not twice (finding
+                    # B). Gated on `lead_aware` so a flag-OFF refresh
+                    # failure stays byte-identical to trunk (log-and-swallow,
+                    # plain success).
+                    if lead_aware and horizon == "month":
+                        code = getattr(site, "code", "?")
+                        if code not in unresolved_codes:
+                            unresolved_codes.append(code)
 
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
