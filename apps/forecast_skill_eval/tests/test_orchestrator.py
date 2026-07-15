@@ -305,6 +305,167 @@ def test_compute_event_contingencies_includes_below_norm_100_when_requested() ->
     pd.testing.assert_frame_equal(bn_rows, bn_only_rows)
 
 
+def _rp_pairs() -> pd.DataFrame:
+    """Build a pentad pairs frame with 20 years of increasing observed values.
+
+    Mirrors ``test_events._rp_pairs``: a clear linear trend gives a
+    non-degenerate GEV fit so ``compute_return_levels`` produces a usable
+    entry for this ``(code, horizon, period_key)`` group.
+    """
+    rows = []
+    for i in range(20):
+        val = 10.0 + i * 5.0
+        rows.append(
+            {
+                "horizon": "pentad",
+                "code": STATION_CODE,
+                "basin": "other",
+                "period_key": 1,
+                "year": 2000 + i,
+                "model": "model-a",
+                "regime": "hindcast",
+                "season": "irrigation",
+                "lead": None,
+                "issue_date": None,
+                "forecast_value": val,
+                "observed_value": val,
+                "norm": 50.0,
+                "norm_provenance": "calculated",
+                "fc_class": "normal",
+                "obs_class": "normal",
+                "contingency": "TN",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_compute_event_contingencies_includes_rp_events_when_requested() -> None:
+    """rp5 must produce contingency rows when requested with return_levels supplied.
+
+    Guards against the bug where return-period events (rp5/rp10/rp30/rp100)
+    pass config validation but are never iterated in
+    ``_compute_event_contingencies``, silently producing zero rows for any
+    station regardless of data volume.
+    """
+    from forecast_skill_eval.events import compute_return_levels
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+    min_years = 10
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=min_years)
+    assert return_levels, "guard: return_levels must be non-empty for this fixture"
+
+    result = _compute_event_contingencies(pairs, {}, ("rp5",), return_levels)
+
+    assert (result["event"] == "rp5").any()
+
+
+def test_compute_event_contingencies_return_levels_param_is_optional() -> None:
+    """Calling with only 3 positional args (no return_levels) must not raise
+    -- AS LONG AS no return-period (rp*) event is requested.
+
+    Backward-compatibility guard for the new trailing parameter added to
+    ``_compute_event_contingencies``: the omitted-4th-arg call must behave
+    identically to explicitly passing ``return_levels={}``, and must not
+    silently swallow non-rp events either.
+
+    Discriminating mutation: reverting PP-review fix #3 (rp*-with-no-
+    return_levels must raise) does not affect this test, by design -- it
+    only exercises non-rp events. What makes THIS version discriminating
+    (vs. the pre-review version) is the direct comparison against an
+    explicit ``return_levels={}`` call: a mutation that gave the omitted
+    argument some OTHER default (e.g. ``None`` handled differently from
+    ``{}``, or a stale/incorrect default) would make the two calls diverge
+    and fail the equality assertion below, whereas the original version
+    could not detect any change to the default's value at all.
+    """
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _below_norm_pairs()
+
+    result_omitted = _compute_event_contingencies(pairs, {}, ("below_norm",))
+    result_explicit_empty = _compute_event_contingencies(pairs, {}, ("below_norm",), {})
+
+    assert set(result_omitted["event"].unique()) == {"below_norm"}
+    pd.testing.assert_frame_equal(result_omitted, result_explicit_empty)
+
+
+def test_compute_event_contingencies_rp_event_without_return_levels_raises() -> None:
+    """PP-review fix #3: requesting an rp* event with no return_levels must
+    raise, never silently produce zero rows.
+
+    Before this fix, ``_compute_event_contingencies`` defaulted
+    ``return_levels`` to ``None``, coerced it to ``{}``, and then iterated
+    the rp-event loop over that empty mapping -- ``reclassify_pairs_for_rp_event``
+    finds no matching group and returns an empty frame, which is silently
+    skipped (``if event_pairs.empty: continue``). A caller who forgets (or
+    a test that never calls) ``compute_return_levels`` first gets a
+    contingency frame with simply no rp5 rows and no signal that anything
+    went wrong -- indistinguishable from "the model has zero rp5 skill".
+
+    Discriminating mutation: removing the new guard (or replacing `raise`
+    with `pass`/`continue`) makes this test fail (no exception raised),
+    while test_compute_event_contingencies_includes_rp_events_when_requested
+    (which supplies real, non-empty return_levels) stays green -- proving
+    the two tests together pin both the "must work when supplied" and
+    "must fail loudly when not supplied" halves of the contract.
+    """
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("below_norm", "rp5"))
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("rp5",), {})
+
+    with pytest.raises(ValueError, match="rp5"):
+        _compute_event_contingencies(pairs, {}, ("rp5",), None)
+
+
+def test_compute_event_contingencies_rp_event_missing_period_raises() -> None:
+    """Round-2 review gap: a NON-EMPTY return_levels that simply lacks the
+    requested rp* event's return period must also raise -- never silently
+    produce zero rows.
+
+    Before this fix, the guard only checked ``not return_levels`` (wholly
+    empty/None). A ``return_levels`` mapping that has real levels for some
+    OTHER return period (here rp5, built via
+    ``compute_return_levels(..., return_periods=(5.0,))``) but not the
+    requested rp10 sailed past that guard, then
+    ``reclassify_pairs_for_rp_event`` did ``group_levels.get(10.0)`` for
+    every group, found nothing, dropped every row, and
+    ``_compute_event_contingencies`` silently produced zero rp10 rows --
+    the exact same silent-empty failure the round-1 fix was meant to kill,
+    just one level down (present mapping, absent key, instead of absent
+    mapping).
+
+    Discriminating mutation: replacing the new "missing period" branch with
+    ``pass``/removing it makes this test fail (no exception raised) while
+    test_compute_event_contingencies_includes_rp_events_when_requested
+    (which supplies a return_levels that DOES cover the requested period)
+    stays green -- proving the two tests together pin both "must work when
+    the period is covered" and "must fail loudly when it is not" halves of
+    the contract, without over-raising on the case that already worked.
+    """
+    from forecast_skill_eval.events import compute_return_levels
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+    min_years = 10
+    # Only rp5 is computed -- rp10's return period (10.0) is absent from
+    # every group, but the mapping itself is non-empty.
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=min_years)
+    assert return_levels, "guard: return_levels must be non-empty for this fixture"
+    assert all(10.0 not in levels for levels in return_levels.values()), (
+        "guard: fixture must not accidentally cover rp10"
+    )
+
+    with pytest.raises(ValueError, match="rp10"):
+        _compute_event_contingencies(pairs, {}, ("rp10",), return_levels)
+
+
 def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object]]:
     rows = []
     day = date(year, month, 1)
