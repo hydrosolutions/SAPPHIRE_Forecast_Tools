@@ -75,8 +75,12 @@ artifact/diff pasted in the prompt.
   run falsely refuted `round_3sf`/tombstone code that is present on the target; a run diffing against a
   stale local `maxat_sapphire_2` falsely reported an upstream `sapphire/services/` file as added by
   the change.)
-- Output = per-claim verdict: `confirmed` / `refuted` / `unverifiable`, each with concrete evidence
-  (path, symbol, test, or contract). No prose approval.
+- **Output contract — differs by review type; do not conflate them:**
+  - Claim-verification / plan review: per-claim verdict `confirmed` / `refuted` / `unverifiable`,
+    each with concrete evidence (path, symbol, test, or contract). No prose approval.
+  - Diff-attack review: a findings array (file:line, severity, concrete failure scenario) — see
+    "Attack axes for code diffs" § "Code-diff `codex exec` prompt template" below for the exact
+    schema.
 
 ### `codex exec` verifier prompt template
 
@@ -107,6 +111,136 @@ repo and return {claim, verdict: confirmed|refuted|unverifiable, evidence}. Flag
 CLAUDE.md / doc/plans/README.md / doc/dev/testing_workflow.md. Factual accuracy only — no design
 opinions.
 ```
+
+## Attack axes for code diffs
+
+Claim verification (above) is necessary but **not sufficient** for any artifact — plan, design,
+audit, or diff (see "Adversarial review is REQUIRED — not just claim verification"). Every artifact
+also needs the open-ended adversarial pass. This section is that pass's concrete toolkit **when the
+artifact under review is a diff**: pointed at a code diff, the claim-verification template above
+finds almost nothing — a diff doesn't assert claims the way a plan's prose does, and "does the diff
+do what the PR description says" is a much weaker question than "what does this diff break that
+nobody asked about." The seven axes below are the diff-shaped form of the same open-ended
+instruction that also applies to plans — this is **not** a "plans get claim-checking, diffs get
+axes" split; a plan/design/audit gets claim verification (its content is largely falsifiable
+claims) **plus** its own open-ended adversarial pass (no fixed axes — hand the reviewer the artifact
+with no checklist, per "Adversarial review is REQUIRED" above). This section's axes are the template
+for the out-of-loop pass required by "Post-implementation review gate" below, specifically for diffs.
+
+This section does not replace the artifact template and does not restate `doc/dev/testing_workflow.md`
+or the Orchestration Protocol. Every axis below is a real defect that shipped, or nearly shipped, in
+this repo **while the claim-verification-only version of this workflow was already in force** — the
+policy existed and did not catch these; only an open-ended diff attack did.
+
+### The axes
+
+Each is a question the reviewer must answer about the diff, not a box to tick.
+
+1. **Implicit invariants.** List every invariant the diff relies on. Who enforces it in code — a
+   type, a range check, a test? If nobody does, that is the bug. *`plot_manager` hardcoded the m0
+   card's lead to `0` while `db.py` resolved `month_0`'s lead from config; nothing enforced
+   "month_0 == lead 0." Same class recurred: a later fix inferred the forecast year by comparing
+   month numbers, valid only for leads 0–11, and the config loader range-checks nothing.*
+2. **Test contract vs code contract.** Do the tests prove the OPERATOR gets the right result, or
+   only that the code agrees with itself? A test that manually seeds the state whose absence is the
+   bug passes identically before and after the fix. *19 mutation-proven tests covered an m0-bulletin
+   fix by seeding the very attribute whose absence caused the corruption — the operator still got a
+   corrupt bulletin after save + reload.*
+3. **Lifecycle / round-trip.** Does the fix survive save → reload → new session / process restart,
+   or does it live only on an in-memory object? *The same m0 fix stored state on an in-memory
+   object and never persisted it — it silently evaporated on reload.*
+4. **Silent wrong-but-plausible fallback.** Does any error path swallow an exception (or take a
+   default branch) and produce a plausible WRONG answer while telling the operator it succeeded?
+   Failing reassuringly is worse than failing loudly. *A bare `except Exception` fell back to the
+   wrong month while the UI reported "Bulletin saved successfully"; separately, `run_tests.sh`
+   printed "All tests completed successfully!" while collecting zero tests.*
+5. **Blast radius on stored/displayed numbers.** Does the diff change a number already PERSISTED in
+   a DB table or DISPLAYED on a dashboard? If yes, treat it as the highest-severity class regardless
+   of diff size — a formula fix to a stored value is a data-migration question, not a code-review
+   question. *A skill metric's sign disagreed with its cited paper; flipping it would have silently
+   redefined every value already written to the DB and shown on dashboards.*
+6. **Kill-switch parity (flag-gated diffs only).** Attack flag-OFF and flag-ON as two separate
+   contracts. Flag-OFF must be byte-identical to trunk — exercise that path explicitly, don't infer
+   it from a green suite. Flag-ON must be correct on its own merits. *A crash existed only on the
+   flag-ON path; the whole existing suite stayed green because every test in it ran flag-OFF.*
+7. **Vacuity.** For each new/changed test, ask: would it still pass if the fix it covers were
+   reverted? If yes, say so — it doesn't pin what it claims to pin. **Caveat:** golden/kill-switch
+   tests are *supposed* to pass with the flag off, both before and after the change — that is their
+   job; do not flag those as vacuous. Only flag a test whose stated purpose was to catch this bug and
+   would not.
+
+### Process rules
+
+- **Stale premises.** Before fixing — or re-confirming — a reported finding, verify it against the
+  CURRENT code, not the note, plan, or earlier review round that reported it. A finding scoped from a
+  months-old memory note had two of three premises already false against current configs; three real
+  fixes beats four fixes where one is fiction.
+- **Run the out-of-loop diff pass BEFORE declaring the work done**, not as a formality attached to
+  the PR afterward — it is a gate on the diff, matching "Post-implementation review gate" below.
+- **Feed the reviewer the CONTRACT, not just the diff.** State explicitly what the operator/caller
+  must observe (the before/after behavior, the flag default), so the reviewer attacks the contract
+  instead of paraphrasing the diff back at you.
+- **Re-review the fixes.** A fix is new, unreviewed code. A second review round over round-1's fixes
+  found a fresh Important-severity defect in them — a fix is not safe merely because the finding it
+  addresses was real; it needs its own pass.
+
+### Code-diff `codex exec` prompt template
+
+```
+codex exec --skip-git-repo-check --sandbox read-only -C <clean_target_checkout> --color never \
+  -o <out.json> "$(cat <<'PROMPT'
+READ-ONLY adversarial review of a DIFF — not a claim checklist. Do NOT edit any file. You are a
+fresh, out-of-loop reviewer; assume nothing from prior context and do not trust the summary below.
+
+BUG BEING FIXED (as claimed by the author):
+<one paragraph: what was broken, for whom, observed how>
+
+DIFF UNDER REVIEW:
+<paste `git diff <base>...HEAD`, or the specific files/hunks>
+
+CONTRACTS THAT MUST HOLD (what the operator/caller must observe — verify against these, not the
+diff's stated intent):
+<e.g. "operator sees the CORRECT bulletin after save+reload+new session, or an explicit error —
+never a silently wrong one"; "flag SAPPHIRE_FOO defaults to False, flag-OFF is byte-identical to
+trunk"; "value X, once written to skill_metrics, is never silently redefined by this change">
+
+SUSPICIOUS SEAMS TO ATTACK (name the specific ones for this diff):
+<e.g. "state assigned to self.foo in PlotManager — persisted, or in-memory only?"; "except Exception
+around the save path — what does it fall back to, and does the caller see success?"; "new/changed
+tests — do they seed the state whose absence was the bug?">
+
+TASK: Attack the diff against the contracts above, using these axes — do not merely restate what the
+diff does:
+1. Implicit invariants: what does the diff assume that no code enforces?
+2. Test contract: do the tests prove the OPERATOR gets the right result, or only that the code
+   agrees with itself (manually-seeded state, mocked-away the real bug, etc.)?
+3. Lifecycle: does the fix survive save/reload/restart, or only live in memory for this session?
+4. Silent fallback: any bare except / default branch that produces a plausible WRONG result while
+   reporting success?
+5. Blast radius: does this change a number already PERSISTED or DISPLAYED? If yes, flag as a
+   data-migration question, not a code-review question.
+6. Kill-switch parity (if flag-gated): is flag-OFF byte-identical to trunk? Is flag-ON correct?
+7. Vacuity: for each new/changed test, would it still pass if the fix were reverted? Do NOT flag
+   golden/kill-switch tests that are supposed to pass with the flag off both before and after.
+
+Separate findings into two buckets: defects INTRODUCED by this diff, vs pre-existing defects the
+diff happens to touch (report both; label which bucket).
+
+Return a JSON array: [{axis, file, line, severity: Critical|Important|Minor, finding, concrete
+failure scenario, introduced_by_diff: true|false}]. No prose approval, no design opinions beyond
+what a Critical/Important finding requires.
+PROMPT
+)"
+```
+
+This findings-array shape is the diff-attack output contract; it is distinct from the per-claim
+verdict contract used for plans/designs/audits (see "Out-of-loop verifier requirements" above) —
+use the one that matches the review type, not both.
+
+Fallback (Codex unavailable): the same prompt via a fresh Claude general-purpose subagent (Agent
+tool, no prior session context) — same "different tool/model where possible" rule as the
+claim-verification fallback above. Triage every returned finding against the current code before
+acting on it (see "Stale premises" above) — the reviewer's verdict is evidence, not a mandate.
 
 ## Proportionality lens checklist (argue for cuts)
 
@@ -140,7 +274,8 @@ transcription drift introduced while applying fixes.
 No PR is approved on the implementer's `done` alone. Standard patches: in-loop `code-review`
 (correctness) + human owner. Patches touching a high-risk coupling point (below): additionally one
 **out-of-loop** reviewer running an OPEN-ENDED adversarial review of the diff (read-only `codex exec`,
-or the fresh-Claude fallback — not merely a claim-checklist).
+or the fresh-Claude fallback — not merely a claim-checklist; use the "Attack axes for code diffs"
+template above).
 PASS = `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` zero-fail / zero-unexpected-skip
 **and** both reviewers' Critical/Important items resolved or reasoned-rebutted **and** no
 unescalated design/contract fork. Live-DB behavior changes additionally require the operational

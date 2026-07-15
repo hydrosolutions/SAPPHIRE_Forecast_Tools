@@ -86,7 +86,12 @@ vocabulary is owned by** [`doc/plans/README.md`](doc/plans/README.md) — do not
    errors** may be applied directly; **scope/design/semantics/security/API-contract** changes
    **escalate to the human owner**; related bugs found while mapping become `gi_draft_*` plan files
    under `doc/plans/issues/` (indexed in `doc/plans/module_issues.md`), never inline fixes. After
-   corrections, run one lightweight **confirm-fixes pass**.
+   corrections, run one lightweight **confirm-fixes pass**. The open-ended pass applies to plans and
+   diffs alike; for diffs, run it via the axes in `doc/dev/agent_review_workflow.md` § "Attack axes
+   for code diffs" (the `adversarial-review` skill runs it in one step) — those axes are the
+   diff-shaped form of the same open-ended instruction, not a plans-vs-diffs split. The doc's
+   claim-verification template (§ "Out-of-loop verifier requirements") checks factual claims and is
+   necessary but not sufficient on its own, for plans or diffs.
 
 3. **Every high-claim-density prompt carries the fitness line** (verbatim): "Every bullet must help
    an agent know what to inspect, what contract not to break, or what verification proves safety —
