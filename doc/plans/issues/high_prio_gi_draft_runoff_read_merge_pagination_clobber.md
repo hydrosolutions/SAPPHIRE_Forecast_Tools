@@ -1,11 +1,16 @@
 # Runoff read-merge-write silently clobbers non-null `discharge`/`predictor` beyond the first 100 rows
 
 **Priority:** high (silent data loss in `runoffs`; no error, no warning).
-**Module:** `apps/iEasyHydroForecast/forecast_library.py` (`_write_runoff_to_api`) — the shared
-runoff write path used by `preprocessing_runoff` and `linear_regression`.
+**Module:** `apps/iEasyHydroForecast/forecast_library.py` (`_write_runoff_to_api`) — the
+**PERIOD** (pentad/decad) runoff write path, used by `preprocessing_runoff` and `linear_regression`.
+**Scope note (corrected 2026-07-15, 2nd adversarial review):** this issue is scoped to
+`forecast_library._write_runoff_to_api` ONLY. The **DAILY** runoff write goes through a *different*
+function (`apps/preprocessing_runoff/src/src.py`, `client.write_runoff()` with **no read-merge at
+all**) and is a **separate, unprotected** clobber path — filed as its own issue (see Related). Do not
+assume fixing this makes "runoff backfill null-clobber-safe" — daily remains exposed until its own fix.
 **Status:** Draft — mechanism confirmed read-only against `origin/maxat_sapphire_2` on
-2026-07-14 (found by an out-of-loop Codex review of the runoff backfill plan; the pagination
-hole was flagged in shipped code, not merely in the plan).
+2026-07-14; fix + scope re-verified by a 2nd adversarial review 2026-07-15 (verdict:
+SOUND-BUT-INCOMPLETE — pagination is the right fix for this function; corrections applied below).
 **Blocks:** `doc/plans/working/runoff_pentad_decad_discharge_backfill_plan.md` — that plan's
 whole premise is that read-merge-write prevents null-clobber. It does not, past row 100.
 
@@ -75,9 +80,17 @@ Tests use the placeholder station code `19999`; no real codes or discharge value
    clobber-victim among the **newest** rows — a test that only checks row 1 passes today and proves
    nothing.
 3. **Pagination boundary:** exercise exactly 100, 101, and >2 pages of existing rows.
-4. **No behavior change under 100 rows:** existing merge behavior stays byte-identical (guards the
+4. **The test must EXERCISE THE LOOP, not just tolerate >100 rows.** Assert `read_runoff` is called
+   with **increasing `skip`** and stops on a short/empty page. Rationale: the house pattern uses
+   `page_size = 10000` (`setup_library.py:1950`), so a single `limit=10000` one-shot would pass the
+   101-row case *without ever paginating* — the test would green a fix that still truncates at the
+   (larger) page size. Assert on the call sequence, not only the merged payload.
+5. **Date-key match:** include a case where existing rows come back with `date` as
+   `datetime.date`/`Timestamp` (not string) to lock the `%Y-%m-%d` normalization
+   (`forecast_library.py:3781`) that makes the `(code, date)` merge key hit.
+6. **No behavior change under 100 rows:** existing merge behavior stays byte-identical (guards the
    current operational path).
-5. **Operational mode untouched:** operational writes still write today's row with
+7. **Operational mode untouched:** operational writes still write today's row with
    `discharge=None` — no merge, no read.
 
 ## Open question
@@ -91,8 +104,31 @@ optimizing.
 ## Related
 
 - `doc/plans/working/runoff_pentad_decad_discharge_backfill_plan.md` (blocked by this)
-- Same *class* of defect as PREPQ-009's norm-clobber: a blind full-column upsert
-  (`crud.py` `setattr` loop) means any writer that sends `None` destroys stored data. PREPQ-009 fixed
-  it for `hydrographs.norm` with a writer-side read-merge; this issue is that same read-merge being
-  silently truncated for `runoffs`. **A service-side partial-update/COALESCE would remove the whole
-  class** — worth raising with the service owner rather than patching each writer.
+- **PREPQ-012 (sibling): daily runoff writer clobbers with no read-merge at all**
+  (`apps/preprocessing_runoff/src/src.py:~4416/4431`). PREPQ-011's pagination fix does NOT cover it.
+- Same *class* of defect as PREPQ-009's norm-clobber: the service upsert does a blind full-column
+  `setattr` loop (`sapphire/services/preprocessing/app/crud.py:37`), so any writer that sends `None`
+  destroys stored data. This class is **broader than runoff** — hydrograph/meteo/snow CRUD are the
+  same shape (`crud.py:91/164/238`), and writers like `extend_era5_reanalysis.py:278` /
+  `Quantile_Mapping_OP.py:358` send `"norm": None` directly.
+
+### The class fix — corrected 2026-07-15 (2nd review); the earlier framing was wrong
+
+The previous "Related" text claimed a **COALESCE / partial-update would remove the whole class.**
+**That is misleading — do not propose blanket COALESCE:**
+
+- **COALESCE (skip-None) is UNSAFE.** Postprocessing deliberately writes **NULL tombstones** to mark
+  stale rows (`n_pairs=0`, all metrics NULL — `postprocessing_forecasts/src/stale_tombstones.py`,
+  appended in `recalculate_skill_metrics.py:339`). A service that silently drops incoming `None`
+  would make "clear this field" impossible and **break tombstoning.**
+- **`exclude_unset` alone does NOT fix today's writers either.** They **explicitly set**
+  `discharge`/`predictor`/`norm` to `None` (`forecast_library.py:3726`, `src.py:4421`,
+  `extend_era5_reanalysis.py:278`) — those keys are *set*, not *unset*, so `model_dump(exclude_unset=True)`
+  would still emit them. `exclude_unset` only helps **after** each writer is changed to *omit* the
+  keys it wants preserved.
+- **Correct class fix = omit-aware PATCH semantics:** service updates only keys present in the
+  payload, while an **explicitly-passed `null` still clears** (preserving tombstones). Then writers
+  omit "preserve" fields and pass explicit `null` only to clear. This is a `sapphire/services/`
+  change (colleague-managed) coupled with per-writer edits — raise with the service owner; it is NOT
+  a drop-in COALESCE. Until then, per-writer read-merge (this issue) and per-writer omission remain
+  the apps-only stopgaps.
