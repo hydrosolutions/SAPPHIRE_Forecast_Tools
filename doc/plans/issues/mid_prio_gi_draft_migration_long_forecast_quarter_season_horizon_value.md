@@ -44,6 +44,14 @@ mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-
 - The from-file importer (MIG-007) and the service migrator need **no hv code change** -- both
   already stamp `operational_month_lead_time`.
 
+> **Addendum (2026-07-13):** a separate dashboard-side investigation surfaced a **third dataset —
+> MONTH aggregate rows with `horizon_value = calendar month`** (prod, ~1,781 rows, 2016–2023, same
+> pathology as `QUARTER hv1-4`), plus a Tajik MONTH coverage gap (empty 2024–2025) and a possibly
+> unhealthy 2026-07 operational run. Summarized for the owner in
+> `doc/prod/longforecast_historical_data_decision_request.md` (ADDENDUM). Fold "month" into the
+> reconciliation scope below alongside quarter/season. P-PIPE for month/quarter appears already landed
+> on `maxat_sapphire_2`.
+
 ## What still needs adapting (for the planner to investigate + scope)
 
 1. **Config audit, per deployment.** Confirm every needed config exists with the correct
