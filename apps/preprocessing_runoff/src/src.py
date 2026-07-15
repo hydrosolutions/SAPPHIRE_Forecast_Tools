@@ -4428,6 +4428,11 @@ def _write_runoff_to_api(
         logger.info("No runoff records to write to API")
         return False
 
+    if sync_mode in {"maintenance", "initial"} and records:
+        from forecast_library import _merge_preserve_existing_runoff
+
+        _merge_preserve_existing_runoff(client, "day", records, preserve_fields=("discharge",))
+
     count = client.write_runoff(records)
     logger.info(f"Successfully wrote {count} runoff records to SAPPHIRE API ({sync_mode} mode)")
     return True

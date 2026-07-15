@@ -1611,6 +1611,119 @@ class TestWriteRunoffToApi:
         assert record["discharge"] == 88.8
         assert record["predictor"] == 12.3
 
+    def test_maintenance_backfill_paginates_existing_read(self, monkeypatch):
+        """Maintenance backfill must page through the existing-rows read instead of
+        relying on the service's default limit=100 (PREPQ-011)."""
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+
+        page_size = 10000
+        n_existing = page_size + 5
+
+        def _paged_read_runoff(*args, **kwargs):
+            # Mirrors the real client/service contract: default limit=100 unless
+            # the caller passes skip/limit explicitly. Slices a virtual table of
+            # `n_existing` rows so the loop naturally spans two pages.
+            skip = kwargs["skip"]
+            limit = kwargs["limit"]
+            end = min(skip + limit, n_existing)
+            n = max(end - skip, 0)
+            if n == 0:
+                return pd.DataFrame(
+                    columns=[
+                        "horizon_type",
+                        "code",
+                        "date",
+                        "horizon_value",
+                        "horizon_in_year",
+                        "discharge",
+                        "predictor",
+                    ]
+                )
+            dates = pd.date_range("2020-01-01", periods=n_existing, freq="D")[skip:end]
+            return pd.DataFrame(
+                {
+                    "horizon_type": ["pentad"] * n,
+                    "code": ["19999"] * n,
+                    "date": dates.strftime("%Y-%m-%d"),
+                    "horizon_value": [3] * n,
+                    "horizon_in_year": [33] * n,
+                    "discharge": [1.0] * n,
+                    "predictor": [2.0] * n,
+                }
+            )
+
+        mock_client.read_runoff.side_effect = _paged_read_runoff
+        monkeypatch.setattr(fl, "_get_preprocessing_client", lambda: mock_client)
+
+        data = self._pentad_runoff_row("2026-06-10", discharge_avg=123.4, predictor=np.nan)
+
+        with (
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}, clear=False),
+            patch.object(fl.pd, "Timestamp", self._pinned_timestamp("2026-06-19")),
+        ):
+            fl._write_runoff_to_api(data, "pentad", mode="maintenance")
+
+        # A single unpaginated read_runoff() call (the PREPQ-011 bug) would not
+        # pass skip/limit at all, so this call-arg inspection catches the bug.
+        assert mock_client.read_runoff.call_count == 2
+        calls = mock_client.read_runoff.call_args_list
+        assert calls[0].kwargs["skip"] == 0
+        assert calls[0].kwargs["limit"] == page_size
+        assert calls[1].kwargs["skip"] == page_size
+        assert calls[1].kwargs["limit"] == page_size
+
+    def test_maintenance_backfill_preserves_newest_row_beyond_first_page(self, monkeypatch):
+        """A clobber-victim row placed beyond the old 100-row service default limit
+        must still be preserved now that the read is paginated (PREPQ-011)."""
+        monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+
+        n_existing = 150
+        dates = pd.date_range("2026-01-01", periods=n_existing, freq="D")
+        discharge = [10.0 + i for i in range(n_existing)]
+        # The victim row is the newest date, i.e. beyond row #100 in date order -
+        # exactly the row a naive limit=100 read would drop.
+        discharge[-1] = 99.9
+        existing = pd.DataFrame(
+            {
+                "horizon_type": ["pentad"] * n_existing,
+                "code": ["19999"] * n_existing,
+                "date": dates.strftime("%Y-%m-%d"),
+                "horizon_value": [3] * n_existing,
+                "horizon_in_year": [33] * n_existing,
+                "discharge": discharge,
+                "predictor": [None] * n_existing,
+            }
+        )
+
+        def _paged_read_runoff(*args, **kwargs):
+            # Mirrors the real client/service contract: default limit=100 unless
+            # the caller passes skip/limit explicitly (the PREPQ-011 bug).
+            skip = kwargs.get("skip", 0)
+            limit = kwargs.get("limit", 100)
+            return existing.iloc[skip : skip + limit].reset_index(drop=True)
+
+        mock_client.read_runoff.side_effect = _paged_read_runoff
+        monkeypatch.setattr(fl, "_get_preprocessing_client", lambda: mock_client)
+
+        victim_date = dates[-1].strftime("%Y-%m-%d")
+        data = self._pentad_runoff_row(victim_date, discharge_avg=np.nan, predictor=12.3)
+
+        with (
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}, clear=False),
+            patch.object(fl.pd, "Timestamp", self._pinned_timestamp("2026-06-19")),
+        ):
+            fl._write_runoff_to_api(data, "pentad", mode="maintenance")
+
+        record = mock_client.write_runoff.call_args[0][0][0]
+        assert record["discharge"] == 99.9
+        assert record["predictor"] == 12.3
+
     def test_operational_mode_still_allows_today_null_discharge(self, monkeypatch):
         """Operational mode should still write today's null discharge without merge reads."""
         monkeypatch.setattr(fl, "SAPPHIRE_API_AVAILABLE", True)

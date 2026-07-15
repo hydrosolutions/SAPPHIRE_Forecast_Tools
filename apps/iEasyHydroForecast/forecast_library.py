@@ -3590,6 +3590,85 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         return False
 
 
+def _merge_preserve_existing_runoff(
+    client,
+    horizon_type: str,
+    records: list[dict],
+    preserve_fields: tuple[str, ...],
+    page_size: int = 10000,
+) -> None:
+    """For maintenance/initial writes: read existing rows (PAGINATED) and, for each
+    outgoing record, keep the stored value of any field in preserve_fields whose
+    incoming value is None. Mutates `records` in place. `records` is a list of dicts
+    each with at least 'code' and 'date' (date as 'YYYY-MM-DD' string).
+
+    The read is constrained to `horizon_type` and done per code, over
+    [min(date), max(date)] of `records`, paginating via skip/limit so that stations
+    with more than the service's default page (limit=100) of existing rows are still
+    read in full (PREPQ-011/PREPQ-012).
+
+    Args:
+        client: SAPPHIRE preprocessing API client exposing read_runoff().
+        horizon_type: Horizon type to constrain the read to (e.g. "pentad", "day").
+        records: Outgoing records to merge into, mutated in place.
+        preserve_fields: Field names to preserve from existing rows when the
+            outgoing value is None.
+        page_size: Page size for the paginated read.
+    """
+    date_values = [record["date"] for record in records]
+    start_date = min(date_values)
+    end_date = max(date_values)
+    existing_by_key = {}
+
+    for code in sorted({record["code"] for record in records}):
+        all_existing = []
+        skip = 0
+        while True:
+            existing_page = client.read_runoff(
+                horizon=horizon_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=page_size,
+            )
+            if existing_page is None:
+                break
+            if not isinstance(existing_page, pd.DataFrame):
+                logger.warning(
+                    "Unexpected read_runoff result for %s/%s; treating as no existing rows",
+                    horizon_type,
+                    code,
+                )
+                break
+            if existing_page.empty:
+                break
+            all_existing.append(existing_page)
+            if len(existing_page) < page_size:
+                break
+            skip += page_size
+
+        if not all_existing:
+            continue
+        existing = pd.concat(all_existing, ignore_index=True)
+
+        existing = existing.copy()
+        existing["code"] = existing["code"].astype(str)
+        existing["date"] = pd.to_datetime(existing["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        existing = existing.dropna(subset=["date"])
+        for existing_record in existing.to_dict("records"):
+            existing_by_key[(existing_record["code"], existing_record["date"])] = existing_record
+
+    for record in records:
+        existing_record = existing_by_key.get((record["code"], record["date"]))
+        if not existing_record:
+            continue
+        for field in preserve_fields:
+            existing_value = existing_record.get(field)
+            if record[field] is None and existing_value is not None and not pd.isna(existing_value):
+                record[field] = existing_value
+
+
 def _write_runoff_to_api(
     data: pd.DataFrame,
     horizon_type: str,
@@ -3752,53 +3831,9 @@ def _write_runoff_to_api(
     )
 
     if sync_mode in {"maintenance", "initial"} and records:
-        date_values = [record["date"] for record in records]
-        start_date = min(date_values)
-        end_date = max(date_values)
-        existing_by_key = {}
-
-        for code in sorted({record["code"] for record in records}):
-            existing = client.read_runoff(
-                horizon=horizon_type,
-                code=code,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            if existing is None:
-                continue
-            if not isinstance(existing, pd.DataFrame):
-                logger.warning(
-                    "Unexpected read_runoff result for %s/%s; treating as no existing rows",
-                    horizon_type,
-                    code,
-                )
-                continue
-            if existing.empty:
-                continue
-
-            existing = existing.copy()
-            existing["code"] = existing["code"].astype(str)
-            existing["date"] = pd.to_datetime(existing["date"], errors="coerce").dt.strftime(
-                "%Y-%m-%d"
-            )
-            existing = existing.dropna(subset=["date"])
-            for existing_record in existing.to_dict("records"):
-                existing_by_key[(existing_record["code"], existing_record["date"])] = (
-                    existing_record
-                )
-
-        for record in records:
-            existing_record = existing_by_key.get((record["code"], record["date"]))
-            if not existing_record:
-                continue
-            for field in ("discharge", "predictor"):
-                existing_value = existing_record.get(field)
-                if (
-                    record[field] is None
-                    and existing_value is not None
-                    and not pd.isna(existing_value)
-                ):
-                    record[field] = existing_value
+        _merge_preserve_existing_runoff(
+            client, horizon_type, records, preserve_fields=("discharge", "predictor")
+        )
 
     # Write to API
     if records:
