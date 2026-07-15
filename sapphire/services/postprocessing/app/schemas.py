@@ -1,7 +1,7 @@
 from datetime import date as DateType
 from datetime import datetime
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, computed_field, field_validator
 
 from app.models import HorizonType, ModelType
 
@@ -24,6 +24,11 @@ class ForecastBase(BaseModel):
     q95: float | None = None
 
     forecasted_discharge: float | None = None
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def _coerce_model_type(cls, value):
+        return ModelType.coerce(value)
 
 
 class ForecastCreate(ForecastBase):
@@ -70,6 +75,11 @@ class LongForecastBase(BaseModel):
     q75: float | None = None
     q90: float | None = None
     q95: float | None = None
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def _coerce_model_type(cls, value):
+        return ModelType.coerce(value)
 
     model_config = {
         "json_schema_extra": {
@@ -181,6 +191,11 @@ class SkillMetricBase(BaseModel):
     fhv: float | None = None
     flv: float | None = None
 
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def _coerce_model_type(cls, value):
+        return ModelType.coerce(value)
+
 
 class SkillMetricCreate(SkillMetricBase):
     pass
@@ -218,6 +233,11 @@ class BulletinBase(BaseModel):
     sdivsigma: float | None = None
     mae: float | None = None
     accuracy: float | None = None
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def _coerce_model_type(cls, value):
+        return ModelType.coerce(value)
 
 
 class BulletinCreate(BulletinBase):
