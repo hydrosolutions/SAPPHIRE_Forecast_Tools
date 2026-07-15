@@ -64,6 +64,29 @@
 > reproduce locally". **That was wrong** — it reproduces exactly, for 15 of 16 Tajik stations. The
 > error came from reading an aggregate `max(n_pairs)` across all orgs, which was dominated by the
 > healthy Kyrgyz stations and masked the Tajik collapse. Always split skill aggregates by org prefix.
+>
+> ## ✅ PROVEN END-TO-END 2026-07-15 — archive fill fixes it, zero code change
+>
+> Ran the full loop locally, no code touched:
+> 1. Migrated the Tajik combined-forecast CSVs into the local postprocessing DB via the service
+>    migrator (`data_migrator.py --type combinedforecast`) — 124,046 rows, 0 failed (deduped on
+>    `(code, model_short, date)` first, per the migration gotchas). The 15 starved decade stations
+>    went from **1 → 570 forecast rows** each.
+> 2. Re-ran the scoped skill recalc for **one** previously-starved station (pentad + decade).
+>
+> Result for that station, all four ML models (TFT/TiDE/TSMixer/NEURAL_ENSEMBLE), BOTH horizons:
+>
+> | | before | after |
+> |---|--------|-------|
+> | `max_n_pairs` | 0–1 | **14–15** |
+> | skill rows/model | 8 (pentad) / 4 (decade) | 72 / 36 |
+>
+> The pairing code was never changed. Filling the archive alone lifts `n_pairs` from starved to
+> healthy — **the diagnosis is confirmed, not inferred.** It also confirms the PR #411 min-n gate
+> stops suppressing these rows once the sample is real (gate working as designed).
+>
+> **Remaining work is purely operational:** complete the ML forecast archive on the **tjhm server**
+> (its decade half never finished — interrupted backfill), then recalc there. No `pp` code change.
 
 ## Problem
 
