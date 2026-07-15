@@ -329,6 +329,144 @@ class TestWriteRunoffToApi:
             records = mock_client.write_runoff.call_args[0][0]
             assert len(records) == 80  # all 40 days × 2 stations
 
+    def test_daily_maintenance_preserves_existing_discharge(self):
+        """Maintenance-mode daily write must preserve a stored discharge when the
+        incoming row is null instead of clobbering it (PREPQ-012)."""
+        today = pd.Timestamp.today().normalize()
+        victim_date = today - pd.Timedelta(days=5)
+        data = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "date": victim_date,
+                    "discharge": np.nan,
+                }
+            ]
+        )
+        existing = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": [victim_date.strftime("%Y-%m-%d")],
+                "discharge": [42.5],
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_runoff.return_value = existing
+        mock_client.write_runoff.return_value = 1
+
+        with (
+            patch.object(src, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(src, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                    "SAPPHIRE_SYNC_MODE": "maintenance",
+                },
+            ),
+        ):
+            src._write_runoff_to_api(data)
+
+        rec = mock_client.write_runoff.call_args[0][0][0]
+        assert rec["discharge"] == 42.5
+
+    def test_daily_operational_still_writes_today_null(self):
+        """Operational mode must still write today's null discharge (not yet
+        observed) without performing any read-merge."""
+        today = pd.Timestamp.today().normalize()
+        data = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "date": today,
+                    "discharge": np.nan,
+                }
+            ]
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+
+        with (
+            patch.object(src, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(src, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                    "SAPPHIRE_SYNC_MODE": "operational",
+                },
+            ),
+        ):
+            result = src._write_runoff_to_api(data)
+
+        assert result is True
+        mock_client.read_runoff.assert_not_called()
+        rec = mock_client.write_runoff.call_args[0][0][0]
+        assert rec["discharge"] is None
+
+    def test_daily_initial_paginates(self):
+        """Initial-mode daily backfill must page through the existing-rows read
+        instead of relying on the service's default limit=100 (PREPQ-012)."""
+        page_size = 10000
+        n_existing = page_size + 5
+        data = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "date": pd.Timestamp("2020-01-01"),
+                    "discharge": np.nan,
+                }
+            ]
+        )
+
+        def _paged_read_runoff(*args, **kwargs):
+            # Mirrors the real client/service contract: default limit=100 unless
+            # the caller passes skip/limit explicitly (the PREPQ-012 bug).
+            skip = kwargs["skip"]
+            limit = kwargs["limit"]
+            end = min(skip + limit, n_existing)
+            n = max(end - skip, 0)
+            if n == 0:
+                return pd.DataFrame(columns=["code", "date", "discharge"])
+            dates = pd.date_range("2020-01-01", periods=n_existing, freq="D")[skip:end]
+            return pd.DataFrame(
+                {
+                    "code": ["19999"] * n,
+                    "date": dates.strftime("%Y-%m-%d"),
+                    "discharge": [1.0] * n,
+                }
+            )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_runoff.side_effect = _paged_read_runoff
+        mock_client.write_runoff.return_value = 1
+
+        with (
+            patch.object(src, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(src, "SapphirePreprocessingClient", return_value=mock_client),
+            patch.dict(
+                os.environ,
+                {
+                    "SAPPHIRE_API_ENABLED": "true",
+                    "SAPPHIRE_API_URL": "http://test:8000",
+                    "SAPPHIRE_SYNC_MODE": "initial",
+                },
+            ),
+        ):
+            src._write_runoff_to_api(data)
+
+        assert mock_client.read_runoff.call_count == 2
+        calls = mock_client.read_runoff.call_args_list
+        assert calls[0].kwargs["skip"] == 0
+        assert calls[0].kwargs["limit"] == page_size
+        assert calls[1].kwargs["skip"] == page_size
+        assert calls[1].kwargs["limit"] == page_size
+
 
 # ---------------------------------------------------------------------------
 # _write_hydrograph_to_api tests
