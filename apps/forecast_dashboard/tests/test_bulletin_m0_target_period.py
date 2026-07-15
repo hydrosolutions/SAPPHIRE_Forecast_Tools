@@ -1386,6 +1386,64 @@ class TestOnWriteReviewRoundFourFindings:
             f"expected '99001' exactly once in the warning message, got: {args[0]!r}"
         )
 
+    def test_two_different_sites_sharing_code_appear_once(self, monkeypatch):
+        """Finding B, from the OTHER direction. `test_none_period_and_
+        refresh_failure_code_appears_once` above uses a SINGLE site that
+        hits BOTH append sites (main block, because its own
+        `bulletin_target_period is None`, AND the except branch, because
+        its refresh also throws) — it only pins same-site dedup, and would
+        still pass even if the MAIN block's own guard were reverted, because
+        a single site only ever reaches the main-block append once and the
+        except branch's guard alone would still prevent the second (its
+        own) append.
+
+        This test instead uses TWO DIFFERENT bulletin sites (distinct
+        objects, e.g. one added from the main panel and one from the m0
+        card) that happen to share the same `code`, BOTH landing in
+        `unresolved_codes` purely via the MAIN-block path (both have
+        `bulletin_target_period is None`; no refresh exception is involved
+        at all here). The operator must still see this code exactly once.
+
+        Discriminating mutation: removing the `if code not in
+        unresolved_codes:` guard around the MAIN block's append (making it
+        an unconditional `unresolved_codes.append(code)` at
+        bulletin_manager.py:~1044) makes THIS test RED — the warning
+        message would contain "99001" twice (once per site) — while
+        `test_none_period_and_refresh_failure_code_appears_once` stays
+        GREEN under that exact same mutation, since its single site's
+        second (duplicate) append is still caught by the EXCEPT branch's
+        own untouched guard.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock())
+
+        site_a = _make_site(code="99001", station_label="99001 - Test Site A")
+        site_a.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+        site_a.bulletin_target_period = None  # this site's own add-time resolution failed
+
+        site_b = _make_site(code="99001", station_label="99001 - Test Site B")
+        site_b.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [70.0],
+             "Forecast lower bound": [60.0], "Forecast upper bound": [80.0]}
+        )
+        site_b.bulletin_target_period = None  # a DIFFERENT site, same code, also failed
+
+        fake_self = _make_write_manager_stub([site_a, site_b], bulletin_wide_month=8)
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._write_to_excel.assert_called_once()
+        fake_self._show_write_popup.assert_called_once()
+        args, kwargs = fake_self._show_write_popup.call_args
+        assert kwargs.get("alert_type") == "warning"
+        assert args[0].count("99001") == 1, (
+            f"expected '99001' exactly once in the warning message, got: {args[0]!r}"
+        )
+
     def test_typo_flag_fails_loudly_once_before_the_loop(self, monkeypatch):
         """Finding C. A typo'd `SAPPHIRE_SKILL_LEAD_AWARE` must fail the
         whole write loudly (consistent with `skill_lead_aware_enabled()`'s
