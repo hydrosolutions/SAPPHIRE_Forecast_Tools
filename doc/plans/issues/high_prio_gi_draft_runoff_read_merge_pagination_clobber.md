@@ -8,9 +8,12 @@
 function (`apps/preprocessing_runoff/src/src.py`, `client.write_runoff()` with **no read-merge at
 all**) and is a **separate, unprotected** clobber path — filed as its own issue (see Related). Do not
 assume fixing this makes "runoff backfill null-clobber-safe" — daily remains exposed until its own fix.
-**Status:** Draft — mechanism confirmed read-only against `origin/maxat_sapphire_2` on
-2026-07-14; fix + scope re-verified by a 2nd adversarial review 2026-07-15 (verdict:
-SOUND-BUT-INCOMPLETE — pagination is the right fix for this function; corrections applied below).
+**Status:** IMPLEMENTED 2026-07-15 on branch `fix_runoff_null_clobber_pagination` (shared paginated
+read-merge helper `_merge_preserve_existing_runoff`; period writer now calls it, ≤100-row behavior
+unchanged). Red-phase-verified regression tests in
+`apps/linear_regression/test/test_forecast_library_api.py`. Mechanism confirmed 2026-07-14; fix +
+scope re-verified by a 2nd adversarial review 2026-07-15 (SOUND-BUT-INCOMPLETE — corrections applied;
+daily sibling split to PREPQ-012, also fixed on the same branch).
 **Blocks:** `doc/plans/working/runoff_pentad_decad_discharge_backfill_plan.md` — that plan's
 whole premise is that read-merge-write prevents null-clobber. It does not, past row 100.
 
