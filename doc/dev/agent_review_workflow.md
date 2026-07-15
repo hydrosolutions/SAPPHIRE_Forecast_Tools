@@ -75,8 +75,12 @@ artifact/diff pasted in the prompt.
   run falsely refuted `round_3sf`/tombstone code that is present on the target; a run diffing against a
   stale local `maxat_sapphire_2` falsely reported an upstream `sapphire/services/` file as added by
   the change.)
-- Output = per-claim verdict: `confirmed` / `refuted` / `unverifiable`, each with concrete evidence
-  (path, symbol, test, or contract). No prose approval.
+- **Output contract — differs by review type; do not conflate them:**
+  - Claim-verification / plan review: per-claim verdict `confirmed` / `refuted` / `unverifiable`,
+    each with concrete evidence (path, symbol, test, or contract). No prose approval.
+  - Diff-attack review: a findings array (file:line, severity, concrete failure scenario) — see
+    "Attack axes for code diffs" § "Code-diff `codex exec` prompt template" below for the exact
+    schema.
 
 ### `codex exec` verifier prompt template
 
@@ -110,12 +114,18 @@ opinions.
 
 ## Attack axes for code diffs
 
-The templates above verify **claims in an artifact** — a plan, design, or audit asserts something,
-and the reviewer confirms or refutes it. Pointed at a **code diff**, that template finds almost
-nothing: a diff doesn't assert claims, it changes behavior, and "does the diff do what the PR
-description says" is a much weaker question than "what does this diff break that nobody asked
-about." **Use claim verification for plans/designs/audits. Use this section for diffs** — it is
-the template for the out-of-loop pass required by "Post-implementation review gate" below.
+Claim verification (above) is necessary but **not sufficient** for any artifact — plan, design,
+audit, or diff (see "Adversarial review is REQUIRED — not just claim verification"). Every artifact
+also needs the open-ended adversarial pass. This section is that pass's concrete toolkit **when the
+artifact under review is a diff**: pointed at a code diff, the claim-verification template above
+finds almost nothing — a diff doesn't assert claims the way a plan's prose does, and "does the diff
+do what the PR description says" is a much weaker question than "what does this diff break that
+nobody asked about." The seven axes below are the diff-shaped form of the same open-ended
+instruction that also applies to plans — this is **not** a "plans get claim-checking, diffs get
+axes" split; a plan/design/audit gets claim verification (its content is largely falsifiable
+claims) **plus** its own open-ended adversarial pass (no fixed axes — hand the reviewer the artifact
+with no checklist, per "Adversarial review is REQUIRED" above). This section's axes are the template
+for the out-of-loop pass required by "Post-implementation review gate" below, specifically for diffs.
 
 This section does not replace the artifact template and does not restate `doc/dev/testing_workflow.md`
 or the Orchestration Protocol. Every axis below is a real defect that shipped, or nearly shipped, in
@@ -171,7 +181,7 @@ Each is a question the reviewer must answer about the diff, not a box to tick.
   must observe (the before/after behavior, the flag default), so the reviewer attacks the contract
   instead of paraphrasing the diff back at you.
 - **Re-review the fixes.** A fix is new, unreviewed code. A second review round over round-1's fixes
-  found a fresh Medium-severity defect in them — a fix is not safe merely because the finding it
+  found a fresh Important-severity defect in them — a fix is not safe merely because the finding it
   addresses was real; it needs its own pass.
 
 ### Code-diff `codex exec` prompt template
@@ -222,6 +232,10 @@ what a Critical/Important finding requires.
 PROMPT
 )"
 ```
+
+This findings-array shape is the diff-attack output contract; it is distinct from the per-claim
+verdict contract used for plans/designs/audits (see "Out-of-loop verifier requirements" above) —
+use the one that matches the review type, not both.
 
 Fallback (Codex unavailable): the same prompt via a fresh Claude general-purpose subagent (Agent
 tool, no prior session context) — same "different tool/model where possible" rule as the

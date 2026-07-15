@@ -24,8 +24,11 @@ real.** Triage is the caller's job (see "Triage, not obey" below).
   after applying fixes from a prior round. Do not assume a fix is safe because the finding it
   addresses was real.
 
-Not for reviewing plans, designs, or audit reports — those use the claim-verification template
-earlier in the same doc, not this one.
+Not for reviewing plans, designs, or audit reports. Those still need the open-ended adversarial
+pass (see the doc § "Adversarial review is REQUIRED" — it applies to plans too, not just diffs),
+but this skill's mechanics (computing a `git diff`, the diff-shaped attack axes) only make sense
+for a diff; for a plan/design/audit, use the claim-verification template earlier in the same doc
+plus a general open-ended prompt over the prose, not this skill.
 
 ## Procedure
 
@@ -33,14 +36,22 @@ earlier in the same doc, not this one.
 
 ```bash
 BASE="${1:-origin/maxat_sapphire_2}"
-git fetch origin "${BASE#origin/}" 2>/dev/null || true
+if ! git fetch origin "${BASE#origin/}"; then
+  echo "FATAL: git fetch origin '${BASE#origin/}' failed — refusing to diff against a possibly" \
+       "stale copy of ${BASE}. Fix connectivity/the ref and retry; a review against a stale base" \
+       "is worse than no review (see 'Out-of-loop verifier requirements' in the doc)." >&2
+  exit 1
+fi
 git diff "${BASE}...HEAD" > /tmp/adversarial-review-diff.txt
 wc -l /tmp/adversarial-review-diff.txt   # sanity check it's non-empty
 ```
 
-Run this from a clean checkout of the branch under review, diffing against `origin/<base>` — never
-a stale local branch ref or the dirty working tree (see "Out-of-loop verifier requirements" in the
-doc; a wrong-branch or stale-ref diff has produced false verdicts before).
+`BASE` must always resolve to an `origin/<branch>` remote-tracking ref, never a bare local branch
+name — run this from a clean checkout of the branch under review, diffing against `origin/<target>`,
+never a stale local branch ref or the dirty working tree (see "Out-of-loop verifier requirements" in
+the doc; a wrong-branch or stale-ref diff has produced false verdicts before). The fetch above must
+succeed before the diff is trusted — do not silently fall back to whatever `origin/<target>` last
+pointed to.
 
 ### 2. Fill in the template's three required inputs
 
