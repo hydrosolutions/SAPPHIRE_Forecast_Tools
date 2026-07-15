@@ -30,7 +30,7 @@ operational lead, not collapse blindly**.
 
 ## Reuse (do not rebuild)
 This IS the parked lead-aware project, refined. Decisions/P0 locked in
-`doc/plans/working/skill_lead_aware_plan_revised.md`; its P2 reader lead-derivation (flag-gated) was
+`doc/plans/working/review_skill_lead_aware_plan_revised.md`; its P2 reader lead-derivation (flag-gated) was
 built (uncommitted). RESUME + ADD config-driven operational-issuance selection + reconcile with #411
 (built AFTER that P2).
 
