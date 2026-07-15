@@ -424,6 +424,48 @@ def test_compute_event_contingencies_rp_event_without_return_levels_raises() -> 
         _compute_event_contingencies(pairs, {}, ("rp5",), None)
 
 
+def test_compute_event_contingencies_rp_event_missing_period_raises() -> None:
+    """Round-2 review gap: a NON-EMPTY return_levels that simply lacks the
+    requested rp* event's return period must also raise -- never silently
+    produce zero rows.
+
+    Before this fix, the guard only checked ``not return_levels`` (wholly
+    empty/None). A ``return_levels`` mapping that has real levels for some
+    OTHER return period (here rp5, built via
+    ``compute_return_levels(..., return_periods=(5.0,))``) but not the
+    requested rp10 sailed past that guard, then
+    ``reclassify_pairs_for_rp_event`` did ``group_levels.get(10.0)`` for
+    every group, found nothing, dropped every row, and
+    ``_compute_event_contingencies`` silently produced zero rp10 rows --
+    the exact same silent-empty failure the round-1 fix was meant to kill,
+    just one level down (present mapping, absent key, instead of absent
+    mapping).
+
+    Discriminating mutation: replacing the new "missing period" branch with
+    ``pass``/removing it makes this test fail (no exception raised) while
+    test_compute_event_contingencies_includes_rp_events_when_requested
+    (which supplies a return_levels that DOES cover the requested period)
+    stays green -- proving the two tests together pin both "must work when
+    the period is covered" and "must fail loudly when it is not" halves of
+    the contract, without over-raising on the case that already worked.
+    """
+    from forecast_skill_eval.events import compute_return_levels
+    from forecast_skill_eval.orchestrator import _compute_event_contingencies
+
+    pairs = _rp_pairs()
+    min_years = 10
+    # Only rp5 is computed -- rp10's return period (10.0) is absent from
+    # every group, but the mapping itself is non-empty.
+    return_levels = compute_return_levels(pairs, return_periods=(5.0,), min_years=min_years)
+    assert return_levels, "guard: return_levels must be non-empty for this fixture"
+    assert all(10.0 not in levels for levels in return_levels.values()), (
+        "guard: fixture must not accidentally cover rp10"
+    )
+
+    with pytest.raises(ValueError, match="rp10"):
+        _compute_event_contingencies(pairs, {}, ("rp10",), return_levels)
+
+
 def _daily_rows(*, year: int, month: int, value: float) -> list[dict[str, object]]:
     rows = []
     day = date(year, month, 1)

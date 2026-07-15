@@ -319,6 +319,22 @@ def _compute_event_contingencies(
             :func:`events.compute_return_levels` first and pass its
             result, or drop the rp* event(s) from *events_filter* if
             return-period contingencies are not wanted for this dataset.
+        ValueError: If *events_filter* requests an rp* event whose specific
+            return period is absent from *every* group in *return_levels*
+            (e.g. ``return_levels`` was built with
+            ``return_periods=(5.0,)`` but ``events_filter`` asks for
+            ``rp10``). :func:`events.reclassify_pairs_for_rp_event` looks
+            up ``group_levels.get(event.return_period)`` per
+            ``(code, horizon, period_key)`` group (events.py ~:579); if no
+            group has that key at all, every lookup misses and the event
+            silently produces zero rows -- the same failure mode as the
+            wholly-empty-mapping case above, just one level down. This does
+            NOT fire when the period is present for *some* groups and
+            legitimately absent for others (station/period below
+            ``min_years``, or a non-finite GEV fit for that specific T) --
+            that per-group partial coverage is expected behaviour and stays
+            silent-per-group, matching
+            :func:`events.reclassify_pairs_for_rp_event`'s own contract.
     """
     return_levels = return_levels or {}
     events_set = frozenset(events_filter)
@@ -333,6 +349,36 @@ def _compute_event_contingencies(
             "result as return_levels, or remove the rp* event(s) from "
             "events_filter."
         )
+    if requested_rp_names:
+        # return_levels is non-empty here (the guard above already caught the
+        # wholly-empty case). A specific rp* event can still be silently
+        # starved if NO group carries a level for its return_period -- e.g.
+        # return_levels was computed with return_periods=(5.0,) but rp10 was
+        # requested. Match the exact lookup in
+        # events.reclassify_pairs_for_rp_event (`group_levels.get(event.return_period)`)
+        # by checking presence across the union of all groups' keys.
+        available_periods = {period for levels in return_levels.values() for period in levels}
+        missing_rp_events = [
+            event
+            for event in _RP_EVENTS
+            if event.name in events_set and event.return_period not in available_periods
+        ]
+        if missing_rp_events:
+            missing_names = [event.name for event in missing_rp_events]
+            missing_periods = [event.return_period for event in missing_rp_events]
+            raise ValueError(
+                f"Return-period event(s) {missing_names} were requested via "
+                f"events_filter, but no group in return_levels has a level for "
+                f"return period(s) {missing_periods}. return_levels is non-empty "
+                "(it has levels for other return periods and/or other groups), "
+                "but reclassify_pairs_for_rp_event looks up "
+                "group_levels.get(event.return_period) per group -- if that key "
+                "is absent everywhere, every lookup misses and the event "
+                "silently produces zero rows. Call "
+                "events.compute_return_levels(...) with a return_periods tuple "
+                f"that includes {missing_periods}, or remove "
+                f"{missing_names} from events_filter."
+            )
     frames: list[pd.DataFrame] = []
 
     for event in (*ALL_EVENTS, *_NORM_FACTOR_EVENTS):
