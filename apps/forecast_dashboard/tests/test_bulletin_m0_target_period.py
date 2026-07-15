@@ -1133,6 +1133,83 @@ class TestReloadClearsStaleCachedTargetPeriod:
 
 
 # ---------------------------------------------------------------------------
+# _on_write: a write-time attribute-refresh failure must also warn (FD-018
+# review round-3) — a genuinely captured target period that then THROWS
+# while being applied must not be reported as a plain success, because the
+# site keeps its stale add-time attributes.
+# ---------------------------------------------------------------------------
+
+
+class TestOnWriteSurfacesRefreshFailure:
+    def test_refresh_failure_warns_operator_but_still_writes(self, monkeypatch):
+        """`_populate_forecast_attributes` raising for a site (e.g. while
+        applying a correctly-captured target period) must not be silently
+        swallowed into a plain 'Bulletin saved successfully' — the site kept
+        its stale add-time (main-month) attributes, so the operator must be
+        warned by name, exactly like the `bulletin_target_period is None`
+        case. The write must still happen (never block on this).
+
+        Discriminating mutation: removing the `unresolved_codes.append(...)`
+        call from the `except` branch in `_on_write` (i.e. leaving the
+        except a pure log-and-swallow, as on trunk) makes this RED —
+        `_show_write_popup` would be called with the plain success message
+        and no `alert_type` kwarg.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(
+            bulletin_manager,
+            "_populate_forecast_attributes",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+
+        site = _make_site(code="99001")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+        site.bulletin_target_period = (7, 2026)  # captured fine at add-time
+
+        fake_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._write_to_excel.assert_called_once()  # write still happened
+        fake_self._show_write_popup.assert_called_once()
+        args, kwargs = fake_self._show_write_popup.call_args
+        assert kwargs.get("alert_type") == "warning"
+        assert "99001" in args[0]
+
+    def test_flag_off_refresh_failure_stays_plain_success(self, monkeypatch):
+        """Kill-switch contract: with the flag OFF, a write-time refresh
+        failure must reproduce trunk's exact behavior — logged and
+        swallowed, plain success popup, no warning. Must stay byte-identical
+        to trunk on the flag-OFF path.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+        monkeypatch.setattr(bulletin_manager, "rehydrate_sites_hydrograph_stats", MagicMock())
+        monkeypatch.setattr(
+            bulletin_manager,
+            "_populate_forecast_attributes",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+
+        site = _make_site(code="99001")
+        site.forecasts = pd.DataFrame(
+            {"Model": ["LR"], "Forecasted discharge": [50.0],
+             "Forecast lower bound": [40.0], "Forecast upper bound": [60.0]}
+        )
+        site.bulletin_target_period = (7, 2026)
+
+        fake_self = _make_write_manager_stub([site], bulletin_wide_month=8)
+
+        BulletinManager._on_write(fake_self, event=None)
+
+        fake_self._write_to_excel.assert_called_once()
+        fake_self._show_write_popup.assert_called_once_with("Bulletin saved successfully")
+
+
+# ---------------------------------------------------------------------------
 # _on_write: a genuinely unresolved target period surfaces to the operator
 # (FD-018 review finding #4)
 # ---------------------------------------------------------------------------

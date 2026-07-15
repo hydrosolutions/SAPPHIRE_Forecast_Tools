@@ -1036,6 +1036,16 @@ class BulletinManager:
                         "_on_write: attribute refresh failed for %s (%s); "
                         "writing with existing attributes.", getattr(site, 'code', '?'), exc,
                     )
+                    # FD-018 review #6 (round-3): a refresh failure here means
+                    # the site keeps its stale add-time attributes (e.g. the
+                    # wrong month's norm/day-count), the exact "silent
+                    # wrong-but-plausible success" this feature exists to
+                    # eliminate. Fold it into the same unresolved_codes ->
+                    # warning-popup path as a `None` target period. Gated on
+                    # the flag so a flag-OFF refresh failure stays byte-
+                    # identical to trunk (log-and-swallow, plain success).
+                    if skill_lead_aware_enabled():
+                        unresolved_codes.append(getattr(site, "code", "?"))
 
             self._write_to_excel(
                 self.dm.sites_list, filtered, bulletin_header_info,
