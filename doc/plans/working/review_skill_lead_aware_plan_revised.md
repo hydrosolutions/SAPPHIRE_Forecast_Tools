@@ -19,12 +19,12 @@
 > **✅ ROLLOUT DECIDED 2026-07-14 — the flag WILL be enabled.** Rationale: for **monthly** forecasts
 > Kyrgyz Hydromet **chooses which lead** goes into the bulletin, so skill must be per-lead and the
 > display must show the skill of the lead actually published. (Quarterly needs no per-lead skill — we
-> publish only the lowest available lead.) This closes **FD-018**.
+> publish only the lowest available lead.) This closes **FD-021**.
 >
-> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this banner said **PP-040 must land
-> before enabling the flag**. **Retracted — that was wrong.** PP-040 is *short-term* (pentad/decade)
-> skill while this flag governs *long-term monthly* skill, and PP-040 proved not to be a code defect
-> at all (the pairing is correct; the Tajik ML forecast archive is merely sparse). **PP-040 does not
+> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this banner said **PP-043 must land
+> before enabling the flag**. **Retracted — that was wrong.** PP-043 is *short-term* (pentad/decade)
+> skill while this flag governs *long-term monthly* skill, and PP-043 proved not to be a code defect
+> at all (the pairing is correct; the Tajik ML forecast archive is merely sparse). **PP-043 does not
 > block this rollout.**
 >
 > What still applies: enabling requires a **full long-term skill recalc**, and the PR #411 min-n gate

@@ -27,11 +27,11 @@
 > golden behavior locked by tests, and it would still deliver one number for a product whose lead is
 > operator-selectable. The flag-on path *is* the requirement, not a nice-to-have.
 >
-> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this file claimed **PP-040 must be
-> fixed before enabling the flag**. **That was wrong, and is retracted.** PP-040 concerns
+> **Sequencing — CORRECTED 2026-07-14.** An earlier revision of this file claimed **PP-043 must be
+> fixed before enabling the flag**. **That was wrong, and is retracted.** PP-043 concerns
 > *short-term* (pentad/decade) skill, whereas this flag governs *long-term monthly* skill — largely
-> independent code paths. And PP-040 turned out **not to be a code defect at all** (the pairing is
-> correct; the Tajik ML forecast archive is simply sparse). **PP-040 does not block this.**
+> independent code paths. And PP-043 turned out **not to be a code defect at all** (the pairing is
+> correct; the Tajik ML forecast archive is simply sparse). **PP-043 does not block this.**
 >
 > What *does* still apply: enabling the flag requires a **full long-term skill recalc**, and the
 > min-n gate (PR #411) will suppress any lead whose sample is too thin — so confirm the monthly
@@ -55,14 +55,22 @@ by the min-n/stale branch).
 In the monthly dashboard view, the **month_0 (in-month, lead 0)** forecasts are annotated
 with **lead-1** skill metrics, not the lead-0 skill for the same model/month.
 
-Mechanism:
-- `get_long_forecasts(..., horizon_value=0)` fetches lead-0 forecast rows but **drops
-  `horizon_value`** before returning (`db.py:~637`, `~665`).
-- `_get_data_monthly` filters `forecast_stats` to `_op_lead == 1` (`db.py:~880`), then
-  **reuses that same lead-1-filtered frame for the month_0 block** (`db.py:~943`), merging
-  only on `["code", "month_in_year", "model_short"]` (`db.py:~951`) — with no
-  `horizon_value` in the key.
-- Net: a month_0 forecast row is joined to the lead-1 skill row for that model/month.
+> **RE-VERIFIED 2026-07-15 against the merged `maxat_sapphire_2` tree (post PR #416 lead-aware
+> convergence). Conclusion holds; mechanism/line-refs below updated — the original `_op_lead`
+> description was pre-#416 and is stale.** Current state, `apps/forecast_dashboard/src/db.py`:
+> - **Flag OFF (`SAPPHIRE_SKILL_LEAD_AWARE`, the default):** `_get_data_monthly` filters
+>   `forecast_stats` to `horizon_value == 1` (`db.py:1001-1004`), the `month_0` block fetches the
+>   forecast at `m0_lead = 0` (`db.py:1064-1065`), then merges it against that **lead-1-filtered**
+>   `forecast_stats` on `merge_keys = ["code", "month_in_year", "model_short"]` (`db.py:973`,
+>   `:1073-1078`) — **no lead in the key.** Net: the lead-0 month_0 forecast is annotated with lead-1
+>   skill. **Bug confirmed present on the default path.**
+> - **Flag ON:** `merge_keys` gains `horizon_value` (`db.py:992`) and `m0_lead` resolves to month_0's
+>   own lead, so the merge is per-lead and correct. **Origin's M1 P3 work already fixes this under the
+>   flag.**
+>
+> **So FD-021 is another symptom cured by the already-decided "enable `SAPPHIRE_SKILL_LEAD_AWARE`"**
+> (see the OWNER DECISION banner above). No separate flag-OFF patch is needed if the flag is enabled;
+> if any deployment must stay flag-OFF, then the fix below applies to that path only.
 
 This is independent of the min-n / stale-tombstone work: month_0 has always consumed the
 lead-1 skill frame, so it never used lead-0 skill regardless of tombstoning. (The reviewer

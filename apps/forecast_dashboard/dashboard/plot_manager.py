@@ -10,8 +10,15 @@ import holoviews as hv
 from calendar import month_abbr, month_name
 
 from dashboard.logger import setup_logger
+from skill_lead_aware_flag import skill_lead_aware_enabled
+from src.month_lead import month_lead_for_mode, primary_month_lead
 
 logger = setup_logger()
+
+
+def _primary_month_lead() -> int:
+    """Resolve the deployment's primary monthly lead for caption/visibility."""
+    return primary_month_lead()
 
 
 def _ordinal(n: int) -> str:
@@ -21,20 +28,34 @@ def _ordinal(n: int) -> str:
     return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
 
 
-def _format_forecast_info(issue_date, horizon_label: str) -> str:
+def _format_forecast_info(issue_date, horizon_label: str, lead: int | None = None) -> str:
     """Build the info text for a monthly forecast card.
 
     Args:
         issue_date: The forecast issue date (datetime-like with .month, .day, .year).
-        horizon_label: "month_1" or "month_0".
+        horizon_label: "month_1" or "month_0" (kept verbatim in the rendered text).
+        lead: The resolved operational lead. When provided (lead-aware path), the
+            target month is issue_month + lead with year rollover. When None
+            (legacy kill-switch), the target is derived from ``horizon_label``.
     """
-    if horizon_label == "month_1":
+    target_year = None
+    if lead is not None:
+        target_month_num = ((issue_date.month - 1 + lead) % 12) + 1
+        # Roll the target year forward whenever the lead pushes the target
+        # month past December (e.g. Dec-issued lead-1 -> January NEXT year).
+        target_year = issue_date.year + ((issue_date.month - 1 + lead) // 12)
+    elif horizon_label == "month_1":
         target_month_num = (issue_date.month % 12) + 1
     else:
         target_month_num = issue_date.month
     target = month_name[target_month_num]
     issue_month = month_name[issue_date.month]
     day = _ordinal(issue_date.day)
+    # Only show the target year when it differs from the issue year — keeps
+    # the common (same-year) case unchanged, and the flag-OFF path (lead is
+    # None) never computes target_year at all, so it is byte-identical.
+    if target_year is not None and target_year != issue_date.year:
+        target = f"{target} {target_year}"
     return (
         f"Monthly runoff forecast for {target}  \n"
         f"Forecast issue date: {day} of {issue_month} {issue_date.year} ({horizon_label})"
@@ -281,8 +302,9 @@ class PlotManager:
             df = self._dm.forecasts_all
             if df is not None and not df.empty:
                 issue_date = df['date'].max()
+                lead = _primary_month_lead() if skill_lead_aware_enabled() else None
                 self._wm.forecast_info_m1.object = _format_forecast_info(
-                    issue_date, "month_1")
+                    issue_date, "month_1", lead=lead)
             else:
                 self._wm.forecast_info_m1.object = ""
         else:
@@ -298,8 +320,20 @@ class PlotManager:
         if forecasts_all is None or forecasts_all.empty:
             self.summary_table_m0_card.visible = False
             return
-        summary_target_month = (forecasts_all['date'].max().month % 12) + 1
-        m0_target_month = m0['date'].max().month
+        _issue_month = forecasts_all['date'].max().month
+        m0_issue_month = m0['date'].max().month
+        if skill_lead_aware_enabled():
+            summary_target_month = ((_issue_month - 1 + _primary_month_lead()) % 12) + 1
+            # The m0 card is not guaranteed to be the lead-0 product — resolve
+            # its lead from config the same way src/db.py does
+            # (_safe_lead("month_0", 0)), so the visibility gate compares like
+            # with like (m0's own TARGET month, not its issue month).
+            m0_lead = month_lead_for_mode("month_0", 0)
+            m0_target_month = ((m0_issue_month - 1 + m0_lead) % 12) + 1
+        else:
+            summary_target_month = (_issue_month % 12) + 1
+            m0_lead = None
+            m0_target_month = m0_issue_month
         if summary_target_month != m0_target_month:
             self.summary_table_m0_card.visible = False
             return
@@ -319,9 +353,11 @@ class PlotManager:
             self._wm.range_slider,
             self._wm.forecast_tabulator_m0,
         )
-        # Update m0 info text
+        # Update m0 info text with the same resolved lead used for the
+        # visibility gate above (config-resolved under the flag; None
+        # under the kill-switch — legacy issue-month fallback).
         self._wm.forecast_info_m0.object = _format_forecast_info(
-            m0_max_date, "month_0")
+            m0_max_date, "month_0", lead=m0_lead)
 
     def update_quarterly_summary_tabulator(self):
         """Update the quarterly summary table card.

@@ -4,6 +4,7 @@ import os
 
 import pandas as pd
 import panel as pn
+from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.file_downloader import FileDownloader
 from src.gettext_config import _, p_
 
@@ -583,8 +584,20 @@ def create_forecast_info_pane():
     return pn.pane.Markdown("", sizing_mode="stretch_width")
 
 
-def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
+def format_horizon_info(
+    horizon, forecast_horizon, forecast_year, last_date, metadata_is_current=True,
+):
     """Build the header label describing the active forecast horizon.
+
+    Args:
+        metadata_is_current: Whether (forecast_horizon, forecast_year) were
+            actually resolved for `horizon` (vs. left stale from a
+            previously-selected horizon after a failed metadata refresh —
+            see widget_manager._on_change). Only consulted by the
+            flag-gated "month" branch, where trusting a stale cross-horizon
+            period number as a month index can crash or silently mislabel
+            the month; defaults to True so all other callers (and every
+            other horizon branch) are unaffected.
 
     See widget_manager._refresh_horizon_info_pane for the call site.
     """
@@ -626,10 +639,22 @@ def format_horizon_info(horizon, forecast_horizon, forecast_year, last_date):
             "num": forecast_horizon,
         }
     elif horizon == "month":
-        target_month_num = (production_date.month % 12) + 1
+        # Defect J: use the resolved target month/year passed in (lead-aware);
+        # the legacy kill-switch recomputes them from the production date.
+        if skill_lead_aware_enabled():
+            if not metadata_is_current:
+                # forecast_horizon/forecast_year were resolved for a
+                # DIFFERENT horizon (the refresh for this one failed and the
+                # cache was left stale) — do not render a month from them.
+                return ""
+            target_month_num = forecast_horizon
+            target_year = forecast_year
+        else:
+            target_month_num = (production_date.month % 12) + 1
+            target_year = production_date.year
         body = _("month: %(month)s %(year)s") % {
             "month": month_name(target_month_num, "nominative"),
-            "year": production_date.year,
+            "year": target_year,
         }
     elif horizon == "season":
         body = _("season: April–September")
