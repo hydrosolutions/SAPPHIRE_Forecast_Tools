@@ -80,7 +80,7 @@ Quarter SM is thin (56/110 survive at both K=4 and K=5) — a coverage risk to a
    EM/NM/SM output rows** → `n_pairs>=K`; quarter/season EM → **output floor only** (fixed-LR
    membership untouched). Short-term (pentad/decad) untouched. Applying the floor to the forecast-side
    gate is what stops stale/low-n raw rows from entering a membership pool.
-4. **Lead-aware alignment is advisory** (`skill_lead_aware_plan_revised.md` absent from this ref, no
+4. **Lead-aware alignment is advisory** (`review_skill_lead_aware_plan_revised.md` absent from this ref, no
    committed min-n) — no hard dependency; sequence to avoid conflicting `skill_metrics.py` diffs.
 
 ---
