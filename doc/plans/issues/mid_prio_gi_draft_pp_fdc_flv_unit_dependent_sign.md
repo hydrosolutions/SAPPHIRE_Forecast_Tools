@@ -1,10 +1,9 @@
-# PP-040: `fdc_flv` sign depends on the magnitude/unit of observed discharge, not just model bias
+# PP-044: `fdc_flv` sign depends on the magnitude/unit of observed discharge, not just model bias
 
-> **ID caveat**: Numbered `PP-040` relative to `doc/plans/module_issues.md` on **this branch**
-> (`fix_pp_informational_metrics`), whose highest existing id at time of filing is `PP-039`
-> (Bulletin Share API). Many branches are filing PP-issues in parallel right now — this id
-> **must be reconciled against `origin/maxat_sapphire_2`'s `module_issues.md` at merge time**
-> to avoid colliding with an id assigned on another branch.
+> **ID note**: Originally filed as `PP-040` on branch `fix_pp_informational_metrics`; renumbered
+> to `PP-044` at merge (trunk `PP-040` = ARIMA ModelType, `PP-041` = long_forecasts stale
+> invalidation, `PP-042` = ensemble-exclusion form mismatch, `PP-043` = archived decadal skill
+> starvation). No other references exist outside this file and `module_issues.md`.
 
 **Status**: Draft
 **Module**: postprocessing_forecasts (apps) + postprocessing service schema

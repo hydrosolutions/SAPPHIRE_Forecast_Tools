@@ -6,6 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def load_configuration(env_file_path: str=None) -> None:
     """
     Loads the application configuration from an .env file.

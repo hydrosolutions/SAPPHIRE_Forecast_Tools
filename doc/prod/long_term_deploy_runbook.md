@@ -20,7 +20,7 @@ two deployments differ — see the parameter table below.
 | b | Two-model ensemble: quarter/season `EM = mean(LR_Base, LR_SM)`, de-skill-gated; reader drops 7 deprecated quarter models | `apps/postprocessing_forecasts/src/{ensemble_calculator,skill_metrics,data_reader,model_names}.py` |
 | c | From-file importer accepts quarter/season + code-scoped gap-fill | `bin/utils/migration_py/long_forecast.py` |
 | d | Seasonal Excel bulletin export | `apps/forecast_dashboard/src/bulletins.py` |
-| e | Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`, **default OFF, opt-in per deployment**) | `apps/postprocessing_forecasts/`, `apps/forecast_dashboard/src/db.py`, `apps/iEasyHydroForecast/{long_term_horizon_resolver,skill_lead_aware_flag}.py` — see the dedicated section below |
+| e | Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`, **default OFF, opt-in per deployment**) | `apps/postprocessing_forecasts/`, `apps/forecast_dashboard/src/db.py`, `apps/forecast_dashboard/dashboard/{widgets,widget_manager,plot_manager}.py`, `apps/forecast_dashboard/src/month_lead.py`, `apps/iEasyHydroForecast/{long_term_horizon_resolver,skill_lead_aware_flag}.py` — see the dedicated section below |
 
 > **Note on (d):** the seasonal-bulletin env var
 > `ieasyforecast_template_season_bulletin_file` has been correct in the code
@@ -70,6 +70,20 @@ configured operational issuance (by `operational_month_lead_time` +
 `operational_issue_day`) instead of blending re-issues / backfills. It also
 un-hides Tajik's flagship monthly forecast (`month_1` = lead 0), previously
 masked by a hard-coded `horizon_value=1`.
+
+**Also changes the dashboard display layer (`apps/forecast_dashboard`):** the
+monthly panel's header/caption resolve and name the correct **target** month and
+year for the deployment's configured lead (per config, not a hard-coded lead 1)
+— this is what un-hides Tajik's flagship forecast on screen, not just in the
+write path above. A December-issued lead-1 monthly bulletin is now saved under
+the **following** year (previously the issue year, which was wrong for any
+lead ≥ 1 issued in December). No extra operator action beyond the single `.env`
+line above — the display fix is covered by the same flag and the same recalc;
+there is nothing additional to configure or run. One known residual gap: the
+`month_0` bulletin card (Kyrgyz-only) can still pick up the wrong target
+month/norm when the bulletin is written or reloaded — tracked separately in
+`doc/plans/issues/mid_prio_gi_draft_fd_m0_bulletin_per_site_target_month.md`
+(FD-018), not fixed by enabling this flag.
 
 **⛔ Enable prerequisite (hard — fail-loud):** every long-term config JSON for the
 deployment must carry BOTH `operational_month_lead_time` AND
