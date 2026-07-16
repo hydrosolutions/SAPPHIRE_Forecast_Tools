@@ -28,10 +28,13 @@ from forecast_skill_eval.economic_value import (
 )
 from forecast_skill_eval.events import (
     _NORM_FACTOR_EVENTS,
+    _RP_EVENTS,
     ALL_EVENTS,
     compute_percentile_thresholds,
+    compute_return_levels,
     event_by_name,
     reclassify_pairs_for_event,
+    reclassify_pairs_for_rp_event,
 )
 from forecast_skill_eval.ledger import ExclusionLedger
 from forecast_skill_eval.metrics import METRIC_COLUMNS, add_metrics
@@ -155,7 +158,23 @@ def run(config: ForecastSkillEvalConfig, client: Any, run_id: str) -> ResultsBun
 
     all_pairs = _concat_pairs(pair_frames)
     thresholds = compute_percentile_thresholds(all_pairs, config.min_years)
-    contingency = _compute_event_contingencies(all_pairs, thresholds, config.events_filter)
+
+    # Return-period (GEV) events are expensive and opt-in: only fit the GEV
+    # distributions when a caller actually requested an rp* event.
+    requested_rp_events = tuple(event for event in _RP_EVENTS if event.name in config.events_filter)
+    return_levels = (
+        compute_return_levels(
+            all_pairs,
+            return_periods=tuple(event.return_period for event in requested_rp_events),
+            min_years=config.min_years,
+        )
+        if requested_rp_events
+        else {}
+    )
+
+    contingency = _compute_event_contingencies(
+        all_pairs, thresholds, config.events_filter, return_levels
+    )
     baselines = _concat_baselines(
         [
             build_climatology_baseline(all_pairs),
@@ -253,6 +272,7 @@ def _compute_event_contingencies(
     pairs: pd.DataFrame,
     thresholds: dict[tuple[str, str, int], dict[float, float]],
     events_filter: tuple[str, ...],
+    return_levels: dict[tuple[str, str, int], dict[float, float]] | None = None,
 ) -> pd.DataFrame:
     """Compute contingency metrics for each requested event and tag with event name.
 
@@ -265,24 +285,116 @@ def _compute_event_contingencies(
     the empirical thresholds.  Percentile events for which no thresholds are
     available (stations with fewer years than ``min_years``) produce no rows
     (those rows are silently dropped by :func:`reclassify_pairs_for_event`).
+    Return-period events (rp5/rp10/rp30/rp100) recompute ``fc_class``/
+    ``obs_class`` from the GEV return levels in *return_levels*; groups without
+    an available return level (station/period did not meet the ``min_years``
+    gate, or the GEV fit failed) likewise produce no rows for THAT group --
+    but see the ``Raises`` note below for the all-or-nothing case.
 
     Args:
         pairs: All-horizons pair DataFrame.
         thresholds: Per-``(code, horizon, period_key)`` percentile thresholds.
         events_filter: Ordered sequence of event names to include in the output.
+        return_levels: Per-``(code, horizon, period_key)`` GEV return-level
+            mappings as returned by :func:`events.compute_return_levels`, used
+            only for the return-period events (rp5/rp10/rp30/rp100). Callers
+            that never request an rp* event may omit this argument entirely
+            (or pass ``{}``/``None``) -- it is simply unused in that case.
 
     Returns:
         Contingency metrics DataFrame with an ``event`` column.  Columns follow
         ``OUTPUT_COLUMNS + METRIC_COLUMNS + ("event",)``.  An empty DataFrame
         with the same schema is returned when no events produce rows.
+
+    Raises:
+        ValueError: If *events_filter* requests one or more return-period
+            events (rp5/rp10/rp30/rp100) but *return_levels* is ``None`` or
+            empty. This is deliberately loud rather than silent: an rp*
+            event with no return levels at all would otherwise produce a
+            contingency frame with zero rows for that event, which reads
+            exactly like "the model has no rp skill here" -- there is no
+            way for a downstream reader to tell "we never computed GEV
+            return levels" apart from "we computed them and this station
+            genuinely has none". Callers must call
+            :func:`events.compute_return_levels` first and pass its
+            result, or drop the rp* event(s) from *events_filter* if
+            return-period contingencies are not wanted for this dataset.
+        ValueError: If *events_filter* requests an rp* event whose specific
+            return period is absent from *every* group in *return_levels*
+            (e.g. ``return_levels`` was built with
+            ``return_periods=(5.0,)`` but ``events_filter`` asks for
+            ``rp10``). :func:`events.reclassify_pairs_for_rp_event` looks
+            up ``group_levels.get(event.return_period)`` per
+            ``(code, horizon, period_key)`` group (events.py ~:579); if no
+            group has that key at all, every lookup misses and the event
+            silently produces zero rows -- the same failure mode as the
+            wholly-empty-mapping case above, just one level down. This does
+            NOT fire when the period is present for *some* groups and
+            legitimately absent for others (station/period below
+            ``min_years``, or a non-finite GEV fit for that specific T) --
+            that per-group partial coverage is expected behaviour and stays
+            silent-per-group, matching
+            :func:`events.reclassify_pairs_for_rp_event`'s own contract.
     """
+    return_levels = return_levels or {}
     events_set = frozenset(events_filter)
+    requested_rp_names = [event.name for event in _RP_EVENTS if event.name in events_set]
+    if requested_rp_names and not return_levels:
+        raise ValueError(
+            f"Return-period event(s) {requested_rp_names} were requested via "
+            "events_filter, but return_levels is empty (None or {}). "
+            "Silently producing zero contingency rows for these events would "
+            "be indistinguishable from 'the model has no rp skill here'. "
+            "Call events.compute_return_levels(...) first and pass its "
+            "result as return_levels, or remove the rp* event(s) from "
+            "events_filter."
+        )
+    if requested_rp_names:
+        # return_levels is non-empty here (the guard above already caught the
+        # wholly-empty case). A specific rp* event can still be silently
+        # starved if NO group carries a level for its return_period -- e.g.
+        # return_levels was computed with return_periods=(5.0,) but rp10 was
+        # requested. Match the exact lookup in
+        # events.reclassify_pairs_for_rp_event (`group_levels.get(event.return_period)`)
+        # by checking presence across the union of all groups' keys.
+        available_periods = {period for levels in return_levels.values() for period in levels}
+        missing_rp_events = [
+            event
+            for event in _RP_EVENTS
+            if event.name in events_set and event.return_period not in available_periods
+        ]
+        if missing_rp_events:
+            missing_names = [event.name for event in missing_rp_events]
+            missing_periods = [event.return_period for event in missing_rp_events]
+            raise ValueError(
+                f"Return-period event(s) {missing_names} were requested via "
+                f"events_filter, but no group in return_levels has a level for "
+                f"return period(s) {missing_periods}. return_levels is non-empty "
+                "(it has levels for other return periods and/or other groups), "
+                "but reclassify_pairs_for_rp_event looks up "
+                "group_levels.get(event.return_period) per group -- if that key "
+                "is absent everywhere, every lookup misses and the event "
+                "silently produces zero rows. Call "
+                "events.compute_return_levels(...) with a return_periods tuple "
+                f"that includes {missing_periods}, or remove "
+                f"{missing_names} from events_filter."
+            )
     frames: list[pd.DataFrame] = []
 
     for event in (*ALL_EVENTS, *_NORM_FACTOR_EVENTS):
         if event.name not in events_set:
             continue
         event_pairs = reclassify_pairs_for_event(pairs, event, thresholds)
+        if event_pairs.empty:
+            continue
+        ct = add_metrics(count_contingencies(event_pairs))
+        ct["event"] = event.name
+        frames.append(ct)
+
+    for event in _RP_EVENTS:
+        if event.name not in events_set:
+            continue
+        event_pairs = reclassify_pairs_for_rp_event(pairs, event, return_levels)
         if event_pairs.empty:
             continue
         ct = add_metrics(count_contingencies(event_pairs))
