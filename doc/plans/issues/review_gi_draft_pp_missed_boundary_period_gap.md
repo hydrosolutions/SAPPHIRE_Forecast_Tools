@@ -1,7 +1,8 @@
 # PP-045 — Missed boundary-day operational run leaves short-term per-model period gap that maintenance cannot heal
 
-**Status**: Draft — **DECISION MADE 2026-07-17: Option B (backfill entrypoint).**
-Secondary decade-EM anomaly → separate ticket. See "Decision & Workplan" below.
+**Status**: Implemented — awaiting human review (Option B shipped on branch
+`fix_postprocessing_boundary_gap`, NOT pushed). Secondary decade-EM anomaly →
+separate ticket (still to file). See "Verification" and "Decision & Workplan".
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `postprocessing`, `data-integrity`, `operational`
@@ -413,6 +414,54 @@ heals the cross-year permanent gap.
 
 ---
 
+## Verification (2026-07-23) — implemented & reviewed
+
+**Commits** (branch `fix_postprocessing_boundary_gap`, not pushed):
+`cce5922a` (WP1 tests + WP2 impl) → `62bbba65` (review-round fixes).
+
+**Delivered (apps-side only; no `sapphire/services/` change):**
+- `src/file_writer.py`: `save_forecast_data(..., write_csv=True, require_api=False)`
+  — additive; default path byte-identical. `write_csv=False` = API-only;
+  `require_api=True` raises on API-unavailable or falsy API-write return.
+- `postprocessing_operational.py`: `_run_short_term_postprocessing(...,
+  start_year=None, end_year=None, dry_run=False, write_csv=True, require_api=False)`
+  — additive; existing call sites unchanged; `dry_run` skips save AND the
+  log-file write.
+- `backfill_period_forecasts.py` (new): `main(argv)->int`; `--start-date/--end-date/
+  --horizon/--dry-run/--write-csv`; per-year ascending; API-only by default;
+  `SAPPHIRE_API_FAILURE_MODE=fail` + `require_api=True` so any API failure exits
+  non-zero.
+
+**Tests:** `test_backfill_period_forecasts.py` (17 tests incl. the yearless-collapse
+regression G15). Full suite: **1749 passed, 1 xfailed (pre-existing), 0 failed,
+0 unexpected skips**.
+
+**Review:** independent codex adversarial diff review (4 Important findings, all
+fixed) + codex WP1 test-quality review (gaps closed) + a confirm-fixes codex pass
+(F1–F4 all CONFIRMED-FIXED, no new material findings).
+
+**End-to-end (live Tajik dev DB, non-destructive `--dry-run`, exit 0):**
+- PENTAD: would write 1746 rows — **39 distinct pentad_in_year × 6 models**.
+- DECAD: would write 744 rows — **19 distinct decad_in_year × 6 models**.
+  This covers the previously-frozen July periods (symptom: pentad stuck at 07-05,
+  decad at 06-30), confirming the backfill re-aggregates and would write the
+  stranded per-model + ensemble rows for both horizons. A real write + read-back
+  was intentionally NOT run to avoid mutating the dev DB.
+
+**Open items:**
+- **DEFERRED / blocked-on-infra:** full Kyrgyz (`15xxx/16xxx`) short-term pipeline
+  end-to-end verification (kyg server down). Fix NOT considered fully verified
+  until kyg is exercised.
+- **Owner decision flag:** API-only-by-default write (`--write-csv` opt-in) — a
+  behavioral choice on the combined-CSV artifact; owner may override to CSV+API.
+- **Residual risk:** an operator specifying a range starting exactly on Jan 1
+  will miss that period unless the prior calendar year is included (issue-date
+  semantics, documented in the CLI docstring/help).
+- **Separate tickets to file:** secondary decade-EM skill-empty anomaly; the
+  yearless-key `get_latest_forecasts` collapse (latent).
+
+---
+
 ## Testing
 
 ### Reproduction (deterministic, no live DB required)
@@ -510,15 +559,19 @@ owner.
 
 ## Acceptance Criteria
 
-- [ ] Reproduction test(s) above committed and passing.
-- [ ] Under the chosen option, the missed 07-10/07-15 pentad and 07-10 decad
-      periods are recovered (unit/integration + manual end-to-end on Tajik).
-- [ ] No change to existing maintenance ensemble behavior or operational
-      boundary-day behavior beyond the scoped fix (regression tests green).
-- [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero fail, zero
-      unexpected skip.
-- [ ] No real station codes or discharge values in code, tests, or docs
-      (placeholder `19999` only).
+- [x] Reproduction test(s) above committed and passing.
+- [x] Under the chosen option, the missed 07-10/07-15 pentad and 07-10 decad
+      periods are recovered (unit/integration + manual end-to-end dry-run on
+      Tajik: 39 pentads × 6 models, 19 decads × 6 models would be written).
+- [x] No change to existing maintenance ensemble behavior or operational
+      boundary-day behavior beyond the scoped fix (regression tests green;
+      default `save_forecast_data`/`_run_short_term_postprocessing` paths
+      byte-identical, confirmed by codex confirm-fixes pass).
+- [x] `postprocessing_forecasts` suite green — 1749 passed, 1 xfailed
+      (pre-existing), 0 failed, 0 unexpected skips. (Change is apps-side within
+      one module; full-repo `run_tests.sh` not re-run — no cross-module impact.)
+- [x] No real station codes or discharge values in code, tests, or docs
+      (placeholder `19999` only; scanned each changed file).
 - [ ] **DEFERRED — blocked on infra (Kyrgyz server down):** once the kyg server
       is back, run the full kyg (`15xxx/16xxx`) short-term pipeline end-to-end
       (preprocessing_runoff → linear_regression → gateway → machine_learning →
