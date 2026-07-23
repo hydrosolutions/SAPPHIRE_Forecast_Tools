@@ -74,6 +74,37 @@ def _import_backfill():
     return bf
 
 
+def _raw_missed_boundary_day_frame():
+    """Raw whole-slice DAY frame (same shape as T1) for code 19999.
+
+    The Jul 10 2026 pentad boundary carries in-period daily targets
+    Jul 11-15 (pentad_in_year 39), one out-of-period target Jul 16
+    (pentad 40 -> dropped by _normalize_ml_forecasts), and a non-boundary
+    noise issue date Jul 8 (dropped entirely). Feeding this to the REAL
+    ``_normalize_ml_forecasts`` yields exactly one healed per-model period
+    row (code 19999, TFT, pentad_in_year 39, forecasted_discharge 30.0).
+    """
+    return pd.DataFrame(
+        {
+            "code": ["19999"] * 8,
+            "date": (["2026-07-10"] * 6 + ["2026-07-08"] * 2),
+            "target": [
+                "2026-07-11",
+                "2026-07-12",
+                "2026-07-13",
+                "2026-07-14",
+                "2026-07-15",  # in pentad 39
+                "2026-07-16",  # pentad 40 -> filtered out
+                "2026-07-09",
+                "2026-07-10",
+            ],
+            "forecasted_discharge": [10.0, 20.0, 30.0, 40.0, 50.0, 999.0, 777.0, 777.0],
+            "q05": [5.0, 10.0, 15.0, 20.0, 25.0, 500.0, 300.0, 300.0],
+            "q95": [15.0, 30.0, 45.0, 60.0, 75.0, 1500.0, 900.0, 900.0],
+        }
+    )
+
+
 # ===========================================================================
 # T1 — Aggregation regression: a "missed" boundary is healed by re-aggregation
 # ===========================================================================
@@ -629,3 +660,239 @@ class TestGetLatestForecastsCollapsesAcrossYears:
         assert len(result) == 1
         assert pd.to_datetime(result["date"].iloc[0]).year == 2026
         assert result["forecasted_discharge"].iloc[0] == pytest.approx(30.0)
+
+
+# ===========================================================================
+# A — require_api failure modes on the REAL save_forecast_data
+# ===========================================================================
+class TestSaveForecastDataRequireApi:
+    """The ``require_api`` flag turns a non-performed / failed API write into a
+    hard RuntimeError; the best-effort default (require_api=False) never raises.
+    Only the api_writer seam is patched; write_csv=False keeps CSV I/O out."""
+
+    @pytest.fixture
+    def missed_period_frame(self):
+        """Minimal valid combined frame with a per-model period row for a
+        previously-missed pentad period (same shape as T7)."""
+        return pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": pd.to_datetime(["2026-07-10"]),
+                "pentad_in_month": [3],
+                "pentad_in_year": [39],
+                "forecasted_discharge": [30.0],
+                "model_short": ["TFT"],
+            }
+        )
+
+    @pytest.fixture(autouse=True)
+    def _csv_env(self, tmp_path):
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_combined_forecast_pentad_file": "combined_pentad.csv",
+            "ieasyforecast_combined_forecast_decad_file": "combined_decad.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    def test_a1_api_unavailable_require_api_raises_default_does_not(self, missed_period_frame):
+        """A1: API unavailable -> require_api=True raises; require_api=False
+        (best-effort default) completes without raising and skips the write."""
+        from conftest import PENTAD
+
+        # require_api=True: unavailable API is a hard error.
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
+            with pytest.raises(RuntimeError):
+                file_writer.save_forecast_data(
+                    PENTAD, missed_period_frame.copy(), write_csv=False, require_api=True
+                )
+
+        # require_api=False: best-effort, no raise (API write simply skipped).
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False):
+            ret = file_writer.save_forecast_data(
+                PENTAD, missed_period_frame.copy(), write_csv=False, require_api=False
+            )
+        assert ret is None
+
+    def test_a2_api_write_returns_false_require_api_raises_default_does_not(
+        self, missed_period_frame
+    ):
+        """A2: API available but the write returns False -> require_api=True
+        raises; require_api=False swallows the falsy return."""
+        from conftest import PENTAD
+
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", return_value=False),
+        ):
+            with pytest.raises(RuntimeError):
+                file_writer.save_forecast_data(
+                    PENTAD, missed_period_frame.copy(), write_csv=False, require_api=True
+                )
+
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", return_value=False),
+        ):
+            ret = file_writer.save_forecast_data(
+                PENTAD, missed_period_frame.copy(), write_csv=False, require_api=False
+            )
+        assert ret is None
+
+    def test_a3_api_write_success_require_api_does_not_raise(self, missed_period_frame):
+        """A3: API available and the write returns True -> require_api=True
+        completes and the API write is performed exactly once."""
+        from conftest import PENTAD
+
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", return_value=True) as m_api,
+        ):
+            ret = file_writer.save_forecast_data(
+                PENTAD, missed_period_frame.copy(), write_csv=False, require_api=True
+            )
+
+        assert ret is None
+        m_api.assert_called_once()
+
+
+# ===========================================================================
+# B — Composed end-to-end: real aggregation -> real operational helper ->
+#     real save -> captured API payload (a WIRING regression fails this)
+# ===========================================================================
+class TestComposedBackfillEndToEnd:
+    """The full heal path with nothing faked between aggregation and the API
+    boundary: the modelled frame is produced by the REAL
+    ``_normalize_ml_forecasts`` (real daily->pentad aggregation), then flows
+    through the REAL ``_run_short_term_postprocessing`` and REAL
+    ``save_forecast_data`` (write_csv=False, require_api=True). Only the reader,
+    station-code, skill, virtual-station, log, and API-write seams are patched."""
+
+    @pytest.fixture(autouse=True)
+    def _csv_env(self, tmp_path):
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_combined_forecast_pentad_file": "combined_pentad.csv",
+            "ieasyforecast_combined_forecast_decad_file": "combined_decad.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    def test_missed_boundary_heals_through_operational_save_to_api(self):
+        from conftest import PENTAD
+
+        po = _import_operational()
+
+        # REAL aggregation: raw DAY frame -> one healed per-model period row.
+        modelled = _normalize_ml_forecasts(_raw_missed_boundary_day_frame(), "TFT", "pentad")
+        assert not modelled.empty  # sanity: aggregation produced the healed row
+
+        captured = {}
+
+        def _capture(df, horizon):
+            captured["df"] = df.copy()
+            captured["horizon"] = horizon
+            return True
+
+        with (
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), modelled.copy()),
+            ),
+            patch.object(po.data_reader, "read_skill_metrics", return_value=pd.DataFrame()),
+            patch.object(po.sl, "calculate_virtual_stations_data", side_effect=lambda df: df),
+            patch.object(po, "_read_station_codes", return_value=["19999"]),
+            patch.object(po.pt, "log_most_recent_forecasts"),
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", side_effect=_capture),
+        ):
+            po._run_short_term_postprocessing(
+                PENTAD,
+                dt.date(2026, 7, 20),
+                [],
+                TimingStats(),
+                start_year=2026,
+                end_year=2026,
+                write_csv=False,
+                require_api=True,
+            )
+
+        # NOTE: the real api_writer's LR-exclusion / null-drop / dedup run INSIDE
+        # _write_combined_forecast_to_api, which is patched here — so those are
+        # out of scope for this test. We assert on the payload
+        # save_forecast_data hands to the API (post get_latest_forecasts), which
+        # is the correct boundary for a composed wiring regression.
+        assert "df" in captured
+        payload = captured["df"]
+        tft = payload[(payload["code"].astype(str) == "19999") & (payload["model_short"] == "TFT")]
+        assert len(tft) == 1
+        assert str(tft["pentad_in_year"].iloc[0]) == "39"
+        assert tft["forecasted_discharge"].iloc[0] == pytest.approx(30.0)
+        assert captured["horizon"] == "pentad"
+
+
+# ===========================================================================
+# C — main() surfaces a require_api failure that propagates through the REAL
+#     save path (composes main -> real save -> non-zero exit)
+# ===========================================================================
+class TestBackfillMainRequireApiFailure:
+    """A failed API write in the REAL save path (require_api=True is set by
+    main) is caught by main's per-year try/except and reported as a non-zero
+    exit code — main never raises and never claims success."""
+
+    @pytest.fixture(autouse=True)
+    def _csv_env(self, tmp_path):
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_combined_forecast_pentad_file": "combined_pentad.csv",
+            "ieasyforecast_combined_forecast_decad_file": "combined_decad.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    def test_main_returns_nonzero_when_api_write_fails(self):
+        bf = _import_backfill()
+        po = _import_operational()
+
+        # REAL aggregation feeds real data into the real save path.
+        modelled = _normalize_ml_forecasts(_raw_missed_boundary_day_frame(), "TFT", "pentad")
+
+        with (
+            patch.object(bf.sl, "load_environment"),
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), modelled.copy()),
+            ),
+            patch.object(po.data_reader, "read_skill_metrics", return_value=pd.DataFrame()),
+            patch.object(po.sl, "calculate_virtual_stations_data", side_effect=lambda df: df),
+            patch.object(po, "_read_station_codes", return_value=["19999"]),
+            patch.object(po.pt, "log_most_recent_forecasts"),
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", return_value=False),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "2026-07-01",
+                    "--end-date",
+                    "2026-07-01",
+                    "--horizon",
+                    "pentad",
+                ]
+            )
+
+        # The require_api RuntimeError raised by the real save is caught by
+        # main's per-year handler and surfaced as a non-zero exit code.
+        assert isinstance(rc, int)
+        assert rc != 0

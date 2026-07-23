@@ -432,21 +432,33 @@ heals the cross-year permanent gap.
   `SAPPHIRE_API_FAILURE_MODE=fail` + `require_api=True` so any API failure exits
   non-zero.
 
-**Tests:** `test_backfill_period_forecasts.py` (17 tests incl. the yearless-collapse
-regression G15). Full suite: **1749 passed, 1 xfailed (pre-existing), 0 failed,
-0 unexpected skips**.
+**Tests:** `test_backfill_period_forecasts.py` (23 tests incl. the yearless-collapse
+regression G15, the three `require_api` failure-mode tests, and a COMPOSED
+end-to-end test: real `_run_short_term_postprocessing` → real aggregation → real
+`save_forecast_data` → captured API payload). Full suite: **1754 passed, 1 xfailed
+(pre-existing), 0 failed, 0 unexpected skips**.
 
 **Review:** independent codex adversarial diff review (4 Important findings, all
 fixed) + codex WP1 test-quality review (gaps closed) + a confirm-fixes codex pass
-(F1–F4 all CONFIRMED-FIXED, no new material findings).
+(F1–F4 all CONFIRMED-FIXED) + a final holistic independent codex cross-check
+(verdict: safe-to-merge-with-fixes; its required fixes — doc accuracy below +
+the added `require_api`/composed tests — are applied).
 
 **End-to-end (live Tajik dev DB, non-destructive `--dry-run`, exit 0):**
-- PENTAD: would write 1746 rows — **39 distinct pentad_in_year × 6 models**.
-- DECAD: would write 744 rows — **19 distinct decad_in_year × 6 models**.
-  This covers the previously-frozen July periods (symptom: pentad stuck at 07-05,
-  decad at 06-30), confirming the backfill re-aggregates and would write the
-  stranded per-model + ensemble rows for both horizons. A real write + read-back
-  was intentionally NOT run to avoid mutating the dev DB.
+- PENTAD: **1746 pre-save candidate rows** — 39 distinct pentad_in_year × 6
+  candidate models.
+- DECAD: **744 pre-save candidate rows** — 19 distinct decad_in_year × 6
+  candidate models.
+- IMPORTANT (corrected by the final review): these counts are what the aggregation
+  hands to `save_forecast_data` **before** `api_writer` processing — the 6 models
+  are `LR + TFT + TiDE + TSMixer + NE + EM`, but **`api_writer` drops `LR` before
+  the API write** (`src/api_writer.py:190`), and null-drop + unique-key dedup
+  (`:373`) run after, so the **actual API payload is smaller (~5 models)**. The
+  dry-run therefore confirms the backfill *reaches and re-aggregates* the missed
+  July periods for both horizons (39 pentads to mid-July, 19 decads) — it does NOT
+  prove the final persisted payload size, LR exclusion, null survival, or upsert
+  success. A real write + read-back was intentionally NOT run (would mutate the
+  dev DB); that stronger proof is part of the deferred verification.
 
 **Open items:**
 - **DEFERRED / blocked-on-infra:** full Kyrgyz (`15xxx/16xxx`) short-term pipeline
@@ -454,11 +466,18 @@ fixed) + codex WP1 test-quality review (gaps closed) + a confirm-fixes codex pas
   until kyg is exercised.
 - **Owner decision flag:** API-only-by-default write (`--write-csv` opt-in) — a
   behavioral choice on the combined-CSV artifact; owner may override to CSV+API.
-- **Residual risk:** an operator specifying a range starting exactly on Jan 1
-  will miss that period unless the prior calendar year is included (issue-date
-  semantics, documented in the CLI docstring/help).
-- **Separate tickets to file:** secondary decade-EM skill-empty anomaly; the
-  yearless-key `get_latest_forecasts` collapse (latent).
+- **Residual risk (range edge):** an operator specifying a range starting exactly
+  on Jan 1 will miss that period unless the prior calendar year is included
+  (issue-date semantics, documented in the CLI docstring/help).
+- **Residual risk (persistence proof):** `api_writer._write_combined_forecast_to_api`
+  returns `True` even on a zero/partial server write (`src/api_writer.py:405` area),
+  so `require_api=True` catches API-unavailable / exception / explicit-`False`
+  failures but does **not** prove the server actually persisted the rows. Fully
+  closing this needs a write-count check or post-write read-back — a shared-code
+  change beyond this patch; **candidate follow-up ticket** (see below).
+- **Separate tickets to file:** (1) secondary decade-EM skill-empty anomaly;
+  (2) yearless-key `get_latest_forecasts` collapse (latent); (3) `api_writer`
+  reports success on zero/partial writes (weakens any `require_api` guarantee).
 
 ---
 
