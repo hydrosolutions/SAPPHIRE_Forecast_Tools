@@ -455,10 +455,27 @@ the added `require_api`/composed tests — are applied).
   the API write** (`src/api_writer.py:190`), and null-drop + unique-key dedup
   (`:373`) run after, so the **actual API payload is smaller (~5 models)**. The
   dry-run therefore confirms the backfill *reaches and re-aggregates* the missed
-  July periods for both horizons (39 pentads to mid-July, 19 decads) — it does NOT
-  prove the final persisted payload size, LR exclusion, null survival, or upsert
-  success. A real write + read-back was intentionally NOT run (would mutate the
-  dev DB); that stronger proof is part of the deferred verification.
+  July periods for both horizons (39 pentads to mid-July, 19 decads).
+
+**End-to-end REAL WRITE + read-back (live Tajik dev DB, 2026-07-23) — persistence PROVEN:**
+- BEFORE (frozen gap, matches symptom): PENTAD per-model max `2026-07-05` (all 5
+  DB models TFT/TIDE/TSMIXER/ENSEMBLE_MEAN/NEURAL_ENSEMBLE); DECADE per-model max
+  `2026-06-30` (DECADE `ENSEMBLE_MEAN` stuck at `2026-04-10`). Rows: PENTAD 86 587,
+  DECADE 45 361.
+- Ran the real backfill (`--horizon both`, API-only, `require_api=True`), exit 0.
+- AFTER (read back from the DB): PENTAD per-model max `2026-07-15` — the missed
+  **07-10 and 07-15** boundaries now present for **all 5 models**; DECADE per-model
+  max `2026-07-10` — missed **07-10** present for all 5 models (DECADE
+  `ENSEMBLE_MEAN` also advanced `04-10`→`07-10`, so decade skill was present this
+  run). Rows: PENTAD 86 933 (+346), DECADE 45 534 (+173). (07-20 correctly absent
+  — its boundary DAY targets aren't complete at 07-23.)
+- IDEMPOTENCY: a second identical run exited 0 with **unchanged** counts
+  (86 933 / 45 534) — confirms upsert, safe to re-run.
+- This is the DB-confirmed proof the dry-run could not give: the LR-drop /
+  null-drop / dedup happen inside `api_writer` on the real path and the correct
+  per-model + ensemble rows land and read back. (The `api_writer` zero/partial-
+  count honesty gap remains a latent concern → follow-up ticket, but did not
+  manifest here — every expected period persisted.)
 
 **Open items:**
 - **DEFERRED / blocked-on-infra:** full Kyrgyz (`15xxx/16xxx`) short-term pipeline
