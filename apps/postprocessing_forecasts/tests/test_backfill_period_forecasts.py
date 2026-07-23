@@ -30,6 +30,7 @@ Contracts locked here (match names precisely):
 """
 
 import datetime as dt
+import logging
 import os
 import sys
 from unittest.mock import patch
@@ -226,6 +227,95 @@ class TestRunShortTermDryRun:
         m_save = self._run(dry_run=False)
         m_save.assert_called_once()
 
+    def _run_nonempty(self, dry_run, caplog):
+        """Run with NON-empty modelled data so the dry-run coverage branch
+        actually computes coverage; patches log_most_recent_forecasts so the
+        no-filesystem-write contract (F2) can be asserted."""
+        po = _import_operational()
+        from conftest import PENTAD as PENTAD_CFG
+
+        modelled = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "date": pd.to_datetime(["2025-07-10", "2025-07-15"]),
+                "pentad_in_year": [39, 40],
+                "model_short": ["TFT", "TFT"],
+                "forecasted_discharge": [30.0, 40.0],
+            }
+        )
+        with (
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), modelled.copy()),
+            ),
+            patch.object(po.data_reader, "read_skill_metrics", return_value=pd.DataFrame()),
+            patch.object(po.sl, "calculate_virtual_stations_data", side_effect=lambda df: df),
+            patch.object(po.file_writer, "save_forecast_data", return_value=None) as m_save,
+            patch.object(po.pt, "log_most_recent_forecasts") as m_log,
+            patch.object(po, "_read_station_codes", return_value=["19999"]),
+        ):
+            with caplog.at_level(logging.INFO):
+                po._run_short_term_postprocessing(
+                    PENTAD_CFG,
+                    dt.date(2025, 7, 20),
+                    [],
+                    TimingStats(),
+                    start_year=2025,
+                    end_year=2025,
+                    dry_run=dry_run,
+                )
+        return m_save, m_log
+
+    def test_dry_run_true_logs_coverage_and_skips_filesystem(self, caplog):
+        """F2 lock: dry_run must emit the coverage log AND must not call
+        log_most_recent_forecasts (which would create a dir + write a CSV)."""
+        m_save, m_log = self._run_nonempty(dry_run=True, caplog=caplog)
+        assert "DRY-RUN" in caplog.text
+        m_save.assert_not_called()
+        m_log.assert_not_called()
+
+    def test_dry_run_false_logs_most_recent(self, caplog):
+        """Operational path (dry_run=False) still calls log_most_recent_forecasts."""
+        m_save, m_log = self._run_nonempty(dry_run=False, caplog=caplog)
+        m_save.assert_called_once()
+        m_log.assert_called_once()
+
+
+# ===========================================================================
+# T3b — write_csv / require_api forwarded to save_forecast_data (G3)
+# ===========================================================================
+class TestRunShortTermForwarding:
+    def test_write_csv_and_require_api_forwarded(self):
+        """_run_short_term_postprocessing forwards write_csv and require_api
+        through to file_writer.save_forecast_data unchanged."""
+        po = _import_operational()
+        with (
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), pd.DataFrame()),
+            ),
+            patch.object(po.data_reader, "read_skill_metrics", return_value=pd.DataFrame()),
+            patch.object(po.file_writer, "save_forecast_data", return_value=None) as m_save,
+            patch.object(po, "_read_station_codes", return_value=["19999"]),
+        ):
+            po._run_short_term_postprocessing(
+                po.PENTAD,
+                dt.date(2026, 7, 20),
+                [],
+                TimingStats(),
+                start_year=2025,
+                end_year=2025,
+                write_csv=False,
+                require_api=True,
+            )
+
+        m_save.assert_called_once()
+        kwargs = m_save.call_args.kwargs
+        assert kwargs["write_csv"] is False
+        assert kwargs["require_api"] is True
+
 
 # ===========================================================================
 # T4 — main(): per (horizon, year) ascending iteration; both horizons
@@ -260,6 +350,9 @@ class TestBackfillMainYearIteration:
             assert call.kwargs["end_year"] == year  # single-year per call
             # The per-year date anchor is Jan 1 of that year (arg index 1).
             assert call.args[1] == dt.date(year, 1, 1)
+            # API-only defaults: no filesystem write, no dry run.
+            assert call.kwargs["dry_run"] is False
+            assert call.kwargs["write_csv"] is False
             pairs.append((config, year))
 
         years_in_order = [y for _, y in pairs]
@@ -282,7 +375,7 @@ class TestBackfillMainValidation:
         bf = _import_backfill()
         with (
             patch.object(bf, "_run_short_term_postprocessing") as m_run,
-            patch.object(bf.sl, "load_environment"),
+            patch.object(bf.sl, "load_environment") as m_env,
         ):
             rc = bf.main(
                 [
@@ -297,12 +390,14 @@ class TestBackfillMainValidation:
         assert isinstance(rc, int)
         assert rc != 0
         m_run.assert_not_called()
+        # Validation must happen BEFORE any environment load.
+        m_env.assert_not_called()
 
     def test_malformed_date_returns_nonzero(self):
         bf = _import_backfill()
         with (
             patch.object(bf, "_run_short_term_postprocessing") as m_run,
-            patch.object(bf.sl, "load_environment"),
+            patch.object(bf.sl, "load_environment") as m_env,
         ):
             rc = bf.main(
                 [
@@ -317,6 +412,8 @@ class TestBackfillMainValidation:
         assert isinstance(rc, int)
         assert rc != 0
         m_run.assert_not_called()
+        # Validation must happen BEFORE any environment load.
+        m_env.assert_not_called()
 
 
 # ===========================================================================
@@ -344,16 +441,18 @@ class TestBackfillHorizonSelection:
     def test_pentad_only_invokes_pentad_config(self):
         bf, m_run, rc = self._run_horizon("pentad")
         assert rc == 0
+        # Single-year range 2025-01-01..2025-06-30 -> exactly one call, PENTAD.
+        assert m_run.call_count == 1
         configs = [c.args[0] for c in m_run.call_args_list]
-        assert configs  # at least one call
         assert all(c is bf.PENTAD for c in configs)
         assert bf.DECAD not in configs
 
     def test_decad_only_invokes_decad_config(self):
         bf, m_run, rc = self._run_horizon("decad")
         assert rc == 0
+        # Single-year range 2025-01-01..2025-06-30 -> exactly one call, DECAD.
+        assert m_run.call_count == 1
         configs = [c.args[0] for c in m_run.call_args_list]
-        assert configs
         assert all(c is bf.DECAD for c in configs)
         assert bf.PENTAD not in configs
 
@@ -419,6 +518,11 @@ class TestSaveForecastDataWriteCsvKwarg:
         payload = captured["df"]
         assert "19999" in set(payload["code"].astype(str))
         assert "TFT" in set(payload["model_short"])
+        # (a') Full payload content: date, period, value, model + horizon arg.
+        assert "2026-07-10" in set(payload["date"].astype(str))
+        assert 39 in set(payload["pentad_in_year"].astype(int))
+        assert payload["forecasted_discharge"].iloc[0] == pytest.approx(30.0)
+        assert captured["horizon"] == "pentad"
         # (b) No CSV write happened.
         m_atomic.assert_not_called()
 
@@ -432,8 +536,8 @@ class TestSaveForecastDataWriteCsvKwarg:
         ):
             file_writer.save_forecast_data(PENTAD, missed_period_frame, write_csv=True)
 
-        # Default/True path still performs the CSV writes.
-        assert m_atomic.called
+        # Default/True path performs exactly two CSV writes (combined + latest).
+        assert m_atomic.call_count == 2
 
 
 # ===========================================================================
@@ -475,7 +579,9 @@ class TestBackfillMainFailureSurfaced:
             return None
 
         with (
-            patch.object(bf, "_run_short_term_postprocessing", side_effect=_raise_for_2025),
+            patch.object(
+                bf, "_run_short_term_postprocessing", side_effect=_raise_for_2025
+            ) as m_run,
             patch.object(bf.sl, "load_environment"),
         ):
             rc = bf.main(
@@ -492,3 +598,34 @@ class TestBackfillMainFailureSurfaced:
         # main must report failure (non-zero) rather than raise or claim success.
         assert isinstance(rc, int)
         assert rc != 0
+        # One bad year must NOT abort the rest: a year AFTER the failing 2025
+        # is still attempted.
+        attempted_years = {c.kwargs["start_year"] for c in m_run.call_args_list}
+        assert 2026 in attempted_years
+
+
+# ===========================================================================
+# T10 — Motivating failure: get_latest_forecasts collapses same period across
+#       years, which is exactly WHY the backfill must process one year at a
+#       time. (Regression lock for the year-at-a-time design.)
+# ===========================================================================
+class TestGetLatestForecastsCollapsesAcrossYears:
+    def test_same_period_two_years_collapses_to_later_year(self):
+        # Same (code, pentad_in_year, model_short) on two different calendar
+        # years — the yearless dedup key means only one row can survive.
+        frame = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "date": pd.to_datetime(["2025-07-10", "2026-07-10"]),
+                "pentad_in_year": [39, 39],
+                "model_short": ["TFT", "TFT"],
+                "forecasted_discharge": [25.0, 30.0],
+            }
+        )
+
+        result = file_writer.get_latest_forecasts(frame, horizon_column_name="pentad_in_year")
+
+        # Collapses to a single row; the LATER year (2026) survives.
+        assert len(result) == 1
+        assert pd.to_datetime(result["date"].iloc[0]).year == 2026
+        assert result["forecasted_discharge"].iloc[0] == pytest.approx(30.0)

@@ -19,11 +19,14 @@ distinct.
 
 Issue-date vs target (Dec 31 -> Jan 1)
 --------------------------------------
-Short-term forecasts are issued on a boundary day and target the NEXT period
-(``forecast_target_date`` maps an issue date to target = issue + 1 day). A period
-that starts Jan 1 of year Y is therefore issued on Dec 31 of year Y-1. The reader
-is asked for calendar year Y and the aggregation anchors the period in year Y, so
-the year-at-a-time loop keeps period rows anchored in the correct year.
+``--start-date`` / ``--end-date`` are ISSUE dates, and the loop iterates ISSUE
+years (``range(start.year, end.year + 1)``). Short-term forecasts are issued on a
+boundary day and target the NEXT period (``forecast_target_date`` maps an issue
+date to target = issue + 1 day), so a period whose target STARTS Jan 1 of year Y
+is produced by the Dec 31 (year Y-1) ISSUE date and is therefore healed by the
+year ``Y-1`` iteration, NOT the year ``Y`` iteration. Consequently, to heal a
+target period that begins Jan 1 of year Y, the requested range must include its
+issue date — i.e. it must extend back into the PRIOR calendar year (Y-1).
 
 Idempotence
 -----------
@@ -98,13 +101,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--start-date",
         required=True,
         metavar="YYYY-MM-DD",
-        help="First date of the range to backfill (inclusive).",
+        help=(
+            "First ISSUE date of the range to backfill (inclusive). The range is "
+            "interpreted by issue year; a target period starting Jan 1 of year Y "
+            "is healed by its Dec 31 (year Y-1) issue date, so include the prior "
+            "calendar year to heal it."
+        ),
     )
     parser.add_argument(
         "--end-date",
         required=True,
         metavar="YYYY-MM-DD",
-        help="Last date of the range to backfill (inclusive).",
+        help=(
+            "Last ISSUE date of the range to backfill (inclusive). The range is "
+            "interpreted by issue year (the loop iterates over issue years)."
+        ),
     )
     parser.add_argument(
         "--horizon",
@@ -204,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
                         end_year=year,
                         dry_run=args.dry_run,
                         write_csv=args.write_csv,
+                        require_api=True,
                     )
                     logger.info("Backfill %s year=%d: ok", label, year)
                 except Exception as exc:

@@ -116,6 +116,7 @@ def _run_short_term_postprocessing(
     end_year=None,
     dry_run=False,
     write_csv=True,
+    require_api=False,
 ):
     """Read data, create ensembles, save results for one horizon type.
 
@@ -132,6 +133,10 @@ def _run_short_term_postprocessing(
             that WOULD have been written. Used by the backfill CLI.
         write_csv: Forwarded to ``file_writer.save_forecast_data``; when False
             the save performs the API write only (no CSV files).
+        require_api: Forwarded to ``file_writer.save_forecast_data``; when True
+            a non-performed or failed API write raises instead of being
+            swallowed. Used by the backfill CLI so a run cannot report success
+            without writing.
     """
     label = config.name.upper()
 
@@ -210,14 +215,17 @@ def _run_short_term_postprocessing(
     else:
         with timer(timing_stats_, f"saving {config.name} results"):
             logger.info(f"\n\n------ Saving {config.name} results ----------------")
-            ret = file_writer.save_forecast_data(config, modelled, write_csv=write_csv)
+            ret = file_writer.save_forecast_data(
+                config, modelled, write_csv=write_csv, require_api=require_api
+            )
             if ret is None:
                 logger.info(f"{label} forecast results saved successfully.")
             else:
                 logger.error(f"Error saving {label} forecast results: {ret}")
                 errors.append(f"{label} forecast save failed: {ret}")
 
-    pt.log_most_recent_forecasts(config, modelled)
+    if not dry_run:
+        pt.log_most_recent_forecasts(config, modelled)
 
 
 def postprocessing_operational():
