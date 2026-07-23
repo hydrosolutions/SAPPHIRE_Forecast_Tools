@@ -358,11 +358,13 @@ heals the cross-year permanent gap.
   - `apps/postprocessing_forecasts/src/file_writer.py` — **additive only**: append
     `write_csv: bool = True` to `save_forecast_data`; when `False`, skip the two
     `atomic_write_csv` calls (`:196`, `:209`) but keep the `get_latest_forecasts`
-    + API write path. Default `True` preserves current behavior. Have it return a
-    truthy/`None` signal the caller can use to detect API-write failure (or keep
-    `None`-on-success and instead thread the `_write_combined_forecast_to_api`
-    boolean out — implementer picks the minimal change that lets the backfill
-    detect failure without altering operational semantics).
+    + API write path. Default `True` preserves current behavior. **Do NOT change**
+    the return value or error-handling semantics (operational relies on them). The
+    backfill surfaces API-write failures instead by setting
+    `SAPPHIRE_API_FAILURE_MODE=fail` (`forecast_library.py:110-113` re-raises), so
+    write exceptions propagate to the backfill's try/except → non-zero exit. The
+    non-exception `_write_combined_forecast_to_api(...)==False` swallow is a
+    pre-existing app-wide limitation → note as residual risk, do not re-plumb.
   - `apps/postprocessing_forecasts/postprocessing_operational.py` — **additive
     only**: append optional kwargs `start_year=None, end_year=None, dry_run=False,
     write_csv=True` to `_run_short_term_postprocessing`; derive `start_year/end_year`

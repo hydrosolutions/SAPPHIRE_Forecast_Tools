@@ -149,7 +149,7 @@ def get_latest_forecasts(simulated_df, horizon_column_name="pentad_in_year"):
 # ---------------------------------------------------------------------------
 
 
-def save_forecast_data(config, simulated: pd.DataFrame):
+def save_forecast_data(config, simulated: pd.DataFrame, write_csv: bool = True):
     """Save combined forecast data (observed + simulated) to CSV and API.
 
     Parameterized by *config* to handle both pentad and decad horizons.
@@ -157,6 +157,14 @@ def save_forecast_data(config, simulated: pd.DataFrame):
     Args:
         config: ShortTermHorizonConfig with horizon-specific parameters.
         simulated: DataFrame with the simulated data.
+        write_csv: When True (default) write the combined and ``_latest`` CSV
+            files atomically and run the CSV-backed consistency check, exactly
+            as before. When False, skip all CSV-file operations (both
+            ``atomic_write_csv`` calls and the consistency check that re-reads
+            the ``_latest`` CSV) but STILL compute the latest-forecast frame and
+            STILL perform the SAPPHIRE API write. Used by the API-only backfill
+            path so healed period rows reach the API without touching the
+            operational CSVs.
 
     Returns:
         None
@@ -190,26 +198,33 @@ def save_forecast_data(config, simulated: pd.DataFrame):
             simulated_latest["date"], errors="coerce"
         ).dt.strftime("%Y-%m-%d")
 
-    # Write the data to csv (atomic to prevent corruption on crash)
-    write_diagnostics.diagnose_forecast_data(simulated, horizon, f"{horizon} combined")
-    try:
-        atomic_write_csv(simulated, filename, index=False)
-    except Exception as e:
-        logger.error(f"Could not write forecast data to {filename}.")
-        raise e
-
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace(".csv", "_latest.csv")
 
-    # Write the latest data to a csv file (atomic)
+    # Write the data to csv (atomic to prevent corruption on crash).
+    # Skipped entirely when write_csv=False (API-only backfill path).
+    write_diagnostics.diagnose_forecast_data(simulated, horizon, f"{horizon} combined")
     write_diagnostics.diagnose_forecast_data(
         simulated_latest, horizon, f"{horizon} combined latest"
     )
-    try:
-        atomic_write_csv(simulated_latest, filename_latest, index=False)
-    except Exception as e:
-        logger.error(f"Could not write latest forecast data to {filename_latest}.")
-        raise e
+    if write_csv:
+        try:
+            atomic_write_csv(simulated, filename, index=False)
+        except Exception as e:
+            logger.error(f"Could not write forecast data to {filename}.")
+            raise e
+
+        try:
+            atomic_write_csv(simulated_latest, filename_latest, index=False)
+        except Exception as e:
+            logger.error(f"Could not write latest forecast data to {filename_latest}.")
+            raise e
+    else:
+        logger.info(
+            "save_forecast_data(write_csv=False): skipping %s CSV writes; "
+            "performing API write only.",
+            horizon,
+        )
 
     # Write to SAPPHIRE API (latest forecasts only)
     if api_writer.SAPPHIRE_API_AVAILABLE:
@@ -219,7 +234,11 @@ def save_forecast_data(config, simulated: pd.DataFrame):
             fl._handle_api_write_error(e, f"{horizon} combined forecasts")
 
     # --- Consistency Check ---
-    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    # The consistency check re-reads the _latest CSV, so it only applies when
+    # the CSV was actually written.
+    consistency_check = (
+        write_csv and os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    )
     if consistency_check:
         logger.info(
             "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for %s combined forecasts",

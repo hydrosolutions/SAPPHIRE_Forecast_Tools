@@ -107,9 +107,36 @@ def _read_station_codes(config):
     return codes
 
 
-def _run_short_term_postprocessing(config, today, errors, timing_stats_):
-    """Read data, create ensembles, save results for one horizon type."""
+def _run_short_term_postprocessing(
+    config,
+    today,
+    errors,
+    timing_stats_,
+    start_year=None,
+    end_year=None,
+    dry_run=False,
+    write_csv=True,
+):
+    """Read data, create ensembles, save results for one horizon type.
+
+    Args:
+        config: ShortTermHorizonConfig for the horizon (PENTAD or DECAD).
+        today: Anchor date for this run.
+        errors: List accumulating error messages (mutated in place).
+        timing_stats_: TimingStats instance for section timing.
+        start_year: First calendar year of data to read. Defaults to
+            ``today.year`` (operational behavior).
+        end_year: Last calendar year of data to read. Defaults to
+            ``today.year`` (operational behavior).
+        dry_run: When True, skip the save entirely and only log the coverage
+            that WOULD have been written. Used by the backfill CLI.
+        write_csv: Forwarded to ``file_writer.save_forecast_data``; when False
+            the save performs the API write only (no CSV files).
+    """
     label = config.name.upper()
+
+    sy = start_year if start_year is not None else today.year
+    ey = end_year if end_year is not None else today.year
 
     codes = _read_station_codes(config)
     if not codes:
@@ -123,8 +150,8 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
         _, modelled = data_reader.read_observed_and_modelled_data(
             config.name,
             codes=codes,
-            start_year=today.year,
-            end_year=today.year,
+            start_year=sy,
+            end_year=ey,
         )
         if modelled.empty:
             logger.warning(
@@ -162,14 +189,33 @@ def _run_short_term_postprocessing(config, today, errors, timing_stats_):
                 get_period_in_month_func=config.get_period_func,
             )
 
-    with timer(timing_stats_, f"saving {config.name} results"):
-        logger.info(f"\n\n------ Saving {config.name} results ----------------")
-        ret = file_writer.save_forecast_data(config, modelled)
-        if ret is None:
-            logger.info(f"{label} forecast results saved successfully.")
-        else:
-            logger.error(f"Error saving {label} forecast results: {ret}")
-            errors.append(f"{label} forecast save failed: {ret}")
+    if dry_run:
+        _period_col = config.period_col
+        n_rows = 0 if modelled is None else len(modelled)
+        coverage = "n/a"
+        if modelled is not None and not modelled.empty:
+            n_periods = (
+                modelled[_period_col].nunique() if _period_col in modelled.columns else "n/a"
+            )
+            n_models = (
+                modelled["model_short"].nunique() if "model_short" in modelled.columns else "n/a"
+            )
+            coverage = f"{n_periods} distinct {_period_col} x {n_models} model(s)"
+        logger.info(
+            "%s DRY-RUN: would write %d row(s) (%s); save skipped.",
+            label,
+            n_rows,
+            coverage,
+        )
+    else:
+        with timer(timing_stats_, f"saving {config.name} results"):
+            logger.info(f"\n\n------ Saving {config.name} results ----------------")
+            ret = file_writer.save_forecast_data(config, modelled, write_csv=write_csv)
+            if ret is None:
+                logger.info(f"{label} forecast results saved successfully.")
+            else:
+                logger.error(f"Error saving {label} forecast results: {ret}")
+                errors.append(f"{label} forecast save failed: {ret}")
 
     pt.log_most_recent_forecasts(config, modelled)
 

@@ -1,0 +1,494 @@
+"""LOCKED regression tests for PP-045: period-forecast boundary-gap backfill.
+
+TDD tests-first. These lock the contract for a fix that adds a backfill
+entrypoint able to heal per-model PENTAD/DECADE period forecasts stranded
+when an operational boundary day was missed. The backfill re-aggregates a
+date range through the EXISTING operational aggregation + save path, one
+year at a time.
+
+The implementation does not exist yet, so tests that touch the new seams
+(the ``write_csv`` kwarg on ``save_forecast_data``, the four additive
+kwargs on ``_run_short_term_postprocessing``, and the new
+``backfill_period_forecasts`` module) are EXPECTED to fail at call/import
+time — that is the intended TDD "red" state. The module-level imports that
+could break collection (``postprocessing_operational`` and
+``backfill_period_forecasts``) are done lazily *inside* the tests so the
+file always COLLECTS cleanly; only the not-yet-implemented seams go red.
+
+Contracts locked here (match names precisely):
+  1. file_writer.save_forecast_data(config, simulated, write_csv=True)
+     — additive kwarg; write_csv=False skips the two atomic_write_csv calls
+     but still performs the API write; default True preserves behavior.
+  2. postprocessing_operational._run_short_term_postprocessing(
+         config, today, errors, timing_stats_,
+         start_year=None, end_year=None, dry_run=False, write_csv=True)
+     — four additive trailing kwargs; start/end default to today.year;
+     dry_run skips save; write_csv forwards to save_forecast_data;
+     existing positional call sites keep working.
+  3. backfill_period_forecasts.main(argv) -> int (0 ok, non-zero error)
+     — CLI over a date range, per (horizon, year) ascending.
+"""
+
+import datetime as dt
+import os
+import sys
+from unittest.mock import patch
+
+import pandas as pd
+import pytest
+
+# Path setup mirrors the sibling test modules / conftest.py.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
+
+# These imports are known-good at top level (used identically by the
+# existing test_data_reader_ml_aggregation.py / test_file_writer.py).
+from src import api_writer, file_writer  # noqa: E402
+from src.data_reader import _normalize_ml_forecasts  # noqa: E402
+from src.postprocessing_tools import TimingStats  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Helpers — lazy imports so a not-yet-existing module never breaks collection.
+# ---------------------------------------------------------------------------
+def _import_operational():
+    """Import the real postprocessing_operational module.
+
+    Kept lazy (not top-level) so its import-time side effects and the
+    additive-kwarg contract can't break collection of the whole file.
+    """
+    import postprocessing_operational as po
+
+    return po
+
+
+def _import_backfill():
+    """Import the not-yet-existing backfill_period_forecasts module.
+
+    Until the implementer creates it, this raises ModuleNotFoundError and
+    the calling test errors — the expected TDD red state.
+    """
+    import backfill_period_forecasts as bf
+
+    return bf
+
+
+# ===========================================================================
+# T1 — Aggregation regression: a "missed" boundary is healed by re-aggregation
+# ===========================================================================
+class TestAggregationHealsMissedBoundary:
+    """Re-running the REAL daily->period aggregation over a range that
+    includes a previously-missed boundary produces the per-model period row.
+    """
+
+    def test_missed_pentad_boundary_yields_period_row(self):
+        # Arrange: a whole-slice DAY frame for one station. The Jul 10 2026
+        # boundary (a pentad boundary that could have been missed) carries
+        # in-period daily targets Jul 11-15 (pentad_in_year 39), one
+        # out-of-period target Jul 16 (pentad 40 -> dropped), and a
+        # non-boundary noise issue date Jul 8 (dropped entirely).
+        raw = pd.DataFrame(
+            {
+                "code": ["19999"] * 8,
+                "date": (
+                    ["2026-07-10"] * 6  # boundary issue day
+                    + ["2026-07-08"] * 2  # non-boundary -> dropped
+                ),
+                "target": [
+                    "2026-07-11",
+                    "2026-07-12",
+                    "2026-07-13",
+                    "2026-07-14",
+                    "2026-07-15",  # in pentad 39
+                    "2026-07-16",  # pentad 40 -> filtered out
+                    "2026-07-09",
+                    "2026-07-10",
+                ],
+                "forecasted_discharge": [10.0, 20.0, 30.0, 40.0, 50.0, 999.0, 777.0, 777.0],
+                "q05": [5.0, 10.0, 15.0, 20.0, 25.0, 500.0, 300.0, 300.0],
+                "q95": [15.0, 30.0, 45.0, 60.0, 75.0, 1500.0, 900.0, 900.0],
+            }
+        )
+
+        # Act
+        result = _normalize_ml_forecasts(raw, "TFT", "pentad")
+
+        # Assert: exactly the healed per-model period row for the boundary day.
+        assert len(result) == 1
+        assert result["code"].iloc[0] == "19999"
+        assert result["model_short"].iloc[0] == "TFT"
+        assert "pentad_in_year" in result.columns
+        # offset date Jul 11 -> pentad_in_year 39 (string from tag_library).
+        assert str(result["pentad_in_year"].iloc[0]) == "39"
+        # Mean of the 5 in-period targets: (10+20+30+40+50)/5 = 30.0.
+        assert result["forecasted_discharge"].iloc[0] == pytest.approx(30.0)
+        assert result["q05"].iloc[0] == pytest.approx(15.0)  # mean(5,10,15,20,25)
+
+
+# ===========================================================================
+# T2 — _run_short_term_postprocessing: year-range kwargs + back-compat
+# ===========================================================================
+class TestRunShortTermYearRange:
+    """The operational helper accepts additive start_year/end_year kwargs and
+    forwards them to the reader; existing positional call sites still work.
+    """
+
+    @staticmethod
+    def _patched(po, station_codes=("19999",)):
+        """Patch the reader/save/station seams on the operational module."""
+        return (
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), pd.DataFrame()),
+            ),
+            patch.object(
+                po.data_reader,
+                "read_skill_metrics",
+                return_value=pd.DataFrame(),
+            ),
+            patch.object(po.file_writer, "save_forecast_data", return_value=None),
+            patch.object(po, "_read_station_codes", return_value=list(station_codes)),
+        )
+
+    def test_explicit_start_end_year_forwarded_to_reader(self):
+        po = _import_operational()
+        p_reader, p_skill, p_save, p_codes = self._patched(po)
+        with p_reader as m_reader, p_skill, p_save as m_save, p_codes:
+            # Act — request a backfill year different from `today`.
+            po._run_short_term_postprocessing(
+                po.PENTAD,
+                dt.date(2026, 7, 20),
+                [],
+                TimingStats(),
+                start_year=2025,
+                end_year=2025,
+            )
+
+        # Assert — reader received the requested backfill year, save happened.
+        assert m_reader.call_count == 1
+        kwargs = m_reader.call_args.kwargs
+        assert kwargs["start_year"] == 2025
+        assert kwargs["end_year"] == 2025
+        m_save.assert_called_once()
+
+    def test_default_positional_call_uses_today_year(self):
+        """Back-compat: the legacy positional call site (no year kwargs)
+        defaults start_year==end_year==today.year."""
+        po = _import_operational()
+        p_reader, p_skill, p_save, p_codes = self._patched(po)
+        with p_reader as m_reader, p_skill, p_save, p_codes:
+            # Act — the historical 4-positional-arg call must still work.
+            po._run_short_term_postprocessing(
+                po.PENTAD,
+                dt.date(2026, 7, 20),
+                [],
+                TimingStats(),
+            )
+
+        kwargs = m_reader.call_args.kwargs
+        assert kwargs["start_year"] == 2026
+        assert kwargs["end_year"] == 2026
+
+
+# ===========================================================================
+# T3 — dry_run skips the save call
+# ===========================================================================
+class TestRunShortTermDryRun:
+    def _run(self, dry_run):
+        po = _import_operational()
+        with (
+            patch.object(
+                po.data_reader,
+                "read_observed_and_modelled_data",
+                return_value=(pd.DataFrame(), pd.DataFrame()),
+            ),
+            patch.object(po.data_reader, "read_skill_metrics", return_value=pd.DataFrame()),
+            patch.object(po.file_writer, "save_forecast_data", return_value=None) as m_save,
+            patch.object(po, "_read_station_codes", return_value=["19999"]),
+        ):
+            po._run_short_term_postprocessing(
+                po.PENTAD,
+                dt.date(2026, 7, 20),
+                [],
+                TimingStats(),
+                start_year=2025,
+                end_year=2025,
+                dry_run=dry_run,
+            )
+            return m_save
+
+    def test_dry_run_true_skips_save(self):
+        m_save = self._run(dry_run=True)
+        m_save.assert_not_called()
+
+    def test_dry_run_false_calls_save(self):
+        m_save = self._run(dry_run=False)
+        m_save.assert_called_once()
+
+
+# ===========================================================================
+# T4 — main(): per (horizon, year) ascending iteration; both horizons
+# ===========================================================================
+class TestBackfillMainYearIteration:
+    def test_both_horizons_each_year_ascending(self):
+        bf = _import_backfill()
+        with (
+            patch.object(bf, "_run_short_term_postprocessing") as m_run,
+            patch.object(bf.sl, "load_environment"),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "2024-03-01",
+                    "--end-date",
+                    "2026-07-10",
+                    "--horizon",
+                    "both",
+                ]
+            )
+
+        assert rc == 0
+        # 3 years x 2 horizons = 6 invocations.
+        assert m_run.call_count == 6
+
+        # Collect (config, year) pairs in invocation order.
+        pairs = []
+        for call in m_run.call_args_list:
+            config = call.args[0]
+            year = call.kwargs["start_year"]
+            assert call.kwargs["end_year"] == year  # single-year per call
+            # The per-year date anchor is Jan 1 of that year (arg index 1).
+            assert call.args[1] == dt.date(year, 1, 1)
+            pairs.append((config, year))
+
+        years_in_order = [y for _, y in pairs]
+        # Years iterate ascending (non-decreasing across the sequence).
+        assert years_in_order == sorted(years_in_order)
+        assert set(years_in_order) == {2024, 2025, 2026}
+
+        # Both PENTAD and DECAD configs are exercised for every year.
+        for y in (2024, 2025, 2026):
+            configs_for_year = {c for c, yy in pairs if yy == y}
+            assert bf.PENTAD in configs_for_year
+            assert bf.DECAD in configs_for_year
+
+
+# ===========================================================================
+# T5 — CLI validation: bad ranges / malformed dates return non-zero, no raise
+# ===========================================================================
+class TestBackfillMainValidation:
+    def test_end_before_start_returns_nonzero(self):
+        bf = _import_backfill()
+        with (
+            patch.object(bf, "_run_short_term_postprocessing") as m_run,
+            patch.object(bf.sl, "load_environment"),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "2026-07-10",
+                    "--end-date",
+                    "2024-03-01",
+                    "--horizon",
+                    "both",
+                ]
+            )
+        assert isinstance(rc, int)
+        assert rc != 0
+        m_run.assert_not_called()
+
+    def test_malformed_date_returns_nonzero(self):
+        bf = _import_backfill()
+        with (
+            patch.object(bf, "_run_short_term_postprocessing") as m_run,
+            patch.object(bf.sl, "load_environment"),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "not-a-date",
+                    "--end-date",
+                    "2026-07-10",
+                    "--horizon",
+                    "pentad",
+                ]
+            )
+        assert isinstance(rc, int)
+        assert rc != 0
+        m_run.assert_not_called()
+
+
+# ===========================================================================
+# T6 — horizon selection
+# ===========================================================================
+class TestBackfillHorizonSelection:
+    def _run_horizon(self, horizon):
+        bf = _import_backfill()
+        with (
+            patch.object(bf, "_run_short_term_postprocessing") as m_run,
+            patch.object(bf.sl, "load_environment"),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "2025-01-01",
+                    "--end-date",
+                    "2025-06-30",
+                    "--horizon",
+                    horizon,
+                ]
+            )
+        return bf, m_run, rc
+
+    def test_pentad_only_invokes_pentad_config(self):
+        bf, m_run, rc = self._run_horizon("pentad")
+        assert rc == 0
+        configs = [c.args[0] for c in m_run.call_args_list]
+        assert configs  # at least one call
+        assert all(c is bf.PENTAD for c in configs)
+        assert bf.DECAD not in configs
+
+    def test_decad_only_invokes_decad_config(self):
+        bf, m_run, rc = self._run_horizon("decad")
+        assert rc == 0
+        configs = [c.args[0] for c in m_run.call_args_list]
+        assert configs
+        assert all(c is bf.DECAD for c in configs)
+        assert bf.PENTAD not in configs
+
+
+# ===========================================================================
+# T7 — End-to-end persistence: write_csv toggles CSV writes, API always runs
+# ===========================================================================
+class TestSaveForecastDataWriteCsvKwarg:
+    """save_forecast_data(config, frame, write_csv=...) — the API write of the
+    healed per-model period row happens regardless; the CSV writes obey the
+    write_csv flag. Only the API boundary is mocked (to capture the payload)
+    plus atomic_write_csv (to observe whether it fired)."""
+
+    @pytest.fixture
+    def missed_period_frame(self):
+        """Minimal valid combined frame with a per-model period row for a
+        previously-missed pentad period."""
+        return pd.DataFrame(
+            {
+                "code": ["19999"],
+                "date": pd.to_datetime(["2026-07-10"]),
+                "pentad_in_month": [3],
+                "pentad_in_year": [39],
+                "forecasted_discharge": [30.0],
+                "model_short": ["TFT"],
+            }
+        )
+
+    @pytest.fixture(autouse=True)
+    def _csv_env(self, tmp_path):
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_combined_forecast_pentad_file": "combined_pentad.csv",
+            "ieasyforecast_combined_forecast_decad_file": "combined_decad.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    def test_write_csv_false_api_yes_csv_no(self, missed_period_frame):
+        from conftest import PENTAD
+
+        captured = {}
+
+        def _capture(df, horizon):
+            captured["df"] = df.copy()
+            captured["horizon"] = horizon
+            return True
+
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(
+                api_writer, "_write_combined_forecast_to_api", side_effect=_capture
+            ) as m_api,
+            patch.object(file_writer, "atomic_write_csv") as m_atomic,
+        ):
+            file_writer.save_forecast_data(PENTAD, missed_period_frame, write_csv=False)
+
+        # (a) API received the healed per-model period row.
+        m_api.assert_called_once()
+        payload = captured["df"]
+        assert "19999" in set(payload["code"].astype(str))
+        assert "TFT" in set(payload["model_short"])
+        # (b) No CSV write happened.
+        m_atomic.assert_not_called()
+
+    def test_write_csv_true_writes_csv(self, missed_period_frame):
+        from conftest import PENTAD
+
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(api_writer, "_write_combined_forecast_to_api", return_value=True),
+            patch.object(file_writer, "atomic_write_csv") as m_atomic,
+        ):
+            file_writer.save_forecast_data(PENTAD, missed_period_frame, write_csv=True)
+
+        # Default/True path still performs the CSV writes.
+        assert m_atomic.called
+
+
+# ===========================================================================
+# T8 — Issue-date vs target Dec31/Jan1 semantics (locked via real helpers)
+# ===========================================================================
+class TestIssueDateTargetSemantics:
+    """A target period starting Jan 1 of year Y derives from the Dec-31
+    (year Y-1) issue date. Locks the target=date+1 mapping and period math
+    so the year-at-a-time backfill anchors periods in the right year."""
+
+    def test_dec31_issue_maps_to_jan1_target_period(self):
+        import tag_library as tl
+        from src import postprocessing_tools as pt
+
+        issue_date = dt.date(2025, 12, 31)
+        target_start = pt.forecast_target_date(issue_date)
+
+        # The target period starts Jan 1 of the following year.
+        assert target_start == dt.date(2026, 1, 1)
+        # Jan 1 is pentad-in-year 1 (first pentad of year Y).
+        assert str(tl.get_pentad_in_year(target_start)) == "1"
+        # Dec 31 is an end-of-month pentad boundary (a valid issue day).
+        from postprocessing_operational import is_pentad_boundary
+
+        assert is_pentad_boundary(issue_date) is True
+
+
+# ===========================================================================
+# T9 — Write/processing failure surfaced by main as non-zero exit
+# ===========================================================================
+class TestBackfillMainFailureSurfaced:
+    def test_propagated_error_returns_nonzero(self):
+        bf = _import_backfill()
+
+        def _raise_for_2025(config, today, errors, *args, **kwargs):
+            # Simulate a fail-loud API-write failure in one backfill year.
+            if kwargs.get("start_year") == 2025:
+                raise RuntimeError("simulated API write failure")
+            return None
+
+        with (
+            patch.object(bf, "_run_short_term_postprocessing", side_effect=_raise_for_2025),
+            patch.object(bf.sl, "load_environment"),
+        ):
+            rc = bf.main(
+                [
+                    "--start-date",
+                    "2024-01-01",
+                    "--end-date",
+                    "2026-12-31",
+                    "--horizon",
+                    "pentad",
+                ]
+            )
+
+        # main must report failure (non-zero) rather than raise or claim success.
+        assert isinstance(rc, int)
+        assert rc != 0
