@@ -231,6 +231,127 @@ read the error.
 
 ---
 
+## Step 3.5 — Opt-in feature flags
+
+Some shipped behaviour is **gated behind flags that default to OFF**. A green dry-run
+tells you nothing about them — Step 3 does **not** load or validate these.
+
+### `SAPPHIRE_SKILL_LEAD_AWARE` — default **OFF**
+
+**What it switches on.** Long-term (month/quarter/season) **skill metrics and the
+EM / Naive Mean / Skilled Mean ensembles are computed per operational lead**
+(`horizon_value`) instead of collapsed; the operational "latest" readers and the monthly
+maintenance gap detector select only the configured operational issuance; and the
+dashboard resolves the monthly panel's lead, header, caption and bulletin target period
+from config instead of a hard-coded lead 1.
+
+**The symptom if you leave it off (Tajik).** With the flag OFF the monthly panel assumes
+**lead 1**. Tajik's `month_1` is **lead 0**, so a July-issued monthly forecast is
+labelled **target month August** instead of July — i.e. the *monthly target month is one
+month late*. Kyrgyz (`month_N` = lead N) is unaffected by the default, so **"it looks
+right on kghm" is not evidence the flag is unnecessary.**
+
+**Before enabling, check both prerequisites.** Every long-term config JSON present for
+the deployment must carry **both** `operational_month_lead_time` **and**
+`operational_issue_day`. This checks all configs, then **exits non-zero** if any failed
+**or if none were found at all**, so it is a real gate rather than a display aid:
+
+```bash
+# NOTE: the config root variable is ieasyforecast_configuration_path
+# (no "hydro") — that is what the resolver actually reads.
+ltf_dir="$ieasyforecast_configuration_path/$ieasyhydroforecast_ml_long_term_configuration"
+ltf_ready=0; ltf_seen=0
+# `find` (not a glob) so an empty directory behaves the same in bash and zsh —
+# zsh errors on an unmatched glob by default.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  ltf_seen=$((ltf_seen + 1))
+  python3 - "$f" <<'PY' || ltf_ready=1
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text())
+missing = [k for k in ("operational_month_lead_time", "operational_issue_day")
+           if d.get(k) is None]
+print(f"  {p.name:<24} lead={d.get('operational_month_lead_time')} "
+      f"issue_day={d.get('operational_issue_day')}")
+if missing:
+    raise SystemExit(f"  {p.name}: NOT READY — missing {', '.join(missing)}")
+PY
+done <<EOF
+$(find "$ltf_dir" -maxdepth 1 -name '*.json' 2>/dev/null | sort)
+EOF
+if [ "$ltf_seen" -eq 0 ]; then
+  echo "NOT READY — no long-term config JSONs found (check the two path variables above)"
+  ltf_ready=1
+elif [ "$ltf_ready" -eq 0 ]; then
+  echo "READY to enable ($ltf_seen configs checked)"
+else
+  echo "NOT READY — do not enable"
+fi
+(exit "$ltf_ready")   # so `echo $?` reflects the result
+```
+
+`NOT READY` (or `echo $?` ≠ 0) ⇒ do not enable; the flag-ON write path aborts by design
+rather than scoring the wrong rows.
+
+> Two deliberate choices here, so they don't get "fixed" back:
+> the loop globs the **config files that exist** rather than iterating
+> `ieasyhydroforecast_ml_long_term_supported_modes`, because a supported mode may
+> legitimately have no config file (kghm lists `monthly`, which has none) — iterating
+> modes reports a false failure. And the filename is passed as an **argument** to
+> `python3 -`, not interpolated into the source, so paths with quotes or spaces are safe.
+
+**Enabling it — either works:**
+
+```bash
+# (a) in your deployment .env
+SAPPHIRE_SKILL_LEAD_AWARE=true
+
+# (b) or as a shell prefix for a single run
+SAPPHIRE_SKILL_LEAD_AWARE=true \
+  ieasyhydroforecast_env_file_path=apps/config/.env_sandro_kghm \
+  bash apps/run_locally.sh short-term
+```
+
+> **Precedence trap — the shell wins.** `load_dotenv` does not override a variable that
+> is already set, and the runner inherits your shell environment. So a stale
+> `SAPPHIRE_SKILL_LEAD_AWARE=false` exported in your shell **silently defeats**
+> `=true` in the `.env`. If enabling via the `.env` appears to do nothing, check
+> `echo $SAPPHIRE_SKILL_LEAD_AWARE` first.
+>
+> A typo'd value (e.g. `SAPPHIRE_SKILL_LEAD_AWARE=yes-please`) **raises** rather than
+> silently resolving to OFF — that is intentional.
+
+**Enabling requires a full-history recalc.** Existing rows were written single-lead.
+Without a recalc your local DB stays a **mix** of single-lead and per-lead rows, which
+looks like corruption and is neither the old nor the new behaviour:
+
+```bash
+SAPPHIRE_SKILL_LEAD_AWARE=true SAPPHIRE_PREDICTION_MODE=ALL \
+  SAPPHIRE_RECALC_START_YEAR=2000 \
+  ieasyhydroforecast_env_file_path=apps/config/.env_sandro_kghm \
+  bash apps/run_locally.sh recalculate_skill_metrics
+```
+
+> **"Full history" is not the default — pin the start year.** Without
+> `SAPPHIRE_RECALC_START_YEAR` the recalc window starts at **`current_year - 20`**, so on
+> a deployment whose `ieasyhydroforecast_START_DATE` is earlier than that (e.g. kghm at
+> `2000-01-01`) the earliest years are silently skipped. Set it to your deployment's
+> `START_DATE` year.
+>
+> Also confirm **`SAPPHIRE_SKILL_METRICS_START_YEAR` is unset** (in your shell *and* your
+> `.env`) — it **takes precedence** over `SAPPHIRE_RECALC_START_YEAR`, so leaving a stale
+> value there silently overrides the window you just pinned.
+
+**Server rollout, verification queries, rollback and per-deployment readiness** are
+**not** repeated here — see
+[`doc/prod/long_term_deploy_runbook.md`](../prod/long_term_deploy_runbook.md)
+§ *Lead-aware skill & ensembles*, and
+[`doc/prod/update_deployment_checklist.md`](../prod/update_deployment_checklist.md)
+for the deployment `.env` step.
+
+---
+
 ## Step 4 — Run a pipeline
 
 ```bash
@@ -265,6 +386,9 @@ Logs are written to `apps/logs/run_locally_<TIMESTAMP>.log`.
 - **macOS bash.** The script needs bash ≥ 4.4 (arrays, `set -u`). The system
   bash is 3.2 — install a modern one with `brew install bash` if `run_locally.sh`
   fails with syntax errors.
+- **Monthly target month looks one month late (Tajik)?** That is the
+  `SAPPHIRE_SKILL_LEAD_AWARE` flag being OFF by default, not a missing fix — see
+  [Step 3.5](#step-35--opt-in-feature-flags).
 - **The env file is yours, not in the repo.** `.env_sandro_kghm` holds paths
   and credentials. `run_locally.sh` does not source it — it greps specific keys
   (`ieasyhydroforecast_organization`, `ieasyhydroforecast_START_DATE`) from it
@@ -300,6 +424,12 @@ ieasyhydroforecast_env_file_path=apps/config/.env_sandro_kghm \
   bash apps/run_locally.sh --dry-run short-term
 
 # 4. Run
+#    Opt-in flag, default OFF. Do NOT uncomment without reading Step 3.5 first:
+#    it requires BOTH config prerequisites (operational_month_lead_time +
+#    operational_issue_day) AND an immediate full-history recalc — enabling it
+#    without the recalc leaves the DB a mix of single-lead and per-lead rows.
+#    Leave it off and Tajik monthly target months read one month late.
+# SAPPHIRE_SKILL_LEAD_AWARE=true \
 SAPPHIRE_PREDICTION_MODE=PENTAD \
   ieasyhydroforecast_env_file_path=apps/config/.env_sandro_kghm \
   bash apps/run_locally.sh short-term

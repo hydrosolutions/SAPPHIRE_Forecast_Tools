@@ -138,7 +138,8 @@ from the overridden discharge bounds (consequence 2 above)? Presumably yes — s
 - End-to-end verification through `bulletin_publish`, not only in the table.
 - A typo'd flag value raises.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` green.
-- Documented in the deployment runbook with the per-path table above.
+- Documented in the deployment runbook with the per-path table above, **and** in
+  `doc/dev/update_dev_deployment.md` § *Opt-in feature flags*.
 - Path 4's no-fallback behaviour is explicitly decided: with the flag ON, does a
   long-horizon row lacking `delta` produce NaN bounds or fail loud?
 
