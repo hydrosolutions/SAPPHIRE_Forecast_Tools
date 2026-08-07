@@ -1659,6 +1659,16 @@ Environment variables:
   ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
                                             Set ML_MODE=BOTH to run ML for all modes.
   ieasyhydroforecast_START_DATE        Hindcast start date for initialize target (YYYY-MM-DD)
+  SAPPHIRE_SKILL_LEAD_AWARE               Lead-aware long-term operational selection: per-lead
+                                            skill metrics & ensembles, config-driven issuance
+                                            selection, and dashboard target-period display
+                                            (default OFF). Requires both operational_month_lead_time
+                                            and operational_issue_day in the configured long-term
+                                            modes, plus a recalc after enabling (pin the window with
+                                            SAPPHIRE_RECALC_START_YEAR - the default is only
+                                            current_year-20). Leaving it off makes Tajik monthly
+                                            target months read one month late.
+                                            See doc/dev/update_dev_deployment.md Step 3.5.
 
 Examples:
   # Full daily run (PENTAD + DECAD + maintenance)

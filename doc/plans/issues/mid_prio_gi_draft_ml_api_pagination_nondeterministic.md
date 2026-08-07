@@ -35,6 +35,31 @@ Gap detection in `fill_ml_gaps.py` and NaN detection in
 
 ---
 
+## Reconfirmed 2026-07-23 — still unfixed, and wider than ML
+
+Independent reconfirmation during a local pipeline health review (taj + kyg,
+`maxat_sapphire_2` @ `16fb9a9b`):
+
+- **Direct control experiment**: two consecutive full-window reads of
+  `/long-forecast/` with **no writes in between** returned **47,975 vs 45,460 keys**
+  (15,553 "added", 18,068 "removed"). Pagination instability is trivially reproducible
+  today; Option 1 is still not implemented.
+- **Concrete scope for the Option 1 fix**: `sapphire/services/postprocessing/app/crud.py`
+  has **0 of 6** paginated list readers with an `order_by` (forecast, long forecast, LR
+  forecast, skill metric, bulletin, LR visibility). By contrast
+  `sapphire/services/preprocessing/app/crud.py` has **4 of 4** ordered (runoff,
+  hydrograph, meteo, snow) — so preprocessing is the working template for the fix.
+- **Not only ML**: `apps/postprocessing_forecasts/src/data_reader.py:1446`
+  (`_read_long_forecasts_api`) paginates per code in 1,000-row batches. ML-007's Option 2
+  (per-code reads) is only safe while each per-code result stays within one page; a
+  multi-year, multi-model, multi-lead long-forecast result exceeds that, so the
+  postprocessing recalc path is exposed too.
+- **Consequence**: this instability blocks attribution of **PP-049** (long-term skill
+  recalc output varying across identical invocations). PP-049 cannot be confirmed as an
+  independent defect until ML-007 is fixed or bypassed.
+
+Still **colleague-owned** (`sapphire/services/`) — coordination required, no edits made.
+
 ## Root Cause Analysis
 
 ### Observed behaviour

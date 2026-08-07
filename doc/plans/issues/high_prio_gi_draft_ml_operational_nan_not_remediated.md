@@ -107,6 +107,31 @@ Reproduced live on both deployments (sentinel codes used below).
    stats, PET, and daylight were finite. See ML-002 Vector 9 for the file/line root cause in
    `BaseDartsDLPredictor`.
 
+4. **Recurrence confirmed on tjhm, 2026-07-23 (local pipeline health review, `maxat_sapphire_2` @ `16fb9a9b`).**
+   After a fresh operational `machine_learning` run (both `PENTAD` and `DECAD`), the day-horizon
+   forecasts for the current issue window showed the **same model-split predicted by the
+   covariate-window mechanism in (2)** — now with tjhm on the *other* side of the split:
+
+   | Model | tjhm stations with >=1 non-null | tjhm stations all-NULL |
+   |-------|--------------------------------|------------------------|
+   | **TFT** | **0** | **15** |
+   | TiDE | 15 | 0 |
+   | TSMixer | 15 | 0 |
+
+   All TFT rows `flag=1`; TiDE/TSMixer `flag=0` with values. Consistent with TFT's longer
+   `input_chunk_length` being exposed to a covariate NaN that the shorter-window models miss —
+   i.e. **more evidence for Vector 9 / prong 3, not a separate defect.**
+
+   Scoping notes: TFT is not globally broken — it wrote successfully at the decade horizon in the
+   same run (`"Successfully wrote 704 ML forecast records (TFT, decade)"`), and is ~187/243 non-null
+   earlier in 2026-07 at a sampled station. A same-day comparison against kghm's last operational
+   state showed the all-model per-station pattern there instead, so **which** models fall on the NaN
+   side varies with each site's covariate windows and gap dates, exactly as (2) describes.
+
+   **This recurrence went completely unflagged by the pipeline** — `run_locally.sh` reported
+   `machine_learning: PASS` because ML has no effective post-run validation (**INFRA-020**). Any fix
+   here should land with INFRA-020 so an all-NaN model surfaces instead of passing silently.
+
 3. **Trailing-gap trigger is not the only path.** Root-cause #1 above attributes the all-NaN to a
    trailing-discharge gap tripping `THRESHOLD_MISSING_DAYS_END`. In this run tjhm discharge was fully
    present through today (no trailing gap) yet the operational forecast was still all-NaN — so the

@@ -117,7 +117,38 @@ for row in rows: print(fmt.format(*row))
 print(f'\n({len(d)} records)')
 "
 }
+
+# Skill-metric summariser — groups rows by (model, horizon_value) and shows n_pairs.
+# Use for Section 9.6: /skill-metric/ has NO horizon_value query param, so per-lead
+# stratification must be inspected client-side.
+skillsum() {
+  python3 -c "
+import sys, json
+from collections import defaultdict
+rows = json.load(sys.stdin)
+if not rows: print('(no records)'); sys.exit()
+g = defaultdict(list)
+for r in rows:
+    g[(r.get('model_type'), r.get('horizon_value'))].append(r)
+print(f'{\"model\":<16}{\"hv\":>4}{\"rows\":>6}{\"n_pairs(min/max)\":>20}{\"nse(min/max)\":>24}')
+print('-' * 70)
+for (m, hv), rs in sorted(g.items(), key=lambda kv: (str(kv[0][0]), -1 if kv[0][1] is None else kv[0][1])):
+    npv = [r['n_pairs'] for r in rs if r.get('n_pairs') is not None]
+    nse = [r['nse'] for r in rs if r.get('nse') is not None]
+    np_s = f'{min(npv):g}/{max(npv):g}' if npv else '-'
+    ns_s = f'{min(nse):.3g}/{max(nse):.3g}' if nse else 'ALL NULL'
+    print(f'{str(m):<16}{str(hv):>4}{len(rs):>6}{np_s:>20}{ns_s:>24}')
+print(f'\n({len(rows)} records; {len(g)} (model,hv) groups)')
+"
+}
 ```
+
+> **Pagination trap (PREPQ-011 class).** Every endpoint defaults to `limit=100`.
+> Once skill rows are stratified per lead, a single station × 5 horizons × ~10
+> models × 4 leads easily exceeds 100 — and the API **silently truncates**, which
+> reads as "these leads were never written". All Section 9.6 queries therefore
+> pass an explicit large `limit`. If a result is exactly the limit you passed,
+> **raise the limit and re-run** before drawing any conclusion.
 
 ### 0.2 Service health checks
 
@@ -179,6 +210,104 @@ cover the following and produce JSON output in `counts` and `max_date` fields:
 
 Manual sections 1.1–1.4 remain useful for per-station spot-checks and
 discharge value inspection; the automated checks provide a quick pass/fail.
+
+### 0.5 Feature-flag preflight
+
+Recent work landed **flag-gated, default OFF**. Merging changes nothing until a
+deployment opts in — so a review run that forgets the flag silently tests the
+*old* behaviour and reports it as current. Establish flag state **before** any
+run, and record it.
+
+#### 0.5a Flags that must be decided per deployment
+
+| Flag | Default | Effect when ON | Set for this run? |
+|------|---------|----------------|-------------------|
+| `SAPPHIRE_SKILL_LEAD_AWARE` | **OFF** | Long-term skill metrics and EM / Naive Mean / Skilled Mean ensembles are computed and stored **per operational lead** (`horizon_value`) instead of collapsed; operational "latest" readers and the monthly maintenance gap detector select only the configured operational issuance; the dashboard monthly panel resolves its lead from config instead of a hard-coded `horizon_value=1`. | <!-- ON / OFF --> |
+
+<!-- RESULT: flag state chosen for this run = -->
+
+The following flags gate `forecast_skill_eval` only — an **offline analysis
+tool**, not the operational pipeline. Leave them unset unless this review also
+runs the evaluator: `SAPPHIRE_SKILL_PROB`, `SAPPHIRE_SKILL_VALUE`,
+`SAPPHIRE_SKILL_LT_LEAD`, `SAPPHIRE_SKILL_LR_REPAIR`,
+`SAPPHIRE_SKILL_FORECAST_ONLY`.
+
+These carry working defaults and need **no** `.env` entry — record them only if
+this deployment deliberately overrides one:
+`ieasyhydroforecast_nse_threshold_long_term` (LT Skilled-Mean pool, NSE>0),
+`ieasyhydroforecast_efficiency_threshold_long_term`,
+`ieasyhydroforecast_accuracy_threshold_long_term`,
+`ieasyhydroforecast_min_pairs_long_term{,_quarter,_season}` (min-n floor,
+defaults 4/5/5), `SAPPHIRE_MONTHLY_FROM_DECADAL` (defaults **True**).
+
+#### 0.5b Hard prerequisite — do not enable the flag until this passes
+
+Under `SAPPHIRE_SKILL_LEAD_AWARE=true` the write path **raises and aborts** if a
+long-term config lacks `operational_issue_day` (by design — it must never
+silently score the wrong rows).
+
+```bash
+for f in "$ieasyhydroforecast_configuration_path/$ieasyhydroforecast_ml_long_term_configuration"/*.json; do
+  [ -f "$f" ] || continue
+  python3 -c "
+import json,sys
+d=json.load(open('$f'))
+print('%-22s lead=%s issue_day=%s' % ('$(basename "$f" .json)',
+      d.get('operational_month_lead_time'), d.get('operational_issue_day')))
+"
+done
+```
+
+<!-- RESULT: -->
+
+**Every row must show a non-`None` `lead` AND a non-`None` `issue_day`.** Any
+`issue_day=None` ⇒ **NOT READY**; do not enable the flag for this deployment.
+
+Record the resolved lead map — Section 9.6 checks the stored rows against it:
+
+| Mode | Configured lead (`horizon_value`) | Issue day |
+|------|-----------------------------------|-----------|
+| month_0 | | |
+| month_1 | | |
+| month_2 | | |
+| month_3 | | |
+| quarter | | |
+| seasonal_january | | |
+| seasonal_february | | |
+| seasonal_march | | |
+| seasonal_april | | |
+
+> `month_N` does **not** universally mean lead N — it is per-deployment. Read the
+> lead from the config, never from the mode name.
+
+#### 0.5c Confirm the flag actually resolves ON in the run environment
+
+The helper fails loudly on a typo'd value rather than silently resolving to OFF,
+so this also validates the token you set:
+
+```bash
+SAPPHIRE_SKILL_LEAD_AWARE=true python3 -c "
+import sys; sys.path.insert(0, 'apps')
+from iEasyHydroForecast.skill_lead_aware_flag import skill_lead_aware_enabled
+print('SAPPHIRE_SKILL_LEAD_AWARE resolves to:', skill_lead_aware_enabled())
+"
+```
+
+<!-- RESULT: (expect True) -->
+
+#### 0.5d Enabling requires a full-history recalc
+
+Existing stored rows were written **single-lead**. Turning the flag on without
+recalculating leaves the DB a mix of single-lead and per-lead rows until the
+next natural recalc — Section 9.6 will then show a confusing half-migrated
+state that is neither a bug nor a pass. **Section 9.2 (recalc) is mandatory, not
+optional, on the run that first enables this flag**, and must be run with the
+flag set.
+
+> If this local DB holds **more than one organisation** (the dev
+> `postprocessing_db` commonly holds both kyg and taj codes), the recalc is
+> **per-org**: run it once per deployment `.env`. Recalculating one org does not
+> migrate the other org's rows.
 
 ---
 
@@ -479,6 +608,27 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 > **Note**: `ML_MODE` defaults to `DECAD`. Set `ML_MODE=BOTH` if ML should
 > run for all prediction modes.
 
+> **⚠️ ML rejects `SAPPHIRE_PREDICTION_MODE=BOTH`.** Unlike `linear_regression`
+> and `postprocessing_forecasts` (which accept `BOTH`, and `ALL`, natively),
+> `machine_learning/make_forecast.py` raises `ValueError` on anything other than
+> `PENTAD` or `DECAD`. Run this module **once per mode**:
+> ```bash
+> for M in PENTAD DECAD; do
+>   ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+>     SAPPHIRE_PREDICTION_MODE=$M ML_MODE=BOTH \
+>     bash apps/run_locally.sh machine_learning
+> done
+> ```
+
+> **Ordering note.** In the real pipeline (`run_short_term_pipeline`)
+> preprocessing runs **once**, then for each mode (PENTAD, then DECAD) the order
+> is **machine_learning → linear_regression → postprocessing_forecasts**. This
+> checklist presents LR (§4) before ML (§5) for readability. If you are
+> reproducing production behaviour rather than spot-checking one module, follow
+> the runner's order, and note that with the default `ML_MODE=DECAD` the ML step
+> is **intentionally skipped for PENTAD** — record that as PASS (no-op), not as
+> a missing write.
+
 ### What this module writes
 
 - `machine_learning` writes TFT, TiDE, TSMixer forecasts stored with
@@ -571,19 +721,50 @@ Delta:              ____  days
 Gate:               [ ] OPEN (run expected)   [ ] CLOSED (run not expected)
 ```
 
-If the gate is CLOSED and you still want to verify LT behaviour, override the
-date:
+> **⚠️ Use `long-term-operational` — NOT `long-term` or `long_term_forecasting`.**
+> Both of those run the **simulate** path: `run_long_term_forecasting()` is
+> labelled `(simulate)` in `apps/run_locally.sh` and invokes
+> `dev_code/simulate_forecasts.py`, which defaults to **historical year 2024**
+> and `month_0` (`LT_SIMULATE_YEARS`, `LT_SIMULATE_MODES`). It does **not**
+> consult the operational day-of-month gate. Verifying today's operational
+> long-term forecast with either target produces a **false PASS** — you will be
+> looking at a 2024 simulation. Only `long-term-operational` runs
+> `run_forecast.py` for the config-resolved active modes and then the real
+> long-term postprocessor (`postprocessing_operational_long_term.py`).
+
+Operational long-term run (this is the one to use):
 
 ```bash
 ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  SAPPHIRE_SKILL_LEAD_AWARE=<flag-from-0.5> \
+  bash apps/run_locally.sh long-term-operational
+```
+
+If the gate is CLOSED and you still want to exercise the operational path,
+override the date (do **not** substitute a simulate target):
+
+```bash
+ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  SAPPHIRE_SKILL_LEAD_AWARE=<flag-from-0.5> \
   LT_FORECAST_TODAY=<YYYY-MM-10 or YYYY-MM-25> \
-  bash apps/run_locally.sh long-term
+  bash apps/run_locally.sh long-term-operational
 ```
 
+Record which modes the schedule query actually selected — coverage depends on
+it, and a fallback selects a different (wider) mode set than the config-aware
+path:
+
 ```bash
-ieasyhydroforecast_env_file_path=<path-to-your-.env> \
-  bash apps/run_locally.sh long_term_forecasting
+grep -iE "active mode|schedule|fallback|skill type" apps/logs/run_locally_*.log | tail -20
 ```
+
+<!-- RESULT: active modes = ; fallback? = -->
+
+> **`postprocessing_forecasts` is the SHORT-TERM postprocessor.** The single
+> module target runs `postprocessing_operational.py` only. Long-term ensembles
+> come from `postprocessing_operational_long_term.py`, which runs *inside*
+> `long-term-operational`. Running §7 alone never produces long-term EM /
+> Naive Mean / Skilled Mean rows.
 
 ### What this module writes
 
@@ -1277,6 +1458,7 @@ Capture current state before recalculation so you can confirm values changed.
 
 ```bash
 ieasyhydroforecast_env_file_path=<path-to-your-.env> \
+  SAPPHIRE_SKILL_LEAD_AWARE=<ON-value-from-0.5a> \
   SAPPHIRE_PREDICTION_MODE=ALL \
   bash apps/run_locally.sh recalculate_skill_metrics
 ```
@@ -1285,6 +1467,11 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 > `SAPPHIRE_PREDICTION_MODE=ALL` recalculates pentad + decad + monthly +
 > quarterly + seasonal + daily skill metrics. Use
 > `SAPPHIRE_PREDICTION_MODE=BOTH` for pentad + decad only.
+
+> **Carry the flag from Section 0.5.** This recalc is what writes the per-lead
+> rows Section 9.6 verifies. Omitting `SAPPHIRE_SKILL_LEAD_AWARE` here — even
+> when the rest of the run had it set — rewrites the rows single-lead and
+> silently undoes the migration.
 
 <!-- RESULT: -->
 
@@ -1390,6 +1577,288 @@ be ~365. If `norm_dates=0`, the recalculation did not write norm records.
   curl -s "$BASE_URL/api/preprocessing/snow/?code=$S2&snow_type=HS&limit=50" | table
   ```
   <!-- RESULT: -->
+
+---
+
+## 9.6 Skill Metrics and Ensembles — All Horizons
+
+Sections 9.1/9.3 cover pentad, decad and month only, and none of the earlier
+sections check long-term **ensembles** at all. This section closes both gaps
+across all five horizons and verifies the per-lead stratification.
+
+Run **after** the Section 9.2 recalc. Uses `skillsum` and `table` from 0.1a and
+the lead map recorded in 0.5b.
+
+### 9.6.1 Skill metrics — per horizon, per model, per lead
+
+`/skill-metric/` exposes `horizon`, `code`, `model`, `start_date`, `end_date`,
+`skip`, `limit` — **there is no `horizon_value` filter**, so lead stratification
+is inspected client-side via `skillsum`. Note `limit=2000` throughout (see the
+pagination trap in 0.1a).
+
+- [ ] $S1 — skill by (model, lead), all five horizons:
+  ```bash
+  for H in pentad decade month quarter season; do
+    echo "=== S1 $H ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=$H&limit=2000" | skillsum
+  done
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — skill by (model, lead), all five horizons:
+  ```bash
+  for H in pentad decade month quarter season; do
+    echo "=== S2 $H ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=$H&limit=2000" | skillsum
+  done
+  ```
+  <!-- RESULT: -->
+
+- [ ] Full unabridged rows for the long-term horizons (values, not just the summary):
+  ```bash
+  for H in month quarter season; do
+    echo "=== S1 $H (full) ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=$H&limit=2000" | table
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected — flag ON:** every long-term horizon shows rows at **each lead in the
+0.5b map** for that mode family (month: one `hv` per configured `month_*`
+config; quarter: the single configured quarter lead; season: one `hv` per
+configured `seasonal_*` config). Short-term (pentad/decad) is **not** lead-aware
+— `horizon_value` is the sentinel `0` there, and that is correct.
+
+**Expected — flag OFF:** long-term skill is collapsed; expect a single lead
+group (or the `0` sentinel) per model. This is the pre-feature behaviour, not a
+defect.
+
+**Red flags**:
+- A configured lead from 0.5b has **no** skill rows at all — the recalc did not
+  emit that lead, or the config's `operational_issue_day` does not match any
+  stored issuance.
+- Rows appear at a `horizon_value` that is **not** in the 0.5b map, and is not
+  `0` — stray/stale aggregate rows (the PP-043 class: aggregates scored as raw
+  model rows at `hv = horizon_in_year`). These are what blank out dashboard
+  skill tiles. **Check `horizon_in_year` before filing**: if the stray `hv`
+  equals it, it is the PP-043 aggregate class; if not, see the quarter caveat
+  below.
+
+> **⚠️ Known exception — do NOT file quarter stray leads as a new defect.**
+> `QUARTER.horizon_value` is **overloaded**: the service stores it with no
+> defined meaning, and the pre-existing operational quarter rows were migrated
+> from a config set that has since changed — so quarter legitimately shows leads
+> beyond the single one today's `quarter.json` configures. This is the **open
+> convention question tracked as MIG-008**
+> (`doc/prod/longforecast_quarter_season_hv_convention.md`), awaiting a decision
+> from the postprocessing-service owner + long-term modeller. Record what you
+> observe as evidence for that decision; do not "fix" it and do not re-file it.
+> The same caveat applies to `SEASON` on deployments whose seasonal configs
+> post-date the stored rows. Month is **not** subject to this — month is
+> config-per-lead and a stray month lead is a genuine finding.
+- Result count equals the `limit` you passed — truncated, re-run with a higher
+  limit before concluding anything.
+- Short-term `horizon_value` is non-zero — short-term must stay sentinel `0`.
+
+### 9.6.2 Min-n floor (no small-sample noise)
+
+Long-term skill has a configurable minimum-pair floor (defaults MONTH=4,
+QUARTER=5, SEASON=5). Rows below the floor must be **absent or tombstoned**,
+never published with a real NSE — an unfloored 2-pair NSE has been observed as
+low as −13.6 million.
+
+- [ ] $S1 — long-term rows violating the floor:
+  ```bash
+  for H in month quarter season; do
+    K=4; [ "$H" != "month" ] && K=5
+    echo "=== S1 $H (floor K=$K) ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=$H&limit=2000" \
+      | K=$K python3 -c "
+import sys, json, os
+K = int(os.environ['K']); rows = json.load(sys.stdin)
+bad = [r for r in rows
+       if r.get('n_pairs') is not None and 0 < r['n_pairs'] < K and r.get('nse') is not None]
+print(f'{len(bad)} VIOLATION(S)' if bad else 'OK - no row with 0 < n_pairs < K carries metrics')
+for r in bad[:20]:
+    print('  ', r.get('model_type'), 'hv=', r.get('horizon_value'),
+          'n_pairs=', r.get('n_pairs'), 'nse=', r.get('nse'))
+"
+  done
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — same check:
+  ```bash
+  for H in month quarter season; do
+    K=4; [ "$H" != "month" ] && K=5
+    echo "=== S2 $H (floor K=$K) ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S2&horizon=$H&limit=2000" \
+      | K=$K python3 -c "
+import sys, json, os
+K = int(os.environ['K']); rows = json.load(sys.stdin)
+bad = [r for r in rows
+       if r.get('n_pairs') is not None and 0 < r['n_pairs'] < K and r.get('nse') is not None]
+print(f'{len(bad)} VIOLATION(S)' if bad else 'OK')
+for r in bad[:20]:
+    print('  ', r.get('model_type'), 'hv=', r.get('horizon_value'),
+          'n_pairs=', r.get('n_pairs'), 'nse=', r.get('nse'))
+"
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected**: `OK` for every horizon. Any violation means the min-n gate is not
+being applied on this path.
+
+### 9.6.3 Tombstones are expected, not failures
+
+Skill writes are upsert-only. When a recalc stops emitting a key (floored out,
+or an aggregate discarded), a **tombstone** is written — `n_pairs = 0` with NULL
+metrics — so the stale row cannot keep showing on the dashboard.
+
+- [ ] $S1 — tombstone census across long-term horizons:
+  ```bash
+  for H in month quarter season; do
+    echo "=== S1 $H ==="
+    curl -s "$BASE_URL/api/postprocessing/skill-metric/?code=$S1&horizon=$H&limit=2000" \
+      | python3 -c "
+import sys, json
+rows = json.load(sys.stdin)
+tomb = [r for r in rows if r.get('n_pairs') == 0]
+bad  = [r for r in tomb if r.get('nse') is not None or r.get('mae') is not None]
+print(f'{len(rows)} rows, {len(tomb)} tombstones (n_pairs=0)')
+print(f'  MALFORMED: {len(bad)} tombstone(s) still carry metrics' if bad
+      else '  OK - all tombstones have NULL metrics')
+for r in tomb[:10]:
+    print('   tomb:', r.get('model_type'), 'hv=', r.get('horizon_value'))
+"
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected**: tombstones may be present (normal); every tombstone must have NULL
+`nse`/`mae`. A tombstone carrying live metrics is a real defect. A *rising*
+tombstone count across successive recalcs of unchanged data is also suspicious —
+it means keys are being emitted inconsistently between runs.
+
+### 9.6.4 Long-term ensembles — EM / Naive Mean / Skilled Mean
+
+The long-term ensembles live on `/long-forecast/` (not `/forecast/`), which
+**does** support a `horizon_value` filter. DB model names: `EM`,
+`Naive Mean`, `Skilled Mean`.
+
+- [ ] $S1 — ensemble presence per horizon and model:
+  ```bash
+  for H in month quarter season; do
+    for M in "EM" "Naive%20Mean" "Skilled%20Mean"; do
+      echo "=== S1 $H $M ==="
+      curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=$H&model=$M&start_date=$MONTH_START&end_date=$MONTH_END&limit=500" | table
+    done
+  done
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S2 — ensemble presence per horizon and model:
+  ```bash
+  for H in month quarter season; do
+    for M in "EM" "Naive%20Mean" "Skilled%20Mean"; do
+      echo "=== S2 $H $M ==="
+      curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S2&horizon_type=$H&model=$M&start_date=$MONTH_START&end_date=$MONTH_END&limit=500" | table
+    done
+  done
+  ```
+  <!-- RESULT: -->
+
+- [ ] $S1 — monthly ensembles stratified by lead (flag ON only):
+  ```bash
+  for HV in 0 1 2 3; do
+    echo "=== S1 month hv=$HV ==="
+    curl -s "$BASE_URL/api/postprocessing/long-forecast/?code=$S1&horizon_type=month&horizon_value=$HV&start_date=$MONTH_START&end_date=$MONTH_END&limit=500" | table
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected**: ensemble rows exist at each lead the 0.5b map configures, and
+**not** at leads it does not. A lead with per-model forecasts (Section 6) but no
+ensemble row means the ensemble step skipped that lead.
+
+**Red flags**:
+- `Skilled Mean` absent everywhere while `EM` is present — the skilled pool was
+  starved. Cross-check the LT NSE>0 pool threshold; verify at least one model
+  has a long-term skill row with `nse > 0` in 9.6.1.
+- Ensemble rows at `horizon_value` = calendar month (e.g. 7 in July) — the
+  stale-aggregate sentinel bug (`hv` should be a **lead**, never a month).
+
+### 9.6.5 Quarter/season EM parity — EM = mean(LR_Base, LR_SM)
+
+For quarter and season, `EM` is defined as the plain mean of `LR_Base` and
+`LR_SM` (de-skill-gated, two-model). This is a closed-form check.
+
+- [ ] $S1 — quarter and season EM parity:
+  ```bash
+  for H in quarter season; do
+    echo "=== S1 $H EM parity ==="
+    python3 -c "
+import json, subprocess, os
+base = os.environ['BASE_URL']; code = os.environ['S1']
+def get(model):
+    url = (f\"{base}/api/postprocessing/long-forecast/?code={code}\"
+           f\"&horizon_type=$H&model={model}&limit=2000\")
+    return json.loads(subprocess.run(['curl','-s',url],capture_output=True,text=True).stdout)
+key = lambda r: (r.get('date'), r.get('horizon_value'), r.get('valid_from'))
+em   = {key(r): r for r in get('EM')}
+base_= {key(r): r for r in get('LR_Base')}
+sm   = {key(r): r for r in get('LR_SM')}
+common = set(em) & set(base_) & set(sm)
+print(f'EM={len(em)} LR_Base={len(base_)} LR_SM={len(sm)} comparable={len(common)}')
+bad = 0
+for k in sorted(common):
+    a, b = base_[k].get('forecasted_discharge'), sm[k].get('forecasted_discharge')
+    e = em[k].get('forecasted_discharge')
+    if None in (a, b, e): continue
+    exp = (a + b) / 2
+    if abs(exp - e) > max(1e-6, 5e-4 * max(abs(exp), 1)):
+        bad += 1
+        if bad <= 10: print('  MISMATCH', k, f'EM={e:g} expected={exp:g}')
+print('  OK - all comparable rows match' if bad == 0 else f'  {bad} MISMATCH(ES)')
+"
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected**: `comparable` > 0 and zero mismatches. `comparable=0` is **not** a
+pass — it means EM and its two inputs share no key, which is itself a finding
+(check whether `horizon_value` differs between the EM row and its inputs).
+
+### 9.6.6 Short-term ensembles — EM / NE at pentad and decad
+
+Section 7.1 checks the operational window; this widens to the full recalc window
+and adds the per-model comparison that reveals stranded period rows.
+
+- [ ] $S1/$S2 — EM and NE counts vs contributing models (pentad + decad):
+  ```bash
+  for H in pentad decade; do
+    for C in $S1 $S2; do
+      echo "=== $C $H ==="
+      for M in EM NE LR TFT TiDE TSMixer; do
+        n=$(curl -s "$BASE_URL/api/postprocessing/forecast/?code=$C&horizon=$H&model=$M&start_date=$TODAY_MINUS_30&end_date=$TODAY&limit=500" \
+            | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+        printf '  %-10s %s\n' "$M" "$n"
+      done
+    done
+  done
+  ```
+  <!-- RESULT: -->
+
+**Expected**: `EM` and `NE` counts roughly track the per-model counts over the
+same window.
+
+**Red flags**:
+- Per-model period rows present but `EM`/`NE` at 0 for a boundary date — the
+  PP-045 class: short-term per-model PENTAD/DECADE rows are written **only** by
+  the operational path on boundary days, and maintenance cannot heal them. Use
+  `apps/postprocessing_forecasts/backfill_period_forecasts.py` (one calendar year
+  per pass) rather than expecting maintenance to fill the gap.
 
 ---
 
@@ -1592,6 +2061,23 @@ not just PASS/FAIL where a threshold applies.
 | Skill metrics delta vs before (Section 9) | n/a | n/a | n_pairs >= BEFORE | |
 | Snow norms count (Section 9) | | | norm_dates ~365 | |
 | Log scan errors | n/a | n/a | 0 ERROR/CRITICAL | |
+| **Flag state (0.5a)** | n/a | n/a | `SAPPHIRE_SKILL_LEAD_AWARE` recorded, resolves as intended | |
+| **LT config prerequisite (0.5b)** | n/a | n/a | every config has lead AND issue_day | |
+| **Recalc carried the flag (9.2)** | n/a | n/a | TRUE | |
+| Month skill leads present (9.6.1) | | | matches 0.5b lead map | |
+| Quarter skill leads present (9.6.1) | | | matches 0.5b lead map | |
+| Season skill leads present (9.6.1) | | | matches 0.5b lead map | |
+| Stray leads (not in map, not 0) (9.6.1) | | | none | |
+| Short-term `horizon_value` sentinel (9.6.1) | | | all 0 | |
+| Truncation check (result count ≠ limit) | | | TRUE for every query | |
+| Min-n floor violations (9.6.2) | | | 0 | |
+| Malformed tombstones (9.6.3) | | | 0 | |
+| LT EM present, all 3 horizons (9.6.4) | | | ≥ 1 row each | |
+| LT Naive Mean present (9.6.4) | | | ≥ 1 row each | |
+| LT Skilled Mean present (9.6.4) | | | ≥ 1 row each | |
+| Quarter EM = mean(LR_Base,LR_SM) (9.6.5) | | | comparable > 0, 0 mismatch | |
+| Season EM = mean(LR_Base,LR_SM) (9.6.5) | | | comparable > 0, 0 mismatch | |
+| Short-term EM/NE vs per-model (9.6.6) | | | counts track | |
 
 ---
 
@@ -1613,3 +2099,13 @@ not just PASS/FAIL where a threshold applies.
 | Skill `n_pairs` = 1 | Recalculation ran with insufficient history | Acceptable for new stations; investigate for established stations |
 | Long-term forecasts absent | Gate condition not met (expected today) or module crash | Check gate logic in Section 6; use `LT_FORECAST_TODAY` override to force run |
 | Log scan shows Traceback | Unhandled exception in a module | Read full traceback; identify module and fix before next run |
+| Long-term skill collapsed to one lead | `SAPPHIRE_SKILL_LEAD_AWARE` OFF, or the recalc ran without it | Re-check 0.5c; re-run Section 9.2 **with the flag set** |
+| Only *some* leads per-lead, others collapsed | Flag enabled but no full-history recalc — DB is half-migrated | Run the Section 9.2 full recalc; if the DB holds several orgs, once per org `.env` |
+| Recalc aborts with a config error | A long-term config lacks `operational_issue_day` — fail-loud by design | Fix the config (0.5b), do not disable the flag to work around it |
+| Skill rows at `horizon_value` = calendar month | Stale aggregate rows scored as raw model rows (PP-043 class) | Re-run the recalc so tombstones invalidate them; confirm none remain in 9.6.1 |
+| Skill row count == the `limit` passed | Silent server-side truncation at the default `limit=100` | Re-run with a larger `limit`; never conclude "absent" from a truncated page |
+| `Skilled Mean` missing while `EM` present | Skilled pool starved — no model cleared the long-term NSE>0 gate | Confirm in 9.6.1 that some model has a long-term row with `nse > 0` |
+| Long-term row with tiny `n_pairs` and a wild NSE | Min-n floor not applied on this path | Check the `ieasyhydroforecast_min_pairs_long_term*` values in effect (defaults 4/5/5) |
+| Tombstone (`n_pairs=0`) carrying metrics | Tombstone written malformed | Real defect — capture the row and file it |
+| EM parity `comparable=0` at quarter/season | EM and LR_Base/LR_SM share no key — usually a `horizon_value` mismatch | Compare `horizon_value` on the EM row vs its inputs before assuming EM is wrong |
+| Per-model period rows exist but EM/NE absent | Missed operational boundary day; maintenance cannot heal per-model period rows | Run `apps/postprocessing_forecasts/backfill_period_forecasts.py`, one calendar year per pass (PP-045) |
