@@ -289,6 +289,84 @@ def rehydrate_sites_hydrograph_stats(sites, horizon: str, period_value: int, db)
             )
 
 
+def rehydrate_sites_linreg_predictor(sites, horizon: str, period_value: int, db) -> None:
+    """Re-hydrate the linear-regression predictor on each site at write-time.
+
+    ``dm.linreg_predictor`` only ever holds rows for the station currently
+    loaded in the dashboard — ``db.get_linreg_predictor`` is scoped to a
+    single code — and
+    ``update_site_attributes_with_linear_regression_predictor`` resets
+    ``site.linreg_predictor`` to ``None`` for every site that frame does not
+    cover. Selecting another station after adding one to the bulletin
+    therefore wipes the predictor of the station added earlier, and the
+    PREDICTOR column of the written pentad/decad bulletin comes out empty
+    for every station except the one last loaded. Re-fetching per site here
+    mirrors what ``rehydrate_sites_hydrograph_stats`` already does for the
+    hydrograph envelope.
+
+    The predictor row is chosen exactly as the interactive path chooses it
+    (``update_site_attributes_with_linear_regression_predictor``): the row
+    for the period preceding the forecast period (``period_value - 1``),
+    latest ``date`` last. Keeping the two in lockstep is deliberate — the
+    Excel cell must show what the dashboard shows. It also means this
+    shares the interactive path's year-boundary gap: at ``period_value ==
+    1`` the preceding period is the last period of the previous year, which
+    ``period_value - 1`` cannot express, so no predictor is found.
+
+    NaN/empty/exception-safe: if the API returns no data, the requested
+    period row is missing, or the fetch raises, the site's existing value is
+    left unchanged and no exception propagates.
+
+    Args:
+        sites: Iterable of site objects with a ``.code`` attribute.
+        horizon: Forecast horizon string passed to the API — either
+            ``"pentad"`` or ``"decade"`` (NOT the legacy ``"decad"``).
+        period_value: Period-in-year of the FORECAST period (pentad 1–72 /
+            decad 1–36). The predictor is read from ``period_value - 1``.
+        db: The ``src.db`` module (passed in to keep the helper testable via
+            injection — callers pass ``src.db`` or a test double).
+    """
+    # Determine the period-in-year column name the same way db.py does.
+    hin = "decad_in_year" if horizon == "decade" else "pentad_in_year"
+    predictor_period = period_value - 1
+
+    for site in sites:
+        try:
+            df = db.get_linreg_predictor(horizon, site.code)
+            if df is None or df.empty:
+                continue
+
+            if hin not in df.columns or "predictor" not in df.columns:
+                logger.warning(
+                    "rehydrate_sites_linreg_predictor: column '%s' or "
+                    "'predictor' missing for station %s — skipping",
+                    hin, site.code,
+                )
+                continue
+
+            row_df = df[df[hin] == predictor_period]
+            if row_df.empty:
+                logger.warning(
+                    "rehydrate_sites_linreg_predictor: no row for period %s "
+                    "in station %s — skipping", predictor_period, site.code,
+                )
+                continue
+
+            # Latest issue date wins, matching the `sort_values('date')` +
+            # `groupby('code').last()` of the interactive path.
+            if "date" in row_df.columns:
+                row_df = row_df.sort_values("date")
+
+            site.linreg_predictor = row_df["predictor"].iloc[-1]
+
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "rehydrate_sites_linreg_predictor: unexpected error for "
+                "station %s — skipping", getattr(site, "code", "?"),
+                exc_info=True,
+            )
+
+
 # @pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_, sites, df, pentad, decad, horizon, horizon_in_year):
     """Update site attributes with hydrograph statistics for selected pentad"""

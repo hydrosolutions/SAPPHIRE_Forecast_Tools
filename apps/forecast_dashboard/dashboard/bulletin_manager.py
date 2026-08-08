@@ -12,6 +12,7 @@ from dashboard.utils import (
     hydrate_month_hydrograph_stats,
     hydrate_season_hydrograph_stats,
     rehydrate_sites_hydrograph_stats,
+    rehydrate_sites_linreg_predictor,
 )
 
 logger = setup_logger()
@@ -1069,6 +1070,23 @@ class BulletinManager:
                     "_on_write: re-hydration step failed (%s); proceeding "
                     "without updated hydrograph stats.", exc,
                 )
+
+            # The LR predictor is per-station data the interactive path only
+            # ever holds for the station currently loaded, so without this
+            # every station but the last one loaded writes an empty PREDICTOR
+            # cell (see rehydrate_sites_linreg_predictor). Only the pentad and
+            # decad bulletins carry the tag. Same isolation as the hydrograph
+            # step above: a fetch failure must not block the write.
+            if horizon in ("pentad", "decade"):
+                try:
+                    rehydrate_sites_linreg_predictor(
+                        filtered, horizon, forecast_horizon, db,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "_on_write: predictor re-hydration failed (%s); "
+                        "proceeding without updated predictors.", exc,
+                    )
 
             # FD-018 review round-4 (finding C): evaluate the flag exactly
             # ONCE, here, before the per-site loop. `skill_lead_aware_enabled()`
