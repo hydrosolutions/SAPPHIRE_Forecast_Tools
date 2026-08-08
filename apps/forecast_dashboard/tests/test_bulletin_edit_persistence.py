@@ -12,7 +12,9 @@ from before writing. This file exercises:
   3. Editing an identity column (Hydropost/Model/Basin) is a no-op.
   4. Column resolution works for both the translated display name and the
      tabulator `field` name form of `event.column`.
-  5. `_populate_forecast_attributes` (extracted from `_load_bulletin_from_api`)
+  5. Editing δ re-derives the forecast lower/upper bounds (Q ∓ δ) in
+     `site.forecasts`, persists them, and patches them into the visible table.
+  6. `_populate_forecast_attributes` (extracted from `_load_bulletin_from_api`)
      correctly hydrates a site's short-term forecast attributes from
      `site.forecasts` using the real `SapphireSite.get_forecast_attributes_for_site`.
 
@@ -80,6 +82,7 @@ try:
 
     BulletinManager = bulletin_manager.BulletinManager
     _populate_forecast_attributes = bulletin_manager._populate_forecast_attributes
+    _apply_delta_bounds = bulletin_manager._apply_delta_bounds
 
 finally:
     for _k in _FAKE_KEYS:
@@ -171,7 +174,9 @@ def _make_manager_stub(site, horizon_context=("pentad", 2026, 26)):
             )
         ]
     )
-    wm = types.SimpleNamespace(bulletin_tabulator=types.SimpleNamespace(value=bulletin_df))
+    wm = types.SimpleNamespace(
+        bulletin_tabulator=types.SimpleNamespace(value=bulletin_df, patch=MagicMock())
+    )
     return types.SimpleNamespace(
         wm=wm,
         bulletin_sites=[site],
@@ -255,6 +260,198 @@ class TestOnBulletinEditUpdatesForecasts:
 
         tft_row = site.forecasts.loc[site.forecasts["Model"] == "TFT"]
         assert tft_row["Forecasted discharge"].iloc[0] == pytest.approx(200.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: editing δ re-derives the forecast bounds
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaEditUpdatesBounds:
+    """δ and the bounds describe one interval (Q ∓ δ, as
+    processing.calculate_forecast_range builds it), so an edited δ must move
+    both bounds instead of leaving the row internally inconsistent."""
+
+    @pytest.mark.parametrize("column", ["delta", "δ"])
+    def test_delta_edit_recomputes_both_bounds(self, monkeypatch, column):
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column=column, row=0, value="5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["δ"] == pytest.approx(5.0)
+        assert row["Forecast lower bound"] == pytest.approx(95.0)
+        assert row["Forecast upper bound"] == pytest.approx(105.0)
+
+    def test_recomputed_bounds_are_rounded_to_three_decimals(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=10.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value=0.1234)
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(9.877)
+        assert row["Forecast upper bound"] == pytest.approx(10.123)
+
+    def test_recomputed_bounds_are_persisted_to_the_api(self, monkeypatch):
+        save_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", save_mock)
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value="5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        saved_site = save_mock.call_args.args[-1][0]
+        row = saved_site.forecasts.loc[saved_site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(95.0)
+        assert row["Forecast upper bound"] == pytest.approx(105.0)
+
+    def test_recomputed_bounds_are_patched_into_the_displayed_table(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value="5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        patch_mock = fake_self.wm.bulletin_tabulator.patch
+        patch_mock.assert_called_once()
+        patches = patch_mock.call_args.args[0]
+        assert patches["Forecast lower bound"] == [(0, pytest.approx(95.0))]
+        assert patches["Forecast upper bound"] == [(0, pytest.approx(105.0))]
+
+    def test_delta_edit_leaves_other_model_rows_untouched(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(model="LR", forecasted_discharge=100.0)
+        site.forecasts = pd.concat(
+            [
+                site.forecasts,
+                pd.DataFrame(
+                    [
+                        {
+                            "Model": "TFT",
+                            "Forecasted discharge": 200.0,
+                            "Forecast lower bound": 190.0,
+                            "Forecast upper bound": 210.0,
+                            "δ": 1.0,
+                            "s/σ": 2.0,
+                            "MAE": 3.0,
+                            "Accuracy": 90.0,
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value="5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        tft = site.forecasts.loc[site.forecasts["Model"] == "TFT"].iloc[0]
+        assert tft["Forecast lower bound"] == pytest.approx(190.0)
+        assert tft["Forecast upper bound"] == pytest.approx(210.0)
+
+    def test_non_delta_edit_does_not_touch_bounds(self, monkeypatch):
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="sdivsigma", row=0, value="0.4")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(90.0)
+        assert row["Forecast upper bound"] == pytest.approx(110.0)
+
+    def test_non_numeric_delta_leaves_bounds_untouched(self, monkeypatch):
+        """A δ the operator typed as text cannot yield bounds; the stored
+        bounds must be left alone rather than blanked."""
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value="not a number")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(90.0)
+        assert row["Forecast upper bound"] == pytest.approx(110.0)
+        fake_self.wm.bulletin_tabulator.patch.assert_not_called()
+
+    def test_display_patch_failure_does_not_lose_the_edit(self, monkeypatch):
+        """Refreshing the visible cells is cosmetic — a failure there must
+        neither raise nor prevent the recomputed bounds from being saved."""
+        save_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", save_mock)
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        fake_self.wm.bulletin_tabulator.patch = MagicMock(
+            side_effect=RuntimeError("frontend gone")
+        )
+        event = FakeEditEvent(column="delta", row=0, value="5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)  # must not raise
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(95.0)
+        save_mock.assert_called_once()
+
+
+class TestApplyDeltaBounds:
+    """Direct unit tests of the `_apply_delta_bounds` helper."""
+
+    def _frame(self, discharge=100.0):
+        return pd.DataFrame(
+            [
+                {
+                    "Model": "LR",
+                    "Forecasted discharge": discharge,
+                    "Forecast lower bound": 90.0,
+                    "Forecast upper bound": 110.0,
+                }
+            ]
+        )
+
+    def test_returns_true_and_updates_bounds(self):
+        df = self._frame()
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, 2.5) is True
+        assert df.loc[0, "Forecast lower bound"] == pytest.approx(97.5)
+        assert df.loc[0, "Forecast upper bound"] == pytest.approx(102.5)
+
+    def test_missing_discharge_column_is_a_noop(self):
+        df = pd.DataFrame([{"Model": "LR", "Forecast lower bound": 90.0}])
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, 2.5) is False
+        assert df.loc[0, "Forecast lower bound"] == pytest.approx(90.0)
+
+    @pytest.mark.parametrize("delta", [None, "", "abc", float("nan")])
+    def test_unusable_delta_is_a_noop(self, delta):
+        df = self._frame()
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, delta) is False
+        assert df.loc[0, "Forecast lower bound"] == pytest.approx(90.0)
+        assert df.loc[0, "Forecast upper bound"] == pytest.approx(110.0)
+
+    def test_missing_discharge_value_yields_undefined_bounds(self):
+        """With no Q there is no Q ∓ δ; the bounds become NaN rather than
+        keeping values that contradict the new δ."""
+        df = self._frame(discharge=float("nan"))
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, 2.5) is True
+        assert pd.isna(df.loc[0, "Forecast lower bound"])
+        assert pd.isna(df.loc[0, "Forecast upper bound"])
 
 
 # ---------------------------------------------------------------------------

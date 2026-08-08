@@ -261,6 +261,67 @@ def _resolve_month_target_period(source_df, site, date_bound=None):
     return next(iter(periods))
 
 
+def _apply_delta_bounds(forecasts: pd.DataFrame, mask, delta, *, ndigits: int = 3) -> bool:
+    """Re-derive the forecast bounds of the masked rows from an edited δ.
+
+    δ and the bounds are two views of one interval: the forecast summary
+    table builds the bounds as Q ∓ δ for the 'delta' range type (see
+    `processing.calculate_forecast_range`). An operator editing δ in the
+    bulletin therefore expects both bounds to follow, rather than a row
+    whose δ and bounds disagree.
+
+    Args:
+        forecasts: A site's ``forecasts`` DataFrame (localized column names);
+            modified in place.
+        mask: Boolean mask selecting the rows to update.
+        delta: The newly edited δ value; non-numeric values are ignored.
+        ndigits: Decimals to round the bounds to — matches the rounding
+            `create_forecast_summary_table` applies to the same two columns.
+
+    Returns:
+        True if both bounds were updated, False if the edit carried no
+        usable δ or the frame has no forecasted-discharge column.
+    """
+    discharge_col = _('Forecasted discharge')
+    if discharge_col not in forecasts.columns:
+        return False
+
+    delta_value = pd.to_numeric(delta, errors='coerce')
+    if pd.isna(delta_value):
+        return False
+
+    discharge = pd.to_numeric(forecasts.loc[mask, discharge_col], errors='coerce')
+    forecasts.loc[mask, _('Forecast lower bound')] = (discharge - delta_value).round(ndigits)
+    forecasts.loc[mask, _('Forecast upper bound')] = (discharge + delta_value).round(ndigits)
+    return True
+
+
+def _patch_bulletin_bounds(tabulator, row_position: int, lower, upper) -> None:
+    """Show the re-derived bounds in the edited bulletin table row.
+
+    ``site.forecasts`` is the source of truth, but the operator only sees
+    the tabulator, so without this the recomputed bounds would appear only
+    after the next full table rebuild. The two cells are patched rather
+    than the whole ``value`` reassigned, which would drop the operator's
+    row selection and basin grouping state mid-edit. A failure here is
+    cosmetic only — the stored values are already correct — so it is
+    logged and swallowed.
+    """
+    try:
+        df = tabulator.value
+        index_label = df.index[row_position]
+        tabulator.patch({
+            _('Forecast lower bound'): [(index_label, lower)],
+            _('Forecast upper bound'): [(index_label, upper)],
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_patch_bulletin_bounds: could not refresh the displayed bounds "
+            "for row %s (%s); they will show on the next table update.",
+            row_position, exc,
+        )
+
+
 def _ensure_site_defaults(site) -> None:
     """Set hydrograph/predictor attributes to None if not yet hydrated.
 
@@ -894,6 +955,11 @@ class BulletinManager:
         Writes the edited value straight into the matching site.forecasts row
         and upserts to the API so it survives reloads and is used verbatim by
         'Write bulletin'. Identity columns (Hydropost/Model/Basin) are ignored.
+
+        Editing δ additionally re-derives the forecast lower/upper bounds as
+        Q ∓ δ (see `_apply_delta_bounds`) and updates them in the displayed
+        table, so the operator never has to keep the three columns in sync by
+        hand.
         """
         field_to_display = {
             'station_label':        _('Hydropost'),
@@ -943,6 +1009,17 @@ class BulletinManager:
             value = float(value)
 
         site.forecasts.loc[mask, column_display] = value
+
+        # An edited δ re-derives both bounds (Q ∓ δ) so the row stays
+        # self-consistent, in site.forecasts (what the API save and the Excel
+        # write read) and in the table the operator is looking at.
+        if column_display == _('δ') and _apply_delta_bounds(site.forecasts, mask, value):
+            updated_row = site.forecasts.loc[mask].iloc[0]
+            _patch_bulletin_bounds(
+                self.wm.bulletin_tabulator, event.row,
+                updated_row[_('Forecast lower bound')],
+                updated_row[_('Forecast upper bound')],
+            )
 
         try:
             _save_bulletin_to_api(*self._horizon_context(), [site])
