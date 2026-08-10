@@ -8,14 +8,54 @@
 function (`apps/preprocessing_runoff/src/src.py`, `client.write_runoff()` with **no read-merge at
 all**) and is a **separate, unprotected** clobber path — filed as its own issue (see Related). Do not
 assume fixing this makes "runoff backfill null-clobber-safe" — daily remains exposed until its own fix.
-**Status:** IMPLEMENTED 2026-07-15 on branch `fix_runoff_null_clobber_pagination` (shared paginated
-read-merge helper `_merge_preserve_existing_runoff`; period writer now calls it, ≤100-row behavior
+**Status:** **Complete** (merged `fb3e4bd3`, see Resolution below). IMPLEMENTED 2026-07-15 on branch
+`fix_runoff_null_clobber_pagination` (shared paginated read-merge helper
+`_merge_preserve_existing_runoff`; period writer now calls it, ≤100-row behavior
 unchanged). Red-phase-verified regression tests in
 `apps/linear_regression/test/test_forecast_library_api.py`. Mechanism confirmed 2026-07-14; fix +
 scope re-verified by a 2nd adversarial review 2026-07-15 (SOUND-BUT-INCOMPLETE — corrections applied;
-daily sibling split to PREPQ-012, also fixed on the same branch).
+daily sibling split to PREPQ-012, also fixed on the same branch). Out-of-loop verification
+2026-07-23 confirmed correct + test-pinned (see Resolution).
 **Blocks:** `doc/plans/working/runoff_pentad_decad_discharge_backfill_plan.md` — that plan's
 whole premise is that read-merge-write prevents null-clobber. It does not, past row 100.
+
+## Resolution
+
+**Status: Complete.** Fixed and merged to `origin/maxat_sapphire_2` in commit `fb3e4bd3`
+("Fix runoff null-clobber: paginated read-merge for period + daily writers (PREPQ-011/012)"),
+carried in via PR #424 (merge commit `8f43694c`).
+
+**Mechanism:** `_write_runoff_to_api` (period/pentad-decad path) now paginates the existing-row
+read through the shared helper `_merge_preserve_existing_runoff` in
+`apps/iEasyHydroForecast/forecast_library.py` — a `skip`/`limit` loop that keeps reading pages
+until a short/empty page or a non-DataFrame/`None` response, instead of a single unpaginated
+`read_runoff()` call truncated at the service's `limit=100` default. The daily writer
+(`apps/preprocessing_runoff/src/src.py:4434`, PREPQ-012) reuses the same helper.
+
+**Verification:** an out-of-loop adversarial review (2026-07-23) confirmed the fix is correct
+and non-vacuously test-pinned:
+- Pagination loop mechanics are asserted by call-count + increasing `skip`
+  (`apps/linear_regression/test/test_forecast_library_api.py:1671,1673-1676`,
+  `test_maintenance_backfill_paginates_existing_read`).
+- Newest-row-beyond-row-100 preservation is pinned by a victim planted at row 149 of 150
+  (`apps/linear_regression/test/test_forecast_library_api.py:1678`,
+  `test_maintenance_backfill_preserves_newest_row_beyond_first_page`).
+- The period/pentad tests live in `apps/linear_regression/test/test_forecast_library_api.py`
+  (not `apps/iEasyHydroForecast/test/`); the daily tests live in
+  `apps/preprocessing_runoff/test/test_api_write.py`.
+
+**Reframe:** `page_size = 10000` (the house pagination default) exceeds every real station's
+archive (pentad ~1,150 rows/16yr, decade ~575, daily ~5,840), so in production this loop
+essentially never iterates more than once — the fix is effectively "raise the truncation cap
+from 100 to 10000," which the row-149 victim test pins.
+
+**Deferred:** the review found three LOW soft spots in test coverage / defensiveness — none of
+which reopen the clobber for any realistically-sized station. Filed as follow-up hardening in
+**PREPQ-013** (`doc/plans/issues/low_prio_gi_draft_runoff_pagination_test_gaps.md`):
+1. Daily preservation is not independently pinned across pages (rides on the shared helper
+   proven only by the pentad test).
+2. No single test combines multi-page concat with a page-2 victim.
+3. No max-iteration guard on the read loop (`forecast_library.py` ~3626-3649).
 
 ## Summary
 

@@ -3,15 +3,38 @@
 **Priority:** high (silent data loss in `runoffs` DAY rows; no error, no warning).
 **Module:** `apps/preprocessing_runoff/src/src.py` (`_write_runoff_to_api`, the DAILY path — a
 different function from the pentad/decad `forecast_library._write_runoff_to_api`).
-**Status:** IMPLEMENTED 2026-07-15 on branch `fix_runoff_null_clobber_pagination` (with PREPQ-011,
+**Status:** **Complete** (merged `fb3e4bd3`, see Resolution below). IMPLEMENTED 2026-07-15 on branch
+`fix_runoff_null_clobber_pagination` (with PREPQ-011,
 via a shared paginated read-merge helper). Draft reviewed adversarially once (verdict
-SOUND-BUT-INCOMPLETE — corrections below applied). Sibling of PREPQ-011.
+SOUND-BUT-INCOMPLETE — corrections below applied). Sibling of PREPQ-011. Out-of-loop verification
+2026-07-23 confirmed correct + test-pinned (see Resolution).
 
 > **✅ FIX SHIPPED (this branch):** the daily writer now calls the shared
 > `_merge_preserve_existing_runoff(client, "day", records, preserve_fields=("discharge",))`
 > (in `forecast_library.py`) gated to `maintenance`/`initial`, before `client.write_runoff`. The read
 > is PAGINATED (skip/limit loop) and scoped to `horizon="day"`. Operational today-null is untouched.
 > Red-phase-verified regression tests in `apps/preprocessing_runoff/test/test_api_write.py`.
+
+## Resolution
+
+**Status: Complete.** Fixed and merged to `origin/maxat_sapphire_2` in commit `fb3e4bd3`
+("Fix runoff null-clobber: paginated read-merge for period + daily writers (PREPQ-011/012)"),
+carried in via PR #424 (merge commit `8f43694c`). Shipped together with PREPQ-011 on the
+shared `_merge_preserve_existing_runoff` helper (`apps/iEasyHydroForecast/forecast_library.py:3593`),
+called from the daily writer at `apps/preprocessing_runoff/src/src.py:4434`.
+
+**Verification:** an out-of-loop adversarial review (2026-07-23) confirmed the fix is correct.
+Two tests exist in `apps/preprocessing_runoff/test/test_api_write.py`:
+- `test_daily_maintenance_preserves_existing_discharge` (line 332) plants a stored-discharge
+  victim and asserts it survives a null incoming row.
+- `test_daily_initial_paginates` (line 411) asserts the read loop pages via increasing
+  `skip`/`limit` for an existing-row count above one page.
+
+**Deferred (soft spot, not a bug):** the review noted `test_daily_maintenance_preserves_existing_discharge`
+mocks `read_runoff.return_value` as a single page (line 355) rather than a fake that honors
+`skip`/`limit` — so it does not, by itself, prove the daily preservation path survives pagination;
+that guarantee currently rides on the shared helper being proven by the period-path tests. Filed
+as item #1 of **PREPQ-013** (`doc/plans/issues/low_prio_gi_draft_runoff_pagination_test_gaps.md`).
 
 ## Summary
 
