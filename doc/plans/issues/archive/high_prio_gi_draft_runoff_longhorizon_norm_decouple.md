@@ -7,6 +7,17 @@
 **Found:** 2026-07-07, read-only end-to-end diagnostic. Line numbers from branch
 `develop_forecast_skill_eval_phase4`.
 
+## Resolution (2026-08-10)
+
+Fixed and merged: PR #409 (`c894edcd`). `sync_long_horizon_hydrograph.py` now classifies
+the monthly norm (written / norm-absent / sdk-failed) and writes norm-less month/quarter/
+season rows from locally-computed `previous`/`current` runoff instead of skipping the whole
+station; the writer-side read-merge preserves any existing stored numeric norm on a
+norm-absent write (mechanism B, no service change). Residual work was intentionally split
+off into sibling issues: **FD-016** (render an absent norm as explicit "N/A — monthly norm
+unavailable") and **PREPQ-010** (derive monthly norms locally from the daily runoff
+archive, governance-gated). Verified against trunk 2026-08-10.
+
 ## Summary
 
 In the forecast dashboard the Tajik monthly bulletin renders an **empty last-year
