@@ -13,6 +13,20 @@ the STATUS UPDATE immediately below for the current, authoritative picture.
 
 ---
 
+## Resolution (2026-08-10)
+
+Umbrella diagnosis, superseded/complete. Defects A (main panel + caption hard-coded lead),
+F (m0 card skill-stat filtering), J (visible horizon header lead + year), and the bulletin
+year-rollover fix all shipped, converging on the pre-existing `SAPPHIRE_SKILL_LEAD_AWARE`
+flag: PR #414 (`develop_pp_lead_aware_skill`) and PR #416 (`develop_ltf_monthly_horizon_value`),
+merged into `origin/maxat_sapphire_2` as `7c7c26f4` / `d9ffa10b`. The remaining piece, Defect G
+(m0 bulletin per-site target month), was split out into its own issue, **FD-018**, which has
+since also been fixed and merged (PR #420, `16fb9a9b`) — see that archived issue's own
+Resolution note for the reload-correctness caveat deferred to the Bulletin schema field issue.
+No further action needed on this umbrella file. Verified against trunk 2026-08-10.
+
+---
+
 ## STATUS UPDATE (2026-07-14) — implemented and merged; read this before the rest of the file
 
 Everything below this point is the **original diagnosis** (revision 7, written before

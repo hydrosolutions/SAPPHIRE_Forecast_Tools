@@ -14,6 +14,24 @@ must be gated on it and be byte-identical to trunk when the flag is off.
 
 ---
 
+## Resolution (2026-08-10)
+
+Fixed and merged: PR #420 (`16fb9a9b`). The live corruption path — the m0 bulletin's Excel
+export writing the **main panel's** target month instead of its own — is fixed:
+`bulletin_manager.py` now captures each site's own target period at add time
+(`_resolve_month_target_period`) and stores it on the site (`site.bulletin_target_period`),
+and the add/write path (`_on_write`) honours that per-site period instead of re-deriving one
+bulletin-wide period for every site. **Reload correctness is consciously deferred** — an
+attempted reload-time heuristic (`_resolve_reload_month_target_period`) was found to be
+actively worse than trunk (could resolve to the wrong frame, could read a stale cached value,
+could swallow a raised exception and silently discard the bulletin) and was deleted; reload
+now falls back to the bulletin-wide period, byte-identical to pre-fix trunk. The durable fix
+for reload requires a schema change on `Bulletin` (colleague-managed) — see the bulletin
+target-period-field issue (`doc/plans/issues/mid_prio_gi_draft_pp_bulletin_target_period_field.md`).
+Verified against trunk 2026-08-10.
+
+---
+
 ## Summary
 
 When a user clicks "Add to bulletin" on the **m0** (lead-0, current-month) forecast
