@@ -338,7 +338,7 @@ The server .env and the local repo .env are on different machines, so you need t
 | `ieasyhydroforecast_run_ML_models` | Enable ML forecasting | `true` or `false` |
 | `ieasyhydroforecast_run_CM_models` | Enable conceptual models | `true` or `false` |
 | `ieasyhydroforecast_organization` | Organization identifier | `${ORG_SLUG}` |
-| `SAPPHIRE_SKILL_LEAD_AWARE` | Per-lead skill & ensembles — **default OFF, opt-in per deployment**. See [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md) § *Lead-aware skill*. | `true` **only** if this deployment's long-term configs carry **both** `operational_month_lead_time` **and** `operational_issue_day`, **and** a full recalc is planned; otherwise leave absent/`false`. Per-deployment readiness: see the dated table in [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md) |
+| `SAPPHIRE_SKILL_LEAD_AWARE` | Per-lead skill & ensembles — **default OFF, opt-in per deployment**. See [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md) § *Lead-aware skill*. Turning this on (including re-enabling) requires running §3.6's full-history recalc as soon as possible afterward. | `true` **only** if this deployment's long-term configs carry **both** `operational_month_lead_time` **and** `operational_issue_day`, **and** a full recalc is planned; otherwise leave absent/`false`. Per-deployment readiness: see the dated table in [`long_term_deploy_runbook.md`](long_term_deploy_runbook.md) |
 
 **Variables to preserve** (don't overwrite with repo values):
 - `IEASYHYDRO_HOST` - Server-specific API endpoint
@@ -902,6 +902,14 @@ After updating crontabs, run each cron command manually (one by one) to verify t
   ```bash
   cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh ${ENV_FILE_PATH}
   ```
+  This bare form recalculates only the `current_year − 20` window **when no
+  start-year variable is set** — if the deployment `.env` sets
+  `SAPPHIRE_SKILL_METRICS_START_YEAR`, that value wins over the default (see
+  §3.6's pre-check for how this is verified). If
+  this deployment is turning `SAPPHIRE_SKILL_LEAD_AWARE` from off to on —
+  including re-enabling it after a rollback or a temporary disablement, not
+  just the first enablement — run the **full-history recalc** in §3.6 instead;
+  the 20-year window is not sufficient for enablement.
 
 - [ ] **Run yearly runoff hydrograph aggregation**
   ```bash
@@ -1221,6 +1229,221 @@ the diff.
       mismatch raises and stops the run — do NOT ignore it.
 - [ ] Spot-check a few stations' month/decad values in the dashboard against
       iEasyHydro HF (3 significant figures).
+
+---
+
+### 3.6 Lead-Aware Skill Full-History Recalc (run on every SAPPHIRE_SKILL_LEAD_AWARE off→on transition)
+
+**When to run this step:** On every transition of `SAPPHIRE_SKILL_LEAD_AWARE`
+from off to on for this deployment — set in §2.3 of this checklist — not only
+the first enablement. Re-enabling after a rollback or a temporary
+disablement counts too: rows written while the flag was off are
+collapsed/single-lead and would otherwise mix with existing per-lead rows.
+Routine tag-bump updates, and deployments leaving the flag off, skip this
+step entirely.
+
+Run this **as soon as possible after the flag is enabled** — §2.3 (flag set),
+§2.4.5 (stack recreated), and §2.5 (cron re-installed) all run before this
+section, so there is a window where the deployment runs flag-ON against a
+mixed-convention DB. Until this step completes, the dashboard serves a mix of
+single-lead and per-lead skill/ensemble rows.
+
+**Reference:** [`long_term_deploy_runbook.md`](./long_term_deploy_runbook.md) §
+*Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`) — opt-in per
+deployment* (prerequisites + per-deployment readiness table) and §§ *Phase 3 —
+Regenerate* / *Phase 4 — Verify* (recalc + verification queries).
+
+**Hard prerequisite (fail-loud):** every long-term config JSON for this
+deployment must carry BOTH `operational_month_lead_time` AND
+`operational_issue_day`. Under the flag, the write path raises and aborts if
+`operational_issue_day` is missing — by design, so it never silently scores
+the wrong rows. Run the prerequisite check in the runbook's *Lead-aware skill*
+section before proceeding. The runbook's per-deployment readiness table is
+dated — re-verify it against the actual configs on this server before
+enabling, do not trust it as-is.
+
+- [ ] Confirmed the prerequisite check passes for this deployment (both fields
+      present on every long-term config JSON).
+
+**Backup first.** Same backup helper as §1.5 / Phase 3 of the runbook. This
+step may run in a later session than §1.5, so re-create the backup directory
+rather than assume `$DB_BACKUP_DIR` is still set. `bin/backup_sapphire_db.sh`
+requires the target directory to already exist and be writable — it exits
+with an error (loudly, not a silent skip) if it doesn't:
+
+```bash
+cd /data/SAPPHIRE_Forecast_Tools
+export DB_BACKUP_DIR="/var/backups/sapphire/pre_update_$(date +%Y%m%d_%H%M%S)"
+sudo mkdir -p "$DB_BACKUP_DIR"
+sudo chown "$USER" "$DB_BACKUP_DIR"
+bash bin/backup_sapphire_db.sh -e "${ENV_FILE_PATH}" -d "$DB_BACKUP_DIR" -r 30
+```
+
+- [ ] Ran the DB backup above before starting the recalc.
+
+**Cron disable / restore.** The recalc below uses the same wrapper and the
+same fixed per-mode container names as the cron-scheduled
+`bin/bimonthly_long_term_skill_metrics_recalculation.sh` (§2.5: `0 10 10,25 *
+*` UTC), and this run is long enough to overlap a scheduled firing — do not
+assume it will finish before the next slot. Use the same mechanism as §3.4
+(runbook §4.2). **This clears the operator's entire crontab, not just the
+bimonthly skill entry** — every SAPPHIRE pipeline job stops until the
+restore step below runs:
+
+This snapshot is §3.6's own working copy of the **post-update** (§2.5)
+schedule — it is a different file from §1.5's `crontab_backup.txt`, which
+holds the **pre-update** schedule and is what §5.8 (Emergency rollback)
+restores from. Do not confuse the two or hand the wrong one to a rollback.
+
+```bash
+SNAPSHOT="$DB_BACKUP_DIR/crontab_before_leadaware_recalc.txt"
+crontab -l > "$SNAPSHOT"
+echo "Cron snapshot: $SNAPSHOT"   # note this path down — do not rely on $DB_BACKUP_DIR
+                                   # surviving to the restore step
+if [ -s "$SNAPSHOT" ]; then
+  crontab -r
+  crontab -l 2>/dev/null || echo "(crontab cleared, verified empty)"
+else
+  echo "ABORT: snapshot missing or empty at $SNAPSHOT — crontab left untouched."
+fi
+```
+It must be impossible to reach `crontab -r` without a non-empty snapshot
+already on disk — the `-s` test is what gates it, not the exit status of the
+redirect above it.
+
+- [ ] Cleared and snapshotted cron before starting the run — **noted the
+      absolute snapshot path** printed above (the restore step below may run
+      in a later shell session where `$DB_BACKUP_DIR` is unset).
+
+> If the recalc fails or is abandoned partway, cron must still be restored
+> before leaving the host — do not leave the deployment with an empty
+> crontab. If the noted snapshot path is lost, do NOT use
+> `update_data_migration_runbook.md` §9.4 — that section recovers snapshots
+> written by `bin/initialize_regenerate_hooks.sh` under
+> `${ieasyhydroforecast_data_root_dir}/logs/regenerate_hooks/`, a different
+> mechanism from this section's manual snapshot. Instead, locate this
+> section's file by name under `/var/backups/sapphire/`:
+> ```bash
+> find /var/backups/sapphire -name crontab_before_leadaware_recalc.txt -printf '%T@ %p\n' \
+>   | sort -rn | head -1
+> ```
+> then `crontab <that path>`. If no match is found, fall back to §2.1's
+> `~/crontab_pre_update_*.txt` or §1.5's `$BACKUP_DIR/crontab_backup.txt` —
+> both hold the **pre-update** schedule (§5.8's rollback source), not the
+> post-update canonical one restored here, so treat them as a last resort,
+> not an equivalent substitute.
+
+- [ ] **Confirm `SAPPHIRE_SKILL_METRICS_START_YEAR` cannot silently override
+      the start year below.** `apps/postprocessing_forecasts/recalculate_skill_metrics.py`
+      reads `SAPPHIRE_SKILL_METRICS_START_YEAR` FIRST and only falls back to
+      `SAPPHIRE_RECALC_START_YEAR` if it is unset. The value that matters is
+      the one in the **deployment `.env`**, which is loaded inside the
+      container — if it sets `SAPPHIRE_SKILL_METRICS_START_YEAR` to a
+      different year, the recalc below silently uses THAT window instead of
+      `2000`, exits 0, and gives no indication the wrong years were
+      recalculated. The shell-level check is a deliberately conservative
+      belt-and-braces echo only:
+      `bin/utils/run_skill_metrics_recalc.sh` (docker run block, lines
+      ~78-93) forwards only `RECALC_START_YEAR_OVERRIDE_ARGS` plus a fixed
+      set of `-e` vars — it never forwards `SAPPHIRE_SKILL_METRICS_START_YEAR`
+      from the shell into the container, so a shell-only value has no effect
+      on this run. Check both:
+  ```bash
+  grep -n "SAPPHIRE_SKILL_METRICS_START_YEAR" "${ENV_FILE_PATH}"
+  echo "shell (belt-and-braces only, not forwarded to the container): ${SAPPHIRE_SKILL_METRICS_START_YEAR:-<unset>}"
+  ```
+  The `.env` grep must be absent, or already set to the same start year used
+  below — that is the check that matters.
+
+- [ ] **Run the full-history recalc.** This differs from the bare §2.6
+      invocation ONLY by the explicit start year — the bare form's default
+      `current_year − 20` window is NOT sufficient for enablement. `2000` is
+      the runbook's conventional safe value; the actual requirement is that
+      the start year is at or before this deployment's earliest archived
+      forecast year:
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools
+  SAPPHIRE_RECALC_START_YEAR=2000 bash bin/bimonthly_long_term_skill_metrics_recalculation.sh "${ENV_FILE_PATH}"
+  ```
+  An empty or unset `SAPPHIRE_RECALC_START_YEAR` does **not** fail loudly:
+  `bin/utils/run_skill_metrics_recalc.sh` only forwards
+  `-e SAPPHIRE_RECALC_START_YEAR=...` to the container when the variable is
+  non-empty, so an empty value is silently omitted and the container falls
+  back to its `current_year − 20` default — exactly the outcome this section
+  exists to prevent. Confirm the variable is set and non-empty in the command
+  above before running it.
+
+- [ ] **Confirm the start year actually predates the archive.** `2000` is a
+      conventional safe value, not a verified one for this deployment.
+      Cross-check it against `MIN(date)` from the runbook's Phase 4 aggregate
+      query (run as part of "Verify per-lead rows landed" below). Pass/fail
+      rule — both failing cases require a re-run with an earlier
+      `SAPPHIRE_RECALC_START_YEAR`:
+  - **FAIL — `MIN(date)` earlier than the chosen start year** (e.g. archive
+    from 1990 with start year 2000): direct proof rows exist outside the
+    recalc window and were never recalculated.
+  - **FAIL — `MIN(date)` exactly at the start-year boundary** (e.g.
+    `2000-01-01`): the archive may extend earlier and is being truncated by
+    the window.
+  - **PASS — `MIN(date)` comfortably later than the start year**: only this
+    case needs no re-run.
+
+- [ ] **Verify per-lead rows landed**, using the runbook's Phase 4
+      aggregate-only verification queries:
+  - taj: `QUARTER hv=0`, `SEASON hv=0`
+  - kyg: `QUARTER hv=1`, `SEASON hv ∈ {3,2,1,0}`
+  - month: one row per configured lead (`operational_month_lead_time`)
+
+  Use sentinel station codes (e.g. `19999`) in any ad-hoc SQL — never real
+  station codes. SQL must use DB enum names (`ENSEMBLE_MEAN`, `LR_BASE`,
+  `LR_SM`, `NAIVE_MEAN`, `SKILLED_MEAN`), never API values such as `EM` or
+  `LR_Base`.
+
+  **Limits of this check:** Phase 4 queries `long_forecasts` (bucket
+  presence, date span, `EM = mean(LR_BASE, LR_SM)` composition) — it does
+  **not** query `skill_metrics` and does not prove monthly skill rows
+  converged. A Phase 4 pass is necessary but not sufficient. Do not treat a
+  Phase 4 pass alone as proof the skill tables converted.
+
+- [ ] **`skill_metrics` per-lead convergence — explicit outcome required.**
+      `skill_metrics` is schema owned by `sapphire/services/` (CLAUDE.md §
+      Ownership Boundaries) — do not write ad-hoc SQL against it here.
+      Instead, record ONE of the following before closing out §3.6:
+  - Confirmed with the service owner that `skill_metrics` rows carry the
+    expected per-lead `horizon_value` for this deployment, **or**
+  - Not confirmed — residual risk explicitly accepted and left unverified
+    for this deployment.
+
+  Tracked as **DOC-005**
+  (`doc/plans/issues/mid_prio_gi_draft_doc_long_term_runbook_skill_verification_gap.md`).
+  This checkbox exists so the gap is a decision the operator consciously
+  makes and records, not a paragraph they can read past.
+
+- [ ] **Restore cron** from the snapshot path noted above, now that the
+      recalc and verification are complete. Use the literal absolute path you
+      wrote down — `$DB_BACKUP_DIR` only works if this is still the same
+      shell session as the snapshot step:
+  ```bash
+  crontab /var/backups/sapphire/pre_update_<TIMESTAMP>/crontab_before_leadaware_recalc.txt   # the noted path
+  # same-session convenience, only if $DB_BACKUP_DIR is still set here:
+  # crontab "$DB_BACKUP_DIR/crontab_before_leadaware_recalc.txt"
+  crontab -l   # confirm restored
+  ```
+
+**Rollback:** setting `SAPPHIRE_SKILL_LEAD_AWARE=false` (or removing the
+line) changes how NEW rows are computed and read going forward — it does
+**not** delete or collapse the per-lead rows already written while the flag
+was on, and it does not touch monthly per-lead skill/ensemble stratification
+at all: per `apps/iEasyHydroForecast/skill_lead_aware_flag.py` (lines 11-14),
+the PP-038 monthly per-lead stratification is unconditional trunk behavior
+and is not gated by this flag. There is no recalc that deletes or collapses
+already-persisted per-lead rows. Rollback is therefore **not** a clean
+reversal of the data — the DB backup taken above is the actual recovery path
+if this enablement needs to be undone.
+
+Skipping this step is the failure mode it exists to prevent: the flag is on,
+new rows are written per-lead, old rows stay single-lead, and the
+dashboard/skill tiles silently mix the two conventions.
 
 ---
 
