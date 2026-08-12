@@ -9,7 +9,8 @@ Run: 2 Options:
 Option 1 (must go this way for integration tests): run locally with panel serve
     1. comment out dashboard service in sapphire/docker-compose.yml
     2. use version of .env witout any sapphire services environment varialbes 
-    ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
+    ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055 --static-dirs help=/absolute/path/to/data_folder/help
+    Note: the help directory passed to --static-dirs must contain forecast_dashboard_user_guide_ru.html and forecast_dashboard_user_guide_en.html.
 Option 2: run in docker
     1. make sure dashboard services is uncommented in sapphire/docker-compose.yml
     2. export DOCKER_DEFAULT_PLATFORM=linux/amd64
@@ -120,6 +121,7 @@ dashboard = pn.template.BootstrapTemplate(
     header=[pn.Row(
         wm.horizon_info_pane,
         pn.layout.HSpacer(),
+        wm.help_link,
         wm.language_buttons,
         auth.logout_button,
         auth.logout_panel

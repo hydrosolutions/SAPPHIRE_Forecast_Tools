@@ -180,6 +180,7 @@ class WidgetManager:
 
         # === NAVBAR WIDGETS ===
         self.language_buttons = widgets.create_language_buttons()
+        self.help_link = widgets.create_help_link()
 
         # --- Post-load callbacks (registered by other managers) ---
         self._post_load_callbacks: list = []

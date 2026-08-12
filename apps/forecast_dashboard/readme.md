@@ -4,8 +4,10 @@ The forecast dashboard is a web application that provides a user interface for t
 Running the dashboard locally:
 (Options for sapphire_forecast_horizon are pentad and decad)
 `bash
-ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port <port number>
+ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port <port number> --static-dirs help=/absolute/path/to/data_folder/help
 `
+
+The `help` directory holds the two user guide HTML files (`forecast_dashboard_user_guide_ru.html` and `forecast_dashboard_user_guide_en.html`) and is served at `/help/` for the header's Help link.
 
 ## Updating translations
 Manually add translation strings in the forecast_dashboard.po file. Then run the following command to compile the translations:

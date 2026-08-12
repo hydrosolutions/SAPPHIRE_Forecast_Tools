@@ -235,6 +235,7 @@ services:
       $${ORIGINS_ARGS}
       forecast_dashboard.py
       --num-threads=4
+      --static-dirs help=$${ieasyhydroforecast_container_data_ref_dir}/help
       "
     restart: always
     ports:
@@ -245,6 +246,7 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
       - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
+      - ${ieasyhydroforecast_data_ref_dir}/help:${ieasyhydroforecast_container_data_ref_dir}/help
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
       - com.centurylinklabs.watchtower.enable=true

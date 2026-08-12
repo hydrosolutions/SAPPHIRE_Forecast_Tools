@@ -107,9 +107,11 @@ The last command must succeed without `sudo` for the deploy user, and without `p
            "${DATA_DIR}/templates" \
            "${DATA_DIR}/reports" \
            "${DATA_DIR}/bin" \
+           "${DATA_DIR}/help" \
            "${LOG_DIR}"
   ```
 - [ ] Copy or create the deployment `.env` at `${ENV_FILE_PATH}`. See section 5 of this doc for the required variables. **Do not commit this file to git.**
+- [ ] Place the forecast-dashboard user guides in `${DATA_DIR}/help/` — the files `forecast_dashboard_user_guide_ru.html` and `forecast_dashboard_user_guide_en.html`. The dashboard serves this directory at `/help/` (via `--static-dirs`) for the header **Help** link; the guides embed operational screenshots and therefore live here, **not** in the git repo.
 
 ---
 
@@ -665,6 +667,15 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboar
 ```
 
 Both should return `200`.
+
+- [ ] Verify the header **Help** link resolves (the `help/` static mount is present and populated):
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/help/forecast_dashboard_user_guide_ru.html
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5006/help/forecast_dashboard_user_guide_en.html
+  ```
+  Both should return `200`. A `404` means either the guide files are missing from `${DATA_DIR}/help/` (section 1.5) or the running container was created without the `--static-dirs help=…` flag / `help/` volume mount — confirm which compose created it with
+  `docker inspect sapphire-dashboard --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`
+  and recreate it (`docker compose -f <that file> --env-file "${ENV_FILE_PATH}" up -d dashboard`) after the flag and mount are in place.
 
 ---
 

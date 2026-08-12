@@ -6,7 +6,7 @@ import pandas as pd
 import panel as pn
 from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.file_downloader import FileDownloader
-from src.gettext_config import _, p_
+from src.gettext_config import _, p_, translation_manager
 
 from dashboard.config import import_tag_library
 
@@ -804,6 +804,28 @@ def create_language_buttons():
     language_buttons.visible = False  # Initially hidden
 
     return language_buttons
+
+
+# Used in dashboard header
+def create_help_link():
+    """Header link to the user guide, opened in a new tab.
+
+    The guide is served as a static file at ``/help/`` (see
+    ``--static-dirs`` in the deploy config). The file matching the current
+    UI language is chosen. Guides live in the deployment data folder, not
+    in the repo, because their screenshots embed operational data.
+    """
+    lang = (getattr(translation_manager, "language", "") or "").lower()
+    if lang.startswith("ru"):
+        guide, label = "forecast_dashboard_user_guide_ru.html", "Помощь"
+    else:
+        guide, label = "forecast_dashboard_user_guide_en.html", "Help"
+    link = (
+        f'<a href="/help/{guide}" target="_blank" rel="noopener" '
+        f'style="margin-right: 10px; padding: 5px 10px; background-color: white; '
+        f'color: #307086; text-decoration: none; border-radius: 4px;">{label}</a>'
+    )
+    return pn.pane.Markdown(link)
 
 # Used in login_form
 def create_login_widgets():
