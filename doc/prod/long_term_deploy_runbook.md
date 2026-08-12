@@ -122,9 +122,16 @@ done
    until the next natural recalc.
 4. Verify per-lead rows exist (aggregate-only, sentinel codes — see Phase 4).
 
-**To roll back:** set `SAPPHIRE_SKILL_LEAD_AWARE=false` (or remove the line) in
-the `.env`; the code reverts to the pre-feature single-lead behavior. Re-run the
-recalc if you need the stored rows collapsed back.
+**To roll back:** setting `SAPPHIRE_SKILL_LEAD_AWARE=false` (or removing the
+line) changes how NEW rows are computed and read going forward — it does
+**not** delete or collapse per-lead rows already written, and it does not
+touch monthly per-lead skill/ensemble stratification at all: per
+`skill_lead_aware_flag.py` (lines 11-14), PP-038 monthly stratification is
+unconditional trunk behavior, not gated by this flag. There is no recalc
+that collapses already-persisted per-lead rows back to single-lead. The
+actual reversal path is restoring the pre-recalc DB backup taken in Phase 3
+above; see [`update_deployment_checklist.md`](./update_deployment_checklist.md)
+§ 3.6 for the full procedure.
 
 **Do NOT enable** on a deployment whose configs lack `operational_issue_day`
 (e.g. uzb today): the flag-ON recalc will hard-error by design.

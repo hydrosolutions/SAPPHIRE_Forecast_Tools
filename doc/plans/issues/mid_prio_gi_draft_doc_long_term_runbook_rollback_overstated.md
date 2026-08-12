@@ -2,8 +2,31 @@
 
 **Priority**: Medium
 **Module**: doc, ltf, pp
-**Status**: Draft
+**Status**: Draft (partially addressed — see "Resolution status" below)
 **Created**: 2026-08-12
+**Updated**: 2026-08-12 (branch `docs_checklist_lead_aware_full_history_recalc`) — runbook
+rollback paragraph corrected; three of four acceptance criteria closed, one remains open.
+
+## Resolution status (2026-08-12)
+
+The rollback paragraph in `doc/prod/long_term_deploy_runbook.md` was rewritten on this
+branch. It now states plainly that the flag only changes read/write behavior for new
+rows, does not delete or collapse already-written per-lead rows, does not revert PP-038
+monthly stratification (with a citation to `skill_lead_aware_flag.py`), and points to
+restoring the Phase 3 DB backup — cross-referenced to
+`update_deployment_checklist.md` § 3.6, which independently carries the same corrected
+framing — as the actual reversal mechanism.
+
+This closes acceptance criteria 1-3 below. It does **not** close criterion 4: the two
+"Investigation gaps" are code/data-behavior questions (upsert-collision risk on
+collapsed keys; whether `skill_metrics` has the same no-delete-path property as
+`long_forecasts`), and a documentation correction cannot resolve them — they require
+someone to trace the write paths and either confirm safety or build cleanup tooling.
+They remain open below, unchanged from the original draft, and are carried forward
+here as the explicit follow-up the criterion asks for. **This issue stays in Draft**
+rather than moving to Review, because one criterion is still unmet; do not re-verify
+criteria 1-3 in a future pass, they are settled — only the investigation gaps need
+further work.
 
 ## Problem
 
@@ -93,20 +116,37 @@ you're back to pre-feature state." In reality:
 
 ## Acceptance criteria
 
-- [ ] Runbook rollback paragraph no longer claims "reverts to pre-feature
+- [x] Runbook rollback paragraph no longer claims "reverts to pre-feature
       single-lead behavior" without the PP-038 monthly-stratification caveat.
-- [ ] Runbook rollback paragraph no longer implies a flag-off recalc collapses
+      **Closed 2026-08-12**: the rewritten paragraph states monthly
+      stratification is not gated by the flag at all, citing
+      `skill_lead_aware_flag.py` lines 11-14.
+- [x] Runbook rollback paragraph no longer implies a flag-off recalc collapses
       already-written per-lead rows.
-- [ ] Runbook points to the Phase 3 DB backup (or an explicit Phase-5-style
+      **Closed 2026-08-12**: the rewritten paragraph states explicitly that no
+      recalc collapses already-persisted per-lead rows.
+- [x] Runbook points to the Phase 3 DB backup (or an explicit Phase-5-style
       cleanup) as the actual mechanism for a full reversion.
+      **Closed 2026-08-12**: the rewritten paragraph names the Phase 3 backup
+      as the actual reversal path and cross-references
+      `update_deployment_checklist.md` § 3.6 for the full procedure.
 - [ ] The two investigation gaps above are either closed or explicitly carried
       forward as a follow-up note in the corrected text.
+      **Still open**: this is a code/data-behavior question, not a wording
+      question — a runbook-paragraph correction cannot close it. Carried
+      forward unchanged in "Investigation gaps" above; needs someone to trace
+      the collapsed-key upsert path for collision risk and confirm (or refute)
+      the `skill_metrics` no-delete-path assumption end-to-end.
 
 ## References
 
-- `doc/prod/long_term_deploy_runbook.md` lines ~125-127 (rollback paragraph),
-  and § "Phase 5 — Cleanup" (lines 370-396) for the contrasting deliberate
-  cleanup-predicate pattern
+- `doc/prod/long_term_deploy_runbook.md` lines ~125-133 (rollback paragraph,
+  corrected 2026-08-12 — was lines ~125-127 pre-correction), and § "Phase 5 —
+  Cleanup" (lines 370-396) for the contrasting deliberate cleanup-predicate
+  pattern
+- `doc/prod/update_deployment_checklist.md` § 3.6 "Rollback" (lines
+  ~1433-1442) — carries the same corrected framing and is now
+  cross-referenced from the runbook paragraph
 - `apps/iEasyHydroForecast/skill_lead_aware_flag.py:1-25` (module docstring —
   PP-038 unconditional-behavior statement)
 - Repo-wide `DELETE FROM` search over
