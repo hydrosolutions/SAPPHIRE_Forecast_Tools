@@ -2284,9 +2284,9 @@ class TestCodesPassthrough:
             None,
         )
         mock_file_writer.save_quarterly_forecast_data.return_value = None
-        mock_file_writer.save_quarterly_skill_metrics.return_value = None
+        mock_file_writer.save_quarterly_skill_metrics.return_value = True
         mock_file_writer.save_seasonal_forecast_data.return_value = None
-        mock_file_writer.save_seasonal_skill_metrics.return_value = None
+        mock_file_writer.save_seasonal_skill_metrics.return_value = True
 
         import tag_library as real_tl
 
