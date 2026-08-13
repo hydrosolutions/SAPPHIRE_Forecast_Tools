@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.api_writer import (
     HORIZON_TYPE_TO_API,
+    WriteOutcome,
     _write_quarterly_ensemble_to_api,
     _write_seasonal_ensemble_to_api,
     _write_skill_metrics_to_api,
@@ -80,7 +81,7 @@ class TestSkillMetricsQuarterSeason:
             patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
         ):
             result = _write_skill_metrics_to_api(data, "quarter", 2025)
-        assert result is True
+        assert result is WriteOutcome.WROTE
         # Verify the record has correct horizon_type
         records = self.mock_client.write_skill_metrics.call_args[0][0]
         assert records[0]["horizon_type"] == "quarter"
@@ -129,7 +130,7 @@ class TestSkillMetricsQuarterSeason:
             patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
         ):
             result = _write_skill_metrics_to_api(data, "season", 2025)
-        assert result is True
+        assert result is WriteOutcome.WROTE
         records = self.mock_client.write_skill_metrics.call_args[0][0]
         assert records[0]["horizon_type"] == "season"
 
@@ -182,7 +183,7 @@ class TestSkillMetricsQuarterSeason:
         ):
             result = _write_skill_metrics_to_api(data, "season", 2025)
 
-        assert result is True
+        assert result is WriteOutcome.WROTE
         records = self.mock_client.write_skill_metrics.call_args[0][0]
         assert len(records) == 4
         assert {record["horizon_in_year"] for record in records} == {0, 1, 2, 3}
