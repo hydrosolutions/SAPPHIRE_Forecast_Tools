@@ -1,16 +1,20 @@
 # PP-051 — Long-term skill-metrics recalc: implementation plan (Option A, LR-007 shape + five-member writer outcome)
 
 **Status:** Not started. Draft plan — subject to CLAUDE.md's mandatory multi-model review
-(out-of-loop verifier pass) before any phase begins execution. **Revised 2026-08-12, third pass**
-after a confirm-fixes review found the *second* revision's core prescription — initializing the
-save_* result variable to `False` before the `api_writer.SAPPHIRE_API_AVAILABLE` gate — was itself
-wrong: it would make `SAPPHIRE_API_ENABLED=false` (a documented, supported CSV-only deployment mode)
-exit 1 on every recalc. **Hard Contract 7 is replaced wholesale in this revision** with an explicit
-five-member outcome type (`WriteOutcome`) returned by the two `api_writer.py` write functions
-themselves, so "no attempt was made" and "the attempt failed" are no longer conflatable. A new phase,
-**P0**, is inserted before P1 to land this outcome type first, since every later phase now consumes
-it. Phase structure P1-P6, risk ordering, and Hard Contracts 1-6 did not change. See §1a for the
-corrected mechanism and §2 Contract 7 for the replacement contract.
+(out-of-loop verifier pass) before any phase begins execution. **This document has been through
+multiple review-and-correction passes** (a confirm-fixes review that replaced Contract 7 wholesale
+after the second revision's `False`-before-the-gate prescription was found to break the documented
+`SAPPHIRE_API_ENABLED=false` deployment mode; a fourth-revision pass that added Contracts 8-11 and
+fixed accumulated anchor drift; and a fifth pass, current as of 2026-08-13, that pinned the exception-path
+`FAILED` assignment explicitly into Contract 7 and every converting phase's prompt, fixed further anchor
+drift, and **split P4 (the daily skill-metrics block) out of this plan's executable phase sequence into
+its own draft, PP-054**, because P4 was not executable as specified — see P4's placeholder entry in §4).
+**The design is settled as of the `WriteOutcome` five-member outcome type (Contract 7, §2)** returned by
+the two `api_writer.py` write functions themselves, so "no attempt was made" and "the attempt failed" are
+no longer conflatable; do not re-derive or rename it (Contract 7). This plan currently carries Hard
+Contracts 1-11 (§2); the phase structure is P0 → P1 → P2 → P3 → P5 → (P6 optional), with P4 retained only
+as a non-executable placeholder — see §3's scope note and §7's dependency graph. See §1a for the
+corrected write-outcome mechanism and §2 Contract 7 for the outcome-type contract.
 **Base:** current `docs_fdc_flv_denominator_stability` tree (module `apps/postprocessing_forecasts`
 only; `apps/iEasyHydroForecast` read but not modified). Source draft:
 `doc/plans/issues/high_prio_gi_draft_pp_recalc_silent_api_write_failure.md` (PP-051). Do not restate
@@ -49,17 +53,19 @@ exception check) than the other four.
 
 **Exit-code aggregation already exists and needs no new mechanism** — `recalculate_skill_metrics()`
 accumulates a shared `errors` list across every mode block and does `sys.exit(1) if errors else
-sys.exit(0)` at `:580-587`. This describes the **P1-P4** work only: each of those phases needs to (a)
+sys.exit(0)` at `:580-587`. This describes the **P1-P3** work only (P4, the daily block, is split out —
+see its placeholder entry in §4 and PP-054): each of those phases needs to (a)
 make its `save_*` return `True`/`False` instead of bare `None` per the corrected contract in §2, and (b)
 flip its call site's dead branch (`if ret is None` / outer-`try/except`) into a check that appends to the
 *existing* `errors` list on `False` — the predicate is pinned in Contract 10, §2. No change to the
 aggregation or exit mechanism itself. **P0 does neither (a) nor (b)** — it lands the `WriteOutcome` type
-inside `api_writer.py` that P1-P4 then consume; see the P0 phase entry in §4.
+inside `api_writer.py` that P1-P3 then consume; see the P0 phase entry in §4.
 
 **`apps/iEasyHydroForecast` is NOT modified.** This plan touches
 `apps/postprocessing_forecasts/src/api_writer.py` (P0 only — see P0's Files list in §4),
-`apps/postprocessing_forecasts/src/file_writer.py` (P1-P4), and
-`apps/postprocessing_forecasts/recalculate_skill_metrics.py` (P1-P4). `_handle_api_write_error` and
+`apps/postprocessing_forecasts/src/file_writer.py` (P1-P3; the daily block's edits are deferred to
+PP-054), and
+`apps/postprocessing_forecasts/recalculate_skill_metrics.py` (P1-P3, same deferral). `_handle_api_write_error` and
 `_get_api_failure_mode` (`forecast_library.py:82-116`) are consumed, not modified — the same shipped
 LR-007 mechanism, unchanged. It is nonetheless exercised by every phase's mandatory full-suite
 verification (§4 blanket note) — not because this plan needs its own separate scoped run, but because
@@ -204,7 +210,8 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
 3. **No `sapphire/services/` change.** Entirely `apps/` behavior — no service, schema, or endpoint edit.
 4. **No half-converted return contract, at either layer.** Two layers change type in this plan:
    `api_writer.py`'s two write functions (`bool` → `WriteOutcome`, landed once in P0) and each
-   `save_*` function in `file_writer.py` (`None` → `bool`, landed per-function in P1-P4, unchanged
+   `save_*` function in `file_writer.py` (`None` → `bool`, landed per-function in P1-P3 — the daily
+   function's conversion is deferred to PP-054, see P4's placeholder in §4 — unchanged
    shape from earlier revisions of this plan). A `save_*` function must never be merged in a state
    where it returns a bool while its sole caller in `recalculate_skill_metrics.py` still checks
    `if ret is None:` (or vice versa) — that silently breaks the check it was aggregated to fix (a
@@ -248,8 +255,12 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
        FAILED = "failed"                         # readiness-check failure, or the write call raised
    ```
 
-   (Member names are illustrative — the implementing agent may rename, but the five semantics below are
-   fixed and every member must exist.)
+   **Member names are pinned, not illustrative — do not rename.** P1-P5 hardcode
+   `WriteOutcome.SKIPPED_BY_CONFIG`, `FAILED`, and `SKIPPED_NOT_DEPLOYED` verbatim in their agent prompts
+   and mutation checks; renaming any member breaks every later phase's literal text against a plan that
+   has already survived three review rounds on this design. All five names above (`WROTE`,
+   `SKIPPED_BY_CONFIG`, `SKIPPED_NO_RECORDS`, `SKIPPED_NOT_DEPLOYED`, `FAILED`) and their semantics are
+   fixed.
 
    **Mapping inside `_write_skill_metrics_to_api`** (`api_writer.py:429`, unaffected branches unchanged
    — only the return statements convert):
@@ -306,7 +317,9 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
      to the same non-failure outcome at the `save_*`/exit-code layer (see mapping below), so this
      distinction costs nothing at the exit-code layer and only adds clarity at the log layer.
 
-   **`SAPPHIRE_API_FAILURE_MODE=ignore` (`forecast_library.py:82-92`, tail at `:113-116`) — the design
+   **`SAPPHIRE_API_FAILURE_MODE=ignore` (`forecast_library.py:82-92`, tail at `:114-116` — corrected from
+   an earlier revision's `:113-116`; `:113` is the fail-mode bare `raise`, the warn/ignore tail is
+   `:114-116`) — the design
    must state how this interacts with the outcome, and — corrected in this pass — must be consulted on
    BOTH paths that can produce `FAILED`, not just the raising one.** A prior version of this contract
    placed the `ignore` check exclusively inside the exception-handling branch, so a writer that returns
@@ -326,21 +339,30 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
      what the second revision got backwards, since a closed gate is a configuration state, not a
      failure); if the gate is open, assign the outcome from the writer's **return value** (previously
      discarded, §1a) inside the `try`. If the `try` raises, call `fl._handle_api_write_error(e, ...)` as
-     today (unchanged) — under `warn`/`ignore` this does not re-raise, so execution reaches the same
-     post-processing step described next; under `fail` it re-raises and the function never reaches that
-     step, so Hard Contract 5 holds without special-casing. **Single, uniform post-processing step applied
-     to the resulting outcome regardless of which mechanism produced it (returned directly, e.g. a
-     readiness-check failure, OR produced by catching a raised exception):** if the outcome is `FAILED`
-     and `fl._get_api_failure_mode() == "ignore"`, downgrade it to `SKIPPED_BY_CONFIG`; otherwise leave it
-     as `FAILED`. This is what makes `ignore` mode behave identically for both failure mechanisms — the
-     entire point of this correction.
+     today (unchanged), **and then, in the same `except` block, explicitly assign the outcome variable to
+     `FAILED`** — this is the literal line three prior revisions of this plan left unstated, and its
+     absence is what would leave the pre-gate `SKIPPED_BY_CONFIG` initialization standing after the call
+     returns, so a genuinely-raised write error reads as non-failure:
+     ```python
+     except Exception as e:
+         fl._handle_api_write_error(e, "<description>")   # may re-raise under fail mode
+         outcome = api_writer.WriteOutcome.FAILED          # <-- this line, currently unstated
+     ```
+     Under `warn`/`ignore` `_handle_api_write_error` does not re-raise, so execution reaches this
+     assignment and then the same post-processing step described next; under `fail` it re-raises and the
+     function never reaches either the assignment or that step, so Hard Contract 5 holds without
+     special-casing. **Single, uniform post-processing step applied to the resulting outcome regardless of
+     which mechanism produced it (returned directly, e.g. a readiness-check failure, OR assigned in the
+     `except` block above):** if the outcome is `FAILED` and `fl._get_api_failure_mode() == "ignore"`,
+     downgrade it to `SKIPPED_BY_CONFIG`; otherwise leave it as `FAILED`. This is what makes `ignore` mode
+     behave identically for both failure mechanisms — the entire point of this correction.
    - **Justification for reusing `SKIPPED_BY_CONFIG` rather than adding an `IGNORED` member:** `ignore`
      mode is itself an operator configuration choice to make write outcomes invisible to the exit code —
      the same category as "writing disabled" and "client absent," just triggered by a different env var.
      Splitting it into a sixth member would not change the exit-code mapping (still non-failure) and
      would only matter if some future consumer needed to distinguish "disabled" from "ignored," which
      nothing in this plan's scope does.
-   - **Acceptance criteria in P1-P4 must test both mechanisms under `ignore`, not just the raising one**
+   - **Acceptance criteria in P1-P3 must test both mechanisms under `ignore`, not just the raising one**
      (see each phase's acceptance list below, which previously covered only "mocked exception under
      `ignore`" — a `FAILED`-returned-directly-under-`ignore` test is now required in every phase).
 
@@ -369,36 +391,61 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
    `_write_skill_metrics_to_api` and `_write_threshold_skill_metrics_to_api` (`api_writer.py`, P0) must
    have their return type annotation changed from `-> bool` to `-> WriteOutcome` and their docstrings'
    `Returns:` sections rewritten to name the five outcomes. Every `save_*` function whose return
-   contract changes in P1-P4 (`save_skill_metrics`, `save_monthly_skill_metrics`,
-   `save_quarterly_skill_metrics`, `save_seasonal_skill_metrics`, `save_daily_skill_metrics`) must have
+   contract changes in P1-P3 (`save_skill_metrics`, `save_monthly_skill_metrics`,
+   `save_quarterly_skill_metrics`, `save_seasonal_skill_metrics`) must have
    its return type annotation changed to `-> bool` and its docstring's `Returns:` section rewritten to
    state the Contract 7 `True`/`False` meaning, **in the same diff** that changes the return
-   statements — e.g. `save_daily_skill_metrics` is currently annotated `-> None` and documents `Returns:
-   None` (`file_writer.py:585`, `:601-602`). Each phase's agent prompt must say this explicitly: "do not
+   statements — the stale-annotation pattern this rule exists for is visible today in
+   `save_daily_skill_metrics`, currently annotated `-> None` and documenting `Returns: None`
+   (`file_writer.py:585`, `:601-602`) — but that function's own conversion is deferred to PP-054 (see P4's
+   placeholder in §4), so this rule applies to P1-P3's four functions here, not to that one. Each phase's
+   agent prompt must say this explicitly: "do not
    change function signatures" means the *parameter* list, not a return annotation left stale by design.
 9. **Log messages must carry the outcome, not the bare bool.** `recalculate_skill_metrics.py`'s
-   error-message templates interpolate the discarded return value directly via `{ret}` at exactly four
-   **in-scope** sites — the skill-metrics callers this plan touches: `:245` (pentad/decad, P2), `:366`
-   (monthly, P3), `:437` (quarterly, P1), `:520` (seasonal, P1). **`:238, :337, :406, :489` are a
-   different, out-of-scope set** — they belong to `save_forecast_data` / `save_monthly_forecast_data` /
-   `save_quarterly_forecast_data` / `save_seasonal_forecast_data` respectively (§5's "four out-of-scope
-   forecast-data `save_*` functions" bullet), which keep the `ret is None` convention and where `{ret}`
-   still carries a real error string today — do not touch those four call sites in any phase below. Under
-   the new contract, printing the in-scope four's `{ret}` would show a bare `False` with no diagnostic
-   value, while the actual cause (readiness failure vs. a raised exception vs., pre-fix, nothing at all)
-   is already logged one level down inside `api_writer.py` (`:463` unavailable, `:469` disabled, `:479`
-   not-ready, `:707` no-records) and inside `_handle_api_write_error` for the exception path. Each phase
-   converting its one in-scope call site must change its `{ret}`-style interpolation to a message that
-   references the mode/horizon and points at the detailed log line already emitted below it (e.g.
-   "quarterly skill metrics API write failed — see log above for detail"), not literally print `False`.
+   error-message templates interpolate the discarded return value directly via `{ret}` at exactly eight
+   **in-scope** sites — a `logger.error` line immediately followed by the `errors.append` line that
+   reports the same value, at each of the four skill-metrics call sites this plan touches: `:244-245`
+   (pentad/decad, P2), `:365-366` (monthly, P3), `:436-437` (quarterly, P1), `:519-520` (seasonal, P1).
+   **`:237-238, :336-337, :405-406, :488-489` are a different, out-of-scope set of eight** (a grep for
+   `{ret}` returns 16 hits total: the 8 in-scope pairs above plus these 8) — they belong to
+   `save_forecast_data` / `save_monthly_forecast_data` / `save_quarterly_forecast_data` /
+   `save_seasonal_forecast_data` respectively (§5's "four out-of-scope forecast-data `save_*` functions"
+   bullet), which keep the `ret is None` convention and where `{ret}` still carries a real error string
+   today — do not touch those four call sites (eight lines) in any phase below. Under the new contract,
+   printing the in-scope `{ret}`s would show a bare `False` with no diagnostic value on **both** lines —
+   the `logger.error` line is what an operator reads first, and leaving it printing `False` defeats this
+   contract just as much as leaving the `errors.append` line unfixed — while the actual cause (readiness
+   failure vs. a raised exception vs., pre-fix, nothing at all) is already logged one level down inside
+   `api_writer.py` (`:463` unavailable, `:469` disabled, `:479` not-ready, `:707` no-records) and inside
+   `_handle_api_write_error` for the exception path. Each phase converting its one in-scope call site must
+   change **both** of its `{ret}`-style interpolations — the `logger.error` line and the `errors.append`
+   line — to messages that reference the mode/horizon and point at the detailed log line already emitted
+   below them (e.g. "quarterly skill metrics API write failed — see log above for detail"), not literally
+   print `False` on either line.
 10. **Call-site failure predicate is pinned: `if ret is False:`, not `if not ret:`.** Both satisfy the
     weaker "append to `errors` on `False`" wording used elsewhere in this plan, but they diverge on a
     stray `None` — which still occurs mid-rollout, from a not-yet-updated test mock for the *same*
-    function this phase converts. `if not ret:` treats `None` as failure and breaks two existing tests
-    that are not in any phase's Files list today: `test_integration_postprocessing.py::test_pentad_mode_calls_correct_functions`
-    (patches `save_skill_metrics` with `return_value=None` at `:3005-3007`, asserts exit 0 at `:3023`) and
-    `test_wiring_integration.py`'s `capture_save_skill` `side_effect` (`return None` at `:1932`, asserts
-    exit 0 at `:1949`). `if ret is False:` treats `None` as success — matching today's *implicit*
+    function this phase converts. **Mechanical warning, binding on every phase that converts a call site:**
+    today's shape at every one of the four in-scope sites (`recalculate_skill_metrics.py:241-245,
+    :362-366, :433-437, :516-520`) is `if ret is None: <log success> else: <log error + errors.append>`.
+    Substituting the predicate alone (`is None` → `is False`) without also **swapping which body sits in
+    the `if` and which sits in the `else`** inverts the semantics: a real success (`True`) would fall into
+    the `else` and get logged/appended as an error, and a real failure (`False`) would satisfy the new
+    `if ret is False:` condition but execute the body that used to mean success. The fix is not a
+    find-and-replace on the condition text — it is `if ret is False: <log error + errors.append> else:
+    <log success>`, bodies swapped. `if not ret:` treats `None` as failure and breaks two existing tests,
+    only one of which is genuinely outside any phase's Files list today:
+    `test_integration_postprocessing.py::test_pentad_mode_calls_correct_functions` (patches
+    `save_skill_metrics` with `return_value=None` at `:3005-3007`, asserts exit 0 at `:3023`) is not in any
+    phase's Files list. **The second, `test_wiring_integration.py`'s `capture_save_skill` `side_effect`
+    (`return None` at `:1933` — corrected from an earlier revision's `:1932`, which is
+    `saved_skills["pentad"] = df`, not the `return`), IS in P2's Files list** (the mock assignment at
+    `test_wiring_integration.py:1942` that wires `save_skill_metrics.side_effect = capture_save_skill` is
+    explicitly listed there) — an earlier revision of this contract claimed neither test was in any
+    phase's Files list, which was only true for the first one. P2's agent will touch this file regardless;
+    the `if ret is False:` choice still matters because it means this specific mock does not *need* to be
+    converted for the exit-0 assertion at `:1949` to keep passing, reducing (not eliminating) P2's
+    required edits here. `if ret is False:` treats `None` as success — matching today's *implicit*
     convention (every current call site's `if ret is None:` already treats the only value the function
     ever returns as success) and requiring no changes to either test file above. **Pinned choice: `if ret
     is False:`.** Justification: it is the lower-blast-radius option (no test files outside each phase's
@@ -407,12 +454,14 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
     non-failure on any value that is not an unambiguous, exact `False`. The trade-off, accepted
     explicitly: an un-converted sibling `save_*` mocked to return `None` reads as success throughout the
     rollout, which is only safe *because* Contract 4 requires each phase's function and call site to
-    convert atomically — once every phase has landed, no production `save_*` can return anything but
-    `True`/`False`, so the `None`-tolerance stops mattering. **P5 (§4) must add a check that no in-scope
+    convert atomically — once every in-scope phase has landed, no production in-scope `save_*` can return
+    anything but `True`/`False`, so the `None`-tolerance stops mattering for those functions. **P5 (§4)
+    must add a check that no in-scope
     `save_*` function can still return `None`** (e.g. a signature/type-level or docstring-`Returns:`-only
     assertion is not sufficient — assert behaviorally, by calling each with an input shape that would have
-    hit a `None` path pre-fix, across all five functions) once P0-P4 have landed, so this transitional
-    tolerance does not become a silent permanent gap.
+    hit a `None` path pre-fix, across all **four** in-scope functions — `save_daily_skill_metrics` is out
+    of scope, see the P4 placeholder in §4 and PP-054) once P0-P3 have landed, so this transitional
+    tolerance does not become a silent permanent gap for those four.
 11. **`SAPPHIRE_CONSISTENCY_CHECK` stays non-failing — this plan does not fold it into the `False`
     return.** It runs *after* the API write, inside `save_skill_metrics` (`:348-377`, pentad/decad, P2)
     and `save_monthly_skill_metrics` (`:435-461`, monthly, P3), logging `"CONSISTENCY CHECK FAILED"` while
@@ -440,11 +489,17 @@ nobody trips it or "fixes" it inline; see P3 below.
 
 ## 3. Phasing rationale
 
-**P0 comes first because every later phase consumes its output.** P1-P4 each need to compare a
+**Scope note (post-split):** this section's ordering rationale, including the P4/daily discussion below,
+was written while P4 was still an executable phase of this plan. P4 is now split out to PP-054 (see its
+placeholder in §4) — the rationale for why daily would have been ordered last is retained below because
+PP-054 inherits it, not because P4 still executes here. Everywhere below, "P1-P4" describes that original,
+now-superseded ordering; this plan's actual executable sequence is P0 → P1 → P2 → P3 → P5 → (P6).
+
+**P0 comes first because every later phase consumes its output.** P1-P3 each need to compare a
 captured return value against `api_writer.WriteOutcome` members — that type does not exist until P0
 lands it, and P0's own tests (§4 P0) are the only thing that pins the outcome-mapping contract
-independent of any `save_*` function. This is a genuine data dependency (P1-P4 import the enum P0
-defines), unlike the P1→P2→P3→P4 ordering below, which is not.
+independent of any `save_*` function. This is a genuine data dependency (P1-P3 import the enum P0
+defines), unlike the P1→P2→P3 ordering below, which is not.
 
 All five `save_*` call sites live in the **same file** (`recalculate_skill_metrics.py`), in disjoint
 but adjacent line ranges. Running multiple worktree-isolated agents on the same file in parallel risks
@@ -457,7 +512,7 @@ dependency, compounded in this revision by a **shared-fixture** dependency: `tes
 functions' return values in the same place (§4, Hard Contract note in each phase). Phases below are
 therefore sequenced (not parallelized) purely for this reason; the dependency graph's `depends_on`
 edges encode "must land and be merged first so line numbers and file/fixture state are current," not a
-data/control dependency (except P1-P4 → P0, which is a real data dependency, see above).
+data/control dependency (except P1-P3 → P0, which is a real data dependency, see above).
 
 Ordering: the no-CSV-fallback functions (quarterly, seasonal — total data loss on a swallowed failure)
 are the highest-value fix and go first (P1), so the riskiest gap is closed and independently verified
@@ -484,11 +539,11 @@ ambiguity, for a different reason — it is guarded before the call, per §2 Con
 
 ## 4. Phases
 
-Every acceptance criterion below that says a function "returns `False`" or "returns `True`" (P1-P4,
+Every acceptance criterion below that says a function "returns `False`" or "returns `True`" (P1-P3,
 `save_*` layer) or "returns `WriteOutcome.X`" (P0, `api_writer.py` layer) means an **exact identity
 assertion** (`assert result is False` / `assert result is api_writer.WriteOutcome.FAILED`, etc.), never
 a truthy/falsy check — today's code returns bare `None`/`bool`, which coerces to falsy/truthy in ways
-that would let a vacuous assertion pass against unfixed code. Every P1-P4 phase's test list must cover
+that would let a vacuous assertion pass against unfixed code. Every P1-P3 phase's test list must cover
 **both** failure mechanisms for its function(s): the writer's outcome being `FAILED` without an
 exception propagating (readiness-check failure — patch `_write_skill_metrics_to_api` with
 `return_value=api_writer.WriteOutcome.FAILED`) and the writer *raising*
@@ -500,8 +555,11 @@ run_tests.sh` (zero fail, zero unexpected skip) — not a module-scoped invocati
 includes `apps/iEasyHydroForecast` (unmodified by this plan, per §1, but part of the mandatory
 full-suite gate regardless).
 
-**Shared-fixture rule for every P1-P4 phase (do not skip):** `test_recalc_workflow.py`'s `_setup_mocks`
-helper (`:99-140`, used across ~17 call sites in that file) and several blocks in
+**Shared-fixture rule for every P1-P3 phase (do not skip):** `test_recalc_workflow.py`'s `_setup_mocks`
+helper (`:99-161`, corrected from an earlier revision's `:99-140` — verified: `def _setup_mocks` opens at
+`:99` but its body, including the `return {...}` block, runs to `:161`; the earlier range would have cut
+off before the quarterly/seasonal mock entries and the `return` statement, used across ~17 call sites in
+that file) and several blocks in
 `test_wiring_integration.py` set mocked return values for *multiple* `save_*` functions in one place.
 Each phase's agent prompt must say explicitly: **change only your own function's entries in these
 shared blocks; leaving sibling functions' entries on the old `None`/string convention is correct until
@@ -517,6 +575,11 @@ diff when that phase lands.
   changes (validation, filtering, the HTTP calls themselves, and every *trigger* condition for each
   branch are unchanged; only what each branch returns changes). This phase does **not** touch
   `file_writer.py` or `recalculate_skill_metrics.py` — those consume the new type starting in P1.
+  **`api_writer.py` has no `enum` import today (verified — its current imports are `datetime as
+  dt_module`, `json`, `logging`, `os`, `pandas`, `tag_library`, `long_term_horizon_resolver`,
+  `skill_lead_aware_flag`)**; P0 must add `from enum import Enum` to the top-of-file import block. This
+  is the one addition authorized beyond the `WriteOutcome` definition and the return statements — without
+  it `class WriteOutcome(Enum)` cannot be defined.
 - **Files:** `apps/postprocessing_forecasts/src/api_writer.py` (the `WriteOutcome` definition plus the
   return statements inside `_write_skill_metrics_to_api` (`:429-708`, final return at `:708`) and
   `_write_threshold_skill_metrics_to_api` (`:711-829`, outer `except` returns at `:829`) only —
@@ -532,12 +595,20 @@ diff when that phase lands.
   Contract 7 `WriteOutcome` definition and mapping verbatim, the fitness line from CLAUDE.md verbatim,
   and: *"Do NOT change any existing function signature's parameter list (return-type annotation changes
   ARE authorized, per Contract 8). Do NOT change any branch's trigger condition (when a `SKIPPED_*`
-  vs. `FAILED` vs. `WROTE` path is entered) — only the value each branch returns. Do NOT touch
-  `file_writer.py` or `recalculate_skill_metrics.py` in this phase; their conversion is P1-P4. Verified
+  vs. `FAILED` vs. `WROTE` path is entered) — only the value each branch returns. Add `from enum import
+  Enum` to the top-of-file import block — verified absent today (current imports: `datetime as
+  dt_module`, `json`, `logging`, `os`, `pandas`, `tag_library`, `long_term_horizon_resolver`,
+  `skill_lead_aware_flag`); this is the one addition permitted beyond the `WriteOutcome` definition and
+  the return statements. Do NOT touch
+  `file_writer.py` or `recalculate_skill_metrics.py` in this phase; their conversion is split between
+  P1-P3 and PP-054. Verified
   blast radius for this phase specifically: `_write_skill_metrics_to_api` has exactly 5 production
   callers, all in `file_writer.py` (`:341,431,616,668,703`); `_write_threshold_skill_metrics_to_api` has
-  exactly 1 (`:626`) — 6 production call sites total across both functions, all deferred to P1-P4 (do
-  not edit them here). Exactly 2 test files assert directly on either function's return value: 8
+  exactly 1 (`:626`) — 6 production call sites total across both functions. **4 are deferred to P1-P3**
+  (`:341` pentad/decad P2, `:431` monthly P3, `:668` quarterly P1, `:703` seasonal P1); **the remaining 2
+  (`:616`, the daily block's FDC call, and `:626`, its threshold call) are deferred to PP-054**, not to
+  any phase of this plan — do
+  not edit them here regardless of which later work converts them. Exactly 2 test files assert directly on either function's return value: 8
   assertions in `test_api_integration.py` (`result = _write_skill_metrics_to_api(...)` pairs at
   `:536-537,563-564,591-592,640-641,758-759,891-892,1074-1075,1260-1261`) and 3 in
   `test_quarterly_api_writer.py` (`:82-83,131-132,183+185`) — 11 total, update every one to assert the
@@ -621,9 +692,13 @@ diff when that phase lands.
   this plan made and it broke `SAPPHIRE_API_ENABLED=false`); inside the gate, capture
   `_write_skill_metrics_to_api`'s returned `WriteOutcome` (previously discarded) — this covers BOTH a
   directly-returned `FAILED` (e.g. readiness-check failure) and a caught exception (if the call raises,
-  keep calling `fl._handle_api_write_error(e, ...)` exactly as today; under `warn`/`ignore` this does not
-  re-raise, so it also lands as a captured outcome). Then apply ONE uniform post-processing step
-  regardless of which mechanism produced it: if the captured outcome is `FAILED` and
+  keep calling `fl._handle_api_write_error(e, ...)` exactly as today, THEN — in the same `except` block —
+  explicitly assign `outcome = api_writer.WriteOutcome.FAILED`; do NOT leave the pre-gate
+  `SKIPPED_BY_CONFIG` default standing after `_handle_api_write_error` returns, or the raised path reads
+  as success — this is the exact seam three prior revisions of this plan left unfixed for exceptions.
+  Under `warn`/`ignore` this does not re-raise, so this assignment is reached and the outcome is
+  captured). Then apply ONE uniform post-processing step regardless of which mechanism produced it: if the
+  captured outcome is `FAILED` and
   `fl._get_api_failure_mode() == \"ignore\"`, downgrade it to `SKIPPED_BY_CONFIG`; otherwise leave it as
   `FAILED`. Map to the function's bool return using the pinned predicate (Contract 10): the call site's
   check is `if ret is False:`, not `if not ret:`. Do NOT change `_write_skill_metrics_to_api` itself
@@ -669,6 +744,14 @@ diff when that phase lands.
     least one new test fail — record which test catches each mutation.
   - `SAPPHIRE_API_FAILURE_MODE=fail` behavior for these two functions is unchanged (existing/extended
     test still shows the exception propagates in `fail` mode, unaffected by the new return value).
+  - **Verify, do not edit:** `tests/test_seasonal_integration.py:542-574`
+    (`test_save_seasonal_skill_metrics_calls_api`) calls `save_seasonal_skill_metrics` directly, patches
+    `_write_skill_metrics_to_api` with a bare `MagicMock` (no `return_value` set), and only asserts the
+    mock was called with the right `horizon_type`/`year` — it does not assert on `save_seasonal_skill_metrics`'s
+    return value at all, so it passes unmodified under this phase's change. It is in **no** Files list
+    above and has no leave-alone instruction in any earlier revision of this plan — an agent could
+    plausibly "fix" it while touching `save_seasonal_skill_metrics`. Confirm it still passes unmodified;
+    do not add assertions to it or move it into this phase's Files list.
   - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` (full suite) — 0 fail, 0 unexpected skip.
 
 ### P2 — Pentad/decad skill metrics (`save_skill_metrics`)
@@ -694,8 +777,11 @@ diff when that phase lands.
   `save_skill_metrics` — **re-verify by grep before editing (Contract 6): an earlier revision of this
   plan cited `:114`, which is off by one; the current line is `:115`**; plus two named tests that must be
   **inverted, not extended** — see prompt note below — `test_save_error_accumulation` (`:232`) and
-  `test_save_success_path` (`:300`), both scoped to pentad/decad `BOTH` mode only, confirmed by reading
-  the test bodies),
+  `test_save_success_path` (`:300`). **Corrected — these are NOT both scoped to `BOTH` mode**, contrary to
+  an earlier revision of this bullet: `test_save_error_accumulation` sets `SAPPHIRE_PREDICTION_MODE:
+  "PENTAD"` (`:234`, re-verified by grep — an earlier pass of this correction cited `:233`, off by one);
+  only `test_save_success_path` sets `"BOTH"` (`:302`, re-verified — an earlier pass cited `:301`, also
+  off by one)),
   `apps/postprocessing_forecasts/tests/test_wiring_integration.py` (only the `save_skill_metrics` mock
   entries, verified at `:973,1257,1942,2271` — do **not** touch `:2287,2289`, those are P1's
   quarterly/seasonal entries in the same file; `:1257` is also one of the tests requiring inversion, see
@@ -713,7 +799,10 @@ diff when that phase lands.
   failure into this function's bool return even though this plan's general thesis is about surfacing
   swallowed failures. Outcome capture and the `ignore`-mode downgrade use the same single
   post-processing step as P1 (Contract 7): capture the `WriteOutcome` whether it was returned directly or
-  produced by catching a raised exception via `fl._handle_api_write_error(e, ...)`; if the result is
+  assigned in the `except` block after catching a raised exception via `fl._handle_api_write_error(e,
+  ...)` — that `except` block must explicitly set `outcome = api_writer.WriteOutcome.FAILED` after the
+  call to `_handle_api_write_error` (do not leave the pre-gate `SKIPPED_BY_CONFIG` default standing after
+  it returns under `warn`/`ignore` — the raised path must not read as success). If the result is
   `FAILED` and `fl._get_api_failure_mode() == \"ignore\"`, downgrade to `SKIPPED_BY_CONFIG`. Call-site
   predicate is `if ret is False:` (Contract 10), not `if not ret:`. INVERT, do not extend, these two named
   tests: `test_recalc_workflow.py:232` (`test_save_error_accumulation`) currently sets
@@ -775,7 +864,10 @@ diff when that phase lands.
   unconditional. Only the API-write try/except at `:429-433`, the top-level guard's return value, and
   the function's final return statement change, using the same
   initialize-to-`SKIPPED_BY_CONFIG`-before-the-gate / capture-the-`WriteOutcome`-either-way (returned
-  directly or caught from a raised exception) / single-`ignore`-mode-downgrade-step pattern as P1 and P2 —
+  directly, or explicitly assigned `outcome = api_writer.WriteOutcome.FAILED` in the `except` block after
+  calling `fl._handle_api_write_error(e, ...)` — do not leave the pre-gate `SKIPPED_BY_CONFIG` default
+  standing after that call returns under `warn`/`ignore`, see P1's prompt for the exact code shape) /
+  single-`ignore`-mode-downgrade-step pattern as P1 and P2 —
   do NOT re-derive this shape independently, copy the P1/P2 pattern. Call-site predicate is `if ret is
   False:` (Contract 10). Do NOT fold `SAPPHIRE_CONSISTENCY_CHECK` (`:435-461`) into this function's bool
   return (Contract 11) — it stays logged-only, same as today, even though this plan's general thesis is
@@ -815,156 +907,72 @@ diff when that phase lands.
   - `SAPPHIRE_TEST_ENV=True bash run_tests.sh` (full suite) — 0 fail, 0 unexpected skip, P0+P1+P2 tests
     still passing.
 
-### P4 — Daily skill metrics block (`save_daily_skill_metrics`)
+### P4 — SPLIT OUT: Daily skill metrics block (`save_daily_skill_metrics`)
 
-- **Goal:** `save_daily_skill_metrics` (`file_writer.py:581-632`) returns a single bool combining both
-  independent writes, per Contract 7 applied separately to each branch then ANDed: for the FDC branch,
-  `True` if `fdc_metrics` is empty/None (nothing to do, `:619-620`) or the captured outcome is anything
-  other than `FAILED`, using the same initialize-to-`SKIPPED_BY_CONFIG` / capture-the-outcome /
-  single-`ignore`-mode-downgrade-step pattern as P1-P3 (`_write_skill_metrics_to_api`'s outcome must be
-  **captured, not discarded** — this is the headline gap PP-051 named for this function).
-  **Corrected from an earlier revision of this section: the threshold branch is NOT exception-free and
-  must use the identical try/except-plus-capture shape as the FDC branch, not a bare return-value read.**
-  §1a establishes that `_write_threshold_skill_metrics_to_api` raises to its caller when
-  `_get_postprocessing_client()` (`:741`) or `client.readiness_check()` (`:746`) itself raises — those
-  sit outside that function's own `try:` (which opens at `:753`). `file_writer.py` already wraps this
-  call in a `try/except` (`:624-628`) that today only routes to `_handle_api_write_error` and discards
-  the return value — **this existing try/except must be KEPT, not removed**, and extended the same way as
-  every other call site in this plan: capture the outcome from the return value when no exception occurs
-  (including `SKIPPED_NOT_DEPLOYED`, which — like every non-`FAILED` outcome — maps to `True`; this is
-  what stops a DAILY/ALL recalc from exiting 1 permanently on a deployment where the threshold endpoint
-  isn't rolled out yet); if the call raises, keep calling `fl._handle_api_write_error(e, ...)` as today,
-  then apply the same single post-processing step as every other phase (Contract 7): `FAILED` unless
-  `fl._get_api_failure_mode() == "ignore"`, in which case `SKIPPED_BY_CONFIG`. Both writes must still be
-  **attempted independently** even if the first fails — do not short-circuit. Call site
-  `recalculate_skill_metrics.py:555-566` **keeps its existing outer `try/except`** — do not delete it —
-  and additionally checks the returned bool inside the `try`, using the pinned predicate `if ret is
-  False:` (Contract 10), `errors.append(...)` on `False`. The outer `except` stays as a safety net for the
-  one case `save_daily_skill_metrics` can still raise out of: `SAPPHIRE_API_FAILURE_MODE=fail`, where
-  `_handle_api_write_error` deliberately re-raises inside `file_writer.py` and that exception propagates
-  all the way up through `save_daily_skill_metrics` uncaught (it never reaches the outcome-assignment
-  step, by design — Hard Contract 5). **This call site is the ONLY one of the five with a wrapping
-  `try/except` today, and it is what currently converts that `fail`-mode re-raise into `errors.append(...)`
-  + a clean `sys.exit(1)` instead of an uncaught traceback that aborts the run mid-mode (violating Hard
-  Contract 1) with no timing summary.** Deleting it — as an earlier revision of this Goal implied by
-  describing the change as "restructured from its outer try/except... into a check on the returned bool"
-  — would be a regression, not a refactor. **P4 must do both: consume the outcome via the returned bool,
-  and keep the exception handling**, exactly matching Hard Contract 5's "`fail` unchanged for all existing
-  callers."
-- **Files:** `apps/postprocessing_forecasts/src/file_writer.py` (`:581-632` only),
-  `apps/postprocessing_forecasts/recalculate_skill_metrics.py` (`:555-566` only),
-  `apps/postprocessing_forecasts/tests/test_file_writer.py`. **Verified: no other test file references
-  `save_daily_skill_metrics` today** (repo-wide grep found zero hits) — this function has no existing
-  test coverage to convert or invert, unlike P1-P3's functions; every test in this phase's acceptance
-  criteria is new, and there is no shared-fixture entry to touch in `test_recalc_workflow.py` or
-  `test_wiring_integration.py` for this phase.
-- **Depends on:** P3.
-- **Agents:** 1, worktree-isolated. Prompt: Hard Contracts 1-11, fitness line, plus: *"Re-verify by grep
-  (Contract 6) before touching `recalculate_skill_metrics.py:555-566` — this call site's current shape is
-  an outer try/except around the *whole call* to `save_daily_skill_metrics`, not an `if ret is None:`
-  check, and unlike P1-P3's call sites this one must be KEPT, not replaced — you are ADDING a
-  return-value check inside the existing try, not swapping the try for a check. The FDC branch's *inner*
-  outcome-capture logic in `file_writer.py` (init before gate, capture inside gate, single
-  ignore-mode-downgrade step whether the outcome was returned directly or caught from a raised exception)
-  is identical to P1-P3's, copy that part. **Corrected claim: `_write_threshold_skill_metrics_to_api`
-  (`api_writer.py:711`) is NOT exception-free** — it raises to its caller when its own client-construction
-  or readiness-check guards (outside its `try:`, see §1a) raise. Give the threshold branch the SAME
-  try/except-plus-capture shape as the FDC branch (`file_writer.py:624-628`'s existing try/except is kept,
-  not removed): capture the returned `WriteOutcome` on the non-raising path (including
-  `SKIPPED_NOT_DEPLOYED`/`SKIPPED_BY_CONFIG`/`FAILED` from api_writer's own outer catch), and on a raised
-  exception, call `fl._handle_api_write_error(e, ...)` then apply the same ignore-mode-aware `FAILED`
-  mapping as the FDC branch. You MUST write tests for both threshold mechanisms: `return_value=` set
-  directly to each `WriteOutcome` member, AND `side_effect=Exception(...)` to prove the raised-exception
-  path is caught and mapped, not left to propagate uncaught (an uncaught raise here would defeat the outer
-  try/except's fail-mode-only purpose and turn a `warn`-mode readiness failure into a full script crash).
-  The two API writes inside `save_daily_skill_metrics` are independent; a failure in the FDC write must
-  not prevent the threshold write from being attempted, and vice versa — verify this with a test where FDC
-  fails and threshold succeeds (function must still return `False` overall, but the threshold write must
-  have been attempted and logged as succeeded). This function has zero existing tests (verified) — write
-  the full Contract 7 matrix from scratch, do not assume an existing test partially covers it. **Fixture
-  shapes** (nothing existing to copy from, build these fresh): `fdc_metrics` rows need at minimum `code`,
-  `model_short`, `fhv`, `flv` — the function itself injects `day_in_year=1` before the write
-  (`file_writer.py:612`), do not add that column in the fixture. `threshold_metrics` rows need `code`,
-  `model_short`, `threshold_type`, `threshold_value`, `f1`, `precision`, `recall`, `csi`, `tp`, `fp`, `fn`,
-  `tn`, `n_years` (per the record shape `api_writer.py:769-791` expects). `write_diagnostics.diagnose_daily_skill_metrics`
-  runs at `file_writer.py:606`, BEFORE both branch guards, and tolerates `None`/empty input — do not gate
-  it behind either branch's guard and do not assume it needs non-empty data to not raise."*
-- **Acceptance criteria:**
-  - Mocked `FAILED` outcome in FDC-only, threshold-only, and both → function returns `False` in all
-    three cases, **each tested via both mechanisms for BOTH branches** (mocked exception AND mocked
-    `return_value=api_writer.WriteOutcome.FAILED`) — corrected from an earlier revision, which required
-    both mechanisms only for the FDC branch on the false premise that the threshold branch never raises.
-  - A test proving `SKIPPED_NOT_DEPLOYED` on the threshold branch (Stage 2 not yet rolled out) does
-    **not** make the function return `False` — this is the DAILY/ALL-recalc-exits-1-permanently
-    regression named in Contract 7, and it must be locked down by name here, not assumed covered by a
-    generic "non-`FAILED` means success" test elsewhere.
-  - A test proving a mocked exception under `SAPPHIRE_API_FAILURE_MODE=ignore` on the FDC branch does
-    not make the function return `False` (same ignore-mode consistency check as P1-P3, applied to this
-    function's FDC branch), AND a second test proving the same for a `FAILED`-returned-directly (no
-    exception) under `ignore` on the FDC branch, AND a third proving it for the threshold branch under
-    `ignore` (either mechanism) — three separate assertions, not one generalized from another, since §2
-    Contract 7's `ignore`-mode fix must be consulted on every path that can produce `FAILED`, in every
-    branch.
-  - A `SAPPHIRE_API_FAILURE_MODE=fail` test: a raised exception on either branch still propagates all the
-    way out of `save_daily_skill_metrics`, and `recalculate_skill_metrics.py`'s outer try/except at
-    `:555-566` still catches it, appends to `errors`, and the run still exits `1` cleanly (not an uncaught
-    traceback) — this is the fail-mode regression this phase's Goal exists to prevent; P1 has an
-    equivalent criterion, P2/P3/P4 previously did not.
-  - A test proving `SAPPHIRE_API_AVAILABLE=false` (or `SAPPHIRE_API_ENABLED=false`) → the function
-    returns `True` on the daily path — P1 locks this "documented-configuration regression" case by name
-    for quarterly/seasonal, but no phase previously tested it for daily; add it here.
-  - In the FDC-only/threshold-only failure cases, the *other* write is proven to have been attempted
-    (e.g. via a call-count assertion on the mocked API client, not just a truthy return).
-  - `recalculate_skill_metrics.py` exits non-zero when this signal is `False`.
-  - No CSV side-effect asserted (none exists for daily).
-  - Both-succeed path returns `True` and recalc still exits `0`; both-empty-input path (`fdc_metrics`
-    and `threshold_metrics` both `None`/empty) returns `True` per Contract 7, not `False`.
-  - **Do not attempt a `SKIPPED_NO_RECORDS`-via-internal-filtering test for the FDC branch** — §3
-    establishes this is unreachable on this call path (`day_in_year` is always set to `1`, so the dropna
-    at `api_writer.py:507` never triggers, and FDC carries no `horizon_value`).
-  - Mutation check as in prior phases, applied separately to the FDC-branch and threshold-branch result
-    assignments (flipping either one alone must fail a test), plus a mutation flipping
-    `SKIPPED_NOT_DEPLOYED` to `FAILED` in the threshold-outcome-to-bool mapping (not in `api_writer.py`
-    itself — that mapping is P0's, already tested there; this mutation targets P4's own
-    outcome-to-bool conversion at the `save_daily_skill_metrics` layer).
-  - `SAPPHIRE_TEST_ENV=True bash run_tests.sh` (full suite) — 0 fail, 0 unexpected skip, all prior-phase
-    tests still passing.
+**Not part of this plan's executable phase sequence.** P4 (daily FDC + threshold skill-metrics writes)
+was found not executable as specified — its `Files` list excluded `test_recalc_workflow.py` while four
+of its acceptance criteria required driving `recalculate_skill_metrics()` end-to-end through exactly that
+file's harness; it covers code with zero existing test coverage and no scoped DAILY-mode fixture chain;
+its new branch has no Contract-9 message template; and two of its acceptance criteria ("both writes
+attempted independently" vs. a required `fail`-mode propagation test) were mutually unsatisfiable as
+worded. Re-scoping it inline kept reproducing these contradictions across revisions, so it is filed as its
+own draft instead: **PP-054**,
+[`doc/plans/issues/high_prio_gi_draft_pp_daily_threshold_skill_silent_api_write_failure.md`](../issues/high_prio_gi_draft_pp_daily_threshold_skill_silent_api_write_failure.md).
+That draft cross-references this plan's Contract 7 (`WriteOutcome`, settled, not to be re-derived) and
+carries forward the design work already done here — the FDC/threshold fixture shapes, the
+`SKIPPED_NO_RECORDS`-unreachable-for-FDC finding (§3), and the "threshold branch is not exception-free"
+finding (§1a) — so a future implementer does not have to re-derive them.
+
+This placeholder is kept under the `P4` heading, not deleted or renumbered, so every cross-reference to
+"P4" elsewhere in this plan (§1, §3's daily-ordering rationale, P0's blast-radius note, etc.) still
+resolves to a real section. P0-P3 and P5-P6 proceed unaffected; see P5 below for the updated
+dependency scope.
 
 ### P5 — Cross-phase integration verification (gate, no new production code)
 
-- **Goal:** confirm the four independent fixes compose correctly — a single recalc run with **multiple**
-  simultaneous genuine failures (`WriteOutcome.FAILED`, e.g. quarterly *and* daily both fail,
-  pentad/decad and monthly succeed) still (i) attempts every mode (Hard Contract 1), (ii) accumulates
-  **all** failure messages into `errors`, not just the first, and (iii) exits non-zero exactly once at
-  the end (`:580-587`), not per-mode. This is the check that P1-P4 didn't each pass in isolation while
-  silently regressing the shared `errors`-list/exit-code mechanism they all write into. Also confirm, in
-  the same run, that a mode with a **non-`FAILED` outcome** (legitimately empty input, `SKIPPED_BY_CONFIG`,
-  `SKIPPED_NO_RECORDS`, or `SKIPPED_NOT_DEPLOYED`) among the failing modes does NOT contribute to
-  `errors` and does NOT flip a passing run's exit code — this is the specific integration-level check
-  for the empty-vs-failure distinction, since P1-P4 each verify it only in isolation per function. Also
-  confirm one run under `SAPPHIRE_API_FAILURE_MODE=ignore` with a mix of real exceptions across two
-  different modes exits `0` (both convert to `SKIPPED_BY_CONFIG`, per Contract 7) — the specific
-  cross-mode check for the `ignore`-mode fix, since P1-P4 each verify it only for their own function.
-  **Also close out Contract 10's transitional tolerance:** with all of P0-P4 landed, confirm behaviorally
-  that none of the five in-scope `save_*` functions can still return `None` — call each with an input
-  shape that would have hit a `None`-producing path pre-fix (e.g. the top-level empty-input guard, or a
-  writer outcome of each `WriteOutcome` member) and assert the return is `True`/`False` by exact identity,
-  never `None`. This is the check that lets the `if ret is False:` predicate (pinned in Contract 10) stop
-  being a transitional safety net and confirms it isn't silently masking an unconverted function.
+**Scope note (post-split):** P4 (daily) is no longer part of this plan's executable sequence — see the
+placeholder above and PP-054. Everywhere below that previously said "the four independent fixes" /
+"five in-scope functions" now means the **three** independent fixes (P1: quarterly+seasonal, P2:
+pentad/decad, P3: monthly) across the **four** in-scope `save_*` functions P0-P3 actually convert
+(`save_quarterly_skill_metrics`, `save_seasonal_skill_metrics`, `save_skill_metrics`,
+`save_monthly_skill_metrics`). `save_daily_skill_metrics` is out of this phase's scope entirely until
+PP-054 lands and its own equivalent verification (if any) is scoped there.
+
+- **Goal:** confirm the three independent fixes compose correctly — a single recalc run with **multiple**
+  simultaneous genuine failures (`WriteOutcome.FAILED`, e.g. quarterly *and* monthly both fail, pentad/decad
+  succeeds) still (i) attempts every mode (Hard Contract 1), (ii) accumulates **all** failure messages into
+  `errors`, not just the first, and (iii) exits non-zero exactly once at the end (`:580-587`), not per-mode.
+  This is the check that P1-P3 didn't each pass in isolation while silently regressing the shared
+  `errors`-list/exit-code mechanism they all write into. Also confirm, in the same run, that a mode with a
+  **non-`FAILED` outcome** (legitimately empty input, `SKIPPED_BY_CONFIG`, `SKIPPED_NO_RECORDS`) among the
+  failing modes does NOT contribute to `errors` and does NOT flip a passing run's exit code — this is the
+  specific integration-level check for the empty-vs-failure distinction, since P1-P3 each verify it only in
+  isolation per function. Also confirm one run under `SAPPHIRE_API_FAILURE_MODE=ignore` with a mix of real
+  exceptions across two different modes exits `0` (both convert to `SKIPPED_BY_CONFIG`, per Contract 7) —
+  the specific cross-mode check for the `ignore`-mode fix, since P1-P3 each verify it only for their own
+  function. **Also close out Contract 10's transitional tolerance:** with P0-P3 landed, confirm
+  behaviorally that none of the **four** in-scope `save_*` functions can still return `None` — call each
+  with an input shape that would have hit a `None`-producing path pre-fix (e.g. the top-level empty-input
+  guard, or a writer outcome of each `WriteOutcome` member) and assert the return is `True`/`False` by
+  exact identity, never `None`. This is the check that lets the `if ret is False:` predicate (pinned in
+  Contract 10) stop being a transitional safety net for these four functions and confirms it isn't
+  silently masking an unconverted one; `save_daily_skill_metrics` remains outside this check's scope until
+  PP-054 lands (it still returns bare `None` today, and that is expected until then, not a regression).
 - **Files:** `apps/postprocessing_forecasts/tests/test_recalc_workflow.py` only (test-only phase — if
-  this phase finds a defect, it is fixed by re-delegating a targeted patch to the specific P0-P4 phase
+  this phase finds a defect, it is fixed by re-delegating a targeted patch to the specific P0-P3 phase
   whose diff caused it, not by writing new production code here).
-- **Depends on:** P0, P1, P2, P3, P4.
+- **Depends on:** P0, P1, P2, P3.
 - **Agents:** 1 (test-writing only, no worktree isolation required — this phase does not touch
   production code).
-- **Acceptance criteria:** one new integration test with ≥2 of the five in-scope functions mocked to
-  fail simultaneously (`ALL` prediction mode or equivalent multi-mode setup), and at least one further
-  in-scope function mocked to receive a non-`FAILED` outcome in the same run, proves (i)-(iii) above plus
+- **Acceptance criteria:** one new integration test with ≥2 of the four in-scope functions mocked to
+  fail simultaneously (`ALL` prediction mode or equivalent multi-mode setup, excluding the daily block —
+  it is not converted by this plan), and at least one further in-scope function mocked to receive a
+  non-`FAILED` outcome in the same run, proves (i)-(iii) above plus
   the non-failure-mode-doesn't-count check, with exact-count assertions on `len(errors)` and which
   messages are present (per the testing workflow's "exact counts, not vague checks" rule), not just
   "exit code is 1". A second new test covers the cross-mode `ignore`-mode check described in the Goal. A
-  third check (not necessarily a single test — a review pass across the five functions is acceptable)
-  confirms the Contract 10 "no lingering `None`" behavioral check described in the Goal, for all five
+  third check (not necessarily a single test — a review pass across the four functions is acceptable)
+  confirms the Contract 10 "no lingering `None`" behavioral check described in the Goal, for all four
   in-scope `save_*` functions. Full suite green: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` —
   0 fail, 0 unexpected skip. This is the last **mandatory** phase; P6 is optional and, as revised below,
   does not ship production code either.
@@ -1032,7 +1040,9 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
   compose: even after this fix ships, a PP-047-class failure would still produce a `True`/success return
   here and a clean exit. Closing PP-047 requires either a service-side fix (colleague-owned,
   `sapphire/services/`) or a client-side read-back verification (which is exactly what
-  `SAPPHIRE_CONSISTENCY_CHECK` attempts for CSV, at `file_writer.py:348-378` / `:435-461` — but per the
+  `SAPPHIRE_CONSISTENCY_CHECK` attempts for CSV, at `file_writer.py:348-377` (corrected from an earlier
+  revision's `:348-378` — verified: the block runs `:348-377`, `:378` is blank, `:379` is `return None`,
+  now agreeing with Contract 11's citation) / `:435-461` — but per the
   draft's evidence, that check compares against the CSV it just wrote, never the API, and is unwired for
   quarterly/seasonal entirely).
 - **The four out-of-scope forecast-data `save_*` functions keep the same defect shape.**
@@ -1085,7 +1095,8 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
   code should not conclude every row landed — the per-write warning logs remain the only place that
   distinction is visible, exactly as they are today.
 - **Option C, now demoted to draft-only (P6), leaves ad-hoc invocations of `recalculate_skill_metrics.py`
-  (outside the bimonthly wrapper) dependent solely on the corrected exit code from P0-P5, with no
+  (outside the bimonthly wrapper) dependent solely on the corrected exit code from P0-P3 and P5 (P4/daily
+  excluded from this plan — see the next bullet), with no
   independent DB check** — and, per P6's corrected rationale, even a fully-built Option C would not
   change this for the ad-hoc population; it only adds a second signal for wrapper-invoked runs. That is
   a real improvement over today (currently even the exit code is wrong), but correctness for ad-hoc runs
@@ -1096,12 +1107,21 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
   `ignore`, see Contract 7) paths, which is where the silent-success gap lives. `ignore` mode's own
   intent (make write outcomes invisible to the exit code) is preserved by design in this revision, not
   merely left unbroken by accident — see Contract 7's ignore-mode rule.
-- **The daily block's combined bool (P4) collapses two independent write outcomes (FDC, threshold) into
-  one signal.** After this fix, a caller can tell "at least one of the two daily writes genuinely failed"
-  but not which one from the return value alone — the existing per-write log lines (`:614-618`,
-  `:624-628`) remain the only way to distinguish them. This is a smaller-grained version of the same
-  general limitation: a boolean success/failure signal is not a substitute for structured, itemized
-  failure reporting, it is only the minimum fix needed to make the exit code truthful.
+- **The daily block's silent-success defect is NOT fixed by this plan — it is split out to PP-054, and
+  remains open until that draft is implemented.** `save_daily_skill_metrics` still returns bare `None`
+  on both the success and the swallowed-failure path after P0-P3 and P5 land, exactly as it does today;
+  `recalculate_skill_metrics.py`'s daily call site (`:555-566`) still cannot distinguish "wrote" from
+  "silently failed under `warn` mode." Both writes it makes are API-only with no CSV fallback (like
+  quarterly/seasonal), so a swallowed failure here is total data loss for that recalc's daily output — the
+  same severity class this plan's P1 prioritized fixing first for quarterly/seasonal, just not yet fixed
+  for daily. **`save_daily_skill_metrics` and `_write_threshold_skill_metrics_to_api` remain the only two
+  functions in this defect family with zero test coverage** (verified — no test in
+  `apps/postprocessing_forecasts/tests/` references either by name), unlike every other function this
+  plan (P0-P3) converts, all of which had existing tests to extend or invert. An operator relying on a
+  clean `recalculate_skill_metrics.py` exit code should not conclude the daily block's writes landed —
+  this gap persists until PP-054 ships. (The design note this bullet replaces — that a combined bool for
+  FDC+threshold can only report "at least one failed," not which — is still correct and now lives in
+  PP-054's scope, not this plan's.)
 
 ---
 
@@ -1129,15 +1149,18 @@ not name or index that file — do not invent a filename for it here; cross-refe
     "P1": { "depends_on": ["P0"], "parallel_agents": 1 },
     "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
     "P3": { "depends_on": ["P2"], "parallel_agents": 1 },
-    "P4": { "depends_on": ["P3"], "parallel_agents": 1 },
-    "P5": { "depends_on": ["P0", "P1", "P2", "P3", "P4"], "parallel_agents": 1 },
+    "P4": { "status": "split_out", "note": "see doc/plans/issues/high_prio_gi_draft_pp_daily_threshold_skill_silent_api_write_failure.md (PP-054); not part of this plan's executable sequence, not a dependency of P5" },
+    "P5": { "depends_on": ["P0", "P1", "P2", "P3"], "parallel_agents": 1 },
     "P6": { "depends_on": ["P5"], "parallel_agents": 1 }
   }
 }
 ```
 
 P0 is new in this revision — it lands the `WriteOutcome` type in `api_writer.py` that every other phase
-consumes (§3), and is a genuine data dependency, not a shared-file ordering convenience like P1→P2→P3→P4.
-P6 is optional and owner-gated (see §4 P6 preamble) — the graph lists it for completeness but, per its
-revised scope, it produces a draft document, not a code change, and should not be started without
-separate explicit sign-off, distinct from approval of P0-P5.
+consumes (§3), and is a genuine data dependency, not a shared-file ordering convenience like P1→P2→P3.
+**P4 is retained in the graph as a non-executable node, not deleted**, so cross-references to "P4"
+elsewhere in this plan keep resolving to a real entry; it carries no `depends_on`/`parallel_agents` because
+it is not scheduled by this plan at all — see its placeholder phase entry in §4 and PP-054. P5 now depends
+on P0-P3 only. P6 is optional and owner-gated (see §4 P6 preamble) — the graph lists it for completeness
+but, per its revised scope, it produces a draft document, not a code change, and should not be started
+without separate explicit sign-off, distinct from approval of P0-P3 and P5.
