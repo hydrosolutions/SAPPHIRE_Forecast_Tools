@@ -520,7 +520,15 @@ class TestWriteSkillMetricsToApi:
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
 
     def test_api_disabled_via_env_var(self, monkeypatch):
-        """When SAPPHIRE_API_ENABLED=false, API write should be skipped."""
+        """When SAPPHIRE_API_ENABLED=false, API write should be skipped.
+
+        Pin SAPPHIRE_API_AVAILABLE=True so this exercises the operator-choice
+        path specifically, not a coincidental overlap with the missing-client
+        path (see test_missing_client_returns_failed below) -- the two must
+        stay distinguishable rather than accidentally landing on the same
+        outcome for the same reason.
+        """
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", True)
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
         data = pd.DataFrame(
             {
@@ -537,6 +545,61 @@ class TestWriteSkillMetricsToApi:
         )
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
         assert result is WriteOutcome.SKIPPED_BY_CONFIG
+
+    def test_missing_client_returns_failed(self, monkeypatch):
+        """When sapphire-api-client is absent, the write is a FAILED
+        attempt at a required dependency -- not a benign config skip.
+
+        SAPPHIRE_API_AVAILABLE is set only by whether the import succeeded
+        (api_writer.py:88-96); it is not an operator setting, so client
+        absence must never be reported the same way as the documented
+        SAPPHIRE_API_ENABLED=false opt-out.
+        """
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", False)
+        data = pd.DataFrame(
+            {
+                "code": [12345],
+                "pentad_in_year": [1],
+                "model_short": ["LR"],
+                "sdivsigma": [0.5],
+                "nse": [0.8],
+                "delta": [0.1],
+                "accuracy": [0.9],
+                "mae": [5.0],
+                "n_pairs": [100],
+            }
+        )
+        result = _write_skill_metrics_to_api(data, "pentad", 2024)
+        assert result is WriteOutcome.FAILED
+
+    def test_missing_client_and_disabled_config_are_distinct(self, monkeypatch):
+        """Client-absent (FAILED) and SAPPHIRE_API_ENABLED=false
+        (SKIPPED_BY_CONFIG) must never collapse to the same outcome."""
+        data = pd.DataFrame(
+            {
+                "code": [12345],
+                "pentad_in_year": [1],
+                "model_short": ["LR"],
+                "sdivsigma": [0.5],
+                "nse": [0.8],
+                "delta": [0.1],
+                "accuracy": [0.9],
+                "mae": [5.0],
+                "n_pairs": [100],
+            }
+        )
+
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", False)
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        missing_client_result = _write_skill_metrics_to_api(data, "pentad", 2024)
+
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", True)
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
+        disabled_config_result = _write_skill_metrics_to_api(data, "pentad", 2024)
+
+        assert missing_client_result is WriteOutcome.FAILED
+        assert disabled_config_result is WriteOutcome.SKIPPED_BY_CONFIG
+        assert missing_client_result != disabled_config_result
 
     @patch("src.api_writer.SapphirePostprocessingClient")
     def test_api_not_ready_returns_false(self, mock_client_class):
@@ -1026,10 +1089,46 @@ class TestWriteThresholdSkillMetricsToApi:
         )
 
     def test_disabled_via_env_var_returns_skipped_by_config(self, monkeypatch):
-        """SAPPHIRE_API_ENABLED=false -> SKIPPED_BY_CONFIG (not a failure)."""
+        """SAPPHIRE_API_ENABLED=false -> SKIPPED_BY_CONFIG (not a failure).
+
+        Pin SAPPHIRE_API_AVAILABLE=True so this exercises the operator-choice
+        path specifically, not a coincidental overlap with the missing-client
+        path (see test_missing_client_returns_failed below).
+        """
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", True)
         monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
         result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
         assert result is WriteOutcome.SKIPPED_BY_CONFIG
+
+    def test_missing_client_returns_failed(self, monkeypatch):
+        """When sapphire-api-client is absent, the write is a FAILED
+        attempt at a required dependency -- not a benign config skip.
+
+        SAPPHIRE_API_AVAILABLE is set only by whether the import succeeded
+        (api_writer.py:88-96); it is not an operator setting, so client
+        absence must never be reported the same way as the documented
+        SAPPHIRE_API_ENABLED=false opt-out.
+        """
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", False)
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.FAILED
+
+    def test_missing_client_and_disabled_config_are_distinct(self, monkeypatch):
+        """Client-absent (FAILED) and SAPPHIRE_API_ENABLED=false
+        (SKIPPED_BY_CONFIG) must never collapse to the same outcome."""
+        data = self._threshold_data()
+
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", False)
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        missing_client_result = _write_threshold_skill_metrics_to_api(data, 2024)
+
+        monkeypatch.setattr("src.api_writer.SAPPHIRE_API_AVAILABLE", True)
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
+        disabled_config_result = _write_threshold_skill_metrics_to_api(data, 2024)
+
+        assert missing_client_result is WriteOutcome.FAILED
+        assert disabled_config_result is WriteOutcome.SKIPPED_BY_CONFIG
+        assert missing_client_result != disabled_config_result
 
     def test_empty_data_returns_skipped_no_records(self):
         """An empty DataFrame short-circuits to SKIPPED_NO_RECORDS."""
