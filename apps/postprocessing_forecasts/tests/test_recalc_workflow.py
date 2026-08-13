@@ -112,7 +112,7 @@ def _setup_mocks(mock_data, mock_skill):
 
     mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
     mock_file_writer.save_forecast_data.return_value = None
-    mock_file_writer.save_skill_metrics.return_value = None
+    mock_file_writer.save_skill_metrics.return_value = True
     mock_file_writer.save_monthly_forecast_data.return_value = None
     mock_file_writer.save_monthly_skill_metrics.return_value = None
 
@@ -234,7 +234,7 @@ class TestRecalcWorkflow:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
-                mocks["file_writer"].save_skill_metrics.return_value = "Error: write failed"
+                mocks["file_writer"].save_skill_metrics.return_value = False
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
@@ -298,7 +298,13 @@ class TestRecalcEdgeCases:
                     module.recalculate_skill_metrics()
 
     def test_save_success_path(self, mock_data, mock_skill):
-        """All saves return None → exit 0, all four saves called."""
+        """All saves succeed → exit 0, all four saves called.
+
+        save_forecast_data is an unconverted sibling and still returns
+        None (success under `if ret is None:`); save_skill_metrics has
+        been converted (PP-051 P2) and returns True (success under
+        `if ret is False:`) via _setup_mocks' default.
+        """
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)

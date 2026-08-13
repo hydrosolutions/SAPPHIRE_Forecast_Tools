@@ -970,7 +970,7 @@ def _setup_recalc_mocks(
     )
 
     mock_file_writer.save_forecast_data.return_value = None
-    mock_file_writer.save_skill_metrics.return_value = None
+    mock_file_writer.save_skill_metrics.return_value = True
 
     import tag_library as real_tl
 
@@ -1254,7 +1254,7 @@ class TestRecalcWiringIntegration:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks["file_writer"].save_skill_metrics.return_value = "Error: write failed"
+                mocks["file_writer"].save_skill_metrics.return_value = False
 
                 module, spec = _import_recalc()
                 spec.loader.exec_module(module)
@@ -2268,7 +2268,7 @@ class TestCodesPassthrough:
         mock_data_reader.read_observed_and_modelled_data.return_value = (mock_data, mock_data)
         mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
         mock_file_writer.save_forecast_data.return_value = None
-        mock_file_writer.save_skill_metrics.return_value = None
+        mock_file_writer.save_skill_metrics.return_value = True
         mock_data_reader.read_quarterly_observations.return_value = pd.DataFrame()
         mock_data_reader.read_quarterly_forecasts.return_value = pd.DataFrame()
         mock_data_reader.read_seasonal_observations.return_value = pd.DataFrame()

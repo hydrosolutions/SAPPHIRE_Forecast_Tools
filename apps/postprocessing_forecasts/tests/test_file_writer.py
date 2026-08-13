@@ -1222,3 +1222,212 @@ class TestSaveSeasonalSkillMetrics:
             result = file_writer.save_seasonal_skill_metrics(data, year=2025)
         mock_client.write_skill_metrics.assert_not_called()
         assert result is True
+
+
+# ===========================================================================
+# PP-051 P2 — save_skill_metrics (pentad/decad)
+#
+# Unlike its quarterly/seasonal siblings (P1) this function has NO
+# top-level empty-input guard (PP-051 plan §1b) and its CSV write is
+# unconditional and already raises on its own failure -- that CSV
+# behavior is unchanged by this phase (Contract 2). Contract 7 mapping
+# under test: FAILED -> False, every other outcome (WROTE,
+# SKIPPED_BY_CONFIG, SKIPPED_NO_RECORDS) -> True. All assertions are
+# exact identity (`is True` / `is False`) -- truthiness is vacuous
+# against the pre-fix bare `None` return.
+#
+# Pre-gate default is WriteOutcome.FAILED (P0a correction): a closed
+# SAPPHIRE_API_AVAILABLE gate means the required sapphire-api-client
+# dependency is missing -- a genuine failure, not a configuration
+# choice. SAPPHIRE_API_ENABLED=false is handled *inside* the writer,
+# below this gate, and maps to SKIPPED_BY_CONFIG there. `ignore` mode
+# never downgrades the outcome (P0a/D3) -- it only suppresses
+# _handle_api_write_error's logging, not failure accounting.
+# ===========================================================================
+
+
+class TestSaveSkillMetrics:
+    """Tests for save_skill_metrics() -- pentad/decad, CSV + API."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self, tmp_path):
+        """Set env vars so save_skill_metrics can resolve paths."""
+        overrides = {
+            "ieasyforecast_intermediate_data_path": str(tmp_path),
+            "ieasyforecast_pentadal_skill_metrics_file": "skill_pentad.csv",
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_CONSISTENCY_CHECK": "false",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            self.tmp_path = tmp_path
+            yield tmp_path
+
+    @pytest.fixture
+    def pentad_skill_data(self):
+        return pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, np.nan],
+            }
+        )
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_wrote_outcome_returns_true(self, mock_api_write, pentad_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.WROTE
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_by_config_outcome_returns_true(self, mock_api_write, pentad_skill_data):
+        """SAPPHIRE_API_ENABLED=false is a documented, benign deployment
+        mode -- the writer maps it to SKIPPED_BY_CONFIG internally, below
+        the SAPPHIRE_API_AVAILABLE gate. SAPPHIRE_API_AVAILABLE is pinned
+        True here so this is distinguishable from the missing-client case
+        (test_client_unavailable_returns_false below)."""
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_BY_CONFIG
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_no_records_outcome_returns_true(self, mock_api_write, pentad_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_NO_RECORDS
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_without_exception_returns_false(
+        self, mock_api_write, pentad_skill_data
+    ):
+        """Headline case: a directly-returned FAILED (e.g. a readiness-check
+        failure) with no exception raised must still surface as a failure --
+        the non-raising path a bare `if ret is None:` swallowed pre-fix."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_warn_returns_false(self, mock_api_write, pentad_skill_data):
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_ignore_returns_false(self, mock_api_write, pentad_skill_data):
+        """`ignore` mode suppresses _handle_api_write_error's logging only --
+        never the failure outcome. A raised write error still returns False
+        under ignore, same as under warn -- there is no downgrade step."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_under_ignore_returns_false(self, mock_api_write, pentad_skill_data):
+        """Second half of the no-downgrade proof: a directly-returned FAILED
+        (no exception -- e.g. a readiness-check failure) also stays False
+        under ignore mode, not just the raised-exception mechanism above."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_fail_mode_propagates(self, mock_api_write, pentad_skill_data):
+        """SAPPHIRE_API_FAILURE_MODE=fail is unchanged: the exception still
+        propagates uncaught, unaffected by the new True/False return
+        contract (Hard Contract 5)."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}),
+        ):
+            with pytest.raises(RuntimeError, match="API connection refused"):
+                file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+
+    def test_client_unavailable_returns_false(self, pentad_skill_data):
+        """A closed SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client,
+        a required dependency) is a genuine failure, not a benign config
+        skip -- the pre-gate default is FAILED, not SKIPPED_BY_CONFIG."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is False
+
+    def test_skipped_no_records_via_internal_filtering_returns_true(self):
+        """Non-empty input whose every row is excluded by the writer's own
+        lead-aware NaN-horizon_value filter -> WriteOutcome.SKIPPED_NO_RECORDS
+        internally -> True at this layer (this outcome is a non-failure per
+        Contract 7). Exercises the REAL, unmocked _write_skill_metrics_to_api
+        (only its client factory is faked) -- mirrors the fixture pattern in
+        test_lead_aware_write_side_dedup.py. `pentad_in_year` itself stays
+        populated (this function's own `.astype(int)` cast at :319 would
+        raise on NaN there) -- the row-dropping filter this test targets
+        operates on the separate `horizon_value` column instead."""
+        data = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "LR"],
+                "horizon_value": [float("nan"), float("nan")],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.8],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.85],
+                "mae": [2.0, 3.0],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.6],
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_SKILL_LEAD_AWARE": "true"}),
+            patch("src.api_writer._get_postprocessing_client", return_value=mock_client),
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, data, year=2025)
+        mock_client.write_skill_metrics.assert_not_called()
+        assert result is True
+
+    def test_csv_still_written_when_api_write_fails(self, pentad_skill_data):
+        """CSV write is unconditional (Contract 2, unchanged by this phase):
+        the CSV must still be written -- and the function must still report
+        the API failure as False -- when the API branch's outcome is FAILED
+        under warn mode."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch(
+                "src.api_writer._write_skill_metrics_to_api",
+                side_effect=RuntimeError("API connection refused"),
+            ),
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+
+        csv_path = os.path.join(str(self.tmp_path), "skill_pentad.csv")
+        assert os.path.exists(csv_path), "CSV should be written even when API fails"
+        saved = pd.read_csv(csv_path)
+        assert len(saved) == 2
+        assert result is False
