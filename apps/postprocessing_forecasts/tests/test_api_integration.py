@@ -25,8 +25,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHyd
 from src.api_writer import (
     MODEL_TYPE_MAP,
     SAPPHIRE_API_AVAILABLE,
+    WriteOutcome,
     _write_combined_forecast_to_api,
     _write_skill_metrics_to_api,
+    _write_threshold_skill_metrics_to_api,
 )
 
 
@@ -534,7 +536,7 @@ class TestWriteSkillMetricsToApi:
             }
         )
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
-        assert result is False
+        assert result is WriteOutcome.SKIPPED_BY_CONFIG
 
     @patch("src.api_writer.SapphirePostprocessingClient")
     def test_api_not_ready_returns_false(self, mock_client_class):
@@ -561,7 +563,7 @@ class TestWriteSkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
-        assert result is False
+        assert result is WriteOutcome.FAILED
 
     @patch("src.api_writer.SapphirePostprocessingClient")
     def test_pentad_skill_metrics_correct_fields(self, mock_client_class):
@@ -589,7 +591,7 @@ class TestWriteSkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
-        assert result is True
+        assert result is WriteOutcome.WROTE
 
         # Check that write_skill_metrics was called
         mock_client.write_skill_metrics.assert_called_once()
@@ -638,7 +640,7 @@ class TestWriteSkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "decad", 2024)
-        assert result is True
+        assert result is WriteOutcome.WROTE
 
         # Get the records that were passed
         call_args = mock_client.write_skill_metrics.call_args[0][0]
@@ -756,7 +758,7 @@ class TestWriteSkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
-        assert result is False
+        assert result is WriteOutcome.SKIPPED_NO_RECORDS
 
         # write_skill_metrics should not be called for empty data
         mock_client.write_skill_metrics.assert_not_called()
@@ -889,7 +891,7 @@ class TestWriteSkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "pentad", 2024)
-        assert result is False
+        assert result is WriteOutcome.SKIPPED_NO_RECORDS
         mock_client.write_skill_metrics.assert_not_called()
 
     @patch("src.api_writer.SapphirePostprocessingClient")
@@ -991,6 +993,179 @@ class TestWriteSkillMetricsToApi:
             assert rec["date"] == expected, f"month {i + 1}: {rec['date']} != {expected}"
 
 
+class TestWriteThresholdSkillMetricsToApi:
+    """Tests for `_write_threshold_skill_metrics_to_api`'s `WriteOutcome` mapping.
+
+    Unlike `_write_skill_metrics_to_api`, no test file called this function
+    directly before this class — all cases below are new coverage, not
+    conversions of pre-existing assertions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_api_env(self, monkeypatch):
+        """Enable API by default; individual tests can override."""
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+    def _threshold_data(self):
+        return pd.DataFrame(
+            {
+                "code": ["12345"],
+                "model_short": ["LR"],
+                "threshold_type": ["flood"],
+                "threshold_value": [100.0],
+                "f1": [0.8],
+                "precision": [0.75],
+                "recall": [0.85],
+                "csi": [0.7],
+                "tp": [10],
+                "fp": [2],
+                "fn": [1],
+                "tn": [50],
+                "n_years": [5],
+            }
+        )
+
+    def test_disabled_via_env_var_returns_skipped_by_config(self, monkeypatch):
+        """SAPPHIRE_API_ENABLED=false -> SKIPPED_BY_CONFIG (not a failure)."""
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.SKIPPED_BY_CONFIG
+
+    def test_empty_data_returns_skipped_no_records(self):
+        """An empty DataFrame short-circuits to SKIPPED_NO_RECORDS."""
+        data = pd.DataFrame(
+            columns=[
+                "code",
+                "model_short",
+                "threshold_type",
+                "threshold_value",
+                "f1",
+                "precision",
+                "recall",
+                "csi",
+                "tp",
+                "fp",
+                "fn",
+                "tn",
+                "n_years",
+            ]
+        )
+        result = _write_threshold_skill_metrics_to_api(data, 2024)
+        assert result is WriteOutcome.SKIPPED_NO_RECORDS
+
+    def test_none_data_returns_skipped_no_records(self):
+        """`data=None` short-circuits to SKIPPED_NO_RECORDS, same as empty."""
+        result = _write_threshold_skill_metrics_to_api(None, 2024)
+        assert result is WriteOutcome.SKIPPED_NO_RECORDS
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_readiness_check_false_returns_failed(self, mock_client_class):
+        """A failed readiness check is a genuine failure, not a skip."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = False
+        mock_client_class.return_value = mock_client
+
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.FAILED
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_success_returns_wrote(self, mock_client_class):
+        """A successful write returns WROTE."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_threshold_skill_metrics.return_value = 1
+        mock_client_class.return_value = mock_client
+
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.WROTE
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_client_missing_write_method_returns_skipped_not_deployed(self, mock_client_class):
+        """AttributeError (client too old, Stage 2 pending) -> SKIPPED_NOT_DEPLOYED, not FAILED."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_threshold_skill_metrics.side_effect = AttributeError(
+            "no write_threshold_skill_metrics"
+        )
+        mock_client_class.return_value = mock_client
+
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.SKIPPED_NOT_DEPLOYED
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_endpoint_not_found_returns_skipped_not_deployed(self, mock_client_class):
+        """A 404/"Not Found" response (endpoint not deployed yet) -> SKIPPED_NOT_DEPLOYED, not FAILED."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_threshold_skill_metrics.side_effect = Exception(
+            "404 Not Found: /threshold-skill-metrics"
+        )
+        mock_client_class.return_value = mock_client
+
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.SKIPPED_NOT_DEPLOYED
+
+    @patch("src.api_writer.SapphirePostprocessingClient")
+    def test_other_http_exception_returns_failed(self, mock_client_class):
+        """A genuine HTTP failure (e.g. a 500 or network error) -> FAILED, not a skip."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_threshold_skill_metrics.side_effect = ConnectionError(
+            "500 Internal Server Error"
+        )
+        mock_client_class.return_value = mock_client
+
+        result = _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+        assert result is WriteOutcome.FAILED
+
+    def test_client_construction_failure_still_raises(self, monkeypatch):
+        """`_get_postprocessing_client()` raising propagates uncaught.
+
+        This documents current, unchanged behavior: the client-construction
+        and readiness-check guards sit outside this function's own
+        try/except, so an exception there is not mapped to any WriteOutcome
+        member -- it is not this phase's job to add that mapping, only to
+        prove the propagation still holds after the WriteOutcome conversion.
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        def _raise(*args, **kwargs):
+            raise ConnectionError("could not construct client")
+
+        monkeypatch.setattr("src.api_writer._get_postprocessing_client", _raise)
+
+        with pytest.raises(ConnectionError):
+            _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+
+    def test_readiness_check_raising_still_raises(self, monkeypatch):
+        """`client.readiness_check()` raising also propagates uncaught (see above)."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_client = Mock()
+        mock_client.readiness_check.side_effect = ConnectionError("connection refused")
+        monkeypatch.setattr("src.api_writer._get_postprocessing_client", lambda: mock_client)
+
+        with pytest.raises(ConnectionError):
+            _write_threshold_skill_metrics_to_api(self._threshold_data(), 2024)
+
+
 class TestModelTypeMap:
     """Tests for MODEL_TYPE_MAP completeness and correctness."""
 
@@ -1072,7 +1247,7 @@ class TestWriteMonthlySkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "month", 2024)
-        assert result is True
+        assert result is WriteOutcome.WROTE
 
         mock_client.write_skill_metrics.assert_called_once()
         call_args = mock_client.write_skill_metrics.call_args[0][0]
@@ -1258,7 +1433,7 @@ class TestWriteMonthlySkillMetricsToApi:
         )
 
         result = _write_skill_metrics_to_api(data, "month", 2024)
-        assert result is False
+        assert result is WriteOutcome.SKIPPED_NO_RECORDS
         mock_client.write_skill_metrics.assert_not_called()
 
     @patch("src.api_writer.SapphirePostprocessingClient")
@@ -1655,9 +1830,7 @@ class TestMonthlyEnsembleHorizonValueConsistency:
             )
 
     @patch("src.api_writer.SapphirePostprocessingClient")
-    def test_horizon_value_falls_back_to_zero_sentinel_when_absent(
-        self, mock_client_class
-    ):
+    def test_horizon_value_falls_back_to_zero_sentinel_when_absent(self, mock_client_class):
         """LOCKED: absent horizon_value falls back to the 0 no-lead sentinel.
 
         The calendar month is NEVER a valid ``horizon_value``. When the input

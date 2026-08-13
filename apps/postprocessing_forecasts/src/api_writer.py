@@ -10,6 +10,7 @@ import datetime as dt_module
 import json
 import logging
 import os
+from enum import Enum
 
 import pandas as pd
 import tag_library as tl
@@ -61,6 +62,25 @@ HORIZON_TYPE_TO_API = {
     "quarter": "quarter",
     "season": "season",
 }
+
+
+class WriteOutcome(Enum):
+    """Outcome of an `api_writer.py` skill-metrics write attempt.
+
+    A single bool cannot distinguish "nothing was attempted" from "the
+    attempt failed" from "the attempt correctly found nothing to send" —
+    conflating them makes a benign, documented configuration state (writing
+    disabled, client absent) indistinguishable from a genuine operational
+    failure. Only `FAILED` should ever cause a caller to treat the write as
+    a failure; every other member is a non-failure outcome.
+    """
+
+    WROTE = "wrote"  # records were sent and accepted
+    SKIPPED_BY_CONFIG = "skipped_by_config"  # client absent, or SAPPHIRE_API_ENABLED=false
+    SKIPPED_NO_RECORDS = "skipped_no_records"  # nothing to write after filtering
+    SKIPPED_NOT_DEPLOYED = "skipped_not_deployed"  # threshold endpoint not yet deployed (Stage 2)
+    FAILED = "failed"  # readiness-check failure, or the write call raised
+
 
 # ---------------------------------------------------------------------------
 # API client availability
@@ -426,7 +446,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         return False
 
 
-def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int) -> bool:
+def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int) -> WriteOutcome:
     """
     Write skill metrics to SAPPHIRE postprocessing API.
 
@@ -449,7 +469,11 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
             decad, or month) in this year.
 
     Returns:
-        bool: True if successful, False otherwise
+        WriteOutcome: WROTE if records were sent and accepted;
+            SKIPPED_BY_CONFIG if the client is absent or
+            SAPPHIRE_API_ENABLED=false; SKIPPED_NO_RECORDS if nothing
+            remained to write after filtering; FAILED if the
+            readiness check failed. See `api_writer.WriteOutcome`.
     """
     # Validate inputs before any I/O
     api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
@@ -461,13 +485,13 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping skill metrics API write")
-        return False
+        return WriteOutcome.SKIPPED_BY_CONFIG
 
     # Check if API writing is enabled (default: enabled)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
-        return False
+        return WriteOutcome.SKIPPED_BY_CONFIG
 
     # Get API URL from environment
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -477,7 +501,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
         logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping skill metrics write")
-        return False
+        return WriteOutcome.FAILED
 
     data = data.copy()
 
@@ -702,13 +726,13 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
             f"Successfully wrote {count} skill metric records to SAPPHIRE API ({horizon_type})"
         )
         print(f"SAPPHIRE API: Successfully wrote {count} skill metric records ({horizon_type})")
-        return True
+        return WriteOutcome.WROTE
     else:
         logger.info(f"No skill metric records to write to API ({horizon_type})")
-        return False
+        return WriteOutcome.SKIPPED_NO_RECORDS
 
 
-def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool:
+def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> WriteOutcome:
     """Write threshold-based skill metrics to SAPPHIRE API.
 
     Writes F1/CSI/precision/recall for flood and low-flow thresholds
@@ -721,26 +745,34 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
         year: Target year for the skill metric date.
 
     Returns:
-        True if successful, False otherwise (never raises).
+        WriteOutcome: WROTE if records were sent and accepted;
+            SKIPPED_BY_CONFIG if the client is absent or
+            SAPPHIRE_API_ENABLED=false; SKIPPED_NO_RECORDS if there was
+            nothing to write; SKIPPED_NOT_DEPLOYED if the endpoint isn't
+            deployed yet (Stage 2 pending); FAILED if the readiness check
+            failed or the write call raised any other exception. Note:
+            client construction and the readiness check itself (above)
+            can still raise uncaught -- only the region from here down is
+            exception-protected. See `api_writer.WriteOutcome`.
     """
     if data is None or data.empty:
         logger.info("No threshold skill metrics to write to API")
-        return False
+        return WriteOutcome.SKIPPED_NO_RECORDS
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning(
             "sapphire-api-client not installed, skipping threshold skill metrics API write"
         )
-        return False
+        return WriteOutcome.SKIPPED_BY_CONFIG
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
-        return False
+        return WriteOutcome.SKIPPED_BY_CONFIG
 
     client = _get_postprocessing_client()
     if client is None:
-        return False
+        return WriteOutcome.SKIPPED_BY_CONFIG
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     if not client.readiness_check():
@@ -748,7 +780,7 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
             "SAPPHIRE API at %s is not ready, skipping threshold skill metrics write",
             api_url,
         )
-        return False
+        return WriteOutcome.FAILED
 
     try:
         df = data.copy()
@@ -792,7 +824,7 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
 
         if not records:
             logger.info("No threshold skill metric records to write")
-            return False
+            return WriteOutcome.SKIPPED_NO_RECORDS
 
         _check_write_codes({str(r["code"]) for r in records}, "threshold_skill_metrics")
         logger.debug("Sample threshold skill metric record: %s", records[0])
@@ -805,13 +837,13 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
                 count,
             )
             print(f"SAPPHIRE API: Successfully wrote {count} threshold skill metric records")
-            return True
+            return WriteOutcome.WROTE
         except AttributeError:
             logger.info(
                 "Postprocessing client does not support "
                 "write_threshold_skill_metrics yet (Stage 2 pending)"
             )
-            return False
+            return WriteOutcome.SKIPPED_NOT_DEPLOYED
         except Exception as e:
             # If the endpoint returns 404 (not deployed yet), log and
             # continue — this is expected before Stage 2 is deployed.
@@ -821,12 +853,12 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> bool
                     "ThresholdSkillMetric endpoint not deployed yet (Stage 2 pending): %s",
                     err_str,
                 )
-                return False
+                return WriteOutcome.SKIPPED_NOT_DEPLOYED
             raise
 
     except Exception as e:
         logger.error("Failed to write threshold skill metrics to API: %s", e)
-        return False
+        return WriteOutcome.FAILED
 
 
 def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
