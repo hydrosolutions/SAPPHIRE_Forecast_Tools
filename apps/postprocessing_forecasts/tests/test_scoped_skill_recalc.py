@@ -213,7 +213,7 @@ def test_run_short_term_recalc_skips_virtual_stations(pentad_config, non_empty_d
         MagicMock(),
     )
     mocks["file_writer"].save_forecast_data.return_value = None
-    mocks["file_writer"].save_skill_metrics.return_value = None
+    mocks["file_writer"].save_skill_metrics.return_value = True
 
     with patch.dict(os.environ, {"SAPPHIRE_RECALC_STATION_CODE": "19999"}):
         with patch.dict(sys.modules, {}):

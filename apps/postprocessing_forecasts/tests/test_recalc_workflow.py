@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import src.api_writer as _real_api_writer
+import src.file_writer as _real_file_writer
 import src.horizon_config as _real_horizon_config
 
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -112,9 +114,9 @@ def _setup_mocks(mock_data, mock_skill):
 
     mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
     mock_file_writer.save_forecast_data.return_value = None
-    mock_file_writer.save_skill_metrics.return_value = None
+    mock_file_writer.save_skill_metrics.return_value = True
     mock_file_writer.save_monthly_forecast_data.return_value = None
-    mock_file_writer.save_monthly_skill_metrics.return_value = None
+    mock_file_writer.save_monthly_skill_metrics.return_value = True
 
     # Quarterly/seasonal mocks
     mock_data_reader.read_quarterly_observations.return_value = pd.DataFrame()
@@ -234,7 +236,7 @@ class TestRecalcWorkflow:
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
-                mocks["file_writer"].save_skill_metrics.return_value = "Error: write failed"
+                mocks["file_writer"].save_skill_metrics.return_value = False
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
@@ -298,7 +300,13 @@ class TestRecalcEdgeCases:
                     module.recalculate_skill_metrics()
 
     def test_save_success_path(self, mock_data, mock_skill):
-        """All saves return None → exit 0, all four saves called."""
+        """All saves succeed → exit 0, all four saves called.
+
+        save_forecast_data is an unconverted sibling and still returns
+        None (success under `if ret is None:`); save_skill_metrics has
+        been converted (PP-051 P2) and returns True (success under
+        `if ret is False:`) via _setup_mocks' default.
+        """
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
@@ -448,9 +456,7 @@ class TestRecalcMonthly:
                     pd.DataFrame(),
                     None,
                 )
-                mocks[
-                    "file_writer"
-                ].save_monthly_skill_metrics.return_value = "Error: monthly write failed"
+                mocks["file_writer"].save_monthly_skill_metrics.return_value = False
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
@@ -770,3 +776,265 @@ class TestRecalcSeasonalLeadSelection:
                 assert exc_info.value.code == 0
                 calls = mocks["data_reader"].read_seasonal_forecasts.call_args_list
                 assert [call.kwargs["horizon_value"] for call in calls] == [0]
+
+
+def _install_real_file_writer(monkeypatch, keep_real):
+    """Swap the fully-mocked `src.file_writer` back to the REAL module, with
+    every save_* function NOT named in `keep_real` replaced by a harmless
+    no-op mock (return None).
+
+    Every test above this point (and everywhere else in this file) mocks out
+    `src.file_writer` wholesale via `sys.modules["src.file_writer"]`, so
+    `save_skill_metrics`/`save_monthly_skill_metrics`/
+    `save_quarterly_skill_metrics`/`save_seasonal_skill_metrics` never
+    actually run -- their real bool-return outcome-computation logic (the
+    thing PP-051 P2/P3 introduced, and the thing the out-of-loop review
+    found a defect in) is entirely bypassed. Tests only prove that
+    recalculate_skill_metrics.py's `if ret is False:` call-site correctly
+    reacts to a return value the TEST chose, not that the real function
+    chain produces that return value correctly.
+
+    This helper installs the REAL `file_writer` module (module singleton,
+    same object every other test file imports) so the skill-metrics save
+    function under test executes for real, while its unrelated siblings
+    (forecast-data saves, daily skill) stay inert -- they are not under
+    test here and would otherwise need a full realistic environment to not
+    raise. `monkeypatch.setattr` reverts automatically at test teardown, so
+    this does not leak into other tests sharing the same module object.
+
+    Uses the `_real_file_writer` module object captured at THIS test
+    module's collection time (before any test's `_setup_mocks` call has
+    poisoned `sys.modules["src.file_writer"]`) rather than doing a fresh
+    `import src.file_writer` here -- a fresh import inside a test would
+    just return the mock that `_setup_mocks` already cached under that
+    exact key, silently defeating this whole helper.
+    """
+    real_file_writer = _real_file_writer
+
+    for name in (
+        "save_forecast_data",
+        "save_monthly_forecast_data",
+        "save_quarterly_forecast_data",
+        "save_seasonal_forecast_data",
+        "save_daily_skill_metrics",
+    ):
+        if name not in keep_real:
+            monkeypatch.setattr(real_file_writer, name, MagicMock(return_value=None))
+    sys.modules["src"].file_writer = real_file_writer
+    sys.modules["src.file_writer"] = real_file_writer
+    return real_file_writer
+
+
+class TestRealWriterChainExitCode:
+    """Out-of-loop review follow-up (PP-051 P2/P3 defect fix): the existing
+    save_*_skill_metrics exit-code tests above mock the save_* function
+    itself to return `False` directly, so they cannot tell a correct
+    `if ret is False:` call-site apart from one that merely happens to also
+    treat a hardcoded `False` as an error (a reverted `if ret is None:`
+    predicate reading a bool it was never designed for routes `False` to
+    the error branch too, so both old and new tests stay green under that
+    single-line mutation).
+
+    These tests instead patch `api_writer._write_skill_metrics_to_api` --
+    the actual seam -- to return `WriteOutcome.FAILED`, and let the REAL
+    save_*_skill_metrics function (via `_install_real_file_writer`) compute
+    its own True/False return from that outcome. This proves the full
+    chain: writer outcome -> bool -> call-site predicate -> exit code, not
+    just that the call site reacts to a value the test invented.
+
+    Uses capsys (stderr), not caplog: recalculate_skill_metrics.py resets
+    the ROOT logger's handlers at import time, and this harness reloads the
+    module fresh via exec_module every test -- see the docstring on
+    TestRecalcQuarterlySeasonalSkillFailure.test_quarterly_failure_message_does_not_print_bare_bool
+    earlier in this file (analogous rationale; the console handler still
+    writes to stderr, which capsys captures).
+    """
+
+    def test_pentad_failed_outcome_causes_exit_1(self, mock_data, monkeypatch, tmp_path, capsys):
+        real_skill_df = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.4],
+            }
+        )
+        monkeypatch.setenv("ieasyforecast_intermediate_data_path", str(tmp_path))
+        monkeypatch.setenv("ieasyforecast_pentadal_skill_metrics_file", "skill_pentad.csv")
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "false")
+        with patch.dict(
+            os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD", "SAPPHIRE_API_ENABLED": "true"}
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, real_skill_df)
+                real_file_writer = _install_real_file_writer(
+                    monkeypatch, keep_real={"save_skill_metrics"}
+                )
+                real_api_writer = _real_api_writer
+                monkeypatch.setattr(real_api_writer, "SAPPHIRE_API_AVAILABLE", True)
+                monkeypatch.setattr(
+                    real_api_writer,
+                    "_write_skill_metrics_to_api",
+                    MagicMock(return_value=real_api_writer.WriteOutcome.FAILED),
+                )
+                assert real_file_writer.api_writer is real_api_writer
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["19999"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+                mocks["skill_metrics"].calculate_skill_metrics.assert_called_once()
+
+        stderr = capsys.readouterr().err
+        assert "PENTAD skill metrics save failed" in stderr
+
+    def test_monthly_failed_outcome_causes_exit_1(
+        self,
+        mock_data,
+        mock_skill,
+        mock_monthly_obs,
+        mock_monthly_forecasts,
+        mock_monthly_skill,
+        monkeypatch,
+        capsys,
+    ):
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "false")
+        with patch.dict(
+            os.environ, {"SAPPHIRE_PREDICTION_MODE": "MONTHLY", "SAPPHIRE_API_ENABLED": "true"}
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["data_reader"].read_monthly_observations.return_value = mock_monthly_obs
+                mocks["data_reader"].read_monthly_forecasts.return_value = mock_monthly_forecasts
+                mocks["skill_metrics"].calculate_monthly_skill_metrics.return_value = (
+                    mock_monthly_skill,
+                    pd.DataFrame(),
+                    None,
+                )
+                _install_real_file_writer(monkeypatch, keep_real={"save_monthly_skill_metrics"})
+                real_api_writer = _real_api_writer
+                monkeypatch.setattr(real_api_writer, "SAPPHIRE_API_AVAILABLE", True)
+                monkeypatch.setattr(
+                    real_api_writer,
+                    "_write_skill_metrics_to_api",
+                    MagicMock(return_value=real_api_writer.WriteOutcome.FAILED),
+                )
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+
+        stderr = capsys.readouterr().err
+        assert "Monthly skill metrics save failed" in stderr
+
+    def test_quarterly_failed_outcome_causes_exit_1(
+        self, mock_data, mock_skill, monkeypatch, capsys
+    ):
+        real_quarterly_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.4],
+            }
+        )
+        with patch.dict(
+            os.environ, {"SAPPHIRE_PREDICTION_MODE": "QUARTERLY", "SAPPHIRE_API_ENABLED": "true"}
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["skill_metrics"].calculate_quarterly_skill_metrics.return_value = (
+                    real_quarterly_skill,
+                    pd.DataFrame(),
+                    None,
+                )
+                _install_real_file_writer(monkeypatch, keep_real={"save_quarterly_skill_metrics"})
+                real_api_writer = _real_api_writer
+                monkeypatch.setattr(real_api_writer, "SAPPHIRE_API_AVAILABLE", True)
+                monkeypatch.setattr(
+                    real_api_writer,
+                    "_write_skill_metrics_to_api",
+                    MagicMock(return_value=real_api_writer.WriteOutcome.FAILED),
+                )
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["19999"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+
+        stderr = capsys.readouterr().err
+        assert "Quarterly skill metrics save failed" in stderr
+
+    def test_seasonal_failed_outcome_causes_exit_1(
+        self, mock_data, mock_skill, monkeypatch, tmp_path, capsys
+    ):
+        _set_long_term_env(monkeypatch, tmp_path, ["seasonal_april"])
+        real_seasonal_skill = pd.DataFrame(
+            {
+                "season_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.4],
+            }
+        )
+        with patch.dict(
+            os.environ, {"SAPPHIRE_PREDICTION_MODE": "SEASONAL", "SAPPHIRE_API_ENABLED": "true"}
+        ):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["skill_metrics"].calculate_seasonal_skill_metrics.return_value = (
+                    real_seasonal_skill,
+                    pd.DataFrame(),
+                    None,
+                )
+                _install_real_file_writer(monkeypatch, keep_real={"save_seasonal_skill_metrics"})
+                real_api_writer = _real_api_writer
+                monkeypatch.setattr(real_api_writer, "SAPPHIRE_API_AVAILABLE", True)
+                monkeypatch.setattr(
+                    real_api_writer,
+                    "_write_skill_metrics_to_api",
+                    MagicMock(return_value=real_api_writer.WriteOutcome.FAILED),
+                )
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["19999"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+
+        stderr = capsys.readouterr().err
+        assert "Seasonal skill metrics save failed" in stderr
