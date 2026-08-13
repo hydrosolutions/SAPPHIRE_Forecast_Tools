@@ -70,13 +70,14 @@ class WriteOutcome(Enum):
     A single bool cannot distinguish "nothing was attempted" from "the
     attempt failed" from "the attempt correctly found nothing to send" —
     conflating them makes a benign, documented configuration state (writing
-    disabled, client absent) indistinguishable from a genuine operational
-    failure. Only `FAILED` should ever cause a caller to treat the write as
-    a failure; every other member is a non-failure outcome.
+    disabled via SAPPHIRE_API_ENABLED=false) indistinguishable from a
+    genuine operational failure (a missing required dependency). Only
+    `FAILED` should ever cause a caller to treat the write as a failure;
+    every other member is a non-failure outcome.
     """
 
     WROTE = "wrote"  # records were sent and accepted
-    SKIPPED_BY_CONFIG = "skipped_by_config"  # client absent, or SAPPHIRE_API_ENABLED=false
+    SKIPPED_BY_CONFIG = "skipped_by_config"  # SAPPHIRE_API_ENABLED=false (operator opt-out)
     SKIPPED_NO_RECORDS = "skipped_no_records"  # nothing to write after filtering
     SKIPPED_NOT_DEPLOYED = "skipped_not_deployed"  # threshold endpoint not yet deployed (Stage 2)
     FAILED = "failed"  # readiness-check failure, or the write call raised
@@ -470,9 +471,9 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
 
     Returns:
         WriteOutcome: WROTE if records were sent and accepted;
-            SKIPPED_BY_CONFIG if the client is absent or
-            SAPPHIRE_API_ENABLED=false; SKIPPED_NO_RECORDS if nothing
-            remained to write after filtering; FAILED if the
+            SKIPPED_BY_CONFIG if SAPPHIRE_API_ENABLED=false;
+            SKIPPED_NO_RECORDS if nothing remained to write after
+            filtering; FAILED if the client is absent, or the
             readiness check failed. See `api_writer.WriteOutcome`.
     """
     # Validate inputs before any I/O
@@ -485,7 +486,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str, year: int
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping skill metrics API write")
-        return WriteOutcome.SKIPPED_BY_CONFIG
+        return WriteOutcome.FAILED
 
     # Check if API writing is enabled (default: enabled)
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
@@ -746,14 +747,15 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> Writ
 
     Returns:
         WriteOutcome: WROTE if records were sent and accepted;
-            SKIPPED_BY_CONFIG if the client is absent or
-            SAPPHIRE_API_ENABLED=false; SKIPPED_NO_RECORDS if there was
-            nothing to write; SKIPPED_NOT_DEPLOYED if the endpoint isn't
-            deployed yet (Stage 2 pending); FAILED if the readiness check
-            failed or the write call raised any other exception. Note:
-            client construction and the readiness check itself (above)
-            can still raise uncaught -- only the region from here down is
-            exception-protected. See `api_writer.WriteOutcome`.
+            SKIPPED_BY_CONFIG if SAPPHIRE_API_ENABLED=false;
+            SKIPPED_NO_RECORDS if there was nothing to write;
+            SKIPPED_NOT_DEPLOYED if the endpoint isn't deployed yet
+            (Stage 2 pending); FAILED if the client is absent, the
+            readiness check failed, or the write call raised any other
+            exception. Note: client construction and the readiness check
+            itself (above) can still raise uncaught -- only the region
+            from here down is exception-protected. See
+            `api_writer.WriteOutcome`.
     """
     if data is None or data.empty:
         logger.info("No threshold skill metrics to write to API")
@@ -763,7 +765,7 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> Writ
         logger.warning(
             "sapphire-api-client not installed, skipping threshold skill metrics API write"
         )
-        return WriteOutcome.SKIPPED_BY_CONFIG
+        return WriteOutcome.FAILED
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
