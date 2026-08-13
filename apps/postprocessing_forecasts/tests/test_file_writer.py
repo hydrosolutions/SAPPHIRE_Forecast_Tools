@@ -287,7 +287,8 @@ class TestSaveMonthlySkillMetrics:
         assert em_row["composition"] == "GBT, LR_Base"
 
     def test_empty_dataframe_guarded_no_write(self):
-        """Empty DataFrame is guarded: returns None and does NOT touch the CSV.
+        """Empty DataFrame is guarded: returns True (PP-051 P3, Contract 7 --
+        empty input is success, not a null signal) and does NOT touch the CSV.
 
         Mirrors save_quarterly/seasonal_skill_metrics. A transient empty read
         must not overwrite an existing monthly skill CSV empty (data loss).
@@ -314,7 +315,7 @@ class TestSaveMonthlySkillMetrics:
         ):
             result = file_writer.save_monthly_skill_metrics(data)
 
-        assert result is None
+        assert result is True
         mock_write.assert_not_called()
         # No CSV created by the guarded call.
         assert not os.path.exists(csv_path)
@@ -402,15 +403,179 @@ class TestSaveMonthlySkillMetrics:
 
     @patch("src.api_writer._write_skill_metrics_to_api")
     def test_csv_written_when_api_fails(self, mock_api_write, monthly_skill_data):
-        """CSV is still written to disk when API write raises."""
+        """CSV is still written to disk when API write raises -- and the
+        function still reports the API failure as False (PP-051 P3,
+        Contract 2: monthly's conditional CSV write is unaffected by the
+        API branch's outcome)."""
         mock_api_write.side_effect = RuntimeError("API connection refused")
         with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
-            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data)
 
         csv_path = os.path.join(str(self.tmp_path), "skill_monthly.csv")
         assert os.path.exists(csv_path)
         saved = pd.read_csv(csv_path, dtype={"code": str})
         assert len(saved) == 6
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_wrote_outcome_returns_true(self, mock_api_write, monthly_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.WROTE
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_by_config_outcome_returns_true(self, mock_api_write, monthly_skill_data):
+        """SAPPHIRE_API_ENABLED=false is a documented, benign deployment
+        mode -- the writer maps it to SKIPPED_BY_CONFIG internally, below
+        the SAPPHIRE_API_AVAILABLE gate. SAPPHIRE_API_AVAILABLE is pinned
+        True here so this is distinguishable from the missing-client case
+        (test_client_unavailable_returns_false below)."""
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_BY_CONFIG
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_no_records_outcome_returns_true(self, mock_api_write, monthly_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_NO_RECORDS
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_without_exception_returns_false(
+        self, mock_api_write, monthly_skill_data
+    ):
+        """Headline case: a directly-returned FAILED (e.g. a readiness-check
+        failure) with no exception raised must still surface as a failure --
+        the non-raising path a bare `if ret is None:` swallowed pre-fix."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_warn_returns_false(self, mock_api_write, monthly_skill_data):
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_ignore_returns_false(self, mock_api_write, monthly_skill_data):
+        """`ignore` mode suppresses _handle_api_write_error's logging only --
+        never the failure outcome. A raised write error still returns False
+        under ignore, same as under warn -- there is no downgrade step."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_under_ignore_returns_false(self, mock_api_write, monthly_skill_data):
+        """Second half of the no-downgrade proof: a directly-returned FAILED
+        (no exception -- e.g. a readiness-check failure) also stays False
+        under ignore mode, not just the raised-exception mechanism above."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_fail_mode_propagates(self, mock_api_write, monthly_skill_data):
+        """SAPPHIRE_API_FAILURE_MODE=fail is unchanged: the exception still
+        propagates uncaught, unaffected by the new True/False return
+        contract (Hard Contract 5)."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}),
+        ):
+            with pytest.raises(RuntimeError, match="API connection refused"):
+                file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+
+    def test_client_unavailable_returns_false(self, monthly_skill_data):
+        """A closed SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client,
+        a required dependency) is a genuine failure, not a benign config
+        skip -- the pre-gate default is FAILED, not SKIPPED_BY_CONFIG."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is False
+
+    def test_skipped_no_records_via_internal_filtering_returns_true(self):
+        """Non-empty input whose every row is excluded by the writer's own
+        lead-aware NaN-horizon_value filter -> WriteOutcome.SKIPPED_NO_RECORDS
+        internally -> True at this layer (a non-failure per Contract 7).
+        Exercises the REAL, unmocked _write_skill_metrics_to_api (only its
+        client factory is faked) -- mirrors the fixture pattern in
+        test_lead_aware_write_side_dedup.py. `month_in_year` itself stays
+        populated (this function's own `.astype(int)` cast would raise on
+        NaN there) -- the row-dropping filter this test targets operates on
+        the separate `horizon_value` column instead."""
+        data = pd.DataFrame(
+            {
+                "month_in_year": [6, 6],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "LR"],
+                "horizon_value": [float("nan"), float("nan")],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.8],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.85],
+                "mae": [2.0, 3.0],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.6],
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_SKILL_LEAD_AWARE": "true"}),
+            patch("src.api_writer._get_postprocessing_client", return_value=mock_client),
+        ):
+            result = file_writer.save_monthly_skill_metrics(data, year=2025)
+        mock_client.write_skill_metrics.assert_not_called()
+        assert result is True
+
+    def test_csv_unconfigured_warns_and_skips(self, monthly_skill_data):
+        """CSV write is conditional (Contract 2, unchanged by this phase):
+        when either env var is unset the write warns-and-skips rather than
+        raising -- distinct from pentad/decad's unconditional-and-raising
+        CSV path (P2), and must not be harmonised with it. The function
+        must still succeed via the API branch. SAPPHIRE_CONSISTENCY_CHECK
+        stays unset/false here (from the class's save_env fixture) to avoid
+        the separately-filed PP-053 UnboundLocalError hazard: `filepath` is
+        only bound inside `if csv_dir and csv_file:` yet is referenced
+        unconditionally by the SAPPHIRE_CONSISTENCY_CHECK branch below it."""
+        overrides = {
+            "ieasyforecast_intermediate_data_path": "",
+            "ieasyforecast_monthly_skill_metrics_file": "",
+        }
+        with (
+            patch.dict(os.environ, overrides),
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch(
+                "src.api_writer._write_skill_metrics_to_api",
+                return_value=api_writer.WriteOutcome.WROTE,
+            ),
+        ):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+
+        assert result is True
+        csv_path = os.path.join(str(self.tmp_path), "skill_monthly.csv")
+        assert not os.path.exists(csv_path)
 
 
 class TestSaveMonthlyForecastData:

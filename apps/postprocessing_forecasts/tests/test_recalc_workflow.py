@@ -114,7 +114,7 @@ def _setup_mocks(mock_data, mock_skill):
     mock_file_writer.save_forecast_data.return_value = None
     mock_file_writer.save_skill_metrics.return_value = True
     mock_file_writer.save_monthly_forecast_data.return_value = None
-    mock_file_writer.save_monthly_skill_metrics.return_value = None
+    mock_file_writer.save_monthly_skill_metrics.return_value = True
 
     # Quarterly/seasonal mocks
     mock_data_reader.read_quarterly_observations.return_value = pd.DataFrame()
@@ -454,9 +454,7 @@ class TestRecalcMonthly:
                     pd.DataFrame(),
                     None,
                 )
-                mocks[
-                    "file_writer"
-                ].save_monthly_skill_metrics.return_value = "Error: monthly write failed"
+                mocks["file_writer"].save_monthly_skill_metrics.return_value = False
 
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)

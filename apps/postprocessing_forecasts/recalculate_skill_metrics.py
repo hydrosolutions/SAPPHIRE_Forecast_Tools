@@ -359,11 +359,13 @@ def recalculate_skill_metrics():
                     errors.append(f"Monthly stale-tombstone invalidation failed: {_e}")
 
                 ret = file_writer.save_monthly_skill_metrics(monthly_skill, year=skill_metrics_year)
-                if ret is None:
-                    logger.info("Monthly skill metrics saved successfully.")
+                if ret is False:
+                    logger.error(
+                        "Monthly skill metrics API write failed — see log above for detail."
+                    )
+                    errors.append("Monthly skill metrics save failed — see log above for detail.")
                 else:
-                    logger.error(f"Error saving monthly skill metrics: {ret}")
-                    errors.append(f"Monthly skill metrics save failed: {ret}")
+                    logger.info("Monthly skill metrics saved successfully.")
 
             pt.log_most_recent_forecasts_monthly(monthly_joint)
 

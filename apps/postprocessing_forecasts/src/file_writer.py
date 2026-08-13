@@ -398,7 +398,7 @@ def save_skill_metrics(config, data: pd.DataFrame, year: int = None) -> bool:
     return outcome is not api_writer.WriteOutcome.FAILED
 
 
-def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
+def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None) -> bool:
     """Save monthly skill metrics to CSV + API.
 
     Follows the same pattern as save_pentadal/decadal_skill_metrics:
@@ -414,11 +414,24 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
             current calendar year.
 
     Returns:
-        None
+        bool: True unless the API write genuinely failed. A closed
+            SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client, a
+            required dependency) and a readiness-check failure or a
+            raised write exception (WriteOutcome.FAILED) are the only
+            failure cases. An empty/None input, a disabled write
+            (SAPPHIRE_API_ENABLED=false), and nothing left to write
+            after filtering are all non-failure and return True — "no
+            attempt was made" is never reported as a failure. The CSV
+            write stays conditional on both
+            ieasyforecast_intermediate_data_path and
+            ieasyforecast_monthly_skill_metrics_file being set — when
+            either is unset it warns and skips, it does not raise
+            (distinct from pentad/decad's unconditional-and-raising CSV
+            path).
     """
     if data is None or data.empty:
         logger.info("No monthly skill metrics to save")
-        return None
+        return True
 
     data = data.round(4)
 
@@ -445,11 +458,18 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
     else:
         logger.warning("Monthly skill metrics CSV path not configured, skipping CSV save")
 
+    # Pre-gate default: a closed SAPPHIRE_API_AVAILABLE gate means the
+    # required sapphire-api-client dependency is missing — a genuine
+    # failure, not a configuration choice. SAPPHIRE_API_ENABLED=false is
+    # handled *inside* the writer, below this gate, and maps to
+    # SKIPPED_BY_CONFIG there (PP-051 P0a correction).
+    outcome = api_writer.WriteOutcome.FAILED
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "month", _resolve_year(year))
+            outcome = api_writer._write_skill_metrics_to_api(data, "month", _resolve_year(year))
         except Exception as e:
-            fl._handle_api_write_error(e, "monthly skill metrics")
+            fl._handle_api_write_error(e, "monthly skill metrics")  # may re-raise under fail mode
+            outcome = api_writer.WriteOutcome.FAILED
 
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
@@ -479,7 +499,7 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
         else:
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
-    return None
+    return outcome is not api_writer.WriteOutcome.FAILED
 
 
 def save_monthly_forecast_data(simulated: pd.DataFrame):
