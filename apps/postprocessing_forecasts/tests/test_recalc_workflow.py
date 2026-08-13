@@ -830,9 +830,10 @@ class TestRealWriterChainExitCode:
     save_*_skill_metrics exit-code tests above mock the save_* function
     itself to return `False` directly, so they cannot tell a correct
     `if ret is False:` call-site apart from one that merely happens to also
-    treat a hardcoded `False` as an error (e.g. a reverted `if ret is None:`
-    predicate reading a bool it was never designed for -- see
-    test_reverted_predicate_mutation_is_caught below).
+    treat a hardcoded `False` as an error (a reverted `if ret is None:`
+    predicate reading a bool it was never designed for routes `False` to
+    the error branch too, so both old and new tests stay green under that
+    single-line mutation).
 
     These tests instead patch `api_writer._write_skill_metrics_to_api` --
     the actual seam -- to return `WriteOutcome.FAILED`, and let the REAL
@@ -844,9 +845,9 @@ class TestRealWriterChainExitCode:
     Uses capsys (stderr), not caplog: recalculate_skill_metrics.py resets
     the ROOT logger's handlers at import time, and this harness reloads the
     module fresh via exec_module every test -- see the docstring on
-    TestSaveQuarterlySkillMetrics.test_quarterly_failure_message_does_not_print_bare_bool
-    in test_file_writer.py... (analogous rationale; the console handler
-    still writes to stderr, which capsys captures).
+    TestRecalcQuarterlySeasonalSkillFailure.test_quarterly_failure_message_does_not_print_bare_bool
+    earlier in this file (analogous rationale; the console handler still
+    writes to stderr, which capsys captures).
     """
 
     def test_pentad_failed_outcome_causes_exit_1(self, mock_data, monkeypatch, tmp_path, capsys):
