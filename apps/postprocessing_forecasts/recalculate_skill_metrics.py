@@ -430,11 +430,13 @@ def recalculate_skill_metrics():
                 ret = file_writer.save_quarterly_skill_metrics(
                     quarterly_skill, year=skill_metrics_year
                 )
-                if ret is None:
-                    logger.info("Quarterly skill metrics saved successfully.")
+                if ret is False:
+                    logger.error(
+                        "Quarterly skill metrics API write failed — see log above for detail."
+                    )
+                    errors.append("Quarterly skill metrics save failed — see log above for detail.")
                 else:
-                    logger.error(f"Error saving quarterly skill metrics: {ret}")
-                    errors.append(f"Quarterly skill metrics save failed: {ret}")
+                    logger.info("Quarterly skill metrics saved successfully.")
 
         if prediction_mode in ["SEASONAL", "ALL"] and _long_term_horizon_supported("season"):
             current_year = dt.date.today().year
@@ -513,11 +515,13 @@ def recalculate_skill_metrics():
                 ret = file_writer.save_seasonal_skill_metrics(
                     seasonal_skill, year=skill_metrics_year
                 )
-                if ret is None:
-                    logger.info("Seasonal skill metrics saved successfully.")
+                if ret is False:
+                    logger.error(
+                        "Seasonal skill metrics API write failed — see log above for detail."
+                    )
+                    errors.append("Seasonal skill metrics save failed — see log above for detail.")
                 else:
-                    logger.error(f"Error saving seasonal skill metrics: {ret}")
-                    errors.append(f"Seasonal skill metrics save failed: {ret}")
+                    logger.info("Seasonal skill metrics saved successfully.")
 
         if prediction_mode in ["DAILY", "ALL"]:
             current_year = dt.date.today().year

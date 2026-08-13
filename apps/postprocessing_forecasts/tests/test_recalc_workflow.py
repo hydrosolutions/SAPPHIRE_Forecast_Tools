@@ -132,9 +132,9 @@ def _setup_mocks(mock_data, mock_skill):
         None,
     )
     mock_file_writer.save_quarterly_forecast_data.return_value = None
-    mock_file_writer.save_quarterly_skill_metrics.return_value = None
+    mock_file_writer.save_quarterly_skill_metrics.return_value = True
     mock_file_writer.save_seasonal_forecast_data.return_value = None
-    mock_file_writer.save_seasonal_skill_metrics.return_value = None
+    mock_file_writer.save_seasonal_skill_metrics.return_value = True
 
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
@@ -545,6 +545,141 @@ class TestRecalcMonthly:
                 # Should still exit 0 (empty is not an error)
                 assert exc_info.value.code == 0
                 mocks["skill_metrics"].calculate_monthly_skill_metrics.assert_called_once()
+
+
+class TestRecalcQuarterlySeasonalSkillFailure:
+    """PP-051 P1: save_quarterly_skill_metrics / save_seasonal_skill_metrics
+    now return True/False (Contract 7) instead of bare None. Their call
+    sites must convert that into the shared errors-list/exit-code
+    mechanism via the pinned `if ret is False:` predicate (Contract 10) --
+    not the old, dead `if ret is None:` branch. These two functions are
+    API-only (no CSV fallback), so a swallowed failure here was total loss
+    of that recalc's output for the horizon."""
+
+    def test_quarterly_save_failure_causes_exit_1(self, mock_data, mock_skill):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "QUARTERLY"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_quarterly_skill_metrics.return_value = False
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+
+    def test_quarterly_save_success_exit_0(self, mock_data, mock_skill):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "QUARTERLY"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_quarterly_skill_metrics.return_value = True
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+    def test_quarterly_failure_message_does_not_print_bare_bool(
+        self, mock_data, mock_skill, capsys
+    ):
+        """Contract 9: the logged error and the errors-list entry must
+        reference the mode/horizon and point at the detail logged one
+        level down, not interpolate the discarded bool directly (a bare
+        `False` has no diagnostic value on the line an operator reads
+        first).
+
+        Uses capsys (stderr), not caplog: recalculate_skill_metrics.py
+        does `logger.handlers = []` on the ROOT logger at import time
+        (its own logging setup, unrelated to this fix) -- since this test
+        harness reloads the module fresh per test via exec_module, that
+        wipes caplog's handler every time. The console handler it installs
+        instead still writes to stderr, which capsys captures.
+        """
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "QUARTERLY"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_quarterly_skill_metrics.return_value = False
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit):
+                    module.recalculate_skill_metrics()
+
+        stderr_lines = [
+            line for line in capsys.readouterr().err.splitlines() if "quarterly" in line.lower()
+        ]
+        assert stderr_lines, "expected a quarterly-skill-metrics error log line"
+        assert not any(line.strip().endswith("False") for line in stderr_lines)
+
+    def test_seasonal_save_failure_causes_exit_1(
+        self, mock_data, mock_skill, monkeypatch, tmp_path
+    ):
+        # SEASONAL mode unconditionally calls _supported_seasonal_issue_leads()
+        # (not flag-gated), which reads the long-term configuration env vars --
+        # needs the same setup as TestRecalcSeasonalLeadSelection below.
+        _set_long_term_env(monkeypatch, tmp_path, ["seasonal_april"])
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "SEASONAL"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_seasonal_skill_metrics.return_value = False
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+
+    def test_seasonal_save_success_exit_0(self, mock_data, mock_skill, monkeypatch, tmp_path):
+        _set_long_term_env(monkeypatch, tmp_path, ["seasonal_april"])
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "SEASONAL"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_seasonal_skill_metrics.return_value = True
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+    def test_seasonal_failure_message_does_not_print_bare_bool(
+        self, mock_data, mock_skill, monkeypatch, tmp_path, capsys
+    ):
+        """Contract 9, seasonal side of the same check (see the quarterly
+        test above for why capsys is used instead of caplog)."""
+        _set_long_term_env(monkeypatch, tmp_path, ["seasonal_april"])
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "SEASONAL"}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks["file_writer"].save_seasonal_skill_metrics.return_value = False
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+                module._read_station_codes = MagicMock(return_value=["10001"])
+
+                with pytest.raises(SystemExit):
+                    module.recalculate_skill_metrics()
+
+        stderr_lines = [
+            line for line in capsys.readouterr().err.splitlines() if "seasonal" in line.lower()
+        ]
+        assert stderr_lines, "expected a seasonal-skill-metrics error log line"
+        assert not any(line.strip().endswith("False") for line in stderr_lines)
 
 
 class TestRecalcSeasonalLeadSelection:

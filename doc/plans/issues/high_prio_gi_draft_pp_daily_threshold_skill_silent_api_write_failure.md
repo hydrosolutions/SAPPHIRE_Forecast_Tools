@@ -27,6 +27,38 @@ Both functions in scope are **API-only, no CSV fallback** — like PP-051's
 quarterly/seasonal, a swallowed failure here is total data loss for that
 recalc's daily output, not a degraded one.
 
+**This draft must also carry PP-051's corrected D1/D2/D3 mapping (P0b), not the
+mapping an earlier revision of PP-051's plan had.** `save_daily_skill_metrics`
+gates on `api_writer.SAPPHIRE_API_AVAILABLE` alone, exactly like the four
+functions PP-051's P1-P3 convert — the FDC branch at `file_writer.py:614`
+(call at `:616`) and the threshold branch at `:624` (call at `:626`). The
+**production fix for the daily path is the same pre-gate default**: the
+outcome variable for each branch must initialize to
+`api_writer.WriteOutcome.FAILED` before its `if
+api_writer.SAPPHIRE_API_AVAILABLE:` check, not `SKIPPED_BY_CONFIG` — because
+the only thing that closes that gate is a missing required dependency
+(`sapphire-api-client`, `pyproject.toml:27`), which is a failure, not an
+operator setting; `SAPPHIRE_API_ENABLED=false` never closes this gate at all,
+it is checked inside the writer functions themselves and always returns
+`SKIPPED_BY_CONFIG` there regardless of the pre-gate default. **Until this
+draft implements that pre-gate default, a DAILY or ALL recalc run can exit
+`0` after writing no daily metrics at all when `sapphire-api-client` is not
+installed** — the same silent-success gap PP-051's P1-P3 close for the other
+four `save_*` functions, still open for this one. `ignore` mode must not
+downgrade the outcome either (D3): `forecast_library.py:110-116` makes
+`ignore` silent relative to `warn` only — it suppresses
+`_handle_api_write_error`'s logging, not failure accounting — so a `FAILED`
+outcome for either branch stays `FAILED` under `warn` and `ignore` alike,
+only `fail` re-raises. See
+`doc/plans/working/pp051_p0a_client_absent_mapping_fix.md` for the full
+correction this note carries forward, and
+`doc/plans/working/pp051_recalc_write_failure_plan.md` §2 Contract 7 and its
+P1 phase entry (§4) for the exact call-site code shape (initialize before the
+gate, capture the writer's return value inside the `try`, explicitly assign
+`FAILED` in the `except` block after calling
+`fl._handle_api_write_error(e, ...)`, no downgrade step) — do not re-derive
+it independently, copy that shape for both the FDC and threshold branches.
+
 ## The four blockers that made P4 unexecutable as specified
 
 1. **Files-list vs. acceptance-criteria contradiction.** P4's `Files` list

@@ -637,7 +637,7 @@ def save_daily_skill_metrics(
 # ---------------------------------------------------------------------------
 
 
-def save_quarterly_skill_metrics(data: pd.DataFrame, year: int = None):
+def save_quarterly_skill_metrics(data: pd.DataFrame, year: int = None) -> bool:
     """Save quarterly skill metrics to API.
 
     API-only — no CSV output for quarterly metrics.
@@ -648,10 +648,20 @@ def save_quarterly_skill_metrics(data: pd.DataFrame, year: int = None):
             accuracy, mae, n_pairs, crps, composition (optional).
         year: Target year for API skill metric dates. Defaults to
             current calendar year.
+
+    Returns:
+        bool: True unless the API write genuinely failed. A closed
+            SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client, a
+            required dependency) and a readiness-check failure or a
+            raised write exception (WriteOutcome.FAILED) are the only
+            failure cases. An empty/None input, a disabled write
+            (SAPPHIRE_API_ENABLED=false), and nothing left to write
+            after filtering are all non-failure and return True — "no
+            attempt was made" is never reported as a failure.
     """
     if data is None or data.empty:
         logger.info("No quarterly skill metrics to save")
-        return None
+        return True
 
     data = data.round(4)
 
@@ -663,16 +673,23 @@ def save_quarterly_skill_metrics(data: pd.DataFrame, year: int = None):
 
     write_diagnostics.diagnose_skill_metrics(data, "quarter", "quarterly skill metrics")
 
+    # Pre-gate default: a closed SAPPHIRE_API_AVAILABLE gate means the
+    # required sapphire-api-client dependency is missing — a genuine
+    # failure, not a configuration choice. SAPPHIRE_API_ENABLED=false is
+    # handled *inside* the writer, below this gate, and maps to
+    # SKIPPED_BY_CONFIG there (PP-051 P0a correction).
+    outcome = api_writer.WriteOutcome.FAILED
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "quarter", _resolve_year(year))
+            outcome = api_writer._write_skill_metrics_to_api(data, "quarter", _resolve_year(year))
         except Exception as e:
-            fl._handle_api_write_error(e, "quarterly skill metrics")
+            fl._handle_api_write_error(e, "quarterly skill metrics")  # may re-raise under fail mode
+            outcome = api_writer.WriteOutcome.FAILED
 
-    return None
+    return outcome is not api_writer.WriteOutcome.FAILED
 
 
-def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None):
+def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None) -> bool:
     """Save seasonal skill metrics to API.
 
     API-only — no CSV output for seasonal metrics.
@@ -683,10 +700,20 @@ def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None):
             accuracy, mae, n_pairs, crps, composition (optional).
         year: Target year for API skill metric dates. Defaults to
             current calendar year.
+
+    Returns:
+        bool: True unless the API write genuinely failed. A closed
+            SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client, a
+            required dependency) and a readiness-check failure or a
+            raised write exception (WriteOutcome.FAILED) are the only
+            failure cases. An empty/None input, a disabled write
+            (SAPPHIRE_API_ENABLED=false), and nothing left to write
+            after filtering are all non-failure and return True — "no
+            attempt was made" is never reported as a failure.
     """
     if data is None or data.empty:
         logger.info("No seasonal skill metrics to save")
-        return None
+        return True
 
     data = data.round(4)
 
@@ -698,13 +725,20 @@ def save_seasonal_skill_metrics(data: pd.DataFrame, year: int = None):
 
     write_diagnostics.diagnose_skill_metrics(data, "season", "seasonal skill metrics")
 
+    # Pre-gate default: a closed SAPPHIRE_API_AVAILABLE gate means the
+    # required sapphire-api-client dependency is missing — a genuine
+    # failure, not a configuration choice. SAPPHIRE_API_ENABLED=false is
+    # handled *inside* the writer, below this gate, and maps to
+    # SKIPPED_BY_CONFIG there (PP-051 P0a correction).
+    outcome = api_writer.WriteOutcome.FAILED
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "season", _resolve_year(year))
+            outcome = api_writer._write_skill_metrics_to_api(data, "season", _resolve_year(year))
         except Exception as e:
-            fl._handle_api_write_error(e, "seasonal skill metrics")
+            fl._handle_api_write_error(e, "seasonal skill metrics")  # may re-raise under fail mode
+            outcome = api_writer.WriteOutcome.FAILED
 
-    return None
+    return outcome is not api_writer.WriteOutcome.FAILED
 
 
 def save_quarterly_forecast_data(simulated: pd.DataFrame):

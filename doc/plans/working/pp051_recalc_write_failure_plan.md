@@ -142,28 +142,53 @@ only, not a caller requiring conversion in any phase below.
 
 **Why the second revision's fix was wrong, and why it was not merely incomplete:** that revision kept a
 single bool per `save_*` function and said to initialize it (`api_ok = False`) *before* the
-`if api_writer.SAPPHIRE_API_AVAILABLE:` gate, so a closed gate would read as failure. But a closed gate
-(`SAPPHIRE_API_AVAILABLE` false, i.e. `sapphire_api_client` not installed) and a disabled write
-(`SAPPHIRE_API_ENABLED=false`) are **not failures** — both are documented, supported deployment
-configurations (`doc/configuration.md:159`; `doc/plans/sapphire_api_integration_plan.md:283,321` —
-local dev and the documented emergency rollback path both run with `SAPPHIRE_API_ENABLED=false`). Under
-that fix, a recalc run in either configuration would report `False` for every mode, every time, and
-`sys.exit(1)` on a run where the CSV write succeeded and nothing was actually wrong — a **worse** bug
-than the one being fixed, because it would fire on every routine run of a supported mode rather than
-only on genuine, intermittent failures. The LR-007 precedent this plan was modeled on gets this right:
-it initializes `api_ok = True` (`forecast_library.py:3973`), the opposite of what the second revision
-prescribed.
+`if api_writer.SAPPHIRE_API_AVAILABLE:` gate, so a closed gate would read as failure. A round-2 review
+rejected that prescription on the grounds that it would break *both* a closed gate
+(`SAPPHIRE_API_AVAILABLE` false, i.e. `sapphire_api_client` not installed) *and* a disabled write
+(`SAPPHIRE_API_ENABLED=false`), treating both as "not failures" and both as "documented, supported
+deployment configurations" (`doc/configuration.md:159`; `doc/plans/sapphire_api_integration_plan.md:283,321`
+— local dev and the documented emergency rollback path both run with `SAPPHIRE_API_ENABLED=false`).
+
+**Correction (this revision, PP-051 P0b): that rejection was only half right, and this plan does not
+repeat it.** Only `SAPPHIRE_API_ENABLED=false` is a documented, supported deployment configuration — a
+missing `sapphire-api-client` package is documented nowhere as one. `SAPPHIRE_API_AVAILABLE` is set
+**only** by whether that required dependency's import succeeded (`api_writer.py:88-96`); it is not an
+operator setting, and `sapphire-api-client` is a hard git-pinned required dependency
+(`pyproject.toml:27`), not an optional extra. So a broken installation being read as a deliberate,
+benign choice is itself the silent-success failure mode this plan exists to fix — reintroduced by an
+earlier revision's own fix, in the case that most resembles a deployment accident. The two conditions
+are separable at the gate: every `save_*` gates on `SAPPHIRE_API_AVAILABLE` alone
+(`file_writer.py:339/341, 429/431, 614/616, 624/626, 666/668, 701/703`); `SAPPHIRE_API_ENABLED` is
+checked **inside** the writers (`api_writer.py:492`, `:773`), strictly after the gate. The two conditions
+never share a code path, so they can — and must — carry different outcomes: a pre-gate `False`/`FAILED`
+default is wrong for `SAPPHIRE_API_ENABLED=false` (which never closes the gate, so a pre-gate default
+never applies to it — the writer's own return value, `SKIPPED_BY_CONFIG`, always governs instead) but
+correct for client absence (which does close the gate, and has no other signal path once closed). Under
+the second revision's fix, a recalc run with `SAPPHIRE_API_ENABLED=false` (client present, writing
+intentionally off) would still report `False` and `sys.exit(1)` on *every* routine run of that supported
+mode — **not because of the pre-gate default** (irrelevant here, the gate is open) **but because the
+second revision left the writer itself returning a single bool that conflated "disabled" with
+"genuinely failed"**, so once the gate opened, the writer's own conflated `False` overwrote whatever the
+pre-gate default had been. That is a **worse** bug than the one being fixed, because it would fire every
+time rather than only on genuine, intermittent failures; that half of the round-2 rejection stands, and
+it is exactly what this revision's `WriteOutcome` split (Contract 7) fixes at the writer layer, separate
+from the pre-gate-default question. The LR-007 precedent this
+plan was modeled on gets the disabled-write case right: it initializes `api_ok = True`
+(`forecast_library.py:3973`) — correct for `SAPPHIRE_API_ENABLED=false`, and, as it happens, also not in
+conflict with treating client absence as failure, since LR-007's own writer has the same
+gate-vs.-disabled separation.
 
 **The owner's chosen fix (this revision): stop collapsing distinct outcomes into one bool at the
 source.** `_write_skill_metrics_to_api` and `_write_threshold_skill_metrics_to_api` each conflate up to
-five outcomes into a single `True`/`False`. Only one of those — the readiness-check failing, or the
-underlying HTTP call raising — is a genuine failure. The rest (client absent, writing disabled, nothing
-to write, and for the threshold writer specifically, the Stage-2-not-deployed cases) are deliberate or
-benign and must never be reported as failure. P0 (new, below) changes both functions' return type from
+five outcomes into a single `True`/`False`. Genuine failures — the readiness-check failing, the
+underlying HTTP call raising, **and client absence** (corrected in this revision; see above) — must map
+to `FAILED`. The rest — writing disabled (`SAPPHIRE_API_ENABLED=false`), nothing to write, and for the
+threshold writer specifically, the Stage-2-not-deployed cases — are deliberate or benign and must never
+be reported as failure. P0 changes both functions' return type from
 `bool` to an explicit `WriteOutcome` (defined in full in §2 Contract 7) that names which of these
 happened, so every later phase — which still returns a plain bool from its `save_*` function to
 preserve the existing `errors`-list aggregation (Hard Contract 4) — maps that outcome down to `True`
-(success) for everything except the one genuinely-failed case.
+(success) for everything except the `FAILED` case.
 
 ### 1b. Asymmetry in `save_skill_metrics` (pentad/decad) — accepted, not fixed here; one mechanism correction
 
@@ -249,11 +274,26 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
    ```
    class WriteOutcome(Enum):
        WROTE = "wrote"                          # records were sent and accepted
-       SKIPPED_BY_CONFIG = "skipped_by_config"   # client absent, or SAPPHIRE_API_ENABLED=false
+       SKIPPED_BY_CONFIG = "skipped_by_config"   # SAPPHIRE_API_ENABLED=false — ONLY this; not client-absent
        SKIPPED_NO_RECORDS = "skipped_no_records" # nothing to write after filtering
        SKIPPED_NOT_DEPLOYED = "skipped_not_deployed"  # threshold endpoint not yet deployed (Stage 2)
-       FAILED = "failed"                         # readiness-check failure, or the write call raised
+       FAILED = "failed"                         # client absent, readiness-check failure, or the write call raised
    ```
+
+   **Correction (this pass, PP-051 P0b): client absence is `FAILED`, not `SKIPPED_BY_CONFIG`.**
+   `SAPPHIRE_API_AVAILABLE` is set **only** by whether the `sapphire_api_client` import succeeded
+   (`api_writer.py:88-96`) — it is not an operator setting. `sapphire-api-client` is a **required**
+   dependency (a hard git pin, `pyproject.toml:27`, not an optional extra). The documented CSV-only
+   deployment mode is `SAPPHIRE_API_ENABLED=false` (`doc/configuration.md:159`); a missing package is
+   documented nowhere as supported. Each `save_*` gates on `SAPPHIRE_API_AVAILABLE` **alone**
+   (`file_writer.py:339/341, 429/431, 614/616, 624/626, 666/668, 701/703`) — the **only** thing that
+   closes that gate is a missing required dependency, which is a failure. `SAPPHIRE_API_ENABLED=false`
+   does **not** close that gate — it reaches the writer, which returns `SKIPPED_BY_CONFIG`. So mapping
+   client-absent to `FAILED` cannot misreport CSV-only mode. An earlier pass of this document had a
+   `SKIPPED_BY_CONFIG` mapping for client-absent below and a matching pre-gate `SKIPPED_BY_CONFIG`
+   default in Contract 7, P1, P2, and P3 — both are wrong for the same reason and are corrected
+   throughout this revision; see the corrected §5 bullet for why an earlier round-2 review's rejection
+   of a `FAILED`-before-the-gate default does not apply here.
 
    **Member names are pinned, not illustrative — do not rename.** P1-P5 hardcode
    `WriteOutcome.SKIPPED_BY_CONFIG`, `FAILED`, and `SKIPPED_NOT_DEPLOYED` verbatim in their agent prompts
@@ -266,10 +306,17 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
    — only the return statements convert):
    - Invalid `horizon_type` (`:456-460`) — unchanged, still `raise ValueError` (a programming error, not
      an outcome).
-   - `SAPPHIRE_API_AVAILABLE` false (`:462-464`) → `SKIPPED_BY_CONFIG`.
-   - `SAPPHIRE_API_ENABLED` not `"true"` (`:467-470`) → `SKIPPED_BY_CONFIG`.
-   - `client.readiness_check()` false (`:478-480`) → `FAILED`. This is one of the two genuine-failure
-     paths — do not fold it into a `SKIPPED_*` member.
+   - `SAPPHIRE_API_AVAILABLE` false (verified current line `:487-489`, corrected from an earlier
+     revision's `:462-464`) → `FAILED`. **Correction (P0b): not `SKIPPED_BY_CONFIG`** — client absence
+     is a missing required dependency, not a configuration choice; see the correction note above the
+     enum block.
+   - `SAPPHIRE_API_ENABLED` not `"true"` (verified current line `:492-495`, corrected from an earlier
+     revision's `:467-470`) → `SKIPPED_BY_CONFIG`. Unchanged — this is the only branch this member
+     covers.
+   - `client.readiness_check()` false (verified current line `:503-505`, corrected from an earlier
+     revision's `:478-480`) → `FAILED`. This is one of **three** genuine-failure paths (client absent,
+     readiness-check false, or the write call raising) — do not fold any of them into a `SKIPPED_*`
+     member.
    - Zero records after filtering (`:706-708`) → `SKIPPED_NO_RECORDS`. **Do not change this branch's
      *trigger* condition** (out of this plan's owner-locked scope) — only its *return value* converts,
      from `False` to `SKIPPED_NO_RECORDS`. **Exactly 3 existing tests are in scope for this rename, all in
@@ -287,10 +334,16 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
    PP-051-adjacent gap the review flagged: **this function has two self-documented EXPECTED `False`
    returns that must not become `FAILED`**):
    - `data is None or data.empty` (top-of-function guard) → `SKIPPED_NO_RECORDS`.
-   - `SAPPHIRE_API_AVAILABLE` false, `SAPPHIRE_API_ENABLED` not `"true"`, or `client is None` → all
-     `SKIPPED_BY_CONFIG`.
-   - `client.readiness_check()` false → `FAILED` (the other genuine-failure path, same reasoning as
-     above).
+   - `SAPPHIRE_API_AVAILABLE` false → `FAILED`. **Correction (P0b): not `SKIPPED_BY_CONFIG`** — same
+     reasoning as `_write_skill_metrics_to_api` above, client absence is a missing required dependency.
+   - `SAPPHIRE_API_ENABLED` not `"true"`, or `client is None` → both `SKIPPED_BY_CONFIG`. (`client is
+     None` here is defensive/unreachable in practice once `SAPPHIRE_API_AVAILABLE` has already been
+     confirmed `True` two branches above — `_get_postprocessing_client()` only returns `None` when the
+     client package is absent — but it is left mapped to `SKIPPED_BY_CONFIG`, not `FAILED`, so it never
+     silently drifts to the wrong member if that invariant ever changes.)
+   - `client.readiness_check()` false → `FAILED` (another genuine-failure path, same reasoning as
+     above — there are three for this function too: client absent, readiness-check false, or the HTTP
+     call raising and being caught by the outer `except`, below).
    - Zero records after mapping (`if not records:`) → `SKIPPED_NO_RECORDS`.
    - `AttributeError` from `client.write_threshold_skill_metrics(...)` (`:809-814`, comment: "client
      does not support write_threshold_skill_metrics yet (Stage 2 pending)") → **`SKIPPED_NOT_DEPLOYED`,
@@ -317,54 +370,73 @@ State these explicitly in every phase's agent prompt — cite them, don't restat
      to the same non-failure outcome at the `save_*`/exit-code layer (see mapping below), so this
      distinction costs nothing at the exit-code layer and only adds clarity at the log layer.
 
-   **`SAPPHIRE_API_FAILURE_MODE=ignore` (`forecast_library.py:82-92`, tail at `:114-116` — corrected from
-   an earlier revision's `:113-116`; `:113` is the fail-mode bare `raise`, the warn/ignore tail is
-   `:114-116`) — the design
-   must state how this interacts with the outcome, and — corrected in this pass — must be consulted on
-   BOTH paths that can produce `FAILED`, not just the raising one.** A prior version of this contract
-   placed the `ignore` check exclusively inside the exception-handling branch, so a writer that returns
-   `FAILED` **without raising** (e.g. `client.readiness_check()` returning `False`, mapped directly at
-   `api_writer.py:478-480`) never reached any `except` and therefore never consulted
-   `fl._get_api_failure_mode()` at all. Result: under `ignore`, a readiness-check failure would still exit
-   1 while a raised write error correctly exited 0 — the same setting producing opposite outcomes, and
-   readiness failure (the API being down) is the *common* case, so `ignore` would fail silence exactly
-   where operators need it most. `_handle_api_write_error` is **not modified by this plan** (Hard Contract
-   5) — it already fully embodies `SAPPHIRE_API_FAILURE_MODE` semantics (`fail` re-raises, `warn` logs and
-   continues, `ignore` silently continues) for the exception path, and stays that way. The `WriteOutcome`
-   conversion happens entirely at the call site, in `file_writer.py`, which already imports
-   `forecast_library as fl` and can therefore call the existing `fl._get_api_failure_mode()` (also not
-   modified):
+   **`SAPPHIRE_API_FAILURE_MODE` and the outcome — corrected in this pass (P0b/D3), superseding two
+   prior corrections to this same passage.** An earlier revision of this contract had a downgrade step
+   that converted `FAILED` to `SKIPPED_BY_CONFIG` under `ignore` mode, and a still-earlier revision of
+   that downgrade only checked `fl._get_api_failure_mode()` inside the exception-handling branch — so a
+   writer that returned `FAILED` **without raising** (e.g. `client.readiness_check()` returning `False`,
+   mapped directly at `api_writer.py:503-505`, corrected from an earlier revision's `:478-480`) never
+   reached any `except` and therefore never consulted `fl._get_api_failure_mode()` at all, producing the
+   same setting yielding opposite outcomes depending on which mechanism failed. **That entire downgrade
+   is removed now — not merely relocated to check both paths consistently.**
+   `forecast_library.py:110-116` makes `ignore` silent **relative to `warn` only**: it suppresses
+   `_handle_api_write_error`'s logging, not failure accounting. `fl._get_api_failure_mode()` does not
+   need to be consulted anywhere in this call-site pattern to determine the outcome, because the outcome
+   no longer depends on the failure mode at all — a `FAILED` outcome, however produced, stays `FAILED`
+   under `warn` and `ignore` alike. The failure mode still matters exactly where it always has: inside
+   `_handle_api_write_error` itself (`forecast_library.py:82-116`, **not modified by this plan**, Hard
+   Contract 5), which decides whether a raised exception re-raises (`fail`), logs and continues (`warn`),
+   or silently continues (`ignore`). The `WriteOutcome` conversion at the call site in `file_writer.py`
+   does not need to call `fl._get_api_failure_mode()` at all — only `_handle_api_write_error` does,
+   unchanged:
    - The call-site pattern for every `save_*` function's API-write block becomes: initialize the
-     outcome to `SKIPPED_BY_CONFIG` (the correct default when the gate never opens — this is the fix for
-     what the second revision got backwards, since a closed gate is a configuration state, not a
-     failure); if the gate is open, assign the outcome from the writer's **return value** (previously
+     outcome to `FAILED` before the `if api_writer.SAPPHIRE_API_AVAILABLE:` gate. **This is the
+     corrected default (P0b) — an earlier pass of this document initialized to `SKIPPED_BY_CONFIG`
+     here, which is wrong.** Each `save_*` gates on `SAPPHIRE_API_AVAILABLE` **alone**
+     (`file_writer.py:339/341, 429/431, 614/616, 624/626, 666/668, 701/703`); the **only** thing that
+     closes that gate is a missing required dependency, which is a failure. `SAPPHIRE_API_ENABLED=false`
+     does **not** close that gate — it reaches the writer, which returns `SKIPPED_BY_CONFIG` (the enum
+     mapping above). So initializing to `FAILED` before the gate cannot misreport CSV-only mode. **A
+     round-2 review previously rejected this exact `FAILED`-before-the-gate (there, `False`-before-the-
+     gate) initialization on the grounds that it would break *both* client-absent *and*
+     `SAPPHIRE_API_ENABLED=false` — that rejection was only half right: only client-absent is
+     gate-affected, `SAPPHIRE_API_ENABLED=false` always reaches the writer regardless of the pre-gate
+     default. Do not re-reject this initialization on that now-corrected premise; see §5 for the full
+     correction.** If the gate is open, assign the outcome from the writer's **return value** (previously
      discarded, §1a) inside the `try`. If the `try` raises, call `fl._handle_api_write_error(e, ...)` as
      today (unchanged), **and then, in the same `except` block, explicitly assign the outcome variable to
-     `FAILED`** — this is the literal line three prior revisions of this plan left unstated, and its
-     absence is what would leave the pre-gate `SKIPPED_BY_CONFIG` initialization standing after the call
-     returns, so a genuinely-raised write error reads as non-failure:
+     `FAILED`** — this is the literal line three prior revisions of this plan left unstated. With the
+     pre-gate default now `FAILED`, an un-assigned outcome after a raise would *already* read as `FAILED`
+     by coincidence of the default — assign it explicitly anyway, so the correctness of the exception
+     path does not depend on an accident of initialization order:
      ```python
      except Exception as e:
          fl._handle_api_write_error(e, "<description>")   # may re-raise under fail mode
          outcome = api_writer.WriteOutcome.FAILED          # <-- this line, currently unstated
      ```
      Under `warn`/`ignore` `_handle_api_write_error` does not re-raise, so execution reaches this
-     assignment and then the same post-processing step described next; under `fail` it re-raises and the
-     function never reaches either the assignment or that step, so Hard Contract 5 holds without
-     special-casing. **Single, uniform post-processing step applied to the resulting outcome regardless of
-     which mechanism produced it (returned directly, e.g. a readiness-check failure, OR assigned in the
-     `except` block above):** if the outcome is `FAILED` and `fl._get_api_failure_mode() == "ignore"`,
-     downgrade it to `SKIPPED_BY_CONFIG`; otherwise leave it as `FAILED`. This is what makes `ignore` mode
-     behave identically for both failure mechanisms — the entire point of this correction.
-   - **Justification for reusing `SKIPPED_BY_CONFIG` rather than adding an `IGNORED` member:** `ignore`
-     mode is itself an operator configuration choice to make write outcomes invisible to the exit code —
-     the same category as "writing disabled" and "client absent," just triggered by a different env var.
-     Splitting it into a sixth member would not change the exit-code mapping (still non-failure) and
-     would only matter if some future consumer needed to distinguish "disabled" from "ignored," which
-     nothing in this plan's scope does.
-   - **Acceptance criteria in P1-P3 must test both mechanisms under `ignore`, not just the raising one**
-     (see each phase's acceptance list below, which previously covered only "mocked exception under
-     `ignore`" — a `FAILED`-returned-directly-under-`ignore` test is now required in every phase).
+     assignment; under `fail` it re-raises and the function never reaches it, so Hard Contract 5 holds
+     without special-casing.
+   - **`ignore` never changes the outcome — there is no post-processing downgrade step (D3).** An
+     earlier pass of this document had a single, uniform post-processing step here: if the outcome is
+     `FAILED` and `fl._get_api_failure_mode() == "ignore"`, downgrade it to `SKIPPED_BY_CONFIG`. **That
+     was wrong in kind and is removed, not merely retargeted.** `forecast_library.py:110-116` makes
+     `ignore` silent **relative to `warn` only** — it suppresses `_handle_api_write_error`'s logging, it
+     does not change failure accounting; both `warn` and `ignore` continue execution, only `fail`
+     re-raises. Downgrading also created a cross-writer inconsistency: the threshold writer catches its
+     own exceptions internally and returns `FAILED` regardless of failure mode (§2's threshold mapping
+     above), so the same network failure would still exit 1 under `ignore` for the threshold path while
+     the downgrade made the skill-metrics path exit 0 — the same setting producing opposite outcomes for
+     the same class of failure. **New rule: a `FAILED` outcome — however it was produced, returned
+     directly (e.g. a readiness-check failure) or assigned in the `except` block above — stays `FAILED`
+     under every failure mode except `fail`, which re-raises before any outcome is assigned.** Do not
+     reintroduce a downgrade step.
+   - **Acceptance criteria in P1-P3 must test both mechanisms under `ignore`, confirming the outcome does
+     NOT change** (see each phase's acceptance list below): a mocked exception under `ignore` must still
+     produce `False` from the `save_*` function and an `errors` entry (only `_handle_api_write_error`'s
+     logging is suppressed), and a directly-returned `FAILED` (e.g. a mocked readiness-check failure)
+     under `ignore` must do the same. Both are required because the two mechanisms were previously easy
+     to handle inconsistently — that is exactly what the removed downgrade step did.
 
    **The `save_*` mapping (what every phase after P0 implements):** `FAILED` → the function's bool
    return is `False`, and the caller in `recalculate_skill_metrics.py` appends to `errors`. **Every
@@ -686,23 +758,30 @@ diff when that phase lands.
   Do NOT touch `save_skill_metrics`, `save_monthly_skill_metrics`, or `save_daily_skill_metrics` — those
   are separate phases. Do NOT touch the API-only guard (`api_writer.SAPPHIRE_API_AVAILABLE`) or the
   `data is None or data.empty` early-return shape itself — only its return value (`None` → `True`) and
-  the API-write try/except changes: initialize the outcome to `api_writer.WriteOutcome.SKIPPED_BY_CONFIG`
-  before the `if api_writer.SAPPHIRE_API_AVAILABLE:` gate (a closed gate is a config state, not a
-  failure — do NOT initialize to a failure-mapped value, that is the exact mistake the prior revision of
-  this plan made and it broke `SAPPHIRE_API_ENABLED=false`); inside the gate, capture
+  the API-write try/except changes: initialize the outcome to `api_writer.WriteOutcome.FAILED`
+  before the `if api_writer.SAPPHIRE_API_AVAILABLE:` gate. **This save_* function gates on
+  `SAPPHIRE_API_AVAILABLE` alone — the only thing that closes this gate is a missing required
+  dependency (`sapphire-api-client`, `pyproject.toml:27`), which is a genuine failure, not a
+  configuration state; `SAPPHIRE_API_ENABLED=false` does NOT close this gate at all — it reaches the
+  writer, which itself returns `SKIPPED_BY_CONFIG` (Contract 7's enum mapping). So initializing to
+  `FAILED` before the gate cannot misreport CSV-only mode. A round-2 review previously rejected a
+  `False`-before-the-gate initialization on the grounds that it broke BOTH client-absent AND
+  `SAPPHIRE_API_ENABLED=false` — only the first is gate-affected; do NOT re-reject this initialization
+  on that now-corrected premise (see §5).** Inside the gate, capture
   `_write_skill_metrics_to_api`'s returned `WriteOutcome` (previously discarded) — this covers BOTH a
   directly-returned `FAILED` (e.g. readiness-check failure) and a caught exception (if the call raises,
   keep calling `fl._handle_api_write_error(e, ...)` exactly as today, THEN — in the same `except` block —
-  explicitly assign `outcome = api_writer.WriteOutcome.FAILED`; do NOT leave the pre-gate
-  `SKIPPED_BY_CONFIG` default standing after `_handle_api_write_error` returns, or the raised path reads
-  as success — this is the exact seam three prior revisions of this plan left unfixed for exceptions.
-  Under `warn`/`ignore` this does not re-raise, so this assignment is reached and the outcome is
-  captured). Then apply ONE uniform post-processing step regardless of which mechanism produced it: if the
-  captured outcome is `FAILED` and
-  `fl._get_api_failure_mode() == \"ignore\"`, downgrade it to `SKIPPED_BY_CONFIG`; otherwise leave it as
-  `FAILED`. Map to the function's bool return using the pinned predicate (Contract 10): the call site's
-  check is `if ret is False:`, not `if not ret:`. Do NOT change `_write_skill_metrics_to_api` itself
-  (`api_writer.py`) — that was P0, already landed."*
+  explicitly assign `outcome = api_writer.WriteOutcome.FAILED`; with the pre-gate default now `FAILED`
+  too, an unassigned outcome after a raise would already coincidentally read as `FAILED` — assign it
+  explicitly anyway, so correctness of the exception path never depends on that coincidence. Under
+  `warn`/`ignore` this does not re-raise, so this assignment is reached and the outcome is captured).
+  **`ignore` never changes the outcome — there is no post-processing downgrade step.**
+  `SAPPHIRE_API_FAILURE_MODE=ignore` only suppresses `_handle_api_write_error`'s logging
+  (`forecast_library.py:110-116`); it does not change failure accounting — both `warn` and `ignore`
+  continue execution and a `FAILED` outcome, however produced, stays `FAILED` under both; only `fail`
+  re-raises before any outcome is assigned. Map to the function's bool return using the pinned predicate
+  (Contract 10): the call site's check is `if ret is False:`, not `if not ret:`. Do NOT change
+  `_write_skill_metrics_to_api` itself (`api_writer.py`) — that was P0, already landed."*
 - **Acceptance criteria:**
   - RED-first: a new test asserting `save_quarterly_skill_metrics` (and separately
     `save_seasonal_skill_metrics`) returns `False` under a mocked API write **exception** in default
@@ -712,16 +791,18 @@ diff when that phase lands.
     headline case; a suite that only has the exception-based test above does not prove the
     non-raising failure path is fixed.
   - A third test: mocked exception under `SAPPHIRE_API_FAILURE_MODE=ignore` → function still returns
-    `True` (not `False`) and nothing is appended to `errors` — proves the ignore-mode consistency fix
-    (§2 Contract 7); this test did not exist under either prior revision of this plan and its absence is
-    exactly what let the second revision's bug through undetected.
+    `False` and `errors` still gets an entry — **corrected (P0b): `ignore` never changes the outcome**,
+    it only suppresses `_handle_api_write_error`'s logging (`forecast_library.py:110-116`), not failure
+    accounting. An earlier revision of this document asserted `True`/no-`errors`-entry here (a downgrade
+    to `SKIPPED_BY_CONFIG` under `ignore`); that downgrade is removed (§2 Contract 7) and this test must
+    assert the corrected behavior, not the removed one.
   - A fourth test: `api_writer.WriteOutcome.FAILED` returned **directly** (no exception, e.g. a mocked
-    readiness-check failure) under `SAPPHIRE_API_FAILURE_MODE=ignore` → function still returns `True`,
-    nothing appended to `errors` — this is the second, previously-missing half of the `ignore`-mode fix
-    (§2 Contract 7's corrected mapping): the third test above only proves the raising mechanism is
-    consistent under `ignore`; this one proves the non-raising mechanism is too. Both are required because
-    a prior revision of this contract only consulted `fl._get_api_failure_mode()` inside the `except`
-    branch.
+    readiness-check failure) under `SAPPHIRE_API_FAILURE_MODE=ignore` → function still returns `False`,
+    `errors` still gets an entry — the non-raising mechanism must behave identically to the raising one
+    under `ignore` (both stay `FAILED`); the third test above only proves the raising mechanism, this
+    one proves the non-raising mechanism is consistent with it. Both are required because the two
+    mechanisms are otherwise easy to handle inconsistently — that inconsistency is exactly what the
+    removed downgrade step did.
   - A test proving the top-level empty-DataFrame guard now returns `True` (not `None`, not `False`) via
     exact identity assertion.
   - A test proving that when `data` is non-empty but `_write_skill_metrics_to_api`'s own internal
@@ -740,8 +821,10 @@ diff when that phase lands.
     these two modes present. Confirm the test suite does **not** assert a CSV side effect for
     quarterly/seasonal (none should exist — API-only).
   - Mutation check: flipping the new `if outcome is WriteOutcome.FAILED:`-shaped condition, or changing
-    the pre-gate initialization to a failure-mapped value instead of `SKIPPED_BY_CONFIG`, must make at
-    least one new test fail — record which test catches each mutation.
+    the pre-gate initialization away from `FAILED` (e.g. to `SKIPPED_BY_CONFIG`), must make at
+    least one new test fail — record which test catches each mutation. **Corrected (P0b): the mutation
+    target is now the reverse of an earlier revision's wording** — the pre-gate default IS the
+    failure-mapped value (`FAILED`); the mutation to catch is someone reverting it to `SKIPPED_BY_CONFIG`.
   - `SAPPHIRE_API_FAILURE_MODE=fail` behavior for these two functions is unchanged (existing/extended
     test still shows the exception propagates in `fail` mode, unaffected by the new return value).
   - **Verify, do not edit:** `tests/test_seasonal_integration.py:542-574`
@@ -797,13 +880,20 @@ diff when that phase lands.
   `data.empty` guard to this function — see §1b of the plan; that is out of scope here. Do NOT touch
   `SAPPHIRE_CONSISTENCY_CHECK` (`:348-377`) — it stays logged-only, per Contract 11; do not fold its
   failure into this function's bool return even though this plan's general thesis is about surfacing
-  swallowed failures. Outcome capture and the `ignore`-mode downgrade use the same single
-  post-processing step as P1 (Contract 7): capture the `WriteOutcome` whether it was returned directly or
-  assigned in the `except` block after catching a raised exception via `fl._handle_api_write_error(e,
-  ...)` — that `except` block must explicitly set `outcome = api_writer.WriteOutcome.FAILED` after the
-  call to `_handle_api_write_error` (do not leave the pre-gate `SKIPPED_BY_CONFIG` default standing after
-  it returns under `warn`/`ignore` — the raised path must not read as success). If the result is
-  `FAILED` and `fl._get_api_failure_mode() == \"ignore\"`, downgrade to `SKIPPED_BY_CONFIG`. Call-site
+  swallowed failures. Outcome capture uses the same pattern as P1 (Contract 7): initialize the outcome to
+  `api_writer.WriteOutcome.FAILED` before the `if api_writer.SAPPHIRE_API_AVAILABLE:` gate — this
+  save_* function gates on `SAPPHIRE_API_AVAILABLE` alone, and the only thing that closes that gate is a
+  missing required dependency (a failure), never `SAPPHIRE_API_ENABLED=false` (which always reaches the
+  writer and returns `SKIPPED_BY_CONFIG` instead). Capture the `WriteOutcome` whether it was returned
+  directly or assigned in the `except` block after catching a raised exception via
+  `fl._handle_api_write_error(e, ...)` — that `except` block must explicitly set
+  `outcome = api_writer.WriteOutcome.FAILED` after the call to `_handle_api_write_error` (the pre-gate
+  default is already `FAILED`, so this assignment is belt-and-suspenders, not correctness-critical for
+  this function specifically — assign it anyway so the exception path's correctness never depends on
+  that coincidence). **`ignore` never changes the outcome — there is no downgrade step.**
+  `SAPPHIRE_API_FAILURE_MODE=ignore` only suppresses `_handle_api_write_error`'s logging
+  (`forecast_library.py:110-116`); a `FAILED` outcome stays `FAILED` under `warn` and `ignore` alike,
+  only `fail` re-raises before the outcome is assigned. Call-site
   predicate is `if ret is False:` (Contract 10), not `if not ret:`. INVERT, do not extend, these two named
   tests: `test_recalc_workflow.py:232` (`test_save_error_accumulation`) currently sets
   `save_skill_metrics.return_value = 'Error: write failed'` and asserts `exc_info.value.code == 1` — under
@@ -863,11 +953,16 @@ diff when that phase lands.
   this is a distinct behavior from pentad/decad's unconditional CSV path in P2, do not make it
   unconditional. Only the API-write try/except at `:429-433`, the top-level guard's return value, and
   the function's final return statement change, using the same
-  initialize-to-`SKIPPED_BY_CONFIG`-before-the-gate / capture-the-`WriteOutcome`-either-way (returned
+  initialize-to-`FAILED`-before-the-gate (this save_* function gates on `SAPPHIRE_API_AVAILABLE` alone;
+  the only thing that closes that gate is a missing required dependency, a failure —
+  `SAPPHIRE_API_ENABLED=false` never closes it, it always reaches the writer and returns
+  `SKIPPED_BY_CONFIG` instead) / capture-the-`WriteOutcome`-either-way (returned
   directly, or explicitly assigned `outcome = api_writer.WriteOutcome.FAILED` in the `except` block after
-  calling `fl._handle_api_write_error(e, ...)` — do not leave the pre-gate `SKIPPED_BY_CONFIG` default
-  standing after that call returns under `warn`/`ignore`, see P1's prompt for the exact code shape) /
-  single-`ignore`-mode-downgrade-step pattern as P1 and P2 —
+  calling `fl._handle_api_write_error(e, ...)` — the pre-gate default is already `FAILED`, so this
+  assignment is belt-and-suspenders here, not correctness-critical; assign it anyway, see P1's prompt for
+  the exact code shape) / no-`ignore`-mode-downgrade pattern as P1 and P2 (`ignore` never changes the
+  outcome — it only suppresses `_handle_api_write_error`'s logging, not failure accounting; there is no
+  downgrade step) —
   do NOT re-derive this shape independently, copy the P1/P2 pattern. Call-site predicate is `if ret is
   False:` (Contract 10). Do NOT fold `SAPPHIRE_CONSISTENCY_CHECK` (`:435-461`) into this function's bool
   return (Contract 11) — it stays logged-only, same as today, even though this plan's general thesis is
@@ -948,9 +1043,13 @@ PP-054 lands and its own equivalent verification (if any) is scoped there.
   failing modes does NOT contribute to `errors` and does NOT flip a passing run's exit code — this is the
   specific integration-level check for the empty-vs-failure distinction, since P1-P3 each verify it only in
   isolation per function. Also confirm one run under `SAPPHIRE_API_FAILURE_MODE=ignore` with a mix of real
-  exceptions across two different modes exits `0` (both convert to `SKIPPED_BY_CONFIG`, per Contract 7) —
-  the specific cross-mode check for the `ignore`-mode fix, since P1-P3 each verify it only for their own
-  function. **Also close out Contract 10's transitional tolerance:** with P0-P3 landed, confirm
+  exceptions across two different modes still exits `1`, with both failures present in `errors` —
+  **corrected (P0b): `ignore` never changes the outcome** (`forecast_library.py:110-116` — it only
+  suppresses `_handle_api_write_error`'s logging, not failure accounting; an earlier revision of this
+  document expected both to convert to `SKIPPED_BY_CONFIG` and the run to exit `0`, which was the
+  removed downgrade step's behavior, not the corrected one) — the specific cross-mode check for the
+  `ignore`-mode rule, since P1-P3 each verify it only for their own function. **Also close out
+  Contract 10's transitional tolerance:** with P0-P3 landed, confirm
   behaviorally that none of the **four** in-scope `save_*` functions can still return `None` — call each
   with an input shape that would have hit a `None`-producing path pre-fix (e.g. the top-level empty-input
   guard, or a writer outcome of each `WriteOutcome` member) and assert the return is `True`/`False` by
@@ -970,7 +1069,8 @@ PP-054 lands and its own equivalent verification (if any) is scoped there.
   non-`FAILED` outcome in the same run, proves (i)-(iii) above plus
   the non-failure-mode-doesn't-count check, with exact-count assertions on `len(errors)` and which
   messages are present (per the testing workflow's "exact counts, not vague checks" rule), not just
-  "exit code is 1". A second new test covers the cross-mode `ignore`-mode check described in the Goal. A
+  "exit code is 1". A second new test covers the cross-mode `ignore`-mode check described in the Goal —
+  asserting exit `1` and both failure messages present in `errors`, not exit `0`. A
   third check (not necessarily a single test — a review pass across the four functions is acceptable)
   confirms the Contract 10 "no lingering `None`" behavioral check described in the Goal, for all four
   in-scope `save_*` functions. Full suite green: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` —
@@ -1018,19 +1118,44 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
 ## 5. Residual risk (verbatim — do not summarize away in the PR description)
 
 - **A prior revision of this plan prescribed initializing the result variable to `False` before the
-  `api_writer.SAPPHIRE_API_AVAILABLE` gate, and that prescription was wrong — recorded here so the
-  reasoning is not silently lost and nobody reintroduces it.** `SAPPHIRE_API_AVAILABLE` false (client not
-  installed) and `SAPPHIRE_API_ENABLED=false` are both documented, supported deployment configurations
-  (`doc/configuration.md:159`; `doc/plans/sapphire_api_integration_plan.md:283,321` — local dev and the
-  documented emergency-rollback path). A pre-gate `False` default would have made every recalc in either
-  configuration report failure and `sys.exit(1)` even when the CSV write succeeded and nothing was
-  actually wrong — worse than the silent-success bug being fixed, because it would fire on every routine
-  run of a supported mode rather than only on genuine, intermittent failures. This revision's Contract 7
-  fixes the mechanism at the source instead: `_write_skill_metrics_to_api` /
-  `_write_threshold_skill_metrics_to_api` now return an explicit `WriteOutcome` that distinguishes
-  "gate closed / disabled" (`SKIPPED_BY_CONFIG`, non-failure) from "genuinely failed"
-  (`FAILED`, the only failure-mapped member) at the source, so the `save_*` layer never has to guess an
-  ambiguous default.
+  `api_writer.SAPPHIRE_API_AVAILABLE` gate. A round-2 review rejected that prescription — recorded here
+  so the reasoning is not silently lost, and *corrected* here (PP-051 P0b) because the rejection was
+  only half right and this revision does not repeat its error.** The round-2 review's stated reason was
+  that a pre-gate `False`/`FAILED` default would break *both* client-absent (`SAPPHIRE_API_AVAILABLE`
+  false, `sapphire_api_client` not installed) *and* `SAPPHIRE_API_ENABLED=false` — treating both as
+  equally "documented, supported deployment configurations" (`doc/configuration.md:159`;
+  `doc/plans/sapphire_api_integration_plan.md:283,321` — local dev and the documented emergency-rollback
+  path). **Only the second is.** `SAPPHIRE_API_ENABLED=false` is documented as the CSV-only mode
+  (`doc/configuration.md:159`) and used for the documented emergency rollback path; a missing
+  `sapphire-api-client` package is documented nowhere as a supported mode — it is a required dependency,
+  hard git-pinned (`pyproject.toml:27`), not an optional extra. `SAPPHIRE_API_AVAILABLE` is set **only**
+  by whether that dependency's import succeeded (`api_writer.py:88-96`) — it is not an operator setting.
+  A pre-gate `False`/`FAILED` default is therefore wrong for `SAPPHIRE_API_ENABLED=false` — but that
+  case is unaffected by the pre-gate default in the first place, because it never closes the gate (it is
+  checked *inside* the writer, after the gate, and always returns `SKIPPED_BY_CONFIG` there regardless
+  of what the pre-gate default was). The pre-gate default is correct, not merely harmless, for
+  client-absence, which does close the gate and has no other signal path once closed. This revision's
+  Contract 7 encodes exactly that split: `_write_skill_metrics_to_api` /
+  `_write_threshold_skill_metrics_to_api` now return an explicit `WriteOutcome` that maps client absence
+  to `FAILED` and `SAPPHIRE_API_ENABLED=false` to `SKIPPED_BY_CONFIG` — never the reverse, and never both
+  to the same member.
+
+  **What PP-051 P0 already shipped (merged) and what it does not yet fix.** P0 landed exactly this
+  `WriteOutcome` mapping inside `api_writer.py` — `_write_skill_metrics_to_api` and
+  `_write_threshold_skill_metrics_to_api` both return `FAILED` for client absence today, verified in the
+  current tree (§2 Contract 7's enum mapping). **That code change is defensive only: it is unreachable
+  from every production call site.** Each `save_*` function in `file_writer.py` calls these writers
+  exclusively inside `if api_writer.SAPPHIRE_API_AVAILABLE:` (`file_writer.py:339/341, 429/431, 614/616,
+  624/626, 666/668, 701/703`) — there are no other production callers. So when the client is absent, the
+  gate never opens, and the writer's own `FAILED`-for-absent-client branch is never executed by any
+  in-repo caller today; it matters only to direct callers of the writer functions themselves (tests, or
+  a future caller outside the gate). **The pre-gate default this plan's P1-P3 land — `FAILED`, not
+  `SKIPPED_BY_CONFIG` — is the actual production fix for client absence**, because the closed-gate case
+  never reaches P0's code at all; P0 alone has no operational effect on any of the five in-scope
+  `save_*` functions. P1-P3 therefore carry the operational weight of this correction, not P0 — do not
+  treat P0 as having already closed this gap. **Residual gap to state plainly:** until P1-P3 (and, for
+  the daily path, PP-054) land, DAILY and ALL runs can still exit 0 after writing no daily metrics with a
+  missing client; P0 alone does not close that.
 - **This fix does not close PP-047.** PP-047 is a different layer: the API returning HTTP 200 having
   persisted zero rows (a server/DB-side silent failure). PP-051's fix makes the client correctly report
   *client-observed* signals (network errors, non-2xx responses, timeouts, readiness-check failures, and
@@ -1103,10 +1228,15 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
   fully depends on the Python process itself accurately detecting and reporting its own failure — there
   is no second, independent observer for that path, with or without P6.
 - **`SAPPHIRE_API_FAILURE_MODE=fail` is not touched, so an operator who has already set `fail` (if any
-  deployment does) sees no behavior change** — the fix specifically targets the `warn` (and now also
-  `ignore`, see Contract 7) paths, which is where the silent-success gap lives. `ignore` mode's own
-  intent (make write outcomes invisible to the exit code) is preserved by design in this revision, not
-  merely left unbroken by accident — see Contract 7's ignore-mode rule.
+  deployment does) sees no behavior change** — the fix specifically targets the `warn` and `ignore`
+  paths, which is where the silent-success gap lives. **Corrected (P0b): `ignore` mode's intent is
+  narrower than an earlier revision of this bullet claimed.** `ignore` does **not** make write outcomes
+  invisible to the exit code — it only suppresses `_handle_api_write_error`'s logging relative to `warn`
+  (`forecast_library.py:110-116`); failure accounting is unaffected. A `FAILED` outcome under `ignore`
+  still makes its `save_*` function return `False` and the recalc still exits `1`, exactly as under
+  `warn` — only the log line is missing. See Contract 7's "`ignore` never changes the outcome" rule; do
+  not reintroduce the removed downgrade-to-`SKIPPED_BY_CONFIG` step this bullet used to describe as
+  intentional.
 - **The daily block's silent-success defect is NOT fixed by this plan — it is split out to PP-054, and
   remains open until that draft is implemented.** `save_daily_skill_metrics` still returns bare `None`
   on both the success and the swallowed-failure path after P0-P3 and P5 land, exactly as it does today;
@@ -1121,7 +1251,13 @@ only defense is the corrected exit code from P0-P5, unchanged by this phase.**
   clean `recalculate_skill_metrics.py` exit code should not conclude the daily block's writes landed —
   this gap persists until PP-054 ships. (The design note this bullet replaces — that a combined bool for
   FDC+threshold can only report "at least one failed," not which — is still correct and now lives in
-  PP-054's scope, not this plan's.)
+  PP-054's scope, not this plan's.) **PP-054 must carry the same pre-gate-`FAILED`-default fix (this
+  plan's Contract 7, corrected in P0b) for the daily path** — `save_daily_skill_metrics` gates on
+  `api_writer.SAPPHIRE_API_AVAILABLE` at `file_writer.py:614` (FDC) and `:624` (threshold) exactly like
+  the four functions P1-P3 convert, so client absence there is the same missing-required-dependency
+  failure, not a benign config skip. Until PP-054 implements it, DAILY/ALL runs can exit `0` after
+  writing no daily metrics at all when the client is absent — the same gap P1-P3 close for the other
+  four functions, still open here.
 
 ---
 

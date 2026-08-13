@@ -5,7 +5,7 @@ Moved from iEasyHydroForecast/tests/test_forecast_library.py (TestAtomicWriteCSV
 
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -848,3 +848,377 @@ class TestDateStringRoundTrip:
         csv_path = os.path.join(str(self.tmp_path), "combined_decad.csv")
         saved = pd.read_csv(csv_path)
         assert saved.iloc[0]["date"] == "2024-01-15"
+
+
+# ===========================================================================
+# PP-051 P1 — save_quarterly_skill_metrics / save_seasonal_skill_metrics
+#
+# Both functions are API-only (no CSV fallback), so a swallowed write
+# failure here is total loss of that recalc's output for the horizon.
+# Contract 7 (api_writer.WriteOutcome) mapping under test: FAILED -> False,
+# every other outcome (WROTE, SKIPPED_BY_CONFIG, SKIPPED_NO_RECORDS) ->
+# True. All assertions are exact identity (`is True` / `is False`) --
+# truthiness is vacuous against the pre-fix bare `None` return.
+#
+# P0a correction (pp051_p0a_client_absent_mapping_fix.md, landed after the
+# parent plan document): a closed SAPPHIRE_API_AVAILABLE gate (missing
+# sapphire-api-client) is a genuine FAILED, not SKIPPED_BY_CONFIG -- the
+# pre-gate default below is `WriteOutcome.FAILED`, not SKIPPED_BY_CONFIG as
+# the parent plan's Contract 7 text still literally reads. P0a's D3 also
+# removes the ignore-mode downgrade step Contract 7 originally specified:
+# `ignore` suppresses _handle_api_write_error's logging only, never the
+# outcome -- a FAILED stays FAILED under both `warn` and `ignore`; only
+# `fail` changes behavior (re-raises). Tests below assert that directly.
+# ===========================================================================
+
+
+class TestSaveQuarterlySkillMetrics:
+    """Tests for save_quarterly_skill_metrics() -- API-only, no CSV fallback."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self):
+        overrides = {
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    @pytest.fixture
+    def quarterly_skill_data(self):
+        return pd.DataFrame(
+            {
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, np.nan],
+            }
+        )
+
+    def test_empty_dataframe_returns_true(self):
+        """Top-level empty guard: True (not None), writer never called."""
+        with patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write:
+            result = file_writer.save_quarterly_skill_metrics(pd.DataFrame(), year=2025)
+        mock_api_write.assert_not_called()
+        assert result is True
+
+    def test_none_input_returns_true(self):
+        with patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write:
+            result = file_writer.save_quarterly_skill_metrics(None, year=2025)
+        mock_api_write.assert_not_called()
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_wrote_outcome_returns_true(self, mock_api_write, quarterly_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.WROTE
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_by_config_outcome_returns_true(self, mock_api_write, quarterly_skill_data):
+        """SAPPHIRE_API_ENABLED=false is a documented, benign deployment
+        mode -- the writer maps it to SKIPPED_BY_CONFIG internally, below
+        the SAPPHIRE_API_AVAILABLE gate. SAPPHIRE_API_AVAILABLE is pinned
+        True here so this is distinguishable from the missing-client case
+        (test_client_unavailable_returns_false below), per the P0a
+        addendum's test guidance."""
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_BY_CONFIG
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_no_records_outcome_returns_true(self, mock_api_write, quarterly_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_NO_RECORDS
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_without_exception_returns_false(
+        self, mock_api_write, quarterly_skill_data
+    ):
+        """Headline case: a directly-returned FAILED (e.g. a readiness-check
+        failure) with no exception raised must still surface as a failure --
+        the non-raising path a bare `if ret is None:` swallowed pre-fix."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_warn_returns_false(self, mock_api_write, quarterly_skill_data):
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_ignore_returns_false(self, mock_api_write, quarterly_skill_data):
+        """`ignore` mode suppresses _handle_api_write_error's logging only --
+        never the failure outcome (P0a D3). A raised write error still
+        returns False under ignore, same as under warn -- there is no
+        downgrade step."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_under_ignore_returns_false(self, mock_api_write, quarterly_skill_data):
+        """Second half of the no-downgrade proof: a directly-returned FAILED
+        (no exception -- e.g. a readiness-check failure) also stays False
+        under ignore mode, not just the raised-exception mechanism above."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_fail_mode_propagates(self, mock_api_write, quarterly_skill_data):
+        """SAPPHIRE_API_FAILURE_MODE=fail is unchanged: the exception still
+        propagates uncaught, unaffected by the new True/False return
+        contract (Hard Contract 5)."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}),
+        ):
+            with pytest.raises(RuntimeError, match="API connection refused"):
+                file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+
+    def test_client_unavailable_returns_false(self, quarterly_skill_data):
+        """A closed SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client,
+        a required dependency) is a genuine failure, not a benign config
+        skip -- P0a correction: the pre-gate default is FAILED, not
+        SKIPPED_BY_CONFIG."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is False
+
+    def test_skipped_no_records_via_internal_filtering_returns_true(self):
+        """Non-empty input whose every row is excluded by the writer's own
+        lead-aware NaN-horizon_value filter -> WriteOutcome.SKIPPED_NO_RECORDS
+        internally -> True at this layer (a non-failure per Contract 7, not
+        the False a pre-P0a reading might suggest). Exercises the REAL,
+        unmocked _write_skill_metrics_to_api (only its client factory is
+        faked) -- mirrors the fixture pattern in
+        test_lead_aware_write_side_dedup.py."""
+        data = pd.DataFrame(
+            {
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "LR"],
+                "horizon_value": [float("nan"), float("nan")],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.8],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.85],
+                "mae": [2.0, 3.0],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.6],
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_SKILL_LEAD_AWARE": "true"}),
+            patch("src.api_writer._get_postprocessing_client", return_value=mock_client),
+        ):
+            result = file_writer.save_quarterly_skill_metrics(data, year=2025)
+        mock_client.write_skill_metrics.assert_not_called()
+        assert result is True
+
+
+class TestSaveSeasonalSkillMetrics:
+    """Tests for save_seasonal_skill_metrics() -- API-only, no CSV fallback."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self):
+        overrides = {
+            "SAPPHIRE_API_ENABLED": "true",
+            "SAPPHIRE_TEST_ENV": "True",
+        }
+        with patch.dict(os.environ, overrides):
+            yield
+
+    @pytest.fixture
+    def seasonal_skill_data(self):
+        return pd.DataFrame(
+            {
+                "season_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "EM"],
+                "sdivsigma": [0.3, 0.25],
+                "nse": [0.9, 0.92],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.91],
+                "mae": [2.0, 1.8],
+                "n_pairs": [10, 10],
+                "crps": [0.5, np.nan],
+            }
+        )
+
+    def test_empty_dataframe_returns_true(self):
+        """Top-level empty guard: True (not None), writer never called."""
+        with patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write:
+            result = file_writer.save_seasonal_skill_metrics(pd.DataFrame(), year=2025)
+        mock_api_write.assert_not_called()
+        assert result is True
+
+    def test_none_input_returns_true(self):
+        with patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write:
+            result = file_writer.save_seasonal_skill_metrics(None, year=2025)
+        mock_api_write.assert_not_called()
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_wrote_outcome_returns_true(self, mock_api_write, seasonal_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.WROTE
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_by_config_outcome_returns_true(self, mock_api_write, seasonal_skill_data):
+        """SAPPHIRE_API_ENABLED=false is a documented, benign deployment
+        mode -- the writer maps it to SKIPPED_BY_CONFIG internally, below
+        the SAPPHIRE_API_AVAILABLE gate. SAPPHIRE_API_AVAILABLE is pinned
+        True here so this is distinguishable from the missing-client case
+        (test_client_unavailable_returns_false below), per the P0a
+        addendum's test guidance."""
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_BY_CONFIG
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_skipped_no_records_outcome_returns_true(self, mock_api_write, seasonal_skill_data):
+        mock_api_write.return_value = api_writer.WriteOutcome.SKIPPED_NO_RECORDS
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is True
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_without_exception_returns_false(
+        self, mock_api_write, seasonal_skill_data
+    ):
+        """Headline case: a directly-returned FAILED (e.g. a readiness-check
+        failure) with no exception raised must still surface as a failure --
+        the non-raising path a bare `if ret is None:` swallowed pre-fix."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_warn_returns_false(self, mock_api_write, seasonal_skill_data):
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_ignore_returns_false(self, mock_api_write, seasonal_skill_data):
+        """`ignore` mode suppresses _handle_api_write_error's logging only --
+        never the failure outcome (P0a D3). A raised write error still
+        returns False under ignore, same as under warn -- there is no
+        downgrade step."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_failed_outcome_under_ignore_returns_false(self, mock_api_write, seasonal_skill_data):
+        """Second half of the no-downgrade proof: a directly-returned FAILED
+        (no exception -- e.g. a readiness-check failure) also stays False
+        under ignore mode, not just the raised-exception mechanism above."""
+        mock_api_write.return_value = api_writer.WriteOutcome.FAILED
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}),
+        ):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+        assert result is False
+
+    @patch("src.api_writer._write_skill_metrics_to_api")
+    def test_exception_under_fail_mode_propagates(self, mock_api_write, seasonal_skill_data):
+        """SAPPHIRE_API_FAILURE_MODE=fail is unchanged: the exception still
+        propagates uncaught, unaffected by the new True/False return
+        contract (Hard Contract 5)."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}),
+        ):
+            with pytest.raises(RuntimeError, match="API connection refused"):
+                file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+
+    def test_client_unavailable_returns_false(self, seasonal_skill_data):
+        """A closed SAPPHIRE_API_AVAILABLE gate (missing sapphire-api-client,
+        a required dependency) is a genuine failure, not a benign config
+        skip -- P0a correction: the pre-gate default is FAILED, not
+        SKIPPED_BY_CONFIG."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is False
+
+    def test_skipped_no_records_via_internal_filtering_returns_true(self):
+        """Non-empty input whose every row is excluded by the writer's own
+        lead-aware NaN-horizon_value filter -> WriteOutcome.SKIPPED_NO_RECORDS
+        internally -> True at this layer (a non-failure per Contract 7, not
+        the False a pre-P0a reading might suggest). Exercises the REAL,
+        unmocked _write_skill_metrics_to_api (only its client factory is
+        faked) -- mirrors the fixture pattern in
+        test_lead_aware_write_side_dedup.py."""
+        data = pd.DataFrame(
+            {
+                "season_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR", "LR"],
+                "horizon_value": [float("nan"), float("nan")],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.8],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.85],
+                "mae": [2.0, 3.0],
+                "n_pairs": [10, 10],
+                "crps": [0.5, 0.6],
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_SKILL_LEAD_AWARE": "true"}),
+            patch("src.api_writer._get_postprocessing_client", return_value=mock_client),
+        ):
+            result = file_writer.save_seasonal_skill_metrics(data, year=2025)
+        mock_client.write_skill_metrics.assert_not_called()
+        assert result is True
