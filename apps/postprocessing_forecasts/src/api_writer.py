@@ -98,6 +98,25 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Operator configuration
+# ---------------------------------------------------------------------------
+def api_writing_enabled() -> bool:
+    """Report whether the operator has SAPPHIRE API writing enabled.
+
+    Mirrors the inline `SAPPHIRE_API_ENABLED` parse each writer function
+    performs internally (default: enabled). That inline parse is left
+    exactly as-is everywhere it already exists -- it is working code
+    covered by existing tests. This helper is purely additive, for
+    callers that need the answer *before* a writer runs at all, e.g.
+    file_writer.py's pre-gate default outcome, which must not report a
+    closed SAPPHIRE_API_AVAILABLE gate as FAILED when the operator has
+    disabled API writing (a closed gate is then just a benign skip, not
+    a genuine failure).
+    """
+    return os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+
+# ---------------------------------------------------------------------------
 # Singleton client
 # ---------------------------------------------------------------------------
 _postprocessing_client = None

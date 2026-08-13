@@ -19,6 +19,29 @@ from conftest import DECAD, PENTAD
 from src import api_writer, file_writer
 
 
+class TestApiWritingEnabledHelper:
+    """Tests for api_writer.api_writing_enabled() -- the additive helper
+    file_writer.py's pre-gate defaults use to distinguish "operator
+    disabled API writing" from "the client is genuinely missing"."""
+
+    def test_defaults_to_enabled(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+            assert api_writer.api_writing_enabled() is True
+
+    def test_explicit_true(self):
+        with patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}):
+            assert api_writer.api_writing_enabled() is True
+
+    def test_explicit_false(self):
+        with patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}):
+            assert api_writer.api_writing_enabled() is False
+
+    def test_case_insensitive_false(self):
+        with patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "False"}):
+            assert api_writer.api_writing_enabled() is False
+
+
 class TestAtomicWriteCSV:
     """Tests for atomic_write_csv that prevents data loss."""
 
@@ -512,6 +535,23 @@ class TestSaveMonthlySkillMetrics:
             result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
             mock_api_write.assert_not_called()
         assert result is False
+
+    def test_client_unavailable_and_writing_disabled_returns_true(self, monthly_skill_data):
+        """Defect fix: SAPPHIRE_API_ENABLED=false is a documented, benign
+        deployment mode (doc/configuration.md, and the documented rollback
+        path) that must succeed whether or not sapphire-api-client is
+        importable. Before this fix, a closed SAPPHIRE_API_AVAILABLE gate
+        left the pre-gate default at FAILED even when the operator had
+        explicitly disabled API writing -- conflating "dependency missing"
+        with "writing disabled". This must return True, not False."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_monthly_skill_metrics(monthly_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is True
 
     def test_skipped_no_records_via_internal_filtering_returns_true(self):
         """Non-empty input whose every row is excluded by the writer's own
@@ -1034,6 +1074,14 @@ class TestDateStringRoundTrip:
 # `ignore` suppresses _handle_api_write_error's logging only, never the
 # outcome -- a FAILED stays FAILED under both `warn` and `ignore`; only
 # `fail` changes behavior (re-raises). Tests below assert that directly.
+#
+# Out-of-loop-review defect fix (post-P0a): the FAILED pre-gate default
+# above only holds when the operator has API writing enabled. When
+# SAPPHIRE_API_ENABLED=false, the pre-gate default is SKIPPED_BY_CONFIG
+# instead, REGARDLESS of whether the client is importable -- a disabled
+# gate that never opens must not be reported as a failure just because a
+# dependency happens to also be missing. See
+# test_client_unavailable_and_writing_disabled_returns_true below.
 # ===========================================================================
 
 
@@ -1177,6 +1225,23 @@ class TestSaveQuarterlySkillMetrics:
             result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
             mock_api_write.assert_not_called()
         assert result is False
+
+    def test_client_unavailable_and_writing_disabled_returns_true(self, quarterly_skill_data):
+        """Defect fix: SAPPHIRE_API_ENABLED=false is a documented, benign
+        deployment mode (doc/configuration.md, and the documented rollback
+        path) that must succeed whether or not sapphire-api-client is
+        importable. Before this fix, a closed SAPPHIRE_API_AVAILABLE gate
+        left the pre-gate default at FAILED even when the operator had
+        explicitly disabled API writing -- conflating "dependency missing"
+        with "writing disabled". This must return True, not False."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_quarterly_skill_metrics(quarterly_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is True
 
     def test_skipped_no_records_via_internal_filtering_returns_true(self):
         """Non-empty input whose every row is excluded by the writer's own
@@ -1354,6 +1419,23 @@ class TestSaveSeasonalSkillMetrics:
             mock_api_write.assert_not_called()
         assert result is False
 
+    def test_client_unavailable_and_writing_disabled_returns_true(self, seasonal_skill_data):
+        """Defect fix: SAPPHIRE_API_ENABLED=false is a documented, benign
+        deployment mode (doc/configuration.md, and the documented rollback
+        path) that must succeed whether or not sapphire-api-client is
+        importable. Before this fix, a closed SAPPHIRE_API_AVAILABLE gate
+        left the pre-gate default at FAILED even when the operator had
+        explicitly disabled API writing -- conflating "dependency missing"
+        with "writing disabled". This must return True, not False."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_seasonal_skill_metrics(seasonal_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is True
+
     def test_skipped_no_records_via_internal_filtering_returns_true(self):
         """Non-empty input whose every row is excluded by the writer's own
         lead-aware NaN-horizon_value filter -> WriteOutcome.SKIPPED_NO_RECORDS
@@ -1408,6 +1490,14 @@ class TestSaveSeasonalSkillMetrics:
 # below this gate, and maps to SKIPPED_BY_CONFIG there. `ignore` mode
 # never downgrades the outcome (P0a/D3) -- it only suppresses
 # _handle_api_write_error's logging, not failure accounting.
+#
+# Out-of-loop-review defect fix (post-P0a): the FAILED pre-gate default
+# above only holds when the operator has API writing enabled. When
+# SAPPHIRE_API_ENABLED=false, the pre-gate default is SKIPPED_BY_CONFIG
+# instead, REGARDLESS of whether the client is importable -- a disabled
+# gate that never opens must not be reported as a failure just because a
+# dependency happens to also be missing. See
+# test_client_unavailable_and_writing_disabled_returns_true below.
 # ===========================================================================
 
 
@@ -1540,6 +1630,23 @@ class TestSaveSkillMetrics:
             result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
             mock_api_write.assert_not_called()
         assert result is False
+
+    def test_client_unavailable_and_writing_disabled_returns_true(self, pentad_skill_data):
+        """Defect fix: SAPPHIRE_API_ENABLED=false is a documented, benign
+        deployment mode (doc/configuration.md, and the documented rollback
+        path) that must succeed whether or not sapphire-api-client is
+        importable. Before this fix, a closed SAPPHIRE_API_AVAILABLE gate
+        left the pre-gate default at FAILED even when the operator had
+        explicitly disabled API writing -- conflating "dependency missing"
+        with "writing disabled". This must return True, not False."""
+        with (
+            patch.object(api_writer, "SAPPHIRE_API_AVAILABLE", False),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}),
+            patch("src.api_writer._write_skill_metrics_to_api") as mock_api_write,
+        ):
+            result = file_writer.save_skill_metrics(PENTAD, pentad_skill_data, year=2025)
+            mock_api_write.assert_not_called()
+        assert result is True
 
     def test_skipped_no_records_via_internal_filtering_returns_true(self):
         """Non-empty input whose every row is excluded by the writer's own
