@@ -19,7 +19,7 @@ Two repository documents schedule the **01 Jan 03:00 UTC** slot differently:
 
 | Source | Script named for that slot |
 |---|---|
-| `doc/deployment.md:923` | `bin/run_periodic_maintenance.sh monthly_norms` |
+| `doc/deployment.md:922` | `bin/run_periodic_maintenance.sh monthly_norms` |
 | `bin/README.md:231` | `bin/yearly_runoff_hydrograph_aggregation.sh` |
 
 Only the second actually invokes the long-horizon writer
@@ -57,20 +57,62 @@ The naming is itself a trap: the deprecated `sync_monthly_norms.py`
 sync_long_horizon_hydrograph.py"*) is what `monthly_norms` presumably once referred to. The
 deployment doc appears to have kept the old task name after the script was replaced.
 
+## The intended path is already decided — do NOT "fix" this by restoring the Luigi task
+
+**This was missed in the first draft of this issue and is the most important thing here.** The
+absence of `monthly_norms` from the task map is **deliberate and test-pinned**, not an oversight.
+
+`apps/preprocessing_runoff/test/test_yearly_monthly_norms_retired.py` asserts that both the class
+and the dispatcher key stay gone:
+
+```python
+def test_monthly_norms_dispatcher_key_is_gone():
+    assert '"monthly_norms"' not in content, (
+        "Old runoff monthly_norms dispatcher key is still present. "
+        "This was retired in Phase 4 of the runoff long-horizon hydrograph plan."
+    )
+```
+
+with a sibling asserting `YearlyMonthlyNormsRecalculation` is absent. The owner decision is recorded
+in `doc/plans/issues/review_gi_draft_runoff_long_horizon_hydrograph.md`.
+
+**So the fix is to correct the documentation, not the code.** Adding a `monthly_norms` task type
+would reintroduce intentionally retired code and break a locked regression test. Only reverse this
+if the owner explicitly reverses the Phase 4 decision.
+
+## Second defect, proven while filing this: the periodic wrapper reports success unconditionally
+
+`bin/run_periodic_maintenance.sh` has **no `set -e`**, never captures the status of its
+`docker compose run` (`:82-88`), and then executes two `echo` statements (`:90-91`) before ending.
+The script's exit status is therefore the last `echo`'s — **0** — regardless of whether the Luigi
+task failed. The `trap cleanup EXIT` (`:43`) does not restore it.
+
+This is **not** specific to `monthly_norms`. Every periodic task routed through this wrapper —
+`long_term`, `skill_recalc`, `snow_norms` — reports success to cron whether or not it worked. The
+`ValueError` from an unknown task type is simply the loudest instance of a general silent-success
+defect.
+
+Consequence for this issue: even with the crontab corrected, a failure of the yearly job would not
+surface. It also means the "task submitted to Luigi daemon" message (`:90`) is the *only* signal an
+operator gets, and it prints on failure too. Same family as PP-051; consider filing separately if
+the fix here stays documentation-only.
+
 ## What to inspect
 
 1. Which form is actually installed in each deployment's crontab (`crontab -l` on kghm, tjhm, uzhm).
    **This is the load-bearing check and requires server access — it has not been done.** If the
-   deployed crontabs use the `bin/README.md` form, impact is nil and this is docs-only.
-2. Whether `run_periodic_maintenance.sh` should gain a `monthly_norms` task type that maps to the
-   long-horizon writer, or whether `deployment.md` should simply name
-   `yearly_runoff_hydrograph_aggregation.sh` — i.e. is the Luigi path or the direct-wrapper path
-   intended for this job?
-3. Whether `RunPeriodicMaintenanceWorkflow`'s `ValueError` surfaces to the cron log as a non-zero
-   exit, or is swallowed by the Luigi submission wrapper. `run_periodic_maintenance.sh` submits to
-   the daemon and reports "task submitted" (`:89`) — confirm whether a task that fails inside Luigi
-   propagates.
-4. Whether any other documented `run_periodic_maintenance.sh` task type is likewise unmapped.
+   deployed crontabs use the `bin/README.md` form, the scheduling impact is nil and this is
+   docs-only (the wrapper defect above still stands).
+2. ~~Whether `run_periodic_maintenance.sh` should gain a `monthly_norms` task type~~ — **answered:
+   no.** See the section above; it is test-pinned as retired.
+3. ~~Whether the `ValueError` surfaces as a non-zero exit~~ — **answered: it does not.** Proven by
+   static shell reading; see the second defect above.
+4. Every place the invalid `monthly_norms` command is still documented or advertised. Known so far:
+   - `doc/deployment.md:922` (the cron entry)
+   - `doc/plans/deployment_new_hydromet_aws.md` (same invalid command)
+   - `bin/docker-compose-luigi.yml:118` (still advertises `monthly_norms` as supported)
+   This inventory is **not** known to be complete — grep before fixing.
+5. Whether any other documented `run_periodic_maintenance.sh` task type is likewise unmapped.
 
 ## Acceptance criteria
 

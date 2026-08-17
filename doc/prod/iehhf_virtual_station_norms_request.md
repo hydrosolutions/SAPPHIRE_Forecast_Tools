@@ -6,7 +6,7 @@ of what was asked.
 **Requested by**: SAPPHIRE Forecast Tools
 **Concerns**: `ieasyhydro-python-sdk` @ `2cc7953` (current `master` HEAD), `get_norm_for_site`
 **Origin**: PREPQ-014 — see
-[`doc/plans/issues/mid_prio_gi_draft_prepq_long_horizon_sdk_norm_path_none.md`](../plans/issues/mid_prio_gi_draft_prepq_long_horizon_sdk_norm_path_none.md)
+[`doc/plans/issues/low_prio_gi_draft_prepq_long_horizon_sdk_norm_path_none.md`](../plans/issues/low_prio_gi_draft_prepq_long_horizon_sdk_norm_path_none.md)
 
 ---
 
@@ -89,6 +89,34 @@ If that endpoint can ever return rows for more than the queried `station_code`, 
 one station's norms to another — silently, since the warning goes to stdout. We have not observed it
 happening and it may be impossible given how the endpoint filters; we mention it only because the
 consequence would be quiet and data-corrupting rather than loud.
+
+## Addendum (2026-08-17, after sending) — a correction we owe the maintainer
+
+An internal review found that the text above **overstates one thing**, and we would rather correct
+it than let it stand. The body is preserved unedited as the record of what was actually sent; this
+addendum is the correction to pass on.
+
+**Wrong as written:** "a virtual station is not in that registry", "the SDK cannot return a norm for
+a virtual station", and "virtual stations therefore produce no `norm`". Those treat *virtual* as
+synonymous with *absent from the hydrological registry*, which is not true. The two registries are
+independent, and a code present in both resolves a hydrological UUID and returns norms normally.
+
+**Defensible form of the ask:** *for a virtual-only code — one whose hydrological lookup returns no
+usable UUID — the current discharge-norm path cannot resolve a norm.* The same failure also follows
+a non-200 station lookup or a row with a missing/null UUID, so the error is not by itself proof that
+a station is virtual.
+
+**Also overstated:** we described the behaviour as an "upstream gap" before you had answered whether
+virtual norms are conceptually supported. That prejudged your answer. Question 1 is the real
+question, and "not supported by design" is a perfectly good answer that we will adapt to.
+
+**Not evidenced:** our claim that the failure is deterministic across `"p"`, `"d"` and `"m"` came
+from a static reading of the resolution chain, not from captured calls across all three periods.
+
+**Still stands:** the resolution chain, the absence of a `'virtual'` branch in
+`_call_get_norm_for_site`, and the conditional `sites[0]` identity note — all verified against the
+SDK source we run. The identity note is better read as directly relevant to any lookup extension you
+might make here, rather than as the unrelated aside we framed it as.
 
 ## What we are running
 

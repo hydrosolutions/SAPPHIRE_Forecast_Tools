@@ -14,10 +14,14 @@ out-of-loop `codex exec` review and re-verified by direct code reading.
 
 ## Why these are filed together
 
-Two independent defects, one operator-facing problem: **when a run fails, you cannot tell what
-failed or why.** Defect A hides *which events* caused the failure; defect B hides *what class* of
-failure it was. Fixing either alone still leaves a run whose failure cannot be attributed without
-reading source code — which is exactly what PREPQ-014 required.
+Two independent defects, one operator-facing problem: **when a run fails, the log tells you which
+module and roughly what kind, but not which events caused it nor — machine-readably — which class.**
+Defect A hides *which events*; defect B discards the *machine-readable class*. Fixing either alone
+still leaves a failure that cannot be attributed without reading source code — which is exactly what
+PREPQ-014 required.
+
+The title says "unattributable", which is shorthand: log *text* does preserve the module and a broad
+failure class. What is lost is event-level cause and any status a script could branch on.
 
 They are in different files and ship independently. Split them if that suits the work better; they
 are together because a fixer should know both exist before deciding what "reported properly" means.
@@ -57,7 +61,7 @@ connection and auth failures, station-lookup non-200, malformed JSON, missing ke
 float-conversion errors, norm-endpoint non-200. So the count alone cannot distinguish an outage from
 a per-site configuration gap.
 
-## Defect B — `run_locally.sh` overwrites every module's exit code with 1
+## Defect B — `run_locally.sh` normalises a recorded-FAIL module's exit code to 1
 
 The inner maintenance function receives the module's specific code and logs the right diagnostic:
 
@@ -79,6 +83,12 @@ exit $exit_code
 so the specific code is discarded before the script exits. **The process exits 1.** The distinction
 survives only in log text.
 
+**Scope the claim carefully.** This holds for any module whose failure is *recorded in the summary*
+— which is the PREPQ-014 path. It is **not** universal: a target that returns a specific code
+without recording a FAIL result can leave `exit_code` intact, because `print_summary` then returns 0
+(see `run_locally.sh:918-955`, `:1928-1929`, `:1973-1977`). An earlier draft of this issue claimed
+"every module's exit code", which is wrong. Establish the true set before designing the fix.
+
 **Blast radius, stated precisely:** `run_locally.sh` is the local/dev runner — production schedules
 go through cron → Luigi (`doc/deployment.md:911`), so this does **not** affect production alerting.
 What it affects is developer and reviewer trust: several issue files state a "contract" that exit
@@ -86,17 +96,23 @@ codes 2/4/5 "are consumed by `run_locally.sh`", and anyone reasoning about `$?` 
 invocation on that basis gets the wrong answer. PREPQ-014's own "Contract not to break" said this
 before it was corrected.
 
-**A correct implementation already exists in-repo** and should be the reference:
-`bin/yearly_runoff_hydrograph_aggregation.sh:206-213` reads the container's true status via
+**Related shell worth reading, but not an equivalent implementation:**
+`bin/yearly_runoff_hydrograph_aggregation.sh:190-211` reads the container's true status via
 `docker inspect "$CONTAINER_NAME" --format='{{.State.ExitCode}}'` rather than `$?` after a `| tee`
-pipeline, then branches on non-zero.
+pipeline. That solves a *different* problem — recovering one container's status through a pipeline —
+and does **not** address `run_locally.sh`'s actual question, which is what a *multi-module summary*
+should exit with. Do not treat it as a drop-in reference.
 
 ## What to inspect
 
-1. Whether `SDK_FAILED` should log per-station at WARNING, or emit a counts-only
-   **exception-class** summary (e.g. `sdk_failed: ValueError=4`). The latter distinguishes an outage
-   from a config gap **without putting station codes in logs** — the constraint that shaped
-   PREPQ-014's evidence gathering.
+1. Whether `SDK_FAILED` should log per-station at WARNING, or emit a counts-only summary keyed by a
+   **normalised reason/stage** — e.g. `station_lookup_non_200`, `norm_path_unresolved`,
+   `norm_endpoint_non_200` — rather than by exception class. **Exception class alone is not
+   sufficient:** the installed SDK raises `ValueError` for a missing path *and* for a non-200 norm
+   endpoint, and a non-200 station lookup also becomes the missing-path `ValueError`, so
+   `ValueError=4` would not distinguish an outage from a config gap. An earlier draft of this issue
+   proposed exactly that and was wrong. The goal remains a summary that discriminates cause
+   **without putting station codes in logs**.
 2. Whether the same DEBUG-only pattern hides causes elsewhere. `sync_long_horizon_hydrograph.py:370`
    (norm absent) and `:607` (per-station API failure) are the same shape; audit siblings in
    `preprocessing_runoff` and the PP-051 recalc family before deciding a convention.
@@ -127,7 +143,13 @@ pipeline, then branches on non-zero.
 - Do not raise `SDK_FAILED` per-station logging to WARNING **and** keep the terminal aggregate ERROR
   without checking the volume: a deployment with many virtual stations would emit one line per
   station per horizon. Counts-only is likely the right shape.
-- **No real station codes in logs at WARNING or above.** Several deployments ship logs off-host.
+- **Requested behaviour change, NOT an existing contract: no real station codes at WARNING or
+  above.** Today's short-horizon warnings *do* include codes
+  (`sync_short_horizon_hydrograph.py:633-650`, and `:716-722` can list failed codes), so this is a
+  new requirement, not an invariant to preserve. An earlier draft listed it as a contract not to
+  break, which would have misled a fixer into thinking the codebase already complied. If the owner
+  wants it, audit every existing warning path as separate work — several deployments ship logs
+  off-host.
 - `bin/yearly_runoff_hydrograph_aggregation.sh`'s `docker inspect` exit-status handling must be
   preserved if that job is ever rerouted; `$?` after a `| tee` is the pipeline's code, not the
   container's.

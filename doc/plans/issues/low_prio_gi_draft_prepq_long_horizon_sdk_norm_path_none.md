@@ -55,8 +55,8 @@ ERROR - Long-horizon monthly hydrograph ingestion completed with 4 SDK norm look
 **CORRECTION (2026-08-17).** An earlier revision of this file claimed "the exit-code contract
 behaves correctly". That is **wrong at the process level** and must not be relied on.
 
-What is true: the inner branch selects the right *diagnostic message* (`run_locally.sh:724-726`
-logs "SDK norm lookup failure(s)" for `lt_rc=4`) and sets the module's own `rc=4`.
+What is true: the inner branch selects the right *diagnostic message* (`run_locally.sh:725-726`
+logs "SDK norm lookup failure(s)" for `lt_rc=4`) and sets the module's own `rc=4` (`:727`).
 
 What is false: that 4 reaches the caller. `print_summary` returns 1 on any failure
 (`:1585-1588`), the caller does `print_summary ... || exit_code=1` (`:1974`), and the script
@@ -69,14 +69,20 @@ out-of-loop review during PREPQ-014 investigation and re-verified here by direct
 
 ## Why (a) is likely a real defect and (b) likely is not
 
-`No path provided or the provided path is None` is a **configuration/path** error raised
-before any data lookup — an unset or unresolved path variable — whereas `expected 72 norm
-values … got 0` is a **data availability** statement. They should not be conflated, and only
-(a) currently drives the exit code.
+> **SUPERSEDED (2026-08-17).** This section's original wording — that the error is a
+> "configuration/path" error "raised before any data lookup", and that the deployment difference
+> points at kghm configuration — is **wrong on both counts** and is kept only so the reasoning
+> trail is legible. A hydrological station-lookup request *has* already been issued and decoded by
+> the time the error is raised; what never happens is the *norm-endpoint* request. And there is no
+> deployment setting that could fix it. See "Root cause" below, which supersedes this section and
+> the "Cross-organisation evidence" triage bullets that follow it.
+
+`No path provided or the provided path is None` is a **path-resolution** error raised before the
+norm request, whereas `expected 72 norm values … got 0` is a **data availability** statement. They
+should not be conflated, and only (a) currently drives the exit code.
 
 Open question for whoever picks this up: are those 4 sites expected to have SDK norms at all?
-If they are legitimately out of scope (e.g. virtual or newly added stations), the fix is to
-classify them rather than to fail the run.
+*(Answered 2026-08-17 — see "Open decisions for the owner" item 1.)*
 
 ## Operational consequence
 
@@ -104,15 +110,22 @@ Same command, same trunk commit (`maxat_sapphire_2` @ `8e3fc1bc`), different org
 | Exit code (logged, inner) | **4** | n/a |
 | Exit code (actual process status) | **1** — see CORRECTION | **0** (PASS, 3m 25s) |
 
+> **SUPERSEDED (2026-08-17)** — the "deployment configuration" reading below is **wrong**. There is
+> no per-site or per-org *path setting* anywhere; the unresolved value is a UUID derived at call
+> time. The cross-org counts themselves stand; only their interpretation was mistaken. See
+> "Root cause".
+
 **This substantially changes the diagnosis.** The path-unset failure is **not** a general code
-defect — it does not occur at all for a second deployment running identical code. That points
-at kghm **deployment configuration** (an unresolved per-site or per-org path) rather than the
-`write_station_short_horizon` implementation.
+defect — it does not occur at all for a second deployment running identical code. ~~That points
+at kghm **deployment configuration** (an unresolved per-site or per-org path)~~ — it points at a
+difference in kghm's *station data*, not its settings.
 
 Consequences for triage:
 
-- **Priority is arguably lower than Medium** as a *code* issue, and higher as a *kghm config*
-  issue. Recommend re-scoping to "diagnose the unresolved kghm path", not "fix the SDK call".
+- **Priority is arguably lower than Medium** as a *code* issue. ~~and higher as a *kghm config*
+  issue. Recommend re-scoping to "diagnose the unresolved kghm path"~~ — there is no kghm path to
+  diagnose; see "Root cause". *(Priority was subsequently set to Low for a different and better
+  reason: no daily-production path runs this code at all.)*
 - The **`got 0` class appears on both orgs** (51 kghm / 19 tjhm) and drives no exit code. That
   supports the original read that it is data availability, not a defect.
 - The tjhm run also confirms the **exit-code contract is sound in the healthy direction**:
@@ -197,7 +210,7 @@ out as a trigger for the 4 sites** — an earlier draft of this section wrongly 
 could. Settling it needs either a captured response or the service's filtering semantics. See also
 the station-identity hazard in the open decisions below.
 
-### What distinguishes the affected sites: they are virtual stations
+### What can make a code unresolvable — virtual-only codes are the leading candidate, not a finding
 
 **Proven from code** — the work list and the norm lookup are built from *different* station
 registries:
@@ -335,7 +348,7 @@ that failure at `logger.debug` (`:356`), the evidence needed to distinguish them
 A counts-only exception-class summary at WARNING would settle it without exposing station codes.
 
 **`run_locally.sh` does not propagate exit 4 as the process status.** The inner maintenance function
-receives `lt_rc=4` and logs the specific "SDK norm lookup failure(s)" diagnostic (`run_locally.sh:720-726`),
+receives `lt_rc=4` and logs the specific "SDK norm lookup failure(s)" diagnostic (`run_locally.sh:725-727`),
 but `print_summary` returns 1 whenever any module failed (`:1585-1588`) and the caller does
 `print_summary "$pipeline_elapsed" || exit_code=1` (`:1974`), overwriting 4 before `exit $exit_code`.
 So the observed `failed (exit 4)` line describes the **inner** result; the wrapper's final process
@@ -419,13 +432,19 @@ crontab documentation.** **The long-horizon script does not run in daily product
 all.** Exhaustive grep for `sync_long_horizon_hydrograph` across `apps/` and `bin/` (excluding tests
 and the module itself) returns exactly three invocation sites:
 
-| Caller | Cadence | Production? |
-|---|---|---|
-| `apps/run_locally.sh:706,713` | on demand | no — local dev runner |
-| `bin/yearly_runoff_hydrograph_aggregation.sh:184` | **yearly, 01 Jan** | **yes** |
-| `bin/dev_local_backfill.sh` | on demand | no — dev backfill |
+| Caller | Level | Cadence | Production? |
+|---|---|---|---|
+| `apps/run_locally.sh:706,713` | runs the script | on demand | no — local dev runner |
+| `bin/yearly_runoff_hydrograph_aggregation.sh:184` | runs the script | **yearly, 01 Jan** | **yes** |
+| `apps/preprocessing_runoff/backfill_discharge_aggregation.py:109` | imports and calls `write_long_horizon_hydrograph` | on demand | no — backfill tool (`bin/backfill_discharge_aggregation.sh`) |
+| `bin/dev_local_backfill.sh` | **indirect** — via `initialize_regenerate_hooks.sh` / the yearly wrapper | on demand | no — dev backfill |
 
-The documented production cron (`doc/deployment.md:911`) runs daily maintenance at 19:00 UTC via
+**This table is not certified exhaustive**, and it deliberately distinguishes script-level from
+function-level callers — an earlier draft claimed "exactly three invocation sites" and both missed
+the backfill module and conflated the two levels. What the grep *does* support is the narrower and
+sufficient claim: **no daily-production path reaches this code.**
+
+The documented production cron (`doc/deployment.md:912`) runs daily maintenance at 19:00 UTC via
 `bin/run_daily_maintenance.sh` → Luigi, whose `PrepRunoffMaintenance` runs only
 `preprocessing_runoff.py`. `bin/daily_preprunoff_maintenance.sh` is marked **[Legacy]** and
 superseded (`bin/README.md:44,173`).
