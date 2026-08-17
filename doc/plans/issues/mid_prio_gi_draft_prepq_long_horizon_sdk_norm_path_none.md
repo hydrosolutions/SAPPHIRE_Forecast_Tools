@@ -3,9 +3,11 @@
 **Status**: Draft (2026-08-15)
 **Module**: `apps/preprocessing_runoff` (`sync_long_horizon_hydrograph.py`,
 `write_station_short_horizon`)
-**Priority**: **Medium** — reproducible, correctly signalled by exit code 4, and it makes
-`maintenance:preprocessing_runoff` report FAIL on every run even when the primary gap-fill
-succeeds.
+**Priority**: **Low** *(downgraded from Medium 2026-08-17)* — the long-horizon script does not run
+in daily production maintenance at all; the "FAIL on every run" symptom is specific to the local
+`run_locally.sh` target. Genuine production exposure is the **yearly 01 Jan** aggregation, where the
+wrapper does surface a non-zero exit correctly. Root cause is an accepted **upstream SDK gap**, not
+a SAPPHIRE defect. See "Open decisions for the owner" 1 and 2, both resolved.
 **Labels**: `preprocessing_runoff`, `hydrograph`, `sdk`, `configuration`
 **Found**: 2026-08-14, reconfirmed 2026-08-15, local kghm review on `maxat_sapphire_2` @
 `8e3fc1bc`.
@@ -400,19 +402,52 @@ malformed row.
 
 ### Open decisions for the owner — these block the fix
 
-**1. Are virtual stations expected to carry SDK discharge norms at all?** *(the original blocker)*
-If yes, this is an iEH HF gap (norms exist for hydrological sites only) and the fix is upstream. If
-no, the fix is to classify them out before the norm call and stop counting them toward `SDK_FAILED`.
+**1. ~~Are virtual stations expected to carry SDK discharge norms at all?~~ — RESOLVED 2026-08-17
+(owner):** **Yes, they should be able to.** Since the SDK cannot do it today, this is accepted as an
+**upstream iEH HF gap**, not a SAPPHIRE defect. Action: request the capability from the SDK
+developer (draft: `doc/prod/iehhf_virtual_station_norms_request.md`).
 
-**2. Which entrypoint is authoritative for "maintenance"?** This changes the operational severity
-claimed at the top of this issue. The standalone Docker wrapper (`bin/daily_preprunoff_maintenance.sh:112`,
-`apps/preprocessing_runoff/Dockerfile:34`) and the Luigi task
-(`apps/pipeline/pipeline_docker.py:1713-1755`, `PrepRunoffMaintenance`) both run only
-`preprocessing_runoff.py` — **neither invokes the long-horizon script**. The shell
-wrapper also logs the container status without exiting on it. So "maintenance reports FAIL on every
-run" is currently established only for the local `apps/run_locally.sh` target, and may not describe
-scheduled production maintenance at all. Resolve this before setting priority or writing acceptance
-tests.
+Consequence for the fix space above: **option 3 is the desired end state**, and options 1–2 are
+interim measures at best. Do not implement a client-side "classify virtual out" fix as though it
+were the answer — it would suppress a signal the owner wants to keep. If an interim measure is
+needed before upstream lands, prefer option 2 (stop counting toward `SDK_FAILED`) over option 1
+(drop from the work list), because option 2 preserves the observed rows that open decision 3 is
+about.
+
+**2. ~~Which entrypoint is authoritative for "maintenance"?~~ — RESOLVED 2026-08-17 from the
+crontab documentation.** **The long-horizon script does not run in daily production maintenance at
+all.** Exhaustive grep for `sync_long_horizon_hydrograph` across `apps/` and `bin/` (excluding tests
+and the module itself) returns exactly three invocation sites:
+
+| Caller | Cadence | Production? |
+|---|---|---|
+| `apps/run_locally.sh:706,713` | on demand | no — local dev runner |
+| `bin/yearly_runoff_hydrograph_aggregation.sh:184` | **yearly, 01 Jan** | **yes** |
+| `bin/dev_local_backfill.sh` | on demand | no — dev backfill |
+
+The documented production cron (`doc/deployment.md:911`) runs daily maintenance at 19:00 UTC via
+`bin/run_daily_maintenance.sh` → Luigi, whose `PrepRunoffMaintenance` runs only
+`preprocessing_runoff.py`. `bin/daily_preprunoff_maintenance.sh` is marked **[Legacy]** and
+superseded (`bin/README.md:44,173`).
+
+**Therefore the headline symptom of this issue — "`maintenance:preprocessing_runoff` reports FAIL on
+every run" — cannot occur in scheduled production.** It is specific to the local `run_locally.sh`
+target. **Priority drops accordingly** (see the status block at the top).
+
+The genuine production exposure is the **yearly 01 Jan** job, once per year. That wrapper handles
+the exit code correctly: it reads the container's real status via
+`docker inspect ... {{.State.ExitCode}}` rather than the `tee` pipeline's code, and branches on
+non-zero (`bin/yearly_runoff_hydrograph_aggregation.sh:206-213`). So an exit 4 there *would* surface
+— unlike in `run_locally.sh`.
+
+> **New defect found while resolving this — filed separately, do not fix here.**
+> `doc/deployment.md:923` schedules the 01 Jan 03:00 slot as
+> `run_periodic_maintenance.sh monthly_norms`, but Luigi's task map handles only
+> `long_term`/`skill_recalc`/`snow_norms` and **raises `ValueError` for `monthly_norms`**
+> (`apps/pipeline/pipeline_docker.py:2049-2057`). `bin/README.md:231` names a *different* script for
+> the same slot (`yearly_runoff_hydrograph_aggregation.sh`). A deployment following `deployment.md`
+> would therefore never run the yearly long-horizon aggregation. See
+> `doc/plans/issues/high_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
 
 **3. Per horizon, should a virtual site keep its observed rows with `norm=None`?** The two horizons
 already disagree. Long-horizon `NORM_ABSENT` still writes the 12 monthly rows and preserves any
