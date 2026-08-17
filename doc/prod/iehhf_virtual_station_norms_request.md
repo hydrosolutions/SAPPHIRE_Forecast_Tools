@@ -1,6 +1,8 @@
 # Request to the iEasyHydro HF SDK developer: discharge norms for virtual stations
 
-**Status**: Draft for owner review before sending (2026-08-17)
+**Status**: **Sent 2026-08-17** — maintainer acknowledged and will look into it. Awaiting an answer
+to the three questions below; PREPQ-014 stays open pending that reply. Retained here as the record
+of what was asked.
 **Requested by**: SAPPHIRE Forecast Tools
 **Concerns**: `ieasyhydro-python-sdk` @ `2cc7953` (current `master` HEAD), `get_norm_for_site`
 **Origin**: PREPQ-014 — see
