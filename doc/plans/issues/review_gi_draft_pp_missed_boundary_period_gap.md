@@ -1,8 +1,12 @@
 # PP-045 — Missed boundary-day operational run leaves short-term per-model period gap that maintenance cannot heal
 
-**Status**: Implemented — awaiting human review (Option B shipped on branch
-`fix_postprocessing_boundary_gap`, NOT pushed). Secondary decade-EM anomaly →
-separate ticket (still to file). See "Verification" and "Decision & Workplan".
+**Status**: Review — Option B **merged to trunk** via PR #425 (`cd97db57`,
+2026-07-23); commits `cce5922a` + `62bbba65`. Secondary decade-EM anomaly filed
+as PP-048. See "Verification", "Decision & Workplan", and the 2026-08-17
+re-assessment at the end of this file for what still blocks Complete.
+*(Header corrected 2026-08-17: the previous text said "shipped on branch
+`fix_postprocessing_boundary_gap`, NOT pushed" — stale; the branch is gone and
+`git merge-base --is-ancestor` confirms both commits are on `maxat_sapphire_2`.)*
 **Module**: postprocessing_forecasts
 **Priority**: High
 **Labels**: `postprocessing`, `data-integrity`, `operational`
@@ -617,8 +621,454 @@ owner.
 
 ---
 
+## Confirmed on trunk 2026-08-17 (tjhm)
+
+Re-assessment against `maxat_sapphire_2` @ `8e3fc1bc`. Every claim is tagged
+**PROVEN** (direct code read and/or a green test in this repo), **INFERRED**
+(consistent with the evidence, not established), or **REPORTED** (supplied to
+this session, not re-verified here). This section was itself put through an
+out-of-loop adversarial review (`codex exec`, read-only, fresh context) before
+being committed; that reviewer refuted several claims in the first draft, and the
+corrections are folded in below — including one that corrects this issue's own
+original premise (§A6).
+
+### A. Code re-verification — PROVEN
+
+1. **The fix is on trunk.** `apps/postprocessing_forecasts/backfill_period_forecasts.py`
+   and `tests/test_backfill_period_forecasts.py` exist at `8e3fc1bc`;
+   `git merge-base --is-ancestor` succeeds for both `cce5922a` and `62bbba65`;
+   the file first appears on the first-parent history at `cd97db57` "Merge pull
+   request #425". The branch is deleted — treat as merged.
+
+2. **The yearless-dedup rationale for one-year-at-a-time is still accurate.**
+   `file_writer.get_latest_forecasts` sorts by `date` descending and calls
+   `drop_duplicates(subset=["code", <period_col>, "model_short"], keep="first")`
+   (`src/file_writer.py:118`) **before** applying `year >= latest_year - 1`
+   (`:124`). The key carries no year, so the same period-in-year across two years
+   collapses to the later row. The load-bearing detail: `save_forecast_data`
+   hands **`simulated_latest`** — the deduped frame — to
+   `api_writer._write_combined_forecast_to_api` (`:244`), so the collapse reaches
+   the API write and is not merely a CSV artifact. Locked by
+   `TestGetLatestForecastsCollapsesAcrossYears::test_same_period_two_years_collapses_to_later_year`.
+   The CLI docstring's "ONE YEAR AT A TIME" section is correct as written. (The
+   underlying defect remains open as PP-046.)
+
+3. **Maintenance still cannot discover a zero-`combined` date.**
+   `postprocessing_maintenance.py:185` early-returns on empty combined; `:192`
+   calls `gap_detector.detect_missing_ensembles(...)` **without**
+   `modelled_forecasts`, which the detector still accepts and still uses to widen
+   its universe (`src/gap_detector.py:88`). Unchanged from the original diagnosis.
+
+4. **Test suite green on trunk** — *this item is REPORTED, not PROVEN: the run
+   happened in the 2026-08-17 session and no durable log is attached, so it is not
+   reproducible from this file. Re-run to confirm.*
+   `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` →
+   **1832 passed, 1 xfailed, 0 failed, 0 skipped** (30.7 s).
+   **PROVEN (static):** `test_backfill_period_forecasts.py` contains **23** test
+   methods (an earlier draft of this section said 26 — a miscount that included
+   `class` lines; 23 matches the 2026-07-23 record above).
+
+5. **`validate_pipeline` structurally cannot see a stranded historical boundary
+   day.** `run_tier1_short_term` computes
+   `boundary = most_recent_pentad_boundary(forecast_date)`
+   (`apps/validate_pipeline/validate_pipeline.py:389`) and queries every
+   configured short-term model over `[boundary, forecast_date]` only (`:459`). On
+   2026-08-17 that window is `[2026-08-15, 2026-08-17]`. **PROVEN:** the window
+   never looks further back than the most recent boundary, so any earlier stranded
+   day is outside it by construction. **INFERRED (not verified here):** that the
+   validator therefore actually returned PASS on the reported tjhm data — that
+   depends on DB contents this session did not query. Same family as INFRA-024 (a
+   check that cannot fail) and INFRA-026 (expectations that do not match the
+   product's schedule); neither currently names the "historical boundary day
+   silently empty" case, so it should be added to one of them.
+
+6. **CORRECTION to this issue's own premise: per-model PERIOD rows are written by
+   at least three entrypoints, not "only the operational code path".** The
+   Summary and Problem sections above say per-model period rows "are created
+   **only** by the operational code path". That is wrong on trunk:
+   - `postprocessing_operational.py` — the boundary-gated path (as described).
+   - `recalculate_skill_metrics.py::_run_short_term_recalc` — calls
+     `file_writer.save_forecast_data(config, modelled)` (`:233`) after
+     re-aggregating, i.e. it writes per-model PERIOD rows as a side effect of a
+     skill recalculation.
+   - `backfill_period_forecasts.py` — PP-045's own CLI.
+   Plus `apps/machine_learning/reaggregate_day_to_periods.py`, which upserts
+   individual/NE period rows by raw SQL (un-wired, noted in the original analysis).
+
+   Two consequences worth carrying:
+   - Observing a PERIOD row for a date does **not** identify which entrypoint
+     produced it. Any diagnosis that reasons backwards from "a period row exists,
+     therefore an operational run happened" is unsound (see §C).
+   - `_run_short_term_recalc` calls `read_observed_and_modelled_data(config.name,
+     codes=codes)` with **no** `start_year`/`end_year`
+     (`recalculate_skill_metrics.py:191`), and those parameters default to `None`
+     = unbounded (`src/data_reader.py:2746-2751`). So the ST skill recalc reads
+     **every** year at once and then saves through the same yearless-key dedup as
+     everything else (`src/file_writer.py:118`) — precisely the multi-year collapse
+     that PP-046 describes and that PP-045's CLI iterates per year to avoid. Stated
+     precisely: the unbounded input is collapsed to **one row per
+     `(code, period_in_year, model_short)`**, then filtered to the last two years.
+     It is therefore *not* true that the recalc writes rows across all years, and
+     *not* true that only the latest year survives — a period-in-year absent from
+     the latest year can retain its prior-year row. The net effect is a silent
+     *under-write* (at most one row per period-in-year reaches the API, regardless
+     of how many years were read), not data loss, since rows are upserted rather
+     than deleted. **Not fixed here** — record and file as a new ticket per the
+     repo's found-while-mapping rule; it is the strongest concrete argument that
+     PP-046 is worth fixing.
+
+### B. Field evidence — REPORTED, not re-run here
+
+This session was read-only and did not query the shared DBs (a concurrent module
+review held the tunnels). Recorded verbatim as context:
+
+- LR raw forecasts (`/lr-forecast/`, pentad) present for **all** issue days
+  including 2026-07-25, 07-31, 08-05, 08-10 (78 rows each).
+- Per-model PERIOD rows (`/forecast/?horizon=pentad`) present **only** for
+  07-05, 07-10, 07-15, 07-20 and 08-15 — the four days above are absent.
+- `maintenance:postprocessing_forecasts` ran (26 s, PASS, ~12.8k records,
+  13-month window) and created none of them; it only enriched dates that already
+  had `combined` rows.
+- EM **and** NE both absent for the four days.
+
+A similar signature was independently recorded on kghm on 2026-08-14
+(`doc/dev/review_checklist_local_2026-08-14_kyg.md`: "TFT pentad present only for
+08-15, nothing for 08-05/08-10") — but that record explicitly labels its own
+PP-045 attribution as underdetermined (`:2158`) and also records an LR **hindcast**
+run producing fourteen write batches (`:2122`). So kghm is a second *observation*,
+not a second confirmation, and it must be probed on its own data and config
+(§E) rather than assumed to share tjhm's cause. That checklist additionally
+states PP-045's fix is "not on trunk" — stale and wrong; PR #425 merged
+2026-07-23, three weeks earlier. What it actually observed is trunk behaviour
+*with* the fix present, because the fix is a manual tool that nobody ran.
+
+### C. What is established, and what decides the diagnosis — READ THIS FIRST
+
+**Established (PROVEN, code-only):** maintenance cannot heal a zero-`combined`
+boundary date (§A3), and the validator's window cannot see one (§A5). Those two
+facts are independent of any DB state.
+
+**REPORTED, not proven here:** that the condition is currently live on tjhm and
+kghm (§B). This session did not query the DBs; the kghm record self-labels as
+underdetermined. Do not cite §B as proof of a live defect until §E runs.
+
+**Two earlier inferences are withdrawn:**
+
+- ~~"An operational pentad run executed on 2026-08-15, because only operational
+  writes per-model PERIOD rows."~~ **Refuted by §A6** — at least three entrypoints
+  write those rows. The producer of the 08-15 rows is unknown.
+- ~~"LR rows on all four days indicate the pipeline was invoked on those days."~~
+  **Refuted** — `linear_regression.py` has a `--hindcast` mode that iterates
+  historical forecast dates (`:698`, `:813`), and the kghm checklist records
+  exactly such a hindcast. LR presence carries no information about when, or
+  through which mode, those rows were created.
+
+**The remaining question, which decides everything:** for each (code, model) and
+each of the four dates, did a **usable row survive merged-archive normalization**
+at the time the aggregation ran? Note this is *not* the same as "does a DAY row
+exist": `_read_ml_forecasts_pp_api` fetches both `horizon="day"` and the migrated
+period archive and merges them (`src/data_reader.py:2194`), retaining period rows
+for dates before each (code, model)'s first DAY issue date
+(`_merge_archives_by_day_cutover`, `:2087`, `:2148`). With no DAY rows at all it
+returns the period archive unchanged. LR presence in `/lr-forecast/` is
+independent of both (`:2630`), and LR is dropped before the combined write —
+returning `False` if the frame is LR-only (`src/api_writer.py:230`, `:242`).
+
+**Decision tree — the first draft's H1/H2 split was not exhaustive.** At least
+six distinct causes produce the observed pattern, and they need different fixes:
+
+| # | Cause | How to detect it | Who fixes it |
+|---|---|---|---|
+| C1 | No usable row for those issue dates in either archive | **Derived-frame probe (P2), not a log line.** `No <model> forecasts from API` (`src/data_reader.py:2661`) fires only when the *entire* scoped read is empty, so it cannot single out four missing dates when other dates exist. | `machine_learning` (see caveat below) |
+| C2 | Rows present, `target` outside the following period | `Filtered %d/%d daily targets outside …` (`src/data_reader.py:2418`) — an **aggregate count**, not per-date; a non-zero count says "look here", P2 says which dates | ML output / aggregation filter |
+| C3 | Rows present, `forecasted_discharge` NULL | `Dropped %d null-discharge forecast records …` (`src/api_writer.py:413`), again aggregate | ML output. `recalculate_nan_forecasts.py` is the usual tool but is **not** a general remedy — it selects only flag `1`/`2` rows, not every null-discharge row |
+| C4 | Rows exist **now** but were absent/unreadable **during** the historical run — the reader turns exceptions into `None` (`src/data_reader.py:2183`, `:2198`) | historical operational log only; no query of current state can see this | transient; needs log evidence |
+| C5 | Codes or models excluded by the operational station-selection or `ieasyhydroforecast_available_ML_models` config (station scoping invoked at `postprocessing_operational.py:146`; the model gate and config parsing follow `src/data_reader.py:2646`) | config diff, not DB | configuration |
+| C6 | Rows usable and written, but the write silently under-persisted (PP-047: `_write_combined_forecast_to_api` receives a server `count` but returns `True` without comparing it to the submitted record count, `src/api_writer.py:445`, `:463`) | server-side count vs submitted | PP-047 |
+
+Only **C6**, and a hypothetical seventh case where everything above is clean and
+the rows still never appeared, would represent a genuine *new* defect in PP-045's
+territory. C1–C5 mean the four days are **not** a PP-045 reproduction: PP-045's
+original "self-heals at the next within-year boundary run" claim survives (its
+stated proviso (a) — "the DAY archive still holds those issue dates" — simply
+failed), and `backfill_period_forecasts.py` cannot recover them, because it
+re-runs the same aggregation over the same inputs.
+
+**Caveat on the C1 remedy.** The obvious upstream tool is
+`machine_learning/fill_ml_gaps.py` (wired into `maintenance:machine_learning` and
+the default ML `RUN_MODE`; the orchestrator already sequences ML maintenance
+before postprocessing maintenance, `apps/pipeline/pipeline_docker.py:1860`). But
+its gap detection only examines gaps *between consecutive dates for codes already
+present* (`fill_ml_gaps.py:265`, `:278`, `:304`) — it cannot discover an empty
+model/code archive, a leading gap, or a trailing gap. If the first DAY date is
+around 08-13/08-15, the four earlier dates may be invisible to it as well, which
+would explain why routine maintenance did not close the gap. Verify before
+recommending it as the remedy.
+
+Also note the mechanism that keeps the *existing* period rows alive:
+`_merge_archives_by_day_cutover` retains period-archive rows for dates before each
+(code, model)'s first DAY issue date, so 07-05..07-20 can be re-emitted unchanged
+from the period archive with no DAY data behind them. A DAY archive that begins
+around 08-13 would reproduce the entire observed pattern on its own.
+
+### D. Two defects in the shipped artefact's stated contract — PROVEN
+
+1. **Inaccurate parenthetical.** `backfill_period_forecasts.py:3-8` says
+   maintenance "recalculates skill metrics, not period forecasts". Both halves are
+   wrong. Maintenance *reads* skill metrics, it does not recalculate them (that is
+   `recalculate_skill_metrics.py`), and it *does* write period forecasts —
+   refreshed individual, NE and EM rows (`postprocessing_maintenance.py:291`,
+   `:348`, `:380`). What it cannot do is discover a date with zero `combined`
+   rows, and its write set never emits fresh per-model rows for a newly-discovered
+   date. The rest of this issue states it correctly; only the CLI docstring is
+   wrong, and an operator reading only the CLI would draw the wrong conclusion
+   about what maintenance did.
+
+2. **Understated precondition.** Neither the docstring nor `--help` states what
+   the backfill actually requires: **a usable row must survive merged-archive
+   normalization for that issue date** — a DAY row with an in-period `target` and
+   a non-null discharge, *or* a retained pre-cutover period-archive row. The first
+   draft of this section wrote "ML DAY rows must exist", which is too strong: with
+   no DAY rows the reader falls back to the period archive
+   (`src/data_reader.py:2103`, `:2148`, `:2194`). The docstring should state the
+   real precondition, name the three filters that can silently empty a date
+   (boundary drop, in-period target filter, null-discharge drop), and point at the
+   upstream tools (`fill_ml_gaps.py`, `recalculate_nan_forecasts.py`) **with** the
+   caveat in §C that `fill_ml_gaps.py` cannot see leading/trailing gaps.
+
+Both are documentation-only fixes to a shipped file; neither changes behaviour.
+They are **blocking**, not cosmetic — this issue's own Desired Outcome states
+that "done" includes "the behavior is documented".
+
+### E. Verification design — DESIGNED, NOT RUN
+
+Not run this session: the shared DBs and SSH tunnels were in use by a concurrent
+module review, and the constraint was read-only. **P0–P3 are read-only and safe to
+run alone. P4 writes and needs owner go-ahead plus an idle tunnel.** Run the whole
+sequence **independently on tjhm and on kghm** — §B establishes two observations,
+not one shared cause.
+
+- **P0 (config, read-only).** Record, per org: `ieasyhydroforecast_run_ML_models`,
+  `ieasyhydroforecast_available_ML_models`, and the station-selection file's
+  `stationsID`. A code or model absent here is cause **C5** and explains the gap
+  with no DB work at all.
+- **P1 (logs, read-only, no DB access).** Preserve the historical operational and
+  maintenance logs covering 2026-07-20 → 2026-08-17 **before any write**, then grep
+  them for: `No <model> forecasts from API` (**C1**),
+  `Filtered %d/%d daily targets outside` (**C2**),
+  `Dropped %d null-discharge forecast records` (**C3**),
+  `No non-LR forecast records to write`, and any reader exception around the ML
+  fetch (**C4**). Read these as *signals, not verdicts*. The two filter lines
+  (`Filtered …`, `Dropped …`) carry an aggregate count for the whole run and never
+  the specific dates or codes, so a non-zero count says "C2/C3 is in play" and P2
+  says which dates. The other three carry no count at all: they are presence/absence
+  markers for the whole scoped read. What makes
+  this step non-optional is **C4** — an input that was absent or unreadable *then*
+  and is present *now* leaves no trace in current DB state, so the log is the only
+  evidence that will ever exist for it. Run it first, and preserve the logs before
+  anything writes.
+- **P2 (derived frame, read-only) — the primary discriminator.** Do **not** stop at
+  counting raw rows: that inspects the wrong frame and cannot separate C1 from
+  C2/C3. Call the production reader on the real config and print exact coverage:
+  `data_reader.read_observed_and_modelled_data("pentad", codes=<selection>,
+  start_year=2026, end_year=2026)`, then print
+  `(date, code, model_short, forecasted_discharge)` for the four dates plus the
+  controls. This exercises the archive merge, boundary drop, in-period target
+  filter, aggregation and station scoping. **It is not the final write payload** —
+  it still contains LR, may contain null-discharge rows, and precedes virtual
+  stations, NE, EM, the yearless-key dedup and the writer's LR/null/dedup filters.
+  What it establishes is the necessary condition: if the four dates are absent
+  *here*, no backfill can write them, and the cause is C1–C5. Reading is
+  side-effect-free; nothing is saved.
+- **P3 (controls + cutover).** Same query for 2026-08-15 (a date that does have
+  period rows) and 2026-07-20 (present, but possibly served from the retained
+  period archive rather than DAY). Separately — the derived frame has discarded
+  archive origin, so this cannot come from P2 — query the raw archives directly for
+  each (code, model)'s **first DAY issue date**:
+  `client.read_short_term_forecasts(horizon="day", model=<M>, code=<code>)` and
+  take the minimum `date`. That is the cutover boundary; a DAY archive beginning
+  ~08-13 explains the whole pattern.
+- **P3b (branch).** Map the result onto the C1–C6 table in §C and route
+  accordingly. C1–C5 ⇒ **not a PP-045 reproduction**; file the real cause against
+  the owning module and do not attribute these days to PP-045. C6 or "all clean
+  and still absent" ⇒ re-open the within-year self-heal analysis in this issue
+  **before** running any backfill.
+- **P4 (only if P3b lands on C6/unexplained; writes; owner go-ahead required).**
+  - Snapshot the affected rows (counts + values) before touching anything.
+  - **`--horizon pentad` only.** The reported anomaly is pentad-specific, and the
+    CLI expands each touched year to a whole-year read and save
+    (`backfill_period_forecasts.py:203`, `:209`); `--horizon both` would needlessly
+    rewrite the entire 2026 decad population and its EM rows.
+  - `--dry-run` first, but do **not** treat its output as coverage proof: the
+    dry-run logs only total rows, distinct period count and distinct model count
+    (`postprocessing_operational.py:197`) — it never lists dates or codes and
+    cannot show whether the four dates survive. P2 is the coverage evidence.
+  - Then the real run (API-only, `require_api=True`), then an **exact post-write
+    read-back** of the four dates for all five DB models. The read-back is
+    mandatory, not a nicety: PP-047 means `require_api=True` catches
+    API-unavailable / exception / explicit-`False` but **not** a `True` returned
+    over a zero or partial server write.
+  - Then re-run once and confirm counts are unchanged (idempotence), mirroring the
+    2026-07-23 verification recorded above.
+
+Caveat that applies to P4 under any cause: EM is recomputed against **current**
+skill metrics (`postprocessing_operational.py:170`, `:187`;
+`src/ensemble_calculator.py:115`, `:165`), so a backfill of historical dates does
+not replay the original ensemble values.
+
+### F. Manual vs automatic — ANSWER AND RECOMMENDATION
+
+**Recommendation: keep the *repair* manual; open a separate small ticket for
+*detection and reporting*. Do not make PP-045 self-repairing.**
+
+Three honest arguments, with the overreach of the first draft removed:
+
+- **A postprocessing-side automatic repair is not sufficient on its own.** Under
+  causes C1–C5 (§C) there is no usable input to aggregate, so a PP-side healer
+  would run, find nothing, and — absent care — report success. This does **not**
+  mean automatic repair is impossible: the orchestrator already sequences ML
+  maintenance before postprocessing maintenance
+  (`apps/pipeline/pipeline_docker.py:1860`), so a coordinated upstream-plus-PP
+  automation is conceivable. But it would need cross-module contracts that do not
+  exist today (notably a `fill_ml_gaps.py` that can see leading/trailing gaps, and
+  PP-047's write-count check), which is a substantially larger design than PP-045.
+- **Repair rewrites history.** EM is recomputed against current skill metrics
+  (confirmed, §E caveat), so a backfill of historical dates does not replay the
+  original ensemble values whenever the inputs or skill membership have changed.
+  It is *not* true that every invocation changes them — unchanged inputs are
+  deterministic — and it is *not* true that this feeds back into the short-term
+  skill store: `recalculate_skill_metrics.py` recomputes skill from raw
+  observed/modelled data and explicitly excludes EM re-derivation (`:191`, `:219`,
+  `:224`). The exposure is to downstream consumers of historical EM —
+  `forecast_skill_eval`, dashboards, bulletins. A tool an operator invokes
+  deliberately, having read that caveat, is a different risk from a cron job doing
+  it unattended.
+- **The blast radius is a whole calendar year.** The CLI's granularity is a full
+  year per pass by construction (whole-year read plus PP-046's yearless-key
+  constraint). Acceptable for a deliberate recovery; poor as automatic behaviour.
+
+The case for *some* automation is nonetheless strong, and this session's evidence
+is why: a routine three-week dev-machine staleness produced four apparently
+stranded issue days, and **no layer reported it** — maintenance ran green, and the
+validator's window (§A5) never looks further back than the most recent boundary.
+Silence here is indistinguishable from health.
+
+**Recommendation: detect-and-report, never auto-fix.**
+
+- **Where:** `maintenance:postprocessing_forecasts` — it runs frequently from cron
+  and is where an operator already looks. Emit a WARN listing boundary dates in the
+  lookback window with zero per-model period rows and, because that is the
+  operator's actual next decision, which of the C1–C6 causes the evidence points
+  at. **No writes, no exit-code change** (the exit contract is PP-051/PP-055
+  territory; do not entangle them).
+- **Cost — corrected, and not as cheap as the first draft claimed.** Maintenance
+  does *not* already own this. `read_combined_forecasts` reads the combined archive
+  **without date bounds** (`src/data_reader.py:844`); the 13-month cutoff lives in
+  `gap_detector` and is relative to the maximum observed date (`:72`, `:80`); and
+  maintenance never enumerates *expected* boundary dates at all — it only ever
+  reasons about dates that already exist. A zero-row detector therefore needs three
+  things that do not exist yet: an expected-boundary calendar, an active
+  code/model history (so retired stations do not alarm), and DAY/archive
+  availability logic (so C1 is reported as an upstream gap rather than a PP gap).
+  Small, but a real ticket — not a two-line WARN.
+- **Why not `validate_pipeline`:** that is where such a check morally belongs, but
+  its expectation model is itself under repair (INFRA-024 / INFRA-026). Adding a
+  boundary-history sweep before those land risks re-opening INFRA-026 from the
+  other side — a check that fires on healthy deployments. Lift it there afterwards.
+- **Honest counter-argument:** `postprocessing_maintenance.py` already carries the
+  most contested write/exit semantics in the module (PP-007, PP-024, PP-051,
+  PP-055), and a WARN nobody reads is not detection. Mitigation: the change touches
+  no write path, and the post-run log scan in the local review checklists
+  (`doc/dev/review_checklist_local_*.md` §8a) already greps these logs.
+
+**File as a new ticket, do not bundle into PP-045.** PP-045's scope was "provide a
+recovery mechanism", and that is delivered. "Make the condition visible" is a
+different contract with a different risk profile. **Do not assume PP-056 is free:**
+it is unused on trunk `8e3fc1bc` but claimed by an uncommitted entry (quarter
+skill-metric `horizon_value=0`) in a parallel session's working copy of
+`doc/plans/module_issues.md`. Allocate against the *current* index, not trunk's.
+
+### G. Remaining checklist to move Review → Complete
+
+**Blocking — evidence:**
+
+- [ ] Run P0–P3b (§E, read-only) **on tjhm** and record the outcome here.
+- [ ] Run P0–P3b **on kghm** independently — §B is two observations, not one
+      confirmed cause, and the kghm record self-labels as underdetermined.
+- [ ] Preserve the 2026-07-20 → 2026-08-17 operational/maintenance logs for both
+      orgs **before** any write. Cause C4 (input absent *then*, present *now*) is
+      invisible to any query of current DB state; the logs are the only evidence.
+- [ ] Resolve the deferred kyg criterion. As written it demands the **kyg server**;
+      the 2026-08-14 kghm local review reproduced a *condition* on kyg data but
+      never exercised the *fix*. Owner decision: exercise the backfill on kghm
+      locally (equivalent evidence, available now) or formally waive/downgrade the
+      criterion with a rationale. This is the only Acceptance Criterion above still
+      unchecked.
+
+**Blocking — the tool is invisible to operators, and "documented" is in this
+issue's own Desired Outcome:**
+
+- [ ] `doc/prod/` runbook entry for `backfill_period_forecasts.py`. Currently
+      referenced only in this issue, `doc/plans/module_issues.md`, and the
+      `doc/dev/review_checklist_local_*.md` diagnostics tables. For a
+      manual-recovery tool the operator-facing runbook *is* the deliverable.
+      It must require an **exact post-write read-back** (PP-047: the writer can
+      return `True` over a zero/partial persist) and recommend `--horizon` scoped
+      to the affected horizon rather than `both`.
+- [ ] CLI docstring fix 1 — the maintenance parenthetical (§D1), including that
+      maintenance does *not* recalculate skill metrics.
+- [ ] CLI docstring/`--help` fix 2 — the real precondition and the three silent
+      filters (§D2), with the `fill_ml_gaps.py` leading/trailing-gap caveat.
+- [ ] `apps/postprocessing_forecasts/README.md` — recovery procedure (no backfill
+      section exists at all).
+- [ ] `doc/data_flow_short_term.md` — the backfill as the recovery path for
+      stranded period rows.
+
+**Non-blocking corrections (factual, safe to apply):**
+
+- [ ] This issue's Summary/Problem sections still say per-model period rows are
+      created "only" by the operational path — corrected in §A6, but the prose
+      above should be fixed too so the two halves of the file agree.
+- [ ] `doc/dev/review_checklist_local_2026-08-14_kyg.md` — three errors, not one:
+      the stale "not on trunk" claim; the "period rows are written **only**
+      operationally" claim (`:4924`); and the diagnostics-table row that reads
+      "per-model period rows present but EM/NE absent ⇒ PP-045" (`:5179`), when
+      PP-045 concerns *missing per-model rows* and EM has a separate skill gate.
+      Dated review record — the owner should choose correct-in-place vs annotate.
+- [ ] `doc/plans/module_issues.md` PP-045 row — Status cell still reads "Option B
+      implemented (branch `fix_postprocessing_boundary_gap`)"; should read merged
+      via PR #425. **Deliberately not edited on 2026-08-17**: a concurrent session
+      had uncommitted changes to that file, and a one-row edit on a separate branch
+      would have handed them a needless conflict.
+- [ ] Claude memory — the self-heal-within-year vs permanent-across-year nuance,
+      the real backfill precondition, and the three-writers correction (§A6).
+
+**New tickets to file (found while mapping; per repo rule, not fixed here):**
+
+- [ ] **ST skill recalc reads all years and saves through the yearless-key dedup**
+      (§A6). `recalculate_skill_metrics.py:191` passes no year bounds; the save
+      path collapses period-in-year across years. Silent under-write, not data
+      loss. Strongest concrete instance of PP-046.
+- [ ] **Detect-and-report for stranded boundary days** (§F). Allocate a free ID —
+      allocate against the *current* `module_issues.md`, not trunk's (see §F —
+      PP-056 is free on trunk but claimed in a parallel session's working copy).
+
+**Owner decisions still open (carried forward, unchanged):**
+
+- [ ] API-only-by-default write (`--write-csv` opt-in) — behavioural choice on the
+      combined-CSV artifact; owner may override to CSV+API.
+
+**Explicitly NOT blocking Complete:** PP-046 (yearless key — worked around by the
+per-year loop), PP-048 (decade EM freeze). **PP-047 is not a code blocker either,
+but it does change the runbook**: without a post-write read-back, the manual
+recovery can report success after zero/partial persistence.
+
+---
+
 ## References
 
 - Investigation + independent (codex) verification: this session (2026-07-17).
+- 2026-08-17 status re-assessment (trunk `8e3fc1bc`, tjhm evidence): sections
+  "Confirmed on trunk 2026-08-17" above.
 - Related: PP-007, PP-024, PP-023, PP-031; prior art
   `apps/preprocessing_runoff/backfill_discharge_aggregation.py`.
