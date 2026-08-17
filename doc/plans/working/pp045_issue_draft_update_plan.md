@@ -213,16 +213,19 @@ un-rollback-able whole-year write is a worse outcome than leaving the question o
 
 ## 4. Phasing rationale
 
-P0 runs **first and immediately**, before any other work: it preserves evidence that
-expires. All three short-term writers — operational, maintenance and
-`recalculate_skill_metrics.py` — use `TimedRotatingFileHandler(when="midnight",
-backupCount=30)`, so logs age out on a rolling basis. Note the retention is a
-*rotation count*, not a wall-clock TTL: 30 backups equals ~30 days only if rollover
-happens daily, which it does not on days the job never runs. Either way, 2026-07-20 is
-28 rollovers back as of 2026-08-17 — at the edge. Deferring preservation until P4 — as
-the first revision did — risks
-losing the only evidence that can ever distinguish cause C4 (input absent *then*, present
-*now*), because no query of current state can recover it.
+P0 runs first because it preserves the only evidence that can ever distinguish cause C4
+(input absent *then*, present *now*) — no query of current state can recover it. All three
+short-term writers — operational, maintenance and `recalculate_skill_metrics.py` — use
+`TimedRotatingFileHandler(when="midnight", backupCount=30)`.
+
+**Corrected 2026-08-17 after running P0 — the earlier urgency framing was wrong.** This
+plan previously called P0 time-critical, reasoning from `backupCount=30` to roughly 30
+days of retention. That is not how it behaves: rotation happens only on days the job
+actually runs, so the 30 retained backups span **2026-04-01 → 2026-08-16**, about four and
+a half months. Evicting the 2026-07-24 file would take ~30 further run-days. P0 remains
+first — it is cheap and it must precede anything that writes — but it is **not** a race.
+The lesson is worth keeping: this premise survived three adversarial review passes and was
+corrected only by looking at the directory.
 
 P1 and P2 are independent of each other and run in parallel. P3 depends on P2 because the
 corrected docstring is the source text the runbook quotes; writing the runbook first
@@ -264,6 +267,25 @@ Steps:
 
 - **Acceptance:** an inventory listing exists naming every file captured and every gap in
   the sequence, dated.
+
+**STATUS: DONE — 2026-08-17.** 155 files (2.8 MB) copied to
+`~/sapphire_evidence/pp045_2026-08-17/logs/`, with `INVENTORY.md` alongside. Kept outside
+any repo: the source is gitignored because it carries operational data. Three results,
+recorded here because they change later phases:
+
+- **The run-day sequence is itself evidence.** `log_operational.2026-07-24` (mtime Jul 24)
+  is followed directly by `log_operational.2026-08-13` (mtime Aug 13) — a **20-day gap
+  with no runs**, spanning all four stranded pentad issue days (07-25, 07-31, 08-05,
+  08-10). This is direct corroboration for **C1**, not proof of it: absence of a rotated
+  file is strong but not conclusive, and LR rows exist for all four days, so something ran
+  later — most plausibly an LR hindcast. P4 must still confirm from contents.
+- **Retention is not a race** — see §4.
+- **Contamination trap.** The live `log_operational` (no date suffix) has mtime
+  2026-08-17 14:10, which is this session's `run_tests.sh`: the backfill tests write into
+  `apps/logs/`. Do not read the live file as operational history, and snapshot before
+  running the suite.
+- **Org attribution is not available from filenames.** The same log paths are reused for
+  whichever `.env` was active, so tjhm/kghm separation requires log *contents*.
 
 ### P1 — Reconcile the draft with itself
 
@@ -364,6 +386,19 @@ Steps:
     **unmodified** (C4, regression check).
   - `--help` renders; the year-semantics correction is visible in it.
 
+**STATUS: DONE — 2026-08-17.** All four steps applied.
+
+- **C4 scope proof, mechanised.** Rather than eyeballing the diff, both versions were
+  parsed with `ast`, docstrings stripped and every `help=`/`description=` value replaced
+  with a placeholder; the resulting trees are **identical**. That is positive evidence no
+  executable code changed, which a reviewed diff only approximates.
+- **Regression check:** 1832 passed, 1 xfailed, 0 failed, 0 skipped — identical to the
+  trunk baseline, with `tests/` unmodified (`git status` clean for that path).
+- **`--help` verified** to render the year-semantics warning.
+- Note for whoever runs this next in a fresh worktree: `run_tests.sh` first reported
+  "Errored — could not be verified" because the worktree had no venv. It did **not**
+  report a false pass. Run `uv sync --all-extras` in the module directory first.
+
 ### P3 — Operator-facing documentation
 
 - **Goal:** the recovery tool stops being invisible in *tracked* documentation. PP-045's
@@ -418,7 +453,13 @@ Steps:
   the preserved logs can say about what was true then. Not more than that.
 - **Files:** the issue file, sections §B / §C / §G. **No other file** — in particular not
   `module_issues.md` (C3).
-- **Depends on:** P0 (logs) and P1. **Externally blocked** on tunnel availability and
+- **Split by prerequisite (revised 2026-08-17, after P0).** Step 2 — analysing the
+  preserved logs — needs **no tunnels and no DB access at all**, and P0 has already
+  supplied its input. It can run today. Steps 1 and 3–5 need the live databases. Do not
+  report P4 as wholly blocked; the log-only half is available now and may settle the C1
+  question on its own.
+- **Depends on:** P0 (logs) and P1. Steps 1 and 3–5 are **externally blocked** on tunnel
+  availability and
   owner authorisation.
 
 **Evidentiary ceiling — the constraint that shapes this phase.** A probe of current
@@ -507,9 +548,11 @@ Steps:
    C8 exists for this. Note specifically that a snapshot alone does **not** make the run
    reversible — rows the backfill *inserts* have no prior value to restore, which is why
    C8 requires a rollback manifest partitioned into pre-existing versus absent keys.
-6. **Historical logs may already be gone.** 30 rotated backups puts 2026-07-20 at the
-   edge as of 2026-08-17. P0 may find the evidence already lost — record that outcome
-   explicitly rather than leaving it indistinguishable from "not yet checked".
+6. **~~Historical logs may already be gone.~~ RETIRED 2026-08-17** — P0 ran and the
+   archive spans 2026-04-01 → 2026-08-16. The risk was real in principle and false in
+   fact. Kept visible rather than deleted, because the *reasoning* that produced it
+   (inferring retention from `backupCount=30` instead of listing the directory) is the
+   recurring error, and it survived three adversarial review passes.
 7. **Gitignored operational records.** The dated local checklists contain operational data
    and are untracked by design. Any instruction to edit or commit them is a data-handling
    violation; P3 step 5 is the guard.
