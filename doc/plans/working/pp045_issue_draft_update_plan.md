@@ -1,16 +1,17 @@
 # PP-045 — issue-draft update: implementation plan
 
-**Status:** Draft, not started. Revised twice against out-of-loop `codex exec` reviews
-(read-only, fresh context). The first pass returned NOT SAFE TO COMMIT with 2 Critical and
-26 Important findings (P4 causal overclaiming and P4 write-safety were the Criticals); the
-confirm-fixes pass cleared 30 of 37 and drove a second revision, chiefly to C8 and P0.
+**Status:** **P0 and P2 DONE** (PR #438). P1, P3, P4, P5 open. Revised three times: twice
+against out-of-loop `codex exec` reviews (the first returned NOT SAFE TO COMMIT on 2
+Critical + 26 Important findings; the confirm-fixes pass cleared 30 of 37 and drove
+changes to C8 and P0), and once — this revision — after the **§8 analysis** closed the
+question P1 previously punted on.
 
-**Base:** `origin/maxat_sapphire_2` @ `8e3fc1bc`, **plus** the 2026-08-17 re-assessment
-commit `31370164` on the unmerged branch `docs_pp045_status_2026-08-17`. See §0 — this is
-the plan's largest dependency, and P1/P4/P5 are void without it.
+**Base:** `origin/maxat_sapphire_2` @ `f4034e52`. The 2026-08-17 re-assessment
+(`31370164`) that P1/P4/P5 depend on **is now merged**; §0's blocking dependency is
+discharged.
 
 **Target artefact:** `doc/plans/issues/review_gi_draft_pp_missed_boundary_period_gap.md`
-(PP-045), 624 lines on trunk, 1074 after `31370164`.
+(PP-045), 1074 lines on trunk.
 
 **Owner-locked scope:** bring PP-045's issue draft to a state where it is internally
 consistent and where a Review → Complete decision is defensible.
@@ -27,8 +28,10 @@ conditionally and behind owner authorisation. Any summary of this plan that says
 feature (this plan updates/creates its ticket, it does not implement it).
 
 **Anchoring convention (deliberate).** Locations are anchored by **section heading or
-symbol name plus a quoted phrase**, with line numbers as a secondary hint only. Line
-numbers in the target file are invalidated the moment `31370164` merges. The sibling plan
+symbol name plus a quoted phrase**, with line numbers as a secondary hint only. Any
+"trunk L…" hint in §2 refers to the **pre-`31370164`** file and is now off by the
+re-assessment's insertions — treat those numbers as historical, not navigational. The
+sibling plan
 `doc/plans/working/pp051_recalc_write_failure_plan.md` records anchor drift as a recurring
 failure mode in this repo's plan documents; the first revision of *this* plan carried four
 wrong anchors of its own, caught in review. **An executing agent must grep for the quoted
@@ -38,20 +41,15 @@ phrase, never seek to a line number.**
 
 ## 0. The base dependency, stated plainly
 
-The 2026-08-17 re-assessment — sections "A. Code re-verification" through "G. Remaining
-checklist to move Review → Complete", referred to below as §A–§G — is **committed but not
-merged**: branch `docs_pp045_status_2026-08-17`, commit `31370164` (parent `8e3fc1bc`),
-one file changed, +453/−3.
+**DISCHARGED 2026-08-17.** The re-assessment — sections "A. Code re-verification" through
+"G. Remaining checklist to move Review → Complete", referred to below as §A–§G — merged in
+PR #438 (`31370164`, now an ancestor of `f4034e52`). P1, P4 and P5 depended on it; they no
+longer block. Branch new phase work off current trunk, **not** off the old
+`docs_pp045_status_2026-08-17` branch, which is merged and must not be reused.
 
-Consequences an executing agent must respect:
-
-- **P1, P4 and P5 all depend on it.** P1 rewrites prose so it agrees with §A6; P4 edits
-  §B/§C/§G; P5 works the §G checklist. Only **P2 and P3 are genuinely independent** — the
-  first revision of this plan wrongly claimed P2–P5 were.
-- **Branch P1 off `docs_pp045_status_2026-08-17`, not off trunk**, or the two edits
-  conflict in the same file. Treat plan and re-assessment as one review unit.
-- If the owner rejects or materially revises the re-assessment, P1 must be re-planned,
-  not patched.
+Retained because it still governs how the phases read: P1 rewrites prose so it agrees with
+§A6, P4 edits §B/§C/§G, and P5 works the §G checklist — so all three assume §A–§G is
+present in the file they open. It now is.
 
 **The finding P1 exists to propagate**, restated so this plan is standalone: PP-045's
 Summary asserts that short-term per-model PENTAD/DECADE rows are created *only* by the
@@ -73,7 +71,8 @@ fourth. Confirmed by direct code read and by two independent `codex exec` review
 | 23 locked tests in `tests/test_backfill_period_forecasts.py` | **Yes** (23 methods, statically verified) | PP-045 §Verification | Green status is **REPORTED, not proven** — no durable test log exists. |
 | Maintenance cannot heal a zero-`combined` date | n/a (this is the defect) | §A3, re-verified 2026-08-17 | none |
 | "Only operational writes period rows" | — | Asserted in PP-045 Summary/Problem | **Drift — false.** P1 closes this. |
-| The four stranded tjhm days are a PP-045 reproduction | — | Implied by `module_issues.md` and local checklists | **Unproven, and may be unprovable** — see §2 D7 and P4. |
+| The four stranded tjhm days are a PP-045 reproduction | — | Implied by `module_issues.md` and local checklists | **Probably not one.** §8: they look like an input-availability case (nothing ran for 20 days), which PP-045's tool cannot fix. Corroborated, not proven — P4 falsifies. |
+| "A re-run heals it / it is permanent across a year boundary" | — | Asserted in PP-045 `## Problem` | **Both need restating.** §8 replaces them with a precondition + per-entrypoint matrix. The issue names only operational's year-scoped read as the cross-year cause; recalc has a *different* one (PP-046's dedup), and the permanence is not unconditional. P1 step 4. |
 | kyg end-to-end verification | **No** | DEFERRED in Acceptance Criteria | Blocked on infra since 2026-07-23; P5 forces a decision. |
 
 ---
@@ -116,11 +115,11 @@ a separate ticket" → filed as **PP-046**.
 `## Secondary anomaly (triage — recommend SEPARATE ticket)` → filed as **PP-048**. Both
 are indexed in `doc/plans/module_issues.md`.
 
-**D6 — Competing "what remains" lists, no stated authority.** On **trunk**, two:
-`## Documentation Impact` (four unchecked boxes) and `## Acceptance Criteria` (one
-unchecked — the kyg deferral). On the **combined base** (trunk + `31370164`), three, with
-§G added. Nothing tells a reader which to work from. The defect is real on the base this
-plan executes against; it is not a trunk-only defect.
+**D6 — Three competing "what remains" lists, no stated authority.** Since `31370164`
+merged, current trunk carries all three: `## Documentation Impact` (four unchecked boxes),
+`## Acceptance Criteria` (one unchecked — the kyg deferral), and `§G`. Nothing tells a
+reader which to work from. (Before that merge there were two; the distinction no longer
+matters, since the file P1 opens has all three.)
 
 **D7 — An unprovable attribution is being treated as settled.** `module_issues.md` and the
 local review checklists attribute the stranded boundary days to PP-045. §C lists six
@@ -292,7 +291,9 @@ recorded here because they change later phases:
 - **Goal:** the narrative sections state only true things; historical sections are visibly
   historical; §G is the single live checklist.
 - **Files:** `doc/plans/issues/review_gi_draft_pp_missed_boundary_period_gap.md` only.
-- **Branch base:** `docs_pp045_status_2026-08-17` (§0). **Depends on:** nothing further.
+- **Branch base:** current trunk (`f4034e52` or later). The old
+  `docs_pp045_status_2026-08-17` branch is merged and must not be reused (§0).
+  **Depends on:** nothing further.
 
 Steps:
 
@@ -306,12 +307,14 @@ Steps:
    dropping "both", and add `backfill_period_forecasts.py` as the primary option. Demote
    the two existing bullets to fallbacks, keeping their caveats verbatim — the CSV-rewrite
    side effect and the raw-SQL bypass are both still accurate.
-4. `## Problem` — qualify the absolute language in the "Net effect" bullets ("no re-run
-   heals a missed period", "never recreated at all"). Those were written when operational
-   was believed to be the only writer; a recalc run is now known to re-save period rows,
-   and the raw-SQL script can too. Add the qualification; do **not** attempt to re-derive
-   what the corrected net effect is — that needs analysis this plan has not done, so state
-   the uncertainty and leave it.
+4. `## Problem` — replace the absolute language in the "Net effect" bullets ("no re-run
+   heals a missed period", "never recreated at all") with the corrected statement in
+   **§8** — the precondition plus the per-entrypoint matrix, **not** a single universal
+   rule. Split the tags per C6: the *mechanism* is PROVEN and should be written plainly;
+   the *attribution* of the observed gaps to input-unavailability remains **INFERRED**
+   until P4 runs, and must stay tagged that way. The earlier draft of this plan punted
+   here; its successor over-corrected by saying "write the conclusion, not a hedge",
+   which would have laundered an inference into a fact. Do neither.
 5. `## Problem` — the self-heal bullet asserts "provided (a) the DAY archive still holds
    those issue dates". Keep it; append a pointer to §C's C1–C6 table, which enumerates the
    ways proviso (a) fails. Do not restate the table (C7).
@@ -409,7 +412,21 @@ Steps:
 
 Steps:
 
-1. New `doc/prod/` runbook. Must contain, at minimum: exact commands with environment
+1. New `doc/prod/` runbook. **Its first section must be "does this tool apply?", per §8** —
+   not the commands. An operator whose pipeline simply did not run will otherwise run the
+   backfill, see exit 0, and believe the gap is repaired when nothing was written. State:
+   the CLI can only re-aggregate inputs that exist. **The check is merged-archive coverage,
+   not DAY-row presence** — a retained pre-cutover period-archive row also suffices, and the
+   reader falls back to the period archive when there are no DAY rows at all, so "no DAY row
+   ⇒ hopeless" is wrong and contradicts §8 and the P2 docstring. Point the operator at the
+   §E P2 derived-frame probe, or at establishing that the date lies after the relevant DAY
+   cutover. If coverage really is absent, the fix is upstream (`fill_ml_gaps.py` /
+   `hindcast_ML_models.py`, with the leading/trailing-gap caveat) and this tool will not
+   help. Give the two cases where it *is* the right tool — inputs present but boundary-day
+   postprocessing missed, and cross-year recovery where its per-year iteration avoids the
+   PP-046 collapse — while noting it is the most controlled cross-year option, not the only
+   one (§8 table).
+   Then, the operational detail: exact commands with environment
    selection; **one year per internal aggregation/save call** — note that the CLI accepts
    a multi-year range and isolates each year itself, so separate invocations are *not*
    required (the first revision implied they were) — and why the isolation exists
@@ -440,11 +457,33 @@ Steps:
    one of these. (The first revision instructed editing that file and scheduled a blanket
    decision over all dated copies — both wrong.)
 
+6. **Author the C8 rollback commands — they do not exist.** C8 requires a manifest
+   partitioning the intended write set into pre-existing keys (restore prior values) and
+   absent keys (delete), with **both commands written and tested before any run**. Nobody
+   has written them; the earlier revision said "document C8" and silently assumed they
+   existed. Either produce them here, against a scratch target, or state in the runbook
+   that rollback is undefined and the procedure must not be run. Do not paper over it.
+7. **Mark the procedure unexercised — in the defensible form.** Say: *no maintenance
+   window or rollback manifest is documented in the tracked record of the 2026-07-23
+   write.* Do **not** assert "C8 has never been executed" — the record is silent on
+   whether any such precaution was taken, and silence is not proof of absence. Either way
+   the runbook must not read as a validated procedure; documenting something more careful
+   than what was previously done is correct, implying it has been proven is not.
+
 - **Acceptance criteria:**
-  - An operator who has never read PP-045 can recover a stranded boundary day from
-    `doc/prod/` alone, including knowing a full-payload read-back is required.
+  - An operator who has never read PP-045 can, from `doc/prod/` alone: decide whether the
+    tool applies at all (§8) and, **if rollback is concrete**, recover a stranded boundary
+    day knowing a full-payload read-back is required.
+  - The "does this tool apply?" section precedes the commands.
+  - The applicability test is merged-archive coverage, not DAY-row presence (step 1).
   - No runbook statement contradicts the P2 docstring — check them against each other
     explicitly; they assert the same facts.
+  - **Rollback resolves one of two ways, and the acceptance differs.** Concrete and tested
+    ⇒ the write path is documented and runnable, and the recovery criterion above applies.
+    Declared undefined ⇒ the runbook is complete only as a **diagnosis** document; the
+    write path is documented as prohibited, and P3 does **not** claim an operator can
+    recover a gap. The earlier draft allowed "undefined" while still claiming recovery —
+    an unusable, prohibited procedure cannot satisfy a recovery criterion.
   - `git status` shows no gitignored checklist staged.
 
 ### P4 — Probe, within its evidentiary limits
@@ -458,6 +497,20 @@ Steps:
   supplied its input. It can run today. Steps 1 and 3–5 need the live databases. Do not
   report P4 as wholly blocked; the log-only half is available now and may settle the C1
   question on its own.
+- **Narrowed by §8, but not settled by it.** §8 makes input-unavailability (C1) the leading
+  hypothesis — corroborated by P0's 20-day run gap and the owner's experience — so P4 leans
+  toward *falsification* rather than open discovery. It does **not** license concluding C1;
+  §8 tags that attribution INFERRED precisely because no live check has run.
+  One check §8 makes worthwhile: did `recalculate_skill_metrics.py` run inside the gap
+  window (`log_recalc*` is in the P0 archive)? Recalc *can* emit fresh per-model rows, so a
+  recalc that ran while inputs were present should have re-emitted them.
+  **Read that signal weakly.** Its saved frame is unfiltered *by observations* only — the
+  payload still passes the yearless dedup, the two-year filter and the `api_writer` drops,
+  the run is scoped to configured codes/models, and it early-returns if observed or
+  modelled is empty; PP-047 also means a reported success need not have persisted. And
+  because C1 is **date-specific**, rows appearing for some dates and not others is fully
+  compatible with C1 — it is *not* evidence against it, as an earlier draft of this bullet
+  claimed.
 - **Depends on:** P0 (logs) and P1. Steps 1 and 3–5 are **externally blocked** on tunnel
   availability and
   owner authorisation.
@@ -533,8 +586,8 @@ Steps:
 
 ## 6. Residual risk — do not summarise away in the PR description
 
-1. **The base is unmerged.** If `31370164` is rejected or revised, P1/P4/P5 are void.
-   Mitigation: branch off `docs_pp045_status_2026-08-17`; review both as one unit.
+1. **~~The base is unmerged.~~ RETIRED 2026-08-17** — `31370164` merged in PR #438. Branch
+   new work off current trunk; the old branch must not be reused.
 2. **Anchor drift.** Line numbers here are hints only; the first revision of this plan
    shipped four wrong ones (`file_writer.py:118`/`:124` for what is `:120`/`:129`; a
    dry-run log line; a checklist line). Grep the quoted phrase.
@@ -599,7 +652,108 @@ unused on trunk but claimed by an uncommitted entry in a parallel working copy (
 
 ---
 
-## 8. Dependency graph
+## 8. What actually heals a missed period (analysis, 2026-08-17)
+
+This section closes the question P1 step 4 previously punted on. It is the substantive
+content P1 and P3 must carry, so it is stated once here and referenced, not repeated.
+
+**Revised after out-of-loop review.** The first draft of this section stated a single
+universal rule — "any re-run that re-aggregates heals if and only if inputs exist; the
+asymmetry is not script-specific". That was **wrong**, and wrong in a way that erased the
+distinction PP-045 is built on: maintenance re-aggregates and still cannot heal. The
+corrected form separates a precondition that *is* universal from an ability that is not.
+
+### The two-part rule
+
+> **Precondition (universal *for the app path*).** No entrypoint that goes through the
+> normal reader can emit a period row unless the merged archive still yields a usable
+> input row for that issue date — one surviving the boundary drop and the in-period
+> `target` filter, with a non-null discharge at the API write. A gap whose inputs were
+> never produced is unhealable by any of them. **The raw-SQL reaggregator is outside this
+> precondition** — it builds its own aggregation from DAY records and upserts directly,
+> which is exactly why it is not a like-for-like substitute.
+>
+> **Ability (entrypoint-specific).** Meeting the precondition is not sufficient. Each
+> entrypoint has its own limit, and **maintenance cannot write a fresh per-model row for
+> a missed date at all.**
+
+Note the distinction the table draws between *reach of the read* and *reach of what
+actually lands* — an earlier draft conflated them for recalc.
+
+| Entrypoint | Re-aggregates? | Emits a *fresh* per-model row? | Reach of what actually lands | Its own limiter |
+|---|---|---|---|---|
+| `postprocessing_operational.py` (boundary day) | whole current year | **Yes** | current year | Year-scoped read ⇒ never touches prior years |
+| `postprocessing_maintenance.py` | only for dates it discovers | **No** | **Mixed, and not uniformly bounded.** Gap and stale-quantile detection are limited to `gap_detector`'s lookback (default 13 months back from the max `combined` date), but the **stale-EM scan is unbounded** — it filters `combined` directly, with no cutoff, so it can reach the whole history | Universe built solely from existing `combined` rows; early-returns on empty `combined`; `refresh_parts` never emits fresh non-stale individual rows (its individual-model writes require an existing stale key; genuinely new rows are NE/EM only). Writes direct to the API, bypassing `get_latest_forecasts` |
+| `recalculate_skill_metrics.py` | unbounded (all years) | **Yes** | **only the latest year and latest-1** — the read reach is *not* the emission reach | Start-year filter drops pre-`SAPPHIRE_SKILL_METRICS_START_YEAR` rows; then yearless dedup + two-year filter (PP-046) collapses any `period_in_year` also present in a later year. Early-returns if observed **or** modelled is empty |
+| `backfill_period_forecasts.py` (PP-045) | per year, ascending | **Yes** | any year in range | Its per-year iteration is precisely what defeats PP-046 |
+| operational with `SAPPHIRE_FORECAST_DATE` | that year | **Yes** | one chosen year | **The chosen date must itself be a boundary date** or the entry gate skips the run entirely; also rewrites that year's combined CSVs from scratch |
+| `reaggregate_day_to_periods.py` (raw SQL, un-wired) | its own DAY grouping | **Yes — individual *and* NE rows** | any | Outside the app path: ignores the source `target` (recomputes `date + 1`), skips the `api_writer` LR-drop/null-drop/dedup, sets `horizon_value=0`. It emits no EM of its own, but its SQL does not exclude source EM rows, so "never writes EM" is **not** code-guaranteed |
+
+Two consequences worth stating explicitly, because the earlier draft got both wrong:
+
+- **Cross-year is limited by two different mechanisms, not one.** For operational it is the
+  year-scoped read; for recalc it is PP-046's dedup. The issue currently blames only the
+  former. Also, "cross-year gaps stay unhealed" is **not unconditional** — a prior-year row
+  for a `period_in_year` that is *absent* from later years survives the dedup and the
+  two-year filter, so it can be written.
+- **The backfill CLI is not the only cross-year option**, only the most controlled one. A
+  `SAPPHIRE_FORECAST_DATE` operational re-run reaches a chosen historical year, and the
+  raw-SQL reaggregator reaches any year. P1 keeps both as documented fallbacks.
+
+### The old-heals / recent-does-not asymmetry
+
+Mechanism (**PROVEN** from code): dates before each (code, model)'s first DAY issue date
+are served from the retained migrated **period archive** via
+`_merge_archives_by_day_cutover`; those rows carry `target = date + 1` (set by both the
+migrator and the normal writer) and so pass the in-period filter and re-emit unchanged.
+Dates in the DAY era require a real DAY row.
+
+Attribution to the observed cases (**INFERRED, not verified**): that the specific gaps
+operators have seen fall on the far sides of that cutover. Corroborated by P0's 20-day run
+gap and by the owner's operational experience (2026-08-17: every recent gap observed was on
+a day the pipeline did not run). **No live-data check has been run** — first-DAY dates per
+(code, model) are still unqueried; that is P4. Do not let P1 or P3 render this as settled.
+
+### Hypothesis tested and REFUTED — do not reintroduce it
+
+An earlier reading proposed the recalc path is *observation-gated*: because skill metrics
+need measured discharge, a period that has not completed gets skipped, producing the
+asymmetry. **The code does not do this.** Recorded so it is not re-derived:
+
+- The observation merge — `pd.merge(simulated, observed[["code","date","discharge_avg",
+  "delta"]], on=["code","date"])`, no `how=` ⇒ inner — produces `skill_metrics_df`, which
+  feeds **only the skill statistics**. It never filters the frame returned for saving.
+- `recalculate_skill_metrics.py` passes `exclude_models=["EM"]` (PP-030), taking the
+  "Skipping EM ensemble derivation (excluded)" branch where
+  **`joint_forecasts = simulated.copy()`**. Note this is *recalc-specific*: without EM
+  exclusion, the joined frame does influence generated EM rows.
+- The only row-removing operation on `simulated` inside the function is the start-year
+  filter (`SAPPHIRE_SKILL_METRICS_START_YEAR`, default `today.year - 20`, compared by
+  calendar year), which cuts off *very old* data — the opposite direction from the
+  observed asymmetry.
+
+**Wording caution.** Say the recalc frame is unfiltered *by observations*. Do **not** call
+it "the unfiltered saved frame": what reaches the database is `simulated_latest`, after the
+yearless dedup and two-year filter, then the `api_writer` LR-drop, null-drop and dedup.
+The earlier draft's "unfiltered" wording was materially false for the write.
+
+### What this means for PP-045's own tool
+
+**The backfill CLI does not address the most common real-world cause of the symptom.** When
+the pipeline did not run, there is nothing to aggregate. Its genuine value is narrower:
+
+1. **Inputs exist but the boundary-day postprocessing was missed** — ML produced its DAY
+   forecasts, postprocessing failed or was skipped.
+2. **Cross-year recovery where inputs exist** — where its per-year iteration avoids the
+   PP-046 collapse that defeats an unbounded recalc. This is its strongest justification,
+   though not an exclusive capability (see the table).
+
+If inputs are absent the operator's next step is upstream — regenerate the ML DAY forecasts
+(`fill_ml_gaps.py` / `hindcast_ML_models.py`), with the standing caveat that
+`fill_ml_gaps.py` sees only gaps *between* existing dates and may miss a leading or
+trailing one. **Establish coverage before reaching for the backfill**, or the run reports
+success having written nothing new.
+## 9. Dependency graph
 
 Prerequisites not expressible in the graph, and binding regardless of it: **all phases
 except P0, P2 and P3 require commit `31370164` in the branch base** (§0); **P4 requires**
