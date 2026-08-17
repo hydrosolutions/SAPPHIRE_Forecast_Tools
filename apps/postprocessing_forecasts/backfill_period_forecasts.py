@@ -1,11 +1,53 @@
 """PP-045 backfill CLI for stranded short-term PENTAD/DECADE period forecasts.
 
-Per-model PENTAD/DECADE period rows are created only by the operational path on
-boundary days. If an operational boundary day was missed, those rows are never
-written and routine maintenance cannot heal them (maintenance recalculates skill
-metrics, not period forecasts). This CLI re-aggregates a date range through the
-EXISTING operational aggregation + save path so the stranded rows are recomputed
-and written.
+Per-model PENTAD/DECADE period rows are written on boundary days by the
+operational path, which is the only path that writes them *on a schedule*. If an
+operational boundary day was missed, routine maintenance cannot heal it. This CLI
+re-aggregates a date range through the EXISTING operational aggregation + save
+path so the stranded rows are recomputed and written.
+
+What maintenance actually does (and does not)
+---------------------------------------------
+``postprocessing_maintenance.py`` does NOT recalculate skill metrics -- it *reads*
+them; ``recalculate_skill_metrics.py`` recalculates. And it DOES write period
+forecasts: its ``refresh_parts`` build emits refreshed stale individual/NE rows
+(block 7a), NE gap rows (7b) and EM rows (7c, "requires skill metrics"), then
+writes them straight to the API ("bypasses get_latest_forecasts").
+
+Its actual limitation is narrower, and is the reason this CLI exists: maintenance
+can only act on dates it can *discover*, and it builds that universe solely from
+existing ``combined`` rows. It returns early when combined is empty, and its
+``gap_detector.detect_missing_ensembles`` call omits the ``modelled_forecasts``
+argument that would widen the universe. A boundary date with ZERO combined rows is
+therefore invisible to it -- and even if it were made discoverable, its write set
+never emits fresh per-model rows for a newly-discovered date.
+
+Note also that ``recalculate_skill_metrics.py`` re-saves period rows as a side
+effect of a skill recalculation, so this CLI is not the only non-operational
+writer of them.
+
+What must be true for a date to be recoverable
+-----------------------------------------------
+This CLI re-runs the ordinary aggregation; it cannot invent inputs. For a given
+issue date to produce a row, TWO independent stages must both pass.
+
+1. The merged archive must yield a row for that issue date that survives the
+   boundary-day drop AND the in-period ``target`` filter (a daily target counts
+   only if ``get_pentad_in_year(target) == get_pentad_in_year(date + 1 day)``).
+   The row may come either from the DAY archive or from a retained pre-cutover
+   period-archive row -- ``_merge_archives_by_day_cutover`` keeps period rows for
+   dates before each (code, model)'s first DAY issue date. A DAY row is therefore
+   NOT strictly required, but a retained period row is not exempt from these
+   filters either.
+2. SEPARATELY, a surviving row reaches the API only if ``forecasted_discharge``
+   is non-null -- ``api_writer`` drops null-discharge records before the write.
+
+If a date yields nothing, the gap is upstream and this CLI cannot close it.
+``machine_learning/fill_ml_gaps.py`` and ``recalculate_nan_forecasts.py`` are the
+usual upstream tools, with one important caveat: ``fill_ml_gaps.py`` detects only
+gaps BETWEEN consecutive existing dates, so it cannot see an empty archive, a
+leading gap, or a trailing gap. A stale period with no forecasts on either side
+may be invisible to it.
 
 Whole-year granularity, ONE YEAR AT A TIME
 ------------------------------------------
@@ -16,6 +58,16 @@ The run iterates one calendar year per call to ``_run_short_term_postprocessing`
 once would collapse the same period across years into a single row and drop
 older years. Processing one year at a time keeps each year's period rows
 distinct.
+
+Only the YEARS of --start-date/--end-date matter
+-------------------------------------------------
+The day and month components are used ONLY for validation. The loop is
+``range(start.year, end.year + 1)`` and every selected year is reprocessed IN
+FULL, for every configured station. ``--start-date 2026-07-25 --end-date
+2026-08-10`` therefore does exactly the same work as ``--start-date 2026-01-01
+--end-date 2026-12-31``: it rewrites all of 2026. Sub-year bounds do NOT narrow
+the write set, and there is no option that does. Size the blast radius from the
+YEARS you pass and from ``--horizon``, never from the dates.
 
 Issue-date vs target (Dec 31 -> Jan 1)
 --------------------------------------
@@ -102,10 +154,11 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="YYYY-MM-DD",
         help=(
-            "First ISSUE date of the range to backfill (inclusive). The range is "
-            "interpreted by issue year; a target period starting Jan 1 of year Y "
-            "is healed by its Dec 31 (year Y-1) issue date, so include the prior "
-            "calendar year to heal it."
+            "First ISSUE date of the range to backfill. ONLY ITS YEAR IS USED: "
+            "every selected year is reprocessed in full for every configured "
+            "station, so a narrow date range does NOT narrow the work. A target "
+            "period starting Jan 1 of year Y is healed by its Dec 31 (year Y-1) "
+            "issue date, so include the prior calendar year to heal it."
         ),
     )
     parser.add_argument(
@@ -113,8 +166,8 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="YYYY-MM-DD",
         help=(
-            "Last ISSUE date of the range to backfill (inclusive). The range is "
-            "interpreted by issue year (the loop iterates over issue years)."
+            "Last ISSUE date of the range to backfill. ONLY ITS YEAR IS USED -- "
+            "the loop iterates whole issue years and reprocesses each in full."
         ),
     )
     parser.add_argument(
