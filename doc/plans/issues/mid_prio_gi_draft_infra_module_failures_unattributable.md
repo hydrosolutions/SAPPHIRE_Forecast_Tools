@@ -70,7 +70,7 @@ elif [ $lt_rc -eq 4 ]; then
     log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
     rc=$lt_rc
 ```
-— `run_locally.sh:724-726`
+— `run_locally.sh:725-727`
 
 But `print_summary` returns 1 whenever any module failed (`:1585-1588`), and the caller does:
 
@@ -89,9 +89,12 @@ without recording a FAIL result can leave `exit_code` intact, because `print_sum
 (see `run_locally.sh:918-955`, `:1928-1929`, `:1973-1977`). An earlier draft of this issue claimed
 "every module's exit code", which is wrong. Establish the true set before designing the fix.
 
-**Blast radius, stated precisely:** `run_locally.sh` is the local/dev runner — production schedules
-go through cron → Luigi (`doc/deployment.md:911`), so this does **not** affect production alerting.
-What it affects is developer and reviewer trust: several issue files state a "contract" that exit
+**Blast radius, stated precisely:** `run_locally.sh` is the local/dev runner and production
+schedules go through cron → Luigi (`doc/deployment.md:912`), so on the **documented** architecture
+this does not affect production alerting. That scoping is *inferred from the docs, not verified* —
+no deployed crontab was inspected, and INFRA-023 is a live demonstration that scheduling docs drift
+from installed reality. Treat "dev-facing only" as the likely case, not an established one. What it
+demonstrably affects is developer and reviewer trust: several issue files state a "contract" that exit
 codes 2/4/5 "are consumed by `run_locally.sh`", and anyone reasoning about `$?` from a wrapper
 invocation on that basis gets the wrong answer. PREPQ-014's own "Contract not to break" said this
 before it was corrected.

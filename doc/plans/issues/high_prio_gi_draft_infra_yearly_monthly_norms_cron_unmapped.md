@@ -83,7 +83,7 @@ if the owner explicitly reverses the Phase 4 decision.
 ## Second defect, proven while filing this: the periodic wrapper reports success unconditionally
 
 `bin/run_periodic_maintenance.sh` has **no `set -e`**, never captures the status of its
-`docker compose run` (`:82-88`), and then executes two `echo` statements (`:90-91`) before ending.
+`docker compose run` (`:82-88`), and then executes two `echo` statements (`:89-90`) before ending.
 The script's exit status is therefore the last `echo`'s — **0** — regardless of whether the Luigi
 task failed. The `trap cleanup EXIT` (`:43`) does not restore it.
 
@@ -92,10 +92,24 @@ This is **not** specific to `monthly_norms`. Every periodic task routed through 
 `ValueError` from an unknown task type is simply the loudest instance of a general silent-success
 defect.
 
-Consequence for this issue: even with the crontab corrected, a failure of the yearly job would not
-surface. It also means the "task submitted to Luigi daemon" message (`:90`) is the *only* signal an
-operator gets, and it prints on failure too. Same family as PP-051; consider filing separately if
-the fix here stays documentation-only.
+Consequence for this issue — **note the asymmetry, it decides the fix**:
+
+- If the crontab is corrected to the `bin/README.md` form (the direct
+  `yearly_runoff_hydrograph_aggregation.sh` wrapper, which is the intended path per the Phase 4
+  decision), **the wrapper defect does not apply** — that wrapper inspects the container's status
+  and exits non-zero (`:190-211`). Correcting the docs therefore fixes both problems at once for
+  this job.
+- The wrapper defect still stands for **every other** periodic task, which does route through
+  `run_periodic_maintenance.sh`: `long_term`, `skill_recalc`, `snow_norms`. Those report success to
+  cron regardless of outcome, and that is not fixed by anything in this issue.
+
+An earlier draft of this section claimed a corrected crontab would still hide failures. That was
+wrong and contradicted this issue's own recommended fix.
+
+The `"task submitted to Luigi daemon"` message (`:89`) also prints on failure. It is not the *only*
+operator signal — Compose and Luigi output reach the cron log too — but it is the only *summary*
+line, and it is unconditionally positive. Same family as PP-051; the wrapper defect likely warrants
+its own issue, since its scope is all periodic tasks rather than this stale command.
 
 ## What to inspect
 
@@ -126,8 +140,9 @@ the fix here stays documentation-only.
 
 ## Contract not to break
 
-- Do not renumber or repurpose existing task types (`long_term`, `skill_recalc`, `snow_norms`) —
-  they are referenced by installed crontabs on deployed servers.
+- Do not renumber or repurpose existing task types (`long_term`, `skill_recalc`, `snow_norms`).
+  They are referenced by the documented crontab; whether the *installed* crontabs match has not been
+  checked (see "What to inspect" item 1), so treat them as live until it is.
 - `bin/yearly_runoff_hydrograph_aggregation.sh` reads the container's true exit status via
   `docker inspect` rather than the `tee` pipeline code (`:206-213`). Preserve that if the job is
   rerouted through Luigi; the naive `$?` after a `| tee` is the pipeline's code, not the container's.

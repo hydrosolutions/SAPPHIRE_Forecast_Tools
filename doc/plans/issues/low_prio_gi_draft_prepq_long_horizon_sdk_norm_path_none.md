@@ -44,7 +44,10 @@ WARNING - write_station_short_horizon: SDK norm call failed for site <CODE> (dec
 
 55 distinct sites *did* receive hydrograph writes, so neither condition is total.
 
-The (a) class propagates to the run's exit code:
+The (a) class *appeared* to propagate to the run's exit code — **superseded**, see the CORRECTION
+below and "Root cause": these short-horizon warnings drive **no** exit code, and the exit-4 line
+below comes from the separate long-horizon module. The log excerpt is retained verbatim as the
+original observation:
 
 ```
 ERROR - Long-horizon monthly hydrograph ingestion completed with 4 SDK norm lookup failure(s).
@@ -345,7 +348,9 @@ and returns `[]` (`sync_short_horizon_hydrograph.py:632-641`); short-horizon `ma
 float-conversion errors, norm-endpoint non-200, and the missing-path `ValueError`. Exit 4 therefore
 has many possible causes, and the equal count of 4 is suggestive only. Because long-horizon logs
 that failure at `logger.debug` (`:356`), the evidence needed to distinguish them was never emitted.
-A counts-only exception-class summary at WARNING would settle it without exposing station codes.
+A counts-only summary at WARNING keyed by a **normalised reason/stage** (not by exception class —
+`ValueError` covers several distinct stages here; see INFRA-024) would settle it without exposing
+station codes.
 
 **`run_locally.sh` does not propagate exit 4 as the process status.** The inner maintenance function
 receives `lt_rc=4` and logs the specific "SDK norm lookup failure(s)" diagnostic (`run_locally.sh:725-727`),
@@ -418,7 +423,10 @@ malformed row.
 **1. ~~Are virtual stations expected to carry SDK discharge norms at all?~~ — RESOLVED 2026-08-17
 (owner):** **Yes, they should be able to.** Since the SDK cannot do it today, this is accepted as an
 **upstream iEH HF gap**, not a SAPPHIRE defect. Action: request the capability from the SDK
-developer (draft: `doc/prod/iehhf_virtual_station_norms_request.md`).
+developer — **sent and acknowledged 2026-08-17**, awaiting their answer
+(`doc/prod/iehhf_virtual_station_norms_request.md`, incl. a dated addendum correcting two
+overstatements in what was sent). Note the framing caveat recorded there: calling this an "upstream
+gap" prejudges question 1; "not supported by design" remains a possible and acceptable answer.
 
 Consequence for the fix space above: **option 3 is the desired end state**, and options 1–2 are
 interim measures at best. Do not implement a client-side "classify virtual out" fix as though it
@@ -430,7 +438,7 @@ about.
 **2. ~~Which entrypoint is authoritative for "maintenance"?~~ — RESOLVED 2026-08-17 from the
 crontab documentation.** **The long-horizon script does not run in daily production maintenance at
 all.** Exhaustive grep for `sync_long_horizon_hydrograph` across `apps/` and `bin/` (excluding tests
-and the module itself) returns exactly three invocation sites:
+and the module itself) returns these invocation sites:
 
 | Caller | Level | Cadence | Production? |
 |---|---|---|---|
@@ -460,7 +468,7 @@ non-zero (`bin/yearly_runoff_hydrograph_aggregation.sh:206-213`). So an exit 4 t
 — unlike in `run_locally.sh`.
 
 > **New defect found while resolving this — filed separately, do not fix here.**
-> `doc/deployment.md:923` schedules the 01 Jan 03:00 slot as
+> `doc/deployment.md:922` schedules the 01 Jan 03:00 slot as
 > `run_periodic_maintenance.sh monthly_norms`, but Luigi's task map handles only
 > `long_term`/`skill_recalc`/`snow_norms` and **raises `ValueError` for `monthly_norms`**
 > (`apps/pipeline/pipeline_docker.py:2049-2057`). `bin/README.md:231` names a *different* script for
@@ -498,11 +506,15 @@ different code.
 > Items 1 and 2 are **answered** in "Root cause" above; item 3's factual half (are they
 > distinguishable in code?) is answered — yes — leaving only the policy half. Item 4 is untouched.
 
-1. ~~Which path variable is unresolved~~ — **answered**: the SDK's per-site `site_uuid`, unresolvable
-   for codes absent from the org's hydrological station registry.
-2. ~~Whether the 4 affected sites differ structurally~~ — **answered (mechanism proven, membership
-   inferred)**: virtual stations, admitted to the work list from a registry the norm lookup cannot
-   address. Open: confirm the failing set against a live `stations/{org}/virtual` listing.
+1. ~~Which path variable is unresolved~~ — **answered**: the SDK's per-site `site_uuid`. It is
+   unresolvable whenever the hydrological station lookup yields no usable UUID — which is **four**
+   distinct conditions, not just registry absence (non-200, empty list, missing/null UUID on the
+   matched row, missing/null UUID via the `sites[0]` fallback). See "Root cause".
+2. ~~Whether the 4 affected sites differ structurally~~ — **mechanism proven, membership NOT
+   established**. Virtual-only codes are the leading candidate and the class the module is known to
+   inject, but automatic-only stations and malformed rows remain live candidates, and the failing
+   set was never matched to any of them. Open: confirm against a live `stations/{org}/virtual`
+   listing plus a captured hydrological response.
 3. Whether (a) and (b) should share an exit code at all — today only (a) reaches exit 4. They are
    cleanly separable in code; this is now purely a policy question. Fold in the reportability
    defect noted above: long-horizon logs its `SDK_FAILED` at DEBUG, so the events causing exit 4
