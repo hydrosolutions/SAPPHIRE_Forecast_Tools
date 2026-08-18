@@ -25,11 +25,19 @@ if P_ensemble.isnull().values.any():
     P_ensemble = P_ensemble.ffill()      # whole frame — no grouping
 ```
 
-| Site | Path | Boundaries crossed **in practice** | Stations per frame |
-|---|---|---|---|
-| `Quantile_Mapping_OP.py:757`, `:762` | **control member** | **station** | **127** (kyg), 35 (taj) |
-| `get_era5_reanalysis_data.py:179` | ERA5 reanalysis | station | (not inventoried) |
-| `Quantile_Mapping_OP.py:899`, `:904` | ensemble | ensemble **member** only | 1 — see below |
+| Fill site | Path | Frame shape | Boundaries crossed **in practice** | Stations/frame |
+|---|---|---|---|---|
+| `Quantile_Mapping_OP.py:763`, `:768` | **control member** | long (`:754-755`) | **station** | **127** (kyg), 35 (taj) |
+| `get_era5_reanalysis_data.py:183`, `:188` | ERA5 reanalysis | long (`:176-177`) | **station** | not inventoried |
+| `Quantile_Mapping_OP.py:902`, `:907` | ensemble | long (`:895`) | ensemble **member** only | 1 — see below |
+
+**The ERA5 site is character-identical to the control site** — same projection, same ungrouped
+fill, same log string. Verified 2026-08-18; an earlier revision asserted its frame shape without
+checking. Fix them together; they are the same code twice.
+
+Note the cited frame lines are the `else:` (no quantile mapping) branch. When `perform_qmapping`
+is true the frame comes from `dg_utils.do_quantile_mapping()` instead — **also long** — so the
+fill is ungrouped on both branches.
 
 The ensemble row is narrower than the first draft claimed: every real ensemble file is
 single-feature (§ Measured exposure), so that fill crosses member boundaries but **not** station
@@ -90,11 +98,21 @@ So the fill runs down a column in which one station's rows are followed by the n
 
 | Log line | Path | Count |
 |---|---|---|
-| `Nan values in T data for HRU …` | **control** | 18 |
-| `Nan values in P data for HRU …` | **control** | 5 |
+| `Nan values in T data for HRU …` | control | 18 |
+| `Nan values in P data for HRU …` | control | 5 |
 | `Nan values in P data (ensemble) …` | ensemble | 8 |
 
 **23 of 31 firings are on the multi-station control frame.**
+
+> **How that attribution was established — the log string alone does not support it.**
+> `Quantile_Mapping_OP.py:761/:766` and `get_era5_reanalysis_data.py:181/:186` print the **same
+> string**, both interpolating `c_m_hru`, so "Nan values in P data for HRU …" is ambiguous between
+> the control and ERA5 paths. The attribution above comes from the **enclosing script section** in
+> each `run_locally` log, which resolves all 31 to `Quantile_Mapping_OP.py` and **zero to ERA5**.
+>
+> Two consequences: the ERA5 fill has **not been observed firing** (its exposure is structural, not
+> demonstrated), and **the log lines should be made distinguishable** as part of this fix —
+> otherwise the next person doing this analysis has to redo the section attribution.
 
 ### What this evidence does *not* establish
 
