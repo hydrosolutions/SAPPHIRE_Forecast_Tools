@@ -1,4 +1,4 @@
-# PP-059 — `recalculate_skill_metrics` and the operational/backfill path write short-term period rows through the same sink with divergent semantics
+# PP-060 — `recalculate_skill_metrics` and the operational/backfill path write short-term period rows through the same sink with divergent semantics
 
 **Status**: Draft
 **Module**: postprocessing_forecasts
@@ -227,6 +227,10 @@ is fixed separately and quickly.
 
 - Found 2026-08-18 during PP-045 phase P4's database probe.
 - Related: PP-030, PP-045, PP-046, PP-047, PP-051.
-- **Index row pending** — not added to `doc/plans/module_issues.md` because that file had
-  uncommitted changes in a parallel session. `PP-059` is the next free id against that
-  working copy (trunk is at PP-055); re-check before publishing.
+- **Renumbered 2026-08-18: this issue was filed as PP-059 and is now PP-060.** A
+  parallel session allocated PP-059 to a different issue ("Remove monthly EM"); this one
+  yielded the id. Any earlier reference to PP-059 for the write divergence — including
+  PR #445's title and description — means this issue.
+- **Index row still pending** — `doc/plans/module_issues.md` has uncommitted changes in
+  that parallel session. `PP-060` was free at the time of renaming; re-verify before
+  adding the row.
