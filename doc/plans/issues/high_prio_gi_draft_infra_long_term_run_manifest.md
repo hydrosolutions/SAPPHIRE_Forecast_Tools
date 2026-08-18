@@ -1,6 +1,7 @@
 ## Long-term runs emit no record of what they were supposed to produce, so validation must guess (INFRA-028)
 
-**Status**: Draft (2026-08-18) — **design not settled; see § Open questions**
+**Status**: Draft (2026-08-18) — **READY TO PLAN. All ten open questions answered by the owner
+2026-08-18; see § Open questions for each decision and its consequences.**
 **Module**: `apps/pipeline` (`pipeline_docker.py`), `apps/run_locally.sh`,
 `apps/long_term_forecasting` (producers) → `apps/validate_pipeline` (consumer)
 **Priority**: **High** — this is a hard prerequisite of the INFRA-021 + INFRA-022 atomic change;
@@ -169,6 +170,8 @@ separate artifact.
 
 ## Open questions
 
+**ALL TEN QUESTIONS ARE NOW ANSWERED (owner, 2026-08-18). This issue is READY TO PLAN.**
+
 ### DECIDED 2026-08-18 (owner)
 
 1. **Missing manifest → validation-infrastructure FAIL, and validation NEVER re-derives the
@@ -183,40 +186,46 @@ separate artifact.
 3. **Intent vs execution → intent-only**, conditional on the three sub-tasks in § "Producer timing".
    Per-model outcome fields are out of scope; "scheduled but crashed" stays a validation FAIL.
 
-*(Question 2 and 4-10 remain open; numbering preserved so cross-references stay valid.)*
-
-### Still open
-
-2. **Staleness rejection.** Which fields must match for a manifest to be accepted — run id alone,
-   or run id + forecast date + organization + config fingerprint?
-4. **Scope of the run id.** **Answered 2026-08-18**: no reusable run id exists in this pipeline —
-   `run_locally.sh:94-97` has only a second-resolution log timestamp, and `RunLongTermWorkflow` has
-   no run-id parameter (`pipeline_docker.py:2316-2319`, `:2344-2345`). But the concept **does**
-   exist in the repo: `forecast_skill_eval` has a caller/default `run_id` plus a run-scoped artifact
-   directory (`cli.py:67-79`, `artifacts.py:18-34`). Borrow that shape rather than inventing one.
-   The remaining question is who *owns* it — see (5).
-5. **Identity ownership and propagation.** Who mints the run id and passes it along the chain? The
-   deployed launcher only submits Luigi and passes no identity and no validation command
-   (`bin/run_long_term_forecasts.sh:104-124`), and `validate_pipeline` has no argument to receive
-   one. Without an owner, every producer invents its own and nothing matches.
-6. **Finalization after partial process death.** If a run is killed between resolution and
-   completion, what state is the manifest in and how does validation read it? (Only relevant under
-   the two-stage model above.)
-7. **Retention and cleanup.** Run-scoped paths accumulate. Who deletes them, and after how long?
-   Note the current fixed file is removed only when the next schedule query starts
-   (`pipeline_docker.py:2101-2105`) — that is the anti-pattern to avoid, not a precedent.
-8. **Fingerprint inputs, and when it is taken.** Which files and env vars compose the config
-   fingerprint — and is it computed **before or after** `ForecastConfig` rewrites every model's
-   `general_config.json` during load (`config_forecast.py:157-180`)? Fingerprinting after the
-   rewrite makes the value depend on whether a run happened first.
-9. **Which artifact owns the horizon value?** This manifest proposes carrying per-mode horizon type
-   and value, while `validate_pipeline` resolves them today from `long_term_horizon_resolver`
-   (`:539`, `:562`). Both cannot be authoritative — if config changes between execution and
-   validation, they diverge. The manifest's copy is the *as-run* value and is probably the right
-   answer, but it must be stated, not left to whichever code path runs first.
-10. **Manifest cardinality for multi-date simulation.** `simulate_forecasts.py:160-176` iterates
-   many year/month pairs; one manifest, or one per generated date? INFRA-021 records the same
-   unresolved question for validation dates — **decide both together, once.**
+2. **Staleness rejection → run id alone.** If the id is explicit and unique per run, matching it is
+   sufficient; forecast date, organization and fingerprint are redundant given (5). The rejection
+   message should still name what it compared, so a mismatch is debuggable.
+4. **Scope of the run id.** No reusable run id exists in this pipeline — `run_locally.sh:94-97` has
+   only a second-resolution log timestamp, and `RunLongTermWorkflow` has no run-id parameter
+   (`pipeline_docker.py:2316-2319`, `:2344-2345`). Luigi's per-task
+   `datetime.now().strftime('%Y%m%d_%H%M%S')` log names are **per task, not per run**, so they
+   cannot serve as a correlation key. The concept does exist in the repo: `forecast_skill_eval` has
+   a caller/default `run_id` plus a run-scoped artifact directory (`cli.py:67-79`,
+   `artifacts.py:18-34`) — **borrow that shape.**
+5. **Identity ownership → the orchestrator mints it and passes it as a CLI argument.**
+   `run_locally` and Luigi each generate a run id at start, write it into the manifest, and pass it
+   to `validate_pipeline` via a new `--run-id` (or `--manifest`) argument. Explicit and testable;
+   no discovery by "latest file wins".
+   **Known cost, to plan for:** this touches four places that today pass no identity —
+   `run_api_validation` and `run_module_validation` (`run_locally.sh:1071-1072`, `:1094-1095`, which
+   currently pass only `--target` / `--module`), the Luigi validation invocation, and the validator's
+   CLI (`validate_pipeline.py:1522-1569`).
+6. **Finalization after partial process death → MOOT.** This question existed only under the
+   two-stage producer model, which was not chosen.
+7. **Retention → keep the N most recent, pruned by the producer on write.** Self-maintaining: no
+   cron, no operator task, and recent history stays available for debugging a failed run. Pick N
+   when planning. Note the current fixed file is removed only when the *next schedule query* starts
+   (`pipeline_docker.py:2101-2105`) — the anti-pattern to avoid, not a precedent.
+8. **Config fingerprint → dropped entirely.** It was proposed to detect config drift between run and
+   validation, but `synchronize_forecast_settings` rewrites every model's `general_config.json`
+   during load (`config_forecast.py:157-180`), so any fingerprint covering model configs differs
+   before and after a run — it would reject valid manifests. The run-id match in (2) already covers
+   the cases that matter. Removing it deletes a class of false rejection rather than engineering
+   around it.
+9. **Horizon value → the manifest's as-run value is authoritative.** Validation queries the horizon
+   value the run actually used, not what the resolver would produce today (`validate_pipeline.py:539`,
+   `:562`). If an operator edits a mode's lead time between run and validation, the check still looks
+   where the data was written. Re-deriving it would reintroduce, in miniature, the exact defect this
+   issue exists to remove.
+10. **Simulation → not operationally validated.** `simulate_forecasts.py` is a development and
+   backfill tool: it produces no manifest and is not validated, which dissolves the multi-date
+   cardinality question rather than defining semantics for it. **This answer is shared with
+   INFRA-021** — record it there too, so the validated-date contract and the manifest contract
+   cannot drift apart.
 
 ## Reuse
 

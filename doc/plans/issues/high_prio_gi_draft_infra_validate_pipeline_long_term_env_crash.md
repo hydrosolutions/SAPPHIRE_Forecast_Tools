@@ -286,7 +286,13 @@ as a workaround — the resolver call is legitimate; the missing env loading is 
   them; a deployment whose config is malformed **FAILs**. Per-mode gating comes from INFRA-022.
 - The validated date is the date that was **forecast**, not `date.today` — `--forecast-date` is
   plumbed from `LT_FORECAST_TODAY` and from the standalone simulation year.
-  **Underspecified (flagged 2026-08-18):** the standalone path is not one date.
+  **RESOLVED 2026-08-18 (owner, shared decision with INFRA-028 question 10): simulation is not
+  operationally validated.** `simulate_forecasts.py` is a development and backfill tool — it
+  produces no manifest and is not validated, so the multi-date question below does not need an
+  answer. Only the **operational** date needs propagating: `LT_FORECAST_TODAY` → `--forecast-date`.
+  *The original problem statement is kept below because it explains why the question was asked.*
+
+  **Previously underspecified:** the standalone path is not one date.
   `LT_SIMULATE_YEARS` may list several years and `LT_SIMULATE_NUM_MONTHS` may exceed 1
   (`run_locally.sh:583-613`), and `simulate_forecasts.py:160-169` iterates every year/month
   combination, yet validation runs **once** afterwards (`:1960-1965`). The plan must state which
