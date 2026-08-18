@@ -137,30 +137,10 @@ class TestTransformDataFileEnsembleMember:
 
 
 class TestMergeEnsembleForecast:
-    """Tests using real CSV files in tmp_path."""
+    """Tests using real CSV files in tmp_path.
 
-    @pytest.fixture
-    def ensemble_csv_factory(self, tmp_path):
-        """Factory to create DG-format ensemble CSVs."""
-
-        def _make(hru_code, ensemble_member, variable, dates, values, band_name="band_1000"):
-            value_type = "P" if variable == "tp" else "T"
-            filename = f"prefix_EM{ensemble_member:03d}_HRU{hru_code}_{variable}.csv"
-            path = tmp_path / filename
-            # Build DG format: 4 header rows + data rows
-            header_rows = [
-                [value_type, value_type],
-                ["unit", "mm" if variable == "tp" else "K"],
-                ["h", "h"],
-                ["h", "h"],
-            ]
-            data_rows = [[d, str(v)] for d, v in zip(dates, values, strict=False)]
-            all_rows = header_rows + data_rows
-            df = pd.DataFrame(all_rows, columns=["Unnamed: 0", band_name])
-            df.to_csv(path, index=False)
-            return str(path)
-
-        return _make
+    ensemble_csv_factory is a shared fixture, defined in conftest.py.
+    """
 
     def test_empty_files_list_exits(self):
         """sys.exit(1) on empty files_downloaded."""

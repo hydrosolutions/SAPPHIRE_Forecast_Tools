@@ -57,11 +57,13 @@ TestSnowPipelineIntegration (4 tests)
 
 import os
 import sys
+from contextlib import ExitStack
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
+import requests
 
 # Add preprocessing_gateway and iEasyHydroForecast to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -357,6 +359,24 @@ def gateway_env(tmp_path):
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+
+
+@pytest.fixture()
+def gateway_env_ensemble(gateway_env):
+    """gateway_env variant that reaches the ensemble download (PREPG-010).
+
+    gateway_env sets ieasyhydroforecast_HRU_ENSEMBLE=None, which makes
+    QM's ensemble loop `break` before any download is attempted
+    (Quantile_Mapping_OP.py's `if ENSEMBLE_HRUS == "None": break`).
+    Transport-retry tests need to reach the download itself, so this
+    override switches both the control-member and ensemble HRU to a
+    synthetic, non-real station code (19999) -- not the pre-existing
+    HRU001/12345/67890 fixture data used by the rest of this file.
+    """
+    os.environ["ieasyhydroforecast_HRU_CONTROL_MEMBER"] = "19999"
+    os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "19999"
+    gateway_env["hru"] = "19999"
+    yield gateway_env
 
 
 def make_dg_mock_side_effect(dg_df, dg_dir, filename="control_member.csv"):
@@ -1302,3 +1322,449 @@ class TestSnowPipelineIntegration:
             f"Maintenance ({len(maintenance_snow)}) should write >= "
             f"operational ({len(operational_snow)})"
         )
+
+
+# =====================================================================
+# 6. TestTransportRetryMainLevel (PREPG-010)
+# =====================================================================
+
+
+class TestTransportRetryMainLevel:
+    """main()-level coverage for the Data Gateway transport-retry helper.
+
+    Covers all three download sites: control member
+    (Quantile_Mapping_OP.py:712), the today ensemble loop (:811), and
+    the yesterday fallback ensemble loop (:830). All new test data uses
+    the synthetic station code 19999.
+
+    The forecast date is fixed via a patched `Quantile_Mapping_OP.datetime`
+    so `today`/`yesterday` assertions never depend on the wall clock
+    (CLAUDE.md, The Forecast Date Rule).
+    """
+
+    FIXED_TODAY = datetime(2024, 6, 15)
+    TODAY_STR = "2024-06-15"
+    YESTERDAY_STR = "2024-06-14"
+    HRU = "19999"
+
+    def _cm_side_effect(self, env):
+        """A control-member download that always succeeds immediately."""
+        codes = [self.HRU]
+        dates = ["01.01.2024", "02.01.2024"]
+        t_vals = [[5.0], [6.0]]
+        p_vals = [[2.0], [2.5]]
+        dg_df = make_dg_control_member_csv(codes, dates, t_vals, p_vals)
+        return make_dg_mock_side_effect(dg_df, env["dg_dir"], "cm_19999.csv")
+
+    def _run_main_with_mocks(self, mock_dg):
+        """Enter the patches shared by every test in this class.
+
+        Returns an ExitStack (itself a context manager) with
+        sl.load_environment neutralised, the DG client mocked, API
+        writes disabled, and the forecast date fixed to FIXED_TODAY.
+        """
+        stack = ExitStack()
+        stack.enter_context(patch("Quantile_Mapping_OP.sl.load_environment"))
+        stack.enter_context(
+            patch(
+                "Quantile_Mapping_OP.sapphire_dg_client.client.SapphireDGClient",
+                return_value=mock_dg,
+            )
+        )
+        stack.enter_context(patch.object(qm, "SAPPHIRE_API_AVAILABLE", False))
+        mock_datetime = stack.enter_context(patch("Quantile_Mapping_OP.datetime"))
+        mock_datetime.today.return_value = self.FIXED_TODAY
+        return stack
+
+    # -----------------------------------------------------------------
+    # Ensemble: today loop
+    # -----------------------------------------------------------------
+
+    def test_ensemble_today_connection_error_retried_and_recovers(
+        self, gateway_env_ensemble, ensemble_csv_factory
+    ):
+        """One member's ConnectionError is retried once and the run
+        continues: today = 51 calls (50 members + 1 retry), yesterday = 0,
+        and the recovered values reach the output CSVs."""
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        calls = []
+        flaky_model = "7"
+        attempts = {"n": 0}
+
+        def ens_side_effect(hru_code, date, models, directory):
+            calls.append((date, models[0]))
+            if date == self.TODAY_STR and models[0] == flaky_model:
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise requests.exceptions.ConnectionError("reset by peer")
+                p_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "tp", ["01/01/2024"], [5.0]
+                )
+                t_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "2t", ["01/01/2024"], [280.0]
+                )
+                return [p_file, t_file]
+            return []
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 0
+
+        today_calls = [c for c in calls if c[0] == self.TODAY_STR]
+        yesterday_calls = [c for c in calls if c[0] == self.YESTERDAY_STR]
+        flaky_calls = [c for c in today_calls if c[1] == flaky_model]
+        assert len(today_calls) == 51
+        assert len(yesterday_calls) == 0
+        assert len(flaky_calls) == 2
+
+        p_csv = env["ens_dir"] / f"{self.HRU}_P_ensemble_forecast.csv"
+        t_csv = env["ens_dir"] / f"{self.HRU}_T_ensemble_forecast.csv"
+        assert p_csv.exists()
+        assert t_csv.exists()
+
+        p_df = pd.read_csv(p_csv)
+        t_df = pd.read_csv(t_csv)
+        assert len(p_df) == 1
+        assert p_df["P"].iloc[0] == pytest.approx(5.0)
+        assert t_df["T"].iloc[0] == pytest.approx(280.0)
+        assert str(p_df["code"].iloc[0]) == self.HRU
+
+    def test_ensemble_today_chunked_encoding_error_retried_and_recovers(
+        self, gateway_env_ensemble, ensemble_csv_factory
+    ):
+        """ChunkedEncodingError (a sibling class of ConnectionError, not
+        a subclass) is retried on the same terms, pinned separately."""
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        calls = []
+        flaky_model = "22"
+        attempts = {"n": 0}
+
+        def ens_side_effect(hru_code, date, models, directory):
+            calls.append((date, models[0]))
+            if date == self.TODAY_STR and models[0] == flaky_model:
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise requests.exceptions.ChunkedEncodingError("truncated body")
+                p_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "tp", ["01/01/2024"], [3.0]
+                )
+                t_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "2t", ["01/01/2024"], [260.0]
+                )
+                return [p_file, t_file]
+            return []
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 0
+        today_calls = [c for c in calls if c[0] == self.TODAY_STR]
+        flaky_calls = [c for c in today_calls if c[1] == flaky_model]
+        assert len(today_calls) == 51
+        assert len(flaky_calls) == 2
+
+        p_df = pd.read_csv(env["ens_dir"] / f"{self.HRU}_P_ensemble_forecast.csv")
+        assert p_df["P"].iloc[0] == pytest.approx(3.0)
+
+    def test_ensemble_today_ssl_error_exhausts_and_propagates_unchanged(self, gateway_env_ensemble):
+        """SSLError IS retried like any ConnectionError -- exactly 2
+        calls on exhaustion -- and then propagates with its original
+        type and message, not converted to sys.exit."""
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        calls = []
+        flaky_model = "3"
+        original_message = "SSL handshake failed"
+
+        def ens_side_effect(hru_code, date, models, directory):
+            calls.append((date, models[0]))
+            if date == self.TODAY_STR and models[0] == flaky_model:
+                raise requests.exceptions.SSLError(original_message)
+            return []
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(requests.exceptions.SSLError) as exc_info:
+                qm.main()
+
+        assert str(exc_info.value) == original_message
+        flaky_calls = [c for c in calls if c[1] == flaky_model]
+        assert len(flaky_calls) == 2
+
+    def test_ensemble_non_matching_valueerror_not_retried_exits_via_main(
+        self, gateway_env_ensemble, capsys
+    ):
+        """A ValueError that doesn't match the fallback trigger message
+        is not retried (exactly 1 call) and main() exits via
+        SystemExit(1) with the existing 'Unexpected error' message --
+        the ValueError itself never escapes main()."""
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        calls = []
+
+        def ens_side_effect(hru_code, date, models, directory):
+            calls.append((date, models[0]))
+            raise ValueError("HRU code not recognized by data gateway")
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 1
+        assert len(calls) == 1
+
+        captured = capsys.readouterr()
+        assert "Unexpected error" in captured.out
+
+    # -----------------------------------------------------------------
+    # Ensemble: yesterday fallback loop
+    # -----------------------------------------------------------------
+
+    def test_ensemble_fallback_yesterday_connection_error_retried_and_recovers(
+        self, gateway_env_ensemble, ensemble_csv_factory
+    ):
+        """today's first call raises the fallback ValueError (1 call,
+        ending that loop) -> yesterday hits a transport fault on one
+        member, retried once and recovered: yesterday = 51 calls.
+        Total across both dates = 52."""
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        calls = []
+        flaky_model = "12"
+        attempts = {"n": 0}
+
+        def ens_side_effect(hru_code, date, models, directory):
+            calls.append((date, models[0]))
+            if date == self.TODAY_STR:
+                raise ValueError("Couldn't find any files for the given HRU code, date and models!")
+            # date == YESTERDAY_STR
+            if models[0] == flaky_model:
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise requests.exceptions.ConnectionError("reset by peer")
+                p_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "tp", ["01/01/2024"], [7.0]
+                )
+                t_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "2t", ["01/01/2024"], [270.0]
+                )
+                return [p_file, t_file]
+            return []
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 0
+
+        today_calls = [c for c in calls if c[0] == self.TODAY_STR]
+        yesterday_calls = [c for c in calls if c[0] == self.YESTERDAY_STR]
+        assert len(today_calls) == 1
+        assert len(yesterday_calls) == 51
+        assert len(today_calls) + len(yesterday_calls) == 52
+
+        p_df = pd.read_csv(env["ens_dir"] / f"{self.HRU}_P_ensemble_forecast.csv")
+        t_df = pd.read_csv(env["ens_dir"] / f"{self.HRU}_T_ensemble_forecast.csv")
+        assert p_df["P"].iloc[0] == pytest.approx(7.0)
+        assert t_df["T"].iloc[0] == pytest.approx(270.0)
+
+    # -----------------------------------------------------------------
+    # Control member
+    # -----------------------------------------------------------------
+
+    def test_control_member_connection_error_retried_and_recovers(self, gateway_env_ensemble):
+        """A ConnectionError on the control-member download is retried
+        once and the run continues; recovered values reach the CM CSVs."""
+        env = gateway_env_ensemble
+        # This test only exercises the control-member site.
+        os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "None"
+
+        codes = [self.HRU]
+        dates = ["01.01.2024", "02.01.2024"]
+        t_vals = [[5.0], [6.0]]
+        p_vals = [[2.0], [2.5]]
+        dg_df = make_dg_control_member_csv(codes, dates, t_vals, p_vals)
+        csv_path = os.path.join(str(env["dg_dir"]), "cm_recovered.csv")
+        call_count = {"n": 0}
+
+        def cm_side_effect(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise requests.exceptions.ConnectionError("reset by peer")
+            dg_df.to_csv(csv_path, index=False)
+            return csv_path
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = cm_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 0
+        assert call_count["n"] == 2
+
+        p_csv = env["cm_dir"] / f"{self.HRU}_P_control_member.csv"
+        t_csv = env["cm_dir"] / f"{self.HRU}_T_control_member.csv"
+        assert p_csv.exists()
+        assert t_csv.exists()
+        p_df = pd.read_csv(p_csv)
+        t_df = pd.read_csv(t_csv)
+        assert set(p_df["P"].round(2)) == {2.0, 2.5}
+        assert set(t_df["T"].round(2)) == {5.0, 6.0}
+
+    def test_control_member_exhausted_transport_fault_not_reported_as_missing_data(
+        self, gateway_env_ensemble, caplog
+    ):
+        """An exhausted transport fault at the control-member site is
+        reported with its own cause (2 calls, then failure) and NOT as
+        'Control Member Data for HRU X not available' -- the pre-existing
+        message for a genuinely missing/unavailable control member."""
+        import logging
+
+        caplog.set_level(logging.ERROR)
+        os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "None"
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = (
+            requests.exceptions.ConnectionError("reset by peer")
+        )
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 1
+        assert mock_dg.operational.get_control_spinup_and_forecast.call_count == 2
+
+        error_text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+        assert f"Control Member Data for HRU {self.HRU} not available." not in error_text
+        assert "ConnectionError" in error_text
+
+    def test_control_member_non_matching_valueerror_does_not_leak_api_key(
+        self, gateway_env_ensemble, caplog
+    ):
+        """PREPG-015: the DG client can embed the live API key in a
+        ValueError's message (sapphire_dg_client/client_base.py:55-60).
+        A non-'Operational data for HRU' ValueError at the control-member
+        site (e.g. a 404 or an unrelated 500 body) must exit 1 and name
+        the exception class, but must NOT write the raw message -- and
+        therefore not the key -- to the log."""
+        import logging
+
+        caplog.set_level(logging.ERROR)
+        os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "None"
+
+        secret_message = (
+            "Failed to get data from api/calculations/operational/template/"
+            "RSMinerva?hru_code=19999&start_date=2024-01-01&api_key=SOMETHING-SECRET: "
+            '{"message": "Internal server error", "success": false}'
+        )
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = ValueError(secret_message)
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 1
+        # Not retried -- a plain ValueError isn't in the retryable set.
+        assert mock_dg.operational.get_control_spinup_and_forecast.call_count == 1
+
+        error_text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+        assert "api_key" not in error_text
+        assert "SOMETHING-SECRET" not in error_text
+        # Still useful: names the exception class and the HRU.
+        assert "ValueError" in error_text
+        assert self.HRU in error_text
+
+    def test_control_member_dg_download_failure_still_exits_1_unchanged(self, gateway_env_ensemble):
+        """Regression guard: the pre-existing 'Operational data for HRU'
+        exact-message case is untouched by the narrowed except clause."""
+        os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "None"
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = Exception(
+            "Operational data for HRU not available"
+        )
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 1
+        # Not retried -- a generic Exception isn't in the retryable set.
+        assert mock_dg.operational.get_control_spinup_and_forecast.call_count == 1
+
+    # -----------------------------------------------------------------
+    # Hygiene
+    # -----------------------------------------------------------------
+
+    def test_no_retry_log_line_leaks_api_key_or_endpoint(
+        self, gateway_env_ensemble, ensemble_csv_factory, caplog
+    ):
+        """PREPG-015: a retry warning logged during a real main() run
+        must not contain the API key, endpoint, or raw exception text
+        embedded in the transport exception's message."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        env = gateway_env_ensemble
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
+
+        secret_message = "https://dg.example.com/api?api_key=LIVE-SECRET-19999"
+        flaky_model = "9"
+        attempts = {"n": 0}
+
+        def ens_side_effect(hru_code, date, models, directory):
+            if date == self.TODAY_STR and models[0] == flaky_model:
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise requests.exceptions.ConnectionError(secret_message)
+                p_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "tp", ["01/01/2024"], [1.0]
+                )
+                t_file = ensemble_csv_factory(
+                    self.HRU, int(flaky_model), "2t", ["01/01/2024"], [2.0]
+                )
+                return [p_file, t_file]
+            return []
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with self._run_main_with_mocks(mock_dg):
+            with pytest.raises(SystemExit) as exc_info:
+                qm.main()
+
+        assert exc_info.value.code == 0
+
+        all_text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "LIVE-SECRET-19999" not in all_text
+        assert "api_key" not in all_text
+        assert "dg.example.com" not in all_text

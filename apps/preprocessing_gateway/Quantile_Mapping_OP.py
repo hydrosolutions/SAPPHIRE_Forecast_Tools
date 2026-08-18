@@ -62,12 +62,14 @@ import logging
 import os
 import shutil
 import sys
+import time
 import traceback
 from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 
 import dg_utils
 import pandas as pd
+import requests
 
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
@@ -129,6 +131,78 @@ logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
+
+
+# --------------------------------------------------------------------
+# TRANSPORT RETRY HELPER (PREPG-010)
+# --------------------------------------------------------------------
+# A transient reset/aborted connection on a single Data Gateway download
+# should not fail the whole run. This is a small, hard-coded retry:
+# exactly one retry (two attempts total), a short fixed pause before the
+# retry, and the original exception re-raised unchanged if the retry is
+# exhausted. Deliberately no env var, config surface, or CLI flag.
+_RETRY_MAX_ATTEMPTS = 2
+_RETRY_SLEEP_SECONDS = 2
+# Indirection so tests can replace the sleep with a no-op instead of
+# incurring a real delay (CLAUDE.md forbids sleep() in tests).
+_retry_sleep = time.sleep
+
+# requests.exceptions.SSLError and ProxyError both subclass
+# ConnectionError and are therefore retried along with it -- deliberate,
+# see PREPG-010 ("SSLError is retried"). ChunkedEncodingError is a
+# sibling class (a reset that lands mid-body), not a subclass, so it is
+# listed separately.
+_RETRYABLE_TRANSPORT_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+)
+
+
+def _call_with_transport_retry(download_fn, context: str):
+    """
+    Call a Data Gateway download once, retrying once on a transport fault.
+
+    Retries exactly once (two attempts total) when ``download_fn()``
+    raises ``requests.exceptions.ConnectionError`` (which also covers
+    ``SSLError`` and ``ProxyError``, both subclasses) or
+    ``requests.exceptions.ChunkedEncodingError``. Any other exception
+    (including ``ValueError``, used elsewhere for the today->yesterday
+    fallback) is not retried and propagates immediately.
+
+    Never logs the raw exception, endpoint, or URL: the Data Gateway can
+    embed the API key in its error messages (PREPG-015). Only the
+    attempt number, caller-supplied context, and exception class name
+    are logged.
+
+    Args:
+        download_fn: Zero-argument callable performing a single Data
+            Gateway download.
+        context: Short, non-sensitive description used for logging
+            (e.g. HRU code, model index, date). Must not include the
+            URL or API key.
+
+    Returns:
+        Whatever ``download_fn()`` returns.
+
+    Raises:
+        Exception: The original exception raised by ``download_fn()``,
+            unchanged, if it is not a retryable transport error or if
+            the retry is exhausted.
+    """
+    for attempt in range(1, _RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return download_fn()
+        except _RETRYABLE_TRANSPORT_ERRORS as e:
+            if attempt >= _RETRY_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "Transport fault on attempt %d/%d (%s): %s. Retrying.",
+                attempt,
+                _RETRY_MAX_ATTEMPTS,
+                context,
+                type(e).__name__,
+            )
+            _retry_sleep(_RETRY_SLEEP_SECONDS)
 
 
 def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) -> pd.DataFrame:
@@ -710,13 +784,35 @@ def main():
         # Initialize control_member_era5 to None
         control_member_era5 = None
         try:
-            control_member_era5 = client.operational.get_control_spinup_and_forecast(
-                hru_code=c_m_hru, date=start_date, directory=OUTPUT_PATH_DG
+            control_member_era5 = _call_with_transport_retry(
+                lambda c_m_hru=c_m_hru: client.operational.get_control_spinup_and_forecast(
+                    hru_code=c_m_hru, date=start_date, directory=OUTPUT_PATH_DG
+                ),
+                context=f"control member HRU {c_m_hru}",
             )
 
         except Exception as e:
             if "Operational data for HRU" in str(e):
                 logger.error(f"Exiting the program due to error: {e}")
+                sys.exit(1)
+            else:
+                # Narrowed 2026-08-20 (PREPG-010): previously this branch
+                # had no else and no re-raise, so a non-matching
+                # exception (e.g. an exhausted transport retry) was
+                # silently discarded here and later misreported by the
+                # "not available" check below as missing data rather
+                # than a transport fault.
+                # Log the exception CLASS only, not its message: the DG
+                # client can embed the live API key in a ValueError's
+                # text (sapphire_dg_client/client_base.py:55-60), and
+                # this branch is reached by exactly the non-"Operational
+                # data for HRU" messages that would otherwise write it
+                # to the log. Safe to include the message text once
+                # PREPG-015 lands a redaction helper.
+                logger.error(
+                    f"Control member download failed for HRU {c_m_hru} "
+                    f"due to {type(e).__name__} (see exception for detail)"
+                )
                 sys.exit(1)
 
         # If control_member_era5 is empty, raise an error
@@ -808,8 +904,11 @@ def main():
         try:
             files_downloaded = []
             for model in range(1, 51):
-                files = client.ecmwf_ens.get_ensemble_forecast(
-                    hru_code=code_ens, date=today, models=[str(model)], directory=OUTPUT_PATH_DG
+                files = _call_with_transport_retry(
+                    lambda model=model, code_ens=code_ens: client.ecmwf_ens.get_ensemble_forecast(
+                        hru_code=code_ens, date=today, models=[str(model)], directory=OUTPUT_PATH_DG
+                    ),
+                    context=f"HRU {code_ens} model {model} date {today}",
                 )
                 files_downloaded.append(files)
             # Unnest the list of lists
@@ -827,11 +926,15 @@ def main():
                 try:
                     files_downloaded = []
                     for model in range(1, 51):
-                        files = client.ecmwf_ens.get_ensemble_forecast(
-                            hru_code=code_ens,
-                            date=yesterday,
-                            models=[str(model)],
-                            directory=OUTPUT_PATH_DG,
+                        files = _call_with_transport_retry(
+                            lambda model=model,
+                            code_ens=code_ens: client.ecmwf_ens.get_ensemble_forecast(
+                                hru_code=code_ens,
+                                date=yesterday,
+                                models=[str(model)],
+                                directory=OUTPUT_PATH_DG,
+                            ),
+                            context=f"HRU {code_ens} model {model} date {yesterday}",
                         )
                         files_downloaded.append(files)
                     # Unnest the list of lists
