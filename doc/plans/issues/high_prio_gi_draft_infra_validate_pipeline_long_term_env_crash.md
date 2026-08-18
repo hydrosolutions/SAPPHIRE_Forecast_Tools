@@ -10,6 +10,43 @@
 - **INFRA-022** — long-term Tier-1 FAILs on legitimately gated days (surfaced only once this crash is worked around).
 - **LTF monthly horizon semantics** — introduced `long_term_horizon_resolver`.
 
+
+## Reproduction 2026-08-17 — both organisations, both on trunk `8e3fc1bc`
+
+Confirmed twice this session with the identical traceback, which narrows this from a possible
+deployment condition to a **code defect**:
+
+```
+run_tier1_long_term
+  -> quarter_horizon_value()                    long_term_horizon_resolver.py:70
+  -> _ensure_supported_mode(config_name)                                  :173
+  -> supported_long_term_modes()                                          :54
+```
+
+| Run | Org | Outcome |
+|---|---|---|
+| 2026-08-15 13:03, `long-term-operational` (`--continue-on-error`) | **kghm** | all 4 LT phases PASS, `api_validation (long-term)` **FAIL** |
+| 2026-08-17 14:32, `long-term-operational` (`LT_FORECAST_TODAY=2026-08-01`) | **tjhm** | all 6 modules PASS, `api_validation (long-term)` **FAIL** |
+
+Two additional observations worth keeping:
+
+1. **It is horizon-scoped, not global.** Per-module validations in the same sessions succeeded
+   (`--module preprocessing_runoff`, `--module preprocessing_gateway`,
+   `--module linear_regression`, `--module postprocessing_forecasts`) because none of them enter
+   the long-term tier. Only `--target long-term` crashes. So the blast radius is exactly the
+   long-term verification path — which is also the path with the least manual scrutiny.
+
+2. **The crash masks everything downstream of it.** Because it raises before any long-term check
+   runs, none of the § 9.6 long-term skill/ensemble verification executes. Any claim that
+   "long-term validation passed" in a prior review is unsupported for as long as this stands —
+   the checks never ran.
+
+**Interaction with INFRA-023 (resolved this session).** Until the `iEasyHydroForecast` package
+shadowing was cleared, `validate_pipeline` died at *import* and this crash was unreachable —
+so INFRA-021 could not have been observed. Order of fixes matters: INFRA-023 first, then this
+becomes visible, then INFRA-022's false-FAIL becomes visible behind it.
+
+
 ---
 
 ## Symptom
