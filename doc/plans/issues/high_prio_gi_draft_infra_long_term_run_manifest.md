@@ -80,12 +80,26 @@ Corrections from the second and third review passes (2026-08-18):
   > validation queries **exact** dates (`validate_pipeline.py:519-573`). Without it, validation
   > cannot find legitimately late output. Restored, correctly scoped.
   >
-  > **This does not force the two-stage model.** The snap is deterministic: within the ±5 window, a
-  > late model's stored date becomes its *scheduled* date and an early/on-time model's stays
-  > `today` (`lt_utils.py:196-217`). Both are computable at resolution time, so an **intent-only**
-  > manifest can carry an *expected* output date per mode-model. Confirm this against the code
-  > before relying on it — if any path can store a third date, the two-stage model becomes
-  > necessary after all.
+  > **Can an intent-only manifest carry this date? Only under two conditions.** *(Corrected
+  > 2026-08-18 after verification — an earlier version of this note claimed it outright.)*
+  >
+  > What **is** established: `check_valid_forecast_issue_date` is deterministic and selects no third
+  > value — outside ±5 it returns `None`, and inside the window it returns the scheduled date when
+  > late and `today` otherwise (`lt_utils.py:177-228`).
+  >
+  > What is **not** established, and is the gap:
+  > - **The helper's return is not the persisted date.** It is passed into a polymorphic
+  >   `predict_operational` call, and persistence then writes each row's `date` from the returned
+  >   DataFrame with no invariant tying the two together (`run_forecast.py:336-420`;
+  >   `lt_utils.py:333-352`).
+  > - **`today` is chosen at forecast-process startup**, not at schedule resolution
+  >   (`run_forecast.py:565-570`). Two processes, two clock reads — they can differ across midnight
+  >   or a slow queue.
+  >
+  > So an intent-only manifest is sufficient **only if** the resolved date is frozen at resolution
+  > and propagated into execution, **and** an output-date invariant is enforced at persistence.
+  > Otherwise the manifest must be finalized after execution (the two-stage model). This is a
+  > design decision for whoever plans INFRA-028 — do not assume the one-stage form works.
 - **The `source` enum needs more than `scheduler` / `manual-override`.** The local runner has a
   **legacy fallback** resolution path with its own hard-coded gate and mode set
   (`run_locally.sh:284-300`), used when the schedule query fails. A manifest that cannot say "these

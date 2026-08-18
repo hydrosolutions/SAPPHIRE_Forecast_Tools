@@ -107,10 +107,16 @@ implemented in two.
 
 ## Acceptance criteria
 
-- One authority for the window; **all three** gates agree with it — the Python scheduler, the Python
-  execution gate, and the shell fallback (per the decision recorded in fix step 2).
-- A test fails if the shell fallback's window and the Python authority diverge, whichever option was
-  chosen — otherwise this issue recurs silently the next time the value changes.
+- One authority for the window, read by **every gate that still exists** after fix step 2. *(These
+  criteria are conditional on which option is chosen there — an earlier version demanded all three
+  gates agree *and* a fallback-divergence test, which is impossible under option (i), where there
+  is no fallback left to agree or diverge.)*
+  - Under **(i) delete the fallback**: exactly two gates remain, both reading the single definition;
+    a failed schedule query becomes a hard error, and a test covers that failure path.
+  - Under **(ii) fallback queries the value**: two definitions, one authority; a test proves the
+    fallback reports the same window the Python authority holds.
+  - Under **(iii) keep the literal**: a test fails when the literal and the Python authority
+    diverge — without it this issue recurs silently the next time the value changes.
 - A run scheduled but rejected by every model produces a visible non-success signal, or the
   scheduler stops admitting days that execution will refuse.
 - Tests cover the boundary on both sides: `distance == window`, `window + 1`, and the previously

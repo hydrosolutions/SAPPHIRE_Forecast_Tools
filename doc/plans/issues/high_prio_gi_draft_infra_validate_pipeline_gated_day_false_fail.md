@@ -205,9 +205,11 @@ downgraded.
   lead-value helpers (`:35-49`), which need `operational_month_lead_time` alone
   (`long_term_horizon_resolver.py:68-81`). The instruction outlived its reason — the same defect
   shape as the vestigial phase in the extraction plan.
-  **What remains true**: introducing gating still changes verdicts on the existing long-term
-  mapping / empty-quarter / empty-season / all-present tests (`:418-477`), because those assert
-  today's un-gated behavior. Update *those* deliberately in the same commit. Whether the fixture
-  needs new fields depends on what the manifest test double carries — decide when the manifest
-  schema is fixed, not now.
+  **What remains true, stated more precisely** *(the first replacement overstated this too)*: the
+  tests at `:418-477` must be **re-examined**, not necessarily re-verdicted. The mapping test
+  asserts only module attribution and is unaffected. The empty-quarter, empty-season and
+  all-present tests can keep their current FAIL/PASS verdicts **if** supplied a manifest double
+  that marks those modes active — what changes is that they now need such a double at all. Whether
+  the shared fixture needs new fields depends on what that double carries, so decide it when the
+  manifest schema is fixed, not now.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green.
