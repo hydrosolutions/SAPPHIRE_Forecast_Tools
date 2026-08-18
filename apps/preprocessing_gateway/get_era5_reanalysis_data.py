@@ -180,12 +180,12 @@ def main():
         if P_data.isnull().values.any():
             print(f"Nan values in P data for HRU {c_m_hru}")
             print("Take Last Observation")
-            P_data = P_data.ffill()
+            P_data = dg_utils.fill_gaps_grouped(P_data, "P", ["code"], "ffill")
 
         if T_data.isnull().values.any():
             print(f"Nan values in T data for HRU {c_m_hru}")
             print("Take Last Observation")
-            T_data = T_data.ffill()
+            T_data = dg_utils.fill_gaps_grouped(T_data, "T", ["code"], "interpolate")
 
         P_data.to_csv(
             os.path.join(OUTPUT_PATH_REANALYSIS, f"{c_m_hru}_P_reanalysis.csv"), index=False

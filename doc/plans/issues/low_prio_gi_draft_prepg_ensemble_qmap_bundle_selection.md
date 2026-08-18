@@ -2,10 +2,11 @@
 
 **Status**: Draft (2026-08-18)
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
-**Priority**: **Conditional — TBD pending the Phase-0 inventory below.** *A Medium downgrade was
-asserted on 2026-08-18 and is itself withdrawn: it was not established.* Severity depends on the
-deployment's bundle configuration, and the identity defect in **PREPG-011** can make coefficient
-selection wrong even with one bundle.
+**Priority**: **Low — dormant.** *Resolved 2026-08-18 by inventory:* **every deployment
+configures exactly one control bundle** (kyg 1, taj 1, uzb unset), so "last bundle wins" has a
+single candidate everywhere and selection is unambiguous today. This is a code-clarity and
+future-proofing fix, not a data-correctness one. (Two earlier severity claims — High, then
+Medium, then "TBD" — are all superseded by the measurement.)
 **Depends on**: **PREPG-011.** Bundle selection cannot be made correct until station identity is
 normalised — today the lookup key is a file-level constant, not the station.
 
@@ -76,17 +77,30 @@ bundle. Then either
   wrong downscaling. This is the only genuine corruption path, and it requires duplicate station
   codes across bundles.
 
-**Phase-0 inventory — required before assigning severity.** Check
-`ieasyhydroforecast_HRU_CONTROL_MEMBER` per deployment:
+## Phase-0 inventory — RESOLVED 2026-08-18
 
-| Configuration | This issue's severity |
+`ieasyhydroforecast_HRU_CONTROL_MEMBER`, read from the three deployment env files
+(`~/Documents/GitHub/<org>_data_forecast_tools/config/`):
+
+| Org | Control bundles configured |
 |---|---|
-| One bundle | Code-clarity only *for bundle selection* — but see PREPG-011 for row selection |
-| Several, target absent from the last | Normally a loud arithmetic failure |
-| Several, same station code with differing coefficients | **High for that deployment** — systematic silent wrong downscaling |
+| kyg | **1** |
+| taj | **1** |
+| uzb | unset (does not use this path) |
 
-Source alone cannot tell us which applies. Until this inventory is done, the honest priority is
-conditional, not Medium.
+**No deployment configures more than one bundle**, so the risk table below is entirely
+hypothetical today:
+
+| Configuration | Severity | Present on any deployment? |
+|---|---|---|
+| One bundle | Code clarity only | **Yes — all of them** |
+| Several, target absent from the last | Loud arithmetic failure | No |
+| Several, same station code, differing coefficients | High — silent wrong downscaling | No |
+
+**Caveat that keeps this open rather than closed:** with one bundle the *bundle* is right, but row
+selection inside it is still keyed on the file-level constant `code` (**PREPG-011**). That defect
+is separately dormant because ensemble files are single-feature — so the two dormancies are
+independent, and arming either one re-arms this.
 
 ## What to inspect
 

@@ -2,9 +2,10 @@
 
 **Status**: Draft (2026-08-18) — **third framing; the first two were wrong**
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`, `dg_utils.py`)
-**Priority**: **Conditional.** High if any deployment's ensemble shapefile has more than one
-feature; otherwise a latent contract violation. **Do not assign a fixed severity before the
-inventory in § Impact is not yet proven.**
+**Priority**: **Low — latent.** *Resolved 2026-08-18 by the Phase-0 inventory below:* every
+ensemble file on every current deployment is **single-feature**, so nothing is mis-attributed
+today. This remains a genuine contract violation that would corrupt silently the moment a
+multi-feature ensemble shapefile is configured — fix it before that happens, not urgently.
 **Labels**: `preprocessing_gateway`, `data-integrity`, `ensemble`, `silent-corruption`
 **Found**: 2026-08-18. The first draft blamed an ungrouped `ffill`; the second called this "band
 identity". Both were wrong. The correct framing comes from the **documented contract in
@@ -62,22 +63,59 @@ The value that should populate `code` is parked in `name`; `code` receives a fil
 A fix that only preserves `name` downstream leaves (1) and (2) intact. **Normalise the identity
 at the transform**, then let coefficient selection and the projection follow from it.
 
-## Impact is not yet proven — do this inventory first
+## Impact — measured, not inferred
 
-*An earlier draft asserted High severity. That is not established from source.* The documented
-shapefile supports multiple features, but the worked example in the docs is single-column and the
-unit fixture is synthetic.
+*An earlier draft asserted High severity; a later one called it conditional. The inventory has
+now settled it as **latent**.* The documented shapefile supports multiple features, but no
+deployment currently uses one.
 
 > *Withdrawn:* the earlier claim that the fixture's `band_1000` / `band_2000`
 > (`test/test_ensemble_transforms.py:38`) proved "multi-band input is a supported, tested shape".
 > That fixture tests only the transform, uses invented names, and explicitly locks in the constant
 > `code`. It is not evidence of a production shape.
 
-**Before assigning severity, obtain a sanitized real DG ensemble file header** (or the gateway's
-schema) and establish whether multi-feature ensemble files reach this path on any deployment.
+## Phase-0 inventory — RESOLVED 2026-08-18
 
-- Every deployment single-feature → real but **dormant**; fix at leisure.
-- Any deployment multi-feature → **actively wrong forcing** for the conceptual model.
+Measured on local dev copies of the `kyg`/`taj` data repos (`intermediate_data/data_gateway`),
+holding the **2026-08-17 operational downloads**, plus the three deployment env files
+(`~/Documents/GitHub/<org>_data_forecast_tools/config/`). Counts only; no station identifiers
+reproduced here.
+
+**Configured bundles / ensemble HRUs**
+
+| Org | `HRU_CONTROL_MEMBER` | `HRU_ENSEMBLE` |
+|---|---|---|
+| kyg | **1** | 2 |
+| taj | **1** | 1 |
+| uzb | unset | unset |
+
+**Real DG file shapes** (fields = date column + one column per feature)
+
+| File class | kyg | taj |
+|---|---|---|
+| Ensemble `ECMWFIFS_*_ENS*_HRU*` | **2 fields — all 200 files** | none present |
+| Control `Operational_HRU_*` | **128 fields (127 stations)** | **36 fields (35 stations)** |
+| Snow `SnowOperational_HRU_*` | 65 and 443 fields | 19 and 158 fields |
+
+**Two conclusions, and they point in opposite directions:**
+
+1. **Every ensemble file is single-feature.** The multi-feature shape that the ensemble identity
+   defect requires **does not occur on any current deployment**.
+2. **The control files are strongly multi-station** — 127 and 35 stations respectively — and the
+   control frame is *long* (`["date","P","code"]`, stations stacked), so an ungrouped `ffill`
+   there crosses station boundaries.
+
+**Verdict for this issue: dormant.** All 200 kyg ensemble files carry exactly one data column;
+taj has none present. The constant `HRU_CODE` is therefore the *only* identity in each file, so
+it is trivially correct today. The bug is a loaded gun, not a firing one.
+
+**What would arm it:** subscribing a multi-feature shapefile for an *ensemble* HRU. Since
+`doc/development.md:382` explicitly documents multi-feature shapefiles as supported, an operator
+could do this at any time and get silently wrong forcing with no error. That is the argument for
+fixing it despite the Low priority.
+
+**Note the fill split:** the 8 ensemble-path `ffill` firings in the logs (§ PREPG-013) are on
+these single-column files, so they cross **member** boundaries only, never station boundaries.
 
 ## A coordinated consumer change is required
 

@@ -70,6 +70,57 @@ logger.setLevel(logging.INFO)
 
 
 # --------------------------------------------------------------------
+# Grouped gap fill
+# --------------------------------------------------------------------
+def fill_gaps_grouped(
+    df: pd.DataFrame,
+    value_col: str,
+    group_cols: list[str],
+    method: str,
+) -> pd.DataFrame:
+    """Fill gaps in ``value_col`` independently within each group.
+
+    Long-format frames (e.g. multiple stations or ensemble members
+    stacked row-wise) must not let a fill bleed across group
+    boundaries. This fills only within each group defined by
+    ``group_cols``, and only the requested ``value_col`` — other
+    columns (dates, codes, etc.) are left untouched.
+
+    Args:
+        df: Input DataFrame. Not mutated; a new DataFrame is returned.
+        value_col: Name of the column to fill.
+        group_cols: Column(s) identifying the group (e.g. ``["code"]``
+            or ``["ensemble_member"]``). Groups are never dropped, even
+            if a group key itself is NaN.
+        method: ``"interpolate"`` performs linear interpolation of
+            interior gaps only (``limit_area="inside"``), leaving
+            leading and trailing NaNs untouched. Used for temperature.
+            ``"ffill"`` forward-fills within the group; leading NaNs
+            stay NaN because nothing precedes them in the group. Used
+            for precipitation.
+
+    Returns:
+        A new DataFrame with the same row order and index as ``df``;
+        only ``value_col`` is modified.
+
+    Raises:
+        ValueError: If ``method`` is not ``"interpolate"`` or ``"ffill"``.
+    """
+    if method not in ("interpolate", "ffill"):
+        raise ValueError(f"Unknown fill method: {method!r}")
+
+    df = df.copy()
+    grouped = df.groupby(group_cols, dropna=False)[value_col]
+
+    if method == "interpolate":
+        df[value_col] = grouped.transform(lambda s: s.interpolate(limit_area="inside"))
+    else:
+        df[value_col] = grouped.transform(lambda s: s.ffill())
+
+    return df
+
+
+# --------------------------------------------------------------------
 # Quantile Mapping
 # --------------------------------------------------------------------
 def ptf(x: np.array, a: float, b: float) -> np.array:

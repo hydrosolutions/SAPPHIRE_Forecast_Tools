@@ -9,8 +9,10 @@ did its job. It currently certifies a total upstream outage as healthy.
 **Found**: 2026-08-14, local kghm review on `maxat_sapphire_2` @ `8e3fc1bc`, during § 3
 `preprocessing_gateway`.
 **Related**: INFRA-020 (ML validation matches zero checks and reports PASS on no evidence) —
-**same failure family**: a check that cannot fail is worse than no check. INFRA-023 (which
-was hiding all validation output until fixed this session).
+**same failure family**: a check that cannot fail is worse than no check. **INFRA-025** (package
+shadowing, which was hiding all validation output until cleared in that working copy).
+*Id corrected 2026-08-18: this line previously said INFRA-023, which is an unrelated issue — the
+yearly `monthly_norms` cron mapping (`module_issues.md:60`). Shadowing is INFRA-025 (`:117`).*
 
 > **Provenance correction (2026-08-16).** The checkout moved from `maxat_sapphire_2` to
 > `fix_lr010_lr011_write_contract` at **2026-08-14 16:00** (git reflog), so every run from the
