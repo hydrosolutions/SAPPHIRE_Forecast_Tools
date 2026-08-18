@@ -303,6 +303,26 @@ level, respecting variable period lengths:
 3. Average only the targets within the period
 4. Result: one row per (code, date, model_short) at pentad/decade level
 
+Step 1 reads a *merged* archive: the DAY records plus, for dates before each
+(code, model)'s first DAY issue date, retained rows from the migrated period
+archive. The merge retains what already exists — it does not synthesise a row for
+a date that was never written.
+
+### Recovery: stranded period rows
+
+Period rows are written on the daily/boundary-day cadence only by the operational
+path, so a missed boundary day strands them, and maintenance cannot heal a date
+that has no `combined` rows to discover. The recovery tool is
+`postprocessing_forecasts/backfill_period_forecasts.py`, which re-runs this same
+aggregation over a chosen range, one calendar year per internal call.
+
+It re-aggregates existing inputs and cannot invent them: when the pipeline never ran,
+there is nothing at step 1 for those dates. The run then writes nothing *new for them*
+while still re-upserting the rest of that year, and exits 0 — or exits 1 if the whole
+horizon-year is empty. Neither outcome is a repair. Establish coverage before using
+it — procedure in
+[`doc/prod/backfill_period_forecasts_runbook.md`](prod/backfill_period_forecasts_runbook.md).
+
 ### Ensemble Creation
 
 | Ensemble | Models | Threshold | Created In |
