@@ -137,6 +137,42 @@ The proposed fix section must therefore cover **three** rules, not one:
    is a summary, not a verification.
 
 
+## Third reproduction (2026-08-18, kyg, trunk `a304ffb0`) — this time with a live boundary
+
+The 2026-08-18 kghm review reproduced the original defect on fresh data, and the shape is worth
+recording because it shows the check failing *and* the data being fine at the same time.
+
+`preprocessing_gateway` ran clean — 2m 15s, 0 errors, 0 warnings, 0 tracebacks — and snow values
+were genuinely written. Reading the stored snow series across the review window:
+
+```
+2026-08-11 … 08-15    80 rows/day, `value` NULL on every row, `norm` non-null on every row
+2026-08-16 … 08-18    80 rows/day, `value` populated
+```
+
+So the data has a **backfill boundary at 08-16**, not an outage: the three most recent days
+including the run date are real, and the five days before them are norm-only placeholder rows.
+
+The validator's verdict over that same window:
+
+```
+Snow (SWE): 80 records                [OK]
+Snow operational values: 80 records   [OK]
+all 3 datasets fresh
+```
+
+Both the presence check and the freshness check counted the norm-only rows as evidence. This is
+the mechanism §"Root cause" describes, on a different org, a different date and a different
+dataset state from the 2026-08-14 observation — and it is the cleanest demonstration yet, because
+here the checks are *right by luck*: the recent days really are populated. Change the boundary
+date and the identical output would certify a five-day outage.
+
+The practical consequence for reviewers: **on this data the validator cannot distinguish "snow is
+flowing" from "snow stopped five days ago and only placeholders remain."** Nothing in its output
+changes between those two worlds.
+
+Recorded here as evidence, not as new scope — the fix direction below is unchanged.
+
 ## Proposed fix
 
 1. Tier-1 presence checks should report **both** a row count and a **non-null value count**,
