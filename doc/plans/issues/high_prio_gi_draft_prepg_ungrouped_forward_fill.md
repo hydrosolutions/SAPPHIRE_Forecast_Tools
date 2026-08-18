@@ -1,18 +1,19 @@
 ## Whole-frame `ffill` on three forcing paths carries values across station, and on one path ensemble-member, boundaries (PREPG-013)
 
-**Status**: Draft (2026-08-18) — split out of PREPG-011, which conflated it with an identity defect
+**Status**: Draft (2026-08-18) — split out of PREPG-011; **scope-cut after out-of-loop review**
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`, `get_era5_reanalysis_data.py`)
 **Priority**: **High for the control path** (*raised from Medium 2026-08-18 on measured
 evidence*), Medium for ERA5, Low for the ensemble path.
 
 The control path is the live one: its frames carry **127 stations (kyg)** / **35 (taj)** stacked
 in long format, and the fill has fired on **15 distinct run dates between 2026-02-13 and
-2026-08-17**. The ensemble path's frames are single-station, so its fill can only cross *member*
-boundaries. See § Measured exposure.
+2026-08-17**. ERA5 is the same code again and shares the defect structurally, though it has not
+been observed firing. The ensemble path ranks lowest because deployment files are single-feature
+— an **externally measured** fact, not one this repository can confirm. See § Measured exposure.
 **Labels**: `preprocessing_gateway`, `data-integrity`, `forcing`, `silent-corruption`
 **Found**: 2026-08-18, out-of-loop review.
-**Related**: PREPG-011 (ensemble station identity — a *prerequisite* for keying the ensemble fill
-correctly, but a different defect). PREPG-010 (same path, transport).
+**Related**: PREPG-011 (ensemble station identity — only relevant if a multi-feature ensemble
+file ever appears; not a blocker for this fix). PREPG-010 (same module, transport).
 
 ---
 
@@ -123,59 +124,87 @@ themselves, not the logs.
 
 That does not weaken the case for fixing it — an ungrouped fill over a 127-station stacked frame
 has no correct interpretation — but the issue should not claim confirmed corruption it has not
-measured. **A cheap way to close this gap:** log the NaN row positions per `code` at the fill
-site before fixing, and re-read after one operational cycle.
+measured. Quantifying it exactly is **not** a precondition for the fix (see § Deliberately out of
+scope).
 
 ## Why the ensemble path cannot be fixed alone
 
-The obvious fix, `groupby(["code", "ensemble_member"])`, **does not work on the ensemble path
-today**: `code` is a file-level constant there (see **PREPG-011**), so that grouping still spans
-stations *in principle*. In practice ensemble files are single-feature, so grouping by
-`ensemble_member` alone is currently sufficient and correct there — but it would silently become
-wrong the moment PREPG-011 is armed by a multi-feature shapefile.
+Grouping the ensemble fill by `ensemble_member` is sufficient **only under the single-feature
+assumption**, and that assumption is **not verifiable from this repository** — it rests on an
+external inventory of deployment data (§ Phase-0 inventory), and the transform explicitly accepts
+every feature column. So:
 
-**Therefore: fix control + ERA5 now; group the ensemble site by member now, but leave a comment
-and a test tying it to PREPG-011** so the dependency is not lost.
+- Group the ensemble fill by `ensemble_member`, and **test member isolation only**.
+- Do **not** claim the ensemble fix prevents station crossing. If a multi-feature ensemble file
+  ever appears, `name` is discarded before the fill, so member-grouping alone would not prevent
+  cross-feature bleed. That is **PREPG-011's** problem, not this one's.
 
-The control and ERA5 sites have no such problem — `code` is already the real station
-(`dg_utils.py:198`) — so they can be fixed independently and immediately. **Do these first.**
+Control and ERA5 have no such ambiguity — `code` is already the real station
+(`dg_utils.py:198`). **Fix those two first; they are the same code twice.**
 
-## The policy question this exposes
+## The fix, and what it deliberately does NOT change
 
-`ffill` is currently unbounded: a single trailing observation can propagate across an arbitrary
-number of days. Before implementing, decide and document:
+**Group each fill by its key. Nothing else.** *Out-of-loop review 2026-08-18 cut this issue's
+scope substantially; the removed items are listed under § Deliberately out of scope.*
 
-- **Leading** gap in a group — nothing to carry forward. Fail, or leave NaN?
-- **Interior** gap — fill, and up to what maximum run length?
-- **Trailing** gap — fill, or truncate the series?
-- **Over-limit** gap — fail loudly, or emit NaN and let the consumer decide?
+| Site | Group by |
+|---|---|
+| control (`Quantile_Mapping_OP.py:763`, `:768`) | `code` |
+| ERA5 (`get_era5_reanalysis_data.py:183`, `:188`) | `code` |
+| ensemble (`Quantile_Mapping_OP.py:902`, `:907`) | `ensemble_member` |
 
-Note the consumer constraint: dropping NaN rows wholesale shortens some members relative to
-others and changes ensemble geometry for the conceptual model.
+**Match today's behaviour minus the cross-group bleed** — do not open a gap-policy debate:
+
+- **Leading** gap in a group: remains NaN (there is nothing within the group to carry forward).
+  This is the only intended behaviour change.
+- **Interior and trailing** gaps: keep the current unbounded `ffill` within the group.
+
+Bounded fills, max-run limits and configurable gap policy are a **separate** question. Deferring
+them costs nothing and keeps this fix reviewable.
 
 ## Acceptance criteria
 
-- **Control and ERA5** fills are grouped by `code`. Proven by a fixture with **two stations
-  stacked in one frame**, where station 2 begins with a gap and must **not** inherit station 1's
-  last value.
-- **Ensemble** fill is grouped by `ensemble_member` (sufficient while files are single-feature),
-  with a comment and test recording that it must become station+member if **PREPG-011** is fixed
-  or armed.
-- No value crosses a station boundary on any of the three paths; no value crosses a member
-  boundary on the ensemble path.
-- Leading, interior, trailing and over-limit gaps are tested **independently** — one combined
-  fixture will not distinguish them.
-- Whatever policy is chosen is logged at **WARNING**, naming variable, station, member, date range
-  and gap length. The current `Take Last Observation` print is indistinguishable from routine
-  output.
-- Assertions are **semantic and ordering-insensitive**, not "byte-identical" — adding a grouped
-  sort can change bytes on a run with no NaNs at all.
+- **Control and ERA5** fills are grouped by `code`. Fixture: two stations stacked in one frame,
+  station 2 beginning with a gap, which must **not** inherit station 1's last value.
+- **Ensemble** fill is grouped by `ensemble_member`. Fixture: two members, second beginning with
+  a gap. (Member isolation only — see above.)
+- A frame with **no NaNs** is unchanged, rows and order identical. The existing guards already
+  skip the fill entirely in that case (`Quantile_Mapping_OP.py:760`), and a grouped assignment on
+  the value column preserves row order — **no grouped sort is needed**.
+- No rows are dropped.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green.
+
+## Deliberately out of scope
+
+Cut on review as disproportionate to a three-call-site fix. Recorded so they are not lost:
+
+- Gap-policy design (leading/interior/trailing/max-run) and its four-way test matrix.
+- WARNING-level gap logging naming variable/station/member/date-range/run-length, and any
+  pre-fix NaN-position instrumentation. The existing notice is adequate here.
+- Making the control and ERA5 log strings distinguishable. They are currently **identical**
+  (`Quantile_Mapping_OP.py:761`/`:766` vs `get_era5_reanalysis_data.py:181`/`:186`), which made
+  attributing the 31 log firings need script-section context. A genuine papercut, but not this
+  issue's job.
 
 ## Contract not to break
 
-- Do **not** drop NaN rows wholesale (see the consumer constraint above).
-- The three paths have **different keys**. Do not apply one grouping blindly to all of them —
-  control and ERA5 have no member dimension.
-- The replacement must stay **loud**. This is invisible today precisely because its log line looks
-  benign.
+- **Do not drop NaN rows.** Shortening one station or member relative to others changes ensemble
+  geometry for the conceptual model.
+- The three paths have **different keys** — control and ERA5 have no member dimension.
+- Do not add a sort. Row order must survive.
+
+## Downstream effect of the fix — a real semantics change
+
+Values that are today fabricated from another station or member will, after the fix, **remain
+NaN**. Verified: they are **not dropped** anywhere downstream.
+
+- Control: written to CSV and sent to the API as `value=None`; the schema permits null
+  (`Quantile_Mapping_OP.py:770`, `:351`).
+- ERA5: written to CSV; the later extension deduplicates and sorts but does not drop NaNs
+  (`extend_era5_reanalysis.py:482`).
+- Ensemble: CSVs are read directly by the conceptual model with no NA removal
+  (`conceptual_model/functions/functions_operational.R:477`).
+
+**So nulls can propagate into model forcing where a (wrong) number used to sit.** That is the
+correct trade — an honest gap beats silent cross-station fabrication — but it is a behaviour
+change the owner should sign off on, not a pure bug fix.
