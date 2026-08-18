@@ -1,7 +1,8 @@
 ## `validate_pipeline --module machine_learning` matches zero checks and reports PASS on no evidence (INFRA-020)
 
 **Status**: Draft (2026-07-23) — **diagnosis confirmed, proposed fix blocked on two owner decisions
-(C3, C4, C5) after three out-of-loop review passes 2026-08-18**
+**READY TO PLAN** — C3, C4 and C5 resolved by the owner 2026-08-18 after five out-of-loop review
+passes; C5's partial-write detection is deliberately deferred to a follow-up issue**
 **Module**: `apps/validate_pipeline` (+ `apps/run_locally.sh` summary reporting)
 **Priority**: **High** (silent false assurance on the module with the most silent-write history)
 **Labels**: `infra`, `validation`, `false-pass`, `machine_learning`, `observability`
@@ -145,18 +146,52 @@ that any particular mechanism is mandatory — picking one is an implementation 
 Also note `--phase pre` returns 0 at `:1493-1495` when `--baseline` is supplied, bypassing any
 exit-code contract.
 
-### C3 — **OWNER DECISION**: the checks need an execution-expectation model, not a calendar gate
+### C3 — **RESOLVED 2026-08-18 (owner): ML runs daily; the only gate is org-level**
 
-A calendar-day gate cannot tell "ML failed" from "ML was never supposed to run":
+> **Correction — the earlier version of C3 was wrong, and so were the two review passes that
+> produced it.** It claimed a calendar gate would false-FAIL "default-PENTAD runs" because
+> `ML_MODE` defaults to `DECAD` (`run_locally.sh:154-156`, skip at `:1144-1150`). **That is a
+> `run_locally.sh`-only behaviour.** In production, Luigi's `RunMLModels` defaults
+> `prediction_mode="ALL"`, which expands to `["PENTAD", "DECAD"]` and runs **both**
+> (`pipeline_docker.py:785-794`). The reviews reasoned about the local runner as though it were the
+> deployed path.
 
-- `ML_MODE` defaults to `DECAD` (`run_locally.sh:154-156`) and an unset prediction mode defaults to
-  `PENTAD` (`:1123-1127`), so ML is skipped for the mismatched mode (`:1144-1150`) — yet short-term
-  validation still runs (`:1155-1158`).
-- `machine_learning` is in both `DEMO_SKIP_MODULES` and `UZHM_SKIP_MODULES` (`:173-174`), so demo
-  and the uzb deployment skip ML entirely.
+**Operational reality (owner):** ML runs **every day**. Each run takes fresh forcing data and the
+latest Q data and produces a 10-day forecast. Raw output is therefore expected daily, independent of
+pentad/decad boundaries.
 
-Validation receives no run manifest. Deciding what supplies that expectation — a manifest, an
-org/mode-aware rule, or a write receipt — is a design decision, not an implementation detail.
+**So the expectation model is far simpler than a manifest.** The single gate is **org-level
+enablement**, read from deployment config / `ORG` — the same fact encoded by `DEMO_SKIP_MODULES` and
+`UZHM_SKIP_MODULES` (`run_locally.sh:173-174`), where demo and uzb do not run ML at all. That is a
+static per-deployment fact, so **INFRA-020 does not depend on INFRA-028's manifest.**
+
+#### C3a — a latent defect this correction exposes
+
+`machine_learning` is listed in **`FORECAST_DAY_MODULES`** (`validate_pipeline.py:113-118`), under
+the comment *"Modules that only produce data on forecast days (not daily)."* **For ML that comment
+is false.** Consequence once ML-tagged checks exist: `_apply_non_forecast_day_skip` (`:1333-1340`)
+would downgrade a genuine "no day rows today" FAIL to **SKIP** on every non-boundary day — silently
+recreating the PASS-on-nothing hole this issue exists to close, on ~24 days a month.
+
+**The fix must remove `machine_learning` from `FORECAST_DAY_MODULES`, or make that gate
+horizon-aware** so it applies to the pentad/decade products but not to daily output. Note
+`linear_regression` and `postprocessing_forecasts` remain correctly listed — their products genuinely
+are boundary-day only.
+
+### C4 — **RESOLVED 2026-08-18 (owner): no provenance change needed**
+
+> **Correction — the concern was misframed.** Earlier text held that because raw ML rows are all
+> stored as `horizon_type="day"`, a DECAD validation could pass on PENTAD leftovers on shared dates.
+> That treats day rows as *mode-specific evidence*. They are not: `_write_ml_forecast_to_api`
+> documents `horizon_type` as **informational only** and stores everything as `day`
+> (`utils_ml_forecast.py:713-732`), and ML produces those rows daily regardless of mode. Pentad and
+> decade ML products are **separate rows at their own horizon types**, which is why filtering by
+> horizon type separates them cleanly — as the owner pointed out.
+
+**Decision: leave the write path and the service contract alone.** No durable provenance, no
+reduced verdict. A raw-ML check is mode-agnostic **by design**, not as a disclaimed limitation. This
+also means `test_api_integration.py:329-337`, which locks day-storage for a decade call, stays
+untouched.
 
 ### C4 — **OWNER DECISION**: mode provenance, or an explicitly weaker verdict
 
@@ -179,11 +214,16 @@ satisfies it. An expected **station × target coverage** contract is required be
 tests can be written; `doc/dev/testing_workflow.md:138-147` requires exact counts, not
 existence-only assertions.
 
-*Marked as an owner decision 2026-08-18 (third review pass):* "assert expected coverage" is not
+**DECIDED 2026-08-18 (owner): defer C5 to a follow-up issue.** "Assert expected coverage" is not
 implementable until someone states **what the expected set is** — which station universe is
 authoritative, which target dates are in scope for a given issue date, how models disabled for a
-deployment are treated, and therefore what cardinality counts as complete. This materially changes
-what PASS means, so it is a product decision, not an implementation detail.
+deployment are treated, and therefore what cardinality counts as complete. That is a second issue,
+not an acceptance criterion here.
+
+**INFRA-020 therefore ships without partial-write detection**, and that limitation must be stated in
+the fix rather than left implicit: a write that lands one station's rows and drops the rest will
+still PASS. What INFRA-020 *does* close is the larger hole — PASS on **nothing at all**, and PASS on
+an all-NaN write. File the follow-up when this lands, so the gap is tracked rather than forgotten.
 
 Two mechanical consequences to settle alongside it:
 
@@ -193,8 +233,18 @@ Two mechanical consequences to settle alongside it:
   cell count stays under the limit.
 - **`BOTH`-mode naming.** `validate` runs Tier 1 once per horizon (`:1401-1427`) and
   `results_to_json` keys on check name alone (`:192-218`), so a duplicated check name silently
-  overwrites one horizon's result. Horizon-qualified names avoid the overwrite but imply a
-  provenance the records do not carry (C4).
+  overwrites one horizon's result. *Now a smaller problem given C4: the daily ML check is
+  mode-agnostic, so it should be **emitted once per run**, not once per horizon — which sidesteps
+  the collision rather than papering over it with horizon-qualified names.*
+
+### C7 — Local and production disagree about whether ML runs for PENTAD
+
+Recorded as context, not as a defect to fix here (owner decision 2026-08-18: note it, do not file a
+separate issue). `run_locally.sh` skips ML unless the mode matches `ML_MODE`, which defaults to
+`DECAD` (`:154-156`, `:1144-1150`), while Luigi runs **both** modes (`pipeline_docker.py:785-794`).
+It is a deliberate local-speed tradeoff, but an undocumented one: **it is why two out-of-loop review
+passes concluded that a calendar gate would false-FAIL PENTAD runs** (see C3's correction). Anyone
+reasoning about ML scheduling from `run_locally.sh` alone will reach the same wrong answer.
 
 ### C6 — The existing ML fixture cannot pin the raw-writer contract
 
@@ -207,12 +257,25 @@ the fix depends on.
 
 ## Acceptance criteria
 
-*(Revised 2026-08-18 after out-of-loop review. Criteria that depend on an unresolved owner decision
-are marked; do not begin implementation while any remain open.)*
+*(Revised 2026-08-18 after out-of-loop review, then again after the owner resolved C3, C4 and C5.
+**No criterion below is blocked on an open decision** — C5's coverage work is deferred, not pending.)*
 
-- `validate_pipeline --module machine_learning` on a day when ML **was expected to run** emits a
-  non-zero number of checks, at least one per configured model, tagged `machine_learning`.
-  *Depends on C3 — "expected to run" is undefined until the expectation model is chosen.*
+**The check shape, per the owner's answer:**
+
+- **Every day**, on any ML-enabled deployment: `--module machine_learning` emits day-horizon
+  presence checks — one per configured model (TFT / TiDE / TSMixer) — tagged `machine_learning`,
+  asserting rows exist for today with non-NaN values. Emitted **once per run**, not once per
+  horizon.
+- **On pentad production days, additionally** the pentad ML rows are checked; **on decad production
+  days**, the decade rows. *Note these largely exist already*: the six per-model checks at the
+  requested horizon (`:459-481`) cover them and are tagged `postprocessing_forecasts`. Per C1 they
+  must **not** be retagged — so confirm the existing coverage is adequate before adding anything,
+  rather than duplicating it under a second tag.
+- **On a deployment that does not run ML** (demo, uzhm — `run_locally.sh:173-174`): the ML checks
+  do not run and do not fail. Determined from deployment config / `ORG`, not from a manifest.
+- **`machine_learning` is removed from `FORECAST_DAY_MODULES`** (or that gate is made
+  horizon-aware) — see C3a. Without this the new daily checks are silently downgraded to SKIP on
+  every non-boundary day, which would reintroduce the defect this issue closes.
 - Zero-row and all-NaN ML results each make the module validation **FAIL**, tested separately via
   **mocked API responses / isolated fixtures with explicit issue and target dates** — not by
   mutating live API data. *Implemented as a **new** check: per C1, the existing finite stuck-flag

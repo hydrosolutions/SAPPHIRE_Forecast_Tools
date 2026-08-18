@@ -83,7 +83,15 @@ implemented in two.
 
 ## Proposed fix (to be planned)
 
-1. Decide the operational window — one value, one definition.
+1. **DECIDED 2026-08-18 (owner): the operational window is 5 days.** The scheduler drops from 10 to
+   5, matching what execution already enforces — so no admitted mode can be refused by every model,
+   which is the defect. Both "temporary" comments already name 5 as the intended operational value
+   (`lt_schedule_query.py:50-52`, `lt_utils.py:196-201`).
+   **Consequence to state in the plan**: modes currently admitted at 6–10 days stop being scheduled.
+   That is not a loss of forecasts — those runs already produce nothing, because execution refuses
+   them — but it *is* a visible change in `active_modes`, so anything reading that output (Luigi's
+   workflow, the local runner's mode list) will see fewer modes on those days. Verify no consumer
+   treats an empty `active_modes` as an error rather than a quiet day.
 2. Have **all three** gates agree. *(Corrected 2026-08-18: an earlier version of this list said
    "both gates", written before the shell fallback was found. Documenting a third authority in the
    table above while leaving the remedy at two would have left the fallback hard-coded and the
