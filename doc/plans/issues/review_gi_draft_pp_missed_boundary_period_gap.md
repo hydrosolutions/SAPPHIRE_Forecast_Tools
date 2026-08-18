@@ -1064,6 +1064,21 @@ Both are documentation-only fixes to a shipped file; neither changes behaviour.
 They are **blocking**, not cosmetic — this issue's own Desired Outcome states
 that "done" includes "the behavior is documented".
 
+3. **The CLI's operator-facing output is not emitted at all — found 2026-08-18, filed as
+   INFRA-029.** Every line the backfill prints for an operator goes through `logger.info`
+   (`backfill_period_forecasts.py:237`, `:247`, `:273`, `:290`), as does the dry-run summary
+   in `postprocessing_operational.py:209-214`. Importing `setup_library` configures the root
+   logger at WARNING (`setup_library.py:44-54`), which makes this module's own
+   `basicConfig(level=INFO)` a no-op — `logging.basicConfig` does nothing when the root logger
+   already has handlers. Verified by direct execution: importing `backfill_period_forecasts`
+   leaves `isEnabledFor(INFO)` = `False`. So a run of the tool this issue delivered reports
+   **nothing but its exit code**, and §F's dry-run diagnostic produces no output.
+   This changes nothing about what the CLI writes — the exit contract, the API writes and the
+   per-year isolation are unaffected — but it removes the evidence an operator would use to
+   decide whether the run did anything, and it is one more reason the runbook's write path
+   stays prohibited. The runbook now carries the same warning. Fix belongs to INFRA-029, not
+   here; this issue only records that its own artefact is one of the 13 affected entry points.
+
 ### E. Verification design — PARTIALLY RUN (see §B3)
 
 **Status 2026-08-18:** the log step ran, and a configuration read plus a direct read-only
@@ -1528,6 +1543,7 @@ body. Sections from `## Implementation Plan` to `### Dependency graph`, and
 | 2026-08-17 | `## Desired Outcome` | "The remediation depth is the open decision below (A/B/C)" | The decision was taken 2026-07-17 and shipped 2026-07-23. |
 | 2026-08-18 | `## Problem`, `§B2`, `§C`, `§H` | That the DAY archive is empty for the four stranded dates — the concrete form in which **cause C1** was carried, as the leading hypothesis and as the reason the dates were unrecoverable | **Falsified as a present-state claim** by a read-only database probe (§B3): per-model rows, NE rows and DAY inputs are all present, and among the 15 covered codes only **EM** is missing (the other 56 codes with DAY inputs have no period row of any model). This does **not** settle **C1 itself**, which names *no usable row surviving merged-archive normalization*: raw counts cannot measure usability and P2 did not run. C1 as a *historical* cause is likewise **unresolved** — a present-state probe cannot reach it — and writer attribution is unrecoverable from the table, which has no provenance column. |
 | 2026-08-18 | `§B2` | "§E P0 and §E's database steps have NOT been run" | Partly superseded: a configuration read (one env) and a direct read-only SQL probe ran 2026-08-18 (§B3). P2's derived-frame probe, P3's controls/cutover and P4 remain unrun, and P0 is still owed per org. |
+| 2026-08-18 | `§D` | Implicitly, that the CLI's dry-run and progress output is readable by an operator (§F's diagnostic depends on it) | Not emitted. All of it is `logger.info`, and the effective root level is WARNING because `setup_library` configures logging at import — filed as **INFRA-029**, with the runbook and §D corrected. Behaviour of the writes is unaffected. |
 | 2026-08-18 | `§G` | Five items listed as outstanding that had already shipped (the `doc/prod/` runbook, both CLI docstring fixes, the README and data-flow updates in PRs #438/#441) and one mis-scoped at a gitignored file | §G is meant to be the single live checklist; it had drifted in both directions for the second time. Reconciled with PR references. |
 
 ---

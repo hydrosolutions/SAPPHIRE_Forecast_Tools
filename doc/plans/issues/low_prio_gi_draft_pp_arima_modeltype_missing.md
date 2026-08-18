@@ -4,10 +4,49 @@
 **Module**: `apps/machine_learning` (fair game) + `sapphire/services/postprocessing` (`ModelType` enum —
 colleague-managed, coordinate before editing) + `apps/postprocessing_forecasts/src/api_writer.py`
 (fair game)
-**Priority**: Low
-**Labels**: `model_type`, `enum`, `latent`, `machine_learning`
+**Priority**: Low — **flagged for owner re-rating 2026-08-18**, see the correction below. Not
+re-rated here.
+**Labels**: `model_type`, `enum`, `machine_learning`
 
 ---
+
+> ## CORRECTION (2026-08-18) — "no environment enables ARIMA" is false for the local review env
+>
+> The 2026-08-18 kghm (kyg) end-to-end review ran against
+> `~/Documents/GitHub/**sensitive_data_forecast_tools**/config/.env_develop_kghm`, which sets:
+>
+> ```
+> ieasyhydroforecast_available_ML_models=TFT,TIDE,TSMIXER,ARIMA
+> ```
+>
+> and **every** postprocessing run on that env logged, once per horizon:
+>
+> ```
+> ERROR - Failed to read ML forecasts for ARIMA from API:
+>         Invalid model 'ARIMA': must be one of ['EM','LR','NE','TFT','TSMixer','TiDE']
+> ```
+>
+> Three things to keep separate:
+>
+> 1. **The survey below was not wrong about the files it checked — it was incomplete.** Every env
+>    in `~/Documents/GitHub/kyg_data_forecast_tools/config/` still reads `TFT,TIDE,TSMIXER`,
+>    including a **same-named** `.env_develop_kghm`. A second config repo carries a same-named file
+>    with a different value. Any future "checked every deployment env" claim must name the repos
+>    searched.
+> 2. **The production claim survives.** The server envs (`.env_kghm_server`,
+>    `.env_develop_kghm.server`) do not enable ARIMA, so no deployed pipeline writes ARIMA today.
+>    What is false is the stronger implication that *nothing* enables it.
+> 3. **The observed manifestation is a read rejection, not the predicted write 422.** The error
+>    above comes from the reader refusing an unknown model name, once per horizon per run — the
+>    write path is never reached because no ARIMA rows exist to write. The 422-on-write analysis
+>    below is unchanged and untested; do not treat this observation as confirming it.
+>
+> **Fourth, and the reason this is worth recording at all:** the run still reports **PASS**. Two
+> ERROR lines per run, and the module's exit code and the pipeline summary are both green — the
+> reader exception is swallowed into a `None` result. That is the same hazard PP-045's cause table
+> labels C4, seen live. See also **INFRA-030** (skips leave no summary line) and **INFRA-029**
+> (INFO output from these modules is suppressed entirely, so the log is WARNING-and-above only —
+> which is, incidentally, why these ERROR lines *were* visible).
 
 ## Summary
 
@@ -33,7 +72,7 @@ loud — the row would be silently written under an inconsistent/unexpected valu
 which failure mode is current before assuming either; the point is that neither the plan nor the
 service today expects `"ARIMA"` to pass its `ModelType` check.
 
-## Why this is latent, not live
+## Why this is latent in production (survey of 2026-07-14 — see the correction above for its scope)
 
 Checked every real deployment `.env` in `~/Documents/GitHub/kyg_data_forecast_tools/config/` and
 `~/Documents/GitHub/taj_data_forecast_tools/config/` (all env variants: `.env_kghm_server`,
@@ -44,7 +83,8 @@ Checked every real deployment `.env` in `~/Documents/GitHub/kyg_data_forecast_to
 ieasyhydroforecast_available_ML_models=TFT,TIDE,TSMIXER
 ```
 
-on every one of them. No deployed environment enables `ARIMA`. The sole exception is
+on every one of them. No deployed environment in **that repository** enables `ARIMA`; the
+`sensitive_data_forecast_tools` copy of `.env_develop_kghm` does — see the 2026-08-18 correction. The sole exception is
 `.env_sandro_kghm` (a personal dev env), which sets
 `ieasyhydroforecast_available_ML_models=TFT,TIDE,TSMIXER,LSTM` — but `LSTM` is not a model
 `apps/machine_learning` supports at all (no `LSTMPredictor`, no `MODEL_TO_USE == "LSTM"` branch in

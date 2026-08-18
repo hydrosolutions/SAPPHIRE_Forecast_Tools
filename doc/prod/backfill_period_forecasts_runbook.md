@@ -171,6 +171,18 @@ suggest.
   so backfilling a historical period does not reproduce the ensemble values that
   period originally had. Anything consuming historical EM — skill evaluation,
   dashboards, bulletins — sees the new values.
+- **The CLI's own output does not currently reach you at all (INFRA-029, 2026-08-18).**
+  Every operator-facing line the backfill emits goes through `logger.info` — `:237`
+  (failure-mode notice), `:247` (plan), `:273` (per-year "ok"), `:290` ("Backfill finished
+  successfully.") — and so does the dry-run summary quoted below
+  (`postprocessing_operational.py:209-214`). Importing `setup_library` configures the root
+  logger at WARNING, which makes the module's own `basicConfig(level=INFO)` a no-op, so the
+  effective level is WARNING and **none of those lines is printed**. Verified directly on this
+  module: `isEnabledFor(INFO)` is `False`. Until INFRA-029 is fixed, a run of this CLI shows you
+  its exit code and nothing else — you cannot distinguish "wrote nothing" from "did not run",
+  and the dry-run step below produces no output whatsoever. Nothing about what the CLI *writes*
+  changes; this is an observability limit, and it is one more reason the write path stays
+  prohibited (section 7).
 - **`--dry-run` is not coverage proof.** Its summary line reports only totals — row
   count, distinct period count, distinct model count
   (`"%s DRY-RUN: would write %d row(s) (%s); save skipped."`) — and never names the

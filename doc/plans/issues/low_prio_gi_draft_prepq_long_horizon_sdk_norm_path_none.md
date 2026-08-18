@@ -501,6 +501,60 @@ different code.
 
 ---
 
+## Second reproduction + owner input (2026-08-18, kyg, trunk `a304ffb0`)
+
+`bash apps/run_locally.sh maintenance:preprocessing_runoff` against the tunnelled kyg iEH HF,
+11m 08s, **0 tracebacks**. The daily gap-fill half succeeded cleanly ("Preprocessing completed
+successfully", 569s). The whole module FAIL came from the long-horizon sync, whose own counters
+were:
+
+```
+total_attempted=62   written=53   norm_absent=5   sdk_failed=4   api_failed=0
+```
+
+| Outcome | Count | How the code treats it |
+|---|---|---|
+| Written OK | 53 | success |
+| Monthly norm **absent** | 5 | DEGRADED → warning, exit 0 |
+| SDK norm lookup **failed** | 4 | ERROR → **exit 4** → module FAIL |
+| API read/write failures | 0 | — |
+
+All 4 failures carry the identical `No path provided or the provided path is None` signature this
+issue describes, so the condition reproduces on a second date, on trunk, at the same cardinality
+(**4** sites), independently of the 2026-08-14/15 observations.
+
+**Owner input, recorded (2026-08-18):** norm lookup succeeds only where the hydromet actually
+stores norms in the iEH HF database, and **virtual stations do not get norms at all — that is
+expected, not a fault**. Discharge, likewise, may legitimately be missing for some stations.
+
+What that does and does not settle:
+
+- It **confirms the class**: for a virtual station there is no norm to fetch, and no amount of
+  fixing on our side produces one. So the exit-4 severity is being applied to a condition the
+  owner considers normal.
+- It does **not** establish membership — that these particular 4 codes are exactly the org's
+  virtual-only set. Item 2 below stands as written; confirming it still needs a live
+  `stations/{org}/virtual` listing.
+- It sharpens **item 3 from a policy question with no premise to a policy question with one**:
+  the code already draws the distinction (`norm_absent` → degraded success, `sdk_failed` → exit 4),
+  and for a virtual station both mean the same thing — *there is no norm, and that is fine*.
+  The consequence is that a scheduled kyg run fails every time on 4 sites while 53 sites' data
+  was written successfully, and the non-zero exit masks that success.
+
+**Recommendation (owner's call, not applied):** treat "no norm because the site is virtual" as
+degraded success alongside `norm_absent`, and keep exit 4 for a genuine SDK/transport failure.
+That needs a way to identify virtual sites at that call site, which is the same lookup item 2
+requires — so items 2 and 3 are one piece of work, not two.
+
+**Reportability, worse than recorded.** Item 3 notes that `SDK_FAILED` is logged at DEBUG and so
+is invisible at default level. **INFRA-029** shows the effective level for this very file is
+WARNING: `sync_long_horizon_hydrograph.py:100-104` calls `logging.basicConfig(level=logging.INFO)`
+*after* importing `setup_library` (`:35`), which makes it a no-op, so its **INFO** lines are
+discarded too — `logger.info("Resolved %d SDK-only station(s)", …)` at `:690`, for one. The
+counters quoted above survived only because the summary block is emitted with **`print`**
+(`:772`), bypassing logging entirely. Two of this module's three output channels are dark; the
+one that works does so by accident of not using the logger.
+
 ## What to inspect
 
 > Items 1 and 2 are **answered** in "Root cause" above; item 3's factual half (are they
