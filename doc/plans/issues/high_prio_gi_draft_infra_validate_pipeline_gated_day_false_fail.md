@@ -141,9 +141,16 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
    > | (c) | accept known-incomplete gating, document which cases still false-FAIL | cheapest and honest, but ships a check that is still wrong on unscheduled months |
    > | (d) | extract the mode-activity decision into `iEasyHydroForecast` beside the resolver; `lt_schedule_query` and `validate_pipeline` both call it | most up-front work, removes the drift risk permanently. Note `validate_pipeline` **already** imports from `iEasyHydroForecast` (`validate_pipeline.py:35-49`), so this adds no new dependency direction |
    >
-   > **This decision is a prerequisite of the INFRA-021 + INFRA-022 atomic change and is not yet
-   > made.** It is a design decision for the owner, not an implementation detail — (a) and (d)
-   > change where scheduling truth lives.
+   > **DECIDED 2026-08-18: option (d).** The extraction is planned in
+   > `doc/plans/working/lt_schedule_authority_extraction_plan.md`.
+   >
+   > **But (d) alone is not sufficient for this issue.** Out-of-loop review of that plan established
+   > that a re-derived schedule — however well single-sourced — cannot see manual overrides
+   > (`pipeline_docker.py:2339-2367` bypasses `LTScheduleQuery`), execution outcome, or the date
+   > output was actually written under (late forecasts snap back, `lt_utils.py:211-217`). Gating
+   > therefore consumes a **run manifest**, filed as **INFRA-028**, which this issue now depends on.
+   > See also **LTF-007**: the scheduler's 10-day window vs execution's 5-day gate means gating
+   > built on the scheduler alone false-FAILs days 6-10 by construction.
    **Skill-metric checks must NOT inherit the operational forecast gate** — they are
    historical and not date-filtered, so gating them would hide real starvation.
 2. When the gate is closed, emit **SKIP with the gate reason** ("not a long-term
