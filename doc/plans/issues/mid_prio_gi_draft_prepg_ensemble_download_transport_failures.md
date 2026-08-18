@@ -5,13 +5,14 @@
 `sapphire-dg-client` dependency
 **Priority**: **Medium** — a single transient network fault fails the whole module, and because
 the gateway target runs its three scripts with `break`-on-first-failure, ERA5 extension **and**
-snow do not run either. The failure **is** reported (`run_locally.sh:501` logs ERROR/FAIL) — it
+snow do not run either. The failure **is** reported (`run_locally.sh:505` logs ERROR/FAIL) — it
 is loud, not silent.
 
-> **Scope note.** This issue is now **narrowly about transport-fault handling**. Two
-> data-correctness defects found on the same code path during review are filed separately as
-> **PREPG-011** (cross-member forward-fill) and **PREPG-012** (wrong HRU quantile-mapping
-> parameters). Those are more serious than this one.
+> **Scope note.** This issue is **narrowly about transport-fault handling**. Three
+> data-correctness defects on the same code path are filed separately: **PREPG-011** (the ensemble
+> transform writes the file-level HRU code into `code`, discarding the per-station identity),
+> **PREPG-012** (parameter-bundle selection via a leftover loop variable, dependent on 011), and
+> **PREPG-013** (ungrouped forward fills on three paths). Those are more serious than this one.
 **Labels**: `preprocessing_gateway`, `error-handling`, `network`, `dependency`
 **Found**: 2026-08-14, reported by a colleague running `run_locally.sh daily` on a dev machine;
 code confirmed on trunk 2026-08-18.
@@ -82,7 +83,7 @@ Four compounding problems:
    level), then re-requests every member. There is also no sound "49 files" bound — each member
    call may return multiple links, so models are not files.
 
-### The client itself has no timeouts, retries, or status checks
+### The link request is unvalidated, and no request carries a timeout
 
 `sapphire_dg_client/client_base.py`:
 
@@ -116,11 +117,9 @@ loudly. The accurate statement is narrower:
 > bodies probably fail during parsing, but **no explicit status, content, size or schema check
 > guarantees rejection**, so a sufficiently CSV-shaped bad body could pass.
 
-The missing **timeout** is arguably the more practically dangerous gap: with none set, a hung
-peer blocks the process indefinitely rather than failing.
-
-Only two `requests` calls exist in the whole client (`client_base.py:43` and `:56`); neither
-passes a `timeout`, so a hung peer blocks indefinitely rather than failing.
+The missing **timeout** is arguably the more practically dangerous gap. Only two `requests` calls
+exist in the whole client (`client_base.py:43` and `:56`) and neither passes one, so a hung peer
+blocks the process indefinitely rather than failing.
 
 ## Where to fix it
 
@@ -154,8 +153,14 @@ transport faults and retryable statuses. Two traps:
 `preprocessing_gateway`, but the installed `sapphire_api_client` implements exactly this shape —
 bounded exponential backoff for `ConnectionError`/`Timeout`, an explicit timeout, and retryable
 status handling. Follow it. Note that `requests` and `tenacity` are currently **transitive**
-dependencies of `preprocessing_gateway`, not declared ones (`pyproject.toml:18`); if local code
-imports either, declare it.
+dependencies of `preprocessing_gateway`, not declared ones — they are pulled in transitively via
+the pinned `sapphire-dg-client` resolution (`apps/preprocessing_gateway/uv.lock:425`); if local
+code imports either, declare it explicitly in `pyproject.toml`.
+
+**Carve-out when copying that pattern:** `sapphire_api_client`'s retry set must **not** be adopted
+wholesale. `requests.exceptions.SSLError` subclasses `ConnectionError`, so inheriting its
+`ConnectionError` handling would retry a permanent TLS misconfiguration — exclude `SSLError`
+explicitly, as noted above.
 
 **Not the only retry in the system.** The Luigi/Docker path already retries the whole container
 (`pipeline/pipeline_docker.py:359`, used at `:550`). That does not help the reported
@@ -182,7 +187,14 @@ sentence in a dependency-policy discussion, not an issue.
   member is retried with bounded backoff and the run continues.
 - After a bounded number of retries, a genuinely unreachable gateway still fails **loudly** —
   this must not become a silent skip (cf. PREPG-009, the opposite defect in the same module).
-- A failure in one ensemble HRU does not silently abandon the remaining HRUs.
+- **The multi-HRU failure contract is explicit and tested.** Today a fault aborts the whole HRU
+  loop (`:799`). Choose one and pin it:
+  - *fail-fast* — abort remaining HRUs, but log which HRUs completed, which failed, and which were
+    never attempted; or
+  - *continue* — attempt every HRU, then exit non-zero with a per-HRU summary.
+
+  "Does not silently abandon the remaining HRUs" is not a contract — it does not say which
+  behaviour is correct.
 
 **Phase (b) — requires the client change** (local code *cannot* satisfy these: a link-level 404
 is never raised, only written, because only the metadata request's status is checked):

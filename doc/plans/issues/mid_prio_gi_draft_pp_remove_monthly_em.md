@@ -7,7 +7,8 @@
 **Decision**: owner, 2026-08-18 — *"we remove it"*. EM was never planned for long-term horizons;
 it was renamed **Skilled Mean** there.
 **Supersedes the open question in**: PP-058 (which records *why* sparse monthly EM was expected).
-**Blocked by**: **PP-057** — see § Sequencing. Do not start before it lands.
+**Sequenced after**: **PP-057** — see § Sequencing. Fixture-level removal could technically be
+built first; what PP-057 gates is the *replay acceptance evidence*, not the code.
 
 ---
 
@@ -76,7 +77,35 @@ members on the operational path. Removing EM before that lands would mean:
 - a reviewer cannot distinguish "EM is gone because we removed it" from "EM was never built
   because members were unresolvable".
 
-**Land PP-057, re-measure, then remove.**
+**Land PP-057, re-measure, then remove.** *Precision correction:* PP-057 is not a semantic
+prerequisite — isolated fixture tests could implement the removal first. It is a **stacking and
+evidence** dependency: the replay-based acceptance criteria below cannot produce a meaningful
+result until it lands, and both changes touch the same monthly builder.
+
+## Surface C — monthly maintenance still *expects* EM
+
+`postprocessing_maintenance_long_term.py:115` calls the gap detector with an expected-model set of
+`{"EM", "Skilled Mean", "Naive Mean"}`. If generation is removed without changing this, **every
+post-cutoff month becomes a permanent, never-closing EM gap**, and maintenance repeats useless
+reads on each run. This must change in the same PR.
+
+## The stale-tombstone conflict — "leave historical rows" is not achievable by default
+
+The recommendation below to leave stored history alone **conflicts with existing recalc
+behaviour**. Monthly recalc diffs existing skill rows against newly emitted ones
+(`recalculate_skill_metrics.py:339`); keys that stop being emitted are written as `n_pairs=0`,
+null-metric **tombstones** (`src/stale_tombstones.py:68`). So on the next recalc, historical
+monthly EM skill rows are not preserved — they are blanked.
+
+**Pick one explicitly; there is no passive option:**
+
+1. **Preserve** — exclude EM from the stale diff so historical rows survive untouched.
+2. **Tombstone** — accept the blanking, and document it as the migration policy with its date.
+
+## Documentation contracts that must change
+
+- `apps/postprocessing_forecasts/README.md:30` — states EM exists at all horizons.
+- `doc/data_flow_long_term.md:296` — lists monthly EM in the long-term flow.
 
 ## Consumers to check before removing (not yet verified)
 
@@ -103,16 +132,26 @@ poor trade.
 
 - Monthly EM forecast rows are no longer produced by the operational path, the maintenance
   gap-fill, **or** `recalculate_skill_metrics`.
-- Monthly **Skilled Mean** and **Naive Mean** are byte-identical before and after, on a fixture
-  and on a replayed real month.
-- **Pentad/decad EM unchanged** — pinned by a short-term fixture test.
-- **Quarter/season EM unchanged** — pinned by a fixture, since it shares the word but not the code.
+- Monthly **Skilled Mean** and **Naive Mean** are **semantically equal** (sorted comparison)
+  before and after, on a fixture and on a replayed real month. *"Byte-identical" is withdrawn as
+  needlessly brittle.*
+- **Pentad and decad EM unchanged** — pinned on output key, row count, model composition, point
+  value **and** quantiles. Not merely "a fixture test".
+- **Quarter and season EM unchanged on both the forecast and skill paths**, asserting the exact
+  fixed `LR_Base, LR_SM` composition (`ensemble_calculator.py:668`, `skill_metrics.py:2741`).
+  It shares the word but not the code.
+- **Monthly maintenance**: EM is no longer an expected model, and a second maintenance pass over
+  the same period is a **no-op**.
 - The now-unused strict-gate `filter_for_highly_skilled_forecasts` call is removed, not left dead.
-- The four monthly test files are updated rather than deleted:
-  `test_monthly_ensemble_creation.py`, `test_monthly_skill_metrics.py`,
-  `test_monthly_skill_per_lead.py`, `test_monthly_workflow_integration.py`.
+- The affected tests are updated rather than deleted. *The earlier four-file list was not a
+  sufficient inventory* — monthly EM behaviour is also asserted in `test_lt_min_pairs_gate.py`,
+  `test_lt_skilled_mean_nse_threshold.py`, `test_monthly_skill_stale_aggregate_regression.py`,
+  the maintenance/operational and recalc tests, and golden fixtures. Re-derive the full list
+  before starting.
+- README and `data_flow_long_term.md` updated (see § Documentation contracts).
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` green.
-- A documented decision on stored history, with the cut-off date recorded.
+- A documented decision on stored history — **preserve or tombstone** (§ stale-tombstone
+  conflict) — with the cut-off date recorded.
 
 ## Contract not to break
 

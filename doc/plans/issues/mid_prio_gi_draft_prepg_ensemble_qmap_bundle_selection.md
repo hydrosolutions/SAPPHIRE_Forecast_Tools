@@ -1,16 +1,23 @@
-## Ensemble quantile mapping implicitly uses the **last** control-HRU parameter bundle — multiple control bundles have no deterministic station-to-bundle association (PREPG-012)
+## Ensemble quantile mapping resolves its parameter bundle from a leftover loop variable — "last configured bundle wins" rather than an explicit per-station lookup (PREPG-012)
 
 **Status**: Draft (2026-08-18)
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
-**Priority**: **Medium** — *downgraded from High on 2026-08-18 after out-of-loop review.*
+**Priority**: **Conditional — TBD pending the Phase-0 inventory below.** *A Medium downgrade was
+asserted on 2026-08-18 and is itself withdrawn: it was not established.* Severity depends on the
+deployment's bundle configuration, and the identity defect in **PREPG-011** can make coefficient
+selection wrong even with one bundle.
+**Depends on**: **PREPG-011.** Bundle selection cannot be made correct until station identity is
+normalised — today the lookup key is a file-level constant, not the station.
 
 > **The original headline was wrong and is withdrawn.** It claimed "every ensemble HRU is
 > downscaled with another HRU's parameters". In fact `HRU{x}_P_params.csv` is a **bundle**
-> covering multiple catchments, and `do_quantile_mapping()` selects coefficient rows **by the
-> ensemble station's own code** (`dg_utils.py:126`, `:130`). With a single configured control
-> bundle the current `c_m_hru` reference is **ugly but correct**. The real defect is narrower:
-> with **multiple** control bundles, "last bundle wins" gives no deterministic
-> station-to-bundle association.
+> covering multiple catchments and `do_quantile_mapping()` filters coefficient rows by `code`.
+>
+> **A second correction, 2026-08-18:** the withdrawal above then claimed that filter uses
+> "the ensemble station's own code". **Also wrong.** It uses the *transform-assigned constant*
+> `code` (the file-level HRU code — see PREPG-011), **not** the per-station identity in `name`.
+> So the "ugly but correct" verdict for single-bundle deployments does not hold: at most the
+> *bundle* is right, while the *row selection within it* can still be wrong.
 
 Three further corrections from the same review:
 - **The missing-file consequence is effectively impossible** in the normal flow — the same
@@ -44,17 +51,23 @@ over from the preceding **control-member** loop:
 ```
 
 `c_m_hru` is not reassigned in the ensemble loop, so it holds whatever value the control-member
-loop left behind — in practice the **last** control-member HRU processed.
+loop left behind.
 
-## Actual consequences (revised — the original list is withdrawn)
+**This is deterministic, not random.** `ieasyhydroforecast_HRU_CONTROL_MEMBER` is a
+comma-separated list processed in order (`Quantile_Mapping_OP.py:670`), and the leftover value
+used at `:884` is therefore always the **last configured** bundle. *An earlier revision called
+this "non-deterministic"; that is withdrawn.* It is implicit and potentially wrong — a reader
+cannot tell which bundle applies without tracing the config order — but it is reproducible.
 
-**With one configured control bundle — the common case — output is correct.** The bundle is
-selected by an implicit leftover binding rather than an explicit lookup, but
-`do_quantile_mapping()` filters rows by the ensemble station's own code, so the right
-coefficients are applied.
+## Actual consequences (revised twice — earlier lists withdrawn)
 
-**With multiple control bundles**, the association is non-deterministic: whichever bundle the
-control loop processed last is the one every ensemble station is looked up in. Then either
+**With one configured control bundle**, *bundle selection* is unambiguous — there is only one
+candidate. That is the most that can be claimed. Row selection inside it is still keyed on the
+file-level constant `code` (**PREPG-011**), so the coefficients applied to a given station may
+still be another station's.
+
+**With multiple control bundles**, every ensemble station is looked up in the **last configured**
+bundle. Then either
 
 - the station's code **is** present in that bundle → correct by luck, or
 - it is **absent** → zero matching coefficient rows, failing in arithmetic rather than with a
@@ -63,9 +76,17 @@ control loop processed last is the one every ensemble station is looked up in. T
   wrong downscaling. This is the only genuine corruption path, and it requires duplicate station
   codes across bundles.
 
-**Triage note:** severity depends entirely on how many control bundles a deployment configures.
-Check `ieasyhydroforecast_HRU_CONTROL_MEMBER` per deployment — a single value means this is
-a code-clarity issue, not a data issue, there.
+**Phase-0 inventory — required before assigning severity.** Check
+`ieasyhydroforecast_HRU_CONTROL_MEMBER` per deployment:
+
+| Configuration | This issue's severity |
+|---|---|
+| One bundle | Code-clarity only *for bundle selection* — but see PREPG-011 for row selection |
+| Several, target absent from the last | Normally a loud arithmetic failure |
+| Several, same station code with differing coefficients | **High for that deployment** — systematic silent wrong downscaling |
+
+Source alone cannot tell us which applies. Until this inventory is done, the honest priority is
+conditional, not Medium.
 
 ## What to inspect
 
@@ -86,11 +107,17 @@ HRU, rows are per hydropost (`apps/config/models_and_scalers/README.md`,
 
 **Implement explicit bundle resolution** instead of an implicit leftover binding:
 
-1. Load every configured control bundle.
-2. Index rows by mapped station code.
-3. Require **exactly one** P row and one T row for the station being processed.
-4. Fail naming both the station code **and** the candidate bundles if coverage is missing or
-   duplicated.
+1. **Land PREPG-011 first**, so a per-station mapped identity exists to look up. Apply the DG
+   `name` → station mapping **before** bundle lookup.
+2. Load and index every configured control bundle **once, outside** the ensemble-member/HRU loop
+   — not re-read per iteration as today.
+3. Index rows by mapped station code.
+4. Require **exactly one** P row and one T row for the station, **and require both to resolve to
+   the same bundle** — "one P row somewhere and one T row somewhere" would permit mismatched
+   provenance.
+5. Detect duplicate coverage **within** a single bundle as well as across bundles.
+6. On failure, name the **raw DG identity, the mapped station identity, and the originating
+   bundle file(s)** — all three, or the diagnostic will not be actionable.
 
 That removes the ambiguity without needing to know which bundle "should" win.
 
@@ -102,8 +129,13 @@ That removes the ambiguity without needing to know which bundle "should" win.
   the correct bundle is used regardless of processing order.
 - A station present in **no** bundle fails with a message naming the station and the candidate
   bundles — not an arithmetic error.
-- A station present in **two** bundles fails as ambiguous rather than silently taking one.
-- Single-bundle deployments are byte-identical to today.
+- A station present in **two** bundles — or twice in **one** bundle — fails as ambiguous rather
+  than silently taking one.
+- P and T coefficients for a station provably come from the **same** bundle.
+- Bundles are loaded and indexed once, not per loop iteration.
+- Single-bundle deployments are **semantically equal** where the station identity was already
+  correct. *"Byte-identical" is withdrawn* — it cannot hold across a simultaneous PREPG-011
+  identity correction, which legitimately changes which coefficients some rows receive.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green.
 
 ## Contract not to break
