@@ -121,9 +121,10 @@ day ∈ {10,20,last-of-month}):
   the gap, or ML is disabled/unavailable, the within-year self-heal does not
   fire either. **Proviso (a) is the one to check first** — **§C's** C1–C6 table
   enumerates the ways the merged archive fails to yield a usable input row.
-  **INFERRED, not verified:** the observed field cases *look like* exactly that
-  (§H), but §B is REPORTED and no live-data check has been run — that is §E's
-  probe.
+  **Superseded in part 2026-08-18 (§B3):** a live database probe found the archive **not
+  empty today** for those dates — per-model rows, NE rows and DAY inputs are all present,
+  and among the 15 covered codes only EM is missing. Whether proviso (a) held *at
+  aggregation time* is a historical question the probe cannot reach, and remains open.
 - The gap is **permanent across a calendar-year boundary for the *operational*
   path**: operational passes `start_year=end_year=today.year`, so it never
   re-reads a prior year, and maintenance cannot seed a zero-combined date.
@@ -824,11 +825,16 @@ states PP-045's fix is "not on trunk" — stale and wrong; PR #425 merged
 2026-07-23, three weeks earlier. What it actually observed is trunk behaviour
 *with* the fix present, because the fix is a manual tool that nobody ran.
 
-### B2. Log evidence — plan phase P4, log-only half, RUN 2026-08-18
+### B2. Evidence — plan phase P4, RUN 2026-08-17/18
 
-§E's log step has been performed. **§E P0 (configuration) and §E's database steps have
-NOT been run.** P0 needs no tunnel — it is a configuration read, simply outstanding; the
-database steps need the tunnels and owner authorisation. Provenance: the
+**§E has been performed in part.** The log step ran 2026-08-18 (below). A configuration
+read and a **direct read-only SQL probe** ran the same day (§B3). Those changed the
+picture — the per-model rows the field report called missing are in fact present — but
+they are **not** the forms §E specifies and do **not** answer §E's question as posed
+(usability after normalization): P2's derived-frame probe, P3's controls and
+per-(code, model) first-DAY cutover, and P4 were **not** run, and P0 covered **one**
+environment rather than each org. §B3 records what was actually done.
+Provenance for the logs: the
 postprocessing logs come from the pre-write archive
 (`~/sapphire_evidence/pp045_2026-08-17/`); the ML logs, which turned out to be the
 informative ones, were read **in place** under `apps/machine_learning/logs/` and are not
@@ -859,8 +865,9 @@ shared across orgs, so it cannot speak to any particular deployment's producer.
 defined in §C as *no usable row in either archive*. The archive is a database that could
 hold rows the local producer never wrote. The producer's silence is evidence toward C1 but is
 neither necessary nor sufficient for it: C1 can also arise after a producer *did* run
-but failed, emitted unusable rows, or failed to persist them. The archive state itself
-is still **unqueried**, and closing it is §E's read-only database probe. An earlier draft of this section
+but failed, emitted unusable rows, or failed to persist them. **Updated 2026-08-18:** the
+archive's *present* state has since been queried (§B3) and is not empty; its state **at
+aggregation time** remains unqueried and unreachable by a present-state probe. An earlier draft of this section
 concluded "C1 is now the supported explanation" while admitting the archive was
 unqueried — that was circular and is withdrawn.
 
@@ -899,6 +906,57 @@ rotates and writes these files. Consequences:
   `log_operational.2026-07-24` → `.2026-08-13` is therefore **withdrawn**. The ML-side
   gap replaces it and rests on a cleaner record.
 
+### B3. Database + configuration evidence — 2026-08-18 (a direct probe, NOT §E P2/P3)
+
+Read-only probe of the **local development postprocessing database** (a single instance,
+which holds data for more than one org), plus a configuration read of one env file.
+**This is the section that changes the diagnosis** — and note it is a single-DB, single-env
+probe, not the per-org work §E specifies.
+
+**§E P0 — configuration.** `ieasyhydroforecast_run_ML_models=True` and
+`ieasyhydroforecast_available_ML_models=TFT,TIDE,TSMIXER,ARIMA` on the kghm develop env,
+with a non-empty station selection. That **weakens** cause C5 for that env but does not
+rule it out: whether the affected codes are actually in the selection was not checked, and
+the 15-of-71 coverage could still be a code-scope effect (see §G). Two notes: the *deployed* kghm env omits `run_ML_models` entirely, which
+defaults to `false` — a different exposure, not this one; and `ARIMA` is not a valid API
+`ModelType`, so every postprocessing run logs an error for it and continues (see PP-040,
+whose "no deployed `.env` enables it" premise does not hold for this develop env).
+
+**§E P2/P3 — the archive is NOT empty.** For the four dates
+(2026-07-25 / 07-31 / 08-05 / 08-10), `horizon_type='PENTAD'`:
+
+| | per-model rows | NE | EM | codes |
+|---|---|---|---|---|
+| each of the four dates | present | present | **absent** | 15 |
+| neighbouring boundaries | present | present | present | 52-67 |
+
+And **DAY inputs exist for all four** — 426 rows each for TSMIXER/TIDE/TFT across 71
+distinct codes.
+
+**Consequences, stated at the right strength:**
+
+- **The premise C1 was invoked to explain is false.** C1 was the explanation for an
+  *absence of per-model period rows*. Those rows are **present** for all four dates, so
+  there is no absence to explain and C1 is not needed. Note what this is **not**: C1 is
+  defined as *no usable row surviving merged-archive normalization*, and a raw SQL row
+  count cannot test usability — that is precisely what §E's P2 derived-frame probe is for,
+  and it was not run (§G). So this **falsifies the field report's premise**; it does not
+  adjudicate C1 on C1's own terms.
+- **C1 is not thereby refuted as a *historical* cause.** `forecasts` has no
+  `created_at` or writer column and the upsert updates in place, so when these rows
+  arrived, and by which writer, cannot be recovered from the table. That question is now
+  **unresolvable from the data**, not merely unanswered.
+- **The actual anomaly is narrower than "stranded":** per-model and NE rows are present
+  and only **EM** is missing, on exactly those four dates, with 15 of 71 available codes
+  covered.
+
+**A writer that emits per-model + NE and never EM was subsequently observed doing so.**
+On 2026-08-18 a controlled before/after diff around `recalculate_skill_metrics` on kyg
+showed it adding one PENTAD row each for TFT, TIDE, TSMIXER and NEURAL_ENSEMBLE, and
+**zero** for ENSEMBLE_MEAN. That is the signature above, produced live. It does not prove
+these particular four dates were written that way — nothing can, per the provenance point
+— but it removes the need to hypothesise a mechanism. See **PP-060**.
+
 ### C. What is established, and what decides the diagnosis — READ THIS FIRST
 
 **Established (PROVEN, code-only):** maintenance cannot heal a zero-`combined`
@@ -906,8 +964,11 @@ boundary date (§A3), and the validator's window cannot see one (§A5). Those tw
 facts are independent of any DB state.
 
 **REPORTED, not proven here:** that the condition is currently live on tjhm and
-kghm (§B). This session did not query the DBs; the kghm record self-labels as
-underdetermined. Do not cite §B as proof of a live defect until §E runs.
+kghm (§B). **Superseded in part 2026-08-18: the local development database has since
+been queried (§B3).**
+The kghm record self-labels as
+underdetermined. **Updated 2026-08-18 (§B3):** the present archive state has been
+queried; the historical state has not, so §B still is not proof of a live defect.
 
 **Two earlier inferences are withdrawn:**
 
@@ -920,7 +981,11 @@ underdetermined. Do not cite §B as proof of a live defect until §E runs.
   exactly such a hindcast. LR presence carries no information about when, or
   through which mode, those rows were created.
 
-**The remaining question, which decides everything:** for each (code, model) and
+**The question this section framed as decisive — still open on its own terms, though the
+premise behind it has changed (§B3).** The per-model rows those dates were thought to be
+missing are in fact present, so the absence this question was asked about did not occur.
+The question as literally posed — usability after normalization — has *not* been tested,
+because P2 was not run. It reads: for each (code, model) and
 each of the four dates, did a **usable row survive merged-archive normalization**
 at the time the aggregation ran? Note this is *not* the same as "does a DAY row
 exist": `_read_ml_forecasts_pp_api` fetches both `horizon="day"` and the migrated
@@ -946,10 +1011,12 @@ six distinct causes produce the observed pattern, and they need different fixes:
 Only **C6**, and a hypothetical seventh case where everything above is clean and
 the rows still never appeared, would represent a genuine *new* defect in PP-045's
 territory. C1–C5 mean the four days are **not** a PP-045 reproduction: PP-045's
-original "self-heals at the next within-year boundary run" claim survives (its
-stated proviso (a) — "the DAY archive still holds those issue dates" — simply
-failed), and `backfill_period_forecasts.py` cannot recover them, because it
-re-runs the same aggregation over the same inputs.
+original "self-heals at the next within-year boundary run" claim survives (on the
+hypothesis that its stated proviso (a) — "the DAY archive still holds those issue
+dates" — failed at aggregation time; **that remains a hypothesis**, since a
+present-state probe cannot establish it, see §B3), and in that case
+`backfill_period_forecasts.py` cannot recover them, because it re-runs the same
+aggregation over the same inputs.
 
 **Caveat on the C1 remedy.** The obvious upstream tool is
 `machine_learning/fill_ml_gaps.py` (wired into `maintenance:machine_learning` and
@@ -997,9 +1064,15 @@ Both are documentation-only fixes to a shipped file; neither changes behaviour.
 They are **blocking**, not cosmetic — this issue's own Desired Outcome states
 that "done" includes "the behavior is documented".
 
-### E. Verification design — DESIGNED, NOT RUN
+### E. Verification design — PARTIALLY RUN (see §B3)
 
-Not run this session: the shared DBs and SSH tunnels were in use by a concurrent
+**Status 2026-08-18:** the log step ran, and a configuration read plus a direct read-only
+SQL probe ran (§B3). **P2's derived-frame probe, P3's controls and cutover dates, and P4
+were not run**, and P0 covered one environment rather than each org. The original design
+follows unchanged; the paragraph below describes the constraints at the time it was
+written.
+
+Not run at the time of writing: the shared DBs and SSH tunnels were in use by a concurrent
 module review, and the constraint was read-only. **P0–P3 are read-only and safe to
 run alone. P4 writes and needs owner go-ahead plus an idle tunnel.** Run the whole
 sequence **independently on tjhm and on kghm** — §B establishes two observations,
@@ -1164,52 +1237,92 @@ immediately before writing the row, never against a remembered value.
       dates — with "no local ML run occurred" recorded as the (strong) inference from
       it, not as proof. Also established: the postprocessing dated logs are
       test-contaminated and cannot serve as an operational record.
-- [ ] **§E P0 (configuration) — NOT run.** Record `ieasyhydroforecast_run_ML_models`,
+- [ ] **§E P0 (configuration) — PARTIAL 2026-08-18 (§B3).** Read for **one** environment
+      (`.env_develop_kghm`): ML reading on, models configured, station selection
+      non-empty. §E specifies this **per org**, and a non-empty selection does **not**
+      by itself rule out C5 — the 15-of-71 coverage could still be a code-scope effect.
+      Still owed: the same read per org, and a check that the affected codes are actually
+      in the selection. Surfaced as a by-product: PP-040's ARIMA premise does not hold for
+      this env. Original text: Record `ieasyhydroforecast_run_ML_models`,
       `ieasyhydroforecast_available_ML_models` and the station-selection `stationsID`
       per org. Cheap, needs no tunnels, and rules cause C5 in or out.
-- [ ] **§E's database steps (P2 derived-frame probe, P3 controls/cutover) — NOT run**,
+- [ ] **§E's database steps — PARTIAL 2026-08-18 (§B3).** A direct read-only SQL probe
+      established that the archive is **not empty** for the four dates — falsifying the
+      field report's premise that the per-model rows were missing. It does **not**
+      adjudicate C1 on C1's own terms (no usable row after normalization); only P2 can. But it is **not** what §E specifies and does not replace
+      it: **P2's derived-frame probe was not run** (§E is explicit that raw row counting
+      inspects the wrong frame — it precedes the merge, filters and dedup), and **P3's
+      controls and per-(code, model) first-DAY cutover dates were not collected**. The
+      cutover dates are what would explain the 15-of-71 coverage. Original text:
       read-only, **on tjhm**. Confirm whether the DAY archive is genuinely empty for
       those issue dates and record each (code, model)'s first-DAY date. Blocked on
       tunnel availability. **This is what closes the still-INFERRED half of §H** — the
       log evidence cannot reach it.
-- [ ] Run the same **on kghm** independently. The ML log stream is shared across orgs,
+- [ ] **kghm — NOT done as specified.** A full kyg/kghm *pipeline* review ran end-to-end
+      on 2026-08-18 (runoff → gateway → LR → ML → postprocessing, plus long-term and both
+      yearly jobs), and its findings are being folded into the relevant issue drafts. That
+      is **not** the independent P0/P2/P3 probe this item asks for — running the pipeline
+      exercises the code, it does not interrogate the archive state. Original note: The ML log stream is shared across orgs,
       so its gap does not distinguish them — it is not evidence that any particular
       org's producer ran or did not. The two deployments' stored data are separate, and
       the kghm record self-labels as underdetermined.
-- [ ] **§E P3b (map the result onto C1–C6 and route) — NOT run**, and cannot be until
-      the database steps above are done.
+- [ ] **§E P3b — PARTIAL 2026-08-18.** What can be routed: the **field report's premise is
+      falsified** — the archive is not empty, so these dates are not a case of "no per-model
+      rows at all". That does **not** route **C1**, which is defined on the *normalized*
+      frame (no **usable** row): raw presence is necessary but not sufficient to clear it,
+      and only P2 can adjudicate. C5 is **not** cleared — P0 covered one env and the
+      coverage gap is unexplained. The residue to route is *EM absent among the 15 covered
+      codes, and no period row at all for the other 56*. **PP-060 documents a writer that
+      produces exactly the first signature** — a skill-metrics job emitting per-model + NE
+      and never EM, observed live on kyg 2026-08-18 — but PP-060 deliberately lists
+      several candidate writers and selects none, and nothing attributes *these* rows to
+      it. Completing this item needs P2/P3 above.
 - [ ] **§E P4 (the conditional real write) — NOT run, and currently prohibited.** Gated
       on owner authorisation, on the C8 procedure, and — per
       `doc/prod/backfill_period_forecasts_runbook.md` §7 — on a tested rollback that
       does not yet exist.
-- [ ] **Resolve the deferred kyg criterion — migrated here 2026-08-17 from the now
-      frozen Acceptance Criteria, and this is its only live home.** As written it
-      demands the full **kyg** (`15xxx/16xxx`) short-term pipeline end-to-end
-      (preprocessing_runoff → linear_regression → gateway → machine_learning →
-      postprocessing_forecasts). The 2026-08-14 kghm local review reproduced the
-      *condition* on kyg data but never exercised the *fix*, and running only the
-      backfill against local kghm data is **not** equivalent pipeline evidence —
-      it still needs a configured API/database plus write authorisation. Owner
-      decision: run the full pipeline when kyg is available, or formally
-      waive/downgrade the criterion with a written rationale.
+- [x] **kyg criterion — SATISFIED IN PART 2026-08-18, remainder waived by the owner.**
+      Read the two halves separately, because only one was demonstrated:
+      - **Pipeline exercised — YES.** The full kyg short-term pipeline ran end-to-end
+        against the kyg hydromet iEH HF instance over an SSH tunnel:
+        preprocessing_runoff → preprocessing_gateway → linear_regression →
+        machine_learning (both PENTAD and DECAD) → postprocessing_forecasts, each in
+        operational **and** maintenance mode, plus `long-term-operational`,
+        `maintenance:postprocessing_long_term`, `recalculate_skill_metrics` and
+        `recalculate_snow_norms`. One genuine FAIL
+        (`maintenance:preprocessing_runoff`, exit 4 on four SDK norm-lookup failures of
+        the `path is None` shape, while 53 of 62 stations were written successfully). The
+        owner's assessment is that norm lookups legitimately fail for virtual stations and
+        where the hydromet stores no norms, which would make this a false FAIL; that
+        characterisation rests on the owner's domain knowledge, not on the log, and is
+        being filed separately. No unexplained failures.
+      - **"Confirm the fix heals kyg pentad/decad" — NOT demonstrated, waived.**
+        2026-08-18 is neither a pentad (5/10/15/20/25/last) nor a decad (10/20/last)
+        boundary, so every period-writing path correctly no-opped — `postprocessing_forecasts`
+        exited in 2s with the validator reporting *"not a pentad forecast day"*. The
+        backfill CLI was not run. **Nothing in this run exercised the PP-045 fix itself.**
+      - **Owner decision (2026-08-18): accept and close on the pipeline evidence.** The
+        healing behaviour remains verified on Tajik only. Anyone later citing this issue
+        as "verified on two deployments" should read this item first.
 
 **Blocking — the tool is invisible to operators, and "documented" is in this
 issue's own Desired Outcome:**
 
-- [ ] `doc/prod/` runbook entry for `backfill_period_forecasts.py`. Currently
+- [x] **DONE — PR #441.** `doc/prod/backfill_period_forecasts_runbook.md` exists, with
+      its write path prohibited pending a tested rollback. Original text:
       referenced only in this issue, `doc/plans/module_issues.md`, and the
       `doc/dev/review_checklist_local_*.md` diagnostics tables. For a
       manual-recovery tool the operator-facing runbook *is* the deliverable.
       It must require an **exact post-write read-back** (PP-047: the writer can
       return `True` over a zero/partial persist) and recommend `--horizon` scoped
       to the affected horizon rather than `both`.
-- [ ] CLI docstring fix 1 — the maintenance parenthetical (§D1), including that
+- [x] **DONE — PR #438.** CLI docstring fix 1 — the maintenance parenthetical (§D1):
       maintenance does *not* recalculate skill metrics.
-- [ ] CLI docstring/`--help` fix 2 — the real precondition and the three silent
+- [x] **DONE — PR #438.** CLI docstring/`--help` fix 2 — the real precondition and the three silent
       filters (§D2), with the `fill_ml_gaps.py` leading/trailing-gap caveat.
-- [ ] `apps/postprocessing_forecasts/README.md` — recovery procedure (no backfill
+- [x] **DONE — PR #441.** `apps/postprocessing_forecasts/README.md` recovery section (previously no backfill
       section exists at all).
-- [ ] `doc/data_flow_short_term.md` — the backfill as the recovery path for
+- [x] **DONE — PR #441.** `doc/data_flow_short_term.md` — the backfill as the recovery path for
       stranded period rows.
 
 **Non-blocking corrections (factual, safe to apply):**
@@ -1222,7 +1335,10 @@ issue's own Desired Outcome:**
       **§H**, the historical A/B/C decision sections are banner-disarmed, the two
       superseded checklists are frozen, and every in-place correction is recorded in
       the **Corrections log**.
-- [ ] `doc/dev/review_checklist_local_2026-08-14_kyg.md` — three errors, not one:
+- [x] **DONE — PR #441, but re-scoped.** The dated file is **gitignored and untracked**
+      and holds operational data, so the *tracked template*
+      (`doc/dev/review_checklist_local_template.md`) was corrected instead. The owner may
+      annotate their local copy by hand. Original text:
       the stale "not on trunk" claim; the "period rows are written **only**
       operationally" claim (`:4924`); and the diagnostics-table row that reads
       "per-model period rows present but EM/NE absent ⇒ PP-045" (`:5179`), when
@@ -1308,8 +1424,11 @@ archived row stays empty. Retained rows carry `target = date + 1` (set by both t
 migrator and the normal writer), so they pass the in-period filter and re-emit
 unchanged. Dates in the DAY era require a real DAY row.
 
-**Attribution to the observed cases — split as of 2026-08-18 (§B2).** One half is now
-proven, the other is not:
+**Attribution to the observed cases — partly answered 2026-08-18 (§B2 for logs, §B3 for
+the database).** The first half stands. The second half's *present-state* form was
+answered, and it falsified the field report's premise; its *historical* form — which
+writer produced these rows, and whether the archive was usable at aggregation time —
+remains unresolved (see the last bullet):
 
 - **PROVEN — the observation only.** `apps/machine_learning/logs/` contains **no entry
   stamped 2026-07-25, 07-31, 08-05 or 08-10**; it rotated 2026-07-23 and then not until
@@ -1321,11 +1440,24 @@ proven, the other is not:
   inference: it cannot exclude an invocation from another working directory or log
   destination, or a run on another host. The record carries no test markers, which is
   reassuring but is not proof of test-freedom.
-- **ALSO INFERRED, and this is the half the diagnosis turns on.** That the DAY archive
-  is consequently *empty* for those dates, which is what cause C1 actually asserts. The
-  archive is a database whose state has not been queried; first-DAY dates per
-  (code, model) are still unknown. §E's read-only database probe is the only way to
-  close it.
+- **~~ALSO INFERRED~~ — RESOLVED 2026-08-18, and it went the other way (§B3).** The
+  remaining half was that the DAY archive is consequently *empty* for those dates — the
+  concrete form in which this issue carried cause C1. The database has now been queried:
+  **it is not empty.** Per-model and NE rows are present for all four dates, and DAY
+  inputs exist (426 rows per model across 71 codes). **The premise C1 was invoked to
+  explain — absent per-model rows — is falsified.** C1 itself is **not** thereby cleared:
+  it names *no usable row surviving merged-archive normalization*, raw non-emptiness is
+  necessary but not sufficient for that, and P2 did not run.
+  Two consequences, stated at the strength the evidence supports:
+  - **The present-state reading this issue carried is wrong.** Among the **15 covered
+    codes**, per-model and NE rows are present and only **EM** is missing. (Coverage is
+    15 of the 71 codes that have DAY inputs, so "only EM is missing" is a statement about
+    those 15, not about all 71 — the remaining 56 have no period row of any model.)
+  - **C1 as a *historical* cause remains UNRESOLVED.** Whether the archive was empty *at
+    aggregation time* is a different question from whether it is empty now, and the probe
+    cannot reach it. Note the narrower impossibility: `forecasts` has no provenance column
+    and the upsert updates in place, so **attribution of these rows to a writer cannot be
+    recovered from the table**. External evidence (logs) could still bear on the timing.
 
 Note the earlier corroboration cited here — a "20-day run gap" in
 `log_operational.2026-07-24` → `.2026-08-13` — has been **withdrawn**: those
@@ -1360,9 +1492,12 @@ dedup.
 **If the archive genuinely lacks rows for the affected dates — inferred, not
 established (§B2) — then the backfill CLI does not address the cause the field cases
 most likely have**, because where inputs were never produced there is nothing to
-aggregate. Both halves of that sentence are conditional: the archive state is unqueried,
-and how *common* the cause is across deployments is unmeasured, resting on one local log
-gap plus owner experience. Do not upgrade either half without data. Its genuine
+aggregate. Both halves of that sentence remain conditional. The archive's *raw* state has
+since been queried and is **not** empty (§B3); its *usable* state after merged-archive
+normalization — the condition C1 actually names, and the one that decides this — is still
+unprobed, because P2 did not run. And how *common* the cause is across deployments is
+unmeasured, resting on one local log gap plus owner experience. Do not upgrade either
+half without data. Its genuine
 value is narrower: (1) inputs exist but the boundary-day postprocessing was missed;
 (2) cross-year recovery where its per-year iteration avoids the PP-046 collapse — the
 most controlled cross-year option, though not the only one (see the table). If inputs
@@ -1391,6 +1526,9 @@ body. Sections from `## Implementation Plan` to `### Dependency graph`, and
 | 2026-08-17 | `## Problem` | Cross-year permanence attributed solely to operational's `start_year=end_year=today.year` | Incomplete and not unconditional. Recalc reads every year but is then limited by PP-046's yearless dedup; a prior-year period absent from later years can survive and be written. §H. |
 | 2026-08-17 | `## Problem` | "Current recovery options (**both** manual / out-of-band)" listing only the `SAPPHIRE_FORECAST_DATE` re-run and the raw-SQL script | Omitted `backfill_period_forecasts.py`, the tool this issue delivered, merged in PR #425 three weeks before. An operator following it reached for the wrong tool. |
 | 2026-08-17 | `## Desired Outcome` | "The remediation depth is the open decision below (A/B/C)" | The decision was taken 2026-07-17 and shipped 2026-07-23. |
+| 2026-08-18 | `## Problem`, `§B2`, `§C`, `§H` | That the DAY archive is empty for the four stranded dates — the concrete form in which **cause C1** was carried, as the leading hypothesis and as the reason the dates were unrecoverable | **Falsified as a present-state claim** by a read-only database probe (§B3): per-model rows, NE rows and DAY inputs are all present, and among the 15 covered codes only **EM** is missing (the other 56 codes with DAY inputs have no period row of any model). This does **not** settle **C1 itself**, which names *no usable row surviving merged-archive normalization*: raw counts cannot measure usability and P2 did not run. C1 as a *historical* cause is likewise **unresolved** — a present-state probe cannot reach it — and writer attribution is unrecoverable from the table, which has no provenance column. |
+| 2026-08-18 | `§B2` | "§E P0 and §E's database steps have NOT been run" | Partly superseded: a configuration read (one env) and a direct read-only SQL probe ran 2026-08-18 (§B3). P2's derived-frame probe, P3's controls/cutover and P4 remain unrun, and P0 is still owed per org. |
+| 2026-08-18 | `§G` | Five items listed as outstanding that had already shipped (the `doc/prod/` runbook, both CLI docstring fixes, the README and data-flow updates in PRs #438/#441) and one mis-scoped at a gitignored file | §G is meant to be the single live checklist; it had drifted in both directions for the second time. Reconciled with PR references. |
 
 ---
 
