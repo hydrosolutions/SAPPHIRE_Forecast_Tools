@@ -16,8 +16,9 @@ ever appears; not a blocker here). PREPG-010 (same module, transport).
 
 **(A) OBSERVED — a one-step temperature gap is carried forward instead of interpolated.**
 Every gap measured on both deployments is a single *interior* step with a valid value on each
-side. `ffill` copies the earlier neighbour; the obviously better answer is to interpolate between
-the two neighbours that both exist. Small, systematic, and fires on every affected run.
+side. `ffill` copies the earlier neighbour; interpolating between the two neighbours that both
+exist is the **preferred operational fallback for an isolated interior gap** — not an
+unqualified improvement. See § The domain caveat.
 
 **(B) LATENT — the fill is ungrouped, so a *leading* gap would inherit the previous station's
 last value.** Structurally real (§ Why it could bleed), but **zero leading gaps were observed**,
@@ -103,28 +104,72 @@ ever appears, `name` is discarded before the fill — that is **PREPG-011's** pr
 Note this counts firings, not boundary crossings — and the measured gap shape says the control
 firings were interior, i.e. defect (A), not (B).
 
+## The domain caveat on interpolation
+
+Interpolation is the better default here, but it is a judgement, not a certainty:
+
+- Temperature drives PET in the conceptual model (`functions_operational.R:467`), so the value
+  matters downstream.
+- Interpolation **smooths fronts and extremes**. Near 0 °C that can shift snow/rain partitioning
+  or melt thresholds — precisely where a smoothed value is least welcome.
+- The synchronised all-station gap points at a **source-side outage**. Filling it more smoothly
+  makes the symptom less visible. The existing notice (`Quantile_Mapping_OP.py:765`) means it is
+  not fully hidden, which is one more reason not to remove that notice.
+
+The magnitude of the difference cannot be established from this repository. If that matters, it
+needs a comparison run, not more code reading.
+
 ## The fix
 
-Per site, group by the key in the table above, then:
+**Group every fill by the key in the table above — including precipitation.** Grouping is pure
+bleed-insurance and is correct for all variables. Then, for **temperature only**, interpolate
+short interior gaps within the group.
 
-1. **Interpolate** short interior gaps within the group. This is what the observed data needs.
-   Use a small `limit` so a long outage cannot be smeared over — matching today's practical
-   behaviour without inheriting `ffill`'s unbounded reach.
-2. **Leading** gaps have nothing to interpolate from and remain NaN. None observed; this is the
-   only behaviour change, and it is the point of the fix.
-3. **Trailing** gaps: keep current behaviour.
+### The pandas details matter here — get them right
 
-**Leave precipitation on its current path.** Zero P gaps were observed on either deployment, and
-interpolating precipitation is *not* the right default — it is intermittent and non-negative, and
-`ffill` on it invents a rain event. If P gaps ever appear they need their own answer (zero-fill or
-climatology). Note the hazard; do not build for it now.
+*Corrected 2026-08-18 after review; the first version of this section was wrong.*
+Locked pandas is **2.3.3** (`apps/preprocessing_gateway/uv.lock:241`).
+
+- **`SeriesGroupBy` has no `.interpolate()` method.** Use a same-indexed
+  `transform(lambda s: s.interpolate(...))`.
+- **Use `transform`, not `apply`.** Control concatenation preserves **duplicate index values**
+  (`dg_utils.py:215`), so `groupby.apply` risks a MultiIndex/reindex hazard on assignment back.
+  `transform` returns a same-indexed result and is plainly safe. **No additional sort is needed** —
+  control/ERA5 are date-sorted before station blocks are concatenated (`dg_utils.py:193`) and the
+  ensemble frame is sorted before merge (`Quantile_Mapping_OP.py:225`).
+- **Default interpolation is positional linear, not datetime-aware.** With regularly spaced rows
+  that is fine; do not assume it honours the date column.
+- **Leading NaNs are left unfilled** by default — which is the behaviour this issue wants.
+- **`limit=N` caps the number of filled cells; it does not reject a longer outage.** A two-step
+  gap under `limit=1` fills one cell and leaves the other NaN — it does *not* skip the gap
+  wholesale. An earlier draft implied otherwise.
+- **Default interpolation also forward-fills trailing NaNs** up to the limit. If trailing
+  behaviour is meant to be normative, pin it with a fixture; otherwise do not claim it.
+
+### Precipitation: group it, but leave its semantics alone
+
+Zero P gaps were observed on either deployment, and interpolating rainfall is not the right
+default — it is intermittent and non-negative.
+
+*Correction:* an earlier draft said `ffill` on precipitation "invents a rain event". Too strong.
+It **can duplicate or extend** one: it repeats the previous amount, which fabricates rainfall only
+when that amount is non-zero, and harmlessly copies zero after a dry step.
+
+Note also that the 5 recorded P-path firings do **not** prove a P *value* was missing — the guard
+tests the whole frame (`Quantile_Mapping_OP.py:760`), so any null column would trip it.
+
+Changing precipitation fill semantics needs its own evidence. Group it now; decide later.
 
 ## Acceptance criteria
 
 - Control and ERA5 fills are grouped by `code`; the ensemble fill by `ensemble_member`.
 - Fixture: two stations stacked in one frame, station 2 starting with a gap, which must **not**
   inherit station 1's last value.
-- Fixture: a single interior gap with valid neighbours is **interpolated**, not carried forward.
+- Fixture: a single interior gap with valid neighbours is **interpolated**, not carried forward —
+  assert the explicit expectation `[1, NaN, 3] → [1, 2, 3]`.
+- Fixture: **two ensemble members**, the second starting with a gap, which must not inherit the
+  first member's last value. (Defect B is otherwise pinned only on the control/ERA5 paths.)
+- Precipitation is **grouped** but its fill semantics are unchanged.
 - A frame with **no NaNs** is unchanged, rows and order identical. The existing guards already
   skip the fill entirely in that case (`Quantile_Mapping_OP.py:760`), and a grouped assignment on
   the value column preserves row order — **no grouped sort is needed**.
