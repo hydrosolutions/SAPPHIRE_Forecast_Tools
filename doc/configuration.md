@@ -248,6 +248,15 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `SAPPHIRE_SKILL_METRICS_YEAR` | Optional | postprocessing_forecasts | Target year for recalculation run | — |
 | `SAPPHIRE_RECALC_START_YEAR` | Optional | postprocessing_forecasts | Skill recalc window start | — |
 | `SAPPHIRE_RECALC_END_YEAR` | Optional | postprocessing_forecasts | Skill recalc window end | — |
+| `ieasyhydroforecast_efficiency_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `sdivsigma` ≤ threshold | `0.6` |
+| `ieasyhydroforecast_nse_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `NSE` ≥ threshold | `0.8` |
+| `ieasyhydroforecast_accuracy_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `accuracy` ≥ threshold | `0.8` |
+| `ieasyhydroforecast_nse_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** (month/quarter/season) Skilled-Mean admission: keep models with `NSE` ≥ threshold | `1e-9` (i.e. NSE > 0) |
+| `ieasyhydroforecast_efficiency_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** `sdivsigma` gate | `False` (gate disabled) |
+| `ieasyhydroforecast_accuracy_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** `accuracy` gate | `False` (gate disabled) |
+| `ieasyhydroforecast_min_pairs_long_term` | Optional | postprocessing_forecasts | Minimum forecast/observation pairs for a **monthly** long-term skill row to be usable | `4` |
+| `ieasyhydroforecast_min_pairs_long_term_quarter` | Optional | postprocessing_forecasts | Same floor, **quarterly** | `5` |
+| `ieasyhydroforecast_min_pairs_long_term_season` | Optional | postprocessing_forecasts | Same floor, **seasonal** | `5` |
 | `SAPPHIRE_SEASON_START_MONTH` | Optional | long_term | Hydrological season start month | — |
 | `SAPPHIRE_SEASON_END_MONTH` | Optional | long_term | Hydrological season end month | — |
 | `SAPPHIRE_HINDCAST_MODE` | Optional | ML, long_term | Enable hindcast code paths | — |
@@ -310,6 +319,42 @@ Internal / Docker-only variables injected by the dashboard or Luigi at runtime (
 - **Manual-site ingestion from Google Sheets.** Set `GOOGLE_SHEETS_ENABLED=true`. Also set `GOOGLE_SHEETS_DISCHARGE_ID`, `GOOGLE_SHEETS_CREDENTIALS_PATH`, `GOOGLE_SHEETS_SITE_CODES`. Sites must be marked `"data_source": ["manual"]` in `config_all_stations_library.json` (list form is the canonical convention used by `setup_library.py`; a plain string `"manual"` is also accepted).
 - **Email alerts on pipeline failure.** Set `SAPPHIRE_PIPELINE_SMTP_SERVER`, `SAPPHIRE_PIPELINE_SMTP_PORT`, `SAPPHIRE_PIPELINE_SMTP_USERNAME`, `SAPPHIRE_PIPELINE_SMTP_PASSWORD`, `SAPPHIRE_PIPELINE_SENDER_EMAIL`, `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS`.
 - **Spot-check validation of iEH HF data.** Set `IEASYHYDRO_SPOTCHECK_SITES` to a comma-separated list of site codes (e.g. `19999,19998`).
+
+#### Ensemble admission thresholds (short-term vs long-term)
+
+Ensemble aggregates admit member models by skill. **Short-term and long-term use separate
+variables** — the names differ only by a `_long_term` suffix, so they are easy to confuse. All
+have working defaults; a deployment needs an entry only to deliberately override one.
+
+| Metric | Short-term (pentad / decad) | Long-term (month / quarter / season) |
+|---|---|---|
+| `sdivsigma` | `ieasyhydroforecast_efficiency_threshold` (`0.6`) | `ieasyhydroforecast_efficiency_threshold_long_term` (disabled) |
+| `NSE` | `ieasyhydroforecast_nse_threshold` (`0.8`) | `ieasyhydroforecast_nse_threshold_long_term` (`1e-9`) |
+| `accuracy` | `ieasyhydroforecast_accuracy_threshold` (`0.8`) | `ieasyhydroforecast_accuracy_threshold_long_term` (disabled) |
+| minimum pairs | — | `ieasyhydroforecast_min_pairs_long_term` (`4`), `..._quarter` (`5`), `..._season` (`5`) |
+
+Three details that are not obvious from the values alone:
+
+- **`False` disables a gate entirely.** Accepted disable tokens are, case-insensitively:
+  `false`, `off`, `none`, `disable`, `disabled`, and the empty string. That is why two of the
+  long-term defaults read `False` rather than a number.
+- **The long-term NSE default is `1e-9`, not `0`.** The comparison is inclusive (`>=`), so an
+  exact `0.0` would pass a gate meant to read "NSE greater than zero". The epsilon enforces
+  *strictly* positive skill — i.e. exclude any model no better than climatology.
+- **The long-term metric thresholds apply to all three long-term horizons**; only the
+  minimum-pairs floor is per-horizon. Quarter and season draw on just two candidate models, so
+  there a threshold acts as an on/off switch for the whole aggregate rather than a way to select
+  among members — raising it above "NSE > 0" suppresses the product instead of refining it.
+
+Which aggregate uses which gate:
+
+| Aggregate | Horizon | Admission |
+|---|---|---|
+| EM | pentad / decad | short-term thresholds, ≥2 qualifying models |
+| EM | month | short-term thresholds + monthly min-pairs — sparse by design, and **not** the intended long-term product |
+| EM | quarter / season | **no skill gate** — fixed `LR_Base` + `LR_SM` aggregate |
+| **Skilled Mean** | month / quarter / season | **long-term thresholds** — the intended long-term aggregate |
+| Naive Mean | all | **no skill gate**; needs ≥2 members with a non-null point forecast |
 
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
