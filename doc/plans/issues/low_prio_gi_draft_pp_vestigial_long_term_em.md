@@ -64,6 +64,52 @@ Options, for the owner:
 **Not urgent.** Recording it so the next reviewer does not spend the same effort re-deriving
 that sparse monthly EM is expected.
 
+
+## Owner decision 2026-08-18 + removal cost estimate
+
+**Decision: "Not harmful, but not very useful — can be removed if the work is small."** So the
+question is cost. Scoped:
+
+**Contained.** Monthly EM is one block inside `create_monthly_ensemble_forecasts`
+(`src/ensemble_calculator.py:226`), which also produces the other two aggregates via
+`_add_skilled_mean_monthly` and `_add_naive_mean_monthly`. Removing EM means deleting/guarding
+the `em_avg["model_short"] = "EM"` block, **not** deleting a function — Skilled Mean and Naive
+Mean must keep working from the same call.
+
+**Two callers only**, both passing through the same builder:
+```
+postprocessing_operational_long_term.py:168
+postprocessing_maintenance_long_term.py:195
+```
+
+**No dashboard consumer found** for monthly EM (`forecast_dashboard/src/db.py` has no `EM`
+reference on the monthly path) — so the display surface is likely unaffected. **Verify before
+removing**; a bulletin template or tabulator column would not appear in that grep.
+
+**Four test files reference monthly EM** and would need updating:
+`test_monthly_ensemble_creation.py`, `test_monthly_skill_metrics.py`,
+`test_monthly_skill_per_lead.py`, `test_monthly_workflow_integration.py`.
+
+**Estimate: small** — one guarded block, two call sites unchanged, four test files, plus a
+decision on stored history.
+
+### The one real decision inside it
+
+**What happens to existing stored monthly EM rows?** Options: leave them (the database keeps a
+model type nothing produces any more — confusing later), or purge them (irreversible, and they
+are legitimate historical output of the old contract). Recommend **leaving them and recording
+the cut-off date**, so a reader can tell why the series stops.
+
+### Recommendation
+
+**Do it as part of the `pp_baselines_misnomer` rename**, not standalone. That work already
+touches these aggregate names and surfaces; folding the removal in avoids two separate rounds of
+test churn and one migration decision made twice. Standalone is fine if the rename is far off.
+
+> Ordering note: PP-057 should land **first**. Until the operational path can resolve `q`,
+> monthly aggregate coverage is not representative, and any before/after comparison of removing
+> EM would be measured against a broken baseline.
+
 ## Explicit non-scope
 
 - **Quarter/season EM is a different thing again** — a fixed `LR_Base + LR_SM` aggregate
