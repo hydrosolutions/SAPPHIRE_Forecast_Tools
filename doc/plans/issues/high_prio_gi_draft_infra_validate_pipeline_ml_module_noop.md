@@ -1,7 +1,7 @@
 ## `validate_pipeline --module machine_learning` matches zero checks and reports PASS on no evidence (INFRA-020)
 
 **Status**: Draft (2026-07-23) — **diagnosis confirmed, proposed fix blocked on two owner decisions
-(C3, C4) after out-of-loop review 2026-08-18**
+(C3, C4, C5) after three out-of-loop review passes 2026-08-18**
 **Module**: `apps/validate_pipeline` (+ `apps/run_locally.sh` summary reporting)
 **Priority**: **High** (silent false assurance on the module with the most silent-write history)
 **Labels**: `infra`, `validation`, `false-pass`, `machine_learning`, `observability`
@@ -102,22 +102,32 @@ confirmed the **diagnosis** (no check is tagged `machine_learning`; raw day outp
 nothing). Both found the *proposed fix* not implementable as written. These constraints are
 findings, not decisions — the ones marked **OWNER DECISION** need sign-off before planning.
 
-### C1 — Five currently-passing tests contradict this draft's acceptance criteria
+### C1 — One test must change; four others are compatible **if** the fix is shaped correctly
 
-Any implementer will hit these on the first run. They must be **renegotiated explicitly**, never
-quietly edited to match new behavior.
+> **Corrected 2026-08-18 (third review pass).** An earlier version of this section listed five tests
+> as contradictions requiring renegotiation. That was an overcorrection and would have told an
+> implementer to break four working contracts. Only the count assertion necessarily changes. The
+> distinction below is the useful part: each of the other four is a *design constraint on the shape
+> of the fix*, not a contract to rewrite.
 
-| Test | Asserts today | This draft demands |
+**Must change (1):**
+
+| Test | Asserts today | Why it must change |
 |---|---|---|
-| `test_validate_pipeline.py:1511-1523` `test_ml_flag_distribution_warn_stuck_flag` | all `flag=1` + finite values → **WARN** | all-flag-1 must **FAIL** |
-| `test_validate_pipeline.py:302-332` `test_tier1_short_term_returns_expected_check_count` | `assert len(results) == 13` | +3 ML checks → 16 |
-| `test_validate_pipeline.py:376-416` | the six model checks are tagged `postprocessing_forecasts` | retagging to `machine_learning` would strip that coverage |
-| `test_validate_pipeline.py:129-133` `test_api_unavailable_exits_zero` | client absent → exit **0** | a blanket "zero checks ⇒ non-zero" flips it |
-| `test_validate_pipeline.py:135-140` `test_api_disabled_exits_zero` | `SAPPHIRE_API_ENABLED=false` → exit **0** | same |
+| `test_validate_pipeline.py:302-332` `test_tier1_short_term_returns_expected_check_count` | `assert len(results) == 13` | any added ML check changes the count; update deliberately, with a comment naming this issue |
 
-Note also that the *generic* NaN check returns WARN, not FAIL (`validate_pipeline.py:662-692`), so
-adding ML checks alone does not make an all-NaN write fail — the **severity policy** has to change
-too, and that is a contract change in its own right.
+**Must NOT be broken (4) — each constrains the fix:**
+
+| Test | Asserts today | Constraint it imposes |
+|---|---|---|
+| `test_validate_pipeline.py:1512-1523` `test_ml_flag_distribution_warn_stuck_flag` | all `flag=1` with **finite** values → WARN | this is *not* the all-NaN case. An all-NaN FAIL check must be a **separate** check, leaving the finite stuck-flag WARN intact. Do not repurpose `check_ml_flag_distribution` |
+| `test_validate_pipeline.py:376-416` | the six period-forecast checks are tagged `postprocessing_forecasts` | **add** raw-day ML checks; do **not** retag the existing six, which would strip processed-output coverage from postprocessing validation |
+| `test_validate_pipeline.py:129-133` `test_api_unavailable_exits_zero` | client absent → exit 0 | the zero-match guard must not fire here — see C2 |
+| `test_validate_pipeline.py:135-140` `test_api_disabled_exits_zero` | `SAPPHIRE_API_ENABLED=false` → exit 0 | same |
+
+Note separately that the *generic* NaN check returns WARN, not FAIL (`validate_pipeline.py:662-692`).
+Whether the new ML null-check FAILs where the generic one WARNs is a deliberate choice to state in
+the plan — the two can differ, but the difference must be intentional and explained.
 
 ### C2 — The zero-match guard must key on *registered* checks, not on an empty result list
 
@@ -128,9 +138,12 @@ too, and that is a contract change in its own right.
 `--module long_term_forecasting --target short-term`. Static Tier-1 counts per module today:
 `preprocessing_runoff` 2, `preprocessing_gateway` 3, `linear_regression` 1,
 **`machine_learning` 0**, `postprocessing_forecasts` 7, `long_term_forecasting` 1 — ML is the only
-API-ready module with none. The draft's (a)/(b) distinction is right but names no mechanism; a
-check **registry** is required. Also note `--phase pre` returns 0 at `:1493-1495` when
-`--baseline` is supplied, bypassing any exit-code contract.
+API-ready module with none. The draft's (a)/(b) distinction is right but names no mechanism. A check
+**registry** is one option; a static module→expected-check table, declarative check descriptors, or
+precomputed per-tag counts would serve equally. The repo proves the distinction is *missing*, not
+that any particular mechanism is mandatory — picking one is an implementation choice for the plan.
+Also note `--phase pre` returns 0 at `:1493-1495` when `--baseline` is supplied, bypassing any
+exit-code contract.
 
 ### C3 — **OWNER DECISION**: the checks need an execution-expectation model, not a calendar gate
 
@@ -159,14 +172,29 @@ Related: the existing non-forecast-day gate only converts **zero-record FAIL →
 boundary through today (`:459-481`), so on the 23rd after a run on the 20th, leftovers read as
 fresh and PASS. Point 4 of the proposed fix is therefore not achievable by reusing the gate.
 
-### C5 — Presence alone cannot detect a partial write
+### C5 — **OWNER DECISION**: presence alone cannot detect a partial write, and the coverage universe is undefined
 
 `check_presence` passes any non-empty frame (`:349-367`), and one surviving station or target row
 satisfies it. An expected **station × target coverage** contract is required before acceptance
 tests can be written; `doc/dev/testing_workflow.md:138-147` requires exact counts, not
-existence-only assertions. The `BOTH`-mode loop compounds this: `validate` runs once per horizon
-(`:1401-1427`) and `results_to_json` is keyed on check name alone (`:192-218`), so a duplicated
-check name silently overwrites one horizon's result.
+existence-only assertions.
+
+*Marked as an owner decision 2026-08-18 (third review pass):* "assert expected coverage" is not
+implementable until someone states **what the expected set is** — which station universe is
+authoritative, which target dates are in scope for a given issue date, how models disabled for a
+deployment are treated, and therefore what cardinality counts as complete. This materially changes
+what PASS means, so it is a product decision, not an implementation detail.
+
+Two mechanical consequences to settle alongside it:
+
+- **Pagination.** Every presence read is capped at `READ_LIMIT = 5000` in a single call
+  (`:100-101`, `:338-340`). An exact coverage check on a larger deployment would read a complete
+  but truncated response as a partial write. Either paginate or demonstrate the maximum expected
+  cell count stays under the limit.
+- **`BOTH`-mode naming.** `validate` runs Tier 1 once per horizon (`:1401-1427`) and
+  `results_to_json` keys on check name alone (`:192-218`), so a duplicated check name silently
+  overwrites one horizon's result. Horizon-qualified names avoid the overwrite but imply a
+  provenance the records do not carry (C4).
 
 ### C6 — The existing ML fixture cannot pin the raw-writer contract
 
@@ -187,18 +215,23 @@ are marked; do not begin implementation while any remain open.)*
   *Depends on C3 — "expected to run" is undefined until the expectation model is chosen.*
 - Zero-row and all-NaN ML results each make the module validation **FAIL**, tested separately via
   **mocked API responses / isolated fixtures with explicit issue and target dates** — not by
-  mutating live API data. *Requires the C1 severity-policy change (WARN → FAIL) to be agreed and
-  the affected tests updated deliberately, in the same commit, with the reason recorded.*
+  mutating live API data. *Implemented as a **new** check: per C1, the existing finite stuck-flag
+  WARN (`check_ml_flag_distribution`) stays as it is. If the new ML null-check FAILs where the
+  generic NaN check WARNs, say so explicitly in the plan.*
 - Partial writes fail: an expected station × target coverage contract is asserted, not mere
-  presence. *Depends on C5.*
-- Mode attribution is either sound or explicitly disclaimed in the check's own `detail` string.
+  presence, and the read is paginated or proven to fit under `READ_LIMIT`. *Depends on C5.*
+- Mode attribution is **sound** (durable provenance or a run-scoped write receipt), or the check
+  reports a deliberately reduced status rather than PASS. *Per C4, a `detail`-string disclaimer
+  alone is not sufficient — a PASS that is known to be unsound on shared dates is the defect this
+  issue exists to remove.*
   *Depends on C4.*
 - A `--module` value for which **no checks are registered** exits non-zero with an explicit
   "no checks registered for module X" message, while API-absent / API-disabled / API-unready
   invocations keep their current exit-0 or readiness-FAIL behavior. *Per C2.*
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green, with new tests
   covering: zero-registration filter, all-NaN ML rows, partial write, `BOTH`-mode duplicate naming,
-  and the non-forecast-day gate. The five contract changes in C1 are updated in the same commit,
+  and the non-forecast-day gate. The single contract change in C1 (the Tier-1 count) is updated in
+  the same commit,
   each with a comment naming this issue.
 
 ## Reproduction

@@ -2,11 +2,21 @@
 
 **Status**: Draft (2026-07-23)
 **Module**: `apps/validate_pipeline` (`run_tier1_long_term`, `_apply_non_forecast_day_skip`)
-**Priority**: **Medium** (false alarm, not data loss — but it erodes trust in the validation signal)
+**Priority**: **High** *(raised from Medium 2026-08-18 — this is now a hard prerequisite of
+INFRA-021, not a follow-on; see below)*
 **Labels**: `infra`, `validation`, `long-term`, `false-fail`, `gating`
 **Discovered**: 2026-07-23, local pipeline health review (taj, `maxat_sapphire_2` @ `16fb9a9b`).
-**Blocked behind**: **INFRA-021** — this is only observable once the long-term validation
-crash is worked around; otherwise the process dies before Tier 1 emits anything.
+**Relationship to INFRA-021 — corrected 2026-08-18.** This draft previously read
+"Blocked behind INFRA-021". That is now wrong in one direction and produced a circular dependency
+once INFRA-021 was rescoped. The accurate statement:
+
+- **Observability** runs one way: this defect is only *visible* after INFRA-021's crash is fixed,
+  because the process currently dies before Tier 1 emits anything.
+- **Delivery** runs the other way: INFRA-021 must **not ship without this gating**, because fixing
+  the crash alone converts one traceback into recurring false FAILs on every legitimately gated day
+  and on every deployment that does not run long-term at all.
+
+So the two are **one atomic change**, not a queue. Neither blocks the other; they land together.
 **Related**: **INFRA-020** (false-PASS counterpart — same class of defect, opposite sign).
 
 ---
@@ -92,11 +102,25 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
 
 ## Proposed fix (to be planned)
 
-1. Implement the long-term downgrade using the **existing per-mode resolver**
-   (`long_term_horizon_resolver`), which did not exist when the "we can't predict the
-   schedule" comment was written. Decide activity **separately for every checked
-   mode/horizon** and tag each result with its owning mode — do not collapse to one
-   deployment-level gate.
+1. Implement the long-term downgrade using a per-mode schedule authority. Decide activity
+   **separately for every checked mode/horizon** and tag each result with its owning mode — do not
+   collapse to one deployment-level gate.
+
+   > **OPEN DECISION — which schedule authority? (raised 2026-08-18, third out-of-loop pass.)**
+   > This step originally said to use `long_term_horizon_resolver`. **That resolver is not
+   > sufficient on its own.** It exposes mode, lead time and issue day (`:33-49`, `:112-155`), but
+   > the *real* operational schedule adds two things it does not model:
+   >
+   > - an **issue-day tolerance window** (`lt_schedule_query.py:50-52`), and
+   > - **per-model `forecast_months`** — a mode can be configured yet inactive in the current
+   >   month (`:88-131`).
+   >
+   > Gate on the resolver alone and a quarter or season mode that is simply not scheduled this
+   > month still reports FAIL — the precise false alarm this issue exists to remove. The options
+   > are (a) have validation call the same `lt_schedule_query` logic the scheduler uses, (b) extend
+   > the resolver to expose tolerance and `forecast_months`, or (c) accept known-incomplete gating
+   > and document which cases still false-FAIL. **This decision is a prerequisite of the INFRA-021
+   > + INFRA-022 atomic change and is not yet made.**
    **Skill-metric checks must NOT inherit the operational forecast gate** — they are
    historical and not date-filtered, so gating them would hide real starvation.
 2. When the gate is closed, emit **SKIP with the gate reason** ("not a long-term
@@ -115,7 +139,19 @@ downgraded.
 - On an issue day with records genuinely missing, it still reports FAIL.
 - Correct behaviour verified per **mode** for both issue-day conventions (taj day 1;
   kyg 10/25) — a fixture per convention, placeholder station codes only.
+- A mode that is configured but **not scheduled in the current month** reports SKIP, not FAIL, and
+  a day inside the **issue-day tolerance window** is treated as an issue day. *Both depend on the
+  open schedule-authority decision above; neither is achievable with `long_term_horizon_resolver`
+  alone.*
+- A deployment that runs **no** long-term modes at all (demo, uzhm) produces no long-term FAILs,
+  including via `run_all`'s unconditional `--target all` (`run_locally.sh:1228-1238`).
 - `test_long_term_never_skipped` is **intentionally superseded**: it locks the current
   premise and must be replaced (not deleted silently) by tests asserting per-mode
   gating, so the behaviour change is explicit and reviewed.
-- `SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green.
+- **Shared-fixture impact (flagged 2026-08-18):** the autouse fixture at
+  `test_validate_pipeline.py:36-59` writes long-term configs carrying only
+  `operational_month_lead_time` — **no `operational_issue_day`** — while schedule-aware gating
+  needs both (`long_term_horizon_resolver.py:112-142`). Introducing gating will therefore also
+  disturb the existing long-term mapping / empty-quarter / empty-season / all-present tests
+  (`:418-477`). Update the fixture and those dates deliberately, in the same commit.
+- `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green.

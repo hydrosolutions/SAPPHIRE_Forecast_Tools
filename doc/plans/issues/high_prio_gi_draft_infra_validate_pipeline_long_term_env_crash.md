@@ -47,7 +47,10 @@ Two additional observations worth keeping:
    also the path with the least manual scrutiny.
    **Correction (2026-08-18 review):** it is *not* only `--target long-term`. `--target all`
    enters the same path (`validate_pipeline.py:1429`), and `main` auto-infers the long-term target
-   for `--module long_term_forecasting` (`:1578-1583`). All three routes crash identically.
+   for `--module long_term_forecasting` (`:1578-1583`). All three routes crash the same way — but
+   only when the run actually reaches the long-term tier: the API client must be installed,
+   `SAPPHIRE_API_ENABLED` must not be `false` (`:1589-1597`), and the postprocessing API must be
+   ready (`:1429-1433`). Otherwise the run exits 0 before the resolver is touched.
 
 2. **The crash masks everything downstream of it.** None of the § 9.6 long-term skill/ensemble
    verification executes. Any claim that "long-term validation passed" in a prior review is
@@ -151,7 +154,13 @@ Two independent read-only `codex exec` passes confirmed the diagnosis (no env lo
 resolver call at `:539` is unconditional) and then found that **fixing it alone makes the
 signal worse, not better**. This issue can no longer be planned as "add env loading".
 
-**The env crash is the only thing currently suppressing a stream of false FAILs.**
+**For any API-ready invocation that reaches long-term Tier 1, the env crash is currently the last
+thing standing between the operator and a stream of false FAILs.** *(Scoped 2026-08-18, third
+review pass — an earlier draft of this section said "the only thing", which is wrong: skipped
+organizations return before validation (`run_locally.sh:1184-1190`), dates with no active modes
+return at `:1202-1205`, an absent/disabled API client exits 0 at `validate_pipeline.py:1589-1597`,
+and an unready postprocessing API bypasses the long-term tier entirely at `:1429-1433`. Those
+suppressors are exactly the conditions under which nobody sees the crash today either.)*
 `run_tier1_long_term` demands month, quarter **and** season output unconditionally
 (`validate_pipeline.py:519-583`), and the "never skip long-term" behavior is *deliberately
 locked* by a test:
@@ -212,12 +221,20 @@ once and passed as a parameter.
    unhandled traceback that aborts the remaining checks.
    **Refined 2026-08-18:** a single broad `try/except` around `run_tier1_long_term` is not
    sufficient — it would still discard the two monthly results that already exist at the point of
-   failure (`:519-538`). Per-check exception boundaries are needed, plus an explicit policy for
-   each failure class: `LongTermHorizonResolverError` (missing variable) and malformed
-   JSON/invalid integer fields should **FAIL**, whereas `UnsupportedLongTermModeError` on a
-   deployment that legitimately does not run quarter/season should **SKIP**
-   (`long_term_horizon_resolver.py:172-178`). Treating "unsupported product" and "broken config"
-   alike just creates a different false signal.
+   failure (`:519-538`). Per-check exception boundaries are needed, plus an explicit verdict for
+   **every** failure class the path can raise. The taxonomy below was completed in the third review
+   pass; an earlier version named only the first two rows and would have left the remaining cases
+   crashing exactly as before:
+
+   | Raised by | Meaning | Verdict |
+   |---|---|---|
+   | `LongTermHorizonResolverError` (`long_term_horizon_resolver.py:207-210`) | a required env var is unset | **FAIL** — name the variable |
+   | Invalid JSON / non-integer `operational_month_lead_time` | broken configuration | **FAIL** |
+   | `UnsupportedLongTermModeError` (`:172-178`) | deployment legitimately does not run quarter | **SKIP** |
+   | `FileNotFoundError` (`:181-184`) | named config file absent | **FAIL** vs **SKIP** is a judgement call — decide explicitly; a deployment that lists a mode but ships no config is misconfigured, not unsupported |
+   | plain `ValueError` from `_resolved_seasonal_presence_horizon_value` (`validate_pipeline.py:596-597`) | **no supported seasonal mode at all** — note this does *not* raise `UnsupportedLongTermModeError` | **SKIP** (same class as the quarter case, different exception type — easy to miss) |
+
+   Treating "unsupported product" and "broken config" alike just creates a different false signal.
 
 **Contract not to break:** the modules' own env loading is working correctly and must
 not be changed. Do not gate `quarter_horizon_value()` on `SAPPHIRE_SKILL_LEAD_AWARE`
@@ -246,6 +263,12 @@ as a workaround — the resolver call is legitimate; the missing env loading is 
   them; a deployment whose config is malformed **FAILs**. Per-mode gating comes from INFRA-022.
 - The validated date is the date that was **forecast**, not `date.today` — `--forecast-date` is
   plumbed from `LT_FORECAST_TODAY` and from the standalone simulation year.
+  **Underspecified (flagged 2026-08-18):** the standalone path is not one date.
+  `LT_SIMULATE_YEARS` may list several years and `LT_SIMULATE_NUM_MONTHS` may exceed 1
+  (`run_locally.sh:583-613`), and `simulate_forecasts.py:160-169` iterates every year/month
+  combination, yet validation runs **once** afterwards (`:1960-1965`). The plan must state which
+  contract applies: validate every generated date, validate only the last, or validate an
+  aggregate. Picking silently would produce a verdict nobody can interpret.
 - Short-term / standalone validator invocations that currently work **without** an env
   file continue to work.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green, with a
