@@ -1,6 +1,7 @@
 ## `validate_pipeline --module machine_learning` matches zero checks and reports PASS on no evidence (INFRA-020)
 
-**Status**: Draft (2026-07-23)
+**Status**: Draft (2026-07-23) — **diagnosis confirmed, proposed fix blocked on two owner decisions
+(C3, C4, C5) after three out-of-loop review passes 2026-08-18**
 **Module**: `apps/validate_pipeline` (+ `apps/run_locally.sh` summary reporting)
 **Priority**: **High** (silent false assurance on the module with the most silent-write history)
 **Labels**: `infra`, `validation`, `false-pass`, `machine_learning`, `observability`
@@ -34,18 +35,28 @@ filter matches zero checks and exits zero — unless an untagged readiness failu
 
 ## Root cause (traced)
 
+*(Line citations re-verified 2026-08-18 by two independent out-of-loop `codex exec` passes;
+several had drifted and are corrected below.)*
+
 1. `machine_learning` appears in `validate_pipeline.py` **only** in the two config
-   maps — `MODULE_DEFAULT_TARGET` (`:104`) and `FORECAST_DAY_MODULES` (`:113`).
+   maps — the `MODULE_DEFAULT_TARGET` entry at `:108` (map starts `:104`) and the
+   `FORECAST_DAY_MODULES` entry at `:116` (set starts `:114`; `:113` is the comment).
 2. **No Tier-1 or Tier-2 check is ever tagged `module="machine_learning"`.** The only
    module tags emitted anywhere are `linear_regression`, `long_term_forecasting`,
    `postprocessing_forecasts`, `preprocessing_gateway`, `preprocessing_runoff`.
-3. The `--module` filter (`:1420`) keeps only exact tag matches → Tier 1 is emptied.
-4. Tier 2/3 never run because they require Tier-1 results (`:1448`, `:1474`).
-5. Zero failures → exit 0 (`:1270`) → `run_locally.sh` (`:1094`) converts that to
-   `PASS`.
+3. The `--module` filter (`:1421-1422`; `:1420` is the comment) keeps only exact tag
+   matches → Tier 1 is emptied.
+4. Tier 2/3 never run because they require Tier-1 results — the guards are at `:1449`
+   (`if tier1_results`) and `:1476` (`if tier1_results and not module_filter`); the
+   previously cited `:1448`/`:1474` are the section comments.
+5. Zero failures → exit 0. The decision is `print_summary`'s
+   `return 1 if counts["FAIL"] > 0 else 0` at `:1284` (`:1270` is the function
+   definition) → `run_locally.sh:1099-1104` converts that to `PASS`.
 
 **Additional gap found by the out-of-loop reviewer:** ML writes its raw forecasts as
-`horizon_type="day"` (`machine_learning/scr/utils_ml_forecast.py:713,776`), but the
+`horizon_type="day"` (`machine_learning/scr/utils_ml_forecast.py:713-732` documents the
+contract; the hard-coded field assignment itself is `:788`, not the previously cited
+`:776`, which is the preparation comment), but the
 validator never queries the day horizon at all — its only short-term forecast query
 uses the requested pentad/decade horizon and tags those results
 `postprocessing_forecasts` (`:462`, `:470`). So **raw ML output is covered by no
@@ -80,23 +91,148 @@ This is a **pre-existing** defect, independent of the lead-aware flag work.
    readiness failure.
 4. Respect the forecast-day gate: on a non-forecast day the correct verdict is SKIP
    with the gate reason, not PASS-on-nothing (cf. INFRA-022).
+   **Not achievable with the existing gate** — see Constraint C4 below.
+
+---
+
+## Constraints found by out-of-loop review (2026-08-18)
+
+Two independent read-only `codex exec` passes reviewed this draft as an implementer's brief. Both
+confirmed the **diagnosis** (no check is tagged `machine_learning`; raw day output is queried by
+nothing). Both found the *proposed fix* not implementable as written. These constraints are
+findings, not decisions — the ones marked **OWNER DECISION** need sign-off before planning.
+
+### C1 — One test must change; four others are compatible **if** the fix is shaped correctly
+
+> **Corrected 2026-08-18 (third review pass).** An earlier version of this section listed five tests
+> as contradictions requiring renegotiation. That was an overcorrection and would have told an
+> implementer to break four working contracts. Only the count assertion necessarily changes. The
+> distinction below is the useful part: each of the other four is a *design constraint on the shape
+> of the fix*, not a contract to rewrite.
+
+**Must change (1):**
+
+| Test | Asserts today | Why it must change |
+|---|---|---|
+| `test_validate_pipeline.py:302-332` `test_tier1_short_term_returns_expected_check_count` | `assert len(results) == 13` | any added ML check changes the count; update deliberately, with a comment naming this issue |
+
+**Must NOT be broken (4) — each constrains the fix:**
+
+| Test | Asserts today | Constraint it imposes |
+|---|---|---|
+| `test_validate_pipeline.py:1512-1523` `test_ml_flag_distribution_warn_stuck_flag` | all `flag=1` with **finite** values → WARN | this is *not* the all-NaN case. An all-NaN FAIL check must be a **separate** check, leaving the finite stuck-flag WARN intact. Do not repurpose `check_ml_flag_distribution` |
+| `test_validate_pipeline.py:376-416` | the six period-forecast checks are tagged `postprocessing_forecasts` | **add** raw-day ML checks; do **not** retag the existing six, which would strip processed-output coverage from postprocessing validation |
+| `test_validate_pipeline.py:129-133` `test_api_unavailable_exits_zero` | client absent → exit 0 | the zero-match guard must not fire here — see C2 |
+| `test_validate_pipeline.py:135-140` `test_api_disabled_exits_zero` | `SAPPHIRE_API_ENABLED=false` → exit 0 | same |
+
+Note separately that the *generic* NaN check returns WARN, not FAIL (`validate_pipeline.py:662-692`).
+Whether the new ML null-check FAILs where the generic one WARNs is a deliberate choice to state in
+the plan — the two can differ, but the difference must be intentional and explained.
+
+### C2 — The zero-match guard must key on *registered* checks, not on an empty result list
+
+`validate_pipeline.py:1589-1597` deliberately returns 0 when the API client is absent or
+`SAPPHIRE_API_ENABLED=false`, and those exits are locked by the two tests above. An empty
+`tier1_results` is also produced legitimately when the postprocessing API is unready
+(`:1418-1419`, `:1432-1433`) and by incompatible combinations such as
+`--module long_term_forecasting --target short-term`. Static Tier-1 counts per module today:
+`preprocessing_runoff` 2, `preprocessing_gateway` 3, `linear_regression` 1,
+**`machine_learning` 0**, `postprocessing_forecasts` 7, `long_term_forecasting` 1 — ML is the only
+API-ready module with none. The draft's (a)/(b) distinction is right but names no mechanism. A check
+**registry** is one option; a static module→expected-check table, declarative check descriptors, or
+precomputed per-tag counts would serve equally. The repo proves the distinction is *missing*, not
+that any particular mechanism is mandatory — picking one is an implementation choice for the plan.
+Also note `--phase pre` returns 0 at `:1493-1495` when `--baseline` is supplied, bypassing any
+exit-code contract.
+
+### C3 — **OWNER DECISION**: the checks need an execution-expectation model, not a calendar gate
+
+A calendar-day gate cannot tell "ML failed" from "ML was never supposed to run":
+
+- `ML_MODE` defaults to `DECAD` (`run_locally.sh:154-156`) and an unset prediction mode defaults to
+  `PENTAD` (`:1123-1127`), so ML is skipped for the mismatched mode (`:1144-1150`) — yet short-term
+  validation still runs (`:1155-1158`).
+- `machine_learning` is in both `DEMO_SKIP_MODULES` and `UZHM_SKIP_MODULES` (`:173-174`), so demo
+  and the uzb deployment skip ML entirely.
+
+Validation receives no run manifest. Deciding what supplies that expectation — a manifest, an
+org/mode-aware rule, or a write receipt — is a design decision, not an implementation detail.
+
+### C4 — **OWNER DECISION**: mode provenance, or an explicitly weaker verdict
+
+Both callers store `horizon_type="day"` with no source-mode field (`utils_ml_forecast.py:788-800`;
+the unique key omits mode at `:760-766`), and `test_api_integration.py:329-337` **locks** day
+storage even for decade. On the 10th, 20th and month-end — dates in both calendars — a DECAD
+validation can pass on PENTAD rows. The draft's "either add provenance or document the limitation"
+is not a real option pair: documenting it means the module verdict is knowingly unsound on shared
+dates. Choose durable provenance, a run-scoped write receipt, or an explicitly reduced claim.
+
+Related: the existing non-forecast-day gate only converts **zero-record FAIL → SKIP**
+(`:1333-1340`). It cannot turn PASS into SKIP, and short-term checks query from the most recent
+boundary through today (`:459-481`), so on the 23rd after a run on the 20th, leftovers read as
+fresh and PASS. Point 4 of the proposed fix is therefore not achievable by reusing the gate.
+
+### C5 — **OWNER DECISION**: presence alone cannot detect a partial write, and the coverage universe is undefined
+
+`check_presence` passes any non-empty frame (`:349-367`), and one surviving station or target row
+satisfies it. An expected **station × target coverage** contract is required before acceptance
+tests can be written; `doc/dev/testing_workflow.md:138-147` requires exact counts, not
+existence-only assertions.
+
+*Marked as an owner decision 2026-08-18 (third review pass):* "assert expected coverage" is not
+implementable until someone states **what the expected set is** — which station universe is
+authoritative, which target dates are in scope for a given issue date, how models disabled for a
+deployment are treated, and therefore what cardinality counts as complete. This materially changes
+what PASS means, so it is a product decision, not an implementation detail.
+
+Two mechanical consequences to settle alongside it:
+
+- **Pagination.** Every presence read is capped at `READ_LIMIT = 5000` in a single call
+  (`:100-101`, `:338-340`). An exact coverage check on a larger deployment would read a complete
+  but truncated response as a partial write. Either paginate or demonstrate the maximum expected
+  cell count stays under the limit.
+- **`BOTH`-mode naming.** `validate` runs Tier 1 once per horizon (`:1401-1427`) and
+  `results_to_json` keys on check name alone (`:192-218`), so a duplicated check name silently
+  overwrites one horizon's result. Horizon-qualified names avoid the overwrite but imply a
+  provenance the records do not carry (C4).
+
+### C6 — The existing ML fixture cannot pin the raw-writer contract
+
+`test_validate_pipeline.py:90-103` has `date`, discharge, model and quantiles but **no**
+`horizon_type`, `target` or `flag`, while real records carry all three
+(`utils_ml_forecast.py:788-800`). Reusing it would let tests pass without asserting the contract
+the fix depends on.
+
+---
 
 ## Acceptance criteria
 
-- `validate_pipeline --module machine_learning` on a forecast day emits a non-zero
-  number of checks, at least one per model, tagged `machine_learning`.
-- Zero-row and all-NaN ML results each make the module validation **FAIL**, tested
-  separately via **mocked API responses / isolated fixtures with explicit issue and
-  target dates** — not by mutating live API data.
-- **Known limitation to state in the fix:** ML writes both PENTAD- and DECAD-triggered
-  records as `horizon_type="day"` with no retained provenance
-  (`utils_ml_forecast.py:713,776`), so a day-horizon presence check cannot by itself
-  attribute rows to the mode under test. Either add provenance or document that the
-  check is mode-agnostic — otherwise a DECAD validation can pass on PENTAD leftovers.
-- A `--module` value that matches no checks exits non-zero with an explicit
-  "no checks matched" message.
-- `SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green, with new tests
-  covering: zero-match filter, all-NaN ML rows, and the non-forecast-day gate.
+*(Revised 2026-08-18 after out-of-loop review. Criteria that depend on an unresolved owner decision
+are marked; do not begin implementation while any remain open.)*
+
+- `validate_pipeline --module machine_learning` on a day when ML **was expected to run** emits a
+  non-zero number of checks, at least one per configured model, tagged `machine_learning`.
+  *Depends on C3 — "expected to run" is undefined until the expectation model is chosen.*
+- Zero-row and all-NaN ML results each make the module validation **FAIL**, tested separately via
+  **mocked API responses / isolated fixtures with explicit issue and target dates** — not by
+  mutating live API data. *Implemented as a **new** check: per C1, the existing finite stuck-flag
+  WARN (`check_ml_flag_distribution`) stays as it is. If the new ML null-check FAILs where the
+  generic NaN check WARNs, say so explicitly in the plan.*
+- Partial writes fail: an expected station × target coverage contract is asserted, not mere
+  presence, and the read is paginated or proven to fit under `READ_LIMIT`. *Depends on C5.*
+- Mode attribution is **sound** (durable provenance or a run-scoped write receipt), or the check
+  reports a deliberately reduced status rather than PASS. *Per C4, a `detail`-string disclaimer
+  alone is not sufficient — a PASS that is known to be unsound on shared dates is the defect this
+  issue exists to remove.*
+  *Depends on C4.*
+- A `--module` value for which **no checks are registered** exits non-zero with an explicit
+  "no checks registered for module X" message, while API-absent / API-disabled / API-unready
+  invocations keep their current exit-0 or readiness-FAIL behavior. *Per C2.*
+- `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green, with new tests
+  covering: zero-registration filter, all-NaN ML rows, partial write, `BOTH`-mode duplicate naming,
+  and the non-forecast-day gate. The single contract change in C1 (the Tier-1 count) is updated in
+  the same commit,
+  each with a comment naming this issue.
 
 ## Reproduction
 
