@@ -11,8 +11,10 @@ files (six paths at the time of writing — do not rely on the count, re-check).
 and the id collision in §0a.4 must be settled first. This is residual risk 6 arriving
 within the hour it was written.
 
-**Scope.** Close out PP-045 honestly, land the two follow-up tickets it owes, and — only
-after an owner decision — fix the write divergence filed as PP-060.
+**Scope.** Close out PP-045 honestly, land the two follow-up tickets it owes, and
+implement **option (a)** for the write divergence filed as PP-060 — the contract was
+decided 2026-08-18 (§4 T2). Option (b) survives only as historical alternative; where
+this plan mentions it, that is the record of what was considered, not live work.
 
 **Scope honesty.** Tiers 0 and 1 are documentation only. **Tier 3 changes runtime code**
 in `apps/postprocessing_forecasts/` and possibly `apps/forecast_dashboard/`, on paths
@@ -88,10 +90,10 @@ refutation of the cause; T0.1 must not repeat that.)
    an **existing** one, so the defect manifests today. May justify re-rating.
 6. **Detect-and-report ticket.** No such file exists under `doc/plans/issues/`.
 
-### 0c. Genuinely open, needing an owner
+### 0c. Owner decisions — one settled, the rest open
 
 7. The **kyg criterion** (PP-045's last acceptance item).
-8. **PP-060's contract** — (a) or (b), see §4 T2.
+8. ~~**PP-060's contract**~~ — **DECIDED 2026-08-18: option (a)** (§4 T2).
 9. PP-045's carried **API-only-by-default** flag.
 
 ### 0d. Housekeeping
@@ -109,7 +111,7 @@ refutation of the cause; T0.1 must not repeat that.)
 | Operator runbook, write path | Documented, **write path prohibited** pending a tested rollback | Yes (#441 §7) | Rollback SQL still unwritten — deliberate |
 | PP-045 diagnosis (cause C1) | — | Asserted in §B2/§H as the live hypothesis | **Unresolved, not refuted.** The 2026-08-18 probe refutes only "the archive is empty today". Tier 0 restates it |
 | PP-045 §G as sole live checklist | — | Asserted | **Stale both ways** (§0a.2) |
-| Recalc/operational write divergence | Present in code | Filed as PP-060 (#445) | Unfixed; owner decision pending |
+| Recalc/operational write divergence | Present in code | Filed as PP-060 (#445) | Unfixed; **contract decided 2026-08-18 (option a)**, implementation pending T3.2 |
 | Detect-and-report | No | Recommended in PP-045 §F | Ticket never filed |
 
 ---
@@ -273,10 +275,11 @@ draft of this plan missed entirely. Note the interaction with the
 broader frame than the API payload. Flag the priority for owner re-rating; **do not
 re-rate unilaterally.**
 
-**Sequencing caution.** If T2 chooses option (a), the recalc stops being a caller and
-this text goes stale the moment T3.2 lands. Either run T0.3 *after* T2 decides, or write
-it so it survives both outcomes — state the maintenance caller unconditionally and the
-recalc caller as "as of trunk `6e28647a`, and subject to PP-060's contract decision".
+**Sequencing — resolved.** T2 chose option (a), so the recalc *will* stop being a caller
+once T3.2 lands. Write this text so it survives that: state the maintenance caller
+unconditionally, and the recalc caller as "as of trunk `6e28647a`; removed by PP-060
+option (a), see T3.2". T0.3 therefore runs after T2 (which it now does) and does not need
+revisiting when T3.2 lands.
 
 - **Acceptance:** PP-046 no longer says "future" caller; cross-references PP-060.
 
@@ -308,18 +311,35 @@ latter is not the PP-045 signature.
 
 ### T2 — Owner decisions (gate; no work)
 
-1. **PP-060 contract:** (a) the recalc stops writing period forecasts, or (b) it writes
-   the same row set as operational (larger; pulls in PP-030 per C3).
+> **DECIDED 2026-08-18 — option (a), and CSV output is being deprecated repo-wide.**
+> The two are linked: with CSV writing going away, the recalc's only remaining *forecast*
+> side effect is the API forecast write, so removing it is a far smaller conceptual
+> change than when it also owned two CSV artefacts. (It still writes skill metrics to the
+> API — that is its job and is untouched.) **Decision 1 is settled; 2, 3 and 4 remain
+> open** — 2 has changed from a design question to a scheduling one, because option (a)
+> does not by itself retire the dashboard CSV problem. See "Consequences of the decision"
+> after the list.
+
+1. **PP-060 contract — DECIDED: (a)**, the recalc stops writing period forecasts.
+   Option (b) (write the same row set as operational) is **not** being pursued, which
+   also means **PP-030 is not pulled in** — the `exclude_models=["EM"]` exclusion stays
+   exactly as it is, because under (a) the recalc writes no forecast rows at all. C3
+   remains in force for anyone later revisiting (b).
 
    **Option (a) is one edit but not a small change** — an earlier draft of this plan
    called it "the removal of one call", which understated it badly. Deleting that call
    removes, from *every* short-term recalc: combined and `_latest` CSV generation **and**
-   the forecast API write. Before choosing (a), the owner must answer:
-   - **What seeds initial combined-forecast and API state on a new deployment?** Both
+   the forecast API write. Now that (a) is chosen, these are **verification items for
+   T3.2**, not inputs to the decision:
+   - **What actually seeds combined-forecast API state on a new deployment?** Determine
+     this empirically; do not assume the recalc does (see the consequences section — the
+     evidence suggests its write may already be a no-op on a fresh site). Both
      initialization implementations (`apps/run_locally.sh`, `apps/pipeline/pipeline_docker.py`)
-     *finish* with the recalc and have no subsequent operational or backfill step. New-site
-     backfill (`bin/initialize_site_backfill.sh`) also runs a `BOTH` recalc. Under (a),
-     nothing seeds that state unless something is added.
+     *finish* with the recalc and have no subsequent operational or backfill step, and
+     new-site backfill (`bin/initialize_site_backfill.sh`) also ends on a `BOTH` recalc —
+     so **if** the recalc's write is what seeds that state, (a) removes it with no
+     replacement. Whether it seeds anything is the open question; answer it before
+     building a replacement.
    - **What about the tooling that hardcodes those CSVs?** DB reset and the postprocessing
      `data_migrator` reference them by name, and `doc/prod/backfill_ml_fromfile.md`
      identifies them as what puts short-term ML into the dashboard.
@@ -327,16 +347,91 @@ latter is not the PP-045 signature.
      CLI docstring, and the review-checklist template all state that the recalc writes
      period rows. Option (a) invalidates each — including text T0.3 would have just
      written.
-2. **Whether the dashboard `write_csv` fix is carved out** as its own change ahead of
-   (a)/(b). Recommended: yes.
+2. **Whether the dashboard `write_csv` fix is carved out** — **still open, and now a
+   scheduling question.** See "T3.1's status" below: option (a) does not by itself retire
+   it, because the scoped `save_skill_metrics` CSV overwrite survives option (a).
 3. **The kyg criterion** — run the full kyg pipeline when available, or waive in writing.
 4. **PP-045's API-only-by-default flag** — confirm or override.
 
-**Nothing in Tier 3 may start before 1 and 2 are answered.**
+**Gating, stated once so the graph and prose agree:** T3.2 is gated on **decision 1**,
+which is settled. T3.1 is gated on **decision 2**, which is open. In §6's default
+scenario T3.1 also precedes T3.2 and T4 — if decision 2 drops T3.1, re-parent per §6
+rather than leaving T3.2 without its Tier-0 chain.
 
-### T3.1 — Dashboard scoped recalc must not rewrite shared CSVs
+### Consequences of the 2026-08-18 decision
 
-- **Goal:** a single-station user action stops rewriting the operational combined CSVs.
+**PP-060 shrinks — by two axes, not three.** Of its eight, exactly two are CSV-shaped:
+**CSV writing** and **what each artefact receives**. Both are retired by the deprecation
+rather than fixed. (An earlier draft also counted the CSV-backed consistency check; that
+is a detail of T3.1, not one of the eight rows.) **Six survive**: the EM row set,
+`require_api`, year scope, station scope plus virtual stations, empty-observation
+behaviour, and operator controls.
+
+**T3.1's status — option (a) does NOT retire it.** The carve-out existed to stop a scoped
+recalc rewriting shared CSVs, and there are two:
+- the **combined** forecast CSVs, written via `save_forecast_data` — option (a) removes
+  that call from the recalc entirely, so these are retired by (a);
+- the **skill-metric** CSV, written via `save_skill_metrics`, which the recalc still calls
+  because writing skill metrics is its job. **Option (a) leaves this one live**, so a
+  station-scoped dashboard recalc can still overwrite the shared skill-metric CSV with a
+  single station's data.
+
+T3.1 is therefore superseded only once the CSV deprecation removes the skill-metric CSV
+write. Until then it is a live defect. The owner's remaining choice (T2.2) is scheduling:
+- if the deprecation will remove that write soon, **drop T3.1** and let it absorb the fix;
+- otherwise **keep T3.1, scoped to `save_skill_metrics` only** — option (a) handles the rest.
+Record whichever is chosen; the dependency graph assumes T3.1 runs, and §6 says how to
+re-derive it if not.
+
+**The seeding concern is WEAKER than an earlier draft claimed — verify it before acting
+on it.** That draft asserted the recalc's API forecast write is what seeds a new site.
+The pipeline *shape* is confirmed — `bin/initialize_site_backfill.sh` has three phases,
+ends with the recalc, and nothing after it writes forecasts — but the seeding claim is
+**not established**, and the evidence points the other way:
+- the init flow regenerates **LR forecasts only**;
+- the recalc obtains ML rows by *reading* the already-populated `forecasts` API, so on a
+  purged site there is nothing for it to read;
+- `api_writer` drops LR rows before the combined write and returns false when nothing
+  non-LR remains — so on a fresh site that write plausibly does nothing at all;
+- `doc/prod/first_deploy_checklist.md` promises only LR state and skill metrics from a
+  fresh deployment.
+
+**Action before T3.2:** establish empirically what a fresh site ends up with in
+`forecasts`, and whether removing the recalc's write changes it. If it changes nothing,
+option (a) needs no seeding step and the main objection to it disappears. Do not build a
+seeding step on the strength of the earlier claim.
+
+**Two deprecation hazards, filed here because no other plan owns them.** Neither is
+loud: both log, and both let the run exit zero, so they surface as wrong data rather than
+as a failure — the same shape as the seeding gap, a green run with a wrong result,
+discovered much later:
+1. **CSV fallback readers become stale-data traps.** `data_reader.read_combined_forecasts`
+   is API-first with a fallback already marked deprecated in code. Once writing stops it
+   serves frozen data when the API is down instead of failing. Remove each fallback in
+   the same change as its writer.
+2. **`bin/reset_sapphire_db.sh` invokes `data_migrator.py --type combinedforecast`**,
+   which reads `combined_forecasts_pentad.csv` / `combined_forecasts_decad.csv` by name.
+   **The API cannot be the replacement source here** — the reset drops the database volume
+   *before* starting the API, so the restarted API is backed by the empty database it is
+   meant to refill. This path needs a pre-reset export, a backup/restore, or a
+   regeneration step. Left as is: a stale file repopulates stale rows; an absent file is
+   warned about and skipped, leaving the table empty and the migrator exiting zero.
+These belong to the deprecation effort, not to PP-060; record them wherever that work is
+tracked. They are noted in `CLAUDE.md` § Data I/O Transition.
+
+### T3.1 — Dashboard scoped recalc must not rewrite the shared skill-metric CSV
+
+**Scope narrowed by decision (a) — with one interim exception.** Option (a) removes the
+recalc's `save_forecast_data` call, so the *combined* forecast CSVs stop being at risk
+from this path **once T3.2 lands**. In the default ordering T3.1 runs *first*, so it must
+still cover them in the meantime; its steps below mark that work interim and T3.2 step 5
+deletes it. The artefact that survives permanently, and the reason T3.1 exists at all,
+is `save_skill_metrics`, whose CSV write is unconditional and which the recalc still
+calls. **That artefact is T3.1's permanent scope; the combined CSVs are temporary scope**
+it carries only until T3.2 removes the call ahead of it.
+
+- **Goal:** a single-station user action stops rewriting shared CSVs — after (a), that
+  means the skill-metric CSV.
 - **Files:** the call sites — `apps/forecast_dashboard/src/vizualization.py`,
   `recalculate_skill_metrics.py`, and possibly a new parameter on
   `file_writer.save_skill_metrics` (see step 1). **Not** `save_forecast_data`'s
@@ -356,9 +451,12 @@ saw only the combined forecast CSVs:
 
 Steps:
 
-1. Decide the mechanism for each artefact. For the combined CSVs, pass `write_csv=False`
-   explicitly on the scoped path. For the skill-metric CSV, either add a `write_csv`
-   parameter to `save_skill_metrics` **defaulting to `True`** so no existing caller
+1. Decide the mechanism. **After decision (a) the only artefact in scope is the
+   skill-metric CSV** — the combined CSVs leave via T3.2. (If T3.1 lands *before* T3.2,
+   also pass `write_csv=False` on the scoped `save_forecast_data` call as an interim
+   guard; drop that half once T3.2 removes the call.) For the skill-metric CSV, either
+   add a `write_csv` parameter to `save_skill_metrics` **defaulting to `True`** so no
+   existing caller
    changes (C1's principle applied to a new parameter), or stop the dashboard invoking a
    writing path at all. Prefer whichever leaves the unscoped recalc byte-identical,
    since T3.2 will revisit that path.
@@ -366,47 +464,64 @@ Steps:
    consistency check**, which re-reads that CSV to verify the write. Left enabled on an
    API-only run it would verify a scoped frame against stale or absent shared CSV state
    and report a spurious mismatch. Suppress both together.
-3. Tests (C5), covering **all three physical files** — combined, `_latest`, and skill
-   metrics: a scoped recalc touches none of them; an unscoped recalc's behaviour is
-   unchanged; and the suppression is exercised with `SAPPHIRE_CONSISTENCY_CHECK=true`.
-   The skill **API write and its failure return must be preserved** — this phase removes
-   a CSV side effect, not the write.
+3. Tests (C5). **Primary, and the only ones that outlive T3.2:** a scoped recalc does not
+   touch the shared **skill-metric** CSV; an unscoped recalc's behaviour is unchanged; the
+   consistency-check suppression is exercised with `SAPPHIRE_CONSISTENCY_CHECK=true`; and
+   the skill **API write and its failure return are preserved** — this phase removes a CSV
+   side effect, not the write. *Interim only, if T3.1 lands before T3.2:* the same
+   assertions for the combined and `_latest` CSVs. Delete those two when T3.2 removes the
+   `save_forecast_data` call, rather than leaving tests asserting a path that no longer
+   exists.
 4. Decide C9 explicitly: should the dashboard's swallowed failures now surface? If yes,
    it is a **separate** change (C4).
 
-- **Acceptance:** C2 evidence; the scoped path provably writes **none of the three**
-  shared CSVs; the skill API write still happens and still reports failure;
+- **Acceptance:** C2 evidence; the scoped path provably writes **no shared skill-metric
+  CSV** (and, while T3.2 is outstanding, no combined CSV either); the skill API write
+  still happens and still reports failure;
   unscoped behaviour byte-identical; the new parameter (if added) defaults to current
   behaviour; one axis only.
 
 ### T3.2 — Implement the chosen PP-060 contract
 
-- **Goal:** the recalc and operational paths stop disagreeing.
-- **Files:** depends on the decision. Under (a) the *code* edit is one call — but the
-  phase also touches existing tests that assert that call, and the documents listed in
-  T2.1 that describe the recalc as a period-row writer. It is one decision, not one file.
-- **Depends on:** T2.1, T3.1.
+- **Goal:** the recalc stops writing period forecasts (option (a), decided 2026-08-18).
+- **Files:** `recalculate_skill_metrics.py` — the `save_forecast_data` call. The *code*
+  edit is one call, but the phase also touches the existing tests that assert that call
+  and the documents that describe the recalc as a period-row writer. One decision, not
+  one file.
+- **Depends on:** T2.1 (settled), T3.1 in the default scenario.
 
-Steps: implement the chosen contract. Under (b), **one axis per PR** (C4), each with C5
-tests and C2 evidence, and PP-030's boundary misalignment addressed first or waived in
-writing (C3). Under (a), the change lands alone under C4's atomic-responsibility-removal
-exception, and **only after** the seeding question in T2.1 has an answer that is itself
-implemented or explicitly deferred with the risk accepted.
+Steps:
 
-Under (a), the phase must also: update the existing tests that assert the forecast-save
-occurs (narrowly, per C2); and refresh the documents listed in T2.1 that state the recalc
-is a period-row writer — otherwise the fix ships alongside documentation asserting the
-opposite.
+1. **Answer the seeding question first** (§T2 consequences): establish empirically what a
+   fresh site ends up with in `forecasts`, and whether removing this call changes it. If
+   it changes nothing, proceed. If it does, the replacement seeding step must be
+   implemented or the risk explicitly accepted in writing **before** this lands.
+2. Remove the call. It lands **alone**, under C4's atomic-responsibility-removal
+   exception.
+3. Update the existing tests that assert the forecast-save occurs — narrowly, per C2.
+   Existing tests require two forecast-save calls, four recalc output CSVs, saved
+   forecast contents, and forecast-save failure propagation; these are intentional
+   expectation changes, not weakened coverage.
+4. Refresh the documents that state the recalc is a period-row writer: PP-045's writer
+   inventory and §H matrix, the backfill CLI docstring, and
+   `doc/dev/review_checklist_local_template.md`. Otherwise the fix ships beside
+   documentation asserting the opposite.
+5. Drop T3.1's interim combined-CSV assertions, now that the call is gone.
 
-- **Acceptance:** for a fixed input frame under equal skill conditions, both paths
-  produce the same `model_short` set (or, under (a), only one path writes at all); C2
-  evidence on every PR; no document left asserting the superseded writer inventory.
+**PP-030 is not in scope.** Under (a) the recalc writes no forecast rows, so
+`exclude_models=["EM"]` stays exactly as it is. Only option (b) would have required
+reconciling it.
+
+- **Acceptance:** the recalc performs no forecast write; its skill-metric write and
+  failure return are unchanged; C2 evidence; no document left asserting the superseded
+  writer inventory.
 
 ### T4 — Record the decisions and close PP-045
 
-- **Goal:** the thing this plan is named for. T2 produces decisions; **without this phase
-  nothing writes them down**, and PP-045's live checklist still shows kyg and the
-  API-default flag as open. An earlier draft of this plan had no such phase — its stated
+- **Goal:** the thing this plan is named for. T2 produces decisions; the PP-060 contract
+  and the CSV deprecation are now recorded in §T2 and in PP-060 itself, but **the kyg and
+  API-default decisions still are not written anywhere**, and PP-045's live checklist
+  still shows both as open. An earlier draft of this plan had no such phase — its stated
   close-out goal was unreachable from its own dependency graph.
 - **Files:** `doc/plans/issues/review_gi_draft_pp_missed_boundary_period_gap.md`;
   `doc/plans/module_issues.md`.
@@ -457,9 +572,12 @@ Steps:
    the first draft of T3.1 and found only in review. Before implementing T3.1, grep
    `file_writer.py` for every `atomic_write_csv` call and check which are gated — do not
    assume the three known ones are all of them.
-9. **Option (a) can strand a new deployment.** If it lands before the seeding question is
-   answered, initialization completes with no combined-forecast CSV or API state and no
-   step that creates it. This risk is invisible on an existing deployment and appears
+9. **Option (a) *may* strand a new deployment — unverified, and the evidence now points
+   away from it.** The concern is that initialization completes with no combined-forecast
+   API state and no step that creates it. But the recalc reads ML rows from `forecasts`,
+   which a purged site does not have, and the writer drops LR rows, so its write may
+   already be a no-op on a fresh site (see the T2 consequences). Verify before treating
+   this as a blocker. If real, the risk is invisible on an existing deployment and appears
    only on the next fresh install — the worst place to discover it.
 10. **This plan has twice understated a change's blast radius** — first calling option (a)
     "the removal of one call", then covering only one of three shared CSVs. Both were
@@ -483,7 +601,8 @@ Prerequisites and conditionals not expressible in the graph:
   `["T0.1", "T0.2", "T0.3", "T2"]`. Simply deleting the T3.1 edges would leave T3.2 with
   no Tier-0 dependency at all and silently break C6. The JSON below is one named
   scenario, not a representation of both branches.
-- Option (b) requires PP-030 addressed or waived (C3).
+- Option (b) is not being implemented; its PP-030 prerequisite (C3) applies only if the
+  contract is ever revisited.
 
 ```json
 {
