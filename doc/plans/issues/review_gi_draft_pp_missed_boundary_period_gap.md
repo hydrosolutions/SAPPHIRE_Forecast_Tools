@@ -1142,10 +1142,11 @@ Silence here is indistinguishable from health.
 
 **File as a new ticket, do not bundle into PP-045.** PP-045's scope was "provide a
 recovery mechanism", and that is delivered. "Make the condition visible" is a
-different contract with a different risk profile. **Do not assume PP-056 is free:**
-it is unused on trunk `8e3fc1bc` but claimed by an uncommitted entry (quarter
-skill-metric `horizon_value=0`) in a parallel session's working copy of
-`doc/plans/module_issues.md`. Allocate against the *current* index, not trunk's.
+different contract with a different risk profile. **Do not assume any id is free:**
+PP-056 and PP-059 were both claimed by a parallel session and landed in the registry via
+PR #448 — PP-059 is "Remove monthly EM", and the write-divergence issue this plan
+references was renamed to **PP-060** as a result. Allocate against the *current* index
+immediately before writing the row, never against a remembered value.
 
 ### G. Remaining checklist to move Review → Complete
 
@@ -1247,14 +1248,18 @@ issue's own Desired Outcome:**
       (§A6). `recalculate_skill_metrics.py:191` passes no year bounds; the save
       path collapses period-in-year across years. Silent under-write, not data
       loss. Strongest concrete instance of PP-046.
-- [ ] **Detect-and-report for stranded boundary days** (§F). Allocate a free ID —
-      allocate against the *current* `module_issues.md`, not trunk's (see §F —
-      PP-056 is free on trunk but claimed in a parallel session's working copy).
+- [ ] **Detect-and-report for stranded boundary days** (§F). Allocate against the
+      *current* `module_issues.md` immediately before writing the row — PP-056 and
+      PP-059 were both taken by a parallel session and landed via PR #448, and the
+      write-divergence issue had to be renumbered to PP-060 as a result.
 
-**Owner decisions still open (carried forward, unchanged):**
+**Owner decisions:**
 
-- [ ] API-only-by-default write (`--write-csv` opt-in) — behavioural choice on the
-      combined-CSV artifact; owner may override to CSV+API.
+- [x] **API-only-by-default write (`--write-csv` opt-in) — CONFIRMED 2026-08-18.** The
+      backfill CLI keeps CSV writing off by default. This was carried as an open flag
+      since 2026-07-23; the answer is now consistent with the repo-wide decision that
+      **CSV output is being deprecated** (`CLAUDE.md` § Data I/O Transition), which also
+      means the flag retires with the CSVs rather than needing a change of its own.
 
 **Explicitly NOT blocking Complete:** PP-046 (yearless key — worked around by the
 per-year loop), PP-048 (decade EM freeze). **PP-047 is not a code blocker either,
