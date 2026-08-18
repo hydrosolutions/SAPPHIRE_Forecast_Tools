@@ -19,7 +19,7 @@ Two independent day-window gates disagree:
 | Gate | Value | Location |
 |---|---|---|
 | Scheduler — decides whether a **mode** is active | `ISSUE_DAY_TOLERANCE = 10` | `lt_schedule_query.py:52`, applied `:103` |
-| Execution — decides whether a **model** runs | hard-coded `5` | `lt_utils.py:196` (`check_valid_forecast_issue_date`), applied via `abs(day_offset) > 5` |
+| Execution — decides whether a **model** runs | hard-coded `5` | `lt_utils.py:202` in `check_valid_forecast_issue_date` — `abs(day_offset) > 5` (`:196` is the comment above it) |
 
 So for a day 6–10 days from a mode's `operational_issue_day`:
 
