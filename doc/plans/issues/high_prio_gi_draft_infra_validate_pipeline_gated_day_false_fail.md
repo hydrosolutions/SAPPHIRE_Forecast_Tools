@@ -197,10 +197,17 @@ downgraded.
 - `test_long_term_never_skipped` is **intentionally superseded**: it locks the current
   premise and must be replaced (not deleted silently) by tests asserting per-mode
   gating, so the behaviour change is explicit and reviewed.
-- **Shared-fixture impact (flagged 2026-08-18):** the autouse fixture at
-  `test_validate_pipeline.py:36-59` writes long-term configs carrying only
-  `operational_month_lead_time` — **no `operational_issue_day`** — while schedule-aware gating
-  needs both (`long_term_horizon_resolver.py:112-142`). Introducing gating will therefore also
-  disturb the existing long-term mapping / empty-quarter / empty-season / all-present tests
-  (`:418-477`). Update the fixture and those dates deliberately, in the same commit.
+- **Shared-fixture impact — re-scoped 2026-08-18 (third pass).** An earlier version of this bullet
+  required the autouse fixture (`test_validate_pipeline.py:36-59`) to gain `operational_issue_day`,
+  because gating was assumed to call `operational_schedule_for_mode`
+  (`long_term_horizon_resolver.py:112-142`). **That justification is gone**: gating consumes the
+  INFRA-028 manifest and calls no scheduling predicate, and `validate_pipeline` imports only the
+  lead-value helpers (`:35-49`), which need `operational_month_lead_time` alone
+  (`long_term_horizon_resolver.py:68-81`). The instruction outlived its reason — the same defect
+  shape as the vestigial phase in the extraction plan.
+  **What remains true**: introducing gating still changes verdicts on the existing long-term
+  mapping / empty-quarter / empty-season / all-present tests (`:418-477`), because those assert
+  today's un-gated behavior. Update *those* deliberately in the same commit. Whether the fixture
+  needs new fields depends on what the manifest test double carries — decide when the manifest
+  schema is fixed, not now.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green.

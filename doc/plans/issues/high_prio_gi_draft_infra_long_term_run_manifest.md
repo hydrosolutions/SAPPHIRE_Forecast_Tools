@@ -62,17 +62,30 @@ A **run-scoped manifest**, written to a unique path (e.g.
 validation **explicitly** — by path or run id — never discovered by "latest file wins".
 
 Fields the review identified as load-bearing: schema version; run id; target/organization;
-requested forecast date; generated-at; config fingerprint; source; active and skipped modes with
-reasons; per-mode horizon type and horizon value; and outcomes.
+requested forecast date; **expected output date per mode-model** (see below); generated-at; config
+fingerprint; source; active and skipped modes with reasons; per-mode horizon type and horizon value;
+and outcomes.
 
-Three corrections from the second review pass (2026-08-18):
+Corrections from the second and third review passes (2026-08-18):
 
-- **The effective output date is per mode-model, not per run.** Each model has its own
+- **The effective output date is per mode-model, and it must be a field.** Each model has its own
   `forecast_months` and computes its own nearest scheduled date (`lt_utils.py:188-202`), then snaps
   independently (`:211-217`); scheduler eligibility is likewise per model
-  (`lt_schedule_query.py:107-124`). Some models in a mode can skip while another activates it. A
-  single run-level "effective date" field would be wrong for at least one row on exactly the days
-  this issue exists to describe.
+  (`lt_schedule_query.py:107-124`). Some models in a mode can skip while another activates it. So a
+  single run-level "effective date" would be wrong for at least one row on exactly the days this
+  issue exists to describe.
+  > **Third pass caught an overcorrection here**: an earlier edit dropped the effective-date field
+  > *entirely* rather than re-scoping it per mode-model. That broke the manifest's purpose —
+  > INFRA-021 and INFRA-022 both cite this manifest as the answer to snapped-back dates, and
+  > validation queries **exact** dates (`validate_pipeline.py:519-573`). Without it, validation
+  > cannot find legitimately late output. Restored, correctly scoped.
+  >
+  > **This does not force the two-stage model.** The snap is deterministic: within the ±5 window, a
+  > late model's stored date becomes its *scheduled* date and an early/on-time model's stays
+  > `today` (`lt_utils.py:196-217`). Both are computable at resolution time, so an **intent-only**
+  > manifest can carry an *expected* output date per mode-model. Confirm this against the code
+  > before relying on it — if any path can store a third date, the two-stage model becomes
+  > necessary after all.
 - **The `source` enum needs more than `scheduler` / `manual-override`.** The local runner has a
   **legacy fallback** resolution path with its own hard-coded gate and mode set
   (`run_locally.sh:284-300`), used when the schedule query fails. A manifest that cannot say "these
@@ -115,7 +128,7 @@ untestable.
 **Simulation must be resolved consistently with INFRA-021.** This issue currently allows declaring
 simulation out of operational validation *and* requires every path to write exactly one manifest —
 those conflict, and INFRA-021 separately requires simulation-date propagation with a
-per-date/last-date/aggregate choice. One decision, recorded in both. See open question (9).
+per-date/last-date/aggregate choice. One decision, recorded in both. See open question **(10)**.
 
 **Do not** add these fields to `lt_schedule_query`'s stdout JSON. That shape is consumed by three
 call sites and pinned by the INFRA-022 extraction plan's characterization tests; keep the manifest a
@@ -169,8 +182,12 @@ inventing a parallel mechanism. A `modules` map keyed by module name would do it
 
 ## Acceptance criteria
 
-- Every path that can run long-term work writes exactly one manifest, including the paths that run
-  **nothing**.
+- Every path **within the agreed scope** (see § "Scope: 'every path' needs narrowing") writes
+  exactly one manifest, including the paths that run **nothing**. *Not testable until that scope
+  decision and the simulation decision (open question 10) are recorded — an unqualified "every
+  path" contradicts this issue's own allowance for excluding simulation and unowned entry points.*
+- The manifest carries an **expected output date per mode-model**, so validation can locate output
+  that was legitimately stored under a snapped-back date rather than the requested one.
 - A manifest is matched to the validation invocation by explicit identity; a mismatched or missing
   one produces a distinct, loud infrastructure failure.
 - `run_all` on a deployment where long-term is skipped (`run_locally.sh:1228-1238`) validates

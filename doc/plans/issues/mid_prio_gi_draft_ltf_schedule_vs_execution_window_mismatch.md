@@ -84,10 +84,20 @@ implemented in two.
 ## Proposed fix (to be planned)
 
 1. Decide the operational window — one value, one definition.
-2. Have both gates read it from a single place. Note INFRA-022's extraction work moves
-   `ISSUE_DAY_TOLERANCE` into `apps/long_term_forecasting/lt_schedule_rules.py` (a flat sibling of
-   both call sites — placement corrected in plan rev 4); this issue should consume that, not add a
-   fourth definition.
+2. Have **all three** gates agree. *(Corrected 2026-08-18: an earlier version of this list said
+   "both gates", written before the shell fallback was found. Documenting a third authority in the
+   table above while leaving the remedy at two would have left the fallback hard-coded and the
+   issue unclosed.)*
+   - **Python scheduler** and **Python execution gate** read the value from a single place —
+     `apps/long_term_forecasting/lt_schedule_rules.py`, which the INFRA-022 extraction creates as a
+     flat sibling of both call sites (placement per plan rev 4). Do not add a fourth definition.
+   - **The shell fallback** (`run_locally.sh:232-261`) cannot import a Python constant. Choose
+     deliberately and record it: either (i) delete the fallback and let a failed schedule query be a
+     hard error — it currently substitutes its own guess for the authority that just failed;
+     (ii) have it shell out to a tiny query that prints the value; or (iii) keep the literal but
+     add a comment naming the Python definition as authoritative and a test that fails when they
+     diverge. **(i) deserves consideration on its own merits**: a fallback that silently disagrees
+     with the scheduler it replaces is worse than no fallback.
 3. Reconcile or delete the stale comment in `lt_utils.py` — **and the matching stale text in
    `tests/test_lt_utils.py:91-103`**, which likewise claims execution was widened from 5 to 10. Both
    describe a widening the code does not implement.
@@ -97,7 +107,10 @@ implemented in two.
 
 ## Acceptance criteria
 
-- One authority for the window; both call sites read it.
+- One authority for the window; **all three** gates agree with it — the Python scheduler, the Python
+  execution gate, and the shell fallback (per the decision recorded in fix step 2).
+- A test fails if the shell fallback's window and the Python authority diverge, whichever option was
+  chosen — otherwise this issue recurs silently the next time the value changes.
 - A run scheduled but rejected by every model produces a visible non-success signal, or the
   scheduler stops admitting days that execution will refuse.
 - Tests cover the boundary on both sides: `distance == window`, `window + 1`, and the previously

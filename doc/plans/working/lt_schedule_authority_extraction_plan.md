@@ -242,7 +242,9 @@ proceed now; P1 onward should wait for that decision to be recorded.
 - **Goal**: `lt_schedule_rules.py` exists, is pure, and is unit-tested in isolation.
 - **Files**: `apps/long_term_forecasting/lt_schedule_rules.py` (new);
   `apps/long_term_forecasting/tests/test_lt_schedule_rules.py` (new).
-- **Depends on**: P0.
+- **Depends on**: P0, **and on INFRA-028's missing-manifest decision being recorded** — that
+  decision determines whether the module belongs here or in `iEasyHydroForecast` (see § "Why the
+  placement changed"). Starting P1 before it risks writing the module twice.
 - **Agents**: 1.
 - **Work**: implement the predicate set above — predicates and constants only, no loop, no
   `ForecastConfig`, no env reads, no file I/O. Reason strings copied character-for-character.
@@ -260,11 +262,14 @@ proceed now; P1 onward should wait for that decision to be recorded.
 ### P2 — Rewire `lt_schedule_query` *(was P3)*
 
 - **Goal**: `query_schedule` keeps loading config and shaping JSON, delegating only the predicates.
-- **Files**: `apps/long_term_forecasting/lt_schedule_query.py`, plus the three files carrying stale
-  line-number citations to the moved constants:
+- **Files**: `apps/long_term_forecasting/lt_schedule_query.py`, plus the **five** files whose
+  `lt_schedule_query.py:54-91` citations this move invalidates:
   `apps/iEasyHydroForecast/tests/test_initialize_long_forecast.py:256-258`,
   `bin/utils/migration_py/long_forecast.py:11-12`,
-  `bin/initialize_long_forecast_history.sh:25-28`.
+  `bin/initialize_long_forecast_history.sh:25-28`,
+  `doc/prod/update_data_migration_runbook.md:624-627`,
+  `doc/plans/issues/high_prio_gi_draft_update_migration_p5_long_forecast.md:44-47`.
+  *(The last two were found in the third review pass; a rev-4 draft listed only three.)*
 - **Depends on**: P1.
 - **Agents**: 1.
 - **Work**: replace inline predicates with calls into `lt_schedule_rules`. **Keep the loop, the
@@ -314,10 +319,13 @@ proceed now; P1 onward should wait for that decision to be recorded.
    **inside** the caught block and becomes a skipped-mode reason, not a CLI failure. An uncaught
    failure remains possible if a file disappears between load and access. P0(b) pins whichever
    behavior is current, not the assumed one.
-2. **Stale cross-references — five, not three.** Beyond P2's three, the same
-   `lt_schedule_query.py:54-91` citation appears at `doc/prod/update_data_migration_runbook.md:624-627`
-   and `doc/plans/issues/high_prio_gi_draft_update_migration_p5_long_forecast.md:44-47`. Docs-only,
-   but a runbook citation that points at the wrong lines is exactly the MIG-002 failure mode.
+2. **Five citations will go stale — they are correct *today*.** All five listed in P2 currently
+   point at real content: `lt_schedule_query.py:54-91` still holds `NON_OPERATIONAL_MODES` and its
+   skip. They break **when P2 moves the constants**, which is why they are in P2's file list rather
+   than filed as a pre-existing defect. *(Corrected in the third pass: an earlier draft called them
+   "already stale" and likened them to MIG-002 — MIG-002 was a rollback dump-glob data-loss defect,
+   not citation drift. The analogy was wrong and the tense was wrong.)* One of the five is an
+   operator **runbook**, so the update is not merely cosmetic.
 3. **Three live schedule definitions survive, not one.** This plan single-sources only the
    scheduler's. Also live:
    - `bin/utils/migration_py/long_forecast.py:72` — its own `_ALWAYS_SKIP_MODES`, applied `:197-203`.
@@ -331,11 +339,20 @@ proceed now; P1 onward should wait for that decision to be recorded.
 
 ```json
 {
+  "external_gates": {
+    "INFRA-028-missing-manifest-decision": {
+      "blocks": ["P1", "P2", "P3"],
+      "why": "determines whether the module lives in long_term_forecasting or iEasyHydroForecast"
+    }
+  },
   "phases": {
     "P0": { "depends_on": [], "parallel_agents": 1 },
-    "P1": { "depends_on": ["P0"], "parallel_agents": 1 },
+    "P1": { "depends_on": ["P0", "INFRA-028-missing-manifest-decision"], "parallel_agents": 1 },
     "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
     "P3": { "depends_on": ["P2"], "parallel_agents": 1 }
   }
 }
 ```
+
+*(The gate was prose-only in the first rev-4 draft — the graph said P1 depended on P0 alone, so an
+agent reading only the graph would have started P1 immediately.)*
