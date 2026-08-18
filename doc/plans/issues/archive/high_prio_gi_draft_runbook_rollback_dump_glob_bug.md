@@ -1,6 +1,6 @@
 ## Runbook §10 rollback uses wrong dump filename glob — silent data loss on operator rollback
 
-**Status**: Draft (2026-06-08)
+**Status**: Complete — fixed and merged 2026-06-10 (PR #359, commit `a1e0dfb6`); all acceptance criteria below re-verified on trunk 2026-08-18
 **Module**: `doc/prod/update_data_migration_runbook.md` (§10 rollback procedure)
 **Priority**: **High** (data-loss class — operator follows the procedure verbatim → live DB destroyed, no restore)
 **Labels**: `runbook`, `rollback`, `data-loss`, `migration-toolkit`, `tjhm`, `P7-followup`
@@ -8,7 +8,12 @@
 **Related**:
 - PR #356 (P7 — final runbook §8/§9/§10) merged after 3 review rounds with live-DB verification of §8 SQL; §10 was NOT exercised end-to-end during review
 - `bin/backup_sapphire_db.sh:206` — the authoritative source for the actual filename format
-- Adjacent finding [MIG-001](high_prio_gi_draft_migration_dry_run_station_code_leak.md) — also discovered during the same walkthrough
+- Adjacent finding MIG-001 (migration dry-run station-code leak) — also discovered during the same
+  walkthrough. **Dangling reference (noted 2026-08-18)**: the linked file
+  `high_prio_gi_draft_migration_dry_run_station_code_leak.md` was never created on any branch and
+  MIG-001 has no row in `module_issues.md`, so the link is removed here. Two other issue files
+  (`high_prio_gi_draft_migration_horizon_type_case_coercion.md`,
+  `low_prio_gi_draft_lt_config_strip_on_split.md`) also cite MIG-001 — the id is referenced but unfiled.
 
 ---
 
@@ -166,11 +171,14 @@ The bug slipped through three reviewer-fix rounds of PR #356 (commit history sho
 
 ## Acceptance criteria
 
-- [ ] All six citations corrected in `doc/prod/update_data_migration_runbook.md` (lines 2527-2530, 2564, 2599)
-- [ ] §10.3 and §10.4 `ls` commands wrapped in the hardened guard pattern (refuses to DROP if glob is empty)
-- [ ] End-to-end smoke test executed: backup → reset → restore → row-count match, on the laptop's local Docker stack
-- [ ] PR description references this gi_draft and the discovery context
-- [ ] No similar globs lurking elsewhere in the runbook (one-shot grep: `grep -nE "sapphire-(preprocessing|postprocessing|user|auth)-db_" doc/prod/update_data_migration_runbook.md` returns empty)
+- [x] All six citations corrected in `doc/prod/update_data_migration_runbook.md` (comment block now at `:2567-2570`; globs at `:2606` and `:2648`)
+- [x] §10.3 and §10.4 `ls` commands wrapped in the hardened guard pattern (refuses to DROP if glob is empty) — `:2610` and `:2650`, testing `-n` / `-s` / `-r`
+- [x] End-to-end smoke test executed: backup → reset → restore → row-count match, on the laptop's local Docker stack — recorded in the merge commit `a1e0dfb6` (user_db sanity loop, preprocessing-db full rehearsal 4.2M rows bit-for-bit, postprocessing-db restore). Evidence is the commit record; not independently re-run on 2026-08-18
+- [x] PR description references this gi_draft and the discovery context — PR #359
+- [x] No similar globs lurking elsewhere in the runbook (one-shot grep: `grep -nE "sapphire-(preprocessing|postprocessing|user|auth)-db_" doc/prod/update_data_migration_runbook.md` returns empty) — re-run 2026-08-18, still empty
+
+**Verification note (2026-08-18)**: the "Required gate" above — exercising §10 end-to-end before any
+future P7-class merge — is a *standing* gate for future work, not an open item of this issue.
 
 ---
 
