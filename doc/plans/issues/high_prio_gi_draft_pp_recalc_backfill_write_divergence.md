@@ -120,18 +120,47 @@ the rows both exist. The divergence is what makes the state ambiguous.
 
 ## Desired Outcome
 
-The owner picks one contract and the code matches it:
+> **DECIDED 2026-08-18 — option (a).** The recalc stops writing period forecasts.
+> Recorded together with a repo-wide decision that **CSV output is being deprecated**
+> now the database services are deployed, which retires **two** of the eight axes below —
+> CSV writing and artefact-frame scope — rather than fixing them. **Six survive**: the EM
+> row set, `require_api`, year scope, station scope plus virtual stations,
+> empty-observation behaviour, and operator controls.
+>
+> **Precondition to verify, not to assume.** An earlier draft claimed option (a) breaks
+> new-site seeding because the recalc's API forecast write seeds a fresh deployment. The
+> pipeline shape is confirmed — `bin/initialize_site_backfill.sh` has three phases, ends
+> with the recalc, and nothing after it writes forecasts — but the seeding claim is **not
+> established**: the init flow regenerates LR only, the recalc *reads* ML rows from a
+> `forecasts` table a purged site does not have, and `api_writer` drops LR before the
+> combined write and returns false when nothing non-LR remains. Establish what a fresh
+> site actually ends up with **before** building any seeding step. See the plan's §T2
+> consequences.
+>
+> Note (b) is not being pursued, so **PP-030's `exclude_models=["EM"]` stays as-is** —
+> under (a) the recalc writes no forecast rows at all.
+>
+> **Option (a) does not retire the dashboard CSV problem.** It removes the recalc's
+> `save_forecast_data` call, but the recalc still calls `save_skill_metrics`, whose CSV
+> write is unconditional — so a station-scoped recalc can still overwrite the shared
+> skill-metric CSV until the deprecation removes that write too.
+
+The two contracts that were on the table, retained for the record — **(a) was chosen**:
 
 - **(a) The recalc should not write period forecasts.** It is a skill-metrics job; drop
-  the `save_forecast_data` call. Smallest change, removes the divergence, and removes
-  the dashboard CSV-clobber path entirely.
+  the `save_forecast_data` call. Smallest change, and it removes the divergence. It
+  removes the *combined-CSV* clobber path but **not** the dashboard problem entirely —
+  `save_skill_metrics` still writes its CSV unconditionally.
 - **(b) The recalc legitimately refreshes period forecasts.** Then it must write the
   same row set as the operational path and share its CSV and failure-reporting
   semantics — and the scoped dashboard invocation needs its own answer, because a
   one-station recalc must not rewrite shared artefacts.
 
-**Independently of (a)/(b), the dashboard's scoped recalc should not inherit
-`write_csv=True`.** That is arguably a separate, smaller, higher-urgency fix.
+**Independently of the contract, the dashboard's scoped recalc should not rewrite shared
+artefacts.** Note what (a) does and does not do here: it removes the `save_forecast_data`
+call, so the inherited `write_csv=True` on *that* path goes away — but `save_skill_metrics`
+has **no `write_csv` parameter at all**, so its shared-CSV write survives (a) and needs
+either a new parameter or the CSV deprecation. Separate, smaller, higher-urgency fix.
 
 ---
 
@@ -169,9 +198,11 @@ contract nobody chose for it.
 
 ## Open questions for the owner
 
-1. **(a) or (b)** — a design decision that shapes all the work.
-2. **Should the dashboard's scoped recalc write anything shared at all?** It currently
-   can rewrite the combined CSVs from one station.
+1. ~~**(a) or (b)**~~ — **DECIDED 2026-08-18: option (a)**, see Desired Outcome.
+2. **Should the dashboard's scoped recalc write anything shared at all?** After decision
+   (a) this is a **scheduling** question about the surviving **skill-metric** CSV, not a
+   design question about the combined CSVs: fix it now, or let the CSV deprecation remove
+   that write. See the plan's T2.2 / T3.1.
 3. **Should `forecasts` carry provenance?** It would have made this diagnosable. That is
    a `sapphire/services/postprocessing` schema change — **colleague-managed, discuss
    first**, and likely out of scope here.
@@ -181,15 +212,34 @@ contract nobody chose for it.
 
 ## Testing
 
-- [ ] Unit: for one fixed input frame, assert both paths produce the same set of
-      `model_short` values **under equal skill conditions** — the test that would have
-      caught the EM divergence without being defeated by the skill gate.
-- [ ] Unit: assert a station-scoped recalc does not rewrite shared combined CSVs.
-- [ ] Unit: assert a failed API write is reported identically by both paths.
-- [ ] Regression: **do not simply delete `exclude_models=["EM"]`.** PP-030 introduced it
-      because boundary-date misalignment produced EM rows with `n_pairs` of 1-2;
-      removing it restores that defect unless the alignment is fixed first.
+Rewritten for **option (a)**. Under (a) the recalc writes no forecast rows, so the
+original checklist's "both paths produce the same set" and "both report forecast-API
+failure identically" are not meaningful — they are retained at the bottom, struck out, as
+the record of what option (b) would have required.
+
+- [ ] Unit: the recalc performs **no** forecast write — `save_forecast_data` is not
+      called from `_run_short_term_recalc`.
+- [ ] Unit: the recalc's **skill-metric** write and its failure return are unchanged.
+- [ ] Unit: a station-scoped recalc does not rewrite the shared **skill-metric** CSV
+      (this one survives option (a) — `save_skill_metrics` has no `write_csv` parameter).
+- [ ] Unit: an **unscoped** recalc's behaviour is unchanged by that suppression.
+- [ ] Unit: the suppression also disables the CSV-backed consistency check — exercise it
+      with `SAPPHIRE_CONSISTENCY_CHECK=true`, or an API-only run verifies a scoped frame
+      against stale or absent shared CSV state and reports a spurious mismatch.
+- [ ] Update, narrowly: the existing tests asserting two forecast-save calls, four recalc
+      output CSVs, saved forecast contents, and forecast-save failure propagation. These
+      are intentional expectation changes; do not weaken unrelated coverage.
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts`
+
+Option-(b) checklist, retained as record only — **not** current work:
+
+- [ ] ~~Unit: for one fixed input frame, assert both paths produce the same set of
+      `model_short` values under equal skill conditions.~~
+- [ ] ~~Unit: assert a failed forecast-API write is reported identically by both paths.~~
+- [ ] ~~Regression: do not simply delete `exclude_models=["EM"]` — PP-030 introduced it
+      because boundary-date misalignment produced EM rows with `n_pairs` of 1-2.~~
+      *(Moot under (a): the recalc writes no forecast rows, so the exclusion stays
+      untouched. This constraint returns only if the contract is revisited.)*
 
 ## Documentation Impact
 
@@ -207,7 +257,9 @@ contract nobody chose for it.
 
 ## Dependencies
 
-- **PP-030** — owns `exclude_models=["EM"]`; its rationale must be understood first.
+- **PP-030** — owns `exclude_models=["EM"]`. **Not a prerequisite under option (a)**: the
+  recalc writes no forecast rows, so the exclusion is untouched. It becomes a prerequisite
+  again only if the contract is revisited toward (b).
 - **PP-045** — the field case this divergence made ambiguous; §H carries the matrix.
 - **PP-046, PP-047, PP-051** — manifested or partially manifested here.
 

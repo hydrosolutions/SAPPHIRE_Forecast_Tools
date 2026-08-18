@@ -158,7 +158,35 @@ The `apps/` modules interact with `sapphire/services/` via REST API. The codebas
 - **Legacy (being removed)**: CSV file reading/writing
 - **Current**: REST API integration with `sapphire/services/`
 
-CSV I/O will be removed once API integration is fully tested.
+**Status 2026-08-18 — the database services are deployed and CSV output is being
+deprecated.** For **pipeline data I/O** — forecasts, skill metrics, observations moving
+between modules — the API is the source of truth: do not add new CSV reads or writes,
+and when touching an existing one prefer removing it over parameterising it.
+
+**This rule is scoped to pipeline data I/O, not to CSV as a file format.** It does not
+ban migration/transfer files, operator exports (`bin/export_runoff_period_history.sh`),
+or presentation-boundary CSV output. Several modules are still legitimately CSV-only
+during the transition — the conceptual model, some `preprocessing_gateway` outputs, and
+the documented `SAPPHIRE_API_ENABLED=false` mode — and `doc/dev/testing_workflow.md`
+still requires CSV-fallback tests. Treat those as transitional exceptions, not
+violations.
+
+Two hazards to respect while the removal is in progress. Neither is loud: both log, and
+both let the run exit zero, so they surface as wrong data rather than as a failure.
+
+- **CSV fallback readers become stale-data traps.** Several readers are API-first with a
+  CSV fallback (e.g. `data_reader.read_combined_forecasts`, already marked
+  `# CSV fallback (deprecated)`). Once writing stops, the fallback serves frozen data
+  when the API is unavailable instead of failing. Remove a fallback in the same change
+  that removes its writer, never later.
+- **Some tooling still reads those CSVs by name.** `bin/reset_sapphire_db.sh` invokes
+  `data_migrator.py --type combinedforecast`, which reads `combined_forecasts_pentad.csv`
+  and `combined_forecasts_decad.csv` with `pd.read_csv`. **Note the API cannot be the
+  replacement source here** — the reset drops the database volume *before* starting the
+  API, so the restarted API is backed by the empty database it is meant to refill. That
+  path needs a pre-reset export, a backup/restore, or a regeneration step. A stale file
+  repopulates stale rows; an absent file is warned about and skipped, leaving the table
+  empty and the migrator exiting zero.
 
 ### Pipeline Data Flow
 

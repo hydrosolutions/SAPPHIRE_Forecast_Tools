@@ -185,7 +185,7 @@ Files that need to be reviewed and potentially edited or replaced for local depl
       - `Dockerfile`: Dockerfile to build the docker image for the forecast dashboard.
       - `forecast_dashboard.py`: The python script that runs the forecast dashboard.
     - `iEasyHydroForecast`: A collection of python functions that are used by the linear regression tool.
-    - `internal_data`: Data that is written and used by the forecast tools.
+    - `internal_data` (legacy — CSV outputs are being deprecated, see Configuration): Data that is written and used by the forecast tools.
       - `forecasts_pentad.csv`: The forecasts produced by the forecast backend. This file is written by the forecast backend and read by the forecast dashboard.
       - `hydrograph_day.csv`: Daily data used for visualization. This file is written by the forecast configuration dashboard and read by the forecast backend.
       - `hydrograph_pentad.csv`: Pentad data used for visualization. This file is written by the forecast configuration dashboard and read by the forecast backend.
@@ -214,6 +214,8 @@ Files that need to be reviewed and potentially edited or replaced for local depl
 
 # Configuration
 The SAPPHIRE Forecast Tools interact with each other through a number of files. The configuration of these files and paths is described in detail in the file [doc/configuration.md](doc/configuration.md).
+
+> **Note — CSV outputs are being deprecated.** The SAPPHIRE database services are now deployed, and the forecast modules increasingly read and write forecasts, skill metrics and observations through the REST API rather than through the CSV files under `apps/internal_data`. For pipeline data moving between modules, the database is the source of truth and new code should not add CSV reads or writes. The transition is not complete: some components are still CSV-only (the conceptual model, parts of `preprocessing_gateway`, and the documented `SAPPHIRE_API_ENABLED=false` mode), and operator exports and migration files are unaffected. See `CLAUDE.md` § Data I/O Transition.
 
 # Deployment
 The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](doc/deployment.md).
