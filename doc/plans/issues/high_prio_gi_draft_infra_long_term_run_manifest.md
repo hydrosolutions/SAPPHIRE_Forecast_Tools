@@ -106,17 +106,33 @@ Corrections from the second and third review passes (2026-08-18):
   modes came from the fallback" mislabels its own provenance.
 - **Producer timing cannot support outcome fields as drafted** (see below).
 
-### Producer timing — intent or outcome, and it cannot silently be both
+### Producer timing — **DECIDED 2026-08-18: intent-only**
 
 Both named operational producers write **after schedule resolution**, which is *before any forecast
 executes*. Per-model results only exist later — accumulated in `run_forecast.py:474-526`, and for
-Luigi not until yielded work completes (`pipeline_docker.py:2401-2417`). So the draft cannot both
-write at resolution time and carry attempted/completed/failed. Choose explicitly:
+Luigi not until yielded work completes (`pipeline_docker.py:2401-2417`). So a manifest cannot both
+be written at resolution time and carry attempted/completed/failed.
 
 | | Model | Consequence |
 |---|---|---|
-| **Intent-only** | one immutable receipt written at resolution | simplest, and still sufficient for gating: "expected, absent" stays a genuine FAIL. Does not distinguish "model crashed" from "model never ran" |
-| **Two-stage** | receipt at resolution, finalized after execution, atomically | richer, but needs an explicit **incomplete/crashed** state for the process-died case, or a half-written manifest becomes a new silent-success trap |
+| **Intent-only** ← **CHOSEN** | one immutable receipt written at resolution | simplest, and sufficient for gating: "expected, absent" stays a genuine FAIL. Does **not** distinguish "model crashed" from "model never ran" |
+| Two-stage | receipt at resolution, finalized after execution, atomically | richer, but needs an explicit incomplete/crashed state or a half-written manifest becomes a new silent-success trap |
+
+**Owner decision: intent-only, and it carries three mandatory sub-tasks.** The receipt alone is not
+enough — as established above, the expected output date is only trustworthy if the date is pinned
+end to end. Intent-only is therefore *conditional* on all three of:
+
+1. **Freeze** the resolved per-mode-model date at schedule resolution (do not let execution re-read
+   the clock — `run_forecast.py:565-570` currently does).
+2. **Propagate** that frozen date into execution rather than recomputing it.
+3. **Enforce an output-date invariant** at persistence, so the stored row date provably equals the
+   frozen one (`lt_utils.py:333-352` currently writes whatever the returned DataFrame carries).
+
+If any of the three proves impractical during planning, the decision reverts to two-stage — they are
+what make intent-only sound, not optional hardening. Explicitly **not** in scope as a consequence of
+this decision: finalization semantics, crashed-state modelling, and per-model outcome fields.
+"Scheduled but the model crashed" remains a **FAIL at validation** (output expected, absent), which
+is the correct verdict without recording outcomes.
 
 Intent-only is the smaller v1 and is enough for INFRA-022. Do not ship a two-stage design without
 the crashed-state semantics — that would recreate the defect class this issue exists to close.
@@ -131,13 +147,16 @@ the crashed-state semantics — that would recreate the defect class this issue 
 | no active modes / skipped org | an explicit **empty** manifest, so "nothing was expected" is stated rather than inferred from absence |
 | simulation | see the scope decision below |
 
-**Scope: "every path" needs narrowing (2026-08-18).** The acceptance criterion below says every path
-writes a manifest, but there are entry points no orchestrator owns — the module's Docker image can
-be run directly (`long_term_forecasting/Dockerfile:21-34`) and the legacy local script can execute
-forecasts (`bin/locally_run_forecast_tools.sh:212-233`). Decide explicitly: either those are
-**out of scope** and validation is only ever run behind an orchestrator that produced a manifest, or
-they are in scope and must produce one too. Leaving "every path" unqualified makes the criterion
-untestable.
+**Scope — DECIDED 2026-08-18: orchestrated paths only.** `run_locally` and Luigi produce manifests,
+including explicit **empty** ones for skipped organizations and no-active-mode days. The entry
+points no orchestrator owns — direct `RUN_MODE` dispatch in the module's image
+(`long_term_forecasting/Dockerfile:21-34`) and the legacy local script
+(`bin/locally_run_forecast_tools.sh:212-233`) — are **out of scope by decision, not by oversight**.
+
+The rule that makes this safe, and which must be stated in the implementation: **validation only
+ever runs behind an orchestrator that produced a manifest.** A validation invocation that finds no
+manifest is the infrastructure FAIL of decided question 1 — it does not fall back to guessing, and
+it does not silently pass because the run happened to come from an unowned entry point.
 
 **Simulation must be resolved consistently with INFRA-021.** This issue currently allows declaring
 simulation out of operational validation *and* requires every path to write exactly one manifest —
@@ -148,16 +167,28 @@ per-date/last-date/aggregate choice. One decision, recorded in both. See open qu
 call sites and pinned by the INFRA-022 extraction plan's characterization tests; keep the manifest a
 separate artifact.
 
-## Open questions (decide before planning)
+## Open questions
 
-1. **Missing manifest.** For a post-run validation invocation, absence must be an explicit
-   **validation-infrastructure FAIL** — not a forecast FAIL, not a silent SKIP, and never a
-   fallback to an older file. Confirm that is the wanted behavior, and what a *pre*-run or
-   standalone invocation should do instead.
+### DECIDED 2026-08-18 (owner)
+
+1. **Missing manifest → validation-infrastructure FAIL, and validation NEVER re-derives the
+   schedule.** Not a forecast FAIL, not a silent SKIP, never a fallback to an older file.
+   **Consequence beyond this issue**: because validation never recomputes the schedule, it never
+   consumes the extracted scheduling predicates — which is what keeps the INFRA-022 extraction in
+   `apps/long_term_forecasting/` and keeps its packaging work deleted. That plan's **P1 gate is
+   hereby satisfied**.
+   *Still to specify (mechanics, not a decision):* what a **pre-run or standalone** invocation does,
+   since there is no manifest to expect yet. Suggest: a distinct "no run to validate" outcome, not
+   reusing the post-run FAIL.
+3. **Intent vs execution → intent-only**, conditional on the three sub-tasks in § "Producer timing".
+   Per-model outcome fields are out of scope; "scheduled but crashed" stays a validation FAIL.
+
+*(Question 2 and 4-10 remain open; numbering preserved so cross-references stay valid.)*
+
+### Still open
+
 2. **Staleness rejection.** Which fields must match for a manifest to be accepted — run id alone,
    or run id + forecast date + organization + config fingerprint?
-3. **Intent vs execution.** Does v1 record only the resolved schedule (cheaper, still leaves
-   "scheduled but the model crashed" as a FAIL, which is correct), or per-model outcomes too?
 4. **Scope of the run id.** **Answered 2026-08-18**: no reusable run id exists in this pipeline —
    `run_locally.sh:94-97` has only a second-resolution log timestamp, and `RunLongTermWorkflow` has
    no run-id parameter (`pipeline_docker.py:2316-2319`, `:2344-2345`). But the concept **does**

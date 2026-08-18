@@ -58,18 +58,16 @@ because the predicate called it. Rev 3 put that call back in the caller — wher
 `lt_schedule_query.py:35` already imports it from `lt_utils`. Nothing has needed it moved since
 rev 3, under either placement. Rev 4 strikes the phase outright; the helper **stays in `lt_utils`**.
 
-**This placement is conditional, and that is a real dependency — not an aside.** It holds *only*
-while INFRA-028 makes the manifest the exclusive post-run authority. If INFRA-028's still-open
-"missing manifest" question (its open question 1) is answered by letting validation **re-derive**
-the schedule as a fallback, `validate_pipeline` becomes a predicate consumer, the module has to move
-to `iEasyHydroForecast`, and the wheel list and namespace work come back.
+**The placement was conditional on INFRA-028's missing-manifest question. That question is now
+DECIDED (2026-08-18, owner): a missing manifest is a validation-infrastructure FAIL and validation
+NEVER re-derives the schedule.** Therefore `validate_pipeline` never becomes a predicate consumer,
+the module stays in `apps/long_term_forecasting/`, and the wheel-list and namespace work stay
+deleted. **The P1 gate is satisfied — all phases may proceed.**
 
-> **Sequencing consequence (rev 4, corrected):** an earlier line in this revision claimed the plan
-> "depends on none of them". That was wrong, and contradicted this very paragraph. The accurate
-> statement: **P0 is unconditionally safe** — it is characterization tests against unmodified source
-> and is correct under either placement. **P1–P2 should not start until INFRA-028's missing-manifest
-> decision is recorded**, because that decision determines where the module lives. Starting P1 early
-> risks writing the module twice.
+> *History, kept because it explains the phase graph:* rev 4 first claimed the plan "depends on none
+> of them", which contradicted its own placement paragraph; the correction made P1 wait on this
+> decision. The wait is now over. If INFRA-028's decision is ever revisited toward allowing
+> re-derivation, the placement must be revisited with it.
 
 A second, smaller conditional: INFRA-028 proposes carrying **per-mode horizon type and value** in the
 manifest, while this plan's placement argument leans on validation resolving horizon values from
@@ -242,9 +240,9 @@ proceed now; P1 onward should wait for that decision to be recorded.
 - **Goal**: `lt_schedule_rules.py` exists, is pure, and is unit-tested in isolation.
 - **Files**: `apps/long_term_forecasting/lt_schedule_rules.py` (new);
   `apps/long_term_forecasting/tests/test_lt_schedule_rules.py` (new).
-- **Depends on**: P0, **and on INFRA-028's missing-manifest decision being recorded** — that
-  decision determines whether the module belongs here or in `iEasyHydroForecast` (see § "Why the
-  placement changed"). Starting P1 before it risks writing the module twice.
+- **Depends on**: P0. *(The INFRA-028 missing-manifest gate that previously blocked this phase was
+  decided on 2026-08-18 in favour of "never re-derive", which confirms this placement. Gate
+  satisfied.)*
 - **Agents**: 1.
 - **Work**: implement the predicate set above — predicates and constants only, no loop, no
   `ForecastConfig`, no env reads, no file I/O. Reason strings copied character-for-character.
@@ -347,18 +345,18 @@ proceed now; P1 onward should wait for that decision to be recorded.
 {
   "external_gates": {
     "INFRA-028-missing-manifest-decision": {
-      "blocks": ["P1", "P2", "P3"],
-      "why": "determines whether the module lives in long_term_forecasting or iEasyHydroForecast"
+      "status": "SATISFIED 2026-08-18 — never re-derive; placement confirmed",
+      "blocks": []
     }
   },
   "phases": {
     "P0": { "depends_on": [], "parallel_agents": 1 },
-    "P1": { "depends_on": ["P0", "INFRA-028-missing-manifest-decision"], "parallel_agents": 1 },
+    "P1": { "depends_on": ["P0"], "parallel_agents": 1 },
     "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
     "P3": { "depends_on": ["P2"], "parallel_agents": 1 }
   }
 }
 ```
 
-*(The gate was prose-only in the first rev-4 draft — the graph said P1 depended on P0 alone, so an
-agent reading only the graph would have started P1 immediately.)*
+**This plan is now unblocked end to end.** The gate is retained as a satisfied entry rather than
+deleted, so that reopening the INFRA-028 decision visibly reopens this one.

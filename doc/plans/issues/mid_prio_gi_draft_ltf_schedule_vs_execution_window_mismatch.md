@@ -91,13 +91,18 @@ implemented in two.
    - **Python scheduler** and **Python execution gate** read the value from a single place —
      `apps/long_term_forecasting/lt_schedule_rules.py`, which the INFRA-022 extraction creates as a
      flat sibling of both call sites (placement per plan rev 4). Do not add a fourth definition.
-   - **The shell fallback** (`run_locally.sh:232-261`) cannot import a Python constant. Choose
-     deliberately and record it: either (i) delete the fallback and let a failed schedule query be a
-     hard error — it currently substitutes its own guess for the authority that just failed;
-     (ii) have it shell out to a tiny query that prints the value; or (iii) keep the literal but
-     add a comment naming the Python definition as authoritative and a test that fails when they
-     diverge. **(i) deserves consideration on its own merits**: a fallback that silently disagrees
-     with the scheduler it replaces is worse than no fallback.
+   - **The shell fallback — DECIDED 2026-08-18: delete it.** `run_locally.sh:232-261` cannot import
+     a Python constant, and it currently substitutes its own guess for the authority that just
+     failed. Options (ii) "shell out to query the value" and (iii) "keep the literal plus a
+     divergence test" were considered and **not** chosen: both preserve a second implementation of
+     scheduling logic, which is the defect class this issue exists to remove.
+     **A failed schedule query becomes a hard error.** That is a behavior change with an operational
+     consequence worth stating plainly: a run that today proceeds on fallback modes will instead
+     stop. That is the intent — proceeding on a guess is how an admitted-but-unrunnable mode reaches
+     production unnoticed — but it means the failure path needs a clear operator message and a test,
+     and deployments that have been silently relying on the fallback will start failing visibly.
+     **Check before implementing**: whether any deployment currently depends on the fallback firing
+     regularly, which would indicate the schedule query is failing routinely and is its own bug.
 3. Reconcile or delete the stale comment in `lt_utils.py` — **and the matching stale text in
    `tests/test_lt_utils.py:91-103`**, which likewise claims execution was widened from 5 to 10. Both
    describe a widening the code does not implement.
@@ -107,18 +112,16 @@ implemented in two.
 
 ## Acceptance criteria
 
-- **One authority for the window**, with every gate either reading it directly or provably agreeing
-  with it. *(Criteria are conditional on the option chosen in fix step 2 — an earlier version
-  demanded all three gates agree *and* a fallback-divergence test, which is impossible under option
-  (i), where there is no fallback left to agree or diverge.)*
-  - Under **(i) delete the fallback**: two gates remain, both **reading** the single definition; a
-    failed schedule query becomes a hard error, and a test covers that failure path.
-  - Under **(ii) fallback queries the value**: still one definition — the fallback **reads** it via
-    the query rather than restating it; a test proves the fallback reports the window the Python
-    authority holds.
-  - Under **(iii) keep the literal**: **two definitions, one authority** — the literal is permitted
-    but not trusted, so a test must fail when it and the Python authority diverge. Without that
-    test this issue recurs silently the next time the value changes.
+*(Criteria below follow the decided option — delete the fallback. The options-conditional form is
+retained in the fix section for the record.)*
+
+- **One definition of the window**, read by both remaining gates: the Python scheduler and
+  `check_valid_forecast_issue_date`. No literal survives anywhere.
+- **The shell fallback is gone**, and a failed schedule query exits non-zero with an operator-legible
+  message. A test covers that failure path — it is now the *only* behavior on query failure, so it
+  must not be left untested.
+- A grep for a bare day-window literal in `run_locally.sh` and `lt_utils.py` returns nothing, so the
+  removal cannot be quietly reintroduced.
 - A run scheduled but rejected by every model produces a visible non-success signal, or the
   scheduler stops admitting days that execution will refuse.
 - Tests cover the boundary on both sides: `distance == window`, `window + 1`, and the previously
