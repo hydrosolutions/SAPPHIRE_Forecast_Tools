@@ -824,6 +824,81 @@ states PP-045's fix is "not on trunk" — stale and wrong; PR #425 merged
 2026-07-23, three weeks earlier. What it actually observed is trunk behaviour
 *with* the fix present, because the fix is a manual tool that nobody ran.
 
+### B2. Log evidence — plan phase P4, log-only half, RUN 2026-08-18
+
+§E's log step has been performed. **§E P0 (configuration) and §E's database steps have
+NOT been run.** P0 needs no tunnel — it is a configuration read, simply outstanding; the
+database steps need the tunnels and owner authorisation. Provenance: the
+postprocessing logs come from the pre-write archive
+(`~/sapphire_evidence/pp045_2026-08-17/`); the ML logs, which turned out to be the
+informative ones, were read **in place** under `apps/machine_learning/logs/` and are not
+in that archive.
+
+**PROVEN (the observation) — the ML log directory holds no entry stamped on the four
+stranded issue dates.** The conclusion usually drawn from it — that no local ML run
+occurred — is an **inference**, strong but not proof; see "What that does and does not
+support" below.
+
+- `apps/machine_learning/logs/` rotated on 2026-07-23 and then not again until
+  2026-08-14. By content rather than filename: `log.2026-07-23` carries entries stamped
+  only `2026-07-23` (74k lines), `log.2026-08-14` only `2026-08-14` (29k lines).
+- **No entry anywhere under `apps/machine_learning/logs/` is stamped 2026-07-25, 07-31,
+  08-05 or 08-10** — the four stranded pentad issue dates.
+- Neither file contains `pytest`/`tests/` markers.
+
+**What that does and does not support — INFERRED.** `make_forecast.py` installs its
+handler at import and `run_locally.sh` runs from the module directory, so the absence is
+strong evidence that **no normal local wrapper run occurred** on those dates. It remains
+an inference: it does **not** exclude an invocation from another working directory or log
+destination, a run on another host, or population by migration or sync. The marker-free
+check is likewise not proof of test-freedom — ML tests import modules that attach the
+same handler and need not emit the string `pytest`. Note also that this log stream is
+shared across orgs, so it cannot speak to any particular deployment's producer.
+
+**It does NOT establish cause C1, and this section must not be read as doing so.** C1 is
+defined in §C as *no usable row in either archive*. The archive is a database that could
+hold rows the local producer never wrote. The producer's silence is evidence toward C1 but is
+neither necessary nor sufficient for it: C1 can also arise after a producer *did* run
+but failed, emitted unusable rows, or failed to persist them. The archive state itself
+is still **unqueried**, and closing it is §E's read-only database probe. An earlier draft of this section
+concluded "C1 is now the supported explanation" while admitting the archive was
+unqueried — that was circular and is withdrawn.
+
+**Signal audit (§E's log step), recorded with counts and attributability.** Contamination
+below limits all of it: none of these counts can be attributed to specific dates or codes,
+because the messages carry aggregate counts only and the streams mix test with
+operational output.
+
+| Signal | Occurrences in the window | Reading |
+|---|---|---|
+| `No <model> forecasts from API for …` (C1 marker) | **0** | No occurrence found in any stream. Not a clearance — see contamination. |
+| `Filtered … daily targets outside …` (C2) | **0** | No occurrence found anywhere in the window. |
+| `Dropped … null-discharge forecast records` (C3) | **27**, all in `log_recalc` (07-15, 07-23, 07-24 one each; 08-13 ×20; 08-14 ×3; 08-16 ×1) | Signal **is present**. Those files also carry `pytest`/`tests/` markers, so it cannot be attributed to an operational run. Records the count, per P4; does not establish C3. |
+| `No non-LR forecast records to write` | **0** | No occurrence found. |
+| Reader exceptions (`Failed to read ML forecasts`) | **0** | No occurrence found. |
+
+An earlier draft of this table reported C3 as zero. That was wrong: it grepped only
+`log_operational`, and the signal lives in `log_recalc`.
+
+**METHODOLOGICAL FINDING — the postprocessing dated logs are not a usable operational
+record, which corrects an earlier note of ours.** `log_operational.2026-08-13` contains
+180 `pytest`/`tests/` references and 40 tracebacks; `.2026-08-14` has 27 and 6;
+`log_recalc` files in the window carry them too. `apps/run_tests.sh` runs from `apps/`
+while the modules install `logs/log_*` handlers at import, so any test that imports them
+rotates and writes these files. Consequences:
+
+- The P0 inventory note that "the set of dated log filenames records which days the
+  pipeline ran" is **unreliable for the postprocessing logs**, on two counts: the
+  handlers are constructed at *import*, so a file can rotate without the job doing any
+  work, and a test run rotates them too.
+- A file's size means nothing operationally: `log_operational.2026-08-13` is the largest
+  in the window *because tests ran that day*.
+- The synthetic failure strings the suite injects (`connection refused`, `down`) are
+  easily mistaken for real API errors on a casual grep.
+- The earlier corroboration citing a "20-day run gap" in
+  `log_operational.2026-07-24` → `.2026-08-13` is therefore **withdrawn**. The ML-side
+  gap replaces it and rests on a cleaner record.
+
 ### C. What is established, and what decides the diagnosis — READ THIS FIRST
 
 **Established (PROVEN, code-only):** maintenance cannot heal a zero-`combined`
@@ -1030,9 +1105,11 @@ Three honest arguments, with the overreach of the first draft removed:
   constraint). Acceptable for a deliberate recovery; poor as automatic behaviour.
 
 The case for *some* automation is nonetheless strong, and this session's evidence
-is why: a routine three-week dev-machine staleness produced four apparently
-stranded issue days, and **no layer reported it** — maintenance ran green, and the
-validator's window (§A5) never looks further back than the most recent boundary.
+is why: four boundary days ended up with no per-model rows across a three-week
+dev-machine quiet period — the full causal chain is still being confirmed (§B2) — and
+**no layer reported it** either way. Maintenance ran green, and the validator's window
+(§A5) never looks further back than the most recent boundary. Note the detection
+argument does not depend on the cause: whatever produced the gap, nothing surfaced it.
 Silence here is indistinguishable from health.
 
 **Recommendation: detect-and-report, never auto-fix.**
@@ -1074,12 +1151,36 @@ skill-metric `horizon_value=0`) in a parallel session's working copy of
 
 **Blocking — evidence:**
 
-- [ ] Run P0–P3b (§E, read-only) **on tjhm** and record the outcome here.
-- [ ] Run P0–P3b **on kghm** independently — §B is two observations, not one
-      confirmed cause, and the kghm record self-labels as underdetermined.
-- [ ] Preserve the 2026-07-20 → 2026-08-17 operational/maintenance logs for both
-      orgs **before** any write. Cause C4 (input absent *then*, present *now*) is
-      invisible to any query of current DB state; the logs are the only evidence.
+- [x] **DONE 2026-08-17 — logs preserved** before any write, to
+      `~/sapphire_evidence/pp045_2026-08-17/` with an inventory. Scope note: the
+      capture covered the postprocessing logs; the ML logs, which turned out to be the
+      decisive ones, were read in place and are the reason §B2 exists. Retention is not
+      a race — the archive spans 2026-04-01 → 08-16.
+- [x] **DONE 2026-08-18 — §E's log step (P1).** Every signal recorded with its
+      count in §B2's audit table: the C3 null-discharge marker fires 27 times (all in
+      `log_recalc`), the others not at all, and **none is attributable** to specific
+      dates or codes. Proven: the ML log directory holds no entry stamped on the four
+      dates — with "no local ML run occurred" recorded as the (strong) inference from
+      it, not as proof. Also established: the postprocessing dated logs are
+      test-contaminated and cannot serve as an operational record.
+- [ ] **§E P0 (configuration) — NOT run.** Record `ieasyhydroforecast_run_ML_models`,
+      `ieasyhydroforecast_available_ML_models` and the station-selection `stationsID`
+      per org. Cheap, needs no tunnels, and rules cause C5 in or out.
+- [ ] **§E's database steps (P2 derived-frame probe, P3 controls/cutover) — NOT run**,
+      read-only, **on tjhm**. Confirm whether the DAY archive is genuinely empty for
+      those issue dates and record each (code, model)'s first-DAY date. Blocked on
+      tunnel availability. **This is what closes the still-INFERRED half of §H** — the
+      log evidence cannot reach it.
+- [ ] Run the same **on kghm** independently. The ML log stream is shared across orgs,
+      so its gap does not distinguish them — it is not evidence that any particular
+      org's producer ran or did not. The two deployments' stored data are separate, and
+      the kghm record self-labels as underdetermined.
+- [ ] **§E P3b (map the result onto C1–C6 and route) — NOT run**, and cannot be until
+      the database steps above are done.
+- [ ] **§E P4 (the conditional real write) — NOT run, and currently prohibited.** Gated
+      on owner authorisation, on the C8 procedure, and — per
+      `doc/prod/backfill_period_forecasts_runbook.md` §7 — on a tested rollback that
+      does not yet exist.
 - [ ] **Resolve the deferred kyg criterion — migrated here 2026-08-17 from the now
       frozen Acceptance Criteria, and this is its only live home.** As written it
       demands the full **kyg** (`15xxx/16xxx`) short-term pipeline end-to-end
@@ -1131,6 +1232,12 @@ issue's own Desired Outcome:**
       via PR #425. **Deliberately not edited on 2026-08-17**: a concurrent session
       had uncommitted changes to that file, and a one-row edit on a separate branch
       would have handed them a needless conflict.
+- [ ] `doc/plans/working/pp045_issue_draft_update_plan.md` — its P0 section repeats the
+      over-broad claim that the dated log filenames record which days the pipeline ran.
+      §B2 disproves that for the postprocessing logs. Not corrected here because P4's
+      declared file scope is this issue only — and note P5's declared file list does
+      not include that plan either, so this needs its own small change rather than
+      being folded into either phase.
 - [ ] Claude memory — the self-heal-within-year vs permanent-across-year nuance,
       the real backfill precondition, and the three-writers correction (§A6).
 
@@ -1196,12 +1303,29 @@ archived row stays empty. Retained rows carry `target = date + 1` (set by both t
 migrator and the normal writer), so they pass the in-period filter and re-emit
 unchanged. Dates in the DAY era require a real DAY row.
 
-**Attribution to the observed cases — INFERRED, not verified.** That the specific
-gaps operators have seen fall on the far sides of that cutover is corroborated by
-the 20-day run gap in the local logs (`log_operational.2026-07-24` → `.2026-08-13`)
-and by the owner's operational experience (2026-08-17: every recent gap observed was
-on a day the pipeline did not run). **No live-data check has been run** — first-DAY
-dates per (code, model) are still unqueried; that is §E's probe.
+**Attribution to the observed cases — split as of 2026-08-18 (§B2).** One half is now
+proven, the other is not:
+
+- **PROVEN — the observation only.** `apps/machine_learning/logs/` contains **no entry
+  stamped 2026-07-25, 07-31, 08-05 or 08-10**; it rotated 2026-07-23 and then not until
+  2026-08-14 (§B2). That is a fact about the log directory, and it is all that is
+  proven.
+- **INFERRED from it — that no local ML run occurred on those dates.** Strong, because
+  `make_forecast.py` attaches its handler at import and `run_locally.sh` runs from the
+  module directory, so a normal local run would have emitted something. But it is an
+  inference: it cannot exclude an invocation from another working directory or log
+  destination, or a run on another host. The record carries no test markers, which is
+  reassuring but is not proof of test-freedom.
+- **ALSO INFERRED, and this is the half the diagnosis turns on.** That the DAY archive
+  is consequently *empty* for those dates, which is what cause C1 actually asserts. The
+  archive is a database whose state has not been queried; first-DAY dates per
+  (code, model) are still unknown. §E's read-only database probe is the only way to
+  close it.
+
+Note the earlier corroboration cited here — a "20-day run gap" in
+`log_operational.2026-07-24` → `.2026-08-13` — has been **withdrawn**: those
+postprocessing logs are contaminated by test output and cannot be read as an
+operational record (§B2). The ML logs replace them, and are stronger.
 
 ### Hypothesis tested and REFUTED — do not reintroduce it
 
@@ -1228,11 +1352,12 @@ dedup.
 
 ### What this means for this issue's own tool
 
-**The backfill CLI does not address the cause seen in the field cases to date.**
-When the pipeline did not run there is nothing to aggregate. (How *common* that
-cause is across deployments is unmeasured — the supporting evidence is one local log
-gap plus owner experience, both INFERRED above. Do not upgrade this to a frequency
-claim without data.) Its genuine
+**If the archive genuinely lacks rows for the affected dates — inferred, not
+established (§B2) — then the backfill CLI does not address the cause the field cases
+most likely have**, because where inputs were never produced there is nothing to
+aggregate. Both halves of that sentence are conditional: the archive state is unqueried,
+and how *common* the cause is across deployments is unmeasured, resting on one local log
+gap plus owner experience. Do not upgrade either half without data. Its genuine
 value is narrower: (1) inputs exist but the boundary-day postprocessing was missed;
 (2) cross-year recovery where its per-year iteration avoids the PP-046 collapse — the
 most controlled cross-year option, though not the only one (see the table). If inputs
