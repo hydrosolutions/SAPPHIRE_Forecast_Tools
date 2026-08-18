@@ -1,4 +1,4 @@
-# Period-write consistency: PP-045 close-out and PP-059 — implementation plan
+# Period-write consistency: PP-045 close-out and PP-060 — implementation plan
 
 **Status:** Draft, not started. Subject to CLAUDE.md's mandatory out-of-loop review
 before any phase executes.
@@ -12,7 +12,7 @@ and the id collision in §0a.4 must be settled first. This is residual risk 6 ar
 within the hour it was written.
 
 **Scope.** Close out PP-045 honestly, land the two follow-up tickets it owes, and — only
-after an owner decision — fix the write divergence filed as PP-059.
+after an owner decision — fix the write divergence filed as PP-060.
 
 **Scope honesty.** Tiers 0 and 1 are documentation only. **Tier 3 changes runtime code**
 in `apps/postprocessing_forecasts/` and possibly `apps/forecast_dashboard/`, on paths
@@ -45,7 +45,7 @@ Grep the quoted phrase, never seek to a line.
    disproved. Any wording stronger than that is unsupported — an earlier draft of this
    plan said the diagnosis was "disproved" and attributed the rows to the 08-13/08-14
    hindcast catch-up; neither is established. The refutation was recorded in PR #445 and
-   in PP-059 — **never in PP-045 itself.** (Both of those records also over-stated it as a
+   in PP-060 — **never in PP-045 itself.** (Both of those records also over-stated it as a
 refutation of the cause; T0.1 must not repeat that.)
 
 2. **PP-045's §G checklist is stale in both directions.** It is supposed to be the
@@ -71,14 +71,15 @@ refutation of the cause; T0.1 must not repeat that.)
    (branch `fix_postprocessing_boundary_gap`)"*. That branch merged as PR #425 on
    2026-07-23 and no longer exists.
 
-4. **PP-059 is now a COLLISION — owner must arbitrate.** The issue filed in PR #445 is
-   titled `PP-059` and is on trunk, deliberately without an index row (C8's gate was
-   closed at the time). A parallel session has since allocated **PP-059 to a different
-   issue** ("Remove monthly EM") in an uncommitted `module_issues.md` row. Two artefacts
-   now claim the same id; neither is indexed yet, so the collision is latent until one
-   lands. **Do not renumber either unilaterally** — the other session's work is in
-   flight. Resolve before T0.2, and note whichever loses the id needs its file title,
-   headings and cross-references updated, not just the row.
+4. **The write-divergence issue is PP-060 — an id collision, resolved by yielding.**
+   It was filed as `PP-059` in PR #445 and merged to trunk without an index row (C8's
+   gate was closed). A parallel session then allocated **PP-059 to a different issue**
+   ("Remove monthly EM") in an uncommitted registry row. Owner decision 2026-08-18:
+   **this issue yields and becomes PP-060**; PP-059 stays with the parallel session's
+   work. Renamed here across the issue file and this plan in one commit, so no
+   intermediate state has the two documents disagreeing. `PP-060` was free on trunk and
+   in the dirty working copy at the time — **re-verify before T0.2 writes the row**,
+   since the parallel session is still in flight.
 
 ### 0b. Owed but never written
 
@@ -90,7 +91,7 @@ refutation of the cause; T0.1 must not repeat that.)
 ### 0c. Genuinely open, needing an owner
 
 7. The **kyg criterion** (PP-045's last acceptance item).
-8. **PP-059's contract** — (a) or (b), see §4 T2.
+8. **PP-060's contract** — (a) or (b), see §4 T2.
 9. PP-045's carried **API-only-by-default** flag.
 
 ### 0d. Housekeeping
@@ -108,7 +109,7 @@ refutation of the cause; T0.1 must not repeat that.)
 | Operator runbook, write path | Documented, **write path prohibited** pending a tested rollback | Yes (#441 §7) | Rollback SQL still unwritten — deliberate |
 | PP-045 diagnosis (cause C1) | — | Asserted in §B2/§H as the live hypothesis | **Unresolved, not refuted.** The 2026-08-18 probe refutes only "the archive is empty today". Tier 0 restates it |
 | PP-045 §G as sole live checklist | — | Asserted | **Stale both ways** (§0a.2) |
-| Recalc/operational write divergence | Present in code | Filed as PP-059 (#445) | Unfixed; owner decision pending |
+| Recalc/operational write divergence | Present in code | Filed as PP-060 (#445) | Unfixed; owner decision pending |
 | Detect-and-report | No | Recommended in PP-045 §F | Ticket never filed |
 
 ---
@@ -143,7 +144,7 @@ boundary-date misalignment produced EM rows with `n_pairs` of 1-2. Removing it r
 that defect unless the alignment is fixed first. Contract option (b) is therefore
 strictly larger than it looks and must carry PP-030's fix or an explicit waiver.
 
-**C4 — One divergence axis per change, one PR per axis.** PP-059 lists eight. Fixing
+**C4 — One divergence axis per change, one PR per axis.** PP-060 lists eight. Fixing
 several at once makes any regression un-bisectable on a path that is both scheduled and
 user-invoked.
 
@@ -163,7 +164,7 @@ rests on. Correct the diagnosis first or the next investigation re-derives it ag
 moving target. **Tier 3 must not start before Tier 0 lands.**
 
 **C7 — `sapphire/services/` is read-only here.** The absent provenance column on
-`forecasts` (PP-059 open question 3) would make this class of defect diagnosable, but it
+`forecasts` (PP-060 open question 3) would make this class of defect diagnosable, but it
 is a colleague-managed schema change and needs its own discussion. No migration in this
 plan.
 
@@ -225,7 +226,7 @@ Steps:
 2. §H — move C1 from "leading hypothesis" to **unresolved**, not to "refuted". Restate
    the observed anomaly: per-model and NE rows present, **EM absent**, 15 of 71 codes
    covered. Record that the cause is **not attributable from the table** (no provenance
-   column, in-place upsert) and that PP-059 documents candidate writers without selecting
+   column, in-place upsert) and that PP-060 documents candidate writers without selecting
    one.
 3. §G — reconcile against §0a.2: tick what shipped in #438/#441/#442 with its PR
    reference; re-scope the review-checklist item to the tracked template that P3 actually
@@ -275,9 +276,9 @@ re-rate unilaterally.**
 **Sequencing caution.** If T2 chooses option (a), the recalc stops being a caller and
 this text goes stale the moment T3.2 lands. Either run T0.3 *after* T2 decides, or write
 it so it survives both outcomes — state the maintenance caller unconditionally and the
-recalc caller as "as of trunk `6e28647a`, and subject to PP-059's contract decision".
+recalc caller as "as of trunk `6e28647a`, and subject to PP-060's contract decision".
 
-- **Acceptance:** PP-046 no longer says "future" caller; cross-references PP-059.
+- **Acceptance:** PP-046 no longer says "future" caller; cross-references PP-060.
 
 ### T1 — File the detect-and-report ticket
 
@@ -307,7 +308,7 @@ latter is not the PP-045 signature.
 
 ### T2 — Owner decisions (gate; no work)
 
-1. **PP-059 contract:** (a) the recalc stops writing period forecasts, or (b) it writes
+1. **PP-060 contract:** (a) the recalc stops writing period forecasts, or (b) it writes
    the same row set as operational (larger; pulls in PP-030 per C3).
 
    **Option (a) is one edit but not a small change** — an earlier draft of this plan
@@ -378,7 +379,7 @@ Steps:
   unscoped behaviour byte-identical; the new parameter (if added) defaults to current
   behaviour; one axis only.
 
-### T3.2 — Implement the chosen PP-059 contract
+### T3.2 — Implement the chosen PP-060 contract
 
 - **Goal:** the recalc and operational paths stop disagreeing.
 - **Files:** depends on the decision. Under (a) the *code* edit is one call — but the
@@ -418,7 +419,7 @@ Steps:
 1. Record the **kyg** decision in §G — run, waived, or downgraded — with the rationale
    and the decider named.
 2. Record the **API-only-by-default** decision.
-3. Record PP-059's contract decision and its effect on §H's matrix.
+3. Record PP-060's contract decision and its effect on §H's matrix.
 4. Propose the status transition and the `review_gi_draft_*` → archive move.
    **Do not execute without approval** (owner-owned, per the preceding plan's C2).
 5. Final `module_issues.md` pass so the PP-045 row matches the issue's Status.
@@ -513,7 +514,7 @@ previously unreachable from its own graph.
 ## References
 
 - `doc/plans/issues/review_gi_draft_pp_missed_boundary_period_gap.md` (PP-045), §G and §H
-- `doc/plans/issues/high_prio_gi_draft_pp_recalc_backfill_write_divergence.md` (PP-059)
+- `doc/plans/issues/high_prio_gi_draft_pp_recalc_backfill_write_divergence.md` (PP-060)
 - `doc/plans/issues/mid_prio_gi_draft_pp_get_latest_forecasts_yearless_key.md` (PP-046)
 - `doc/prod/backfill_period_forecasts_runbook.md` — write path prohibited pending rollback
 - `doc/plans/working/pp045_issue_draft_update_plan.md` — the preceding plan; its P0/P2/P3
