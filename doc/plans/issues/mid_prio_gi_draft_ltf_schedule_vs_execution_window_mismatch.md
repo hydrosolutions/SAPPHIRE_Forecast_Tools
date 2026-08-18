@@ -2,8 +2,13 @@
 
 **Status**: Draft (2026-08-18)
 **Module**: `apps/long_term_forecasting` (`lt_schedule_query.py`, `lt_utils.py`)
-**Priority**: **Medium** — silent no-op rather than wrong numbers, but it produces a run that is
-scheduled, executes, and writes nothing, with no error anywhere.
+**Priority**: **Medium — provisional, pending one production check.** The consequence is an
+orchestration/status defect, not wrong numbers. **OWNER DECISION**: if it is confirmed that a
+deployed schedule actually hits the 6–10 band — the checked-in recommended cron runs this route on
+fixed dates (`doc/deployment.md:896-898`) — then an admitted production forecast goes wholly missing
+while Luigi reports success, which is the same class as the other silent write-loss issues and
+merits **High**. Medium is defensible only as "not yet shown to fire in production", never as
+"harmless".
 **Labels**: `ltf`, `scheduling`, `silent-noop`, `configuration-drift`
 **Found**: 2026-08-18, while mapping schedule authority for INFRA-022 option (d). Found by
 out-of-loop review of the extraction plan; not introduced by that work.
@@ -19,24 +24,47 @@ Two independent day-window gates disagree:
 | Gate | Value | Location |
 |---|---|---|
 | Scheduler — decides whether a **mode** is active | `ISSUE_DAY_TOLERANCE = 10` | `lt_schedule_query.py:52`, applied `:103` |
+| **Local runner fallback** — used when the schedule query fails *(found 2026-08-18, a third definition)* | hard-coded `5` | `run_locally.sh:232-261`, selected at `:274-300`; independently reimplements the wrap distance and issue-day defaults |
 | Execution — decides whether a **model** runs | hard-coded `5` | `lt_utils.py:202` in `check_valid_forecast_issue_date` — `abs(day_offset) > 5` (`:196` is the comment above it) |
 
-So for a day 6–10 days from a mode's `operational_issue_day`:
+*(Preconditions and consequences below were corrected 2026-08-18 after out-of-loop review; the first
+draft overstated all three. The defect is real, the chain is conditional.)*
 
-1. `query_schedule` reports the mode **active**;
-2. the orchestrator launches the long-term run for it;
-3. `check_valid_forecast_issue_date` returns `None` for **every** model — logged at INFO as
-   "not scheduled … skipping" — and the run writes nothing;
-4. nothing reports an error. The pipeline records success for a run that produced no forecast.
+The divergence bites when **all** of these hold:
+
+1. the mode passes the scheduler's first gate — `day_distance` ≤ 10. Note this is an **approximate**
+   day-of-month distance with a `30 - diff` wrap (`lt_schedule_query.py:60-64`), so it can report 6
+   where the model's real calendar offset is 5 or less, in which case execution accepts and there is
+   no divergence at all;
+2. the mode also passes the scheduler's **second** gate — at least one model scheduled this month by
+   `forecast_months` (`:107-125`). A mode rejected here never runs, so the mismatch never arises;
+3. **every** configured model's real nearest-scheduled-date offset then exceeds 5
+   (`lt_utils.py:188-202`).
+
+When all three hold: the orchestrator launches the mode, `check_valid_forecast_issue_date` returns
+`None` for every model, and the run produces no forecast.
 
 ## Why it matters
 
-- It is invisible: a graceful `return None` per model, logged at INFO, inside a run the pipeline
-  considers successful.
-- **It will produce false FAILs the moment INFRA-022 lands.** Schedule-aware gating derived from
-  the scheduler's 10-day window will mark those days as "output expected", while execution
-  guarantees there is none. Whoever implements INFRA-022 must know this gap exists, or they will
-  build gating that is correct against the scheduler and wrong against reality.
+- **The failure is reported, but not in a machine-readable way.** The gate itself logs at INFO
+  (`lt_utils.py:202-209`) — but `run_single_model` immediately emits a **WARNING** and returns
+  `False` (`run_forecast.py:336-343`), dependent models may then be skipped at **ERROR**
+  (`:490-496`), and the final summary prints **FAILED** (`:517-526`). What is missing is a non-zero
+  process status or a persisted outcome — not the logging. *(An earlier draft called this
+  "invisible … nothing reports an error", which is wrong.)*
+- **Whole-run success is conditional, not guaranteed.** `run_forecast` returns no aggregate status,
+  so its CLI exits zero and `run_locally` records the module PASS; Luigi likewise writes its success
+  markers (`pipeline_docker.py:2413-2434`). But `long-term-operational` then invokes validation, and
+  a validation failure is recorded and makes the final shell exit non-zero
+  (`run_locally.sh:1585-1588`, `:1970-1977`). If validation is disabled or unavailable it exits
+  zero. So "scheduled, ran, wrote nothing, reported success" holds unconditionally for **Luigi** —
+  the deployed route (`bin/run_long_term_forecasts.sh:104-124`) — and conditionally for the local
+  runner.
+- **It matters for INFRA-022.** Gating derived from the scheduler's 10-day window would mark these
+  days as "output expected". **Note the semantics** (corrected 2026-08-18): under INFRA-028's
+  manifest contract that is a **genuine detected execution failure**, not a legitimately gated SKIP
+  — the run *was* expected to produce output and did not. An earlier version of this draft and its
+  tracker row called it a "false FAIL", contradicting INFRA-022 and INFRA-028.
 
 ## Both comments say "temporary", and they disagree
 
@@ -57,9 +85,12 @@ implemented in two.
 
 1. Decide the operational window — one value, one definition.
 2. Have both gates read it from a single place. Note INFRA-022's extraction work moves
-   `ISSUE_DAY_TOLERANCE` into `iEasyHydroForecast`; this issue should consume that, not add a
+   `ISSUE_DAY_TOLERANCE` into `apps/long_term_forecasting/lt_schedule_rules.py` (a flat sibling of
+   both call sites — placement corrected in plan rev 4); this issue should consume that, not add a
    fourth definition.
-3. Reconcile or delete the stale comment in `lt_utils.py`.
+3. Reconcile or delete the stale comment in `lt_utils.py` — **and the matching stale text in
+   `tests/test_lt_utils.py:91-103`**, which likewise claims execution was widened from 5 to 10. Both
+   describe a widening the code does not implement.
 4. If the two windows are *intended* to differ (a wider scheduling net, a stricter execution
    guard), then say so explicitly in both places and make the resulting no-op **loud** — an
    operator should not have to read INFO logs to discover that a scheduled run produced nothing.

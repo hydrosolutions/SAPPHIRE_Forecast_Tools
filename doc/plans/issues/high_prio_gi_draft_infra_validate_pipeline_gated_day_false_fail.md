@@ -139,7 +139,12 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
    > | (a) | validation calls `lt_schedule_query.query_schedule()` directly | single source of truth, but it lives in `long_term_forecasting`, builds a `ForecastConfig`, and calls `sl.load_environment()` internally (`:76`) — the very function INFRA-021 says must not be called unchanged. Heavy for a validator whose `pyproject.toml` declares only `pandas` |
    > | (b) | extend `long_term_horizon_resolver` to expose tolerance, `forecast_months` and non-operational modes | keeps the validator light, but creates a **second** schedule authority — and two definitions that must agree is how this class of bug arises in the first place |
    > | (c) | accept known-incomplete gating, document which cases still false-FAIL | cheapest and honest, but ships a check that is still wrong on unscheduled months |
-   > | (d) | extract the mode-activity decision into `iEasyHydroForecast` beside the resolver; `lt_schedule_query` and `validate_pipeline` both call it | most up-front work, removes the drift risk permanently. Note `validate_pipeline` **already** imports from `iEasyHydroForecast` (`validate_pipeline.py:35-49`), so this adds no new dependency direction |
+   > | (d) | extract the mode-activity decision so it has exactly one definition | most up-front work, removes the drift risk permanently |
+   >
+   > *(The options above are recorded as they were posed. Option (d)'s **placement** has since moved:
+   > it was originally "into `iEasyHydroForecast`, called by both `lt_schedule_query` and
+   > `validate_pipeline`". Evidence gathered 2026-08-18 showed validation will not call it, so the
+   > module now lives in `apps/long_term_forecasting/lt_schedule_rules.py` — see the plan, rev 4.)*
    >
    > **DECIDED 2026-08-18: option (d)** — the mode-activity decision gets one definition, planned in
    > `doc/plans/working/lt_schedule_authority_extraction_plan.md`.
@@ -180,9 +185,13 @@ downgraded.
 - Correct behaviour verified per **mode** for both issue-day conventions (taj day 1;
   kyg 10/25) — a fixture per convention, placeholder station codes only.
 - A mode that is configured but **not scheduled in the current month** reports SKIP, not FAIL, and
-  a day inside the **issue-day tolerance window** is treated as an issue day. *Both depend on the
-  open schedule-authority decision above; neither is achievable with `long_term_horizon_resolver`
-  alone.*
+  a day inside the **issue-day tolerance window** is treated as an issue day. *(Updated 2026-08-18:
+  these come from **INFRA-028's manifest**, which records what the run actually resolved. They are
+  not re-derived here — neither is achievable from `long_term_horizon_resolver`, and re-deriving
+  them would miss manual overrides regardless.)*
+- A mode admitted by the scheduler whose models all refused to execute (**LTF-007**, the 10-vs-5
+  band) reports **FAIL**, not SKIP — output was expected and is absent. Gating must not be built to
+  excuse it.
 - A deployment that runs **no** long-term modes at all (demo, uzhm) produces no long-term FAILs,
   including via `run_all`'s unconditional `--target all` (`run_locally.sh:1228-1238`).
 - `test_long_term_never_skipped` is **intentionally superseded**: it locks the current

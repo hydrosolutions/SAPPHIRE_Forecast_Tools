@@ -62,19 +62,60 @@ A **run-scoped manifest**, written to a unique path (e.g.
 validation **explicitly** — by path or run id — never discovered by "latest file wins".
 
 Fields the review identified as load-bearing: schema version; run id; target/organization;
-requested forecast date **and** effective output date (they differ — see the snap-back above);
-generated-at; config fingerprint; source (`scheduler` vs `manual-override`); active and skipped
-modes with reasons; per-mode horizon type and horizon value; and attempted/completed/failed
-outcomes per mode-model.
+requested forecast date; generated-at; config fingerprint; source; active and skipped modes with
+reasons; per-mode horizon type and horizon value; and outcomes.
+
+Three corrections from the second review pass (2026-08-18):
+
+- **The effective output date is per mode-model, not per run.** Each model has its own
+  `forecast_months` and computes its own nearest scheduled date (`lt_utils.py:188-202`), then snaps
+  independently (`:211-217`); scheduler eligibility is likewise per model
+  (`lt_schedule_query.py:107-124`). Some models in a mode can skip while another activates it. A
+  single run-level "effective date" field would be wrong for at least one row on exactly the days
+  this issue exists to describe.
+- **The `source` enum needs more than `scheduler` / `manual-override`.** The local runner has a
+  **legacy fallback** resolution path with its own hard-coded gate and mode set
+  (`run_locally.sh:284-300`), used when the schedule query fails. A manifest that cannot say "these
+  modes came from the fallback" mislabels its own provenance.
+- **Producer timing cannot support outcome fields as drafted** (see below).
+
+### Producer timing — intent or outcome, and it cannot silently be both
+
+Both named operational producers write **after schedule resolution**, which is *before any forecast
+executes*. Per-model results only exist later — accumulated in `run_forecast.py:474-526`, and for
+Luigi not until yielded work completes (`pipeline_docker.py:2401-2417`). So the draft cannot both
+write at resolution time and carry attempted/completed/failed. Choose explicitly:
+
+| | Model | Consequence |
+|---|---|---|
+| **Intent-only** | one immutable receipt written at resolution | simplest, and still sufficient for gating: "expected, absent" stays a genuine FAIL. Does not distinguish "model crashed" from "model never ran" |
+| **Two-stage** | receipt at resolution, finalized after execution, atomically | richer, but needs an explicit **incomplete/crashed** state for the process-died case, or a half-written manifest becomes a new silent-success trap |
+
+Intent-only is the smaller v1 and is enough for INFRA-022. Do not ship a two-stage design without
+the crashed-state semantics — that would recreate the defect class this issue exists to close.
 
 ### Producers — one per path that can run long-term work
 
 | Path | Producer |
 |---|---|
 | local operational | `query_lt_schedule` in `run_locally.sh`, after it resolves modes (`:278-323`) |
+| local operational **fallback** | the legacy `is_lt_issue_window` path with its own hard-coded gate and mode set (`:284-300`), used when the schedule query fails — must be a distinct `source` value, not silently labelled `scheduler` |
 | Luigi | `RunLongTermWorkflow`, after override-or-query resolution (`:2339-2367`) — **not** `LTScheduleQuery`, which the override path bypasses |
 | no active modes / skipped org | an explicit **empty** manifest, so "nothing was expected" is stated rather than inferred from absence |
-| simulation | an explicit simulation manifest, or an explicit statement that simulation output is not operationally validated (`run_locally.sh:583-613` generates many dates) |
+| simulation | see the scope decision below |
+
+**Scope: "every path" needs narrowing (2026-08-18).** The acceptance criterion below says every path
+writes a manifest, but there are entry points no orchestrator owns — the module's Docker image can
+be run directly (`long_term_forecasting/Dockerfile:21-34`) and the legacy local script can execute
+forecasts (`bin/locally_run_forecast_tools.sh:212-233`). Decide explicitly: either those are
+**out of scope** and validation is only ever run behind an orchestrator that produced a manifest, or
+they are in scope and must produce one too. Leaving "every path" unqualified makes the criterion
+untestable.
+
+**Simulation must be resolved consistently with INFRA-021.** This issue currently allows declaring
+simulation out of operational validation *and* requires every path to write exactly one manifest —
+those conflict, and INFRA-021 separately requires simulation-date propagation with a
+per-date/last-date/aggregate choice. One decision, recorded in both. See open question (9).
 
 **Do not** add these fields to `lt_schedule_query`'s stdout JSON. That shape is consumed by three
 call sites and pinned by the INFRA-022 extraction plan's characterization tests; keep the manifest a
@@ -90,8 +131,34 @@ separate artifact.
    or run id + forecast date + organization + config fingerprint?
 3. **Intent vs execution.** Does v1 record only the resolved schedule (cheaper, still leaves
    "scheduled but the model crashed" as a FAIL, which is correct), or per-model outcomes too?
-4. **Scope of the run id.** Does one already exist anywhere in the pipeline, or is this introducing
-   the concept? If introducing it, that is a broader change than long-term alone.
+4. **Scope of the run id.** **Answered 2026-08-18**: no reusable run id exists in this pipeline —
+   `run_locally.sh:94-97` has only a second-resolution log timestamp, and `RunLongTermWorkflow` has
+   no run-id parameter (`pipeline_docker.py:2316-2319`, `:2344-2345`). But the concept **does**
+   exist in the repo: `forecast_skill_eval` has a caller/default `run_id` plus a run-scoped artifact
+   directory (`cli.py:67-79`, `artifacts.py:18-34`). Borrow that shape rather than inventing one.
+   The remaining question is who *owns* it — see (5).
+5. **Identity ownership and propagation.** Who mints the run id and passes it along the chain? The
+   deployed launcher only submits Luigi and passes no identity and no validation command
+   (`bin/run_long_term_forecasts.sh:104-124`), and `validate_pipeline` has no argument to receive
+   one. Without an owner, every producer invents its own and nothing matches.
+6. **Finalization after partial process death.** If a run is killed between resolution and
+   completion, what state is the manifest in and how does validation read it? (Only relevant under
+   the two-stage model above.)
+7. **Retention and cleanup.** Run-scoped paths accumulate. Who deletes them, and after how long?
+   Note the current fixed file is removed only when the next schedule query starts
+   (`pipeline_docker.py:2101-2105`) — that is the anti-pattern to avoid, not a precedent.
+8. **Fingerprint inputs, and when it is taken.** Which files and env vars compose the config
+   fingerprint — and is it computed **before or after** `ForecastConfig` rewrites every model's
+   `general_config.json` during load (`config_forecast.py:157-180`)? Fingerprinting after the
+   rewrite makes the value depend on whether a run happened first.
+9. **Which artifact owns the horizon value?** This manifest proposes carrying per-mode horizon type
+   and value, while `validate_pipeline` resolves them today from `long_term_horizon_resolver`
+   (`:539`, `:562`). Both cannot be authoritative — if config changes between execution and
+   validation, they diverge. The manifest's copy is the *as-run* value and is probably the right
+   answer, but it must be stated, not left to whichever code path runs first.
+10. **Manifest cardinality for multi-date simulation.** `simulate_forecasts.py:160-176` iterates
+   many year/month pairs; one manifest, or one per generated date? INFRA-021 records the same
+   unresolved question for validation dates — **decide both together, once.**
 
 ## Reuse
 

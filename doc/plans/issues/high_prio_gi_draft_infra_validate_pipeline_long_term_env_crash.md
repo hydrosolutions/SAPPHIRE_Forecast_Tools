@@ -191,8 +191,31 @@ strictly worse, because the traceback at least cannot be ignored as noise. This 
 CLAUDE.md forecast-date rule (§ "The Forecast Date Rule"), which requires the date to be captured
 once and passed as a parameter.
 
-**Re-pricing:** the tracker entry reads like a small env-loading fix. It is not. Scope is now
+**Re-pricing:** the tracker entry reads like a small env-loading fix. It is not. Scope is
 `INFRA-021 + INFRA-022 + forecast-date propagation`, with one locked test to renegotiate.
+
+**Chain updated 2026-08-18 — INFRA-028 joins the front of it.** INFRA-022's gating cannot be built
+by *re-deriving* the schedule: re-derivation cannot see manual overrides
+(`pipeline_docker.py:2339-2367` bypasses `LTScheduleQuery`), execution outcome, or the date output
+was written under (late forecasts snap back, `lt_utils.py:211-217`). Gating therefore consumes a
+run-scoped manifest, filed as **INFRA-028**. So the delivery chain is:
+
+> **INFRA-028** (manifest) → **INFRA-022** (gating) → **atomic with INFRA-021** (this issue)
+
+Two consequences for this issue specifically:
+
+- **The schedule-authority question is decided, not open.** Owner chose option (d); the extraction is
+  planned in `doc/plans/working/lt_schedule_authority_extraction_plan.md`. Note it is **independent
+  cleanup, not a prerequisite** of this chain — validation consumes the manifest, not the extracted
+  predicates (it already gets horizon values from `long_term_horizon_resolver`,
+  `validate_pipeline.py:539`, `:562`).
+- **The simulation-date question below must be answered once, jointly with INFRA-028's manifest
+  cardinality** — the same multi-date ambiguity is recorded in both issues, and answering it in one
+  place only will put them back out of step.
+
+See also **LTF-007**: a mode the scheduler admits at 6–10 days can have every model refuse to run at
+execution's 5-day gate. Under the manifest contract that is a **genuine detected execution failure**,
+not a legitimately gated SKIP — gating must not be built to excuse it.
 
 ## Proposed fix (to be planned — pick one primary)
 

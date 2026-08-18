@@ -48,7 +48,7 @@ That matters because every hard part of rev 3 existed *only* to cross that bound
 
 | Rev 3 burden | Under rev 4 |
 |---|---|
-| Add the module to `iEasyHydroForecast/pyproject.toml`'s explicit wheel include list (`:40-48`) | **gone** — `long_term_forecasting/pyproject.toml` has no include list, no build-system section; it is an application consumed as an editable path dependency |
+| Add the module to `iEasyHydroForecast/pyproject.toml`'s explicit wheel include list (`:40-48`) | **gone** — `long_term_forecasting/pyproject.toml` has no include list and no build-system section. *(Rev 4 correction: it is the **virtual root project** — `uv.lock:851-854` records source `.`; `iEasyHydroForecast` is the editable dependency, `uv.lock:669-672`. The conclusion stands, the rationale was wrong.)* |
 | Prove a non-editable wheel exposes both flat and `iEasyHydroForecast.*` namespaces | **gone** — flat sibling import only, exactly like `lt_utils`'s `from config_forecast import ForecastConfig` |
 | `lt_utils` re-export shim + import-context hazard that could break *every* `lt_utils` importer | **gone** — see below |
 | Docker packaging proof | **gone** — `Dockerfile:15` copies the whole directory |
@@ -58,10 +58,24 @@ because the predicate called it. Rev 3 put that call back in the caller — wher
 `lt_schedule_query.py:35` already imports it from `lt_utils`. Nothing has needed it moved since
 rev 3, under either placement. Rev 4 strikes the phase outright; the helper **stays in `lt_utils`**.
 
-**What would flip this back**: if INFRA-028's "a missing manifest is an infrastructure FAIL, never
-re-derive the schedule" decision is ever softened, validation would need these predicates and the
-module would have to move to `iEasyHydroForecast` after all — reintroducing the wheel list and the
-namespace work. That question is still open in INFRA-028; decide the two together.
+**This placement is conditional, and that is a real dependency — not an aside.** It holds *only*
+while INFRA-028 makes the manifest the exclusive post-run authority. If INFRA-028's still-open
+"missing manifest" question (its open question 1) is answered by letting validation **re-derive**
+the schedule as a fallback, `validate_pipeline` becomes a predicate consumer, the module has to move
+to `iEasyHydroForecast`, and the wheel list and namespace work come back.
+
+> **Sequencing consequence (rev 4, corrected):** an earlier line in this revision claimed the plan
+> "depends on none of them". That was wrong, and contradicted this very paragraph. The accurate
+> statement: **P0 is unconditionally safe** — it is characterization tests against unmodified source
+> and is correct under either placement. **P1–P2 should not start until INFRA-028's missing-manifest
+> decision is recorded**, because that decision determines where the module lives. Starting P1 early
+> risks writing the module twice.
+
+A second, smaller conditional: INFRA-028 proposes carrying **per-mode horizon type and value** in the
+manifest, while this plan's placement argument leans on validation resolving horizon values from
+`long_term_horizon_resolver` (`validate_pipeline.py:539`, `:562`). Both cannot be the authority.
+Recorded as an open question in INFRA-028; it does not change the placement either way, because
+neither source is a scheduling *predicate*.
 
 ---
 
@@ -156,9 +170,12 @@ phase, and the idea under it was insufficient: a re-derived schedule cannot see 
 was actually written under (late forecasts snap back, `lt_utils.py:211-217`). That work is
 **INFRA-028**, a run-scoped manifest emitted by whatever actually ran.
 
-**Dependency direction**: INFRA-022 depends on INFRA-028; INFRA-021 ships atomically with INFRA-022.
-**This plan depends on none of them, and — per rev 4 — none of them depends on it.** It is
-independent cleanup that removes a drift source and gives LTF-007 a single tolerance to fix.
+**Dependency direction**: INFRA-028 → INFRA-022 → atomic with INFRA-021.
+
+**Nothing in that chain depends on this plan** — validation consumes the manifest, not these
+predicates. But this plan is **not** fully independent of the chain either: its *placement* is
+conditional on INFRA-028's missing-manifest decision (see § "Why the placement changed"). P0 can
+proceed now; P1 onward should wait for that decision to be recorded.
 
 ---
 
@@ -229,8 +246,13 @@ independent cleanup that removes a drift source and gives LTF-007 a single toler
 - **Agents**: 1.
 - **Work**: implement the predicate set above — predicates and constants only, no loop, no
   `ForecastConfig`, no env reads, no file I/O. Reason strings copied character-for-character.
-- **Acceptance**: unit tests cover the P0 matrix at predicate level, including the permutation and
-  tuple negative controls. The module imports with **no** env vars set and without touching the
+- **Acceptance**: unit tests cover **the P0 rows that are predicate-owned** — the window boundaries
+  (`dist == tolerance`, `+1`), the wrap-around, non-operational membership, and the `is_unrestricted`
+  cases including the permutation and tuple negative controls. *(Rev 4 correction: rev 4 said "the
+  P0 matrix at predicate level", which overreaches — config-load failures, zero/multiple models,
+  horizon mapping, nearest-month selection, year rollover and short-month clamping are owned by the
+  caller or by `nearest_scheduled_issue_date`, both of which P1 explicitly excludes. Those rows stay
+  caller-level in P0 only.)* The module imports with **no** env vars set and without touching the
   filesystem — prove with an explicit probe, not prose. Nothing else imports it yet.
   *(No packaging work: `long_term_forecasting/pyproject.toml` has no wheel include list, and
   `Dockerfile:15` copies the directory wholesale.)*
@@ -292,11 +314,18 @@ independent cleanup that removes a drift source and gives LTF-007 a single toler
    **inside** the caught block and becomes a skipped-mode reason, not a CLI failure. An uncaught
    failure remains possible if a file disappears between load and access. P0(b) pins whichever
    behavior is current, not the assumed one.
-2. **Stale cross-references — three.** Listed in P2's file list; all cite
-   `lt_schedule_query.py:54-91` by line number.
-3. **A second live definition survives.** `bin/utils/migration_py/long_forecast.py:72` keeps its own
-   `_ALWAYS_SKIP_MODES`, applied `:197-203`. Deliberately out of scope; the "single-sourced" claim
-   is therefore scoped to `apps/long_term_forecasting/`.
+2. **Stale cross-references — five, not three.** Beyond P2's three, the same
+   `lt_schedule_query.py:54-91` citation appears at `doc/prod/update_data_migration_runbook.md:624-627`
+   and `doc/plans/issues/high_prio_gi_draft_update_migration_p5_long_forecast.md:44-47`. Docs-only,
+   but a runbook citation that points at the wrong lines is exactly the MIG-002 failure mode.
+3. **Three live schedule definitions survive, not one.** This plan single-sources only the
+   scheduler's. Also live:
+   - `bin/utils/migration_py/long_forecast.py:72` — its own `_ALWAYS_SKIP_MODES`, applied `:197-203`.
+   - **The local runner's operational fallback** (`run_locally.sh:232-261`, selected on schedule-query
+     failure at `:274-300`) — independently reimplements the 30-day wrap distance, issue-day
+     defaults, **and a five-day window**. Note that is the *execution* value, not the scheduler's
+     ten, so the fallback and the scheduler already disagree with each other (**LTF-007**).
+   The "single-sourced" claim is therefore scoped to `apps/long_term_forecasting/` Python callers.
 4. **LTF-007 is the second consumer and is not part of this plan.** Until it lands, the extracted
    tolerance has one reader, and `lt_utils.py:202` still hard-codes `5`.
 
