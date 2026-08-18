@@ -327,8 +327,11 @@ proceed now; P1 onward should wait for that decision to be recorded.
    they are in P2's file list rather than filed as a pre-existing defect. **The list has grown at
    every review pass — re-grep before executing P2 rather than trusting it.** *(Corrected in the third pass: an earlier draft called them
    "already stale" and likened them to MIG-002 — MIG-002 was a rollback dump-glob data-loss defect,
-   not citation drift. The analogy was wrong and the tense was wrong.)* One of the five is an
-   operator **runbook**, so the update is not merely cosmetic.
+   not citation drift. The analogy was wrong and the tense was wrong.)* One of the known sites is an
+   operator **runbook** (`doc/prod/update_data_migration_runbook.md`), so the update is not merely
+   cosmetic. Note the sites are not all the same citation class — some name
+   `NON_OPERATIONAL_MODES`, others the tolerance or the query itself — so a grep for one constant
+   will not find them all.
 3. **Three live schedule definitions survive, not one.** This plan single-sources only the
    scheduler's. Also live:
    - `bin/utils/migration_py/long_forecast.py:72` — its own `_ALWAYS_SKIP_MODES`, applied `:197-203`.
