@@ -206,8 +206,14 @@ Cut on review as disproportionate to a three-call-site fix; recorded so they are
 ## Downstream effect
 
 Interpolating interior gaps keeps a value where one exists today, so the earlier concern about
-nulls propagating into model forcing **largely disappears** — it now applies only to leading gaps,
-of which none have been observed.
+nulls propagating into model forcing shrinks — but it does **not** disappear, and an earlier
+revision saying it applied "only to leading gaps" was wrong.
+
+`limit_area="inside"` leaves **trailing** temperature gaps NaN as well, where the old whole-frame
+`ffill` filled them. Neither leading nor trailing gaps appeared in the two frames inspected, so
+this is a regression *surface*, not an observed incident — but it is a real behaviour change and
+the conceptual model does no NA removal before using temperature to compute PET
+(`functions_operational.R:467`, `:495`).
 
 For completeness, if a leading gap does occur its NaN is **not dropped** anywhere: control writes
 to CSV and sends the API `value=None` (`Quantile_Mapping_OP.py:355-357`), which the schema

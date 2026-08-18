@@ -7,11 +7,14 @@ Covers:
 - Interior precipitation gaps are forward-filled, not interpolated.
 - No-NaN frames are returned unchanged.
 - No rows are ever dropped, including when the group key itself is NaN.
-- Trailing gap behaviour is pinned for both methods.
-- The six production call sites are wired to fill_gaps_grouped with the
-  correct value_col/group_cols/method (guards against a revert to a
-  bare .ffill() or a copy/paste argument swap going unnoticed by the
-  unit tests above, which only exercise the helper directly).
+- Trailing gap behaviour is pinned for both methods: "interpolate"
+  leaves a trailing gap NaN, "ffill" fills it.
+
+NOT covered: the wiring of the six production call sites. These tests
+exercise the helper directly and would stay green if a call site were
+reverted to a bare .ffill() or given the wrong group_cols/method. A
+source-regex guard was tried and removed as implementation-coupled;
+closing this properly needs a behavioural fixture with gaps in it.
 """
 
 import os
