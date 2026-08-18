@@ -124,6 +124,29 @@ Operational (daily, boundary days)     Maintenance (nightly)
 **Note:** `postprocessing_forecasts.py` is deprecated. Use
 `recalculate_skill_metrics.py` instead.
 
+## Recovering Stranded Period Forecasts
+
+If short-term per-model PENTAD/DECADE rows are missing for a boundary date, the
+recovery tool is `backfill_period_forecasts.py`. It re-aggregates a range through the
+existing operational aggregation and save path, one calendar year per internal call.
+
+**Check first whether it applies.** The CLI re-aggregates inputs that already exist —
+it does not generate forecasts. When the inputs for the affected dates were never
+produced it cannot recreate them: if the rest of the year still has coverage the run
+exits 0 having re-upserted everything *else* and nothing new for your dates, and if the
+whole horizon-year is empty it exits 1. Neither outcome means "repaired". In the field
+cases examined so far the cause was that the pipeline had not run, and the fix for that
+is upstream in `machine_learning` — though how representative those cases are is
+inferred, not measured.
+
+Two further traps worth knowing before reading the full procedure: only the *years* of
+`--start-date`/`--end-date` are used, so a narrow date range does not narrow the work;
+and Ensemble Mean is recomputed against current skill metrics, so a historical
+backfill is not a replay.
+
+Full procedure, including the write-safety requirements:
+[`doc/prod/backfill_period_forecasts_runbook.md`](../../doc/prod/backfill_period_forecasts_runbook.md).
+
 ## Skill Metrics
 
 ### Metric tiers

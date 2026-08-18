@@ -1854,11 +1854,18 @@ and adds the per-model comparison that reveals stranded period rows.
 same window.
 
 **Red flags**:
-- Per-model period rows present but `EM`/`NE` at 0 for a boundary date — the
-  PP-045 class: short-term per-model PENTAD/DECADE rows are written **only** by
-  the operational path on boundary days, and maintenance cannot heal them. Use
-  `apps/postprocessing_forecasts/backfill_period_forecasts.py` (one calendar year
-  per pass) rather than expecting maintenance to fill the gap.
+- Per-model period rows **absent** for a boundary date — the PP-045 class: short-term per-model PENTAD/DECADE rows are written on the
+  daily/boundary-day cadence **only** by the operational path, and maintenance
+  cannot heal them. (Other entrypoints do write them off that cadence — the yearly
+  skill recalculation re-saves period rows as a side effect — so do not infer "an
+  operational run happened" from a row's existence.) **First check that inputs
+  exist for the affected issue dates**: the backfill re-aggregates existing inputs
+  and cannot invent them. With no coverage for the affected dates it exits 0 having
+  re-upserted the rest of the year and written nothing new for those dates (or exits 1
+  if the whole horizon-year is empty) — neither is a repair. If inputs are present, use
+  `apps/postprocessing_forecasts/backfill_period_forecasts.py` — see
+  `doc/prod/backfill_period_forecasts_runbook.md`. If they are absent the fix is
+  upstream in `machine_learning`.
 
 ---
 
@@ -2108,4 +2115,5 @@ not just PASS/FAIL where a threshold applies.
 | Long-term row with tiny `n_pairs` and a wild NSE | Min-n floor not applied on this path | Check the `ieasyhydroforecast_min_pairs_long_term*` values in effect (defaults 4/5/5) |
 | Tombstone (`n_pairs=0`) carrying metrics | Tombstone written malformed | Real defect — capture the row and file it |
 | EM parity `comparable=0` at quarter/season | EM and LR_Base/LR_SM share no key — usually a `horizon_value` mismatch | Compare `horizon_value` on the EM row vs its inputs before assuming EM is wrong |
-| Per-model period rows exist but EM/NE absent | Missed operational boundary day; maintenance cannot heal per-model period rows | Run `apps/postprocessing_forecasts/backfill_period_forecasts.py`, one calendar year per pass (PP-045) |
+| Per-model period rows **absent** on a boundary date | Missed boundary-day postprocessing, or inputs never produced | Establish coverage first, then `doc/prod/backfill_period_forecasts_runbook.md` (PP-045). No coverage ⇒ upstream `machine_learning` fix |
+| Per-model period rows present but EM/NE absent | **Not the PP-045 signature.** EM requires ≥2 models past the skill gate and is skipped when skill metrics are empty; NE needs ML members | Check skill-metric availability for the horizon before suspecting a stranded period |
