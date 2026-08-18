@@ -116,11 +116,34 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
    >   month (`:88-131`).
    >
    > Gate on the resolver alone and a quarter or season mode that is simply not scheduled this
-   > month still reports FAIL — the precise false alarm this issue exists to remove. The options
-   > are (a) have validation call the same `lt_schedule_query` logic the scheduler uses, (b) extend
-   > the resolver to expose tolerance and `forecast_months`, or (c) accept known-incomplete gating
-   > and document which cases still false-FAIL. **This decision is a prerequisite of the INFRA-021
-   > + INFRA-022 atomic change and is not yet made.**
+   > month still reports FAIL — the precise false alarm this issue exists to remove.
+   >
+   > **Two further gaps found while writing this up (2026-08-18), not in either review:**
+   >
+   > - **`NON_OPERATIONAL_MODES`.** `query_schedule` skips `{"monthly"}` outright
+   >   (`lt_schedule_query.py:57`, `:89-91`) — and the comment there says such modes are
+   >   *deliberately kept* in `ieasyhydroforecast_ml_long_term_supported_modes` so the maintenance
+   >   pipeline can reference them. So a validator that iterates `supported_long_term_modes()`
+   >   would demand operational output for a mode that is **never** operationally issued, and
+   >   FAIL every single day. The resolver exposes no notion of "non-operational".
+   > - **The tolerance is in flux.** `ISSUE_DAY_TOLERANCE = 10` carries the comment "Temporarily
+   >   relaxed to 10 days… Must be changed back to 5 days for operational use"
+   >   (`lt_schedule_query.py:50-52`). Any gating that hard-codes or re-derives this number will
+   >   silently disagree with the scheduler the day it goes back to 5. Whatever is built must read
+   >   the tolerance from **one** place.
+   >
+   > **Options:**
+   >
+   > | | Approach | Cost |
+   > |---|---|---|
+   > | (a) | validation calls `lt_schedule_query.query_schedule()` directly | single source of truth, but it lives in `long_term_forecasting`, builds a `ForecastConfig`, and calls `sl.load_environment()` internally (`:76`) — the very function INFRA-021 says must not be called unchanged. Heavy for a validator whose `pyproject.toml` declares only `pandas` |
+   > | (b) | extend `long_term_horizon_resolver` to expose tolerance, `forecast_months` and non-operational modes | keeps the validator light, but creates a **second** schedule authority — and two definitions that must agree is how this class of bug arises in the first place |
+   > | (c) | accept known-incomplete gating, document which cases still false-FAIL | cheapest and honest, but ships a check that is still wrong on unscheduled months |
+   > | (d) | extract the mode-activity decision into `iEasyHydroForecast` beside the resolver; `lt_schedule_query` and `validate_pipeline` both call it | most up-front work, removes the drift risk permanently. Note `validate_pipeline` **already** imports from `iEasyHydroForecast` (`validate_pipeline.py:35-49`), so this adds no new dependency direction |
+   >
+   > **This decision is a prerequisite of the INFRA-021 + INFRA-022 atomic change and is not yet
+   > made.** It is a design decision for the owner, not an implementation detail — (a) and (d)
+   > change where scheduling truth lives.
    **Skill-metric checks must NOT inherit the operational forecast gate** — they are
    historical and not date-filtered, so gating them would hide real starvation.
 2. When the gate is closed, emit **SKIP with the gate reason** ("not a long-term
