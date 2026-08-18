@@ -185,8 +185,10 @@ both let the run exit zero, so they surface as wrong data rather than as a failu
   replacement source here** — the reset drops the database volume *before* starting the
   API, so the restarted API is backed by the empty database it is meant to refill. That
   path needs a pre-reset export, a backup/restore, or a regeneration step. A stale file
-  repopulates stale rows; an absent file is warned about and skipped, leaving the table
-  empty and the migrator exiting zero.
+  repopulates stale rows; an absent file is warned about and skipped, leaving the
+  **combined period rows** empty and the migrator exiting zero — not the whole
+  `forecasts` table, since the reset also runs `--type forecast`, which can populate DAY
+  rows.
 
 ### Pipeline Data Flow
 

@@ -3,12 +3,12 @@
 **Status:** Draft, not started. Subject to CLAUDE.md's mandatory out-of-loop review
 before any phase executes.
 
-**Base:** `origin/maxat_sapphire_2` @ `6e28647a` (PR #445 merged).
+**Base:** `origin/maxat_sapphire_2` @ `c9e91f83` (PR #448 merged).
 
-**C8's gate is CLOSED again.** The shared checkout was briefly clean when this plan was
-started; a parallel session has since dirtied `doc/plans/module_issues.md` and several issue
-files (six paths at the time of writing — do not rely on the count, re-check). Every phase that edits the registry (T0.2, T1.2, T4) is blocked until it is clean,
-and the id collision in §0a.4 must be settled first. This is residual risk 6 arriving
+**C8's gate is OPEN as of 2026-08-18** — the parallel session's work landed in PR #448
+and the checkout is clean, so T0.2, T1.2 and T4 are unblocked. The gate has opened and
+closed twice during this plan's life; **re-check immediately before writing a registry
+row** rather than trusting this line. The earlier closure was residual risk 6 arriving
 within the hour it was written.
 
 **Scope.** Close out PP-045 honestly, land the two follow-up tickets it owes, and
@@ -76,12 +76,14 @@ refutation of the cause; T0.1 must not repeat that.)
 4. **The write-divergence issue is PP-060 — an id collision, resolved by yielding.**
    It was filed as `PP-059` in PR #445 and merged to trunk without an index row (C8's
    gate was closed). A parallel session then allocated **PP-059 to a different issue**
-   ("Remove monthly EM") in an uncommitted registry row. Owner decision 2026-08-18:
+   ("Remove monthly EM"), **which has since landed in the registry via PR #448** — so the
+   collision is now settled fact, not a pending clash. Owner decision 2026-08-18:
    **this issue yields and becomes PP-060**; PP-059 stays with the parallel session's
    work. Renamed here across the issue file and this plan in one commit, so no
    intermediate state has the two documents disagreeing. `PP-060` was free on trunk and
-   in the dirty working copy at the time — **re-verify before T0.2 writes the row**,
-   since the parallel session is still in flight.
+   in the working copy at the time, and remains free and unindexed on trunk `c9e91f83`
+   after PR #448 landed the parallel session's rows — **still re-verify before T0.2
+   writes the row.**
 
 ### 0b. Owed but never written
 
@@ -90,15 +92,24 @@ refutation of the cause; T0.1 must not repeat that.)
    an **existing** one, so the defect manifests today. May justify re-rating.
 6. **Detect-and-report ticket.** No such file exists under `doc/plans/issues/`.
 
-### 0c. Owner decisions — one settled, the rest open
+### 0c. Owner decisions (the four T2 gates) — three settled 2026-08-18, one open
 
-7. The **kyg criterion** (PP-045's last acceptance item).
-8. ~~**PP-060's contract**~~ — **DECIDED 2026-08-18: option (a)** (§4 T2).
-9. PP-045's carried **API-only-by-default** flag.
+7. **The kyg criterion** (PP-045's last acceptance item) — **still OPEN.** The only
+   unsettled T2 gate.
+8. ~~**PP-060's contract**~~ — **DECIDED: option (a)** (§4 T2.1).
+9. ~~**The dashboard `write_csv` carve-out**~~ — **DECIDED: carve it out**; T3.1 runs as
+   its own change (§4 T2.2).
+10. ~~**PP-045's carried API-only-by-default flag**~~ — **DECIDED: confirmed**, CSV
+    writing stays off by default (§4 T2.4).
+
+**Open items outside these four gates**, so that "only kyg is open" is not misread as
+"nothing else needs a decision": **C9** (whether the dashboard's swallowed failures
+should now surface) is an explicit product choice, and **PP-060's priority** is still
+marked owner-to-confirm.
 
 ### 0d. Housekeeping
 
-10. Seven scratchpad worktrees and seven merged branches from this sequence remain. A
+11. Seven scratchpad worktrees and seven merged branches from this sequence remain. A
     prior cleanup attempt was declined; not re-attempted here without an explicit ask.
 
 ---
@@ -171,9 +182,9 @@ is a colleague-managed schema change and needs its own discussion. No migration 
 plan.
 
 **C8 — `module_issues.md` is edited once per phase that needs it, on a clean tree,
-re-reading the file to allocate ids.** **The gate is currently CLOSED** — see the Base
-note. Three phases (T0.2, T1.2, T4) wait on it, and the id collision in §0a.4 must be
-settled before any of them writes a row.
+re-reading the file to allocate ids.** **The gate is OPEN as of 2026-08-18** (PR #448
+landed; checkout clean), and the §0a.4 id collision is settled. It has opened and closed
+twice already, so T0.2, T1.2 and T4 must each re-check rather than trust this line.
 
 **C9 — The dashboard change alters failure visibility.** The scoped recalc's failures
 are currently swallowed as non-fatal, and the container runner prints rather than raises.
@@ -315,10 +326,9 @@ latter is not the PP-045 signature.
 > The two are linked: with CSV writing going away, the recalc's only remaining *forecast*
 > side effect is the API forecast write, so removing it is a far smaller conceptual
 > change than when it also owned two CSV artefacts. (It still writes skill metrics to the
-> API — that is its job and is untouched.) **Decision 1 is settled; 2, 3 and 4 remain
-> open** — 2 has changed from a design question to a scheduling one, because option (a)
-> does not by itself retire the dashboard CSV problem. See "Consequences of the decision"
-> after the list.
+> API — that is its job and is untouched.) **Decisions 1, 2 and 4 are settled as of
+> 2026-08-18; only 3 — the kyg criterion — remains open.** See "Consequences of the
+> decision" after the list.
 
 1. **PP-060 contract — DECIDED: (a)**, the recalc stops writing period forecasts.
    Option (b) (write the same row set as operational) is **not** being pursued, which
@@ -347,16 +357,23 @@ latter is not the PP-045 signature.
      CLI docstring, and the review-checklist template all state that the recalc writes
      period rows. Option (a) invalidates each — including text T0.3 would have just
      written.
-2. **Whether the dashboard `write_csv` fix is carved out** — **still open, and now a
-   scheduling question.** See "T3.1's status" below: option (a) does not by itself retire
-   it, because the scoped `save_skill_metrics` CSV overwrite survives option (a).
+2. **Whether the dashboard `write_csv` fix is carved out** — **DECIDED 2026-08-18:
+   yes, carve it out.** T3.1 runs as its own change rather than waiting for the CSV
+   deprecation to absorb it. The §6 dependency graph's default scenario therefore holds
+   as written and needs no re-derivation. Scope per "T3.1's status" below: permanently
+   the `save_skill_metrics` CSV, plus the combined CSVs on an interim basis until T3.2
+   removes that call.
 3. **The kyg criterion** — run the full kyg pipeline when available, or waive in writing.
-4. **PP-045's API-only-by-default flag** — confirm or override.
+4. **PP-045's API-only-by-default flag** — **DECIDED 2026-08-18: confirmed.** The
+   backfill CLI keeps `--write-csv` off by default. Consistent with the CSV deprecation,
+   and it means the flag needs no change now; it retires with the CSVs themselves.
 
-**Gating, stated once so the graph and prose agree:** T3.2 is gated on **decision 1**,
-which is settled. T3.1 is gated on **decision 2**, which is open. In §6's default
-scenario T3.1 also precedes T3.2 and T4 — if decision 2 drops T3.1, re-parent per §6
-rather than leaving T3.2 without its Tier-0 chain.
+**Gating, stated once so the graph and prose agree:** T3.2 is gated on **decision 1**
+and T3.1 on **decision 2** — both settled 2026-08-18, so Tier 3's *owner-decision* gates
+are cleared. It is **not** otherwise unblocked: C6 still requires all of Tier 0 to land
+first, which the graph encodes. T3.1 runs,
+so §6's default scenario applies as written and the re-derivation note there is now
+hypothetical.
 
 ### Consequences of the 2026-08-18 decision
 
@@ -377,10 +394,11 @@ recalc rewriting shared CSVs, and there are two:
   single station's data.
 
 T3.1 is therefore superseded only once the CSV deprecation removes the skill-metric CSV
-write. Until then it is a live defect. The owner's remaining choice (T2.2) is scheduling:
-- if the deprecation will remove that write soon, **drop T3.1** and let it absorb the fix;
-- otherwise **keep T3.1, scoped to `save_skill_metrics` only** — option (a) handles the rest.
-Record whichever is chosen; the dependency graph assumes T3.1 runs, and §6 says how to
+write. Until then it is a live defect. **DECIDED 2026-08-18 (T2.2): carve it out** — T3.1
+runs as its own change, scoped permanently to `save_skill_metrics` (option (a) handles
+the combined CSVs via T3.2). The alternative, letting the deprecation absorb it, was
+declined. The dependency graph's default scenario therefore applies as written; §6's
+re-derivation note is now hypothetical and says how to
 re-derive it if not.
 
 **The seeding concern is WEAKER than an earlier draft claimed — verify it before acting
@@ -415,7 +433,9 @@ discovered much later:
    *before* starting the API, so the restarted API is backed by the empty database it is
    meant to refill. This path needs a pre-reset export, a backup/restore, or a
    regeneration step. Left as is: a stale file repopulates stale rows; an absent file is
-   warned about and skipped, leaving the table empty and the migrator exiting zero.
+   warned about and skipped, leaving the **combined period rows** empty and the migrator
+   exiting zero. (Not the whole `forecasts` table — the reset also runs
+   `--type forecast`, which can populate DAY rows.)
 These belong to the deprecation effort, not to PP-060; record them wherever that work is
 tracked. They are noted in `CLAUDE.md` § Data I/O Transition.
 
@@ -518,10 +538,10 @@ reconciling it.
 
 ### T4 — Record the decisions and close PP-045
 
-- **Goal:** the thing this plan is named for. T2 produces decisions; the PP-060 contract
-  and the CSV deprecation are now recorded in §T2 and in PP-060 itself, but **the kyg and
-  API-default decisions still are not written anywhere**, and PP-045's live checklist
-  still shows both as open. An earlier draft of this plan had no such phase — its stated
+- **Goal:** the thing this plan is named for. Three of T2's four decisions — the PP-060
+  contract, the dashboard carve-out and the API-only default — are now recorded in §T2,
+  in PP-060, and (for the API default) in PP-045's §G checklist. **The kyg decision is
+  the one still unwritten**, because it is the one still unmade. An earlier draft of this plan had no such phase — its stated
   close-out goal was unreachable from its own dependency graph.
 - **Files:** `doc/plans/issues/review_gi_draft_pp_missed_boundary_period_gap.md`;
   `doc/plans/module_issues.md`.
@@ -532,9 +552,11 @@ reconciling it.
 Steps:
 
 1. Record the **kyg** decision in §G — run, waived, or downgraded — with the rationale
-   and the decider named.
-2. Record the **API-only-by-default** decision.
-3. Record PP-060's contract decision and its effect on §H's matrix.
+   and the decider named. **This is the only T2 decision still unrecorded, because it is
+   the only one still unmade.**
+2. ~~Record the API-only-by-default decision~~ — already done: PP-045 §G, 2026-08-18.
+3. Record PP-060's contract decision (option (a)) and its effect on §H's matrix —
+   recorded in PP-060 and this plan; §H's matrix still needs the update.
 4. Propose the status transition and the `review_gi_draft_*` → archive move.
    **Do not execute without approval** (owner-owned, per the preceding plan's C2).
 5. Final `module_issues.md` pass so the PP-045 row matches the issue's Status.
@@ -595,8 +617,9 @@ Prerequisites and conditionals not expressible in the graph:
 - **T0.2, T1.2 and T4 all edit `module_issues.md`** and therefore require a clean tree
   (C8) *and* must not run concurrently with each other. The graph serialises them; the
   C8 gate is an external condition it cannot express.
-- **T3.1 is conditional, and the graph encodes only the case where it runs.** If the
-  owner declines the dashboard carve-out (T2.2), **re-derive the graph**: drop T3.1, and
+- **T3.1 runs** (T2.2, decided 2026-08-18), so the graph below applies as written. The
+  following is retained only against a future reversal: if T3.1 were ever dropped,
+  **re-derive the graph** —
   **re-parent its Tier-0 dependencies onto T3.2 and T4** — that is, T3.2 becomes
   `["T0.1", "T0.2", "T0.3", "T2"]`. Simply deleting the T3.1 edges would leave T3.2 with
   no Tier-0 dependency at all and silently break C6. The JSON below is one named

@@ -199,10 +199,10 @@ contract nobody chose for it.
 ## Open questions for the owner
 
 1. ~~**(a) or (b)**~~ — **DECIDED 2026-08-18: option (a)**, see Desired Outcome.
-2. **Should the dashboard's scoped recalc write anything shared at all?** After decision
-   (a) this is a **scheduling** question about the surviving **skill-metric** CSV, not a
-   design question about the combined CSVs: fix it now, or let the CSV deprecation remove
-   that write. See the plan's T2.2 / T3.1.
+2. ~~**Should the dashboard's scoped recalc write anything shared at all?**~~ —
+   **DECIDED 2026-08-18: fix it now, carved out as its own change** (the plan's T3.1),
+   rather than waiting for the CSV deprecation to remove the write. Scope is the
+   surviving **skill-metric** CSV; option (a) handles the combined CSVs via T3.2.
 3. **Should `forecasts` carry provenance?** It would have made this diagnosable. That is
    a `sapphire/services/postprocessing` schema change — **colleague-managed, discuss
    first**, and likely out of scope here.
@@ -283,6 +283,7 @@ is fixed separately and quickly.
   parallel session allocated PP-059 to a different issue ("Remove monthly EM"); this one
   yielded the id. Any earlier reference to PP-059 for the write divergence — including
   PR #445's title and description — means this issue.
-- **Index row still pending** — `doc/plans/module_issues.md` has uncommitted changes in
-  that parallel session. `PP-060` was free at the time of renaming; re-verify before
-  adding the row.
+- **Index row still pending, but now unblocked** — the parallel session's registry work
+  landed in PR #448, so the tree is clean and `PP-059` is now formally "Remove monthly
+  EM". `PP-060` is confirmed free and unindexed as of 2026-08-18; re-verify immediately
+  before adding the row (the plan's T0.2).
