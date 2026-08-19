@@ -82,6 +82,37 @@ non-200 *metadata* response into an undifferentiated `ValueError` (`client_base.
 non-200 *link* response is not raised at all. Status-aware retry requires the client — see
 PREPG-014.
 
+## Coverage today is ZERO — build the harness first
+
+Measured 2026-08-18. **Nothing exercises the code this issue changes**, so there is no safety net
+and no characterization of current behaviour:
+
+- **No test references `get_ensemble_forecast` or `ecmwf_ens`** anywhere in `test/`.
+- `test_dg_download_failure_exits` does call `qm.main()`, but it makes the **control** download
+  raise, so execution dies long before the ensemble block at `:808`.
+- `test_qm_writes_both_P_and_T_csvs` runs `main()` all the way through successfully — but the
+  `gateway_env` fixture sets `ieasyhydroforecast_HRU_ENSEMBLE: "None"`
+  (`test_integration_preprocessing_gateway.py:318`), and the loop does
+  `if ENSEMBLE_HRUS == "None": break` (`Quantile_Mapping_OP.py:806`) **before** the download. The
+  ensemble path is never entered.
+- **The today→yesterday date fallback has no test at all** — and it is the contract this fix most
+  must not break.
+
+**So the first task is not the retry.** It is a fixture that actually reaches the ensemble block:
+a `gateway_env` variant with a real `HRU_ENSEMBLE` value and a mocked `client.ecmwf_ens`. The
+pattern already exists (`patch("Quantile_Mapping_OP.sapphire_dg_client.client.SapphireDGClient")`
++ `qm.main()`), so this is extension, not invention.
+
+**Pin current behaviour before changing it.** Two characterization tests, written against the
+*unmodified* code and expected to pass immediately:
+
+1. `today` raises the "Couldn't find any files…" `ValueError` → the `yesterday` loop runs and the
+   HRU completes. *This is the regression guard.*
+2. A `ConnectionError` on one member propagates out of `main()` today. This test **inverts** when
+   the fix lands — which is the point, and makes the behaviour change explicit in the diff.
+
+Only then add the retry. This is not extra scope: criteria below are unverifiable without it.
+
 ## Acceptance criteria
 
 - A simulated `requests.exceptions.ConnectionError` (chained from `ConnectionResetError`, as
