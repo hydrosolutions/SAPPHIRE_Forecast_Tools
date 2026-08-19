@@ -60,14 +60,22 @@ HTML or JSON error body would most likely raise. The accurate claim is narrower:
 move when they **relock**, not when `@main` advances — `uv.lock` pins a specific commit and the
 Docker build runs `uv sync --frozen --no-dev`, so the dependency set is reproducible.
 
-Add to `_call_api_and_save_file`: an explicit timeout on both requests, and a status check before
-`_save_file`.
+The two requests live in **different methods**, so a fix confined to one cannot cover both:
+
+- the **link** request is in `_call_api_and_save_file` (`client_base.py:43`) — add the status check
+  here, before `_save_file`;
+- the **metadata** request is inside `_call_api` (`client_base.py:56`) — the timeout must be added
+  here (or to its interface) as well.
+
+*An earlier revision said to add timeouts "to `_call_api_and_save_file`". That cannot reach the
+metadata request.*
 
 ## Acceptance criteria
 
 - Every request carries an explicit timeout.
 - A non-200 **link** response is never written to disk as a forecast file.
-- A non-retryable status fails immediately rather than burning retries.
+- A non-200 status is surfaced as an error rather than written to disk. (No retry behaviour is
+  specified here — see the ownership note below.)
 - Metadata-response and link-response handling are tested **separately** — they differ today, and
   that asymmetry is the bug.
 
@@ -76,7 +84,8 @@ Add to `_call_api_and_save_file`: an explicit timeout on both requests, and a st
 - `_call_api`'s existing `ValueError` on non-200 metadata is load-bearing: `Quantile_Mapping_OP.py`
   matches on its message text to drive the today→yesterday date fallback. Changing that message or
   exception type breaks a working daily path.
-- Do not add retry logic that duplicates PREPG-010's local retry; decide which layer owns it.
+- **Retry ownership is already settled: PREPG-010 owns it, locally.** Do not add retry logic here.
+  This issue is timeouts and link-status validation only.
 
 ## Note on verification
 

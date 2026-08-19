@@ -32,7 +32,7 @@ One member's TLS connection was reset. The module died; ERA5 extension and snow 
 
 ## Root cause
 
-`Quantile_Mapping_OP.py:808-846` wraps the download in `try / except ValueError`. That handler
+`Quantile_Mapping_OP.py:808-856` wraps the download in `try / except ValueError`. That handler
 exists for a **different** condition — "today's data isn't published yet, fall back to yesterday" —
 and a `requests.exceptions.ConnectionError` is not a `ValueError`, so it bypasses the block and
 propagates out of `main()`.
@@ -57,10 +57,6 @@ case. Both must use the same retry.
 - **A fixed number of attempts — three — hard-coded. No env var, no config surface, no CLI flag.**
 - **Retry the individual member call**, not the enclosing 50-member loop. Re-running all 50 after
   a fault on member 37 is a different (and worse) behaviour.
-- **Do not use `tenacity` or copy `sapphire_api_client`'s retry machinery.** That client does use
-  Tenacity with exponential backoff (`sapphire_api_client/client.py:110`), but importing a
-  framework for one call site is disproportionate. A small local loop is the right size.
-
 ### The `SSLError` decision
 
 `requests.exceptions.SSLError` **subclasses** `ConnectionError` (`requests/exceptions.py:60`,
@@ -75,43 +71,50 @@ Pick one and pin it with a test:
 Either is defensible. **Do not claim the class hierarchy cleanly separates transient from
 permanent faults** — it does not.
 
-### Retryable HTTP statuses are out of reach here
+## Coverage today is ZERO, and the harness is NOT a small fixture tweak
 
-Do **not** add 429/502/503/504 handling. It cannot work from this layer: the client turns a
-non-200 *metadata* response into an undifferentiated `ValueError` (`client_base.py:59`), and a
-non-200 *link* response is not raised at all. Status-aware retry requires the client — see
-PREPG-014.
+Measured 2026-08-18. **Nothing exercises the code this issue changes:**
 
-## Coverage today is ZERO — build the harness first
+- **No test references `get_ensemble_forecast` or `ecmwf_ens`.**
+- `test_dg_download_failure_exits` calls `qm.main()`, but makes the **control** download raise, so
+  it dies long before `:808`.
+- `test_qm_writes_both_P_and_T_csvs` runs `main()` successfully — but `gateway_env` sets
+  `ieasyhydroforecast_HRU_ENSEMBLE: "None"` (`test_integration_preprocessing_gateway.py:318`) and
+  the loop breaks on that value (`Quantile_Mapping_OP.py:806`) **before** the download.
+- **The today→yesterday fallback has no test at all** — the contract this fix most must not break.
 
-Measured 2026-08-18. **Nothing exercises the code this issue changes**, so there is no safety net
-and no characterization of current behaviour:
+### Budget the harness properly
 
-- **No test references `get_ensemble_forecast` or `ecmwf_ens`** anywhere in `test/`.
-- `test_dg_download_failure_exits` does call `qm.main()`, but it makes the **control** download
-  raise, so execution dies long before the ensemble block at `:808`.
-- `test_qm_writes_both_P_and_T_csvs` runs `main()` all the way through successfully — but the
-  `gateway_env` fixture sets `ieasyhydroforecast_HRU_ENSEMBLE: "None"`
-  (`test_integration_preprocessing_gateway.py:318`), and the loop does
-  `if ENSEMBLE_HRUS == "None": break` (`Quantile_Mapping_OP.py:806`) **before** the download. The
-  ensemble path is never entered.
-- **The today→yesterday date fallback has no test at all** — and it is the contract this fix most
-  must not break.
+*An earlier revision called this "extension, not invention". That was wrong.* Reaching `:808`
+requires **all** of the following to succeed first:
 
-**So the first task is not the retry.** It is a fixture that actually reaches the ensemble block:
-a `gateway_env` variant with a real `HRU_ENSEMBLE` value and a mocked `client.ecmwf_ens`. The
-pattern already exists (`patch("Quantile_Mapping_OP.sapphire_dg_client.client.SapphireDGClient")`
-+ `qm.main()`), so this is extension, not invention.
+- `load_environment()` neutralised; API key present.
+- Every path env var non-`None`; CM/ENS/DG directories writable.
+- Models/QM path env vars present. **If the QM directory exists, both control-member parameter
+  CSVs must be valid** — the current fixture sidesteps this by leaving it absent.
+- Both HRU env vars present, ensemble **not** `"None"`.
+- Mapping path env vars present; any existing mapping file must be valid JSON containing
+  `gateway_name_twins`.
+- The control-member download must return a truthy, existing, valid DG-format CSV, and its
+  transform and CM output writes must complete.
 
-**Pin current behaviour before changing it.** Two characterization tests, written against the
-*unmodified* code and expected to pass immediately:
+### The harder part: characterization test (a) needs real files
 
-1. `today` raises the "Couldn't find any files…" `ValueError` → the `yesterday` loop runs and the
-   HRU completes. *This is the regression guard.*
-2. A `ConnectionError` on one member propagates out of `main()` today. This test **inverts** when
-   the fix lands — which is the point, and makes the behaviour change explicit in the diff.
+A plain `MagicMock` return **will not work**. `merge_ensemble_forecast` exits the process when the
+list is empty (`Quantile_Mapping_OP.py:189-191`, `sys.exit(1)`), and a default mock flattens to
+`[]`. So the fallback test needs **all 50 `yesterday` calls to return iterable lists of files that
+actually exist on disk**, created *after* the `:625` cleanup, with parseable
+`..._EMnnn_HRU..._{tp,2t}.csv` names and contents.
 
-Only then add the retry. This is not extra scope: criteria below are unverifiable without it.
+An ensemble-file factory already exists but is **module-local to `test/test_ensemble_transforms.py`**,
+so it must be shared or rebuilt.
+
+**Characterization test (b) is cheap by contrast** — a `ConnectionError` propagates directly out of
+`main()`, so it needs no file scaffolding, and it inverts when the fix lands.
+
+**Implication for sequencing:** (b) and the retry can land first and cheaply. (a) — the date-fallback
+regression guard — is the expensive part, and it is the one that protects a normal daily path. Do
+not let its cost silently drop it.
 
 ## Acceptance criteria
 
@@ -137,9 +140,13 @@ Only then add the retry. This is not extra scope: criteria below are unverifiabl
   PREPG-009's problem of an unexplained condition reported as routine.
 - **Preserve fail-fast across HRUs.** Today an escaping exception ends the HRU loop
   (`Quantile_Mapping_OP.py:799`). Keep that. Switching to "continue" would change
-  operator-visible partial output, since results are written per HRU (`:911`) — a separate
+  operator-visible partial output, since results are written per HRU (`:912-917`) — a separate
   decision, not this fix.
 - The one-model-at-a-time loop is deliberate (batched requests time out server-side). Keep it.
+- **A small local loop, not `tenacity`** — a retry framework for one call site is disproportionate.
+- **No HTTP-status retry (429/502/503/504).** It cannot work from here: the client turns a non-200
+  *metadata* response into an undifferentiated `ValueError` and never raises on a bad *link*. That
+  is PREPG-014's territory.
 
 ## State on failure — no new cleanup needed
 
