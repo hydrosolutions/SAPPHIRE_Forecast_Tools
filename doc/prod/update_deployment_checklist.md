@@ -9,7 +9,7 @@ This checklist guides you through a **routine update** of an existing SAPPHIRE F
 
 ## Operator setup — set these once per session [Required]
 
-Before running any command below, set these variables once in your shell session. Everywhere in this doc that you see `${ORG_SLUG}`, `${DATA_DIR}`, `${ENV_FILE_PATH}`, or `${LOG_DIR}`, those are the values being substituted.
+Before running any command below, set these variables once in your shell session. Everywhere in this doc that you see `${ORG_SLUG}`, `${DATA_DIR}`, `${ENV_FILE_PATH}`, `${LOG_DIR}` or `${LT_ISSUE_DAY}`, those are the values being substituted.
 
 ```bash
 # Operator: set these variables once per deployment session. The rest of
@@ -18,6 +18,16 @@ export ORG_SLUG=tjhm                                             # one of: kghm,
 export DATA_DIR=/data/taj_data_forecast_tools                    # adapt to your data path
 export ENV_FILE_PATH="${DATA_DIR}/config/.env_develop_${ORG_SLUG}"
 export LOG_DIR=/home/ubuntu/logs                                 # adapt to your logs path
+
+# Long-term forecast issue day(s) — read from THIS deployment's configs, do not
+# copy from another deployment. Every file in ${DATA_DIR}/config/long_term_configs/
+# carries an "operational_issue_day"; the cron day field must list those values:
+#   ls ${DATA_DIR}/config/long_term_configs/*.json |
+#     xargs -I{} sh -c 'printf "%-22s " "$(basename {})"; grep -o "\"operational_issue_day\":[^,]*" {}'
+# Known values: tjhm = 1 (all modes) | kghm = 10 and 25. A deployment with no
+# long_term_configs/ directory does not run long-term forecasts at all — leave
+# cron entries (4) and (4b) out entirely.
+export LT_ISSUE_DAY=1                                            # e.g. "1" (tjhm) or "10,25" (kghm)
 ```
 
 **Target Server Paths:**
@@ -732,8 +742,12 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # Log cleanup: delete logs older than 7 days (runs daily at 02:00 UTC)
   0 2 * * * find ${LOG_DIR} -name "sapphire_*.log" -mtime +7 -delete
 
-  # Daily DB backup at 01:00 UTC (pg_dump-based, 3-day retention)
-  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 3 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
+  # Daily DB backup at 01:00 UTC (pg_dump-based, 3-day retention).
+  # The `cd` is REQUIRED: backup_sapphire_db.sh resolves sapphire/docker-compose.yml
+  # and its default env file RELATIVE to the working directory (`COMPOSE_DIR="sapphire"`,
+  # :47-49) and aborts with "Must run from the repository root" otherwise. Cron runs
+  # from $HOME, so a line without the `cd` fails every night and backs up nothing.
+  0 1 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/backup_sapphire_db.sh -e ${ENV_FILE_PATH} -d /var/backups/sapphire -r 3 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
 
   # Weekly Docker cleanup at 00:30 UTC Sundays: prune dangling images + build
   # cache so /var/lib/docker does not grow unbounded across deploys. Volume-safe:
@@ -755,19 +769,30 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # (3) Decadal Forecast at 05:00 UTC.
   0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_decadal_forecast_$(date +\%Y\%m\%d).log 2>&1
 
-  # (4) Long-Term Forecast at 06:00 UTC on the 10th and 25th of each month.
-  # The script self-gates via lt_schedule_query.py (only fires on predefined
-  # operational forecast dates with ±5 day tolerance), so daily * * * is also
-  # safe but wasteful. The 10th/25th schedule matches operational expectations.
-  0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_long_term_$(date +\%Y\%m\%d).log 2>&1
+  # (4) Long-Term Forecast at 06:00 UTC on THIS deployment's issue day(s).
+  # ${LT_ISSUE_DAY} MUST equal the "operational_issue_day" values in
+  # ${DATA_DIR}/config/long_term_configs/*.json — see Operator setup above.
+  # tjhm = 1 | kghm = 10,25. Do NOT copy another deployment's days.
+  #
+  # Why this is not cosmetic: the run is gated twice, with different widths.
+  # lt_schedule_query.py:52 admits a mode when it is within ISSUE_DAY_TOLERANCE
+  # (currently 10) days of its issue day, but lt_utils.py:202 refuses to execute
+  # a model more than 5 days off. A cron day 6-10 days from the issue day is
+  # therefore ADMITTED and then SKIPPED: the run writes nothing and still exits
+  # 0. Scheduling on the issue day itself (distance 0) is the only safe choice.
+  # This is issue LTF-007; until it is fixed, a wrong cron day fails silently.
+  0 6 ${LT_ISSUE_DAY} * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_long_term_$(date +\%Y\%m\%d).log 2>&1
 
-  # (4b) Bimonthly long-term skill metrics recalculation at 10:00 UTC on the
-  # 10th and 25th (4 hours after the long-term forecast). Refreshes MONTHLY,
+  # (4b) Long-term skill metrics recalculation at 10:00 UTC, four hours after
+  # each long-term forecast — so its day field tracks ${LT_ISSUE_DAY} too.
+  # Unlike (4) this job does not gate on the issue day, so a mismatched day
+  # still runs; keeping the days aligned only preserves the intended
+  # forecast-then-score ordering. Refreshes MONTHLY,
   # QUARTERLY, and SEASONAL skill metrics so long-term skill tiles on the
   # dashboard do not stay stale for a year. Log-and-continue: one failing
   # mode does not block the others, but the job exits non-zero so errors
   # still surface in the cron log.
-  0 10 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_bimonthly_lt_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
+  0 10 ${LT_ISSUE_DAY} * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_bimonthly_lt_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
   # (5) Daily Maintenance at 19:00 UTC (consolidated; replaces legacy
   # daily_preprunoff_maintenance.sh / daily_ml_maintenance.sh /
@@ -788,10 +813,14 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   # dashboard tiles fresh; this is the annual deep recalc).
   0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
-  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on January 1.
+  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on August 31.
+  # Owner decision 2026-08-19: run it at the END of the snow year, before the
+  # new accumulation season, rather than on 1 January which would move the
+  # norms mid-season. Deployments that previously used 1 January should move
+  # to 31 August unless they have a stated reason not to.
   # Consolidated Luigi wrapper. Supersedes legacy bin/yearly_snow_norm_recalculation.sh
   # (kept on origin for manual / debugging use only).
-  0 2 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
+  0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds
@@ -800,9 +829,45 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
   0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/yearly_runoff_hydrograph_aggregation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_runoff_hydrograph_$(date +\%Y\%m\%d).log 2>&1
   ```
 
+- [ ] **Remove retired entries that fail silently** — these were valid in earlier
+      versions and are still present on deployments updated from them:
+
+  | Retired entry | What happens if left | Replace with |
+  |---|---|---|
+  | `run_periodic_maintenance.sh monthly_norms` | **Fails silently, and the cron log looks successful.** The wrapper's argument guard only rejects an *empty* task type (`bin/run_periodic_maintenance.sh:23-28`), so `monthly_norms` passes through to Luigi, where `PeriodicMaintenance.requires()` raises `ValueError: Unknown task_type` (`apps/pipeline/pipeline_docker.py:2049-2057`). The wrapper has no `set -e`, never captures the exit code of `docker compose run`, and ends with two unconditional `echo`s (`:82-90`) — so it **exits 0** and prints "task submitted". Every 1 January the long-horizon hydrograph view is silently not rebuilt. This is **INFRA-023** (`issues/high_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`). | entry **(9)** `bin/yearly_runoff_hydrograph_aggregation.sh` |
+  | `daily_preprunoff_maintenance.sh`, `daily_ml_maintenance.sh`, `daily_linreg_maintenance.sh`, `daily_postprc_maintenance.sh`, `daily_gateway_maintenance.sh`, `daily_update_sapphire_frontend.sh` | Duplicates work the Luigi DAG already does, out of dependency order | entry **(5)** `bin/run_daily_maintenance.sh` |
+
 - [ ] **Verify crontab was saved correctly**
   ```bash
   crontab -l
+  ```
+
+- [ ] **Verify the long-term cron day matches this deployment's configs** — the
+      single most common silent failure on a long-term deployment
+  ```bash
+  # what the configs say
+  grep -h -o '"operational_issue_day":[^,]*' ${DATA_DIR}/config/long_term_configs/*.json | sort -u
+  # what cron will do
+  crontab -l | grep run_long_term_forecasts
+  ```
+  The day-of-month field of the cron entry must contain exactly the
+  `operational_issue_day` values above. If they differ by 6-10 days the run is
+  admitted by the scheduler and then skipped by the model, writing nothing and
+  exiting 0 — nothing in the log or the exit code will tell you (LTF-007).
+
+- [ ] **Confirm no line ends in a stray character after `2>&1`.** A trailing `#`
+      or space-less comment makes the shell report `1#: ambiguous redirect`, so the
+      command never runs while the redirect still creates an empty log file — a
+      failure that looks exactly like "the job ran and produced nothing".
+  ```bash
+  crontab -l | grep -nE '2>&1[^ ]' && echo "^^ FIX THESE" || echo "OK: no malformed redirects"
+  ```
+
+- [ ] **Confirm shell variables were substituted.** Cron does not expand them; a
+      surviving `${LOG_DIR}` sends the redirect to an unwritable path and the job
+      never runs.
+  ```bash
+  crontab -l | grep -n '\${' && echo "^^ SUBSTITUTE THESE" || echo "OK: no unexpanded variables"
   ```
 
 - [ ] **Ensure log directory exists**
@@ -1283,8 +1348,9 @@ bash bin/backup_sapphire_db.sh -e "${ENV_FILE_PATH}" -d "$DB_BACKUP_DIR" -r 30
 
 **Cron disable / restore.** The recalc below uses the same wrapper and the
 same fixed per-mode container names as the cron-scheduled
-`bin/bimonthly_long_term_skill_metrics_recalculation.sh` (§2.5: `0 10 10,25 *
-*` UTC), and this run is long enough to overlap a scheduled firing — do not
+`bin/bimonthly_long_term_skill_metrics_recalculation.sh` (§2.5: `0 10
+${LT_ISSUE_DAY} * *` UTC), and this run is long enough to overlap a scheduled
+firing — do not
 assume it will finish before the next slot. Use the same mechanism as §3.4
 (runbook §4.2). **This clears the operator's entire crontab, not just the
 bimonthly skill entry** — every SAPPHIRE pipeline job stops until the
