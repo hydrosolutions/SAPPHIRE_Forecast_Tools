@@ -3,12 +3,22 @@
 **Status**: Draft (2026-08-18) — split out of PREPG-010, which is local-only by design
 **Module**: the **`sapphire-dg-client`** dependency (separate hydrosolutions repo), consumed by
 `apps/preprocessing_gateway`
-**Priority**: **Low** — no observed incident. The missing timeout is the more practically dangerous
-half; the unvalidated link response is a latent correctness gap.
+**Priority**: **Medium** — *raised from Low 2026-08-18.* No observed incident, which is what kept
+it Low, but the reasoning was wrong on two counts:
+
+1. **A hang is worse than a crash.** PREPG-010 makes the gateway survive a *reset*. A peer that
+   hangs instead still blocks indefinitely — and unlike a crash it never reports, so cron cannot
+   retry and the gateway target's ERA5 and snow scripts never run either.
+2. **External lead time.** This lives in a separate repo and consumers only move on a relock, so
+   it must start *earlier* than a local fix of equal value, not later.
+
+The missing timeout is the half most likely to cause a real operational stall; the unvalidated
+link response remains a latent correctness gap.
 **Labels**: `preprocessing_gateway`, `dependency`, `network`, `upstream`
 **Found**: 2026-08-18, while reviewing PREPG-010.
 **Related**: **PREPG-010** — the local bounded retry. That fix stands alone and does **not** depend
-on this one.
+on this one, but it explicitly does **not** cover hangs; this issue is where that gets fixed.
+**PREPG-015** — the same client puts the API key in its exception message, which we then log.
 
 ---
 
