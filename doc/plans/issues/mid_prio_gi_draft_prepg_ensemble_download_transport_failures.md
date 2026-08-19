@@ -116,6 +116,36 @@ so it must be shared or rebuilt.
 regression guard — is the expensive part, and it is the one that protects a normal daily path. Do
 not let its cost silently drop it.
 
+## This fix creates a small NEW hang exposure — know it before implementing
+
+`requests` has **no default timeout**, and the client sets none (`client_base.py:43`, `:56`), so a
+peer that accepts a connection and never responds blocks forever. That is **PREPG-014**, not this
+issue — but the retry interacts with it, and not neutrally:
+
+| Scenario | Today | After this fix |
+|---|---|---|
+| Attempt 1 **hangs** | blocks forever | blocks forever — **unchanged**; the retry never fires because the call never returns |
+| Attempt 1 **resets** | module dies in seconds — loud, and cron can retry | attempt 2 runs, and **attempt 2 can hang** |
+
+So the fix does not make a hang worse; it creates **up to 3× the opportunities to meet one**, on a
+path that previously terminated immediately. The bad trade it can produce is converting a fast,
+loud, cron-retryable failure into an indefinite silent block.
+
+**This is not a reason to skip the fix** — a reset is the observed failure and hangs are
+unobserved — but two things follow:
+
+1. **Keep the attempt count genuinely small (3).** Every extra attempt is another chance to hang.
+   This is a second, independent reason not to make it configurable: an operator raising it to 10
+   would multiply the exposure without seeing the connection.
+2. **PREPG-014 stops being merely "the other half" and becomes this fix's safety net.** Land it, or
+   accept the exposure knowingly.
+
+**A local option, if the exposure is unacceptable before PREPG-014 lands:** `socket.setdefaulttimeout(N)`
+at process start bounds *any* blocking socket operation without touching the client. It is a blunt
+instrument — process-global, affects the SAPPHIRE API client too — but it is per-socket-operation,
+not per-request, so a large ensemble download that streams steadily is unaffected. **Owner
+decision; do not add it unprompted.**
+
 ## Acceptance criteria
 
 - A simulated `requests.exceptions.ConnectionError` (chained from `ConnectionResetError`, as
