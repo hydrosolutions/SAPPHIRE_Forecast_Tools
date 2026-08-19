@@ -73,9 +73,8 @@ metadata request.*
 ## Acceptance criteria
 
 - Every request carries an explicit timeout.
-- A non-200 **link** response is never written to disk as a forecast file.
-- A non-200 status is surfaced as an error rather than written to disk. (No retry behaviour is
-  specified here — see the ownership note below.)
+- A non-200 **link** response is surfaced as an error and never written to disk as a forecast
+  file. (No retry behaviour is specified here — see the ownership note below.)
 - Metadata-response and link-response handling are tested **separately** — they differ today, and
   that asymmetry is the bug.
 
