@@ -17,6 +17,12 @@ export ORG_SLUG=tjhm                                             # one of: kghm,
 export DATA_DIR=/data/taj_data_forecast_tools                    # adapt to your data path
 export ENV_FILE_PATH="${DATA_DIR}/config/.env_develop_${ORG_SLUG}"
 export LOG_DIR=/home/ubuntu/logs                                 # adapt to your logs path
+
+# Long-term forecast issue day(s) — read from THIS deployment's configs:
+#   grep -h -o '"operational_issue_day":[^,]*' ${DATA_DIR}/config/long_term_configs/*.json | sort -u
+# tjhm = 1 (all modes) | kghm = 10 and 25. No long_term_configs/ directory means
+# this deployment does not run long-term forecasts — omit cron entries (4)/(4b).
+export LT_ISSUE_DAY=1                                            # e.g. "1" (tjhm) or "10,25" (kghm)
 ```
 
 ---
@@ -786,7 +792,7 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
   0 2 * * * find ${LOG_DIR} -name "sapphire_*.log" -mtime +7 -delete
 
   # Daily DB backup at 01:00 UTC (pg_dump-based, 30-day retention)
-  0 1 * * * bash /data/SAPPHIRE_Forecast_Tools/bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
+  0 1 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30 >> ${LOG_DIR}/sapphire_db_backup_$(date +\%Y\%m\%d).log 2>&1
 
   # (1) Gateway Preprocessing at 03:00 UTC. Independent of daily data.
   0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +\%Y\%m\%d).log 2>&1
@@ -797,15 +803,20 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
   # (3) Decadal Forecast at 05:00 UTC.
   0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_decadal_forecast_$(date +\%Y\%m\%d).log 2>&1
 
-  # (4) Long-Term Forecast at 06:00 UTC on the 10th and 25th of each month.
-  # The script self-gates via lt_schedule_query.py — it only fires on
-  # predefined operational forecast dates (±5 day tolerance).
-  0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_long_term_$(date +\%Y\%m\%d).log 2>&1
+  # (4) Long-Term Forecast at 06:00 UTC on THIS deployment's issue day(s).
+  # ${LT_ISSUE_DAY} MUST equal the "operational_issue_day" values in
+  # ${DATA_DIR}/config/long_term_configs/*.json — tjhm = 1, kghm = 10,25.
+  # A cron day 6-10 days from the issue day is admitted by
+  # lt_schedule_query.py (ISSUE_DAY_TOLERANCE = 10, :52) and then refused by
+  # lt_utils.py:202 (>5 days): the run writes nothing and exits 0 (LTF-007).
+  0 6 ${LT_ISSUE_DAY} * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_long_term_$(date +\%Y\%m\%d).log 2>&1
 
-  # (4b) Bimonthly long-term skill metrics recalculation at 10:00 UTC on the
-  # 10th and 25th (4 hours after the long-term forecast). Keeps the
-  # dashboard long-term skill tiles fresh between yearly full recalcs.
-  0 10 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_bimonthly_lt_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
+  # (4b) Long-term skill metrics recalculation at 10:00 UTC, four hours after
+  # each long-term forecast, so its day field tracks ${LT_ISSUE_DAY} too. This
+  # job does not gate on the issue day; aligning the days only preserves the
+  # forecast-then-score ordering. Keeps the dashboard long-term skill tiles
+  # fresh between yearly full recalcs.
+  0 10 ${LT_ISSUE_DAY} * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_bimonthly_lt_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
   # (5) Daily Maintenance at 19:00 UTC (consolidated Luigi wrapper).
   # Replaces the legacy individual daily_*_maintenance.sh scripts. Luigi
@@ -827,7 +838,10 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
   # (consolidated Luigi wrapper). Supersedes legacy
   # bin/yearly_snow_norm_recalculation.sh (kept for manual / debugging
   # use only).
-  0 2 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
+  # Owner decision 2026-08-19: run at the END of the snow year (31 August),
+  # before the new accumulation season, rather than 1 January which would move
+  # the norms mid-season.
+  0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_snow_norm_$(date +\%Y\%m\%d).log 2>&1
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds

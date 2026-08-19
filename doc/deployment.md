@@ -893,9 +893,15 @@ Add the following to the crontab file:
 # (3) Decadal Forecast at 05:00 UTC. Luigi uses completed runoff task.
 0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
 #
-# (4) Long-term Forecast at 06:00 UTC on the 10th and 25th of each month.
-# The script self-gates via lt_schedule_query.py (±5 day tolerance on operational_issue_day).
-0 6 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
+# (4) Long-term Forecast at 06:00 UTC on THIS deployment's issue day(s).
+# Replace <lt_issue_day> with the "operational_issue_day" values found in
+# <data_folder>/config/long_term_configs/*.json — tjhm = 1, kghm = 10,25.
+# Do NOT copy another deployment's days: a cron day 6-10 days from the issue
+# day is admitted by lt_schedule_query.py (ISSUE_DAY_TOLERANCE = 10, :52) and
+# then refused by lt_utils.py:202 (>5 days), so the run writes nothing and
+# still exits 0 (LTF-007). Scheduling on the issue day itself is the only
+# safe choice.
+0 6 <lt_issue_day> * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 #
 # (4b) Bimonthly long-term skill recalc at 10:00 UTC on the 10th and 25th
 # (4 hours after the 06:00 UTC long-term forecast cron). Refreshes MONTHLY,
@@ -904,7 +910,7 @@ Add the following to the crontab file:
 # mode does not block the others, but the job exits non-zero so errors still
 # surface in the cron log. The yearly Dec 31 entry below is retained as a
 # full-history safety net; this job does not replace it.
-0 10 10,25 * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_bimonthly_longterm_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
+0 10 <lt_issue_day> * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_bimonthly_longterm_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 #
 # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
 # Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
@@ -917,7 +923,10 @@ Add the following to the crontab file:
 # Yearly skill recalculation at 01:00 UTC on December 31
 0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
 # Yearly snow norm/stat recalculation at 02:00 UTC on January 1
-0 2 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
+# Owner decision 2026-08-19: run at the END of the snow year (31 August),
+# before the new accumulation season, rather than 1 January which would move
+# the norms mid-season.
+0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
 # Yearly monthly discharge norm recalculation from iEH HF SDK at 03:00 UTC on January 1
 0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh monthly_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_monthlynorms_$(date +\%Y\%m\%d).log 2>&1
 ```
