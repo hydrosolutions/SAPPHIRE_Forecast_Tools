@@ -50,6 +50,32 @@ Line numbers also re-based after the PREPG-010 retry landed — the statements a
 All three go to a file: the first via the module logger, the two `print`s via `run_locally.sh`,
 which tees stdout into its run log.
 
+### FIVE statements, not three — the traceback prints re-leak it
+
+*Found 2026-08-20 during implementation. This is the finding that decides whether this issue
+achieves anything: redacting only the three statements above fixes ONE site of three.*
+
+Each of the two `print` sites is immediately followed by `print(traceback.format_exc())`
+(currently `:984` and `:991`). **`traceback.format_exc()` renders the exception's own `str()` as
+its final line**, so the unredacted key is printed one line after the redacted message. Verified in
+the module venv:
+
+```
+LAST LINE: ValueError: Failed to get data from endpoint?api_key=LIVEKEY123: {"msg": "nope"}
+KEY PRESENT IN TRACEBACK: True
+```
+
+So the redaction must be applied to the traceback output too — `print(_redact_api_key(traceback.format_exc()))`.
+**Owner decision 2026-08-20: fix in this change**, rather than shipping a partial fix and filing a
+follow-up. A security fix that retires the issue while leaving the credential on the routine daily
+path is worse than not shipping, because nobody looks again.
+
+The `logger.error` site is not affected — no traceback is rendered on that branch.
+
+**Consequence for testing**: a `capsys` assertion that inspects only the redacted line proves
+nothing while the traceback is live. Assert against the WHOLE captured stdout, and assert the
+traceback's structural markers survive so the test cannot pass merely because nothing printed.
+
 **Not** a site: the `else` branch added at `:809-815` by PREPG-010 logs `type(e).__name__` only,
 deliberately, and has a regression test asserting no `api_key` reaches the log. Leave it that way
 until this issue lands a redaction helper — then it may be widened to include a redacted message.
