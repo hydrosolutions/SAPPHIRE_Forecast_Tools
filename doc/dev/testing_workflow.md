@@ -196,6 +196,74 @@ This fixture is already present in `iEasyHydroForecast`, `postprocessing_forecas
 - **Non-deterministic time dependence** — tests that break on Jan 1 or Feb 29 because they call `date.today()` instead of receiving the forecast date as a parameter
 - **`datetime.now()` in default arguments** — `def f(year=datetime.now().year)` is evaluated once at import time and goes stale at year boundaries; always require explicit arguments
 
+### Checks that look like verification and aren't
+
+All four of these shapes were found in this repository in a single day. They are grouped
+here because reading the check does not distinguish them from a real one — only mutating
+the thing being checked does.
+
+- **A check that cannot fail.** An assertion was narrowed from the whole captured output to a
+  single line so it would pass. The narrowing *was* the finding: a
+  `print(traceback.format_exc())` beside it was re-leaking an API key that the line above had
+  just redacted. (PREPG-017.)
+- **A check that cannot pass.** `bin/docker-compose-dashboards.yml` healthchecks probe
+  `/pentad_dashboard` and `/decad_dashboard`, but both services serve
+  `forecast_dashboard.py`, i.e. `/forecast_dashboard`. Both containers are therefore reported
+  unhealthy forever, which trains everyone to ignore the one column that would reveal a real
+  restart loop. (INFRA-035.)
+- **A check that is never called (historical).** `validate_dashboard_origins` had a full
+  passing suite of fixed, parametrised logic and edge-case tests — no fuzzing or
+  property-based testing; ad-hoc fuzzing by hand was done separately while drafting the
+  fix and is not part of the suite — and deleting all three of its call sites in the
+  dashboard launchers used to leave the entire suite green: the logic was tested
+  thoroughly, but the fact that production invokes it was not covered at all. This gap is
+  now closed — `apps/iEasyHydroForecast/tests/test_launcher_validation_order.py` asserts
+  each of the three launcher scripts actually calls `validate_dashboard_origins` before
+  bringing the dashboard up, so deleting a call site now fails that suite. (INFRA-032.)
+- **A check that reports success while destroying what it validated.** The same validator
+  lowercases its input with `tr`. With `tr` absent from `PATH`, the command substitution
+  yields empty, so the function silently emptied both origin values and returned 0 — the
+  launcher then took the running stack down and started Bokeh with an empty origin, which
+  crash-loops. It did not fail to detect a bad value; it manufactured one and passed.
+  (INFRA-032.) A second, subtler round of the same shape: a `tr` that exits 0 without
+  actually lowercasing (e.g. a locale where `[:upper:]`/`[:lower:]` is a no-op) produces a
+  non-empty but *not-canonical* value ("HOST.EXAMPLE:5006" instead of
+  "host.example:5006") — structurally well-formed, so a well-formedness re-check still
+  returns 0, and Bokeh's allow-list comparison is case-sensitive against a
+  Bokeh-lowercased Origin header, so the entry silently matches nothing. **"If a non-empty
+  input becomes empty, fail loudly" is necessary but not sufficient** — it is exactly the
+  guard that let this second round through. Generalise instead to the durable rule: any
+  validator that *transforms* its input — normalise, lowercase, trim, canonicalise — must
+  assert the **canonical postcondition** on its output (e.g. "no ASCII uppercase char
+  remains"), not merely that the output is non-blank and well-formed.
+
+Two rules fall out of this, and they are the practical payload:
+
+- **Mutate the call site, not just the logic.** Delete the call and confirm tests go red.
+  Shape 3 is invisible to anyone reading a green suite, and it is the hardest to see
+  precisely because the check itself looks impeccable.
+- **Fuzz the environment, not only the input.** Shape 4 cannot be found by fuzzing values,
+  however thoroughly — the fault is in the environment. Vary `PATH`, missing coreutils,
+  locale, and cron's stripped environment. Shell-side code in this repo runs under cron,
+  which is exactly where `PATH` is stripped.
+
+One more, worth its own line because it inverts the usual failure direction: `${var,,}`
+(bash 4+ lowercasing) works on the Linux servers and fails on a macOS dev machine, where
+`/bin/bash` is 3.2 — the inverse of the usual "works on my machine", and harder to
+diagnose because the failure appears where you least expect an environment problem.
+**Precisely: this is not a syntax error.** `bash -n` on 3.2 parses `${var,,}` without
+complaint (verified) — the failure only happens when the expansion actually *executes*,
+where it fails with `bad substitution` (also verified). The consequence matters more than
+the label: a syntax-only lint or a `bash -n` gate in CI will not catch this — the only way
+to catch it is to actually run the code path under the older bash. Prefer POSIX-portable
+constructs in `bin/` shell code, and guard any external command you depend on.
+
+**Telling a real check from a fake one:** make the thing it watches actually break, once, on
+purpose. Reading a test cannot distinguish a check that cannot fail from one that works;
+mutation can, in seconds. A useful discriminator when an assertion is changed *after* a red
+run: ask whether the new assertion admits *more* outcomes than the old one — if it does, it
+is a weakening and the failure was probably real; if fewer, it is a correction.
+
 ---
 
 ## Testing Workflow Overview

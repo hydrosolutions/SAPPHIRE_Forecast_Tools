@@ -67,6 +67,9 @@ print_banner
 # Read the configuration from the .env file
 read_configuration $1
 
+# Validate the resolved dashboard WebSocket origins before starting anything
+validate_dashboard_origins || exit 1
+
 # Clean up the Docker space (note: this will remove all containers and images)
 clean_out_docker_space
 

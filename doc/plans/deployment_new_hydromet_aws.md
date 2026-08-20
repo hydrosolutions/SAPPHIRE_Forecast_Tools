@@ -575,12 +575,16 @@ Skip this section if the deployment is LAN-only — users can reach the dashboar
   - `https://fc.pentad.<base_url>/forecast_dashboard` → `localhost:5006` (served by the sapphire stack from Phase 4.2)
   - `https://fc.decad.<base_url>/forecast_dashboard` → `localhost:5007` (served by `bin/docker-compose-dashboards.yml` from 9.1)
 - [ ] **Add the WebSocket upgrade** to each route. nginx needs `proxy_http_version 1.1` + `Upgrade` / `Connection` headers on the dashboard location block; Caddy does this by default. Panel/Bokeh dashboards appear loaded but stop responding to clicks without the upgrade.
-- [ ] **Set the WebSocket-origin env vars** in `<env_file>` and restart the dashboards so Panel's origin check accepts the new public hostnames:
+- [ ] **Set the WebSocket-origin env vars** in `<env_file>` and restart the dashboards so Bokeh's origin check accepts the new public hostnames. Entries are `HOST[:PORT]`, **no scheme** — a `https://` prefix crashes Bokeh at startup:
   ```bash
-  ieasyhydroforecast_url_pentad=https://fc.pentad.<base_url>
-  ieasyhydroforecast_url_decad=https://fc.decad.<base_url>
+  ieasyhydroforecast_url_pentad=fc.pentad.<base_url>
+  ieasyhydroforecast_url_decad=fc.decad.<base_url>
   ```
-  These can be set directly in the env file, or derived from a base `ieasyhydroforecast_url` by `bin/utils/common_functions.sh` (the derivation hard-codes org prefixes for existing hydromets — check the script before relying on it for a new org). Multiple origins are supported as a comma-separated list.
+  An env-file assignment now genuinely wins over the derivation: set directly in the env
+  file as above, or leave unset to derive from a base `ieasyhydroforecast_url` by
+  `bin/utils/common_functions.sh` (the derivation hard-codes org prefixes for existing
+  hydromets — check the script before relying on it for a new org). Multiple origins are
+  supported as a comma-separated list.
 - [ ] **Force HTTPS** — add a permanent redirect from `http://` to `https://` for both hostnames (one line per proxy flavour — see `doc/deployment.md` > `Reverse proxy and HTTPS` > "Force HTTPS").
 - [ ] **Verify end-to-end before announcing the URLs to users**:
   - Load each `https://fc.*.<base_url>/forecast_dashboard` in a browser; confirm a valid TLS certificate is shown.
