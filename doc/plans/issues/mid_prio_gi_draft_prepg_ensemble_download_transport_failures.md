@@ -115,10 +115,10 @@ is a **sibling** of `ConnectionError`, not a subclass. Requests converts a `Prot
 while consuming a response body into `ChunkedEncodingError` (`requests/models.py:818-830`), and a
 non-streaming `requests.get` reads the body eagerly before returning (`sessions.py:748-751`).
 
-A file download is exactly the case where the reset lands **mid-body**. So `except ConnectionError`
-alone would catch the handshake-phase reset in the reported traceback and miss the more common
-body-phase one — a fix catching only `ConnectionError` would not have fixed the reported bug in
-its most likely form.
+A file download is a case where a reset **can** land mid-body. So `except ConnectionError` alone
+would catch the handshake-phase reset in the reported traceback but miss a body-phase one entirely.
+Which is more frequent in this deployment is **not** established — the point is that one whole
+class of the same fault would go unretried, not that it is the commoner class.
 ### `SSLError` is retried — DECIDED 2026-08-20 (reversal; read this before "fixing" it)
 
 `requests.exceptions.SSLError` **subclasses** `ConnectionError` (`requests/exceptions.py:60`,
@@ -252,16 +252,27 @@ three-attempt loop, one that converts exhaustion to `sys.exit`, or one that retr
 
 **Counts and types**
 
-- **Call counts are asserted exactly.** On success-after-failure: 51 calls, i.e. only the failing
-  member repeats and the other 49 are not re-requested. On exhaustion: **exactly 2** calls for that
-  member — an implementation attempting 3 must fail this test.
+- **Call counts are asserted exactly, and the two scenarios have DIFFERENT totals** — assert them
+  per date, not as one aggregate, or the fallback case will look like an off-by-one:
+
+  | Scenario | `today` calls | `yesterday` calls | Total |
+  |---|---|---|---|
+  | Normal path, one member fails then succeeds | 51 (50 members + 1 retry) | 0 | **51** |
+  | Fallback path, one `yesterday` member fails then succeeds | **1** (model 1 raises the fallback `ValueError`, ending that loop) | 51 | **52** |
+
+  In both, only the failing member repeats and the other 49 are not re-requested. On exhaustion:
+  **exactly 2** calls for that member — an implementation attempting 3 must fail this test.
 - On exhaustion the module fails **loudly**, propagating the **original exception type and
   message** — not a silent skip (cf. PREPG-009), and not a rewrapped or swallowed cause.
 - **A `requests.exceptions.SSLError` IS retried** on the same terms as any other
   `ConnectionError` — pinned by a test asserting **2** calls on exhaustion, so that a later
   "tightening" that re-adds an exclusion clause fails visibly.
-- **A non-matching `ValueError` still escapes after exactly 1 call** — the retry must not widen to
-  `ValueError`, and must not replay the date fallback.
+- **A non-matching `ValueError` is not retried — asserted as exactly 1 call**, not as a
+  propagating exception. Be precise about where it is observed: the helper must let it through
+  untouched, but `main()` never re-raises it — the `else` branch at `:851-856` prints and calls
+  `sys.exit(1)`, so at `main()` level the observable outcome is **`SystemExit(1)` with the
+  "Unexpected error" message**, unchanged from today. Assert the call count plus that exit; do not
+  assert that a `ValueError` escapes `main()`, because it never has.
 
 **Hygiene**
 
