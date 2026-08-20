@@ -1,8 +1,13 @@
 # ML-016: Standalone `run_locally.sh machine_learning` target crashes — empty `SAPPHIRE_PREDICTION_MODE` (and ignores `ML_MODE`)
 
-**Status**: Draft (2026-06-19). Implemented, verification pending (2026-08-20) —
-see § Implementation status below; the full `run_tests.sh` gate has not yet
-been confirmed green for this branch.
+**Status**: Draft (2026-06-19). Implemented (verified 2026-08-20) — see
+§ Implementation status below. This fix ships on the same branch as
+INFRA-037 (`high_prio_gi_draft_infra_run_locally_aborts_on_expected_preprocessing_failure.md`);
+the full `run_tests.sh` gate is confirmed green for that branch: 16/16
+modules and services pass, zero failures, and no skips introduced by the
+branch (15 skips pre-existed; 1 more arrived from trunk during a rebase,
+gated on bash < 4). Three rounds of out-of-loop adversarial review have run
+against the branch.
 **Module**: `apps/run_locally.sh` (ML dispatch) + `apps/machine_learning/recalculate_nan_forecasts.py`
 **Priority**: High (broke the documented per-module verification command used by the local review checklist; recurring)
 **Labels**: `ml`, `orchestration`, `run_locally`, `dx`, `error-message`
@@ -130,9 +135,11 @@ operational behaviour rather than a default/derived one.
 
 ## Implementation status (2026-08-20)
 
-Both bugs were fixed on this branch. Status is "implemented, verification pending" — the full
-`cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` gate had not yet been confirmed green for this
-branch at the time this file was corrected; do not read this section as a completion claim.
+Both bugs were fixed on this branch. The full
+`cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` gate is confirmed green for this branch:
+16/16 modules and services pass, zero failures, and no skips introduced by the branch (15 skips
+pre-existed; 1 more arrived from trunk during a rebase, gated on bash < 4). Three rounds of
+out-of-loop adversarial review have run against the branch.
 
 ### Bug 1 fix — `resolve_ml_bare_target_modes`
 
@@ -191,10 +198,10 @@ the actual value (including distinguishing `None`/empty from a typo) instead of 
 - [ ] Review checklist Section 5 command works as written — updated in
       `doc/dev/review_checklist_local_template.md` §5 to describe the new resolution behaviour;
       not yet re-run end-to-end against a live deployment as part of this pass.
-- [ ] Tests/lint pass; sentinel station codes only in any fixtures — `cd apps && SAPPHIRE_TEST_ENV=True
-      bash run_tests.sh` has not yet been confirmed to pass with zero failures and zero unexpected
-      skips for this branch's full affected scope. **This is the standing precondition before this
-      issue can move past Draft** (see CLAUDE.md § Multi-Model Review & Verification).
+- [x] Tests/lint pass; sentinel station codes only in any fixtures — `cd apps && SAPPHIRE_TEST_ENV=True
+      bash run_tests.sh` is confirmed green for this branch's full affected scope: 16/16 modules and
+      services, zero failures, no skips introduced by the branch (15 pre-existed; 1 more arrived from
+      trunk during a rebase, gated on bash < 4).
 
 ## Out of scope
 - The operational ML-NaN problem (TFT/TiDE/TSMixer producing NaN) — see ML-015 and ML-002.

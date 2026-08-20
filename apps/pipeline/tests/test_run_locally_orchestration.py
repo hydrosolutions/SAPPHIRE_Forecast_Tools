@@ -277,6 +277,32 @@ def _mode_of(call_line: str) -> str:
     return call_line.rsplit("mode=", 1)[-1]
 
 
+def _real_apps_logs_snapshot() -> dict[str, tuple[int, int]]:
+    """Map each entry name in apps/logs/ to (size, mtime_ns).
+
+    A directory-entry-name-only snapshot (the previous version of this
+    fixture) misses a test that appends to an EXISTING file -- e.g. a
+    module-level TimedRotatingFileHandler bound to the real apps/logs/log
+    that a test writes into: the file was already there before the test,
+    so its name alone doesn't change. (size, mtime_ns) per entry catches
+    that without the cost of hashing file contents -- apps/logs/log can be
+    multiple MB, and this fixture runs on every test in this file.
+    """
+    if not REAL_LOG_DIR.exists():
+        return {}
+    snapshot = {}
+    for entry in REAL_LOG_DIR.iterdir():
+        try:
+            stat = entry.stat()
+        except OSError:
+            # Entry vanished between iterdir() and stat() -- treat as
+            # "no stable info", which still can't spuriously match a
+            # differently-sized/timestamped post-test entry.
+            continue
+        snapshot[entry.name] = (stat.st_size, stat.st_mtime_ns)
+    return snapshot
+
+
 @pytest.fixture(autouse=True)
 def protect_real_apps_logs():
     """Fail loudly if a test writes into the live apps/logs/ directory.
@@ -284,13 +310,18 @@ def protect_real_apps_logs():
     apps/logs/ is the operator's real log directory -- every test here must
     override LOG_DIR/LOG_FILE after sourcing, exactly as instructed. This
     fixture is the verification: it snapshots apps/logs/ before and after
-    every single test and fails if anything changed.
+    every single test and fails if anything changed -- including a test
+    that only APPENDS to an existing file there, which a name-only
+    directory-entry comparison would miss (see _real_apps_logs_snapshot).
     """
-    before = set(REAL_LOG_DIR.iterdir()) if REAL_LOG_DIR.exists() else set()
+    before = _real_apps_logs_snapshot()
     yield
-    after = set(REAL_LOG_DIR.iterdir()) if REAL_LOG_DIR.exists() else set()
+    after = _real_apps_logs_snapshot()
     assert after == before, (
-        f"A test wrote into the live apps/logs/ directory: new/changed entries = {after - before}"
+        "A test wrote into the live apps/logs/ directory: "
+        f"added/removed entries = {after.keys() ^ before.keys()}, "
+        "changed entries (size, mtime_ns) = "
+        f"{ {name: (before.get(name), after.get(name)) for name in after.keys() & before.keys() if after[name] != before[name]} }"
     )
 
 

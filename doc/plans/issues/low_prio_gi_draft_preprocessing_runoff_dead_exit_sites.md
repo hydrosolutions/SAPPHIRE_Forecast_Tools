@@ -8,9 +8,10 @@ as an uncaught traceback instead of a graded exit code); no data-loss or silent-
 **Found**: 2026-08-20, filed as a follow-up while implementing INFRA-037, which separately
 documents these `sys.exit(1)` sites as part of its diagnosis of `run_locally.sh`'s fail-fast
 behavior.
-**Related**: **INFRA-037** (the row in `module_issues.md` currently characterizes `:653` as the
-sole dead site and `:523`/`:536` as "reachable" signaling a CSV-only failure; this draft goes
-further after direct verification of the two `to_csv` helpers — see "Note on INFRA-037's framing"
+**Related**: **INFRA-037** (an earlier version of the `module_issues.md` row characterized `:653`
+as the sole dead site and `:523`/`:536` as "reachable" signaling a CSV-only failure; the tracker
+row has since been corrected to list all three — `:523`, `:536`, `:653` — as unreachable, matching
+this draft's direct verification of the two `to_csv` helpers — see "Note on INFRA-037's framing"
 below).
 
 ---
@@ -104,14 +105,16 @@ exits 1 with the logged error message" is describing the intended shape, not the
 
 ## Note on INFRA-037's framing
 
-The `INFRA-037` row in `module_issues.md` (filed the same day, same investigation) characterizes
-`:523`/`:536` as "reachable" and signaling "a CSV failure only, never an API one," with `:653`
-called out as the sole dead site. That framing is not wrong about *what the site is for* (CSV vs.
-API failure) but understates reachability: this draft's direct verification of both `to_csv`
-helpers' source shows `:523` and `:536` are, like `:653`, unreachable on the non-exception path —
-the "realistic failure ... is an uncaught traceback" caveat INFRA-037 already carries is the
-correct characterization for all three sites, not just two of them. This draft does not modify the
-INFRA-037 row; flagging the discrepancy here for whoever picks up either issue.
+An earlier version of the `INFRA-037` row in `module_issues.md` (filed the same day, same
+investigation) characterized `:523`/`:536` as "reachable" and signaling "a CSV failure only, never
+an API one," with `:653` called out as the sole dead site. That framing was not wrong about *what
+the site is for* (CSV vs. API failure) but understated reachability: this draft's direct
+verification of both `to_csv` helpers' source shows `:523` and `:536` are, like `:653`,
+unreachable on the non-exception path — the "realistic failure ... is an uncaught traceback"
+caveat INFRA-037 already carries is the correct characterization for all three sites, not just two
+of them. The `module_issues.md` tracker row has since been corrected to reflect this: it now lists
+all three sites (`:523`, `:536`, `:653`) as unreachable dead code, so the discrepancy this note
+originally flagged no longer exists.
 
 ## Proposed fix
 

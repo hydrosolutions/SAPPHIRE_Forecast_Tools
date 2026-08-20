@@ -154,6 +154,60 @@ def test_cwd_redirect_keeps_module_logging_out_of_real_apps_logs():
         )
 
 
+# ---------------------------------------------------------------------------
+# Real defence against writing to apps/logs/log (INFRA-037 review round 3).
+#
+# The cwd redirect above only protects whichever import runs FIRST. Under
+# the mandated runner (run_tests.sh), pytest collects test_fill_ml_gaps.py
+# (and other unguarded siblings, tracked separately -- see module
+# docstring) alphabetically BEFORE this file. Those siblings import
+# fill_ml_gaps.py with no cwd guard, which binds fill_ml_gaps.logger's
+# handler to the real apps/logs/log at that earlier import. Python then
+# caches the module: this file's later `import fill_ml_gaps` inside the
+# tempdir redirect just returns the already-bound module object, so the
+# redirect has no effect on it -- and the same risk applies to
+# make_forecast/recalculate_nan_forecasts if some future sibling ever
+# imports them unguarded too.
+#
+# This autouse fixture is the real guard: for every test in this file, it
+# detaches -- from each module's `logger` -- any handler whose resolved
+# `baseFilename` points at the real apps/logs/log, regardless of which
+# file imported the module first or in what order, and reattaches it
+# afterwards so logging state is left exactly as found.
+# ---------------------------------------------------------------------------
+
+_MODULES_UNDER_TEST = (fill_ml_gaps, make_forecast, recalculate_nan_forecasts)
+
+
+@pytest.fixture(autouse=True)
+def _detach_live_apps_logs_handlers():
+    """Make every test in this file incapable of writing to apps/logs/log.
+
+    Belt-and-suspenders with the tempdir cwd redirect above: that redirect
+    only protects the import that happens to run first, which under the
+    real runner is a sibling file, not this one. This fixture instead acts
+    on whichever handler each module's `logger` ends up holding, so it
+    works regardless of import order or which sibling test file ran first.
+    """
+    detached = []  # (logger, handler) pairs removed for the duration
+    for module in _MODULES_UNDER_TEST:
+        logger = getattr(module, "logger", None)
+        if logger is None:
+            continue
+        for handler in list(logger.handlers):
+            base_filename = getattr(handler, "baseFilename", None)
+            if base_filename is None:
+                continue
+            if os.path.abspath(base_filename) == _REAL_APPS_LOGS_LOG:
+                logger.removeHandler(handler)
+                detached.append((logger, handler))
+    try:
+        yield
+    finally:
+        for logger, handler in detached:
+            logger.addHandler(handler)
+
+
 _UNSET = object()  # sentinel: "do not set the env var at all"
 
 

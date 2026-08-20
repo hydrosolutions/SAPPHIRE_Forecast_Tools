@@ -614,9 +614,14 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 > `SAPPHIRE_PREDICTION_MODE` yourself to avoid a crash:
 > - **Nothing set**: derives the mode from `ML_MODE` (WARN, then that single
 >   mode, or both PENTAD and DECAD if `ML_MODE=BOTH`).
-> - **`SAPPHIRE_PREDICTION_MODE=BOTH`**: now accepted directly and loops
->   PENTAD then DECAD in one invocation — the manual `for M in PENTAD DECAD`
->   loop below is no longer required, though it still works.
+> - **`SAPPHIRE_PREDICTION_MODE=BOTH`**: now accepted directly, but each of
+>   PENTAD/DECAD it expands to is still filtered through
+>   `should_skip_ml_for_mode` against `ML_MODE` (default `DECAD`) — so
+>   `SAPPHIRE_PREDICTION_MODE=BOTH` **alone** runs DECAD only. To actually
+>   run both, also set `ML_MODE=BOTH`
+>   (`SAPPHIRE_PREDICTION_MODE=BOTH ML_MODE=BOTH`); the manual
+>   `for M in PENTAD DECAD` loop below with `ML_MODE=BOTH` remains an
+>   equally valid way to get both.
 > - **`SAPPHIRE_PREDICTION_MODE=PENTAD` or `DECAD`**: must agree with
 >   `ML_MODE` (either `ML_MODE=BOTH`, or `ML_MODE` equal to the same value) —
 >   an explicit conflict (e.g. `SAPPHIRE_PREDICTION_MODE=PENTAD ML_MODE=DECAD`)

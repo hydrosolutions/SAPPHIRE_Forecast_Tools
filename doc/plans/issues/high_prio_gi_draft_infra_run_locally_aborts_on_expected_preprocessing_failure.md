@@ -2,9 +2,10 @@
 
 **Status**: Draft (2026-08-20). Implemented — the diagnosis below was corrected after direct
 evidence and a fix has been built against the corrected diagnosis (see § What was actually
-built). The full `run_tests.sh` gate is confirmed green (16/16 modules and services), and two
-rounds of out-of-loop review have run against this branch; see § Acceptance criteria for the
-current, verified state.
+built). The full `run_tests.sh` gate is confirmed green: 16/16 modules and services pass, zero
+failures, and no skips introduced by this branch (15 skips pre-existed; 1 more arrived from
+trunk during a rebase, gated on bash < 4). Three rounds of out-of-loop adversarial review have
+run against this branch; see § Acceptance criteria for the current, verified state.
 **Module**: `apps/run_locally.sh` (orchestration) + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 (exit semantics of the maintenance sub-step that actually fails — **not**
 `preprocessing_runoff.py`, see § Correction below)
@@ -272,6 +273,36 @@ path (see § Correction) and has been filed as its own draft:
 [`low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md`](low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md).
 Do not duplicate that analysis here.
 
+### Known limitation — per-mode `machine_learning` MODULE rows still collide (not fixed here)
+
+Review round 3 fixed the per-mode **VALIDATION** rows: `run_module_validation`
+(`apps/run_locally.sh:1222`) now takes an optional mode suffix, so `daily`'s
+two ML validations produce distinguishable rows — `api_validation
+(machine_learning PENTAD)` and `api_validation (machine_learning DECAD)` —
+each with its own log file, per the comment at `run_locally.sh:1220-1221`.
+
+The per-mode **MODULE** rows were not fixed. `run_machine_learning`
+(`apps/run_locally.sh:637`) always truncates `${ERROR_DIR}/machine_learning.log`
+at its own start and always calls `record_result "machine_learning" ...` with
+no mode suffix. So two calls in the same run — one per mode — produce two
+indistinguishable `machine_learning` rows in `PIPELINE SUMMARY` (e.g. a
+PENTAD PASS and a DECAD FAIL both read just `machine_learning`), and the
+second call's log truncates and overwrites the first's.
+
+This is **not new** — `run_daily_pipeline` (`apps/run_locally.sh:1446`)
+already loops `for mode in PENTAD DECAD` and calls `run_machine_learning`
+once per mode, in both Phase 3 and Phase 4, so `daily` has produced
+colliding `machine_learning` module rows for as long as that loop has
+existed, independent of anything this branch changed.
+
+Same family as **INFRA-024** (a module's specific exit code is normalised
+away, so failure causes are unattributable) and **INFRA-030** (skipped
+modules leave no summary line) — all three are instances of `PIPELINE
+SUMMARY` under-reporting what actually happened. This branch deliberately
+did not widen scope to fix it; a fix, if picked up separately, would likely
+apply the same mode-suffix pattern `run_module_validation` already uses for
+VALIDATION rows.
+
 ---
 
 ## Scope boundaries
@@ -289,6 +320,9 @@ Do not duplicate that analysis here.
 - The wider `run_locally` reporting cluster is INFRA-024 (exit codes
   unattributable) and INFRA-030 (skips leave no summary line). Both make this
   issue harder to diagnose; neither is a prerequisite.
+- **Do not** fold in the per-mode `machine_learning` MODULE-row collision
+  (§ Known limitation above). It is pre-existing, in the same reporting
+  family as INFRA-024/INFRA-030, and deliberately left unfixed here.
 - This issue is **orchestration and exit semantics only**. It does not touch what
   `preprocessing_runoff` or `sync_long_horizon_hydrograph.py` read or write.
 
@@ -319,8 +353,10 @@ Do not duplicate that analysis here.
    `run_maintenance_preprocessing_runoff`.
 6. `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with zero
    failures and zero unexpected skips. **Confirmed** — the full suite
-   (16/16 modules and services) is green on this branch, and two rounds of
-   out-of-loop review have run (CLAUDE.md § Multi-Model Review &
+   (16/16 modules and services) is green on this branch: zero failures, and
+   no skips introduced by this branch (15 skips pre-existed; 1 more arrived
+   from trunk during a rebase, gated on bash < 4). Three rounds of
+   out-of-loop adversarial review have run (CLAUDE.md § Multi-Model Review &
    Verification).
 
 ---
@@ -331,6 +367,7 @@ Do not duplicate that analysis here.
 |---|---|
 | INFRA-024 | Failure *causes* are unattributable; a failed module's exit code is normalised to 1 at the pipeline guard — unrelated to the fix here, which acts one level up (inside `run_maintenance_preprocessing_runoff`, before that guard is reached) |
 | INFRA-030 | Skipped modules leave no summary line, so a `--continue-on-error` run's summary under-reports |
+| — | Same reporting family, found this round but **not fixed here**: per-mode `machine_learning` MODULE rows still collide (§ Known limitation above) — the per-mode VALIDATION rows were fixed on this branch, the MODULE rows were not |
 | ML-016 | One of the traps the operator hits when falling back to manual module invocation |
 | `low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md` | The dead-code analysis of `preprocessing_runoff.py:523/536/653`, split out of this issue — same finding, not on this issue's failure path |
 | — | [ML debugging runbook](../../prod/ml_no_forecasts_debug_runbook.md) — the operator-facing document this issue was found from |
