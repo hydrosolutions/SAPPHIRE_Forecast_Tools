@@ -108,6 +108,14 @@ _API_KEY_ENV_VAR = "ieasyhydroforecast_API_KEY_GATEAWAY"
 # empty, or a 2-3 char placeholder someone left in a test .env) would
 # match all over an unrelated message and corrupt it wholesale, so the
 # literal pass is skipped entirely below this threshold.
+#
+# Before raising this "to be safer": it is not free. Raising it only
+# shrinks the unscoped-substring risk (see redact_api_key's Limitations
+# docstring, point 1) at the direct cost of widening the opposite gap --
+# more short-but-real credentials fall back to pattern-only redaction,
+# which is only partial for a key containing ": ". There is no value
+# that fixes both; changing the number moves the trade, it does not
+# remove it.
 _MIN_LITERAL_KEY_LENGTH = 8
 
 
@@ -124,30 +132,66 @@ def redact_api_key(message: str) -> str:
        not import time, since operators and tests may change it) and is
        at least ``_MIN_LITERAL_KEY_LENGTH`` characters long, every literal
        occurrence of that exact value anywhere in the message is replaced
-       with ``***``. This closes the case a pattern alone cannot: a
-       credential value that itself contains ": ", which is otherwise
+       with ``***``. This closes a case the pattern pass alone cannot: a
+       credential value that itself contains ": ", otherwise
        indistinguishable from the separator before the server's JSON
        response body. Run first so the pattern pass below still collapses
        ``api_key=***`` to a single ``***`` rather than doubling up.
-    2. The ``api_key=``/``apikey=`` query-string pattern is redacted as
-       before, covering the case where the live key is unknown (env var
+    2. The ``api_key=``/``apikey=`` query-string pattern is redacted,
+       covering the case where the live key is unknown (env var
        unset/too short) or the message otherwise doesn't contain the
-       literal value.
+       literal value. The pattern will not match inside an unrelated
+       name like ``backup_api_key=disabled``.
 
-    Only the credential is replaced; the rest of the message (endpoint
-    path, HRU code, the server's response text) is left intact -- the
-    pattern will not match inside an unrelated name like
-    ``backup_api_key=disabled``.
+    LIMITATIONS (owner decision 2026-08: documented and shipped as-is,
+    not further hardened -- read this before relying on this helper for
+    anything beyond the Data Gateway call sites it was built for):
 
-    Does NOT cover: credentials passed in header form (e.g.
-    ``Authorization: ...`` or ``Api-Key: ...``) or JSON/dict
-    representations (e.g. ``{"api_key": "..."}``) *when the live key is
-    unavailable to the literal pass* -- when it IS available, the literal
-    pass catches the secret in those shapes too, since it matches the
-    value itself rather than its surroundings. Still not covered even
-    with the literal pass available: a key that has been URL-encoded or
-    otherwise transformed before landing in the message (e.g.
-    ``api_key%3D...``), since that no longer contains the literal value.
+    - **The literal pass is unscoped.** ``message.replace(live_key,
+      "***")`` blanks every occurrence of the live key's exact text
+      anywhere in the message, including a coincidental substring that
+      has nothing to do with the credential. Concretely, with a live key
+      of ``"disabled"``, the message ``api_key=disabled:
+      {"message":"model disabled"}`` redacts to ``...{"message":"model
+      ***"}``. This is a deliberate trade: it fails in the SAFE
+      direction -- it hides a diagnostic word rather than leaking a
+      credential -- and a real Data Gateway credential being an ordinary
+      English substring is the unlikely case being accepted here.
+    - **``_MIN_LITERAL_KEY_LENGTH`` is a trade with no correct value.**
+      Raising it shrinks the unscoped-substring risk above (fewer
+      accidental hits) but widens the opposite gap: a short real
+      credential falls back to pattern-only redaction, which is only
+      partial for a key containing ": " (see the next point). Lowering
+      it does the reverse. The two failure modes cannot both be fixed by
+      tuning the number -- changing it only moves the trade. This
+      fallback is also silent by design: nothing logs that only pattern
+      redaction ran for a given message, because a log line announcing
+      "the key is short" would itself be a small disclosure about the
+      credential.
+    - **The env var is read fresh at call time, not the key a specific
+      client instance was constructed with.** If the environment were
+      rotated after a client was built, that client's exceptions would
+      still carry the OLD key while this helper searches for the NEW
+      one, so the literal pass would silently miss it (the pattern pass
+      still applies regardless). Nothing in this codebase currently
+      mutates the environment mid-run without rebuilding the client,
+      which is why this is documented rather than fixed -- a caller that
+      ever does so must pass the key explicitly instead of relying on
+      this env-var lookup.
+    - **The pattern pass alone cannot fully redact a key containing
+      ": "** -- that sequence is genuinely ambiguous between "part of
+      the key" and "the separator before the server's JSON body"; only
+      the literal-value pass closes this, and only when the live key is
+      known (see point 2 above).
+    - **Not covered by either pass:** a key that has been URL-encoded or
+      otherwise transformed before landing in the message (e.g.
+      ``api_key%3D...``), since that no longer contains the literal
+      value. When the live key is unavailable to the literal pass, also
+      not covered: credentials in header form (e.g. ``Authorization:
+      ...`` or ``Api-Key: ...``) or JSON/dict representations (e.g.
+      ``{"api_key": "..."}``) -- when the literal pass IS available, it
+      catches the secret in those shapes too, since it matches the value
+      itself rather than its surroundings.
 
     Args:
         message: The string to redact, e.g. a formatted exception message.

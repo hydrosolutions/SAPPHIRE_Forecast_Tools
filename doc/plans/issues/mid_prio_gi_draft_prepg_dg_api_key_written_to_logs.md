@@ -156,6 +156,33 @@ locally regardless; it is cheap and does not depend on the client changing.
   `"Couldn't find any files for the given HRU code, date and models!"` to drive the
   today→yesterday fallback. Redaction must not alter matching behaviour.
 
+## Known limitations of the redactor — accepted, not overlooked
+
+Found by the final adversarial pass 2026-08-20 and **accepted by owner decision** rather than fixed.
+All three are real; none is a reason to withhold the fix, and all three fail in bounded ways.
+
+1. **The literal pass is unscoped.** It replaces every occurrence of the live key value, so a
+   credential that happens to be a substring of ordinary text redacts that text too — with a key of
+   `disabled`, `{"message":"model disabled"}` becomes `{"message":"model ***"}`. This **fails in the
+   safe direction**: it hides a diagnostic word rather than leaking a credential. A real gateway
+   credential being a common English substring is the unlikely case we accept.
+
+2. **The length threshold is a trade with no correct value.** Raising `_MIN_LITERAL_KEY_LENGTH`
+   reduces limitation 1 and worsens its opposite — a short real credential falls back to
+   pattern-only redaction, which is *partial* for a key containing `": "`. Lowering it does the
+   reverse. **The two failure modes cannot both be closed by tuning the number.** The fallback is
+   deliberately silent: a log line announcing that the key is short is its own small disclosure.
+
+3. **The environment is read, not the client's captured key.** If the environment were rotated
+   after a client was constructed, that client's exception would carry the old key while the helper
+   searched for the new one, and the literal pass would silently miss. Nothing in this codebase
+   mutates the environment mid-run without rebuilding the client — which is why this is documented
+   rather than fixed. **A caller that ever does so must pass the key explicitly.**
+
+The durable point behind all three: this helper reduces exposure, it does not guarantee
+containment. **The only cure is upstream — PREPG-014, where the client stops putting a credential
+in an exception message at all.** Treat the key as exposed on any machine that has run the gateway.
+
 ## Not covered
 
 Existing log files already contain the key. Rotating or scrubbing them is an operational task, not
