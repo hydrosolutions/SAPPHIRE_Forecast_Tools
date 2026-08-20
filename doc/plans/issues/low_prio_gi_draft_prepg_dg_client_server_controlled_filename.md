@@ -38,7 +38,10 @@ available.** The counter-arguments are real:
 
 - The Data Gateway is **first-party hydrosolutions infrastructure**, authenticated with an API key.
   It is not an untrusted internet endpoint.
-- No malformed filename has been observed.
+- **Observed filenames are plain basenames.** Checked against the live gateway 2026-08-20:
+  `ECMWFIFS_<date>_ENS<n>_HRU<code>_tp.csv` and `..._2t.csv` — `basename(f) == f`, no separators,
+  not absolute. So nothing malformed is being served today; this is a guard against a shape the
+  server does not currently produce.
 - Reaching it requires the gateway itself to be compromised or defective — at which point it is
   already serving the forecast data we then run models on, which is the larger problem.
 

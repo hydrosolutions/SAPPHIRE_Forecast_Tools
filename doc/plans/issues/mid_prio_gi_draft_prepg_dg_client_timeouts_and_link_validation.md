@@ -1,8 +1,9 @@
 ## `sapphire-dg-client` has no request timeouts and never validates the link response (PREPG-014)
 
-**Status**: Draft (reviewed 2026-08-20) — split out of PREPG-010, which is local-only by design.
-**The three owner decisions are now RESOLVED** (§ Decisions). One evidence gap remains before this
-can move to `Ready`: a single measurement of Data Gateway time-to-first-byte — see § Decisions #3.
+**Status**: **Ready** (2026-08-20) — split out of PREPG-010, which is local-only by design. The
+three owner decisions are RESOLVED (§ Decisions) and the time-to-first-byte measurement they were
+waiting on is **done** (§ Decisions #3). Implementation is upstream in `sapphire-dg-client`; the
+local half (adding `Timeout` to the retry set) and the relock are in this repo.
 **Module**: the **`sapphire-dg-client`** dependency (separate hydrosolutions repo), consumed by
 `apps/preprocessing_gateway`
 **Priority**: **Medium** — *raised from Low 2026-08-18.* No observed incident, which is what kept
@@ -136,13 +137,22 @@ reach for.
    ERA5, snow and all processing — so a **single request** idling 60s is already far outside
    anything normal. It cannot plausibly break a download that completes today.
 
-   **The one thing not measured, and it is the only number that can break a working download:**
-   Data Gateway **time-to-first-byte**. A read timeout is an idle interval
-   (`urllib3/util/timeout.py:76-103`), so if the gateway *computes* a file on demand it may
-   legitimately stay silent longer than 60s before sending anything. **Measure it once against a
-   real deployment before merging** and raise the read value if it is anywhere near 60s. Do not
-   skip this because the number looks generous — the runtime evidence above says nothing about
-   first-byte latency.
+   **MEASURED 2026-08-20 against the live gateway** — this was the one number that could have
+   broken a working download, and it does not:
+
+   | request (the calls the pipeline actually makes) | TTFB | payload |
+   |---|---|---|
+   | control member, `start_date = today − 365d` | **4.92s** | 313 KB |
+   | ensemble link-list metadata | 0.54s | 1 KB |
+   | ensemble link download | 0.08–0.17s | ~325 B |
+
+   So `read=60s` carries roughly **12x headroom** over the slowest observed first byte, and the
+   "large downloads might idle" concern is unfounded at these payload sizes.
+
+   **A trap for whoever re-measures:** the control member is a **spin-up** request —
+   `Quantile_Mapping_OP.py:754` sets `start_date = today − 365 days`. Probing that endpoint with
+   *today's* date returns HTTP 500 and looks exactly like a gateway outage. It is not; it is a
+   meaningless request. **Reproduce the caller's real arguments.**
 
    **A per-request timeout does NOT bound the job.** Worst case is now
    50 members x 2 attempts x 70s = **~1.9 hours per HRU** of pure waiting. That is finite, unlike
