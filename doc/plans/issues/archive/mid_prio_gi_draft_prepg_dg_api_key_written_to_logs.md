@@ -1,6 +1,6 @@
 ## The Data Gateway API key is written to local log files in plaintext (PREPG-015)
 
-**Status**: Draft (2026-08-18)
+**Status**: **Complete** (2026-08-20) — shipped in **PR #460**, merged to `maxat_sapphire_2`
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
 **Priority**: **Medium** — a live credential lands in readable files on every dev machine and
 server that has run the gateway. **No repo exposure**: `apps/logs` is gitignored and the key has
@@ -11,6 +11,17 @@ never been committed (verified).
 **Related**: PREPG-014 (the upstream half of this — the client is what puts the key in the message).
 
 ---
+
+> **Completed 2026-08-20 (PR #460).** `dg_utils.redact_api_key` applied at **eight statements
+> across four files**, redacting both by pattern and by the literal env value. 386 tests, zero
+> skips.
+>
+> **Read the LIMITATIONS section before relying on this.** Three limits ship documented rather
+> than fixed, by owner decision: the literal pass is unscoped, `_MIN_LITERAL_KEY_LENGTH` is a
+> trade with no correct value, and the env is read rather than the client's captured key.
+> **This helper reduces exposure; it does not guarantee containment.** The cure is upstream
+> (**PREPG-014**), and the uncaught-transport path it cannot reach is **PREPG-017**. Treat the
+> key as exposed on any machine that has run the gateway.
 
 ## What lands in the log
 

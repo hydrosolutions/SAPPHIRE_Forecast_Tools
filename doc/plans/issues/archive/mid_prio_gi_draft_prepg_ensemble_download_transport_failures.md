@@ -1,6 +1,6 @@
 ## A transient transport fault kills `preprocessing_gateway`: no DG download is retried, and two of the three sites lose the cause (PREPG-010)
 
-**Status**: Draft (2026-08-20) — **re-widened after out-of-loop review**; ready to implement
+**Status**: **Complete** (2026-08-20) — shipped in **PR #459**, merged to `maxat_sapphire_2`
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
 **Scope**: all three Data Gateway download sites — control member (`:712`) and both ensemble loops
 (`:811` today, `:830` yesterday). *Widened 2026-08-20 by owner decision; the previous revision
@@ -24,6 +24,16 @@ taken at the same time: **one retry, not two** (§ The fix) and **widen to the c
 download** (§ Three transport call sites).
 
 ---
+
+> **Completed 2026-08-20 (PR #459).** Retry helper applied at all three Data Gateway download
+> sites; the control-member handler no longer discards a non-matching exception and no longer
+> misreports a transport fault as missing data. 366 tests, zero skips.
+>
+> **What this fix does NOT do, carried forward:** it makes the gateway survive a connection
+> *reset*. A *hung* peer still blocks indefinitely, and the retry now offers two chances to meet
+> one instead of one — that is **PREPG-014**, still open, and it is this fix's safety net. An
+> exhausted transport exception also still reaches stderr with the API key in its URL — that is
+> **PREPG-017**.
 
 ## What happened
 
