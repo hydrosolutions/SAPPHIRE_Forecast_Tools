@@ -98,8 +98,9 @@ fault still masquerading as missing data.
 - **Retry the individual call**, not an enclosing loop. Re-running all 50 members after a fault on
   member 37 is a different (and worse) behaviour.
 - **Retryable set**: `requests.exceptions.ConnectionError` **and
-  `requests.exceptions.ChunkedEncodingError`**, with `requests.exceptions.SSLError` re-raised
-  first. See the two subsections below — each class is here for a verified reason, not for breadth.
+  `requests.exceptions.ChunkedEncodingError`** — two classes, no exclusions. `SSLError` and
+  `ProxyError` are `ConnectionError` subclasses and are therefore retried with it; that is
+  deliberate (see below), not an oversight to be "tightened" later.
 - **On exhaustion, re-raise the original exception unchanged** — same type, same message. Do not
   convert it to `sys.exit`, a `ValueError`, or a custom class: the ensemble sites depend on
   `ValueError` remaining distinguishable, and the control site's whole problem is a lost cause.
@@ -118,31 +119,31 @@ A file download is exactly the case where the reset lands **mid-body**. So `exce
 alone would catch the handshake-phase reset in the reported traceback and miss the more common
 body-phase one — a fix catching only `ConnectionError` would not have fixed the reported bug in
 its most likely form.
-### The `SSLError` decision — DECIDED 2026-08-20: exclude it
+### `SSLError` is retried — DECIDED 2026-08-20 (reversal; read this before "fixing" it)
 
 `requests.exceptions.SSLError` **subclasses** `ConnectionError` (`requests/exceptions.py:60`,
-`:68`) — verified, not assumed. So a bare `except ConnectionError` also retries a permanent TLS
-misconfiguration.
-
-**Owner decision (2026-08-20): exclude `SSLError`.** *(Re-examined and upheld after the
-out-of-loop review argued for including it.)* A permanent TLS failure must fail
-immediately and loudly rather than burn three attempts on a fault that cannot succeed — and,
-per the hang section below, every avoided attempt is one fewer opportunity to meet a hung peer.
-Implement as an explicit re-raise, not a narrower catch:
+`:68`) — verified, not assumed. So a plain `except requests.exceptions.ConnectionError` already
+catches it, and **no exclusion clause is needed or wanted**:
 
 ```python
-except requests.exceptions.SSLError:
-    raise
-except requests.exceptions.ConnectionError:
-    ...  # retry
+except (requests.exceptions.ConnectionError,        # incl. SSLError, ProxyError
+        requests.exceptions.ChunkedEncodingError):
+    ...  # one retry, then re-raise unchanged
 ```
 
-**Do not claim the class hierarchy cleanly separates transient from permanent faults** — it does
-not, and this decision does not assert otherwise. A connection reset *during* a TLS handshake can
-surface as either class depending on where it lands; excluding `SSLError` therefore accepts that
-some genuinely transient faults will not be retried. That is the accepted trade, not an oversight.
-The observed failure (`ConnectionResetError(54)`) reached us as a plain `ConnectionError`, so it
-is retried under this policy.
+**Owner decision, reversing an earlier exclusion.** The reason the exclusion was dropped:
+**the class hierarchy does not separate transient from permanent faults.** A connection reset
+*during* a TLS handshake can surface as either `SSLError` or plain `ConnectionError` depending on
+where in the exchange it lands — so excluding `SSLError` would have declined to retry a share of
+exactly the fault this issue exists to survive, while a genuinely permanent TLS
+misconfiguration costs only **one** wasted extra attempt before failing loudly with its original
+message. One attempt is a cheap price for not silently splitting the observed failure mode in two.
+
+Two consequences an implementer must not undo:
+
+- **Do not add an `SSLError` re-raise** as a "safety" refinement. It is the reverted design.
+- **Do not discriminate on the underlying `ssl` cause** either. That would mean matching on
+  exception text or private cause types, which is fragile in a way the one wasted attempt is not.
 
 ## Coverage today is ZERO, and the harness is NOT a small fixture tweak
 
@@ -256,8 +257,9 @@ three-attempt loop, one that converts exhaustion to `sys.exit`, or one that retr
   member — an implementation attempting 3 must fail this test.
 - On exhaustion the module fails **loudly**, propagating the **original exception type and
   message** — not a silent skip (cf. PREPG-009), and not a rewrapped or swallowed cause.
-- **A `requests.exceptions.SSLError` is NOT retried** — it propagates on the first attempt, pinned
-  by a test asserting exactly **1** call.
+- **A `requests.exceptions.SSLError` IS retried** on the same terms as any other
+  `ConnectionError` — pinned by a test asserting **2** calls on exhaustion, so that a later
+  "tightening" that re-adds an exclusion clause fails visibly.
 - **A non-matching `ValueError` still escapes after exactly 1 call** — the retry must not widen to
   `ValueError`, and must not replay the date fallback.
 
@@ -286,14 +288,17 @@ three-attempt loop, one that converts exhaustion to `sys.exit`, or one that retr
   issue is not the place to re-test that claim.
 - **A small local loop, not `tenacity`** — a retry framework for three call sites is
   disproportionate.
-- **`requests` is not a declared dependency of this module.** It is absent from
-  `apps/preprocessing_gateway/pyproject.toml` and reaches the venv only transitively via the DG
-  client (whose own metadata does not declare it either). Importing it to name the exception
-  classes makes an undeclared transitive dependency load-bearing. Either declare it and relock, or
-  record the accepted risk explicitly — do not do neither.
-- **Decide retry timing explicitly.** Immediate retry or a short bounded pause; if a pause, inject
-  or patch the sleeper so tests add no real wall-clock delay (CLAUDE.md forbids `sleep()` in
-  tests). A silent tight loop can re-hit the same transient condition before it clears.
+- **Declare `requests` in `apps/preprocessing_gateway/pyproject.toml` and relock** (DECIDED
+  2026-08-20). It is absent today and reaches the venv only transitively via the DG client, whose
+  own metadata does not declare it either — so the exception classes this fix dispatches on would
+  rest on a dependency nobody has promised to keep. The DG client is pinned to a moving `@main`,
+  which makes that promise weaker still. Do not skip the relock.
+- **A short fixed pause before the single retry** (DECIDED 2026-08-20) — a couple of seconds,
+  hard-coded alongside the attempt count, no backoff schedule and no config surface. With only one
+  retry, an immediate re-dial is likely to meet the same condition before it clears, which would
+  make the retry decorative. **Inject or patch the sleeper** so tests add no real wall-clock delay;
+  CLAUDE.md forbids `sleep()` in tests, and a two-second pause on 50 members would otherwise be
+  felt in the suite.
 - **No HTTP-status retry (429/502/503/504).** It cannot work from here: the client turns a non-200
   *metadata* response into an undifferentiated `ValueError` and never raises on a bad *link*. That
   is PREPG-014's territory.
@@ -310,3 +315,44 @@ lost, so no merge or final ensemble CSV is produced for that HRU.
 **No code resumes from partial files**, and the next run *attempts* to delete everything under
 `OUTPUT_PATH_DG` before downloading (`Quantile_Mapping_OP.py:625`) — deletion failures are caught
 and suppressed (`:637`), so it is an attempt, not a guarantee.
+
+---
+
+## Implementation phases
+
+Required by CLAUDE.md § Orchestration Protocol. One phase — this is a single small change with one
+test surface, and splitting it would create a window where the retry exists without its regression
+guard.
+
+### P1 — Retry helper at all three DG download sites
+
+**Goal**: A transient transport fault at any Data Gateway download is retried once and, if it still
+fails, propagates with its original type and message.
+
+**Files** (the complete allowed set):
+- `apps/preprocessing_gateway/Quantile_Mapping_OP.py` — the helper plus its three call sites
+  (`:712`, `:811`, `:830`), and narrowing the control site's `except Exception`.
+- `apps/preprocessing_gateway/pyproject.toml` + its `uv.lock` — declare `requests`.
+- `apps/preprocessing_gateway/test/test_integration_preprocessing_gateway.py` — the `main()`-level
+  cases.
+- `apps/preprocessing_gateway/test/` — a new unit-test module for the helper, and sharing the
+  ensemble-file factory currently module-local to `test_ensemble_transforms.py`.
+
+**Do NOT change** any existing function signature, the data flow through the transform/merge
+chain, the today→yesterday fallback logic, or the one-model-at-a-time loop. The change is a
+wrapper around three call sites plus one narrowed `except`; everything else is additive.
+
+**Depends on**: nothing. PREPG-014 is a *safety net*, not a prerequisite — this fix is correct
+without it and the hang exposure is documented above.
+
+**Agents**: 1.
+
+**Acceptance criteria**: the § Acceptance criteria section above, in full.
+
+```json
+{
+  "phases": {
+    "P1": { "depends_on": [], "parallel_agents": 1 }
+  }
+}
+```
