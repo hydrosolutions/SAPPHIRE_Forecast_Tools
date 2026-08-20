@@ -79,6 +79,20 @@
 #   Only that module's data is checked (Tier 1 + Tier 2).
 #   For standalone use: validate_pipeline.py --module <module_name>
 #
+# machine_learning mode resolution (bare target vs. maintenance/daily):
+#   The bare `machine_learning` target has no outer per-mode loop, so it
+#   resolves SAPPHIRE_PREDICTION_MODE/ML_MODE itself, via
+#   resolve_ml_bare_target_modes: unset derives the mode from ML_MODE (WARN);
+#   SAPPHIRE_PREDICTION_MODE=BOTH loops PENTAD then DECAD in one invocation;
+#   an explicit single-valued SAPPHIRE_PREDICTION_MODE that conflicts with a
+#   single-valued ML_MODE errors out naming both variables rather than
+#   silently picking one. `maintenance:machine_learning`, `daily`, `all` and
+#   `maintenance` instead resolve the mode via their own outer per-mode loop
+#   (which also honours ML_MODE) before calling into machine_learning, so an
+#   operator moving between the bare target and these should not assume the
+#   two resolve a given SAPPHIRE_PREDICTION_MODE/ML_MODE combination the same
+#   way.
+#
 # Prerequisites:
 #   - Bash 4.4+ (macOS ships 3.2; install via: brew install bash)
 #   - Each module needs a .venv: cd apps/<module> && uv sync --all-extras
@@ -99,6 +113,11 @@ LOG_FILE="${LOG_DIR}/run_locally_${TIMESTAMP}.log"
 # Flags (set by argument parsing)
 CONTINUE_ON_ERROR=false
 DRY_RUN=false
+
+# Set true in main() for multi-module targets where a non-zero return can
+# only arise from the CONTINUE_ON_ERROR guard idiom (i.e. a real abort that
+# skipped remaining modules). Used to gate the continue-on-error hint.
+IS_FAIL_FAST_TARGET=false
 
 # Error capture
 ERROR_TAIL_LINES=30
@@ -345,6 +364,18 @@ record_validation() {
     VALIDATION_ERROR_LOG+=("$error_log")
 }
 
+# emit_continue_on_error_hint - Tell the operator why the pipeline stopped
+# early and how to run the remaining modules anyway. Called exactly once
+# from main(), after the target's pipeline function has already returned,
+# and only for fail-fast targets (see IS_FAIL_FAST_TARGET) where a non-zero
+# return means a guard idiom aborted the run with CONTINUE_ON_ERROR=false.
+emit_continue_on_error_hint() {
+    local target="$1"
+    log WARN "Pipeline stopped early because --continue-on-error is not set; the remaining modules did not run."
+    log WARN "To run the remaining modules anyway: bash apps/run_locally.sh --continue-on-error ${target}"
+    log WARN "Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful."
+}
+
 check_venv() {
     local module="$1"
     local python_path="${SCRIPT_DIR}/${module}/.venv/bin/python"
@@ -373,6 +404,65 @@ should_skip_ml_for_mode() {
     # ML_MODE=BOTH means run ML for every mode (legacy behavior)
     [ "$ML_MODE" = "BOTH" ] && return 1
     [ "$current_mode" != "$ML_MODE" ]
+}
+
+# resolve_ml_bare_target_modes - Validate SAPPHIRE_PREDICTION_MODE and ML_MODE
+# for the bare `machine_learning` single-module target, then populate the
+# global ML_BARE_RESOLVED_MODES array with the mode(s) to run.
+#
+# Unlike the daily/maintenance loops, the bare target has no outer mode loop
+# to resolve SAPPHIRE_PREDICTION_MODE for it, so it must validate and resolve
+# both variables itself instead of silently forwarding an empty mode or
+# silently discarding an explicit request via should_skip_ml_for_mode.
+#
+# Exits the script (exit 1) on invalid or mutually inconsistent input, since
+# this is only ever called from that one case branch before anything has run.
+resolve_ml_bare_target_modes() {
+    local requested_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+
+    case "$requested_mode" in
+        ""|PENTAD|DECAD|BOTH) ;;
+        *)
+            log ERROR "Invalid SAPPHIRE_PREDICTION_MODE for machine_learning target: '${requested_mode}' (expected unset/empty, PENTAD, DECAD, or BOTH)"
+            exit 1
+            ;;
+    esac
+
+    case "$ML_MODE" in
+        PENTAD|DECAD|BOTH) ;;
+        *)
+            log ERROR "Invalid ML_MODE for machine_learning target: '${ML_MODE}' (expected PENTAD, DECAD, or BOTH)"
+            exit 1
+            ;;
+    esac
+
+    ML_BARE_RESOLVED_MODES=()
+
+    if [ "$requested_mode" = "BOTH" ]; then
+        local mode
+        for mode in PENTAD DECAD; do
+            if should_skip_ml_for_mode "$mode"; then
+                log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+            else
+                ML_BARE_RESOLVED_MODES+=("$mode")
+            fi
+        done
+    elif [ -n "$requested_mode" ]; then
+        if [ "$ML_MODE" = "BOTH" ] || [ "$ML_MODE" = "$requested_mode" ]; then
+            ML_BARE_RESOLVED_MODES=("$requested_mode")
+        else
+            log ERROR "Inconsistent ML mode request for machine_learning target: SAPPHIRE_PREDICTION_MODE=${requested_mode} but ML_MODE=${ML_MODE}"
+            exit 1
+        fi
+    else
+        if [ "$ML_MODE" = "BOTH" ]; then
+            log WARN "SAPPHIRE_PREDICTION_MODE not set for machine_learning target; deriving (PENTAD DECAD) from ML_MODE=BOTH"
+            ML_BARE_RESOLVED_MODES=(PENTAD DECAD)
+        else
+            log WARN "SAPPHIRE_PREDICTION_MODE not set for machine_learning target; deriving ${ML_MODE} from ML_MODE=${ML_MODE}"
+            ML_BARE_RESOLVED_MODES=("$ML_MODE")
+        fi
+    fi
 }
 
 resolve_org() {
@@ -701,6 +791,12 @@ run_maintenance_preprocessing_runoff() {
     if [ $rc -eq 0 ]; then
         local lt_rc=0
         log INFO "Daily runoff maintenance completed; syncing long-horizon hydrograph norms"
+
+        local lt_start
+        lt_start=$(get_timestamp)
+        CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_long_horizon.log"
+        > "$CURRENT_MODULE_LOG"
+
         if [ -n "${RUNOFF_LONG_HORIZON_TARGET_YEAR:-}" ]; then
             log INFO "  Long-horizon target year: ${RUNOFF_LONG_HORIZON_TARGET_YEAR}"
             if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
@@ -717,6 +813,8 @@ run_maintenance_preprocessing_runoff() {
             fi
         fi
 
+        local lt_elapsed=$(( $(get_timestamp) - lt_start ))
+
         if [ $lt_rc -eq 2 ]; then
             log WARN "Long-horizon hydrograph sync produced no records; continuing maintenance"
         elif [ $lt_rc -eq 5 ]; then
@@ -724,10 +822,12 @@ run_maintenance_preprocessing_runoff() {
             rc=$lt_rc
         elif [ $lt_rc -eq 4 ]; then
             log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
-            rc=$lt_rc
+            record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
         elif [ $lt_rc -ne 0 ]; then
             rc=$lt_rc
         fi
+
+        CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
     fi
 
     local elapsed=$(( $(get_timestamp) - start ))
@@ -1630,7 +1730,10 @@ Modules (for single-module operational runs):
   preprocessing_runoff    Process runoff data
   preprocessing_gateway   Quantile mapping, ERA5 extension, snow data
   linear_regression       Linear regression forecasts
-  machine_learning        ML forecasts (TFT, TIDE, TSMIXER)
+  machine_learning        ML forecasts (TFT, TIDE, TSMIXER). Resolves its own
+                          prediction mode(s) via resolve_ml_bare_target_modes
+                          instead of crashing on an empty mode -- see the
+                          SAPPHIRE_PREDICTION_MODE / ML_MODE entries below.
   postprocessing_forecasts  Post-process forecast outputs
   long_term_forecasting   Long-term monthly forecasts
 
@@ -1641,7 +1744,22 @@ Flags:
 
 Environment variables:
   ieasyhydroforecast_env_file_path   Path to .env config file (required)
-  SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance)
+  SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance).
+                                        Three targets resolve this differently, so check
+                                        which one you are running:
+                                          - bare `machine_learning`: validates this against
+                                            ML_MODE itself (resolve_ml_bare_target_modes).
+                                            Unset derives the mode from ML_MODE (WARN);
+                                            BOTH loops PENTAD then DECAD; an explicit single
+                                            value that conflicts with a single-valued ML_MODE
+                                            errors out naming both variables instead of
+                                            silently picking one.
+                                          - `maintenance:machine_learning` / `daily` /
+                                            `all` / `maintenance`: resolved by an outer
+                                            per-mode loop in run_locally.sh itself, which
+                                            also consults ML_MODE via should_skip_ml_for_mode.
+                                          - every other module target: forwarded as-is to
+                                            the module's own venv invocation.
   lt_forecast_mode                   Specific month for long-term (e.g. month_3)
   LT_SIMULATE_YEARS                  Space-separated years to simulate (default: 2024)
   LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 1)
@@ -1792,6 +1910,16 @@ main() {
         print_usage
         exit 1
     fi
+
+    # Fail-fast targets: multi-module pipelines where a non-zero return can
+    # only arise from the CONTINUE_ON_ERROR guard idiom aborting the run
+    # (i.e. remaining modules were genuinely skipped). Used to gate the
+    # continue-on-error hint at the end of main().
+    case "$target" in
+        daily|short-term|long-term|long-term-operational|maintenance)
+            IS_FAIL_FAST_TARGET=true
+            ;;
+    esac
 
     # Create log directory
     mkdir -p "$LOG_DIR"
@@ -1949,7 +2077,14 @@ main() {
             if should_skip_module machine_learning; then
                 log INFO "Skipping machine_learning (not required for ${ORG} org)"
             else
-                run_machine_learning || exit_code=$?
+                local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+                resolve_ml_bare_target_modes
+                for mode in "${ML_BARE_RESOLVED_MODES[@]}"; do
+                    export SAPPHIRE_PREDICTION_MODE="$mode"
+                    log INFO "Running machine_learning for mode: ${mode}"
+                    run_machine_learning || { exit_code=$?; break; }
+                done
+                export SAPPHIRE_PREDICTION_MODE="$original_mode"
                 run_module_validation "machine_learning"
             fi
             ;;
@@ -1969,6 +2104,13 @@ main() {
 
     local pipeline_elapsed=$(( $(get_timestamp) - pipeline_start ))
 
+    # If the run aborted early via the CONTINUE_ON_ERROR guard idiom on a
+    # fail-fast target, tell the operator why and how to proceed. Exactly
+    # one emission per run.
+    if [ "$exit_code" -ne 0 ] && [ "$CONTINUE_ON_ERROR" = false ] && [ "$IS_FAIL_FAST_TARGET" = true ]; then
+        emit_continue_on_error_hint "$target"
+    fi
+
     # Print summary if we ran anything
     if [ ${#RESULTS_MODULE[@]} -gt 0 ]; then
         print_summary "$pipeline_elapsed" || exit_code=1
@@ -1977,4 +2119,14 @@ main() {
     exit $exit_code
 }
 
-main "$@"
+# main() wraps arg parsing + dispatch + summary so this file can be sourced
+# by a test harness without executing a real pipeline run: sourcing still
+# runs the top-of-file initialisation (set -euo pipefail, mktemp -d, and the
+# EXIT trap that removes ERROR_DIR), which is unavoidable and harmless, but
+# it does NOT invoke main — that only happens when the script is executed
+# directly (`bash run_locally.sh ...`), which is the only way it is invoked
+# today. The guard below lets a harness source the file and call individual
+# functions (e.g. emit_continue_on_error_hint) directly.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

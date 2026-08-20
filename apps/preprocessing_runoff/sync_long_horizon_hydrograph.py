@@ -353,7 +353,7 @@ def write_station_monthly_hydrograph(
     norm_classification = norm_lookup.classification
     if norm_classification is _NormClassification.SDK_FAILED:
         exc = norm_lookup.exception
-        logger.debug(
+        logger.warning(
             "write_station_monthly_hydrograph: SDK call failed for site %s, skipping. "
             "Error: %s: %s",
             code,
@@ -638,10 +638,10 @@ def _summarize_long_horizon_station_statuses(
 
 def _exit_code_for_long_horizon_summary(summary: LongHorizonRunSummary) -> int:
     """Return the terminal exit code for the station-status summary."""
-    if summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED] >= 1:
-        return 4
     if summary.status_counts[LongHorizonStationWriteStatus.API_FAILED] >= 1:
         return 5
+    if summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED] >= 1:
+        return 4
     return 0
 
 

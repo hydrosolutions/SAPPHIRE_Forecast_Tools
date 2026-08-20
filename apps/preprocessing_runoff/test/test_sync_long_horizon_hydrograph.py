@@ -773,6 +773,36 @@ def test_skips_station_when_sdk_raises(caplog):
     assert "tunnel down" in caplog.text
 
 
+# INFRA-032: the SDK-failure log for write_station_monthly_hydrograph was
+# lifted from DEBUG to WARNING because the root logger is configured at
+# WARNING in production (iEasyHydroForecast.setup_library), which makes this
+# script's own logging.basicConfig(level=logging.INFO) a no-op. Below
+# WARNING, the failing station and the reason are invisible in production
+# logs. Capture at WARNING (not DEBUG) so this test would fail if the level
+# regressed back to DEBUG.
+def test_skips_station_when_sdk_raises_logs_at_warning_with_station_and_error(caplog):
+    client = MagicMock()
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        result = sync_lhh.write_station_monthly_hydrograph(
+            TEST_CODE,
+            FakeSDK(ConnectionError("tunnel down")),
+            client,
+            target_year=2026,
+            today=dt.date(2026, 6, 15),
+        )
+
+    assert result.status is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
+    warning_records = [
+        record for record in caplog.records if record.levelno == sync_lhh.logging.WARNING
+    ]
+    assert len(warning_records) == 1
+    message = warning_records[0].getMessage()
+    assert TEST_CODE in message
+    assert "ConnectionError" in message
+    assert "tunnel down" in message
+
+
 def test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sdk_failed(
     monkeypatch,
 ):
@@ -1341,7 +1371,13 @@ def test_main_exits_four_when_sdk_norm_lookup_fails(monkeypatch):
     assert exc.value.code == 4
 
 
-def test_main_exits_four_before_five_when_sdk_and_api_failures_both_present(monkeypatch):
+# INFRA-032: the precedence was deliberately inverted so exit 4 means "SDK
+# failures only, no API failures". A later phase treats exit 4 as non-fatal
+# degradation; that is only safe if API_FAILED (a real read/write failure,
+# not just a missing norm lookup) always wins and keeps the run fatal (5).
+# This assertion changing from 4 to 5 is an authorised contract change, not
+# a weakened test.
+def test_main_exits_five_before_four_when_sdk_and_api_failures_both_present(monkeypatch):
     records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
     records.station_statuses = [
         (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
@@ -1352,7 +1388,7 @@ def test_main_exits_four_before_five_when_sdk_and_api_failures_both_present(monk
     with pytest.raises(SystemExit) as exc:
         sync_lhh.main()
 
-    assert exc.value.code == 4
+    assert exc.value.code == 5
 
 
 def test_main_exits_four_when_all_sdk_failed_even_with_zero_records(monkeypatch, caplog):
