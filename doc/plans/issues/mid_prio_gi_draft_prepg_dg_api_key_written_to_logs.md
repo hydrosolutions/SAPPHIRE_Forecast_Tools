@@ -36,12 +36,23 @@ Three steps, only the last of which is ours:
 Note this fires on a **routine** condition — "operational data for this HRU is not available for
 this date" is an ordinary daily occurrence, not a rare error. The key is written often.
 
-## The two local sites
+## The THREE local sites
+
+*Corrected 2026-08-20: an earlier revision listed two and missed the `yesterday` fallback print.
+Line numbers also re-based after the PREPG-010 retry landed — the statements are unchanged.*
 
 | Site | Context |
 |---|---|
-| `Quantile_Mapping_OP.py:719` | `logger.error(f"Exiting the program due to error: {e}")` — the observed one |
-| `Quantile_Mapping_OP.py:854` | `print(f"Unexpected error for date {today}: {e}")` — same client, same exposure |
+| `Quantile_Mapping_OP.py:796` (was `:719`) | `logger.error(f"Exiting the program due to error: {e}")` — the observed one, and it fires on the **routine** "data not published yet" condition |
+| `Quantile_Mapping_OP.py:957` (was `:854`) | `print(f"Unexpected error for date {today}: {e}")` — same client, same exposure |
+| `Quantile_Mapping_OP.py:950` | `print(f"Error for date {yesterday}: {e2}")` — **newly identified**; the `yesterday`-fallback branch, reached after today's data was absent, i.e. on the same routine path as the first site |
+
+All three go to a file: the first via the module logger, the two `print`s via `run_locally.sh`,
+which tees stdout into its run log.
+
+**Not** a site: the `else` branch added at `:809-815` by PREPG-010 logs `type(e).__name__` only,
+deliberately, and has a regression test asserting no `api_key` reaches the log. Leave it that way
+until this issue lands a redaction helper — then it may be widened to include a redacted message.
 
 Other exception logs in the module (`extend_era5_reanalysis.py:353`, `:650`, `:659`) are on the
 **SAPPHIRE API** client, not the DG client, and are out of scope here.
