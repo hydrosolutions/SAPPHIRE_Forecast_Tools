@@ -44,8 +44,8 @@ Line numbers also re-based after the PREPG-010 retry landed — the statements a
 | Site | Context |
 |---|---|
 | `Quantile_Mapping_OP.py:796` (was `:719`) | `logger.error(f"Exiting the program due to error: {e}")` — the observed one, and it fires on the **routine** "data not published yet" condition |
-| `Quantile_Mapping_OP.py:957` (was `:854`) | `print(f"Unexpected error for date {today}: {e}")` — same client, same exposure |
-| `Quantile_Mapping_OP.py:950` | `print(f"Error for date {yesterday}: {e2}")` — **newly identified**; the `yesterday`-fallback branch, reached after today's data was absent, i.e. on the same routine path as the first site |
+| `Quantile_Mapping_OP.py:956` (was `:854`) | `print(f"Unexpected error for date {today}: {e}")` — same client, same exposure |
+| `Quantile_Mapping_OP.py:949` | `print(f"Error for date {yesterday}: {e2}")` — **newly identified**; the `yesterday`-fallback branch, reached after today's data was absent, i.e. on the same routine path as the first site |
 
 All three go to a file: the first via the module logger, the two `print`s via `run_locally.sh`,
 which tees stdout into its run log.
@@ -92,7 +92,7 @@ locally regardless; it is cheap and does not depend on the client changing.
 ## Acceptance criteria
 
 - A DG-client `ValueError` whose message contains `api_key=<something>` is logged with the value
-  replaced, at **all three** sites — `:796`, `:950`, `:957`. *A fix applied to only the two that an
+  replaced, at **all three** sites — `:796`, `:949`, `:956`. **Match on the statements, not these numbers**: they have already drifted twice this week as edits above them landed. *A fix applied to only the two that an
   earlier revision of this issue listed leaves the `yesterday`-fallback print leaking, on the same
   routine path as the observed one.*
 - **The redaction is applied to the logged string, never to the exception object.** The
