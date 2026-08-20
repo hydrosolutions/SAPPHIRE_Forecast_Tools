@@ -12,6 +12,31 @@ import forecast_library as fl
 
 
 @pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    """Never actually sleep in Data Gateway transport retries during
+    tests (CLAUDE.md forbids sleep() in tests; PREPG-010's plan requires
+    tests add zero real wall-clock delay).
+
+    Applies package-wide, not just to the module that imports
+    Quantile_Mapping_OP directly, since any test that exercises main()'s
+    ensemble or control-member download paths (e.g. via
+    test_integration_preprocessing_gateway.py) goes through
+    _retry_sleep too. Looked up lazily via sys.modules -- by the time
+    any fixture runs, pytest has already finished collecting (and thus
+    importing) every test module in this session, so
+    "Quantile_Mapping_OP" is already present if any collected file uses
+    it. A test that wants to observe the pause itself (asserting it is
+    actually invoked) can still monkeypatch _retry_sleep again inside
+    the test body -- that call runs after this fixture's setup and
+    wins for the duration of the test.
+    """
+    qm_module = sys.modules.get("Quantile_Mapping_OP")
+    if qm_module is not None:
+        monkeypatch.setattr(qm_module, "_retry_sleep", lambda seconds: None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_api_singletons():
     """Reset forecast_library API client singletons between tests.
 

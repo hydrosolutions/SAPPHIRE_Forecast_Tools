@@ -33,11 +33,12 @@ sys.modules["sapphire_dg_client.snow_model"] = MagicMock()
 
 import Quantile_Mapping_OP as qm
 
-
-@pytest.fixture(autouse=True)
-def _no_retry_sleep(monkeypatch):
-    """Never actually sleep in tests (CLAUDE.md forbids sleep() in tests)."""
-    monkeypatch.setattr(qm, "_retry_sleep", lambda seconds: None)
+# The package-wide autouse `_no_retry_sleep` fixture in conftest.py
+# patches Quantile_Mapping_OP._retry_sleep to a no-op for every test in
+# this package (PREPG-010) -- no per-file fixture needed here. Tests
+# below that need to *observe* the pause (asserting it is invoked)
+# monkeypatch _retry_sleep again inside the test body, which runs after
+# that fixture's setup and wins for the duration of the test.
 
 
 class TestCallWithTransportRetry:

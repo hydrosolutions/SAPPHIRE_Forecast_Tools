@@ -810,8 +810,7 @@ def main():
                 # to the log. Safe to include the message text once
                 # PREPG-015 lands a redaction helper.
                 logger.error(
-                    f"Control member download failed for HRU {c_m_hru} "
-                    f"due to {type(e).__name__} (see exception for detail)"
+                    f"Control member download failed for HRU {c_m_hru} due to {type(e).__name__}"
                 )
                 sys.exit(1)
 
