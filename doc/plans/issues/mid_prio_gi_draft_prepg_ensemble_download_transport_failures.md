@@ -57,19 +57,30 @@ case. Both must use the same retry.
 - **A fixed number of attempts — three — hard-coded. No env var, no config surface, no CLI flag.**
 - **Retry the individual member call**, not the enclosing 50-member loop. Re-running all 50 after
   a fault on member 37 is a different (and worse) behaviour.
-### The `SSLError` decision
+### The `SSLError` decision — DECIDED 2026-08-20: exclude it
 
 `requests.exceptions.SSLError` **subclasses** `ConnectionError` (`requests/exceptions.py:60`,
 `:68`) — verified, not assumed. So a bare `except ConnectionError` also retries a permanent TLS
 misconfiguration.
 
-Pick one and pin it with a test:
+**Owner decision (2026-08-20): exclude `SSLError`.** A permanent TLS failure must fail
+immediately and loudly rather than burn three attempts on a fault that cannot succeed — and,
+per the hang section below, every avoided attempt is one fewer opportunity to meet a hung peer.
+Implement as an explicit re-raise, not a narrower catch:
 
-1. **Exclude `SSLError`** explicitly, so a permanent TLS failure fails immediately; or
-2. **Retry all `ConnectionError`** briefly, accepting three wasted attempts on a permanent fault.
+```python
+except requests.exceptions.SSLError:
+    raise
+except requests.exceptions.ConnectionError:
+    ...  # retry
+```
 
-Either is defensible. **Do not claim the class hierarchy cleanly separates transient from
-permanent faults** — it does not.
+**Do not claim the class hierarchy cleanly separates transient from permanent faults** — it does
+not, and this decision does not assert otherwise. A connection reset *during* a TLS handshake can
+surface as either class depending on where it lands; excluding `SSLError` therefore accepts that
+some genuinely transient faults will not be retried. That is the accepted trade, not an oversight.
+The observed failure (`ConnectionResetError(54)`) reached us as a plain `ConnectionError`, so it
+is retried under this policy.
 
 ## Coverage today is ZERO, and the harness is NOT a small fixture tweak
 
@@ -158,7 +169,8 @@ decision; do not add it unprompted.**
   49 are not re-requested.
 - After the attempt limit is exhausted, the module still fails **loudly** — this must not become a
   silent skip (cf. PREPG-009, the opposite defect in this module).
-- The chosen `SSLError` policy is pinned by a test.
+- **A `requests.exceptions.SSLError` is NOT retried** — it propagates on the first
+  attempt, pinned by a test asserting exactly one call.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green.
 
 ## Contract not to break
