@@ -22,6 +22,10 @@ dependencies = [
     "python-dotenv>=1.0.1",
     # Workflow orchestration
     "luigi>=3.5.0",
+    # HTTP client (the transport-retry helper dispatches on requests'
+    # exception classes; declared directly rather than relying on it
+    # arriving transitively via sapphire-dg-client)
+    "requests>=2.32.0",
     # SAPPHIRE Data Gateway client (private repo - requires access)
     "sapphire-dg-client @ git+https://github.com/hydrosolutions/sapphire-dg-client.git@main",
     # SAPPHIRE API client (for writing to preprocessing service)
