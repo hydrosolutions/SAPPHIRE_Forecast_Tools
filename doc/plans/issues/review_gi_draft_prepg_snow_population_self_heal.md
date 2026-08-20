@@ -299,6 +299,33 @@ No implementation agent required. Operator/orchestrator action after deploy.
 
 Scope:
 
+> **Preconditions (learned during local validation 2026-06-26; rescued to trunk 2026-08-20).**
+>
+> - **The archive must be fully loaded first.** Run the snow recalc only after the full historical
+>   snow archive is present in the DB — **not** merely after the 365-day maintenance sync, which
+>   loads only the recent window. Recalc against a partially-loaded archive yields starved
+>   per-day-of-year climatology counts and missing or seamed bands. Observed: HS/SWE early-January
+>   `count` of **2-5 instead of the full ~26**. Verify completeness first, e.g.
+>
+>   ```sql
+>   SELECT snow_type, count(DISTINCT EXTRACT(YEAR FROM date))
+>   FROM snow
+>   WHERE value IS NOT NULL AND EXTRACT(DOY FROM date) BETWEEN 1 AND 10
+>   GROUP BY snow_type;
+>   ```
+>
+> - **The pagination precondition is now SATISFIED — no longer a blocker.** The recalc's climatology
+>   read paginates `get_snow()`, which used to be nondeterministic without a stable sort, so bands
+>   could flicker or come back incomplete regardless of archive completeness. **`crud.get_snow()` now
+>   orders by `(snow_type, code, date, id)`** — a stable sort with a unique tiebreaker — so this no
+>   longer gates the remediation. Re-verify it is present in the **target environment** before
+>   running, since the fix lives in `sapphire/services/preprocessing` and deploys on its own cadence.
+>
+>   *Reference correction:* the original note called this dependency "PREPG-009". **That ID now
+>   belongs to a different issue** (gateway reports PASS with all six snow tasks errored). The
+>   pagination issue was drafted but never merged, and its fix shipped anyway — do not go looking
+>   for it under that number.
+
 - Before remediation, take a database backup: snow-table `pg_dump` or a volume snapshot.
 - Before remediation, capture a SQL count snapshot for each `snow_type` over
   `2025-09-01 ... 2026-08-31`, counting non-null `value`, `current`, `norm`, `previous`, `q50`, and
