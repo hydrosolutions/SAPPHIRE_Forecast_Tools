@@ -59,8 +59,27 @@ Other exception logs in the module (`extend_era5_reanalysis.py:353`, `:650`, `:6
 
 ## The fix
 
-A small redaction helper applied at those two sites — replace `api_key=<value>` with
+A small redaction helper applied at **all three** sites — replace `api_key=<value>` with
 `api_key=***` before the message is logged or printed.
+
+### The trap: what terminates the key
+
+Get this wrong and you either leak part of the key or destroy the diagnostics. In the observed
+message the credential is the **last** query parameter and is followed by `: ` and the server's
+JSON body:
+
+```
+...&start_date=…&api_key=<LIVE KEY>: {"message": "Operational data for HRU … is not available…"}
+```
+
+So a naive `api_key=[^&\s]*` runs past the key and eats the colon and the leading part of the JSON,
+destroying exactly the response text the acceptance criteria require you to preserve. But the key is
+**not** guaranteed to be last — `_call_api` appends it to whatever endpoint it was handed
+(`client_base.py:55`), and a future endpoint could append further parameters, in which case `&` does
+terminate it.
+
+Terminate on `&` **or** whitespace **or** `:` — whichever comes first — and pin all three shapes
+with a test: key-last-then-colon (the observed case), key-followed-by-`&`, and key-at-end-of-string.
 
 **Keep it local and keep it small.** Do not build a logging filter subsystem, and do not change
 what is logged apart from the credential: the rest of the message (endpoint, HRU code, the
@@ -73,7 +92,13 @@ locally regardless; it is cheap and does not depend on the client changing.
 ## Acceptance criteria
 
 - A DG-client `ValueError` whose message contains `api_key=<something>` is logged with the value
-  replaced, at **both** sites.
+  replaced, at **all three** sites — `:796`, `:950`, `:957`. *A fix applied to only the two that an
+  earlier revision of this issue listed leaves the `yesterday`-fallback print leaking, on the same
+  routine path as the observed one.*
+- **The redaction is applied to the logged string, never to the exception object.** The
+  `ValueError` message is load-bearing for the today→yesterday fallback (see Contract below);
+  rewriting the exception itself would be a control-flow change wearing a logging fix's clothes.
+- The three termination shapes above are each pinned by a test.
 - The rest of the message is preserved — endpoint path, HRU code, and the server's response text
   must still appear, or the log stops being useful.
 - A message with **no** `api_key=` is passed through unchanged.
@@ -81,7 +106,7 @@ locally regardless; it is cheap and does not depend on the client changing.
 
 ## Contract not to break
 
-- **Do not swallow or downgrade the error.** `:719` exits the program deliberately; redaction must
+- **Do not swallow or downgrade the error.** `:796` exits the program deliberately; redaction must
   not change control flow.
 - The `ValueError` message text is **load-bearing elsewhere**: `Quantile_Mapping_OP.py` matches on
   `"Couldn't find any files for the given HRU code, date and models!"` to drive the
