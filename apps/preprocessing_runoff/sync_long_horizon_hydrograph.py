@@ -637,7 +637,13 @@ def _summarize_long_horizon_station_statuses(
 
 
 def _exit_code_for_long_horizon_summary(summary: LongHorizonRunSummary) -> int:
-    """Return the terminal exit code for the station-status summary."""
+    """Return the terminal exit code for the station-status summary.
+
+    API_FAILED is checked before SDK_FAILED, so a run with both kinds of
+    failure exits 5, not 4 -- exit 4 is reserved for SDK norm failures with
+    zero API failures. Callers may rely on that as an invariant: exit code 4
+    implies no API read/write failures occurred this run.
+    """
     if summary.status_counts[LongHorizonStationWriteStatus.API_FAILED] >= 1:
         return 5
     if summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED] >= 1:
@@ -736,8 +742,11 @@ def main() -> None:
         1  API setup/runtime error.
         2  No SDK sites/no records.
         3  Unexpected exception.
-        4  >=1 SDK norm lookup failure.
-        5  >=1 API read/write failure.
+        4  >=1 SDK norm lookup failure, and zero API read/write failures.
+        5  >=1 API read/write failure (regardless of SDK norm failures --
+           _exit_code_for_long_horizon_summary checks API_FAILED first, so a
+           run with both kinds of failure exits 5, not 4). A caller may treat
+           exit 4 as the invariant "no API failures occurred this run".
     """
     parser = _build_parser()
     args = parser.parse_args()

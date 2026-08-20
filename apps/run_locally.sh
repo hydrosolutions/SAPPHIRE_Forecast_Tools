@@ -83,9 +83,13 @@
 #   The bare `machine_learning` target has no outer per-mode loop, so it
 #   resolves SAPPHIRE_PREDICTION_MODE/ML_MODE itself, via
 #   resolve_ml_bare_target_modes: unset derives the mode from ML_MODE (WARN);
-#   SAPPHIRE_PREDICTION_MODE=BOTH loops PENTAD then DECAD in one invocation;
-#   an explicit single-valued SAPPHIRE_PREDICTION_MODE that conflicts with a
-#   single-valued ML_MODE errors out naming both variables rather than
+#   SAPPHIRE_PREDICTION_MODE=BOTH loops over PENTAD and DECAD, but each pass
+#   is still filtered through should_skip_ml_for_mode against ML_MODE
+#   (default DECAD) -- so SAPPHIRE_PREDICTION_MODE=BOTH alone only runs
+#   DECAD. To actually run both horizons, ALSO set ML_MODE=BOTH (which by
+#   itself, even with SAPPHIRE_PREDICTION_MODE unset, is sufficient to run
+#   both); an explicit single-valued SAPPHIRE_PREDICTION_MODE that conflicts
+#   with a single-valued ML_MODE errors out naming both variables rather than
 #   silently picking one. `maintenance:machine_learning`, `daily`, `all` and
 #   `maintenance` instead resolve the mode via their own outer per-mode loop
 #   (which also honours ML_MODE) before calling into machine_learning, so an
@@ -114,10 +118,11 @@ LOG_FILE="${LOG_DIR}/run_locally_${TIMESTAMP}.log"
 CONTINUE_ON_ERROR=false
 DRY_RUN=false
 
-# Set true in main() for multi-module targets where a non-zero return can
-# only arise from the CONTINUE_ON_ERROR guard idiom (i.e. a real abort that
-# skipped remaining modules). Used to gate the continue-on-error hint.
-IS_FAIL_FAST_TARGET=false
+# Set true by the CONTINUE_ON_ERROR guard idiom itself whenever it aborts a
+# pipeline function with CONTINUE_ON_ERROR=false. This is a fact recorded at
+# the abort site, not an inference from the target name -- used to gate the
+# continue-on-error hint.
+PIPELINE_ABORTED=false
 
 # Error capture
 ERROR_TAIL_LINES=30
@@ -365,13 +370,15 @@ record_validation() {
 }
 
 # emit_continue_on_error_hint - Tell the operator why the pipeline stopped
-# early and how to run the remaining modules anyway. Called exactly once
-# from main(), after the target's pipeline function has already returned,
-# and only for fail-fast targets (see IS_FAIL_FAST_TARGET) where a non-zero
-# return means a guard idiom aborted the run with CONTINUE_ON_ERROR=false.
+# and how to run past the failure anyway. Called exactly once from main(),
+# after the target's pipeline function has already returned, gated on
+# PIPELINE_ABORTED (see its declaration above) -- a fact recorded by the
+# CONTINUE_ON_ERROR guard idiom itself, not inferred from the target name.
+# Note this fires whether or not the failing step happened to be the last
+# guarded step, so the wording below must not claim modules were skipped.
 emit_continue_on_error_hint() {
     local target="$1"
-    log WARN "Pipeline stopped early because --continue-on-error is not set; the remaining modules did not run."
+    log WARN "Pipeline stopped at the first failing module because --continue-on-error is not set."
     log WARN "To run the remaining modules anyway: bash apps/run_locally.sh --continue-on-error ${target}"
     log WARN "Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful."
 }
@@ -817,17 +824,29 @@ run_maintenance_preprocessing_runoff() {
 
         if [ $lt_rc -eq 2 ]; then
             log WARN "Long-horizon hydrograph sync produced no records; continuing maintenance"
+            # Sub-step was non-fatal: restore the maintenance log now, since
+            # the module log recorded below (rc still 0) should reflect the
+            # successful maintenance run, not this non-fatal sub-step.
+            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
         elif [ $lt_rc -eq 5 ]; then
             log ERROR "Long-horizon hydrograph sync had API read/write failure(s)"
             rc=$lt_rc
+            # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
+            # FAIL row recorded below references the output that explains it.
         elif [ $lt_rc -eq 4 ]; then
             log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
             record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
+            # Downgraded, not fatal to the overall module (rc stays 0):
+            # restore the maintenance log for the module-level record below.
+            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
         elif [ $lt_rc -ne 0 ]; then
             rc=$lt_rc
+            # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
+            # FAIL row recorded below references the output that explains it.
+        else
+            # lt_rc -eq 0: sub-step succeeded, restore the maintenance log.
+            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
         fi
-
-        CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
     fi
 
     local elapsed=$(( $(get_timestamp) - start ))
@@ -1229,11 +1248,11 @@ run_short_term_pipeline() {
 
     # Preprocessing runs once regardless of mode
     log INFO "Running preprocessing (shared across modes)..."
-    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if should_skip_module preprocessing_gateway; then
         log INFO "Skipping preprocessing_gateway (not required for ${ORG} org)"
     else
-        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     # Forecasting + postprocessing runs per mode
@@ -1246,10 +1265,10 @@ run_short_term_pipeline() {
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
         else
-            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
-        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+        run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     done
 
     # Restore original mode
@@ -1267,16 +1286,16 @@ run_long_term_pipeline() {
     fi
 
     # Phase 1: Generate forecasts
-    run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     # Phase 2: Operational postprocessing
-    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     # Phase 3: Long-term skill metrics (monthly + quarterly + seasonal)
-    run_recalculate_long_term_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_recalculate_long_term_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     # Phase 4: Maintenance gap-fill (creates ensembles using skill metrics)
-    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     run_api_validation "long-term"
 }
@@ -1296,8 +1315,8 @@ run_long_term_operational_pipeline() {
 
     # Phase 1: Preprocessing (shared, runs once)
     log INFO "Phase 1: Preprocessing"
-    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
         log WARN "No active modes today, skipping long-term pipeline"
@@ -1307,20 +1326,20 @@ run_long_term_operational_pipeline() {
     log INFO "Active modes: ${LT_ACTIVE_MODES}"
 
     # Phase 2: Generate forecasts (only active modes)
-    run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     # Phase 3: Operational postprocessing
-    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     # Phase 4: Skill metrics — driven by schedule query
     if [ -n "${LT_SKILL_METRIC_TYPES:-}" ]; then
-        run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     else
-        run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     # Phase 5: Maintenance gap-fill (creates ensembles using skill metrics)
-    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     run_api_validation "long-term"
 }
@@ -1360,9 +1379,9 @@ run_maintenance_pipeline() {
     fi
 
     # Preprocessing maintenance runs once (mode-independent)
-    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
-        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     # linear_regression and ML maintenance run per mode
@@ -1375,16 +1394,16 @@ run_maintenance_pipeline() {
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
         else
-            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
-        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     done
 
     # Long-term maintenance (mode-independent, runs once)
     if ! should_skip_module long_term_forecasting; then
         log INFO "Running long-term postprocessing maintenance"
-        run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
@@ -1397,16 +1416,16 @@ run_daily_pipeline() {
 
     # --- Phase 1: Preprocessing (runs once) ---
     log INFO "Phase 1: Preprocessing (shared across all horizons)"
-    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
-        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     # --- Phase 2: Maintenance preprocessing (runs once) ---
     log INFO "Phase 2: Maintenance preprocessing"
-    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
-        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
     # --- Phase 3: Forecasting + postprocessing per horizon ---
@@ -1419,10 +1438,10 @@ run_daily_pipeline() {
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
         else
-            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
-        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+        run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     done
 
     # --- Phase 4: Maintenance per horizon ---
@@ -1435,10 +1454,10 @@ run_daily_pipeline() {
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
         else
-            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
-        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     done
 
     # Restore original mode
@@ -1451,14 +1470,14 @@ run_daily_pipeline() {
         query_lt_schedule
         if [ -n "${LT_ACTIVE_WINDOW:-}" ]; then
             log INFO "Phase 5: Long-term forecasting (active modes: ${LT_ACTIVE_MODES})"
-            run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-            run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_long_term_forecasting_operational || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+            run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
             if [ -n "${LT_SKILL_METRIC_TYPES:-}" ]; then
-                run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+                run_recalculate_long_term_skill_metrics "$LT_SKILL_METRIC_TYPES" || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
             else
-                run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+                run_recalculate_long_term_skill_metrics "MONTHLY" || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
             fi
-            run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+            run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         else
             log INFO "Phase 5: Skipping long-term forecasting — no modes active today"
         fi
@@ -1472,9 +1491,9 @@ run_yearly_pipeline() {
     if should_skip_module preprocessing_gateway; then
         log INFO "Skipping snow norm recalculation (not required for ${ORG} org)"
     else
-        run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
-    run_recalculate_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_recalculate_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 }
 
 # ---------------------------------------------------------------------------
@@ -1750,10 +1769,14 @@ Environment variables:
                                           - bare `machine_learning`: validates this against
                                             ML_MODE itself (resolve_ml_bare_target_modes).
                                             Unset derives the mode from ML_MODE (WARN);
-                                            BOTH loops PENTAD then DECAD; an explicit single
-                                            value that conflicts with a single-valued ML_MODE
-                                            errors out naming both variables instead of
-                                            silently picking one.
+                                            BOTH loops over PENTAD and DECAD, but each pass
+                                            is still filtered against ML_MODE (default DECAD),
+                                            so SAPPHIRE_PREDICTION_MODE=BOTH alone only runs
+                                            DECAD -- also set ML_MODE=BOTH to run both (which
+                                            by itself is enough, even with this var unset); an
+                                            explicit single value that conflicts with a
+                                            single-valued ML_MODE errors out naming both
+                                            variables instead of silently picking one.
                                           - `maintenance:machine_learning` / `daily` /
                                             `all` / `maintenance`: resolved by an outer
                                             per-mode loop in run_locally.sh itself, which
@@ -1910,16 +1933,6 @@ main() {
         print_usage
         exit 1
     fi
-
-    # Fail-fast targets: multi-module pipelines where a non-zero return can
-    # only arise from the CONTINUE_ON_ERROR guard idiom aborting the run
-    # (i.e. remaining modules were genuinely skipped). Used to gate the
-    # continue-on-error hint at the end of main().
-    case "$target" in
-        daily|short-term|long-term|long-term-operational|maintenance)
-            IS_FAIL_FAST_TARGET=true
-            ;;
-    esac
 
     # Create log directory
     mkdir -p "$LOG_DIR"
@@ -2079,13 +2092,23 @@ main() {
             else
                 local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
                 resolve_ml_bare_target_modes
+                local ran_modes=()
                 for mode in "${ML_BARE_RESOLVED_MODES[@]}"; do
                     export SAPPHIRE_PREDICTION_MODE="$mode"
                     log INFO "Running machine_learning for mode: ${mode}"
+                    ran_modes+=("$mode")
                     run_machine_learning || { exit_code=$?; break; }
                 done
+                # Validate only the mode(s) actually attempted, each under
+                # its own mode -- validating the pre-loop original_mode
+                # would check a horizon ML did not necessarily produce, and
+                # a mode that never ran (loop broke early) must not be
+                # validated either.
+                for mode in ${ran_modes[@]+"${ran_modes[@]}"}; do
+                    export SAPPHIRE_PREDICTION_MODE="$mode"
+                    run_module_validation "machine_learning"
+                done
                 export SAPPHIRE_PREDICTION_MODE="$original_mode"
-                run_module_validation "machine_learning"
             fi
             ;;
         postprocessing_forecasts)
@@ -2104,10 +2127,11 @@ main() {
 
     local pipeline_elapsed=$(( $(get_timestamp) - pipeline_start ))
 
-    # If the run aborted early via the CONTINUE_ON_ERROR guard idiom on a
-    # fail-fast target, tell the operator why and how to proceed. Exactly
-    # one emission per run.
-    if [ "$exit_code" -ne 0 ] && [ "$CONTINUE_ON_ERROR" = false ] && [ "$IS_FAIL_FAST_TARGET" = true ]; then
+    # If the run aborted via the CONTINUE_ON_ERROR guard idiom, tell the
+    # operator why and how to proceed. Exactly one emission per run.
+    # PIPELINE_ABORTED can only become true when CONTINUE_ON_ERROR is false
+    # (see the guard idiom), so no extra condition is needed here.
+    if [ "$PIPELINE_ABORTED" = true ]; then
         emit_continue_on_error_hint "$target"
     fi
 

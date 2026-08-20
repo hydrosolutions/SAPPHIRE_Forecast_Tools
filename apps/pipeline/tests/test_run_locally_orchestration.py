@@ -4,14 +4,27 @@ Context: three behaviour changes were made to run_locally.sh in earlier
 INFRA-032 phases, and this file locks all three in end-to-end:
 
   A. A ``--continue-on-error`` hint, emitted once from ``main()`` after
-     dispatch, when a fail-fast target aborted early with the flag unset.
+     dispatch, gated on the ``PIPELINE_ABORTED`` fact recorded by the
+     CONTINUE_ON_ERROR guard idiom itself at its abort site -- not on an
+     inference from the target name. An earlier version of this gate used a
+     hardcoded per-target ``IS_FAIL_FAST_TARGET`` list, which was wrong both
+     ways: it excluded ``all``/``yearly`` even though a guarded step inside
+     them can genuinely skip later work, and it included ``maintenance``
+     even though a failure in its *last* guarded step skips nothing, making
+     the old hint text ("the remaining modules did not run") false.
   B. Mode resolution/validation for the bare ``machine_learning``
      single-module target (``resolve_ml_bare_target_modes``), which has no
      outer mode loop to resolve SAPPHIRE_PREDICTION_MODE for it the way the
-     daily/maintenance pipelines do.
+     daily/maintenance pipelines do. Validation must run under the mode(s)
+     ML actually attempted, not the pre-loop original mode.
   C. A downgrade of ``sync_long_horizon_hydrograph.py`` exit code 4 (SDK
      norm lookup failure) from aborting ``preprocessing_runoff`` maintenance
-     to a separate FAIL row that lets the rest of the run continue.
+     to a separate FAIL row that lets the rest of the run continue. For the
+     remaining fatal exit codes (1, 3, 5), CURRENT_MODULE_LOG must stay
+     pointed at the long-horizon log when the module-level FAIL is
+     recorded, so MODULE ERROR DETAILS shows the sub-step output that
+     explains the failure rather than the maintenance log's unrelated
+     successful primary-step output.
 
 ``apps/test_run_tests.sh`` is the local precedent for driving a bash script
 from tests with synthetic fixtures (fake ``.venv/bin/<exe>`` stubs that exit
@@ -288,9 +301,13 @@ def protect_real_apps_logs():
 
 class TestContinueOnErrorHint:
     """The hint is emitted once from main(), after dispatch, before
-    print_summary, gated on exit_code != 0 && CONTINUE_ON_ERROR == false &&
-    IS_FAIL_FAST_TARGET == true.
+    print_summary, gated on PIPELINE_ABORTED == true -- a fact recorded by
+    the CONTINUE_ON_ERROR guard idiom itself at the abort site (not an
+    inference from the target name). PIPELINE_ABORTED can only become true
+    when CONTINUE_ON_ERROR is false, so the gate needs no extra condition.
     """
+
+    HINT_TEXT = "Pipeline stopped at the first failing module"
 
     def test_fail_fast_target_without_flag_emits_hint_once(self, synth_tree):
         synth_tree.override(
@@ -301,7 +318,7 @@ class TestContinueOnErrorHint:
         out = result.stdout + result.stderr
 
         assert result.returncode != 0
-        assert out.count("Pipeline stopped early because") == 1
+        assert out.count(self.HINT_TEXT) == 1
         assert "bash apps/run_locally.sh --continue-on-error daily" in out
 
     def test_continue_on_error_suppresses_hint_but_still_exits_nonzero(self, synth_tree):
@@ -312,7 +329,7 @@ class TestContinueOnErrorHint:
         result = run_main(synth_tree, "daily", continue_on_error=True)
         out = result.stdout + result.stderr
 
-        assert "Pipeline stopped early because" not in out
+        assert self.HINT_TEXT not in out
         # An earlier draft of this issue wrongly claimed --continue-on-error
         # makes a failing run exit 0 -- it must not.
         assert result.returncode != 0
@@ -328,9 +345,21 @@ class TestContinueOnErrorHint:
         result = run_main(synth_tree, "preprocessing_runoff")
 
         assert result.returncode != 0
-        assert "Pipeline stopped early because" not in (result.stdout + result.stderr)
+        # A single-module target's dispatch arm assigns exit_code directly
+        # (`run_X || exit_code=$?`), never going through the
+        # CONTINUE_ON_ERROR guard idiom, so PIPELINE_ABORTED stays false.
+        assert self.HINT_TEXT not in (result.stdout + result.stderr)
 
-    def test_all_target_failure_emits_no_hint(self, synth_tree):
+    def test_all_target_short_term_failure_emits_hint(self, synth_tree):
+        """Defect (a): `all` was excluded from the old hardcoded fail-fast
+        list, but when preprocessing_runoff fails, run_short_term_pipeline's
+        own guard idiom aborts it -- genuinely skipping gateway/forecasting/
+        postprocessing/validation for the short-term phase -- before run_all
+        goes on to run long-term regardless. PIPELINE_ABORTED is set at that
+        abort site regardless of which top-level target called in, so the
+        hint now fires even though `all` itself never touches the guard
+        idiom directly.
+        """
         synth_tree.override(
             "preprocessing_runoff",
             'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
@@ -338,24 +367,61 @@ class TestContinueOnErrorHint:
         result = run_main(synth_tree, "all")
 
         assert result.returncode != 0
-        assert "Pipeline stopped early because" not in (result.stdout + result.stderr)
+        assert self.HINT_TEXT in (result.stdout + result.stderr)
         # run_all always runs the long-term phase after short-term,
-        # regardless of a short-term failure -- a non-zero return here
-        # really doesn't mean anything was skipped.
+        # regardless of a short-term failure -- that part of the pipeline
+        # was NOT skipped, even though the short-term phase genuinely was.
         assert any("module=long_term_forecasting" in ln for ln in synth_tree.calls())
+        # But the short-term modules after preprocessing_runoff really were
+        # skipped.
+        assert not any("module=linear_regression" in ln for ln in synth_tree.calls())
 
-    def test_yearly_target_failure_emits_no_hint(self, synth_tree):
+    def test_yearly_snow_norms_failure_emits_hint_and_skips_skill_metrics(self, synth_tree):
+        """Defect (b): `yearly` was excluded from the old hardcoded fail-fast
+        list, but run_yearly_pipeline has two guarded steps -- if snow norms
+        fails, skill metrics is genuinely skipped, and the operator got no
+        hint under the old inference-based gate.
+        """
+        synth_tree.override(
+            "preprocessing_gateway",
+            'if [ "$script" = "recalculate_snow_norms.py" ]; then exit 1; fi',
+        )
+        result = run_main(synth_tree, "yearly")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert self.HINT_TEXT in out
+        calls = synth_tree.calls()
+        assert any("script=recalculate_snow_norms.py" in ln for ln in calls)
+        assert not any("script=recalculate_skill_metrics.py" in ln for ln in calls), (
+            "skill metrics ran despite snow norms aborting the yearly pipeline"
+        )
+
+    def test_yearly_last_step_failure_emits_hint_without_claiming_skipped_modules(self, synth_tree):
+        """Defect (c): when the FINAL guarded step of a pipeline fails,
+        nothing remains to skip, so the hint text must not assert that
+        remaining modules did not run -- that would be knowingly false.
+        """
         synth_tree.override(
             "postprocessing_forecasts",
             'if [ "$script" = "recalculate_skill_metrics.py" ]; then exit 1; fi',
         )
         result = run_main(synth_tree, "yearly")
+        out = result.stdout + result.stderr
 
         assert result.returncode != 0
-        assert "Pipeline stopped early because" not in (result.stdout + result.stderr)
+        # Both yearly steps ran -- skill metrics (the last one) is what
+        # failed, nothing was left to skip.
         calls = synth_tree.calls()
         assert any("script=recalculate_snow_norms.py" in ln for ln in calls)
         assert any("script=recalculate_skill_metrics.py" in ln for ln in calls)
+        # The hint still fires (a real abort happened)...
+        assert self.HINT_TEXT in out
+        # ...but must not claim modules remained unrun. (The second hint
+        # line legitimately says "the remaining modules anyway" as part of
+        # the --continue-on-error command suggestion -- that's fine, it's
+        # only the false "did not run" claim that must be gone.)
+        assert "did not run" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +500,55 @@ class TestMachineLearningBareTargetModes:
         assert result.returncode != 0
         modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
         assert modes == ["PENTAD"]
+
+    @staticmethod
+    def _validation_calls(tree: SynthTree) -> list[str]:
+        """Calls to validate_pipeline.py (run via the postprocessing_forecasts
+        stub, per run_module_validation's run_in_venv invocation).
+        """
+        return [
+            ln
+            for ln in tree.calls()
+            if "module=postprocessing_forecasts" in ln and "validate_pipeline.py" in ln
+        ]
+
+    def test_validation_uses_the_mode_ml_actually_ran_under(self, synth_tree):
+        """Regression for the bug where main()'s machine_learning) case
+        restored SAPPHIRE_PREDICTION_MODE to original_mode BEFORE calling
+        run_module_validation -- so with SAPPHIRE_PREDICTION_MODE unset,
+        validation ran under an empty mode (which validate_pipeline.py then
+        defaults to PENTAD) even though ML itself ran under DECAD (the
+        default ML_MODE). Validation must check the same mode ML produced.
+        """
+        result = run_main(synth_tree, "machine_learning")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
+
+        assert ml_modes, "machine_learning stub was never invoked"
+        assert validation_modes, "validate_pipeline.py was never invoked"
+        assert validation_modes == ml_modes
+
+    def test_partial_both_mode_run_validates_only_attempted_modes(self, synth_tree):
+        """When ML_MODE=BOTH and the first mode (PENTAD) fails, the loop
+        breaks and DECAD never runs. Validation must cover only the mode(s)
+        actually attempted (PENTAD) -- validating a mode that never ran
+        would produce a false validation failure for work that was never
+        supposed to happen.
+        """
+        synth_tree.override(
+            "machine_learning",
+            (
+                'if [ "$script" = "recalculate_nan_forecasts.py" ] '
+                '&& [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then exit 1; fi'
+            ),
+        )
+        result = run_main(synth_tree, "machine_learning", extra_env={"ML_MODE": "BOTH"})
+
+        assert result.returncode != 0
+        validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
+        assert validation_modes == ["PENTAD"]
 
 
 # ---------------------------------------------------------------------------
@@ -556,4 +671,53 @@ class TestLongHorizonSyncExitCodeHandling:
         calls = synth_tree.calls()
         assert not any("module=machine_learning" in ln for ln in calls), (
             "machine_learning ran despite a fatal (exit 5) maintenance failure"
+        )
+
+    def test_fatal_failure_records_long_horizon_log_not_maintenance_log(self, synth_tree):
+        """Regression: CURRENT_MODULE_LOG used to be restored to the
+        maintenance log UNCONDITIONALLY after the lt_rc branches, including
+        for fatal sub-step exits (1, 3, 5). record_result was then called
+        with the log pointing at the maintenance log, which for this
+        scenario holds only the SUCCESSFUL primary maintenance output --
+        the sub-step's own output (the thing that actually explains the
+        failure) was in the long-horizon log and got left out of MODULE
+        ERROR DETAILS.
+
+        For a fatal exit, CURRENT_MODULE_LOG must still be pointed at the
+        long-horizon log when record_result runs, so the "MODULE ERROR
+        DETAILS" tail shows the sub-step's own output, not the unrelated
+        successful primary-step output. The stub's CALL-log line (used
+        elsewhere in this file for `synth_tree.calls()`) is written direct
+        to a file, not to stdout, so it never reaches CURRENT_MODULE_LOG --
+        this test instead makes the sync sub-step echo a distinctive
+        marker to its own stdout, which run_in_venv tees into whichever
+        file CURRENT_MODULE_LOG points to at that moment.
+        """
+        synth_tree.override(
+            "preprocessing_runoff",
+            textwrap.dedent("""\
+                if [ "$script" = "preprocessing_runoff.py" ]; then
+                    exit 0
+                fi
+                if [ "$script" = "sync_long_horizon_hydrograph.py" ]; then
+                    echo "SYNC_SUBSTEP_DISTINCTIVE_FAILURE_OUTPUT"
+                    exit 5
+                fi
+                """),
+        )
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert "preprocessing_runoff (maintenance): FAIL" in out
+        assert "MODULE ERROR DETAILS" in out
+
+        # Isolate the tailed error-detail block so this doesn't just match
+        # the marker appearing earlier in stdout when run_in_venv streamed
+        # the sub-step's live output to the console.
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "SYNC_SUBSTEP_DISTINCTIVE_FAILURE_OUTPUT" in details, (
+            "MODULE ERROR DETAILS should tail the long-horizon log (the "
+            "sub-step that actually failed), not the maintenance log -- "
+            "got '(no output captured)' or the wrong log's tail instead"
         )

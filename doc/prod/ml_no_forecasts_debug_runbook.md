@@ -320,9 +320,13 @@ expected signature of an org skip there.
 `resolve_ml_bare_target_modes` instead of crashing on an empty mode. You no
 longer need to export `SAPPHIRE_PREDICTION_MODE` by hand — leaving it unset
 derives the mode from `ML_MODE` (default `DECAD`) with a `WARN`, and
-`ML_MODE=BOTH` (or `SAPPHIRE_PREDICTION_MODE=BOTH`) now runs both PENTAD and
-DECAD in one invocation instead of being silently ignored. You can still force
-a specific mode explicitly:
+`ML_MODE=BOTH` now runs both PENTAD and DECAD in one invocation instead of
+being silently ignored. **`SAPPHIRE_PREDICTION_MODE=BOTH` by itself does
+NOT** — it still loops PENTAD and DECAD internally, but each pass is
+filtered against `ML_MODE` (default `DECAD`), so with `ML_MODE` unset only
+DECAD actually runs. To run both horizons, set `ML_MODE=BOTH` (with or
+without `SAPPHIRE_PREDICTION_MODE=BOTH` — `ML_MODE=BOTH` alone is
+sufficient). You can still force a specific mode explicitly:
 
 ```bash
 cd apps

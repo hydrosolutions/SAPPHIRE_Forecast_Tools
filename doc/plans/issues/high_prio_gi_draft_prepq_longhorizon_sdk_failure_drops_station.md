@@ -65,7 +65,8 @@ kept SDK_FAILED skipping the station** — its Phase P1 acceptance criterion 3 s
 So the current behavior is not an oversight relative to PREPQ-009 — it was the explicit design at
 the time, on the reasoning that a raised call is "unexpected, retryable" and the run's exit code
 should key on it (`_exit_code_for_long_horizon_summary`, `:639-645`, returns 4 when
-`SDK_FAILED >= 1`). This issue proposes revisiting that choice: a raise from the *norm* endpoint
+`SDK_FAILED >= 1` and no station is `API_FAILED`; `API_FAILED` is checked first and returns 5).
+This issue proposes revisiting that choice: a raise from the *norm* endpoint
 specifically does not need to withhold data the norm endpoint has nothing to do with.
 
 ## Proposed fix
@@ -89,9 +90,15 @@ risk a second uncaught exception from this later SDK call — it independently f
 
 ### Required guard — do not let this regress the systemic-outage signal
 
-Today, `_exit_code_for_long_horizon_summary` returns exit code 4 whenever **any** attempted
-station has `SDK_FAILED` status (`:641-645`, `>= 1`) — a single flaky station's raise already
-makes the whole run report non-zero. If this fix simply reclassifies `SDK_FAILED` to be treated
+Today, `_exit_code_for_long_horizon_summary` returns exit code 4 when **any** attempted station
+has `SDK_FAILED` status **and zero stations have `API_FAILED` status** (`:641-645` — `API_FAILED
+>= 1` is checked first and returns 5, so a run with both failure kinds exits 5, not 4) — absent
+any API failures, a single flaky station's SDK raise already makes the whole run report non-zero.
+Exit 4 is therefore a guarantee that no API read/write failures occurred this run — that invariant
+is exactly what `run_locally.sh`'s maintenance runner relies on to downgrade exit 4 to non-fatal
+(rc stays 0) while still treating exit 5 as fatal (`apps/run_locally.sh:823-832`); this fix must
+preserve that invariant, not just the exit-4-on-SDK_FAILED behavior in isolation. If this fix
+simply reclassifies `SDK_FAILED` to be treated
 identically to `NORM_ABSENT` everywhere (including the exit-code function, which today does *not*
 key on `NORM_ABSENT` at all), the run would degrade silently to exit 0 even when the SDK is
 **completely down and every station's norm lookup is failing** — writing every station with

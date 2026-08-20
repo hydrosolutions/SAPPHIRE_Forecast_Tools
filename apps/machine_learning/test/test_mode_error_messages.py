@@ -43,6 +43,7 @@ formatting.
 
 import os
 import sys
+import tempfile
 from unittest.mock import MagicMock
 
 import pytest
@@ -77,16 +78,36 @@ sys.modules["matplotlib"] = MagicMock()
 sys.modules["matplotlib.pyplot"] = MagicMock()
 sys.modules["setup_library"] = MagicMock()
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scr"))
+# Use absolute paths: the import below temporarily changes the process cwd
+# (see comment there), and relative sys.path entries are re-resolved
+# against the *current* cwd at import time, not at insert time.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scr")))
 sys.path.insert(
     0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast")),
 )
 
-import fill_ml_gaps  # noqa: E402
-import make_forecast  # noqa: E402
-import recalculate_nan_forecasts  # noqa: E402
+# fill_ml_gaps.py, make_forecast.py and recalculate_nan_forecasts.py all set up
+# module-level logging at IMPORT time using a path relative to the process cwd
+# ("logs/log", via TimedRotatingFileHandler). The mandated test runner
+# (run_tests.sh) invokes pytest from apps/, so an unguarded import here would
+# append to apps/logs/log — the LIVE operator log directory used by
+# run_locally.sh. Redirect the cwd to a throwaway temp directory for the
+# duration of the import only, so "logs/log" is created (and immediately
+# discarded) there instead of in the repo working tree.
+_prior_cwd = os.getcwd()
+with tempfile.TemporaryDirectory(prefix="sapphire_ml_test_mode_error_messages_") as _tmp_import_dir:
+    os.chdir(_tmp_import_dir)
+    try:
+        import fill_ml_gaps  # noqa: E402
+        import make_forecast  # noqa: E402
+        import recalculate_nan_forecasts  # noqa: E402
+    finally:
+        # Restore the cwd before the TemporaryDirectory context manager
+        # tries to remove _tmp_import_dir (can't rmdir the cwd on some
+        # platforms) and before any other test code runs.
+        os.chdir(_prior_cwd)
 
 _UNSET = object()  # sentinel: "do not set the env var at all"
 
