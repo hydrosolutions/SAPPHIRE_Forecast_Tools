@@ -36,10 +36,15 @@ Three steps, only the last of which is ours:
 Note this fires on a **routine** condition — "operational data for this HRU is not available for
 this date" is an ordinary daily occurrence, not a rare error. The key is written often.
 
-## The THREE local sites
+## The sites — EIGHT statements across FOUR files
 
-*Corrected 2026-08-20: an earlier revision listed two and missed the `yesterday` fallback print.
-Line numbers also re-based after the PREPG-010 retry landed — the statements are unchanged.*
+**This scope has been wrong at every revision.** 2 → 3 → 5 (the traceback prints re-leak what the
+line above redacts) → **8 across 4 files** (an out-of-loop review found three more consumers of the
+same client). Recorded because the pattern matters more than the count: the issue kept naming
+*statements* when the defect is a *property* — anything in this module that renders a DG exception.
+**If you are extending this, search the module for the property; do not trust this list.**
+
+### `Quantile_Mapping_OP.py` — 5 statements
 
 | Site | Context |
 |---|---|
@@ -47,8 +52,20 @@ Line numbers also re-based after the PREPG-010 retry landed — the statements a
 | `Quantile_Mapping_OP.py:956` (was `:854`) | `print(f"Unexpected error for date {today}: {e}")` — same client, same exposure |
 | `Quantile_Mapping_OP.py:949` | `print(f"Error for date {yesterday}: {e2}")` — **newly identified**; the `yesterday`-fallback branch, reached after today's data was absent, i.e. on the same routine path as the first site |
 
-All three go to a file: the first via the module logger, the two `print`s via `run_locally.sh`,
-which tees stdout into its run log.
+These go to a file: the first via the module logger, the two `print`s via `run_locally.sh`, which
+tees stdout into its run log. **Plus the two `print(traceback.format_exc())` calls** that follow the
+two prints (see below).
+
+### Three more files — same client, same exposure
+
+| Site | Context |
+|---|---|
+| `snow_data_operational.py:331` | `logger.error("Error getting snow data … %s", …, e)` — the **active daily** snow pipeline |
+| `snow_data_renalysis.py:316` | same shape, inside a **five-year batch loop**, so one credential can be written many times |
+| `get_era5_reanalysis_data.py:~163` | the DG call had **no exception boundary at all** — the credential went straight to the default traceback handler |
+
+The helper therefore lives in **`dg_utils.py`**, not in `Quantile_Mapping_OP.py`, so all four files
+share one implementation.
 
 ### FIVE statements, not three — the traceback prints re-leak it
 
@@ -85,8 +102,8 @@ Other exception logs in the module (`extend_era5_reanalysis.py:353`, `:650`, `:6
 
 ## The fix
 
-A small redaction helper applied at **all three** sites — replace `api_key=<value>` with
-`api_key=***` before the message is logged or printed.
+A small redaction helper in `dg_utils.py`, applied at **all eight** statements — replace
+`api_key=<value>` with `api_key=***` before the message is logged or printed.
 
 ### The trap: what terminates the key
 
@@ -118,9 +135,10 @@ locally regardless; it is cheap and does not depend on the client changing.
 ## Acceptance criteria
 
 - A DG-client `ValueError` whose message contains `api_key=<something>` is logged with the value
-  replaced, at **all three** sites — `:796`, `:949`, `:956`. **Match on the statements, not these numbers**: they have already drifted twice this week as edits above them landed. *A fix applied to only the two that an
-  earlier revision of this issue listed leaves the `yesterday`-fallback print leaking, on the same
-  routine path as the observed one.*
+  replaced, at **all eight** statements across the four files listed above. **Match on the
+  statements, not on line numbers** — they have drifted twice this week. *Every earlier revision of
+  this issue understated the scope; a fix that satisfies an out-of-date list closes the issue with
+  the credential still being written.*
 - **The redaction is applied to the logged string, never to the exception object.** The
   `ValueError` message is load-bearing for the today→yesterday fallback (see Contract below);
   rewriting the exception itself would be a control-flow change wearing a logging fix's clothes.

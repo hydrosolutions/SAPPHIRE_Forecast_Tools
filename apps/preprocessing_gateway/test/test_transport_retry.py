@@ -297,10 +297,24 @@ class TestRedactApiKey:
     at its five sites; these tests exercise the helper directly.
 
     Obviously-fake credential throughout (`FAKE-KEY-DO-NOT-USE`) --
-    never a real-looking key, per CLAUDE.md.
+    never a real-looking key, per CLAUDE.md. Covers both the regex
+    pattern pass and the literal-value pass added for the ": "-inside-
+    the-key defect (the helper reads
+    `ieasyhydroforecast_API_KEY_GATEAWAY` from the environment at call
+    time; tests set/unset it via `monkeypatch`, never a real .env).
     """
 
     FAKE_KEY = "FAKE-KEY-DO-NOT-USE"
+
+    @pytest.fixture(autouse=True)
+    def _no_ambient_live_key(self, monkeypatch):
+        """Deterministic baseline: no live key in the environment unless
+        a test explicitly sets one via `monkeypatch.setenv`. Without
+        this, `redact_api_key`'s literal-value pass would silently pick
+        up whatever `ieasyhydroforecast_API_KEY_GATEAWAY` happens to be
+        set to in the developer's shell (it is not set in this repo's
+        test env, but nothing should rely on that)."""
+        monkeypatch.delenv("ieasyhydroforecast_API_KEY_GATEAWAY", raising=False)
 
     def test_key_last_terminated_by_colon_json_body_survives(self):
         """The observed shape: key is the last query param, followed by
@@ -365,6 +379,69 @@ class TestRedactApiKey:
         assert "next=1" in redacted_upper
         assert self.FAKE_KEY not in redacted_camel
         assert "next=1" in redacted_camel
+
+    def test_unrelated_name_ending_in_api_key_is_not_matched(self):
+        """DEFECT 1: the pattern must not fire inside an unrelated
+        identifier like 'backup_api_key=' -- without the leading
+        boundary check, a match starting mid-name would truncate
+        whatever followed it, corrupting diagnostics that have nothing
+        to do with the real credential."""
+        message = f'ep?api_key={self.FAKE_KEY}: {{"message":"backup_api_key=disabled"}}'
+        redacted = dg_utils.redact_api_key(message)
+        assert self.FAKE_KEY not in redacted
+        assert "api_key=***" in redacted
+        # The unrelated "backup_api_key=disabled" field is untouched --
+        # not partially eaten, not redacted (it's a different field).
+        assert "backup_api_key=disabled" in redacted
+
+    def test_colon_space_inside_key_fully_redacted_when_env_var_set(self, monkeypatch):
+        """DEFECT 2: a credential value that itself contains ': ' is
+        genuinely ambiguous to the pattern alone (': ' is also the real
+        message separator) -- this is fixed via the literal-value pass,
+        not the pattern, so it requires the live key to be known via the
+        env var the Data Gateway client actually reads it from."""
+        tricky_key = f"{self.FAKE_KEY}: SUFFIX"
+        monkeypatch.setenv("ieasyhydroforecast_API_KEY_GATEAWAY", tricky_key)
+
+        message = f'ep?api_key={tricky_key}: {{"m":"x"}}'
+        redacted = dg_utils.redact_api_key(message)
+
+        assert self.FAKE_KEY not in redacted
+        assert "SUFFIX" not in redacted
+        assert "api_key=***" in redacted
+        # Exactly one placeholder, not "***: ***" or "api_key=******" --
+        # the literal pass runs first and the pattern pass then collapses
+        # the already-redacted "api_key=***" without doubling it up.
+        assert redacted == 'ep?api_key=***: {"m":"x"}'
+
+    def test_colon_space_inside_key_partially_redacted_when_env_var_unset(self):
+        """Same tricky-key message as above, but with no live key known
+        to the helper (env var unset, the default in this test class).
+        This must not crash, and must still redact what the pattern
+        alone can reach -- the pattern-only limitation from DEFECT 2 is
+        expected here, not a regression."""
+        tricky_key = f"{self.FAKE_KEY}: SUFFIX"
+        message = f'ep?api_key={tricky_key}: {{"m":"x"}}'
+
+        redacted = dg_utils.redact_api_key(message)
+
+        assert self.FAKE_KEY not in redacted
+        assert "api_key=***" in redacted
+        # The pattern-only limitation: text after the key's own ": " is
+        # indistinguishable from the JSON separator, so it survives.
+        assert "SUFFIX" in redacted
+
+    def test_short_env_var_skips_literal_pass(self, monkeypatch):
+        """A live key shorter than `_MIN_LITERAL_KEY_LENGTH` (e.g. a
+        stray short placeholder in a test .env) must not trigger a
+        blanket substring replacement -- that would corrupt any message
+        that happens to contain the same short string as ordinary text."""
+        monkeypatch.setenv("ieasyhydroforecast_API_KEY_GATEAWAY", "abc")
+
+        message = "Unrelated diagnostic text that happens to contain abc in the middle."
+        redacted = dg_utils.redact_api_key(message)
+
+        assert redacted == message
 
     def test_no_api_key_passed_through_unchanged(self):
         """A message with no `api_key=` at all is untouched (byte-identical)."""

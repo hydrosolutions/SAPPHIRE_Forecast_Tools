@@ -85,8 +85,30 @@ logger.setLevel(logging.INFO)
 # part after it; a future endpoint could instead append another "&param="
 # after the key, so a pattern that stops only at whitespace/": " would leave
 # that parameter glued onto the redacted value. Matching is case-insensitive
-# and tolerates both "api_key=" and "apikey="/"ApiKey=" spellings.
-_API_KEY_PATTERN = re.compile(r"api_?key=(?:(?!: )[^&\s])*", re.IGNORECASE)
+# and tolerates both "api_key=" and "apikey="/"ApiKey=" spellings. The
+# leading negative lookbehind requires a non-name character (or
+# start-of-string) immediately before "api_key"/"apikey", so the pattern
+# does not fire inside an unrelated identifier like "backup_api_key=" --
+# without it, a name ending in "..._api_key=" would match starting mid-name
+# and truncate whatever followed it, corrupting diagnostics that have
+# nothing to do with the real credential.
+_API_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9_])api_?key=(?:(?!: )[^&\s])*", re.IGNORECASE)
+
+# Name of the env var the Data Gateway API key is read from (see e.g.
+# snow_data_operational.py, snow_data_renalysis.py,
+# get_era5_reanalysis_data.py -- all read this same var).
+_API_KEY_ENV_VAR = "ieasyhydroforecast_API_KEY_GATEAWAY"
+
+# Minimum length of the live env-var value before `redact_api_key` will
+# use it for a literal, whole-message substring replacement. A credential
+# containing ": " defeats the pattern pass alone -- ": " is genuinely
+# ambiguous between "part of the key" and "the separator before the
+# server's JSON body" (see PREPG-015 follow-up), so the literal value is
+# also matched and blanked directly. But a short value (e.g. unset,
+# empty, or a 2-3 char placeholder someone left in a test .env) would
+# match all over an unrelated message and corrupt it wholesale, so the
+# literal pass is skipped entirely below this threshold.
+_MIN_LITERAL_KEY_LENGTH = 8
 
 
 def redact_api_key(message: str) -> str:
@@ -94,26 +116,50 @@ def redact_api_key(message: str) -> str:
     Replace a live API key embedded in a message with a redacted placeholder.
 
     Intended for the Data Gateway client's exception messages, which embed
-    the API key as a query parameter (PREPG-015). Only the credential value
-    is replaced; the rest of the message (endpoint path, HRU code, the
-    server's response text) is left intact.
+    the API key as a query parameter (PREPG-015). Two passes are applied,
+    in this order:
+
+    1. If the live Data Gateway API key is available (read from the
+       ``ieasyhydroforecast_API_KEY_GATEAWAY`` env var **at call time**,
+       not import time, since operators and tests may change it) and is
+       at least ``_MIN_LITERAL_KEY_LENGTH`` characters long, every literal
+       occurrence of that exact value anywhere in the message is replaced
+       with ``***``. This closes the case a pattern alone cannot: a
+       credential value that itself contains ": ", which is otherwise
+       indistinguishable from the separator before the server's JSON
+       response body. Run first so the pattern pass below still collapses
+       ``api_key=***`` to a single ``***`` rather than doubling up.
+    2. The ``api_key=``/``apikey=`` query-string pattern is redacted as
+       before, covering the case where the live key is unknown (env var
+       unset/too short) or the message otherwise doesn't contain the
+       literal value.
+
+    Only the credential is replaced; the rest of the message (endpoint
+    path, HRU code, the server's response text) is left intact -- the
+    pattern will not match inside an unrelated name like
+    ``backup_api_key=disabled``.
 
     Does NOT cover: credentials passed in header form (e.g.
-    ``Authorization: ...`` or ``Api-Key: ...``), JSON/dict representations
-    (e.g. ``{"api_key": "..."}``), or URL-encoded parameter names (e.g.
-    ``api_key%3D``). Only the literal ``api_key=``/``apikey=`` query-string
-    shape the Data Gateway client actually produces is handled -- this is a
-    local mitigation for that one shape, not a general-purpose secret
-    scrubber.
+    ``Authorization: ...`` or ``Api-Key: ...``) or JSON/dict
+    representations (e.g. ``{"api_key": "..."}``) *when the live key is
+    unavailable to the literal pass* -- when it IS available, the literal
+    pass catches the secret in those shapes too, since it matches the
+    value itself rather than its surroundings. Still not covered even
+    with the literal pass available: a key that has been URL-encoded or
+    otherwise transformed before landing in the message (e.g.
+    ``api_key%3D...``), since that no longer contains the literal value.
 
     Args:
         message: The string to redact, e.g. a formatted exception message.
 
     Returns:
-        The message with any ``api_key=<value>`` (case-insensitive, with or
-        without the underscore) replaced by ``api_key=***``. Returned
-        unchanged if no such parameter is present.
+        The message with any live key value and any ``api_key=<value>``
+        (case-insensitive, with or without the underscore) replaced by
+        ``***``/``api_key=***``. Returned unchanged if neither is present.
     """
+    live_key = os.getenv(_API_KEY_ENV_VAR)
+    if live_key and len(live_key) >= _MIN_LITERAL_KEY_LENGTH:
+        message = message.replace(live_key, "***")
     return _API_KEY_PATTERN.sub("api_key=***", message)
 
 
