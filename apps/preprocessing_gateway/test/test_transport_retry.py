@@ -39,6 +39,7 @@ sys.modules["sapphire_dg_client.client"] = MagicMock()
 sys.modules["sapphire_dg_client.SapphireDGClient"] = MagicMock()
 sys.modules["sapphire_dg_client.snow_model"] = MagicMock()
 
+import dg_utils
 import Quantile_Mapping_OP as qm
 
 # The package-wide autouse `_no_retry_sleep` fixture in conftest.py
@@ -286,7 +287,14 @@ class TestRetryLoggingHygiene:
 
 
 class TestRedactApiKey:
-    """Unit tests for `_redact_api_key` (PREPG-015).
+    """Unit tests for `dg_utils.redact_api_key` (PREPG-015).
+
+    Moved from `Quantile_Mapping_OP._redact_api_key` to
+    `dg_utils.redact_api_key` (now public -- it is shared across
+    modules: Quantile_Mapping_OP.py, snow_data_operational.py,
+    snow_data_renalysis.py, get_era5_reanalysis_data.py).
+    `Quantile_Mapping_OP.py` calls it as `dg_utils.redact_api_key(...)`
+    at its five sites; these tests exercise the helper directly.
 
     Obviously-fake credential throughout (`FAKE-KEY-DO-NOT-USE`) --
     never a real-looking key, per CLAUDE.md.
@@ -306,7 +314,7 @@ class TestRedactApiKey:
             '{"message": "Operational data for HRU 19999 is not available for this date", '
             '"success": false}'
         )
-        redacted = qm._redact_api_key(message)
+        redacted = dg_utils.redact_api_key(message)
         assert self.FAKE_KEY not in redacted
         assert "api_key=***" in redacted
         # The response text -- the reason these lines exist -- survives intact.
@@ -319,20 +327,49 @@ class TestRedactApiKey:
         """The key is not guaranteed to be last -- a future endpoint
         could append a further query param after it."""
         message = f"endpoint?hru_code=19999&api_key={self.FAKE_KEY}&models=1,2,3"
-        redacted = qm._redact_api_key(message)
+        redacted = dg_utils.redact_api_key(message)
         assert self.FAKE_KEY not in redacted
         assert "api_key=***" in redacted
         assert "models=1,2,3" in redacted
 
     def test_key_at_end_of_string(self):
         message = f"endpoint?hru_code=19999&api_key={self.FAKE_KEY}"
-        redacted = qm._redact_api_key(message)
+        redacted = dg_utils.redact_api_key(message)
         assert redacted == "endpoint?hru_code=19999&api_key=***"
 
+    def test_key_containing_colon_both_parts_redacted(self):
+        """The partial-leak bug this revision fixes: a credential value
+        that itself contains a colon (not followed by a space) must be
+        redacted in full, not just up to the first colon. Only a colon
+        immediately followed by a space (the actual message separator)
+        terminates the match."""
+        message = 'endpoint?api_key=prefix:suffix: {"message": "nope"}'
+        redacted = dg_utils.redact_api_key(message)
+        assert "prefix" not in redacted
+        assert "suffix" not in redacted
+        assert "api_key=***" in redacted
+        # The JSON body -- separated by the real ': ' -- survives intact.
+        assert '{"message": "nope"}' in redacted
+
+    def test_case_insensitive_variants_all_redacted(self):
+        """API_KEY= (upper, with underscore) and ApiKey= (mixed case,
+        no underscore) must both redact -- not just a case-fold of the
+        exact 'api_key=' literal."""
+        upper = f"endpoint?API_KEY={self.FAKE_KEY}&next=1"
+        camel = f"endpoint?ApiKey={self.FAKE_KEY}&next=1"
+
+        redacted_upper = dg_utils.redact_api_key(upper)
+        redacted_camel = dg_utils.redact_api_key(camel)
+
+        assert self.FAKE_KEY not in redacted_upper
+        assert "next=1" in redacted_upper
+        assert self.FAKE_KEY not in redacted_camel
+        assert "next=1" in redacted_camel
+
     def test_no_api_key_passed_through_unchanged(self):
-        """A message with no `api_key=` at all is untouched."""
+        """A message with no `api_key=` at all is untouched (byte-identical)."""
         message = "Failed to get data from api/calc?hru_code=19999: some other server error"
-        assert qm._redact_api_key(message) == message
+        assert dg_utils.redact_api_key(message) == message
 
     def test_redact_does_not_mutate_original_exception(self):
         """Redaction must operate on the formatted string only -- never
@@ -343,7 +380,7 @@ class TestRedactApiKey:
         )
         exc = ValueError(secret_message)
 
-        redacted = qm._redact_api_key(str(exc))
+        redacted = dg_utils.redact_api_key(str(exc))
 
         assert "api_key=***" in redacted
         assert self.FAKE_KEY not in redacted
@@ -580,6 +617,13 @@ class TestCallSiteRedaction:
         # Diagnostics survived: this proves redaction, not suppression.
         assert "Traceback (most recent call last)" in out
         assert "ValueError" in out
+        # Diagnostics unique to THIS exception's message (not just the
+        # HRU code, which also appears in unrelated progress prints):
+        # the endpoint path fragment and the server's response text.
+        # A redactor broad enough to also destroy these would still
+        # pass on the checks above.
+        assert "api/calculations/ensemble" in out
+        assert "No ensemble data available" in out
 
     def test_ensemble_unexpected_error_is_redacted(self, dg_call_site_env, capsys):
         """Site 3 (`print`, ~:956): a ValueError that does NOT match the
@@ -648,3 +692,8 @@ class TestCallSiteRedaction:
         assert "api_key=***" in out
         assert "Traceback (most recent call last)" in out
         assert "ValueError" in out
+        # Diagnostics unique to THIS exception's message (not just the
+        # HRU code, which also appears in unrelated progress prints):
+        # the endpoint path fragment and the server's response text.
+        assert "api/calculations/ensemble" in out
+        assert "Internal server error" in out

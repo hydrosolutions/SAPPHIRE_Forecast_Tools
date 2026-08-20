@@ -310,7 +310,10 @@ def get_snow_data_reanalysis(client, hru, variable, start_date, end_date, dg_pat
         )
     except Exception as e:
         logger.error(
-            "Error getting reanalysis data from Data Gateway for HRU %s, %s: %s", hru, variable, e
+            "Error getting reanalysis data from Data Gateway for HRU %s, %s: %s",
+            hru,
+            variable,
+            dg_utils.redact_api_key(str(e)),
         )
         return False
 

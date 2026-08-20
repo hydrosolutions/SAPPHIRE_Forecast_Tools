@@ -325,7 +325,10 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
         )
     except Exception as e:
         logger.error(
-            "Error getting snow data from Data Gateway for HRU %s, %s: %s", hru, variable, e
+            "Error getting snow data from Data Gateway for HRU %s, %s: %s",
+            hru,
+            variable,
+            dg_utils.redact_api_key(str(e)),
         )
         return False
 

@@ -3,6 +3,7 @@
 # --------------------------------------------------------------------
 import logging
 import os
+import re
 import sys
 from logging.handlers import TimedRotatingFileHandler
 
@@ -67,6 +68,53 @@ logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
+
+
+# --------------------------------------------------------------------
+# API KEY REDACTION (PREPG-015)
+# --------------------------------------------------------------------
+# The Data Gateway client embeds the live API key as a query parameter in
+# exception messages (PREPG-015; sapphire_dg_client/client_base.py:55-59).
+# This pattern redacts it before a message is logged or printed. The key is
+# not guaranteed to be the last query parameter, so its value is terminated
+# at the first of "&", whitespace, or ": " (colon followed by a space) --
+# whichever comes first. This matters because the observed shape has the
+# server's JSON response text immediately after the key, separated by ": ",
+# so a pattern that stops at any bare ":" would run past a colon that is
+# part of the key's own value (e.g. "api_key=prefix:suffix") and leak the
+# part after it; a future endpoint could instead append another "&param="
+# after the key, so a pattern that stops only at whitespace/": " would leave
+# that parameter glued onto the redacted value. Matching is case-insensitive
+# and tolerates both "api_key=" and "apikey="/"ApiKey=" spellings.
+_API_KEY_PATTERN = re.compile(r"api_?key=(?:(?!: )[^&\s])*", re.IGNORECASE)
+
+
+def redact_api_key(message: str) -> str:
+    """
+    Replace a live API key embedded in a message with a redacted placeholder.
+
+    Intended for the Data Gateway client's exception messages, which embed
+    the API key as a query parameter (PREPG-015). Only the credential value
+    is replaced; the rest of the message (endpoint path, HRU code, the
+    server's response text) is left intact.
+
+    Does NOT cover: credentials passed in header form (e.g.
+    ``Authorization: ...`` or ``Api-Key: ...``), JSON/dict representations
+    (e.g. ``{"api_key": "..."}``), or URL-encoded parameter names (e.g.
+    ``api_key%3D``). Only the literal ``api_key=``/``apikey=`` query-string
+    shape the Data Gateway client actually produces is handled -- this is a
+    local mitigation for that one shape, not a general-purpose secret
+    scrubber.
+
+    Args:
+        message: The string to redact, e.g. a formatted exception message.
+
+    Returns:
+        The message with any ``api_key=<value>`` (case-insensitive, with or
+        without the underscore) replaced by ``api_key=***``. Returned
+        unchanged if no such parameter is present.
+    """
+    return _API_KEY_PATTERN.sub("api_key=***", message)
 
 
 # --------------------------------------------------------------------

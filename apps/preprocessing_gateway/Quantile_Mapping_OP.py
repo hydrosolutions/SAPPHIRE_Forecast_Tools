@@ -60,7 +60,6 @@
 import json
 import logging
 import os
-import re
 import shutil
 import sys
 import time
@@ -206,37 +205,10 @@ def _call_with_transport_retry(download_fn, context: str):
             _retry_sleep(_RETRY_SLEEP_SECONDS)
 
 
-# The Data Gateway client embeds the live API key as a query parameter in
-# exception messages (PREPG-015; sapphire_dg_client/client_base.py:55-59).
-# This pattern redacts it before a message is logged or printed. The key is
-# not guaranteed to be the last query parameter, so its value is terminated
-# at the first of "&", whitespace, or ":" -- whichever comes first. This
-# matters because the observed shape has the server's JSON response text
-# immediately after the key, separated by ": ", so a pattern that stops
-# only at "&" would run past the key and destroy that diagnostic text; a
-# future endpoint could instead append another "&param=" after the key, so
-# a pattern that stops only at whitespace/":" would leave that parameter
-# glued onto the redacted value.
-_API_KEY_PATTERN = re.compile(r"api_key=[^&\s:]*")
-
-
-def _redact_api_key(message: str) -> str:
-    """
-    Replace a live API key embedded in a message with a redacted placeholder.
-
-    Intended for the Data Gateway client's exception messages, which embed
-    the API key as a query parameter (PREPG-015). Only the credential value
-    is replaced; the rest of the message (endpoint path, HRU code, the
-    server's response text) is left intact.
-
-    Args:
-        message: The string to redact, e.g. a formatted exception message.
-
-    Returns:
-        The message with any ``api_key=<value>`` replaced by
-        ``api_key=***``. Returned unchanged if no ``api_key=`` is present.
-    """
-    return _API_KEY_PATTERN.sub("api_key=***", message)
+# The API-key redaction helper used below moved to dg_utils.redact_api_key
+# (PREPG-015) -- shared across the module's Data Gateway call sites plus
+# snow_data_operational.py, snow_data_renalysis.py, and
+# get_era5_reanalysis_data.py.
 
 
 def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) -> pd.DataFrame:
@@ -827,7 +799,7 @@ def main():
 
         except Exception as e:
             if "Operational data for HRU" in str(e):
-                logger.error(f"Exiting the program due to error: {_redact_api_key(str(e))}")
+                logger.error(f"Exiting the program due to error: {dg_utils.redact_api_key(str(e))}")
                 sys.exit(1)
             else:
                 # Narrowed 2026-08-20 (PREPG-010): previously this branch
@@ -980,15 +952,15 @@ def main():
                     #    directory=OUTPUT_PATH_DG
                     # )
                 except ValueError as e2:
-                    print(f"Error for date {yesterday}: {_redact_api_key(str(e2))}")
-                    print(_redact_api_key(traceback.format_exc()))
+                    print(f"Error for date {yesterday}: {dg_utils.redact_api_key(str(e2))}")
+                    print(dg_utils.redact_api_key(traceback.format_exc()))
                     # Handle the second error or re-raise it
                     sys.exit(1)
             else:
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
-                print(f"Unexpected error for date {today}: {_redact_api_key(str(e))}")
-                print(_redact_api_key(traceback.format_exc()))
+                print(f"Unexpected error for date {today}: {dg_utils.redact_api_key(str(e))}")
+                print(dg_utils.redact_api_key(traceback.format_exc()))
                 sys.exit(1)
 
         # print(f"Files downloaded: {files_downloaded}")
