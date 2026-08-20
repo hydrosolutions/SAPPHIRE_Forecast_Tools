@@ -1,10 +1,9 @@
 ## `sapphire-dg-client` has no request timeouts and never validates the link response (PREPG-014)
 
-**Status**: Draft — **NOT ready to implement** (reviewed 2026-08-20). Split out of PREPG-010,
-which is local-only by design. An out-of-loop pass found three HIGH gaps: the timeout values and
-policy are unspecified, the link-error exception type is unspecified, and the new timeout
-exceptions do not line up with the retry that has since shipped. **Three owner decisions are
-required before this can be implemented — see § Owner decisions.**
+**Status**: Draft (reviewed 2026-08-20) — split out of PREPG-010, which is local-only by design.
+**Blocked on three owner decisions before it can move to `Ready`** — see § Owner decisions. An
+out-of-loop pass found the timeout values unspecified, the link-error exception type unspecified,
+and the new timeout exceptions not lining up with the retry that has since shipped.
 **Module**: the **`sapphire-dg-client`** dependency (separate hydrosolutions repo), consumed by
 `apps/preprocessing_gateway`
 **Priority**: **Medium** — *raised from Low 2026-08-18.* No observed incident, which is what kept
