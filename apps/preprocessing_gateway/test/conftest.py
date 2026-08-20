@@ -21,11 +21,24 @@ def _no_retry_sleep(monkeypatch):
     Quantile_Mapping_OP directly, since any test that exercises main()'s
     ensemble or control-member download paths (e.g. via
     test_integration_preprocessing_gateway.py) goes through
-    _retry_sleep too. Looked up lazily via sys.modules -- by the time
-    any fixture runs, pytest has already finished collecting (and thus
-    importing) every test module in this session, so
-    "Quantile_Mapping_OP" is already present if any collected file uses
-    it. A test that wants to observe the pause itself (asserting it is
+    _retry_sleep too. Looked up lazily via sys.modules rather than
+    imported here directly, because importing Quantile_Mapping_OP from
+    this conftest would bind the real sapphire_dg_client package before
+    other test modules install their sys.modules mocks for it -- a
+    worse problem than the one this fixture solves.
+
+    LIMITATION: the lookup only finds "Quantile_Mapping_OP" if some
+    already-collected test module imported it at module (top) level
+    before this fixture runs. If a test instead imports
+    Quantile_Mapping_OP for the first time inside a test or fixture
+    body and then triggers a retry, this fixture will have already run
+    and found the module absent, so it will NOT be patched and that
+    retry will sleep for real, with no failure or warning. Avoid this:
+    import Quantile_Mapping_OP at module level, as both current test
+    files that use it (test_transport_retry.py and
+    test_integration_preprocessing_gateway.py) already do.
+
+    A test that wants to observe the pause itself (asserting it is
     actually invoked) can still monkeypatch _retry_sleep again inside
     the test body -- that call runs after this fixture's setup and
     wins for the duration of the test.

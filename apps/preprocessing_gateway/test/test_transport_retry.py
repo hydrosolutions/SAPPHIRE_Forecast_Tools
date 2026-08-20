@@ -16,6 +16,7 @@ Run::
 import logging
 import os
 import sys
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -43,6 +44,18 @@ import Quantile_Mapping_OP as qm
 
 class TestCallWithTransportRetry:
     """Unit tests for _call_with_transport_retry."""
+
+    def test_autouse_fixture_actually_disabled_the_retry_sleep(self):
+        """Guards against conftest's `_no_retry_sleep` silently no-opping.
+
+        That fixture only patches `_retry_sleep` if
+        "Quantile_Mapping_OP" is already in sys.modules when it runs
+        (see its docstring's LIMITATION) -- this file imports the
+        module at top level, so the patch should always have taken
+        effect here. If this assertion ever fails, every other test in
+        this file that triggers a retry is sleeping for real.
+        """
+        assert qm._retry_sleep is not time.sleep
 
     def test_success_first_attempt_no_retry(self):
         """A download_fn that succeeds immediately is called exactly once."""
