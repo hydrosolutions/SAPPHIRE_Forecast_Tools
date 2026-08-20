@@ -369,17 +369,24 @@ record_validation() {
     VALIDATION_ERROR_LOG+=("$error_log")
 }
 
-# emit_continue_on_error_hint - Tell the operator why the pipeline stopped
-# and how to run past the failure anyway. Called exactly once from main(),
-# after the target's pipeline function has already returned, gated on
-# PIPELINE_ABORTED (see its declaration above) -- a fact recorded by the
+# emit_continue_on_error_hint - Tell the operator why a pipeline phase
+# stopped and how to run past the failure anyway. Called exactly once from
+# main(), after the target's pipeline function has already returned, gated
+# on PIPELINE_ABORTED (see its declaration above) -- a fact recorded by the
 # CONTINUE_ON_ERROR guard idiom itself, not inferred from the target name.
-# Note this fires whether or not the failing step happened to be the last
-# guarded step, so the wording below must not claim modules were skipped.
+#
+# This fires whether or not the failing step happened to be the last
+# guarded step in its enclosing pipeline function (e.g. `yearly`'s final
+# step, run_recalculate_skill_metrics, has nothing after it to skip), and
+# whether or not the *target* as a whole stopped (e.g. `all` continues into
+# the long-term pipeline and aggregate validation after a short-term abort
+# -- only the short-term phase itself stopped). So the wording below must
+# not claim any modules remained unrun, and must scope "stopped" to the
+# phase that aborted, not to the whole run. (INFRA-037)
 emit_continue_on_error_hint() {
     local target="$1"
-    log WARN "Pipeline stopped at the first failing module because --continue-on-error is not set."
-    log WARN "To run the remaining modules anyway: bash apps/run_locally.sh --continue-on-error ${target}"
+    log WARN "A pipeline phase stopped at its first failing module because --continue-on-error is not set."
+    log WARN "To continue past failures instead of stopping at the first, run: bash apps/run_locally.sh --continue-on-error ${target}"
     log WARN "Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful."
 }
 
@@ -1202,25 +1209,52 @@ run_api_validation() {
     return 0  # don't abort pipeline mid-run; failures surface in summary
 }
 
+# run_module_validation MODULE [LABEL_SUFFIX]
+#
+# LABEL_SUFFIX is optional and additive (INFRA-037): every existing
+# single-argument call site behaves exactly as before (log path
+# "api_validation_${module}.log", row label "api_validation (${module})").
+# When a suffix is given (e.g. a mode name), both the log path and the
+# recorded row label are made unique per suffix, so callers that invoke
+# this once per mode (e.g. the bare `machine_learning` target under
+# ML_MODE=BOTH) don't have each call overwrite the previous call's log
+# file and don't get indistinguishable PASS/FAIL rows in the summary.
 run_module_validation() {
     local module="$1"
-    banner "API Data Validation (${module})"
+    local suffix="${2:-}"
+    local label="$module"
+    local log_suffix="$module"
+    if [ -n "$suffix" ]; then
+        label="${module} ${suffix}"
+        log_suffix="${module}_${suffix}"
+    fi
+
+    banner "API Data Validation (${label})"
     local start
     start=$(get_timestamp)
 
-    CURRENT_MODULE_LOG="${ERROR_DIR}/api_validation_${module}.log"
+    CURRENT_MODULE_LOG="${ERROR_DIR}/api_validation_${log_suffix}.log"
     > "$CURRENT_MODULE_LOG"
+    # `|| rc=$?` (not a bare call + `local rc=$?`) is required here: every
+    # call site of run_module_validation is itself a bare statement (not
+    # wrapped in `||`/`if`), so under `set -euo pipefail` a bare failing
+    # run_in_venv would trip `set -e` and kill the whole script on the
+    # spot -- before record_validation below ever runs, silently defeating
+    # the "don't abort pipeline mid-run" contract this function documents.
+    # (Found while testing INFRA-037 defect 1: with ML_MODE=BOTH, a FAIL
+    # from either mode's validation previously killed run_locally.sh
+    # outright instead of producing a FAIL row.)
+    local rc=0
     run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
-        -- --module "$module"
-    local rc=$?
+        -- --module "$module" || rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
-        log OK "api_validation (${module}) completed in $(format_duration $elapsed)"
-        record_validation "api_validation (${module})" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+        log OK "api_validation (${label}) completed in $(format_duration $elapsed)"
+        record_validation "api_validation (${label})" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
-        log WARN "api_validation (${module}) reported failures after $(format_duration $elapsed)"
-        record_validation "api_validation (${module})" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+        log WARN "api_validation (${label}) reported failures after $(format_duration $elapsed)"
+        record_validation "api_validation (${label})" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return 0  # don't abort pipeline mid-run; failures surface in summary
 }
@@ -2103,10 +2137,13 @@ main() {
                 # its own mode -- validating the pre-loop original_mode
                 # would check a horizon ML did not necessarily produce, and
                 # a mode that never ran (loop broke early) must not be
-                # validated either.
+                # validated either. Pass the mode as run_module_validation's
+                # label suffix (INFRA-037) so PENTAD/DECAD each get their
+                # own log file and summary row instead of the second call
+                # truncating the first's log and reusing its label.
                 for mode in ${ran_modes[@]+"${ran_modes[@]}"}; do
                     export SAPPHIRE_PREDICTION_MODE="$mode"
-                    run_module_validation "machine_learning"
+                    run_module_validation "machine_learning" "$mode"
                 done
                 export SAPPHIRE_PREDICTION_MODE="$original_mode"
             fi

@@ -1,4 +1,4 @@
-"""Tests for the mode/model ValueError messages (INFRA-032 / ML-016).
+"""Tests for the mode/model ValueError messages (INFRA-037 / ML-016).
 
 Several `raise ValueError(...)` call sites in the ML pipeline used a literal
 "%s" placeholder with no %-formatting, so the raised message printed the
@@ -15,13 +15,18 @@ and "" render as visibly different values):
 - hindcast_ML_models.py: hindcast-mode guard (HINDCAST_MODE, read from
   env var SAPPHIRE_HINDCAST_MODE)
 
-This file exercises the two guards through their REAL code paths:
+This file exercises the guards through their REAL code paths:
 - recalculate_nan_forecasts.recalculate_nan_forecasts() — the mode guard
   runs before sl.load_environment(), so calling the real function is cheap.
 - make_forecast.get_predictor_class() — the smallest real entry point that
   reaches the model-guard raise, without needing to run the rest of
   make_ml_forecast() (which requires sl.load_environment() plus predictor
   setup that isn't relevant to this guard).
+- make_forecast.make_ml_forecast() — its own, separate PREDICTION_MODE
+  guard (further down the same function, after get_predictor_class()).
+  Reachable cheaply too: setup_library is mocked as a bare MagicMock, so
+  sl.load_environment() is a no-op, and get_predictor_class() just needs a
+  valid SAPPHIRE_MODEL_TO_USE to pass through to the PREDICTION_MODE check.
 - fill_ml_gaps.fill_ml_gaps() — same structure as recalculate_nan_forecasts:
   the mode guard runs before sl.load_environment(), so it is included here
   too even though the task only required the first two.
@@ -109,6 +114,46 @@ with tempfile.TemporaryDirectory(prefix="sapphire_ml_test_mode_error_messages_")
         # platforms) and before any other test code runs.
         os.chdir(_prior_cwd)
 
+# ---------------------------------------------------------------------------
+# Regression guard for the cwd-redirect trick above (INFRA-037 defect 3a).
+# Without this test, the whole `_prior_cwd = os.getcwd(); with
+# tempfile.TemporaryDirectory() ...` block above is unenforced: deleting it
+# does not fail any test in this file.
+# ---------------------------------------------------------------------------
+
+_REAL_APPS_LOGS_LOG = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "logs", "log")
+)
+
+
+def test_cwd_redirect_keeps_module_logging_out_of_real_apps_logs():
+    """make_forecast.py and recalculate_nan_forecasts.py both call
+    `TimedRotatingFileHandler("logs/log", ...)` at *import* time, which
+    resolves against the process cwd at that exact moment and freezes into
+    the handler's `.baseFilename`. This test file is the first file (under
+    pytest's default alphabetical collection order in this test directory)
+    to import either module, so if the tempdir cwd redirect above were ever
+    removed, their `file_handler` would bind to the LIVE apps/logs/log --
+    since run_tests.sh (the mandated runner) invokes pytest with cwd=apps/.
+
+    fill_ml_gaps.py is deliberately not checked here: test_fill_ml_gaps.py
+    and test_fill_ml_gaps_null_loop.py both import it earlier (alphabetically,
+    ahead of this file) without any cwd guard of their own, so
+    fill_ml_gaps's file_handler is already bound to the real apps/logs/log
+    by the time this file's own import runs, regardless of whether this
+    file's redirect is present. This file's redirect has no effect on
+    fill_ml_gaps either way, so asserting on it here would not actually
+    exercise this file's own guard.
+    """
+    for module in (make_forecast, recalculate_nan_forecasts):
+        bound_path = os.path.abspath(module.file_handler.baseFilename)
+        assert bound_path != _REAL_APPS_LOGS_LOG, (
+            f"{module.__name__}.file_handler is bound to the live "
+            "apps/logs/log -- the tempdir cwd redirect around this file's "
+            "module-level imports appears to have been removed or broken."
+        )
+
+
 _UNSET = object()  # sentinel: "do not set the env var at all"
 
 
@@ -195,6 +240,50 @@ class TestMakeForecastModelGuardMessage:
         expected = (
             f"Model {expected_repr} is not supported.\n"
             "Please choose one of the following models: TFT, TIDE, TSMIXER, ARIMA"
+        )
+        assert str(exc_info.value) == expected
+
+
+# ---------------------------------------------------------------------------
+# make_forecast.py — prediction-mode guard (PREDICTION_MODE) in
+# make_ml_forecast() itself (INFRA-037 defect 3b) -- a separate guard from
+# get_predictor_class()'s MODEL_TO_USE guard above, further down the same
+# function, using the identical f-string-interpolated message shape.
+# ---------------------------------------------------------------------------
+
+
+class TestMakeMlForecastPredictionModeMessage:
+    """The PREDICTION_MODE guard at make_forecast.py:~526-529, inside
+    make_ml_forecast() -- unlike recalculate_nan_forecasts.py/fill_ml_gaps.py,
+    this guard runs AFTER sl.load_environment() and get_predictor_class().
+    Both are cheap here: `setup_library` is mocked as a bare MagicMock (see
+    the module-level sys.modules stubbing above), so sl.load_environment()
+    is a no-op MagicMock call with no real environment/API access, and
+    get_predictor_class() only needs SAPPHIRE_MODEL_TO_USE to be one of the
+    values in ieasyhydroforecast_available_ML_models to pass through
+    without raising, exactly as in TestMakeForecastModelGuardMessage above.
+    """
+
+    @pytest.mark.parametrize(
+        ("prediction_mode", "expected_repr"),
+        [
+            (_UNSET, "None"),
+            ("", "''"),
+            ("WEEKLY", "'WEEKLY'"),
+        ],
+        ids=["unset", "empty_string", "junk_value"],
+    )
+    def test_exact_message(self, monkeypatch, prediction_mode, expected_repr):
+        monkeypatch.setenv("ieasyhydroforecast_available_ML_models", "TFT,TIDE,TSMIXER,ARIMA")
+        monkeypatch.setenv("SAPPHIRE_MODEL_TO_USE", "TFT")
+        _set_or_clear(monkeypatch, "SAPPHIRE_PREDICTION_MODE", prediction_mode)
+
+        with pytest.raises(ValueError) as exc_info:
+            make_forecast.make_ml_forecast()
+
+        expected = (
+            f"Prediction mode {expected_repr} is not supported.\n"
+            "Please choose one of the following prediction modes: PENTAD, DECAD"
         )
         assert str(exc_info.value) == expected
 

@@ -118,7 +118,7 @@ grep -E "^(ieasyforecast_intermediate_data_path|ieasyhydroforecast_models_and_sc
 echo "===== 7. PREPROCESSING_RUNOFF FAILURE ====="
 grep -n "preprocessing_runoff failed\|Traceback" "$RUN" | head -5
 
-echo "===== 8. LONG-HORIZON HYDROGRAPH SYNC (INFRA-032, degraded not fatal) ====="
+echo "===== 8. LONG-HORIZON HYDROGRAPH SYNC (INFRA-037, degraded not fatal) ====="
 grep -n "SDK call failed for site\|long-horizon sync\|Long-horizon hydrograph sync had" "$RUN" | head -10
 } 2>&1 | tee /tmp/ml_round1.txt
 ```
@@ -144,10 +144,12 @@ and you run via Docker, you have no ML image.
 > `ieasyhydroforecast_available_ML_models` line and section 3, and read the two
 > known-bug notes below before anything else: they used to fully explain this
 > exact symptom with no deeper cause, and a fix for both has landed on this
-> branch (**implemented, verification pending** — confirm your checkout has it
-> before assuming it applies to you; see Step 0 for how to check the commit).
+> branch — INFRA-037 is **implemented and confirmed** (full apps test suite
+> green, two rounds of out-of-loop review); confirm your checkout has both
+> fixes before assuming they apply to you; see Step 0 for how to check the
+> commit.
 >
-> - **INFRA-032 — `run_locally.sh daily` used to abort before ML was reached**
+> - **INFRA-037 — `run_locally.sh daily` used to abort before ML was reached**
 >   whenever the maintenance sub-step `sync_long_horizon_hydrograph.py` exited
 >   4 (at least one station's iEasyHydro-HF monthly-norm SDK lookup raised) —
 >   a condition the owner regards as expected/degraded, not fatal. **Fixed**:
@@ -439,13 +441,13 @@ apps/machine_learning/.venv/bin/python -c "import sapphire_api_client; print('cl
 
 **This is the most likely cause if `preprocessing_runoff`'s operational run
 (Phase 1, `preprocessing_runoff.py`) actually failed** — the discharge data ML
-reads. Note this is distinct from INFRA-032, which (as corrected — see the
+reads. Note this is distinct from INFRA-037, which (as corrected — see the
 `kghm` note above) is about a **maintenance** sub-step
 (`sync_long_horizon_hydrograph.py`, Phase 2) that runs only after Phase 1
 already succeeded and writes month-horizon hydrograph rows that neither
 `machine_learning` nor `linear_regression` reads. If you are running modules
 by hand because `daily` aborted, check which phase actually failed before
-assuming this step's cause applies — an INFRA-032-only abort on an unfixed
+assuming this step's cause applies — an INFRA-037-only abort on an unfixed
 checkout leaves Phase 1's discharge data intact.
 
 **There are two independent station lists, and only one of them can cause a
@@ -714,4 +716,4 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 | PREPG-015 | Data Gateway API key reachable in logs — the redaction rules above |
 | INFRA-029 | Root logger capped at WARNING; why two Step 4 causes are invisible |
 | INFRA-030 | Skipped modules leave no summary line — Step 2 |
-| INFRA-032 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented, verification pending): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |
+| INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green, two rounds of out-of-loop review): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |

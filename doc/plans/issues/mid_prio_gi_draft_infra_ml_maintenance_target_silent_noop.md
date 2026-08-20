@@ -3,10 +3,10 @@
 **Status**: Draft (2026-08-20)
 **Module**: `apps/run_locally.sh` (`maintenance:machine_learning` case branch and its mode loop)
 **Priority**: Medium — a default-env invocation reports success having done no ML maintenance
-work; not confirmed to have bitten a real deployment yet (unlike INFRA-032/ML-016).
+work; not confirmed to have bitten a real deployment yet (unlike INFRA-037/ML-016).
 **Labels**: `run_locally`, `machine_learning`, `silent-noop`
-**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-032. Deliberately **not**
-fixed in that same patch, to keep INFRA-032 scoped to `daily`'s fail-fast behavior.
+**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-037. Deliberately **not**
+fixed in that same patch, to keep INFRA-037 scoped to `daily`'s fail-fast behavior.
 **Related**: **ML-016** (the bare `machine_learning` target had the same class of defect —
 crashed on an empty `SAPPHIRE_PREDICTION_MODE`; fixed via `resolve_ml_bare_target_modes`, which
 validates both `SAPPHIRE_PREDICTION_MODE` and `ML_MODE` against an explicit domain and errors on
@@ -79,7 +79,7 @@ defaults to PENTAD, then gets filtered by ML_MODE=DECAD" combination — see the
 `ML_MODE=DECAD` does skip ML for PENTAD, but not on `daily`, which runs both horizons explicitly.
 The standalone `maintenance:machine_learning` target is the one call site that can still resolve
 `SAPPHIRE_PREDICTION_MODE` to the WARN-logged PENTAD default *and* then immediately filter that
-single resolved mode away — an operator running it by hand, exactly as INFRA-032 documents
+single resolved mode away — an operator running it by hand, exactly as INFRA-037 documents
 becoming necessary after a `daily` abort, is the realistic trigger.
 
 ## Desired outcome

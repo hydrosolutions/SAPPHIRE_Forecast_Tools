@@ -5,12 +5,12 @@
 **Priority**: Low — the guarded failure mode is never lost (a write failure still surfaces, just
 as an uncaught traceback instead of a graded exit code); no data-loss or silent-success risk.
 **Labels**: `preprocessing_runoff`, `dead-code`, `exit-code-hygiene`
-**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-032, which separately
+**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-037, which separately
 documents these `sys.exit(1)` sites as part of its diagnosis of `run_locally.sh`'s fail-fast
 behavior.
-**Related**: **INFRA-032** (the row in `module_issues.md` currently characterizes `:653` as the
+**Related**: **INFRA-037** (the row in `module_issues.md` currently characterizes `:653` as the
 sole dead site and `:523`/`:536` as "reachable" signaling a CSV-only failure; this draft goes
-further after direct verification of the two `to_csv` helpers — see "Note on INFRA-032's framing"
+further after direct verification of the two `to_csv` helpers — see "Note on INFRA-037's framing"
 below).
 
 ---
@@ -102,16 +102,16 @@ exits 1 with the logged error message" is describing the intended shape, not the
 — the actual failure mode is a traceback that never reaches the `logger.error(...)` lines at
 `:522`/`:535` either, since those are on the same dead `else` branches.
 
-## Note on INFRA-032's framing
+## Note on INFRA-037's framing
 
-The `INFRA-032` row in `module_issues.md` (filed the same day, same investigation) characterizes
+The `INFRA-037` row in `module_issues.md` (filed the same day, same investigation) characterizes
 `:523`/`:536` as "reachable" and signaling "a CSV failure only, never an API one," with `:653`
 called out as the sole dead site. That framing is not wrong about *what the site is for* (CSV vs.
 API failure) but understates reachability: this draft's direct verification of both `to_csv`
 helpers' source shows `:523` and `:536` are, like `:653`, unreachable on the non-exception path —
-the "realistic failure ... is an uncaught traceback" caveat INFRA-032 already carries is the
+the "realistic failure ... is an uncaught traceback" caveat INFRA-037 already carries is the
 correct characterization for all three sites, not just two of them. This draft does not modify the
-INFRA-032 row; flagging the discrepancy here for whoever picks up either issue.
+INFRA-037 row; flagging the discrepancy here for whoever picks up either issue.
 
 ## Proposed fix
 
@@ -127,7 +127,7 @@ choice for whoever implements the fix, not dictated by this issue.
   share this defect without separately checking their guarded variables.
 - Any change to `write_daily_time_series_data_to_csv` / `write_daily_hydrograph_data_to_csv`'s
   API-write behavior (already explicitly non-blocking, unrelated to this issue).
-- INFRA-032's broader diagnosis of `run_locally.sh`'s fail-fast default — this issue is scoped to
+- INFRA-037's broader diagnosis of `run_locally.sh`'s fail-fast default — this issue is scoped to
   the exit-site reachability claim only.
 
 ## Acceptance criteria

@@ -1,7 +1,7 @@
 """Regression tests for apps/run_locally.sh's orchestration/dispatch logic.
 
 Context: three behaviour changes were made to run_locally.sh in earlier
-INFRA-032 phases, and this file locks all three in end-to-end:
+INFRA-037 phases, and this file locks all three in end-to-end:
 
   A. A ``--continue-on-error`` hint, emitted once from ``main()`` after
      dispatch, gated on the ``PIPELINE_ABORTED`` fact recorded by the
@@ -307,7 +307,7 @@ class TestContinueOnErrorHint:
     when CONTINUE_ON_ERROR is false, so the gate needs no extra condition.
     """
 
-    HINT_TEXT = "Pipeline stopped at the first failing module"
+    HINT_TEXT = "stopped at its first failing module"
 
     def test_fail_fast_target_without_flag_emits_hint_once(self, synth_tree):
         synth_tree.override(
@@ -417,11 +417,14 @@ class TestContinueOnErrorHint:
         assert any("script=recalculate_skill_metrics.py" in ln for ln in calls)
         # The hint still fires (a real abort happened)...
         assert self.HINT_TEXT in out
-        # ...but must not claim modules remained unrun. (The second hint
-        # line legitimately says "the remaining modules anyway" as part of
-        # the --continue-on-error command suggestion -- that's fine, it's
-        # only the false "did not run" claim that must be gone.)
+        # ...but must not claim modules remained unrun. Neither hint line
+        # may assert that anything "remained" or was left to run "anyway"
+        # -- the offer to use --continue-on-error must stand on its own,
+        # without implying there is necessarily unrun work waiting behind
+        # the failure.
         assert "did not run" not in out
+        assert "remaining modules" not in out
+        assert "modules anyway" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +552,60 @@ class TestMachineLearningBareTargetModes:
         assert result.returncode != 0
         validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
         assert validation_modes == ["PENTAD"]
+
+    def test_both_mode_validation_failure_gets_its_own_log_and_label(self, synth_tree):
+        """INFRA-037 defect 1 regression: run_module_validation used to
+        derive both its log path and its summary-row label from `$module`
+        alone, so calling it once per mode (PENTAD, then DECAD) made the
+        second call truncate the first call's log file and reuse the exact
+        same row label. With PENTAD failing and DECAD passing, the operator
+        got a FAIL row for PENTAD whose "error details" tail showed DECAD's
+        successful output, with no way to tell the two rows apart.
+
+        Both modes actually run here (unlike the partial-run test above),
+        so validate_pipeline.py is invoked twice under the same module,
+        each echoing a distinctive marker and exiting with a different
+        code.
+        """
+        synth_tree.override(
+            "postprocessing_forecasts",
+            textwrap.dedent(
+                """\
+                case "$script" in
+                    */validate_pipeline.py)
+                        if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then
+                            echo "PENTAD_VALIDATION_MARKER"
+                            exit 1
+                        fi
+                        if [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then
+                            echo "DECAD_VALIDATION_MARKER"
+                            exit 0
+                        fi
+                        ;;
+                esac
+                """
+            ),
+        )
+        result = run_main(synth_tree, "machine_learning", extra_env={"ML_MODE": "BOTH"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        # Both modes ran and were validated.
+        validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
+        assert validation_modes == ["PENTAD", "DECAD"]
+
+        # Each mode gets its own, distinguishable summary row -- not two
+        # identically-labelled "api_validation (machine_learning)" rows.
+        assert "api_validation (machine_learning PENTAD): FAIL" in out
+        assert "api_validation (machine_learning DECAD): PASS" in out
+
+        # The failing row's own error-details tail must show PENTAD's own
+        # output, not DECAD's (which would mean DECAD's later call
+        # truncated/overwrote PENTAD's log file).
+        assert "VALIDATION ERROR DETAILS" in out
+        details = out.split("VALIDATION ERROR DETAILS", 1)[1]
+        assert "PENTAD_VALIDATION_MARKER" in details
+        assert "DECAD_VALIDATION_MARKER" not in details
 
 
 # ---------------------------------------------------------------------------

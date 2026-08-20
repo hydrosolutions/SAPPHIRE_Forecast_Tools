@@ -1,9 +1,10 @@
-# INFRA-032: An expected `preprocessing_runoff` failure aborts the whole `daily` run
+# INFRA-037: An expected `preprocessing_runoff` failure aborts the whole `daily` run
 
-**Status**: Draft (2026-08-20). Implemented, verification pending (2026-08-20) — the diagnosis
-below was corrected after direct evidence and a fix has been built against the corrected
-diagnosis (see § What was actually built). The full `run_tests.sh` gate has not yet been
-confirmed green for this branch; do not read this file as a completion claim.
+**Status**: Draft (2026-08-20). Implemented — the diagnosis below was corrected after direct
+evidence and a fix has been built against the corrected diagnosis (see § What was actually
+built). The full `run_tests.sh` gate is confirmed green (16/16 modules and services), and two
+rounds of out-of-loop review have run against this branch; see § Acceptance criteria for the
+current, verified state.
 **Module**: `apps/run_locally.sh` (orchestration) + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 (exit semantics of the maintenance sub-step that actually fails — **not**
 `preprocessing_runoff.py`, see § Correction below)
@@ -124,16 +125,18 @@ and loses the ordering and mode handling the orchestrator provides.
 ## Mechanism (corrected)
 
 `run_daily_pipeline` guards every module call with the same idiom
-(e.g. `apps/run_locally.sh:1386`, Phase 1; `:1393`, Phase 2):
+(e.g. `apps/run_locally.sh:1444`, Phase 1; `:1451`, Phase 2). The idiom now
+also records the abort as a fact, via `PIPELINE_ABORTED` (see § What was
+actually built):
 
 ```bash
-run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 ```
 
-`CONTINUE_ON_ERROR` defaults to `false` (`:114`). So the default behaviour is
+`CONTINUE_ON_ERROR` defaults to `false` (`:118`). So the default behaviour is
 fail-fast on the first module that returns non-zero. The reported abort was at
-**Phase 2** (`run_maintenance_preprocessing_runoff`, `:1393`) — maintenance
-preprocessing — not Phase 1 (`run_preprocessing_runoff`, `:1386`, which had
+**Phase 2** (`run_maintenance_preprocessing_runoff`, `:1451`) — maintenance
+preprocessing — not Phase 1 (`run_preprocessing_runoff`, `:1444`, which had
 already passed).
 
 `run_maintenance_preprocessing_runoff` runs `preprocessing_runoff.py
@@ -205,19 +208,24 @@ documented in the file header and in `--help`, so this was undiscoverable at
 the moment of need, not undocumented.
 
 **Now**, `main()` calls a new `emit_continue_on_error_hint` exactly once,
-after dispatch, whenever a fail-fast target aborted early with the flag unset:
+after dispatch, whenever the run aborted via the `CONTINUE_ON_ERROR` guard
+idiom. (The exact wording is being iterated on separately — do not quote it
+here; that is how this passage went stale before. Describe it structurally
+instead: it names the `--continue-on-error` flag, gives the exact command to
+re-run with it, and states that the run will still exit non-zero even then.)
 
-```
-[WARN] Pipeline stopped early because --continue-on-error is not set; the remaining modules did not run.
-[WARN] To run the remaining modules anyway: bash apps/run_locally.sh --continue-on-error <target>
-[WARN] Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful.
-```
-
-This is gated to **fail-fast targets** only (`daily`, `short-term`,
-`long-term`, `long-term-operational`, `maintenance`) via an `IS_FAIL_FAST_TARGET`
-flag set in `main()`'s target-validation step — `initialize`, `all` and
-`yearly` are excluded because a non-zero return from those does not
-necessarily mean anything was skipped by this guard idiom.
+This fires on the **fact of an abort**, not on the target's name. A
+`PIPELINE_ABORTED` flag is set at each of the guard idiom's 39 call sites
+(every pipeline function, across every target) the moment `CONTINUE_ON_ERROR`
+is false and a guarded step fails; `main()` checks that single flag once,
+after dispatch, regardless of which target ran. No target is excluded —
+`all`, `yearly` and `initialize` route through the same post-dispatch check
+as `daily`, `short-term`, `long-term`, `long-term-operational` and
+`maintenance`, and the hint fires for any of them if the guard idiom aborted
+something they call. (An earlier draft of this file described the gating as
+an `IS_FAIL_FAST_TARGET` flag that excluded `all`, `yearly` and `initialize`
+by target name — no such flag exists in the shipped code. Excluding those
+targets was the defect the fix corrected, not a design choice it kept.)
 
 ### 2. Exit 4 no longer folds into the module's overall status (was Candidate A)
 
@@ -293,9 +301,11 @@ Do not duplicate that analysis here.
    **Superseded**: the actual failure site is `sync_long_horizon_hydrograph.py`
    exit 4, not a `preprocessing_runoff.py` exit — recorded in § Field evidence
    and § Correction above.
-2. When any fail-fast target's module fails with `CONTINUE_ON_ERROR=false`,
-   the error output names `--continue-on-error` and states that the run is
-   stopping because of it — **implemented** via `emit_continue_on_error_hint`.
+2. When the `CONTINUE_ON_ERROR` guard idiom aborts any module, for any
+   target, with `CONTINUE_ON_ERROR=false`, the error output names
+   `--continue-on-error` and states that the run is stopping because of it —
+   **implemented** via `emit_continue_on_error_hint`, gated on the
+   `PIPELINE_ABORTED` flag rather than on the target's name.
 3. A `sync_long_horizon_hydrograph.py` exit 4 no longer aborts the `daily`
    run — Phase 3 (`machine_learning`, `linear_regression`,
    `postprocessing_forecasts`) still runs — while the overall run still exits
@@ -308,9 +318,9 @@ Do not duplicate that analysis here.
    per target, and the exit-4-continues-but-1/3/5-still-abort behaviour of
    `run_maintenance_preprocessing_runoff`.
 6. `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with zero
-   failures and zero unexpected skips. **Verification pending** — not yet
-   confirmed green for this branch at the time of this file's correction; this
-   issue cannot move past Draft until it is (CLAUDE.md § Multi-Model Review &
+   failures and zero unexpected skips. **Confirmed** — the full suite
+   (16/16 modules and services) is green on this branch, and two rounds of
+   out-of-loop review have run (CLAUDE.md § Multi-Model Review &
    Verification).
 
 ---

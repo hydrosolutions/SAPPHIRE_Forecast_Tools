@@ -198,6 +198,6 @@ the actual value (including distinguishing `None`/empty from a typo) instead of 
 
 ## Out of scope
 - The operational ML-NaN problem (TFT/TiDE/TSMixer producing NaN) — see ML-015 and ML-002.
-- INFRA-032 (the co-dependent `daily`-aborts-before-ML issue) — related but tracked separately; see
+- INFRA-037 (the co-dependent `daily`-aborts-before-ML issue) — related but tracked separately; see
   its own file for the `--continue-on-error` hint and the `preprocessing_runoff` long-horizon
   sub-step exit-code changes.

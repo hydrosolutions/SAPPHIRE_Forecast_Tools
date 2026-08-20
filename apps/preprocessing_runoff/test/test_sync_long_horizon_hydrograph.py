@@ -773,7 +773,7 @@ def test_skips_station_when_sdk_raises(caplog):
     assert "tunnel down" in caplog.text
 
 
-# INFRA-032: the SDK-failure log for write_station_monthly_hydrograph was
+# INFRA-037: the SDK-failure log for write_station_monthly_hydrograph was
 # lifted from DEBUG to WARNING because the root logger is configured at
 # WARNING in production (iEasyHydroForecast.setup_library), which makes this
 # script's own logging.basicConfig(level=logging.INFO) a no-op. Below
@@ -1371,7 +1371,7 @@ def test_main_exits_four_when_sdk_norm_lookup_fails(monkeypatch):
     assert exc.value.code == 4
 
 
-# INFRA-032: the precedence was deliberately inverted so exit 4 means "SDK
+# INFRA-037: the precedence was deliberately inverted so exit 4 means "SDK
 # failures only, no API failures". A later phase treats exit 4 as non-fatal
 # degradation; that is only safe if API_FAILED (a real read/write failure,
 # not just a missing norm lookup) always wins and keeps the run fatal (5).

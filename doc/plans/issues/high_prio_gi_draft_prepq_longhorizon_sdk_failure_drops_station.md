@@ -6,7 +6,7 @@
 the exact symptom PREPQ-009 fixed (empty last-year runoff, no percent-of-norm in the long-term
 monthly bulletin), just reached by a different branch of the same classifier.
 **Labels**: `preprocessing_runoff`, `long-horizon`, `data-loss`, `silent-skip`
-**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-032.
+**Found**: 2026-08-20, filed as a follow-up while implementing INFRA-037.
 **Related**: **PREPQ-009** (archived, `issues/archive/high_prio_gi_draft_runoff_longhorizon_norm_decouple.md`,
 merged PR #409 `c894edcd`) fixed exactly this asymmetry for the **NORM_ABSENT** branch — this
 issue is the residual **SDK_FAILED** branch it left standing. **PREPQ-014** (Low, Draft) —
