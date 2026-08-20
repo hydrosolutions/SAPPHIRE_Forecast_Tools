@@ -714,16 +714,39 @@ The two forecast dashboards are in different compose files — a mid-migration s
 
 To start just the decadal dashboard:
 
+> **⚠️ Do NOT run this as a bare `docker compose --env-file … up -d`.**
+> `bin/docker-compose-dashboards.yml` interpolates `${ieasyhydroforecast_data_ref_dir}`
+> and `${ieasyhydroforecast_container_data_ref_dir}` into the container's volume
+> mounts. Those are **not** literal `.env` keys — they are derived and `export`-ed by
+> `read_configuration` (`bin/utils/common_functions.sh`). A bare `--env-file` run
+> resolves them **blank**, turning the mount
+> `${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin`
+> into a literal **`/bin:/bin`** — mounting the host's bash over the container's libc,
+> which crash-loops with `GLIBC_2.38 not found`. Load the config into your shell
+> first, e.g. following the recipe in
+> [`doc/prod/long_term_deploy_runbook.md`](prod/long_term_deploy_runbook.md) (the
+> "Recreate via" block, around line 361) or
+> [`doc/prod/update_deployment_checklist.md`](prod/update_deployment_checklist.md)
+> (around line 604):
+
 ```bash
-docker compose -f bin/docker-compose-dashboards.yml \
-  --env-file /absolute/path/to/<data_folder>/config/<env_file> \
-  up -d decaddashboard
+source bin/utils/common_functions.sh
+export ieasyhydroforecast_env_file_path="/absolute/path/to/<data_folder>/config/<env_file>"
+read_configuration "$ieasyhydroforecast_env_file_path"
+docker compose --env-file "$ieasyhydroforecast_env_file_path" -f bin/docker-compose-dashboards.yml up -d decaddashboard
 
 # Health check (expect 200)
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5007/forecast_dashboard
 ```
 
-**Restarting after a config change:** use `bash bin/restart_sapphire_stack.sh <env_file>` — it stops the legacy dashboards compose first to free port 5006, then restarts the sapphire stack (including the pentadal dashboard). Restart the decadal dashboard separately with `docker compose -f bin/docker-compose-dashboards.yml restart decaddashboard` if needed.
+**Restarting after a config change:** use `bash bin/restart_sapphire_stack.sh <env_file>` — it stops the legacy dashboards compose first to free port 5006, then restarts the sapphire stack (including the pentadal dashboard). For the decadal dashboard, `restart` reuses the container's baked-in environment and will not pick up a changed variable. Use `--force-recreate` instead — but the same trap as above applies: `${ieasyhydroforecast_data_ref_dir}` and `${ieasyhydroforecast_container_data_ref_dir}` are derived, not `.env` keys, so a bare `--env-file` run resolves them blank and crash-loops the container with `GLIBC_2.38 not found`. Load the config first, then force-recreate:
+
+```bash
+source bin/utils/common_functions.sh
+export ieasyhydroforecast_env_file_path="<env_file>"
+read_configuration "$ieasyhydroforecast_env_file_path"
+docker compose --env-file "$ieasyhydroforecast_env_file_path" -f bin/docker-compose-dashboards.yml up -d --force-recreate decaddashboard
+```
 
 The migration of the decadal dashboard into `sapphire/docker-compose.yml` is planned but not yet done; until then, treat `bin/docker-compose-dashboards.yml` as "for the decadal dashboard only."
 
@@ -758,7 +781,7 @@ Either way, the DNS records (`fc.pentad.<base_url>`, `fc.decad.<base_url>`) must
 
 **WebSocket upgrade is mandatory.** The Panel/Bokeh dashboards communicate with the browser over a WebSocket after the initial page load. If the reverse proxy strips or rewrites the `Upgrade` and `Connection` headers, the page loads but every interaction hangs. For nginx, the relevant directives are `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` on the dashboard `location` block. Caddy and Traefik do this by default. Test after deploying by loading a dashboard and watching the browser's network tab for a WebSocket connection that stays open; if it repeatedly reconnects, the upgrade is not working.
 
-**Also set `ALLOWED_WEBSOCKET_ORIGINS`** on the Panel/Bokeh container to match your public hostname — otherwise Panel rejects the WebSocket even if the proxy is configured correctly. The dashboard image already reads `ieasyhydroforecast_url_pentad` / `..._decad` from the env file for this; set those to the full `https://fc.pentad.<base_url>` URLs.
+**Also set `ieasyhydroforecast_url_pentad` / `..._decad`** in the env file to match your public hostname — otherwise Bokeh rejects the WebSocket even if the proxy is configured correctly. Entries are comma-separated `HOST[:PORT]`, **with no scheme** (a `https://` prefix crashes Bokeh at startup); set those to `fc.pentad.<base_url>` / `fc.decad.<base_url>`.
 
 **Harden the API gateway if exposed.** If you have a reason to route the API gateway through the reverse proxy (remote admin, federation, etc.), turn on the optional defences that are off by default in `sapphire/.env.example`:
 

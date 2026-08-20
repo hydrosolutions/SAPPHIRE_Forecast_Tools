@@ -40,6 +40,9 @@ print_banner
 # Read the configuration from the .env file
 read_configuration $1
 
+# Validate the resolved dashboard WebSocket origins before starting anything
+validate_dashboard_origins || exit 1
+
 # Taking down the LEGACY dashboards first to free port 5006
 echo "|      "
 echo "| ------"

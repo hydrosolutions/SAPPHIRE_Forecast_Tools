@@ -51,6 +51,9 @@ print_banner
 # Read the configuration from the .env file
 read_configuration $1
 
+# Validate the resolved dashboard WebSocket origins before starting anything
+validate_dashboard_origins || exit 1
+
 # Taking down the dashboards if they are running
 echo "| Stoping the dashboards if they are running"
 docker compose -f bin/docker-compose-dashboards.yml down
