@@ -17,6 +17,7 @@
 import logging
 import os
 import sys
+import traceback
 from logging.handlers import TimedRotatingFileHandler
 
 import dg_utils
@@ -145,9 +146,30 @@ def main():
         # Initialize control_member_era5 to None
         control_member_era5 = None
 
-        control_member_era5 = client.era5_land.get_era5_land(
-            c_m_hru, date=start_date, end_date=end_date, directory=OUTPUT_PATH_DG
-        )
+        # Wrapped in a minimal try/except (PREPG-015): the Data Gateway
+        # client can embed the live API key in a ValueError's message
+        # (sapphire_dg_client/client_base.py:55-59). Without this, an
+        # uncaught exception here reaches Python's default traceback
+        # handler and prints the raw key on stderr. Mirrors the
+        # log-then-exit(1) convention already used above for the
+        # missing-API-key precondition, and in Quantile_Mapping_OP.py's
+        # control-member step for this same client call. The script
+        # must still fail with exit code 1 on this error, same as
+        # before. Logs the full traceback (not just str(e)) so a bug in
+        # our own code here -- a TypeError, KeyError, AttributeError --
+        # still gets a real stack, same as it would uncaught; the
+        # traceback text is redacted before logging, same as the two
+        # print(traceback.format_exc()) sites in Quantile_Mapping_OP.py.
+        try:
+            control_member_era5 = client.era5_land.get_era5_land(
+                c_m_hru, date=start_date, end_date=end_date, directory=OUTPUT_PATH_DG
+            )
+        except Exception:
+            logger.error(
+                "Exiting the program due to error: %s",
+                dg_utils.redact_api_key(traceback.format_exc()),
+            )
+            sys.exit(1)
 
         logger.debug(f"Control Member Data for HRU {c_m_hru} downloaded")
         logger.debug(f"for start_date: {start_date}")

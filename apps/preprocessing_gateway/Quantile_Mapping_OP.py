@@ -205,6 +205,12 @@ def _call_with_transport_retry(download_fn, context: str):
             _retry_sleep(_RETRY_SLEEP_SECONDS)
 
 
+# The API-key redaction helper used below moved to dg_utils.redact_api_key
+# (PREPG-015) -- shared across the module's Data Gateway call sites plus
+# snow_data_operational.py, snow_data_renalysis.py, and
+# get_era5_reanalysis_data.py.
+
+
 def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) -> pd.DataFrame:
     """
     Transforms the data file from the data gateaway in a more handy format.
@@ -793,7 +799,7 @@ def main():
 
         except Exception as e:
             if "Operational data for HRU" in str(e):
-                logger.error(f"Exiting the program due to error: {e}")
+                logger.error(f"Exiting the program due to error: {dg_utils.redact_api_key(str(e))}")
                 sys.exit(1)
             else:
                 # Narrowed 2026-08-20 (PREPG-010): previously this branch
@@ -946,15 +952,15 @@ def main():
                     #    directory=OUTPUT_PATH_DG
                     # )
                 except ValueError as e2:
-                    print(f"Error for date {yesterday}: {e2}")
-                    print(traceback.format_exc())
+                    print(f"Error for date {yesterday}: {dg_utils.redact_api_key(str(e2))}")
+                    print(dg_utils.redact_api_key(traceback.format_exc()))
                     # Handle the second error or re-raise it
                     sys.exit(1)
             else:
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
-                print(f"Unexpected error for date {today}: {e}")
-                print(traceback.format_exc())
+                print(f"Unexpected error for date {today}: {dg_utils.redact_api_key(str(e))}")
+                print(dg_utils.redact_api_key(traceback.format_exc()))
                 sys.exit(1)
 
         # print(f"Files downloaded: {files_downloaded}")
