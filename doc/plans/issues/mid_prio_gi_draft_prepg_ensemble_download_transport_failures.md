@@ -1,23 +1,17 @@
-## ECMWF ensemble download: a transient transport fault aborts `preprocessing_gateway` because the only handler catches `ValueError` (PREPG-010)
+## A transient transport fault kills `preprocessing_gateway`: the only handler catches `ValueError` (PREPG-010)
 
-**Status**: Draft (2026-08-18)
-**Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`), plus the
-`sapphire-dg-client` dependency
-**Priority**: **Medium** — a single transient network fault fails the whole module, and because
-the gateway target runs its three scripts with `break`-on-first-failure, ERA5 extension **and**
-snow do not run either. The failure **is** reported (`run_locally.sh:505` logs ERROR/FAIL) — it
-is loud, not silent.
-
-> **Scope note.** This issue is **narrowly about transport-fault handling**. Three
-> data-correctness defects on the same code path are filed separately: **PREPG-011** (the ensemble
-> transform writes the file-level HRU code into `code`, discarding the per-station identity),
-> **PREPG-012** (parameter-bundle selection via a leftover loop variable, dependent on 011), and
-> **PREPG-013** (ungrouped forward fills on three paths). Those are more serious than this one.
-**Labels**: `preprocessing_gateway`, `error-handling`, `network`, `dependency`
-**Found**: 2026-08-14, reported by a colleague running `run_locally.sh daily` on a dev machine;
-code confirmed on trunk 2026-08-18.
-**Related**: PREPG-009 (same module, opposite direction — that one reports success on failure;
-this one fails the whole run on a recoverable fault).
+**Status**: Draft (2026-08-18) — **scope-cut after pre-implementation review**; ready to implement
+**Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
+**Priority**: **Medium** — one transient network fault fails the whole module, and because the
+gateway target runs its three scripts with `break`-on-first-failure, ERA5 extension **and** snow
+do not run either. The failure **is** reported (`run_locally.sh:506-507` logs ERROR/FAIL) — loud,
+not silent.
+**Labels**: `preprocessing_gateway`, `error-handling`, `network`
+**Found**: 2026-08-14, reported by a colleague running `run_locally.sh` on a dev machine; code
+confirmed on trunk 2026-08-18.
+**Related**: PREPG-014 (client-side timeouts and link-status validation — split out of this issue,
+requires the separate `sapphire-dg-client` repo). PREPG-009 (same module, opposite direction —
+that one reports success on failure).
 
 ---
 
@@ -25,190 +19,182 @@ this one fails the whole run on a recoverable fault).
 
 ```
 Processing HRU Ensemble: <code>
-Traceback (most recent call last):
-  …
   File "Quantile_Mapping_OP.py", line 811, in main
     files = client.ecmwf_ens.get_ensemble_forecast(
   File "sapphire_dg_client/client_base.py", line 43, in _call_api_and_save_file
     resp = requests.get(file_resp.get("link"))
-  …
 requests.exceptions.ConnectionError: ('Connection aborted.',
     ConnectionResetError(54, 'Connection reset by peer'))
 [ERROR] preprocessing_gateway failed (exit 1) after 2m 4s
 ```
 
-The TLS connection for one ensemble-member file download was reset by the peer. The module
-died. ERA5 reanalysis extension and snow never ran.
+One member's TLS connection was reset. The module died; ERA5 extension and snow never ran.
 
-## Root cause — the error handling covers the *data* failure mode, not the *transport* one
+## Root cause
 
-`Quantile_Mapping_OP.py:808-846`:
+`Quantile_Mapping_OP.py:808-856` wraps the download in `try / except ValueError`. That handler
+exists for a **different** condition — "today's data isn't published yet, fall back to yesterday" —
+and a `requests.exceptions.ConnectionError` is not a `ValueError`, so it bypasses the block and
+propagates out of `main()`.
 
-```python
-try:
-    files_downloaded = []
-    for model in range(1, 51):                       # 50 client calls; each = 1 metadata req + N body reqs
-        files = client.ecmwf_ens.get_ensemble_forecast(
-            hru_code=code_ens, date=today, models=[str(model)], directory=OUTPUT_PATH_DG)
-        files_downloaded.append(files)
-except ValueError as e:                              # <-- ValueError ONLY
-    if "Couldn't find any files for the given HRU code, date and models!" in str(e):
-        …retry the same 50 calls with `yesterday`…
-```
+## There are TWO download loops, not one
 
-Four compounding problems:
+This is the detail an implementation is most likely to get wrong:
 
-1. **The handler catches `ValueError` only.** A `requests.exceptions.ConnectionError` is not a
-   `ValueError`, so it bypasses this block entirely and propagates out of `main()`.
-2. **The existing retry is a date fallback, not a transport retry.** It exists for "today's data
-   isn't published yet, try yesterday" — a legitimate and different concern. It was never meant
-   to cover network faults, and doesn't.
-3. **The loop makes 50 sequential client calls per ensemble HRU — and more HTTP requests than
-   that.** Each `get_ensemble_forecast` performs one metadata request (`client_base.py:38`) plus
-   one body request per returned link (`client_base.py:42`), so the true exposure is
-   `50 metadata requests + sum(returned links)` per HRU, plus the fallback's calls if it is entered (the first pass
-   can fail after any member, so the total is not simply doubled). *The original draft said "50 sequential HTTP downloads", which
-   understated it.* The inline comment explains the split — the batched form "may cause timeout
-   errors from gateway server side" — but it multiplied exposure to per-call transport faults
-   **without adding per-call resilience**. A fault also aborts the enclosing HRU loop
-   (`:799`): earlier HRUs have **completed**, the **currently failing** HRU is left with partial
-   raw downloads, and later HRUs are never attempted.
-4. **A failure at model N loses the accumulated in-memory path list, not the files.**
-   *Corrected 2026-08-18 after out-of-loop review — the original wording ("discards up to 49
-   downloaded files") was wrong.* `_save_file` writes each response to disk immediately
-   (`client_base.py:26`), so files from members `1..N-1` remain. What is lost is the
-   `files_downloaded` list, so no merge or final ensemble CSV is produced for that HRU. **No
-   code resumes from the partial files**, and the next normal run deletes everything under
-   `OUTPUT_PATH_DG` before downloading (`Quantile_Mapping_OP.py:625`, skipped only at DEBUG
-   level), then re-requests every member. There is also no sound "49 files" bound — each member
-   call may return multiple links, so models are not files.
-
-### The link request is unvalidated, and no request carries a timeout
-
-`sapphire_dg_client/client_base.py`:
-
-```python
-def _call_api_and_save_file(self, endpoint: str, directory: str):
-    resp = self._call_api(method="GET", endpoint=endpoint)
-    for file_resp in resp.json():
-        resp = requests.get(file_resp.get("link"))          # no timeout, no retry, no status check
-        local_file_path = self._save_file(resp, directory, file_resp["filename"])
-```
-
-Compare its sibling `_call_api`, which **does** validate:
-
-```python
-    if response.status_code != 200:
-        raise ValueError(f"Failed to get data from {endpoint}: {response.text}")
-```
-
-**A non-200 body is written to disk before any validation** — `_save_file` writes
-`response.content` with no content-type, size, checksum or schema check (`client_base.py:26`).
-Note the asymmetry: the *metadata* request is validated (`client_base.py:59`), the *link* request
-is not.
-
-*Corrected 2026-08-18:* the original draft called this "the more dangerous half" and asserted
-silent corruption. **That is not established.** Downstream parsing calls `pd.read_csv`
-(`Quantile_Mapping_OP.py:204`) and then assumes a non-empty two-column structure (`:147`) and
-parses dates (`:153`), so a typical HTML/JSON/plain-text error body would most likely raise
-loudly. The accurate statement is narrower:
-
-> Non-200 link bodies are written as raw forecast-named files before validation. Typical error
-> bodies probably fail during parsing, but **no explicit status, content, size or schema check
-> guarantees rejection**, so a sufficiently CSV-shaped bad body could pass.
-
-The missing **timeout** is arguably the more practically dangerous gap. Only two `requests` calls
-exist in the whole client (`client_base.py:43` and `:56`) and neither passes one, so a hung peer
-blocks the process indefinitely rather than failing.
-
-## Where to fix it
-
-`sapphire-dg-client` is a **hydrosolutions-owned git dependency**, so upstream is possible:
-
-```toml
-"sapphire-dg-client @ git+https://github.com/hydrosolutions/sapphire-dg-client.git@main"
-```
-
-| Option | Pros | Cons |
+| Site | Date | Context |
 |---|---|---|
-| **(a) Local, in `Quantile_Mapping_OP.py`** — retry the individual member on *transient* faults only (see breadth note below), with backoff | No cross-repo change; fixes the observed failure; can resume mid-loop | Leaves the client unguarded for other callers |
-| **(b) Upstream in `sapphire_dg_client`** — add `timeout`, bounded retry, and a status check to `_call_api_and_save_file` | Fixes it for every caller; the status check is the real prize | Separate repo and release; consumers move when they **relock**, not when `@main` moves |
+| `Quantile_Mapping_OP.py:811` | `today` | the normal path |
+| `Quantile_Mapping_OP.py:830` | `yesterday` | **inside** the `ValueError` fallback |
 
-**Recommend (a) now and (b) as a follow-up** — but note an inconsistency the review caught:
-**local-only work cannot satisfy every acceptance criterion below.** Request timeouts, a status
-check before `_save_file`, and any guarantee that a non-200 body is never written all live
-*inside the client*. So either (b) lands too, or the acceptance criteria must be split by phase.
-They are split accordingly below.
+They are near-identical 50-iteration loops. **A fix applied to only the first one leaves the
+defect live on the fallback path** — and the fallback is a normal daily occurrence, not an edge
+case. Both must use the same retry.
 
-**Retry breadth — do not catch all of `RequestException`.** Retry only genuinely transient
-transport faults and retryable statuses. Two traps:
+## The fix
 
-- **`requests.exceptions.SSLError` subclasses `ConnectionError`**, so retrying `ConnectionError`
-  also retries a permanent TLS misconfiguration. Exclude `SSLError` explicitly, or the
-  "fail immediately on permanent TLS failure" intent is not implemented.
-- The sibling `sapphire_api_client` treats **429** as retryable alongside 502/503/504. Either
-  include it deliberately or state why this API differs.
+**One small bounded retry helper, applied at both call sites.** Nothing more.
 
-**Reuse an existing pattern rather than inventing one.** There is no shared retry utility in
-`preprocessing_gateway`, but the installed `sapphire_api_client` implements exactly this shape —
-bounded exponential backoff for `ConnectionError`/`Timeout`, an explicit timeout, and retryable
-status handling. Follow it. Note that `requests` and `tenacity` are currently **transitive**
-dependencies of `preprocessing_gateway`, not declared ones — they are pulled in transitively via
-the pinned `sapphire-dg-client` resolution (`apps/preprocessing_gateway/uv.lock:425`); if local
-code imports either, declare it explicitly in `pyproject.toml`.
+- **A fixed number of attempts — three — hard-coded. No env var, no config surface, no CLI flag.**
+- **Retry the individual member call**, not the enclosing 50-member loop. Re-running all 50 after
+  a fault on member 37 is a different (and worse) behaviour.
+### The `SSLError` decision — DECIDED 2026-08-20: exclude it
 
-**Carve-out when copying that pattern:** `sapphire_api_client`'s retry set must **not** be adopted
-wholesale. `requests.exceptions.SSLError` subclasses `ConnectionError`, so inheriting its
-`ConnectionError` handling would retry a permanent TLS misconfiguration — exclude `SSLError`
-explicitly, as noted above.
+`requests.exceptions.SSLError` **subclasses** `ConnectionError` (`requests/exceptions.py:60`,
+`:68`) — verified, not assumed. So a bare `except ConnectionError` also retries a permanent TLS
+misconfiguration.
 
-**Not the only retry in the system.** The Luigi/Docker path already retries the whole container
-(`pipeline/pipeline_docker.py:359`, used at `:550`). That does not help the reported
-`run_locally.sh` invocation and is far too coarse — it re-runs every HRU and every member — but
-it means "no transport-failure handling" would be too broad a claim.
+**Owner decision (2026-08-20): exclude `SSLError`.** A permanent TLS failure must fail
+immediately and loudly rather than burn three attempts on a fault that cannot succeed — and,
+per the hang section below, every avoided attempt is one fewer opportunity to meet a hung peer.
+Implement as an explicit re-raise, not a narrower catch:
 
-## Withdrawn — the `@main` reproducibility concern
+```python
+except requests.exceptions.SSLError:
+    raise
+except requests.exceptions.ConnectionError:
+    ...  # retry
+```
 
-*An earlier revision claimed that `@main` means "any upstream commit lands on the next
-`uv sync` with no lockfile-visible intent". **That is wrong** and has been removed.*
-`uv.lock` resolves the dependency to a specific commit (`apps/preprocessing_gateway/uv.lock`),
-the installed metadata records the same commit, and the Docker build runs
-`uv sync --frozen --no-dev`. **The Python dependency set is reproducible.** (Not the whole
-image — the base image tag is mutable, which is a separate concern and not this issue's.)
+**Do not claim the class hierarchy cleanly separates transient from permanent faults** — it does
+not, and this decision does not assert otherwise. A connection reset *during* a TLS handshake can
+surface as either class depending on where it lands; excluding `SSLError` therefore accepts that
+some genuinely transient faults will not be retried. That is the accepted trade, not an oversight.
+The observed failure (`ConnectionResetError(54)`) reached us as a plain `ConnectionError`, so it
+is retried under this policy.
 
-What remains is an *upgrade-policy* question only: a deliberate relock advances `main`. Worth a
-sentence in a dependency-policy discussion, not an issue.
+## Coverage today is ZERO, and the harness is NOT a small fixture tweak
+
+Measured 2026-08-18. **Nothing exercises the code this issue changes:**
+
+- **No test references `get_ensemble_forecast` or `ecmwf_ens`.**
+- `test_dg_download_failure_exits` calls `qm.main()`, but makes the **control** download raise, so
+  it dies long before `:808`.
+- `test_qm_writes_both_P_and_T_csvs` runs `main()` successfully — but `gateway_env` sets
+  `ieasyhydroforecast_HRU_ENSEMBLE: "None"` (`test_integration_preprocessing_gateway.py:318`) and
+  the loop breaks on that value (`Quantile_Mapping_OP.py:806`) **before** the download.
+- **The today→yesterday fallback has no test at all** — the contract this fix most must not break.
+
+### Budget the harness properly
+
+*An earlier revision called this "extension, not invention". That was wrong.* Reaching `:808`
+requires **all** of the following to succeed first:
+
+- `load_environment()` neutralised; API key present.
+- Every path env var non-`None`; CM/ENS/DG directories writable.
+- Models/QM path env vars present. **If the QM directory exists, both control-member parameter
+  CSVs must be valid** — the current fixture sidesteps this by leaving it absent.
+- Both HRU env vars present, ensemble **not** `"None"`.
+- Mapping path env vars present; any existing mapping file must be valid JSON containing
+  `gateway_name_twins`.
+- The control-member download must return a truthy, existing, valid DG-format CSV, and its
+  transform and CM output writes must complete.
+
+### The harder part: characterization test (a) needs real files
+
+A plain `MagicMock` return **will not work**. `merge_ensemble_forecast` exits the process when the
+list is empty (`Quantile_Mapping_OP.py:189-191`, `sys.exit(1)`), and a default mock flattens to
+`[]`. So the fallback test needs **all 50 `yesterday` calls to return iterable lists of files that
+actually exist on disk**, created *after* the `:625` cleanup, with parseable
+`..._EMnnn_HRU..._{tp,2t}.csv` names and contents.
+
+An ensemble-file factory already exists but is **module-local to `test/test_ensemble_transforms.py`**,
+so it must be shared or rebuilt.
+
+**Characterization test (b) is cheap by contrast** — a `ConnectionError` propagates directly out of
+`main()`, so it needs no file scaffolding, and it inverts when the fix lands.
+
+**Implication for sequencing:** (b) and the retry can land first and cheaply. (a) — the date-fallback
+regression guard — is the expensive part, and it is the one that protects a normal daily path. Do
+not let its cost silently drop it.
+
+## This fix creates a small NEW hang exposure — know it before implementing
+
+`requests` has **no default timeout**, and the client sets none (`client_base.py:43`, `:56`), so a
+peer that accepts a connection and never responds blocks forever. That is **PREPG-014**, not this
+issue — but the retry interacts with it, and not neutrally:
+
+| Scenario | Today | After this fix |
+|---|---|---|
+| Attempt 1 **hangs** | blocks forever | blocks forever — **unchanged**; the retry never fires because the call never returns |
+| Attempt 1 **resets** | module dies in seconds — loud, and cron can retry | attempt 2 runs, and **attempt 2 can hang** |
+
+So the fix does not make a hang worse; it creates **up to 3× the opportunities to meet one**, on a
+path that previously terminated immediately. The bad trade it can produce is converting a fast,
+loud, cron-retryable failure into an indefinite silent block.
+
+**This is not a reason to skip the fix** — a reset is the observed failure and hangs are
+unobserved — but two things follow:
+
+1. **Keep the attempt count genuinely small (3).** Every extra attempt is another chance to hang.
+   This is a second, independent reason not to make it configurable: an operator raising it to 10
+   would multiply the exposure without seeing the connection.
+2. **PREPG-014 stops being merely "the other half" and becomes this fix's safety net.** Land it, or
+   accept the exposure knowingly.
+
+**A local option, if the exposure is unacceptable before PREPG-014 lands:** `socket.setdefaulttimeout(N)`
+at process start bounds *any* blocking socket operation without touching the client. It is a blunt
+instrument — process-global, affects the SAPPHIRE API client too — but it is per-socket-operation,
+not per-request, so a large ensemble download that streams steadily is unaffected. **Owner
+decision; do not add it unprompted.**
 
 ## Acceptance criteria
 
-**Phase (a) — local, achievable without the client:**
 - A simulated `requests.exceptions.ConnectionError` (chained from `ConnectionResetError`, as
-  Requests actually raises it — **not** a bare built-in) on one ensemble member does **not** fail the module; the
-  member is retried with bounded backoff and the run continues.
-- After a bounded number of retries, a genuinely unreachable gateway still fails **loudly** —
-  this must not become a silent skip (cf. PREPG-009, the opposite defect in the same module).
-- **The multi-HRU failure contract is explicit and tested.** Today a fault aborts the whole HRU
-  loop (`:799`). Choose one and pin it:
-  - *fail-fast* — abort remaining HRUs, but log which HRUs completed, which failed, and which were
-    never attempted; or
-  - *continue* — attempt every HRU, then exit non-zero with a per-HRU summary.
-
-  "Does not silently abandon the remaining HRUs" is not a contract — it does not say which
-  behaviour is correct.
-
-**Phase (b) — requires the client change** (local code *cannot* satisfy these: a link-level 404
-is never raised, only written, because only the metadata request's status is checked):
-- Every request carries an explicit timeout.
-- A non-200 **link** response is never written to disk as a forecast file.
-- A non-retryable status fails immediately without burning retries.
-- Metadata-response and link-response handling are tested **separately**.
-- `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green.
+  Requests actually raises it — **not** a bare built-in) on one member is retried and the run
+  continues.
+- **The `yesterday` fallback path is covered too**: `today` raises the fallback `ValueError` →
+  `yesterday` hits a `ConnectionError` → retry succeeds. *Without this case, wrapping only the
+  first loop would pass.*
+- **Call counts are asserted exactly**, proving only the failing member is retried and the other
+  49 are not re-requested.
+- After the attempt limit is exhausted, the module still fails **loudly** — this must not become a
+  silent skip (cf. PREPG-009, the opposite defect in this module).
+- **A `requests.exceptions.SSLError` is NOT retried** — it propagates on the first
+  attempt, pinned by a test asserting exactly one call.
+- `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green.
 
 ## Contract not to break
 
-- **The `yesterday` date-fallback must keep working.** It handles "data not published yet",
-  which is a normal daily condition — do not collapse it into the transport retry.
-- **Do not widen the `except` to bare `Exception`.** A genuine `ValueError` for "no files for
-  this HRU/date" must remain distinguishable from a transport fault; conflating them would
-  re-create PREPG-009's problem of an unexplained condition reported as routine.
+- **The `yesterday` date-fallback must keep working.** It handles "data not published yet", a
+  normal daily condition. Do not collapse it into the transport retry.
+- **Do not widen the `except` to bare `Exception`.** The `ValueError` for "no files for this
+  HRU/date" must stay distinguishable from a transport fault; conflating them re-creates
+  PREPG-009's problem of an unexplained condition reported as routine.
+- **Preserve fail-fast across HRUs.** Today an escaping exception ends the HRU loop
+  (`Quantile_Mapping_OP.py:799`). Keep that. Switching to "continue" would change
+  operator-visible partial output, since results are written per HRU (`:912-917`) — a separate
+  decision, not this fix.
 - The one-model-at-a-time loop is deliberate (batched requests time out server-side). Keep it.
+- **A small local loop, not `tenacity`** — a retry framework for one call site is disproportionate.
+- **No HTTP-status retry (429/502/503/504).** It cannot work from here: the client turns a non-200
+  *metadata* response into an undifferentiated `ValueError` and never raises on a bad *link*. That
+  is PREPG-014's territory.
+
+## State on failure — no new cleanup needed
+
+`_save_file` writes each response to disk immediately (`client_base.py:26`) with mode `wb`, so a
+retry overwrites the same path harmlessly. Files from earlier members persist, but the in-memory
+`files_downloaded` list is lost, so no merge or final ensemble CSV is produced for that HRU.
+**No code resumes from partial files**, and the next run *attempts* to delete everything under
+`OUTPUT_PATH_DG` before downloading (`Quantile_Mapping_OP.py:625`) — deletion failures are caught
+and suppressed (`:637`), so it is an attempt, not a guarantee.
