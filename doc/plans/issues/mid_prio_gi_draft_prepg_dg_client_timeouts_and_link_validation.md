@@ -1,9 +1,8 @@
 ## `sapphire-dg-client` has no request timeouts and never validates the link response (PREPG-014)
 
 **Status**: Draft (reviewed 2026-08-20) — split out of PREPG-010, which is local-only by design.
-**Blocked on three owner decisions before it can move to `Ready`** — see § Owner decisions. An
-out-of-loop pass found the timeout values unspecified, the link-error exception type unspecified,
-and the new timeout exceptions not lining up with the retry that has since shipped.
+**The three owner decisions are now RESOLVED** (§ Decisions). One evidence gap remains before this
+can move to `Ready`: a single measurement of Data Gateway time-to-first-byte — see § Decisions #3.
 **Module**: the **`sapphire-dg-client`** dependency (separate hydrosolutions repo), consumed by
 `apps/preprocessing_gateway`
 **Priority**: **Medium** — *raised from Low 2026-08-18.* No observed incident, which is what kept
@@ -105,43 +104,74 @@ as-is, PREPG-014 converts "blocks forever" into "dies uncaught, printing a key-b
 stderr" — an improvement over hanging, but not what a reader would assume, and it lands on
 PREPG-017's open path.
 
-## Owner decisions required before implementing
+## Decisions — RESOLVED 2026-08-20 by the owner
 
-These are genuine forks, not details. **Do not start without them.**
+Recorded with their reasoning, because each rules out an alternative an implementer would otherwise
+reach for.
 
-1. **Does `ReadTimeout` join the local retry set?** It is the read-phase hang. Adding it means
-   editing shipped PREPG-010 code (`_call_with_transport_retry`'s retryable tuple) — cheap, but it
-   changes merged behaviour and needs its own test. Declining it means a read timeout is a loud
-   one-shot failure. Either is defensible; silence is not.
-2. **What exception does a failed link raise?** `raise_for_status()` gives `HTTPError`, which
-   **bypasses both ensemble `ValueError` handlers**. A `ValueError` subclass preserves handler
-   coverage but must be guaranteed *not* to contain the sentinel
-   `"Couldn't find any files for the given HRU code, date and models!"`, or a link failure would
-   silently trigger the today→yesterday fallback. Note the control path catches `Exception`
-   broadly (`Quantile_Mapping_OP.py:792-821`), so it is unaffected either way.
-3. **What timeout values, and on what evidence?** "Every request carries an explicit timeout" is
-   satisfied by `timeout=None`. Values must be positive and finite, and **connect and read must be
-   set separately**, because a read timeout is an *idle interval between socket reads*, not a total
-   deadline (`urllib3/util/timeout.py:76-103`) — a trickling response never trips it. Since
-   `_call_api` also downloads whole files, a single small number is unsafe. Needs operational
-   evidence: largest file, observed latency, and the acceptable worst case for a 50-member loop
-   that may now attempt each member twice.
+1. **`ReadTimeout` IS retried. Add `requests.exceptions.Timeout` to the retryable tuple** in the
+   shipped `_call_with_transport_retry` — that single class covers both `ReadTimeout` and
+   `ConnectTimeout`, rather than naming subclasses. **Reasoning:** a read timeout is exactly the
+   transient fault the retry exists for, and without it PREPG-014 would convert a hang into an
+   *uncaught* exception on PREPG-017's key-bearing stderr path — trading one bad outcome for
+   another. This edits merged code, so it needs its own test asserting a `ReadTimeout` produces
+   exactly 2 calls.
+   **Consequence to state in the PR:** retrying a timeout doubles the worst-case wait per member to
+   `2 x (connect + read)`.
+2. **A failed link raises a dedicated `ValueError` SUBCLASS.** Not `raise_for_status()`.
+   **Reasoning:** `HTTPError` is neither `ConnectionError` nor `ValueError`, so it bypasses both
+   ensemble handlers *and* the retry and propagates uncaught — the idiomatic choice is the worse
+   one here. A `ValueError` subclass keeps the existing handlers working, so the failure exits
+   loudly through the path that already exists.
+   **Hard requirement:** its message must be guaranteed **not** to contain
+   `"Couldn't find any files for the given HRU code, date and models!"`. A link failure is not
+   "no data for this date", and if its text ever matched that sentinel it would silently trigger
+   the today→yesterday fallback and download the wrong day's forecast. **Pin that with a test.**
+   The control path catches `Exception` broadly (`Quantile_Mapping_OP.py:792-821`) and is
+   unaffected either way.
+3. **`timeout=(10, 60)` — connect 10s, read 60s — with ONE measurement required before merge.**
+
+   **Evidence for 60s:** 121 observed `run_locally` gateway runs give whole-module
+   min 92s / median 329s / max 584s. That total covers 50 ensemble members per HRU *plus* control,
+   ERA5, snow and all processing — so a **single request** idling 60s is already far outside
+   anything normal. It cannot plausibly break a download that completes today.
+
+   **The one thing not measured, and it is the only number that can break a working download:**
+   Data Gateway **time-to-first-byte**. A read timeout is an idle interval
+   (`urllib3/util/timeout.py:76-103`), so if the gateway *computes* a file on demand it may
+   legitimately stay silent longer than 60s before sending anything. **Measure it once against a
+   real deployment before merging** and raise the read value if it is anywhere near 60s. Do not
+   skip this because the number looks generous — the runtime evidence above says nothing about
+   first-byte latency.
+
+   **A per-request timeout does NOT bound the job.** Worst case is now
+   50 members x 2 attempts x 70s = **~1.9 hours per HRU** of pure waiting. That is finite, unlike
+   today, but it is long enough to overlap the next cron run. **The implementer must confirm the
+   deployed cron spacing tolerates it, or an overall job deadline is needed — a Requests timeout
+   cannot provide one.**
 
 ## Acceptance criteria
 
-- Every request carries an explicit, **positive and finite** connect and read timeout, asserted as
-  an exact tuple on **both** `requests` call sites. *"Has a timeout" is not testable;
-  `timeout=None` satisfies it.*
-- A non-200 **link** response is surfaced as the exception type chosen in § Owner decisions, and
-  **never written to disk** — assert the target file does not exist afterwards, not merely that an
-  exception was raised.
+- Both `requests` call sites pass **`timeout=(10, 60)`** exactly — assert the tuple, not merely
+  that some timeout is present. *"Has a timeout" is not testable; `timeout=None` satisfies it.*
+- **`requests.exceptions.Timeout` is in `_call_with_transport_retry`'s retryable tuple**, pinned by
+  a test asserting a `ReadTimeout` produces exactly **2** calls — the same shape as the existing
+  `SSLError` test, so a later "tightening" that drops it fails visibly.
+- A non-200 **link** response raises the dedicated `ValueError` subclass and is **never written to
+  disk** — assert the target file does not exist afterwards, not merely that an exception was
+  raised.
+- **The link error's message does not contain the fallback sentinel.** Assert it directly, and
+  assert at `main()` level that a link failure does **not** trigger the today→yesterday path. This
+  is the criterion that stops a link failure silently fetching the wrong day's forecast.
 - Direct-file `_call_api` calls (control, ERA5, snow) are covered separately from the ensemble
   link-list call — they are different payload sizes through the same method.
 - Each newly-reachable class is tested at the **caller**: `ConnectTimeout`, `ReadTimeout`, the link
   error, and retry exhaustion — including that nothing reaches stdout/stderr carrying `api_key`
   (PREPG-015/PREPG-017).
-- The today→yesterday fallback still fires on the real sentinel, and a **link** failure does
-  **not** trigger it.
+- The today→yesterday fallback still fires on the real sentinel.
+- **Recorded before merge, not after:** the measured Data Gateway time-to-first-byte, and a
+  statement that the deployed cron spacing tolerates the ~1.9h worst case (or the overall deadline
+  that replaces it). See § Decisions #3.
 - **`uv.lock` is relocked** to the reviewed upstream commit, and the full suite passes on a frozen
   install. *Without this the fix ships nowhere.*
 
