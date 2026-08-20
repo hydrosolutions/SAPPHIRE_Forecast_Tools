@@ -2,8 +2,8 @@
 
 **Status**: Draft (2026-08-20)
 **Module**: `apps/preprocessing_gateway` (`Quantile_Mapping_OP.py`)
-**Priority**: **Medium — latent, not observed.** See § How likely is this, really — the severity
-turns on a question about Data Gateway behaviour that has not been answered.
+**Priority**: **Low — DORMANT.** *Was Medium-latent; the blocking question is now answered
+empirically (§ How likely is this, really) and the answer closes it.*
 **Labels**: `preprocessing_gateway`, `data-quality`, `silent-failure`
 **Found**: 2026-08-20, by the out-of-loop adversarial review of the PREPG-010 diff. Not observed in
 production; no log or output artifact is known to exhibit it.
@@ -42,21 +42,36 @@ run on whatever arrived.
 This is the same failure *shape* as PREPG-009: the run is loud about nothing, exits 0, and the
 damage is wrong data rather than a visible error.
 
-## How likely is this, really — the open question
+## How likely is this, really — ANSWERED 2026-08-20, and the answer is "it cannot happen today"
 
-**Do not assign a firm severity before answering this**, and do not let the vividness of the
-scenario substitute for evidence:
+The question was: can `get_ensemble_forecast` return **successfully with an empty file list** —
+an HTTP 200 carrying no links — rather than raising? Only a 200-with-empty-list arms this issue,
+because `_call_api` turns every non-200 into a `ValueError` (`client_base.py:59`).
 
-> Can `client.ecmwf_ens.get_ensemble_forecast(...)` return **successfully with an empty or short
-> file list** for a member — an HTTP 200 whose body contains no links — rather than raising?
+**Measured against the live Data Gateway 2026-08-20.** Every no-data and invalid case returns
+**HTTP 400**, never 200-with-empty-list:
 
-- If it always raises when a member is unavailable (the DG client turns a non-200 into a
-  `ValueError`, and the today→yesterday fallback is built on exactly that), then the loop cannot
-  silently skip members and this issue is **dormant** — worth a cheap assertion, nothing more.
-- If a 200-with-empty-list is reachable, the loop swallows it as `[]` and the defect is **live**.
+| request | result |
+|---|---|
+| valid HRU + date | 200, 2 entries |
+| date 400 days in the past | 200, 2 entries |
+| date 10 days in the **future** | **400** |
+| model 51 (outside 1..50) | **400** |
+| nonexistent HRU | **400** |
 
-That question is answerable from a DG response capture or from the client's own behaviour; it is
-not answerable by reading `Quantile_Mapping_OP.py`, which is why this is filed rather than fixed.
+The no-data body is
+`{"message": "Couldn't find any files for the given HRU code, date and models! ", "success": false}`
+— i.e. the **same 400 that drives the today→yesterday fallback**. So an unavailable member raises;
+it does not return `[]`.
+
+**Verdict: dormant.** The loop cannot silently skip a member, so the one-member-ensemble scenario
+is unreachable through this path. Reduced to **Low**.
+
+**What would re-arm it**, and why the issue is kept rather than closed: a gateway change that
+starts returning 200 with an empty or partial list, or a caller that begins swallowing the
+`ValueError`. The aggregate-only guards at `:264`/`:293`/`:296` are still the only thing standing
+between a partial download and a written output — nothing in *our* code enforces member count.
+**Five probes are not a contract.**
 
 ## Relationship to PREPG-010 — orthogonal, worth stating explicitly
 
