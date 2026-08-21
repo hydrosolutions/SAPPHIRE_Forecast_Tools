@@ -341,7 +341,11 @@ Scope:
 
   ```bash
   bash bin/daily_gateway_maintenance.sh <env>
-  ieasyhydroforecast_SNOW_RECALC_YEAR=2026 bash bin/run_periodic_maintenance.sh snow_norms <env>
+  # DO NOT USE run_periodic_maintenance.sh snow_norms -- see P-007. It routes to a Luigi task
+  # that launches the `sapphire-pipeline` image, which does not contain recalculate_snow_norms.py,
+  # and the failure is reported as SUCCESS (container exit code discarded; the wrapper has no
+  # `set -e` and ends on two echoes, so it always exits 0). Use the working path instead:
+  ieasyhydroforecast_SNOW_RECALC_YEAR=2026 bash bin/yearly_snow_norm_recalculation.sh <env>
   ```
 
 - Order rationale: maintenance-first fills `value`/`current`; recalc-second
