@@ -2207,7 +2207,11 @@ Accept when:
 1. hydrographs/month rows exist for every target year run.
 2. hydrographs/season rows exist for every target year run.
 3. norm, previous, and current are populated where source data exists.
-4. Stations skipped by bad SDK responses are listed in logs and reviewed.
+4. A bad iEasyHydro-HF monthly-norm SDK response no longer skips a station —
+   it still gets its full month/season/quarter row set, marked `SDK_FAILED`
+   (only its monthly norm is affected, read-merged from any previously
+   stored value). Stations skipped outright due to API read/write failures
+   (`API_FAILED`) are listed in logs and reviewed.
 ```
 
 ### Failure recovery

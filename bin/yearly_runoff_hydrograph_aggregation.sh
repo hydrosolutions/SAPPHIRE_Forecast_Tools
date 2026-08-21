@@ -18,8 +18,12 @@
 # iEH HF SDK monthly norm call's outcome: a wrong-length/empty return
 # (NORM_ABSENT) or the call itself raising (SDK_FAILED, PREPQ-015)
 # both still write the station's month/quarter/season rows, preserving
-# any previously stored norm via a read-merge rather than dropping the
-# station. The run summary and exit code still distinguish the two --
+# any previously stored MONTHLY norm via a read-merge rather than dropping
+# the station. Seasonal and quarterly norms are not read-merged themselves;
+# they are re-derived (all-or-nothing) from those monthly norms, so a
+# previously stored rollup norm can still be rewritten to null if one of
+# its constituent months is absent this run. The run summary and exit code
+# still distinguish the two --
 # any SDK_FAILED station keeps the run's exit code non-zero (4, or 5
 # if an API read/write failure also occurred) so the failure stays
 # visible without withholding otherwise-computable data.
