@@ -14,10 +14,15 @@
 # seasonal row per station per year.
 #
 # Designed to run once a year (e.g., 1 January 03:00 UTC) as part of
-# the yearly maintenance window. Stations whose iEH HF SDK monthly
-# norm call returns wrong-length or empty data are skipped and the
-# rest of the run continues (see commit aeceebe for the skip-and-
-# continue P1-fix).
+# the yearly maintenance window. Row existence is decoupled from the
+# iEH HF SDK monthly norm call's outcome: a wrong-length/empty return
+# (NORM_ABSENT) or the call itself raising (SDK_FAILED, PREPQ-015)
+# both still write the station's month/quarter/season rows, preserving
+# any previously stored norm via a read-merge rather than dropping the
+# station. The run summary and exit code still distinguish the two --
+# any SDK_FAILED station keeps the run's exit code non-zero (4, or 5
+# if an API read/write failure also occurred) so the failure stays
+# visible without withholding otherwise-computable data.
 #
 # Usage:
 #   bash bin/yearly_runoff_hydrograph_aggregation.sh <env_file_path> [--target-year YYYY]

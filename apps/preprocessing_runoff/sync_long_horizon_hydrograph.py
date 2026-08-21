@@ -344,9 +344,10 @@ def write_station_monthly_hydrograph(
     """Build and write monthly hydrograph records for one station.
 
     Row existence is decoupled from the iEH-HF monthly norm: when the norm is
-    absent (any non-12-finite return), the 12 month rows are still written and
-    any previously stored norm is preserved via a read-merge. Only an SDK
-    exception skips the station.
+    absent (any non-12-finite return) OR the SDK call itself raises, the 12
+    month rows are still written and any previously stored norm is preserved
+    via a read-merge. Status stays orthogonal to record existence -- an SDK
+    exception no longer skips the station.
     """
     logger.info("Building long-horizon monthly hydrograph for station %s", code)
     norm_lookup = _lookup_monthly_norms(code, iehhf_sdk)
@@ -354,19 +355,15 @@ def write_station_monthly_hydrograph(
     if norm_classification is _NormClassification.SDK_FAILED:
         exc = norm_lookup.exception
         logger.warning(
-            "write_station_monthly_hydrograph: SDK call failed for site %s, skipping. "
-            "Error: %s: %s",
+            "write_station_monthly_hydrograph: SDK call failed for site %s, continuing "
+            "with a read-merge of any previously stored norm. Error: %s: %s",
             code,
             type(exc).__name__,
             exc,
         )
-        return LongHorizonStationWriteResult(
-            status=LongHorizonStationWriteStatus.SDK_FAILED,
-            records=[],
-        )
 
     norms = norm_lookup.norms
-    if norm_classification is _NormClassification.NORM_ABSENT:
+    if norm_classification in (_NormClassification.NORM_ABSENT, _NormClassification.SDK_FAILED):
         logger.debug(
             "write_station_monthly_hydrograph: monthly norms absent for site %s; "
             "preserving any existing month norms.",
@@ -409,11 +406,12 @@ def write_station_monthly_hydrograph(
     )
     client.write_hydrograph(records)
     logger.info("Wrote %d monthly hydrograph records for station %s", len(records), code)
-    status = (
-        LongHorizonStationWriteStatus.WRITTEN
-        if norm_classification is _NormClassification.VALID
-        else LongHorizonStationWriteStatus.NORM_ABSENT
-    )
+    if norm_classification is _NormClassification.VALID:
+        status = LongHorizonStationWriteStatus.WRITTEN
+    elif norm_classification is _NormClassification.SDK_FAILED:
+        status = LongHorizonStationWriteStatus.SDK_FAILED
+    else:
+        status = LongHorizonStationWriteStatus.NORM_ABSENT
     return LongHorizonStationWriteResult(status=status, records=records)
 
 
@@ -569,14 +567,6 @@ def write_long_horizon_hydrograph(
                 target_year=target_year,
                 today=today,
             )
-            if monthly_result.status is LongHorizonStationWriteStatus.SDK_FAILED:
-                all_records.station_statuses.append((code_str, monthly_result.status))
-                all_records.attempted_station_codes.pop()
-                logger.info(
-                    "Skipping seasonal hydrograph for station %s without monthly records",
-                    code,
-                )
-                continue
             monthly_records = monthly_result.records
             all_records.extend(monthly_records)
             all_records.append(

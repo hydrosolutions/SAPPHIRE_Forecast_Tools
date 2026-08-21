@@ -754,8 +754,19 @@ def test_norm_absent_preserves_existing_month_norms_and_derives_rollups():
         assert quarter_record["norm"] == pytest.approx(expected)
 
 
-def test_skips_station_when_sdk_raises(caplog):
-    client = MagicMock()
+def test_continues_station_when_sdk_raises(caplog):
+    # PREPQ-015: previously test_skips_station_when_sdk_raises, asserting the
+    # early return this issue removes -- `records == []` and
+    # `write_hydrograph` never called. That early return was exactly the
+    # dropped-station bug PREPQ-015 fixes: a raised norm lookup no longer
+    # skips the station, it falls through the same NORM_ABSENT read-merge
+    # path and writes the 12 monthly records, keeping status SDK_FAILED.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
 
     with caplog.at_level(sync_lhh.logging.DEBUG):
         result = sync_lhh.write_station_monthly_hydrograph(
@@ -763,12 +774,13 @@ def test_skips_station_when_sdk_raises(caplog):
             FakeSDK(ConnectionError("tunnel down")),
             client,
             target_year=2026,
-            today=dt.date(2026, 6, 15),
+            today=dt.date(2027, 1, 1),
         )
 
     assert result.status is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
-    assert result.records == []
-    client.write_hydrograph.assert_not_called()
+    assert len(result.records) == 12
+    assert len(client.write_calls) == 1
+    assert len(client.write_calls[0]) == 12
     assert "ConnectionError" in caplog.text
     assert "tunnel down" in caplog.text
 
@@ -780,8 +792,17 @@ def test_skips_station_when_sdk_raises(caplog):
 # WARNING, the failing station and the reason are invisible in production
 # logs. Capture at WARNING (not DEBUG) so this test would fail if the level
 # regressed back to DEBUG.
-def test_skips_station_when_sdk_raises_logs_at_warning_with_station_and_error(caplog):
-    client = MagicMock()
+def test_continues_station_when_sdk_raises_logs_at_warning_with_station_and_error(caplog):
+    # PREPQ-015: previously test_skips_station_when_sdk_raises_logs_at_
+    # warning_with_station_and_error -- the WARNING-level log assertion is
+    # unchanged (INFRA-037), only the "skip" framing changed to "continue",
+    # and the station now writes 12 records instead of zero.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
 
     with caplog.at_level(sync_lhh.logging.WARNING):
         result = sync_lhh.write_station_monthly_hydrograph(
@@ -789,10 +810,11 @@ def test_skips_station_when_sdk_raises_logs_at_warning_with_station_and_error(ca
             FakeSDK(ConnectionError("tunnel down")),
             client,
             target_year=2026,
-            today=dt.date(2026, 6, 15),
+            today=dt.date(2027, 1, 1),
         )
 
     assert result.status is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
+    assert len(result.records) == 12
     warning_records = [
         record for record in caplog.records if record.levelno == sync_lhh.logging.WARNING
     ]
@@ -844,6 +866,11 @@ def test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sd
     assert month_five["previous"] == sync_lhh.fl.round_3sf(15.0)
     assert month_five["current"] == sync_lhh.fl.round_3sf(30.0)
 
+    # PREPQ-015: this final phase previously asserted `sdk_failed_records ==
+    # []` and no new `write_hydrograph` calls -- the exact drop this issue
+    # fixes. A raised norm lookup now falls through the same NORM_ABSENT
+    # read-merge and writes the station's 17 records (12 month + 1 season + 4
+    # quarter), preserving the month-five norm stored by the prior run.
     write_call_count = len(client.write_calls)
     sdk_failed_records = sync_lhh.write_long_horizon_hydrograph(
         codes=[TEST_CODE],
@@ -852,14 +879,23 @@ def test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sd
         target_year=2026,
         today=dt.date(2027, 1, 1),
     )
-    assert sdk_failed_records == []
+    assert len(sdk_failed_records) == 17
     assert sdk_failed_records.station_statuses == [
         (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)
     ]
-    assert len(client.write_calls) == write_call_count
+    assert len(client.write_calls) == write_call_count + 3
+    sdk_failed_month_five = _record_for_month(_records_by_horizon(sdk_failed_records, "month"), 5)
+    assert sdk_failed_month_five["norm"] == 5.0
+    assert sdk_failed_month_five["previous"] == sync_lhh.fl.round_3sf(15.0)
+    assert sdk_failed_month_five["current"] == sync_lhh.fl.round_3sf(30.0)
 
 
 def test_mixed_batch_carries_station_statuses():
+    # PREPQ-015: strengthened per the draft's "also strengthen" note -- assert
+    # record counts (17 per invocation, 51 total), not just station_statuses,
+    # now that SDK_FAILED writes records like every other status. Also
+    # asserts the len(station_statuses) == len(attempted_station_codes)
+    # invariant the draft calls out, to catch an accidental double-append.
     client = FakeHydrographClient(
         runoff_by_year={
             2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
@@ -880,6 +916,16 @@ def test_mixed_batch_carries_station_statuses():
         (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
         (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
     ]
+    assert len(records) == 51
+    for status_index in range(3):
+        start = status_index * 17
+        batch = records[start : start + 17]
+        assert len(_records_by_horizon(batch, "month")) == 12
+        assert len(_records_by_horizon(batch, "season")) == 1
+        assert len(_records_by_horizon(batch, "quarter")) == 4
+    assert len(records.attempted_station_codes) == 3
+    assert len(records.completed_station_codes) == 3
+    assert len(records.station_statuses) == len(records.attempted_station_codes)
 
 
 def test_mixed_batch_status_summary_tallies_statuses_and_total():
@@ -1096,31 +1142,45 @@ def test_leap_year_february_threshold_still_uses_29_days_with_norm_absent(monkey
     assert february["day_of_year"] == 46
 
 
-def test_orchestrator_continues_after_skipped_station():
-    skipped_code = "A"
-    valid_code = "B"
+def test_orchestrator_continues_after_sdk_failed_station():
+    # PREPQ-015: previously test_orchestrator_continues_after_skipped_station,
+    # asserting the SDK-failed station contributed zero records and only the
+    # valid station's writes showed up (17 records, call_count == 3). The
+    # SDK-failed station is no longer skipped -- it writes its own 12/1/4
+    # records too, so both stations' records/writes are present (34 records,
+    # call_count == 6, shape checked per station).
+    sdk_failed_code = "19999"
+    valid_code = "19998"
     sdk = MagicMock()
     sdk.get_norm_for_site.side_effect = [ConnectionError("tunnel down"), _norms()]
-    client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-    ]
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
 
     records = sync_lhh.write_long_horizon_hydrograph(
-        codes=[skipped_code, valid_code],
+        codes=[sdk_failed_code, valid_code],
         iehhf_sdk=sdk,
         client=client,
         target_year=2026,
         today=dt.date(2027, 1, 1),
     )
 
-    assert len(records) == 17
-    assert {record["code"] for record in records} == {valid_code}
-    assert client.write_hydrograph.call_count == 3
-    assert len(client.write_hydrograph.call_args_list[0].args[0]) == 12
-    assert len(client.write_hydrograph.call_args_list[1].args[0]) == 1
-    assert len(client.write_hydrograph.call_args_list[2].args[0]) == 4
+    assert len(records) == 34
+    assert {record["code"] for record in records} == {sdk_failed_code, valid_code}
+    assert len(client.write_calls) == 6
+    for station_code in (sdk_failed_code, valid_code):
+        station_records = [record for record in records if record["code"] == station_code]
+        assert len(_records_by_horizon(station_records, "month")) == 12
+        assert len(_records_by_horizon(station_records, "season")) == 1
+        assert len(_records_by_horizon(station_records, "quarter")) == 4
+    assert records.station_statuses == [
+        (sdk_failed_code, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        (valid_code, sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+    ]
+    assert len(records.station_statuses) == len(records.attempted_station_codes)
 
 
 def test_orchestrator_continues_after_quarterly_api_write_failure(caplog):
@@ -1195,6 +1255,52 @@ def test_orchestrator_preserves_monthly_when_seasonal_api_write_fails(caplog):
     assert records.attempted_station_codes == ["19999"]
     assert records.completed_station_codes == []
     assert records.failed_station_codes == ["19999"]
+
+
+def test_orchestrator_sole_api_failed_status_when_sdk_raises_then_seasonal_write_fails(caplog):
+    # PREPQ-015 NEW (added per the latest review round): a norm lookup that
+    # raises (SDK_FAILED) followed by a LATER SAPPHIRE API write failure
+    # (seasonal, here) must leave exactly ONE terminal status recorded --
+    # API_FAILED, not both SDK_FAILED and API_FAILED. The monthly write that
+    # already happened before the failure still contributes its partial
+    # records; the station is not completed; the run exits 5 (API_FAILED
+    # takes precedence over SDK_FAILED).
+    client = MagicMock()
+    client.read_runoff.side_effect = [
+        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+    ]
+    client.read_hydrograph.return_value = []
+    write_calls = []
+
+    def fail_second_write(_records):
+        write_calls.append(_records)
+        if len(write_calls) == 2:
+            raise sync_lhh.SapphireAPIError("season rejected", status_code=422)
+
+    client.write_hydrograph.side_effect = fail_second_write
+
+    with caplog.at_level(sync_lhh.logging.WARNING):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=["19999"],
+            iehhf_sdk=FakeSDK(ConnectionError("tunnel down")),
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert len(records) == 12
+    assert client.write_hydrograph.call_count == 2
+    assert records.station_statuses == [
+        ("19999", sync_lhh.LongHorizonStationWriteStatus.API_FAILED)
+    ]
+    assert len(records.station_statuses) == 1
+    assert records.attempted_station_codes == ["19999"]
+    assert records.completed_station_codes == []
+    assert records.failed_station_codes == ["19999"]
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 5
 
 
 @pytest.mark.parametrize(
@@ -1283,10 +1389,20 @@ def test_orchestrator_marks_read_runoff_failure_as_attempted_failed(caplog):
     assert records.failed_station_codes == ["19999"]
 
 
-def test_orchestrator_skip_has_metadata_but_no_attempt_completion_or_failure():
+def test_orchestrator_sdk_failed_station_is_attempted_and_completed():
+    # PREPQ-015: previously test_orchestrator_skip_has_metadata_but_no_
+    # attempt_completion_or_failure, asserting the SDK-failed station
+    # appeared in NONE of the three code lists and contributed zero records
+    # -- the exact dropped-station bug this issue fixes. It is now attempted,
+    # completed, and writes its 17 records like any other status.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
     sdk = MagicMock()
     sdk.get_norm_for_site.side_effect = ConnectionError("tunnel down")
-    client = MagicMock()
 
     records = sync_lhh.write_long_horizon_hydrograph(
         codes=["19999"],
@@ -1297,10 +1413,14 @@ def test_orchestrator_skip_has_metadata_but_no_attempt_completion_or_failure():
     )
 
     assert isinstance(records, sync_lhh._LongHorizonWriteResult)
-    assert records == []
-    assert records.attempted_station_codes == []
-    assert records.completed_station_codes == []
+    assert len(records) == 17
+    assert records.attempted_station_codes == ["19999"]
+    assert records.completed_station_codes == ["19999"]
     assert records.failed_station_codes == []
+    assert records.station_statuses == [
+        ("19999", sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)
+    ]
+    assert len(records.station_statuses) == len(records.attempted_station_codes)
 
 
 def _patch_main_dependencies(monkeypatch, records):
@@ -1392,6 +1512,20 @@ def test_main_exits_five_before_four_when_sdk_and_api_failures_both_present(monk
 
 
 def test_main_exits_four_when_all_sdk_failed_even_with_zero_records(monkeypatch, caplog):
+    # PREPQ-015 decision (recorded per the latest review round): after this
+    # fix, write_long_horizon_hydrograph can no longer produce this exact
+    # input naturally -- SDK_FAILED always writes 17 records now, and
+    # station_statuses/attempted_station_codes stay in lockstep (see the
+    # len(station_statuses) == len(attempted_station_codes) assertions added
+    # elsewhere in this file). test_main_exits_four_when_sdk_norm_lookup_fails
+    # above already covers exit 4 with the now-realistic non-zero-records
+    # shape. Retained here (not dropped) as a SYNTHETIC unit test of main()'s
+    # exit-code/logging logic in isolation: main() only reads
+    # `station_statuses` to pick the exit code and only reads
+    # `attempted_station_codes`/`records` for the "no records produced" log
+    # branch, so this artificial all-empty-except-status input still
+    # exercises real code paths in main() even though the writer can no
+    # longer construct this exact shape.
     records = sync_lhh._LongHorizonWriteResult()
     records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)]
     records.attempted_station_codes = []
