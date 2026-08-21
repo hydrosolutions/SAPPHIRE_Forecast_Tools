@@ -19,6 +19,14 @@ rejected" below. This issue now ships only the simpler, provably safe fix: a rai
 status `SDK_FAILED` and also writes the station's records. It does not distinguish a structural
 (virtual-station) failure from a transient one, and does not stop the permanent alarm for
 structurally normless stations — see "Accepted cost" below.
+**Implemented 2026-08-21** on branch `fix_prepq015_longhorizon_sdk_failure_writes_rows`: all four
+"The contract" bullets and both PART-2 review corrections (a new sole-`API_FAILED` test, and the
+retained/labeled `..._with_zero_records` synthetic test) applied exactly as specified.
+`cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff` — 462 passed, 2 skipped
+(the same two pre-existing `test_src.py` placeholders as the clean baseline; net +1 from the new
+sole-`API_FAILED` test). Full suite (`bash run_tests.sh`, all app modules + all five services) —
+zero failures, zero unexpected skips. `ruff check`/`ruff format --check` clean on both changed
+Python files; `bash -n` clean on the changed shell script. Awaiting review before status changes.
 
 ---
 
@@ -187,7 +195,15 @@ Deleting one without a same-shape replacement is a regression, not a cleanup.
 | `test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sdk_failed` (`:806`) | `sdk_failed_records == []`, no new writes | 17 new records written, previously-preserved norm intact |
 | `test_orchestrator_continues_after_skipped_station` (`:1099`) | 17 records for the surviving station only, `write_hydrograph.call_count == 3` | 34 records across both stations, `call_count == 6`, 12/1/4 shape check repeated per station |
 | `test_orchestrator_skip_has_metadata_but_no_attempt_completion_or_failure` (`:1286`) | `records == []`, all three code lists empty | 17 records; station in `attempted_station_codes` AND `completed_station_codes`; absent from `failed_station_codes` |
-| `test_main_exits_four_when_all_sdk_failed_even_with_zero_records` (`:1394`) | name assumes zero records | keep the exit-4 assertion; rename or add a sibling covering the non-zero-records case |
+| `test_main_exits_four_when_all_sdk_failed_even_with_zero_records` (`:1394`) | name assumes zero records | **CORRECTED (implemented 2026-08-21)**: retained, not dropped or renamed — kept as an explicitly-labeled SYNTHETIC unit test of `main()`'s exit-code/logging logic in isolation, since `main()` only reads `station_statuses`/`attempted_station_codes` and does not enforce the length-equality invariant itself. A comment in the test records that `write_long_horizon_hydrograph` can no longer construct this exact input, and that `test_main_exits_four_when_sdk_norm_lookup_fails` already covers exit 4 with the now-realistic non-zero-records shape. |
+
+**CORRECTION (implemented 2026-08-21) — new test added, not in the original six:** a norm
+lookup that raises (`SDK_FAILED`) followed by a LATER SAPPHIRE API write failure (seasonal or
+quarterly) was previously untested. Added
+`test_orchestrator_sole_api_failed_status_when_sdk_raises_then_seasonal_write_fails`, asserting:
+sole `API_FAILED` status (never both `SDK_FAILED` and `API_FAILED`), exactly one status recorded
+for that station, the station absent from `completed_station_codes`, the 12 partial monthly
+records that were written before the later failure, and exit code 5.
 
 Also strengthen `test_mixed_batch_carries_station_statuses` (`:862`) to assert record counts (17
 per station) and the total record count, not just `station_statuses`.

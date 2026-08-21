@@ -162,10 +162,15 @@ and you run via Docker, you have no ML image.
 >   `PIPELINE SUMMARY`. Look for a `WARNING` (not `DEBUG`) log line naming the
 >   specific station code and the SDK exception —
 >   `write_station_monthly_hydrograph: SDK call failed for site <code>,
->   skipping. Error: ...` — that is the new visible signal for exactly this
->   condition. If your checkout predates the fix, `--continue-on-error` is
->   still the workaround: it continues to later modules but still exits
->   non-zero at the end, which is expected and not a second failure. Other
+>   continuing with a read-merge of any previously stored norm. Error: ...` —
+>   that is the new visible signal for exactly this condition. The affected
+>   station is **not** skipped: it still gets its full row set (12 monthly,
+>   1 seasonal, 4 quarterly), just marked `SDK_FAILED`; only its monthly norm
+>   is affected — the previously stored value is read-merged back in instead
+>   of the fresh (failed) lookup. If your checkout predates the fix,
+>   `--continue-on-error` is still the workaround: it continues to later
+>   modules but still exits non-zero at the end, which is expected and not
+>   a second failure. Other
 >   `preprocessing_runoff`/`sync_long_horizon_hydrograph.py` failures (exits
 >   1, 3, 5, or any of the four reachable `preprocessing_runoff.py`
 >   `sys.exit(1)` sites) are still fatal to `daily` — this fix narrowly

@@ -1283,9 +1283,12 @@ the diff.
 - [ ] Inspect the dry-run diff — a large `changed`/`added` count is EXPECTED (that
       is the parity correction being applied to historical rows).
 - [ ] Expect non-fatal iEasyHydro HF **norm** warnings (`No path provided` / SDK
-      norm lookup). These skip only the affected station/horizon rows (mostly
-      monthly), not the whole run — review the summary counts and spot-check the
-      skipped stations rather than treating the warnings as a failure.
+      norm lookup). No rows are skipped for these — the affected station still
+      gets its full month/season/quarter row set, marked `SDK_FAILED`; only its
+      monthly norm value is affected (read-merged back in from any previously
+      stored value instead of the failed fresh lookup) — review the summary
+      counts and spot-check the affected stations' norm values rather than
+      treating the warnings as a failure.
 - [ ] Live backfill (writes, with snapshot + post-write verification):
   ```bash
   bash bin/backfill_discharge_aggregation.sh ${ENV_FILE_PATH} --years 3

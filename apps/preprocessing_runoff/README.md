@@ -172,11 +172,21 @@ bash bin/yearly_runoff_hydrograph_aggregation.sh /path/to/config/.env --target-y
 - iEasyHydro HF SSH tunnel up (the wrapper establishes it via
   `establish_ssh_tunnel`)
 
-**Behavior:** Stations whose monthly norm SDK call returns a
-non-12 result or raises are **skipped** and the run continues
-for the remaining stations (skip-and-continue P1-fix at commit
-`aeceebe`). This avoids one bad station blocking the entire
-yearly aggregation.
+**Behavior:** Row existence is decoupled from the iEH-HF monthly norm
+lookup. When the lookup returns a non-12-finite result (`NORM_ABSENT`) or
+the SDK call itself raises (`SDK_FAILED`, PREPQ-015), the station's month/
+quarter/season rows are still written — previously stored MONTHLY norms are
+preserved via a read-merge instead of being clobbered with `None`. Season
+and quarter norms are not read-merged themselves; they are re-derived from
+those (possibly read-merged) monthly norms, all-or-nothing per rollup — if a
+numeric seasonal or quarterly norm was previously stored but one of its
+constituent monthly norms is absent this run, the rollup is rewritten to
+`None`. No station's data is dropped by either classification; the run
+summary still distinguishes the two so an operator can tell "SDK returned
+but no usable norm" from "the SDK call itself failed," and any `SDK_FAILED`
+station keeps the run's exit code non-zero (4, unless an API read/write
+failure also occurred, which takes precedence at 5) to surface the failure
+without withholding the station's otherwise-computable data.
 
 **Predecessor:** The old `sync_monthly_norms.py` script
 (yearly-cron-launched via the retired Luigi task
