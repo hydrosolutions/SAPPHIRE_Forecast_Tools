@@ -608,10 +608,28 @@ ieasyhydroforecast_env_file_path=<path-to-your-.env> \
 > **Note**: `ML_MODE` defaults to `DECAD`. Set `ML_MODE=BOTH` if ML should
 > run for all prediction modes.
 
-> **⚠️ ML rejects `SAPPHIRE_PREDICTION_MODE=BOTH`.** Unlike `linear_regression`
-> and `postprocessing_forecasts` (which accept `BOTH`, and `ALL`, natively),
-> `machine_learning/make_forecast.py` raises `ValueError` on anything other than
-> `PENTAD` or `DECAD`. Run this module **once per mode**:
+> **Mode resolution (bare target).** The bare `machine_learning` target now
+> resolves its own prediction mode(s) via `resolve_ml_bare_target_modes` — you
+> no longer need to loop the invocation by hand or export
+> `SAPPHIRE_PREDICTION_MODE` yourself to avoid a crash:
+> - **Nothing set**: derives the mode from `ML_MODE` (WARN, then that single
+>   mode, or both PENTAD and DECAD if `ML_MODE=BOTH`).
+> - **`SAPPHIRE_PREDICTION_MODE=BOTH`**: now accepted directly, but each of
+>   PENTAD/DECAD it expands to is still filtered through
+>   `should_skip_ml_for_mode` against `ML_MODE` (default `DECAD`) — so
+>   `SAPPHIRE_PREDICTION_MODE=BOTH` **alone** runs DECAD only. To actually
+>   run both, also set `ML_MODE=BOTH`
+>   (`SAPPHIRE_PREDICTION_MODE=BOTH ML_MODE=BOTH`); the manual
+>   `for M in PENTAD DECAD` loop below with `ML_MODE=BOTH` remains an
+>   equally valid way to get both.
+> - **`SAPPHIRE_PREDICTION_MODE=PENTAD` or `DECAD`**: must agree with
+>   `ML_MODE` (either `ML_MODE=BOTH`, or `ML_MODE` equal to the same value) —
+>   an explicit conflict (e.g. `SAPPHIRE_PREDICTION_MODE=PENTAD ML_MODE=DECAD`)
+>   errors out naming both variables instead of silently picking one.
+> - Anything else in either variable (a typo, a stray value) also errors out
+>   by name rather than reaching `make_forecast.py`'s `ValueError`.
+>
+> If you still prefer to drive it explicitly per mode:
 > ```bash
 > for M in PENTAD DECAD; do
 >   ieasyhydroforecast_env_file_path=<path-to-your-.env> \
@@ -1102,7 +1120,7 @@ output (no try/except around `read_meteo_data_combined()` or
   <!-- RESULT: -->
 
 - [ ] ERA5 meteo data depth — does T and P data exist for the hindcast
-  training window? The script crashes at line 267 if `era5_data_transformed`
+  training window? The script crashes at line 268 if `era5_data_transformed`
   is empty (`.min()` on empty series raises TypeError):
   ```bash
   echo "=== S1 T 2023 ==="

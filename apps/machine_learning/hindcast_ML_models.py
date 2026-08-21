@@ -155,7 +155,7 @@ def main():
     logger.debug("Prediction mode: %s", HINDCAST_MODE)
     if HINDCAST_MODE not in ["PENTAD", "DECAD"]:
         raise ValueError(
-            "Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
+            f"Prediction mode {HINDCAST_MODE!r} is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
         )
     else:
         logger.debug("Prediction mode: %s", HINDCAST_MODE)
