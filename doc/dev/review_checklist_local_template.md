@@ -1120,7 +1120,7 @@ output (no try/except around `read_meteo_data_combined()` or
   <!-- RESULT: -->
 
 - [ ] ERA5 meteo data depth — does T and P data exist for the hindcast
-  training window? The script crashes at line 267 if `era5_data_transformed`
+  training window? The script crashes at line 268 if `era5_data_transformed`
   is empty (`.min()` on empty series raises TypeError):
   ```bash
   echo "=== S1 T 2023 ==="

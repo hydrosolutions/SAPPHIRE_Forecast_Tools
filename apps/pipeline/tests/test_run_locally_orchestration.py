@@ -200,9 +200,21 @@ def synth_tree(tmp_path: Path) -> SynthTree:
     Org is fixed to a value that is neither "demo" nor "uzhm" so
     should_skip_module() never skips a module -- every dispatch path
     exercised below stays reachable.
+
+    A symlink at ``script_dir/run_locally.sh`` -> the real, unmodified
+    ``RUN_LOCALLY_SH`` is included so the continue-on-error hint's printed
+    command (which interpolates ``${SCRIPT_DIR}/run_locally.sh``, and
+    SCRIPT_DIR is overridden to this synthetic ``script_dir`` for every test
+    in this file) is directly executable as a standalone ``bash '<path>'
+    ...`` invocation: running it computes SCRIPT_DIR from its own
+    (symlinked) invocation path via ``dirname``/``pwd``, which resolves back
+    to this same synthetic tree -- reaching these same module stubs -- with
+    no sourcing or override needed. See
+    TestContinueOnErrorHint.test_hint_command_is_actually_runnable_as_printed.
     """
     script_dir = tmp_path / "synth_apps"
     script_dir.mkdir()
+    (script_dir / "run_locally.sh").symlink_to(RUN_LOCALLY_SH)
     call_log = tmp_path / "calls.log"
     call_log.write_text("")
     for module in MODULES:
@@ -289,9 +301,11 @@ def _extract_hint_command(out: str) -> str:
     """Pull the literal copy-pasteable command out of the emitted hint text.
 
     The hint line (see emit_continue_on_error_hint) reads:
-        ... run: <ieasyhydroforecast_env_file_path=... >bash apps/run_locally.sh --continue-on-error <target>
-    Returns everything after "run: ", with the trailing ANSI reset code (if
-    any) and surrounding whitespace stripped.
+        ... run: <assignments... >bash '<SCRIPT_DIR>/run_locally.sh' --continue-on-error '<target>'
+    where every interpolated value (env file path, SAPPHIRE_PREDICTION_MODE,
+    ML_MODE if set, the script path, the target) is single-quoted by
+    shell_quote. Returns everything after "run: ", with the trailing ANSI
+    reset code (if any) and surrounding whitespace stripped.
     """
     marker = "stopping at the first, run: "
     for line in out.splitlines():
@@ -301,6 +315,43 @@ def _extract_hint_command(out: str) -> str:
                 command = command[: -len(_ANSI_RESET_SUFFIX)]
             return command.strip()
     raise AssertionError(f"continue-on-error hint command not found in output:\n{out}")
+
+
+def _run_hint_command_verbatim(command: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Execute an extracted hint command line EXACTLY as printed.
+
+    Round-5 review finding 1: the previous version of this test claimed to
+    execute the printed command but actually parsed the string and
+    reconstructed a `main <args>` function call after re-sourcing the
+    script with its own overrides -- it never ran the literal text an
+    operator would paste, which is exactly why the unquoted-interpolation
+    defect survived review. This runs it for real, through a shell, from a
+    directory that is NOT the repo root, and does not pre-seed any of the
+    variables the command itself interpolates (ieasyhydroforecast_env_file_
+    path, SAPPHIRE_PREDICTION_MODE, ML_MODE) -- proving the command is both
+    safe (no injected content can run) and self-sufficient (it supplies
+    everything validate_env needs on its own).
+
+    `command`'s script path is `${SCRIPT_DIR}/run_locally.sh` as captured
+    at hint-emission time -- for every test in this file that is the
+    synth_tree fixture's `script_dir/run_locally.sh` symlink (SCRIPT_DIR is
+    always overridden to that path before dispatch), so running it reaches
+    the same synthetic module stubs the first run used, with no sourcing or
+    override needed here.
+    """
+    env = os.environ.copy()
+    for var in _ISOLATE_ENV_VARS:
+        env.pop(var, None)
+    env.pop("ieasyhydroforecast_env_file_path", None)
+
+    return subprocess.run(
+        ["bash", "-c", command],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
 
 def _real_apps_logs_snapshot() -> dict[str, tuple[int, int]]:
@@ -376,7 +427,11 @@ class TestContinueOnErrorHint:
 
         assert result.returncode != 0
         assert out.count(self.HINT_TEXT) == 1
-        assert "bash apps/run_locally.sh --continue-on-error daily" in out
+        # Round-5 review finding 1b: the script path must be the absolute
+        # SCRIPT_DIR-derived path (cwd-independent), not a literal
+        # "apps/run_locally.sh" relative fragment -- and single-quoted
+        # (finding 1a).
+        assert f"bash '{synth_tree.script_dir}/run_locally.sh' --continue-on-error 'daily'" in out
 
     def test_continue_on_error_suppresses_hint_but_still_exits_nonzero(self, synth_tree):
         synth_tree.override(
@@ -485,19 +540,23 @@ class TestContinueOnErrorHint:
 
     def test_hint_command_is_actually_runnable_as_printed(self, synth_tree):
         """Round-4 review finding 3: 'The test merely matches the string and
-        never executes the suggested command.' validate_env REQUIRES
-        ieasyhydroforecast_env_file_path to be set to an existing file, so a
-        hint that prints a bare `bash apps/run_locally.sh --continue-on-error
-        <target>` is not actually copy-pasteable -- an operator who runs it
-        verbatim gets a validation failure, not a continued run.
+        never executes the suggested command.' Round-5 finding 1 caught a
+        REAL defect that finding-3's own fix let through: the previous
+        version of this test extracted the printed command, then
+        RECONSTRUCTED a `main <args>` call by re-sourcing the script with
+        its own overrides -- it never executed the literal text an operator
+        would paste, so unquoted interpolation (a space or `;` in the env
+        path corrupting the command, or worse, executing) was invisible to
+        it.
 
-        This test extracts the literal command the hint prints, then
-        executes it for real (through the same source-and-override harness
-        every other test in this file uses) WITHOUT pre-seeding
-        ieasyhydroforecast_env_file_path in the subprocess environment --
-        proving the fix works: the command carries its own working env-file
-        assignment and gets past validate_env, then genuinely proceeds past
-        the module that failed on the first run.
+        This version extracts the literal command and runs it EXACTLY as
+        printed through `bash -c` (via _run_hint_command_verbatim), from a
+        working directory that is NOT the repo root (proving finding 1b:
+        cwd-independence), without pre-seeding ieasyhydroforecast_env_file_
+        path/SAPPHIRE_PREDICTION_MODE/ML_MODE in the child environment --
+        proving the command is self-sufficient: it supplies everything
+        validate_env needs on its own, then genuinely proceeds past the
+        module that failed on the first run.
         """
         synth_tree.override(
             "preprocessing_runoff",
@@ -511,60 +570,28 @@ class TestContinueOnErrorHint:
         assert command.startswith("ieasyhydroforecast_env_file_path="), (
             f"hint command does not interpolate the env file path: {command!r}"
         )
-
-        env_assignment, sep, rest = command.partition(" bash ")
-        assert sep, f"expected ' bash ' after the env assignment in: {command!r}"
-        env_key, _, env_value = env_assignment.partition("=")
-        assert env_key == "ieasyhydroforecast_env_file_path"
-        assert env_value == str(synth_tree.env_file), (
+        assert f"'{synth_tree.env_file}'" in command, (
             "hint command's env file path does not match the path this run "
-            f"actually used: {env_value!r} vs {synth_tree.env_file}"
+            f"actually used: {command!r} vs {synth_tree.env_file}"
         )
-
-        script_name, _, main_args = rest.partition(" ")
-        assert script_name == "apps/run_locally.sh"
-        main_args = main_args.strip()
-        assert main_args == "--continue-on-error daily"
-
-        # Re-run the extracted command for real. Source the unmodified
-        # script and override only the synthetic data globals -- exactly
-        # what run_main() does -- but this time do NOT pre-set
-        # ieasyhydroforecast_env_file_path in the subprocess environment.
-        # The command line itself, exactly as the hint printed it, must
-        # supply it.
-        rerun_log_file = synth_tree.log_dir / "hint_rerun.log"
-        script = textwrap.dedent(f"""
-            source "{RUN_LOCALLY_SH}"
-            SCRIPT_DIR="{synth_tree.script_dir}"
-            LOG_DIR="{synth_tree.log_dir}"
-            LOG_FILE="{rerun_log_file}"
-            ML_MODELS=(TFT)
-            ML_SCRIPTS=(recalculate_nan_forecasts.py)
-            ML_MAINTENANCE_SCRIPTS=(recalculate_nan_forecasts.py)
-            {env_key}={env_value} main {main_args}
-            """)
-
-        env = os.environ.copy()
-        for var in _ISOLATE_ENV_VARS:
-            env.pop(var, None)
-        env.pop("ieasyhydroforecast_env_file_path", None)
-
-        rerun = subprocess.run(
-            ["bash", "-c", script],
-            cwd=str(APPS_DIR),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=120,
+        assert f"'{synth_tree.script_dir}/run_locally.sh'" in command, (
+            f"hint command's script path is not the expected absolute path: {command!r}"
         )
+        assert command.endswith("--continue-on-error 'daily'")
+
+        # Run a directory that is NOT the repo root -- the whole point of
+        # finding 1b is that the printed command must not silently depend
+        # on the operator's cwd.
+        rerun = _run_hint_command_verbatim(command, cwd=synth_tree.script_dir.parent)
         rerun_out = rerun.stdout + rerun.stderr
 
         # It must NOT die in validate_env for a missing/unset env file --
-        # that was the entire bug: the old hint printed a command with no
-        # env var at all, so validate_env failed before --continue-on-error
-        # ever had a chance to matter.
+        # that was the entire round-4 bug: the old hint printed a command
+        # with no env var at all, so validate_env failed before
+        # --continue-on-error ever had a chance to matter.
         assert "ieasyhydroforecast_env_file_path is not set" not in rerun_out, rerun_out
         assert "Env file not found" not in rerun_out, rerun_out
+        assert "No such file or directory" not in rerun_out, rerun_out
 
         # And it must genuinely proceed past preprocessing_runoff (the
         # module that failed on the first run) into later Phase-3 modules
@@ -574,6 +601,64 @@ class TestContinueOnErrorHint:
         assert any("module=machine_learning" in ln for ln in calls), (
             "re-running the hint's own printed command did not get past "
             f"the failing module. Output:\n{rerun_out}"
+        )
+
+    def test_hint_command_survives_space_and_metacharacter_in_env_path(self, synth_tree):
+        """Round-5 review finding 1a: unquoted interpolation of
+        ieasyhydroforecast_env_file_path is a real hazard, not a
+        theoretical one -- a space breaks the printed command (exit 127),
+        and `;`/backticks/$(...) in the path would EXECUTE that content
+        when an operator pastes the printed line into a shell, since the
+        hint is printed specifically to be pasted.
+
+        Builds the synthetic env file at a path containing a space, a `;`,
+        AND a `$(...)` substring all at once, then proves the printed
+        command still executes correctly (reaches machine_learning) and
+        that the injected `touch` never ran. The injected command uses a
+        bare (path-free) filename -- a directory NAME cannot itself contain
+        "/", and every rerun in this test uses the same cwd
+        (synth_tree.script_dir.parent), so the marker's location is
+        unambiguous regardless of where in the weird name it fires from.
+        """
+        weird_dir = synth_tree.script_dir.parent / "op env; $(touch INJECTED_BY_UNQUOTED_HINT)"
+        weird_dir.mkdir()
+        weird_env_file = weird_dir / "test.env"
+        weird_env_file.write_text(synth_tree.env_file.read_text())
+        marker = synth_tree.script_dir.parent / "INJECTED_BY_UNQUOTED_HINT"
+
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        first = run_main(
+            synth_tree,
+            "daily",
+            extra_env={"ieasyhydroforecast_env_file_path": str(weird_env_file)},
+        )
+        out = first.stdout + first.stderr
+        assert first.returncode != 0
+        assert not marker.exists(), (
+            "the injected touch ran while emitting/logging the hint itself, "
+            "before the command was ever re-executed"
+        )
+
+        command = _extract_hint_command(out)
+        assert f"'{weird_env_file}'" in command, (
+            f"env path with space/metacharacters not safely quoted in: {command!r}"
+        )
+
+        rerun = _run_hint_command_verbatim(command, cwd=synth_tree.script_dir.parent)
+        rerun_out = rerun.stdout + rerun.stderr
+
+        assert not marker.exists(), (
+            "shell metacharacter/command-substitution in the env path "
+            f"executed when the printed hint command was run verbatim. Output:\n{rerun_out}"
+        )
+        assert "Env file not found" not in rerun_out, rerun_out
+        calls = synth_tree.calls()
+        assert any("module=machine_learning" in ln for ln in calls), (
+            "re-running the hint command with a space/metacharacter env "
+            f"path did not get past the failing module. Output:\n{rerun_out}"
         )
 
 
@@ -833,6 +918,29 @@ class TestLongHorizonSyncExitCodeHandling:
         first module. Assert on all three Phase-3 consumers -- a test that
         only checked machine_learning could pass while linear_regression
         and postprocessing_forecasts were silently skipped.
+
+        Round-5 review finding 2: the module-name-only assertions below
+        would ALSO pass if Phase 3 were skipped entirely and only Phase 4
+        (maintenance, ~line 1507) ran -- run_daily_pipeline's Phase 4 calls
+        the exact same module names (machine_learning, linear_regression,
+        postprocessing_forecasts) via run_maintenance_machine_learning /
+        run_maintenance_linear_regression / run_maintenance_postprocessing_
+        forecasts, and this harness's stub logs only the module name, not
+        which function invoked it. So the module-name assertions are kept
+        (still true, still worth checking) but are no longer load-bearing
+        on their own -- the two assertions below key on what actually
+        differs between the phases:
+          - postprocessing_forecasts: Phase 3 runs postprocessing_
+            operational.py; Phase 4 runs postprocessing_maintenance.py.
+            Different script name.
+          - linear_regression: Phase 3 (run_linear_regression) invokes it
+            with no extra args; Phase 4 (run_maintenance_linear_regression)
+            passes `-- --hindcast`, which run_in_venv turns into a real
+            `--hindcast` script argument. The stub logs args=<script args>,
+            so Phase 3's call line has an empty args field and Phase 4's
+            has "args=--hindcast" -- different, and observable.
+        Neither module ever appears with these Phase-3 signatures unless
+        Phase 3 itself actually ran.
         """
         _override_sync_exit_code(synth_tree, 4)
         result = run_main(synth_tree, "daily")
@@ -853,6 +961,22 @@ class TestLongHorizonSyncExitCodeHandling:
         assert any("module=postprocessing_forecasts" in ln for ln in calls), (
             "postprocessing_forecasts never ran after the downgraded exit-4 failure -- "
             "Phase 3 did not fully continue"
+        )
+        # Phase-3-specific discriminators (see docstring): these can only be
+        # true if the OPERATIONAL calls actually ran, not just Phase 4's
+        # maintenance calls under the same module names.
+        assert any(
+            "module=postprocessing_forecasts" in ln and "script=postprocessing_operational.py" in ln
+            for ln in calls
+        ), (
+            "Phase 3's operational postprocessing (postprocessing_operational.py) never ran -- "
+            "only maintenance's postprocessing_maintenance.py appeared, meaning Phase 3 "
+            "was skipped and only Phase 4 executed"
+        )
+        assert any("module=linear_regression" in ln and "args= mode=" in ln for ln in calls), (
+            "Phase 3's operational linear_regression call (no --hindcast argument) never "
+            "ran -- only the maintenance call (args=--hindcast) appeared, meaning Phase 3 "
+            "was skipped and only Phase 4 executed"
         )
 
     def test_maintenance_continues_past_downgraded_failure(self, synth_tree):

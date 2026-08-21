@@ -124,6 +124,15 @@ DRY_RUN=false
 # continue-on-error hint.
 PIPELINE_ABORTED=false
 
+# Invocation-time mode env vars, captured before anything in main() (the
+# per-mode dispatch loops, or the default applied to ML_MODE below) can
+# mutate/resolve them, so emit_continue_on_error_hint can reproduce the
+# operator's original horizon in its printed retry command. Read-only after
+# capture; never used for pipeline logic itself -- see the capture sites
+# (main()'s first line, and just above ML_MODE's default below).
+INVOCATION_SAPPHIRE_PREDICTION_MODE=""
+INVOCATION_ML_MODE=""
+
 # Error capture
 ERROR_TAIL_LINES=30
 ERROR_DIR="$(mktemp -d)"
@@ -177,6 +186,11 @@ ML_MAINTENANCE_SCRIPTS=(
 
 # Machine learning only runs for DECAD mode (PENTAD forecasts use LR only).
 # Override with ML_MODE=BOTH to restore old behavior.
+# INVOCATION_ML_MODE captures whether the operator actually set ML_MODE,
+# before this line's own default overwrites it -- ML_MODE is never mutated
+# again after this point, so this is the only place that distinction is
+# still observable. Used only by emit_continue_on_error_hint.
+INVOCATION_ML_MODE="${ML_MODE:-}"
 ML_MODE="${ML_MODE:-DECAD}"
 
 # Modules with maintenance modes
@@ -240,6 +254,17 @@ banner() {
 
 get_timestamp() {
     date +%s
+}
+
+# shell_quote - single-quote a string so it is safe to paste verbatim into a
+# POSIX shell, regardless of its content (spaces, semicolons, backticks,
+# $(...) substitutions, embedded single quotes, ...). Standard technique:
+# close the current single-quoted string, emit an escaped literal quote,
+# reopen. Used by emit_continue_on_error_hint so the command it prints can
+# never execute injected content when an operator copy-pastes it.
+shell_quote() {
+    local s="$1"
+    printf "'%s'" "${s//\'/\'\\\'\'}"
 }
 
 format_duration() {
@@ -390,19 +415,41 @@ record_validation() {
 # --continue-on-error's effect (round-4 review finding). The value comes
 # from the current run's own environment, which validate_env has already
 # echoed as "Env file: ..." earlier in this same run's output, so including
-# it here discloses nothing new. SAPPHIRE_PREDICTION_MODE/ML_MODE/
-# LT_FORECAST_TODAY are deliberately left out -- they are not required to
-# get past validate_env, and reconstructing them generally (mode may have
-# been mutated mid-loop by the aborting pipeline function itself) would
-# turn this into a general-purpose command reconstructor rather than a
-# targeted fix for the one thing that actually blocks copy-paste.
+# it here discloses nothing new.
+#
+# Every interpolated value is passed through shell_quote so the printed line
+# is safe to paste verbatim regardless of its content (spaces, `;`,
+# backticks, $(...) -- round-5 review finding 1a/1b). The script path uses
+# SCRIPT_DIR (an absolute path computed once at the top of this file) rather
+# than a literal "apps/run_locally.sh", so the line also works when the
+# operator's shell is not cwd'd at the repo root (finding 1b).
+#
+# SAPPHIRE_PREDICTION_MODE and ML_MODE are included via
+# INVOCATION_SAPPHIRE_PREDICTION_MODE / INVOCATION_ML_MODE -- captured
+# before this run's own dispatch loops could mutate/resolve them (see their
+# declarations near the top of this file) -- so a resumed non-daily target
+# such as `short-term` reruns the SAME horizon the operator originally
+# invoked, not whatever SAPPHIRE_PREDICTION_MODE happens to hold at the
+# moment the aborting phase returned (round-5 review finding 1c). Each is
+# only emitted when the operator actually set it, so an unset mode does not
+# turn into a spurious empty assignment. LT_FORECAST_TODAY remains
+# deliberately left out -- it is never mutated mid-run the way
+# SAPPHIRE_PREDICTION_MODE is, so omitting it was never the defect; adding
+# it would still turn this into a general-purpose command reconstructor
+# rather than a targeted fix for what round-5 actually flagged.
 emit_continue_on_error_hint() {
     local target="$1"
     local env_file="${ieasyhydroforecast_env_file_path:-}"
-    local env_prefix=""
-    [ -n "$env_file" ] && env_prefix="ieasyhydroforecast_env_file_path=${env_file} "
+    local prefix=""
+    [ -n "$env_file" ] && prefix="ieasyhydroforecast_env_file_path=$(shell_quote "$env_file") "
+    [ -n "$INVOCATION_SAPPHIRE_PREDICTION_MODE" ] && \
+        prefix="${prefix}SAPPHIRE_PREDICTION_MODE=$(shell_quote "$INVOCATION_SAPPHIRE_PREDICTION_MODE") "
+    [ -n "$INVOCATION_ML_MODE" ] && \
+        prefix="${prefix}ML_MODE=$(shell_quote "$INVOCATION_ML_MODE") "
+    local cmd
+    cmd="bash $(shell_quote "${SCRIPT_DIR}/run_locally.sh") --continue-on-error $(shell_quote "$target")"
     log WARN "A pipeline phase stopped at its first failing module because --continue-on-error is not set."
-    log WARN "To continue past failures instead of stopping at the first, run: ${env_prefix}bash apps/run_locally.sh --continue-on-error ${target}"
+    log WARN "To continue past failures instead of stopping at the first, run: ${prefix}${cmd}"
     log WARN "Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful."
 }
 
@@ -1932,6 +1979,13 @@ USAGE
 # ---------------------------------------------------------------------------
 
 main() {
+    # Capture the operator's invocation-time SAPPHIRE_PREDICTION_MODE before
+    # anything below -- the unconditional export default further down, or
+    # the per-mode dispatch loops in the case statement -- can overwrite it.
+    # Used only by emit_continue_on_error_hint to reproduce the original
+    # horizon in its printed retry command; never read for pipeline logic.
+    INVOCATION_SAPPHIRE_PREDICTION_MODE="${SAPPHIRE_PREDICTION_MODE:-}"
+
     local target=""
 
     # Parse arguments

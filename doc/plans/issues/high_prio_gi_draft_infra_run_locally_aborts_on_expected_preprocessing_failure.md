@@ -126,7 +126,7 @@ and loses the ordering and mode handling the orchestrator provides.
 ## Mechanism (corrected)
 
 `run_daily_pipeline` guards every module call with the same idiom
-(e.g. `apps/run_locally.sh:1444`, Phase 1; `:1451`, Phase 2). The idiom now
+(e.g. `apps/run_locally.sh:1516`, Phase 1; `:1523`, Phase 2). The idiom now
 also records the abort as a fact, via `PIPELINE_ABORTED` (see § What was
 actually built):
 
@@ -136,8 +136,8 @@ run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { 
 
 `CONTINUE_ON_ERROR` defaults to `false` (`:118`). So the default behaviour is
 fail-fast on the first module that returns non-zero. The reported abort was at
-**Phase 2** (`run_maintenance_preprocessing_runoff`, `:1451`) — maintenance
-preprocessing — not Phase 1 (`run_preprocessing_runoff`, `:1444`, which had
+**Phase 2** (`run_maintenance_preprocessing_runoff`, `:1523`) — maintenance
+preprocessing — not Phase 1 (`run_preprocessing_runoff`, `:1516`, which had
 already passed).
 
 `run_maintenance_preprocessing_runoff` runs `preprocessing_runoff.py
@@ -277,29 +277,29 @@ Do not duplicate that analysis here.
 
 Review round 3 fixed the per-mode **VALIDATION** rows for the bare
 `machine_learning` single-module target: `run_module_validation`
-(`apps/run_locally.sh:1222`) now takes an optional mode suffix, and the
-`machine_learning` case branch (`apps/run_locally.sh:2144-2147`) passes each
+(`apps/run_locally.sh:1285`) now takes an optional mode suffix, and the
+`machine_learning` case branch (`apps/run_locally.sh:2216`) passes each
 attempted mode as that suffix, so `ML_MODE=BOTH machine_learning` produces
 distinguishable rows — `api_validation (machine_learning PENTAD)` and
 `api_validation (machine_learning DECAD)` — each with its own log file.
 `daily`'s own validation is unrelated to this fix: it is a single aggregate
-call, `run_api_validation "daily"` at `run_locally.sh:1520`, not per-mode.
+call, `run_api_validation "daily"` at `run_locally.sh:1583`, not per-mode.
 
 The per-mode **MODULE** rows were not fixed. `run_machine_learning`
-(`apps/run_locally.sh:637`, called from Phase 3) always truncates
+(`apps/run_locally.sh:700`, called from Phase 3) always truncates
 `${ERROR_DIR}/machine_learning.log` and always calls
 `record_result "machine_learning" ...` with no mode suffix.
-`run_maintenance_machine_learning` (`apps/run_locally.sh:912`, called from
+`run_maintenance_machine_learning` (`apps/run_locally.sh:975`, called from
 Phase 4 — a different function, not `run_machine_learning`) does the same
 for `${ERROR_DIR}/machine_learning_maintenance.log` and
 `record_result "machine_learning (maintenance)" ...`. `run_daily_pipeline`
-(`apps/run_locally.sh:1446`) loops `for mode in PENTAD DECAD` in both
+(`apps/run_locally.sh:1509`) loops `for mode in PENTAD DECAD` in both
 phases, so two calls to the same function in one run produce
 indistinguishable rows, and the second call's log overwrites the first's.
 
 This does not happen by default. `should_skip_ml_for_mode`
-(`apps/run_locally.sh:416`) skips the mode that doesn't match `ML_MODE`, and
-`ML_MODE` defaults to `DECAD` (`run_locally.sh:180`), so each phase's loop
+(`apps/run_locally.sh:479`) skips the mode that doesn't match `ML_MODE`, and
+`ML_MODE` defaults to `DECAD` (`run_locally.sh:194`), so each phase's loop
 calls its ML function only once. The collision requires `ML_MODE=BOTH`,
 which is not the default.
 

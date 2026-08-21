@@ -96,7 +96,7 @@ has `SDK_FAILED` status **and zero stations have `API_FAILED` status** (`:641-64
 any API failures, a single flaky station's SDK raise already makes the whole run report non-zero.
 Exit 4 is therefore a guarantee that no API read/write failures occurred this run — that invariant
 is exactly what `run_locally.sh`'s maintenance runner relies on to downgrade exit 4 to non-fatal
-(rc stays 0) while still treating exit 5 as fatal (`apps/run_locally.sh:823-832`); this fix must
+(rc stays 0) while still treating exit 5 as fatal (`apps/run_locally.sh:901-911`); this fix must
 preserve that invariant, not just the exit-4-on-SDK_FAILED behavior in isolation. If this fix
 simply reclassifies `SDK_FAILED` to be treated
 identically to `NORM_ABSENT` everywhere (including the exit-code function, which today does *not*
