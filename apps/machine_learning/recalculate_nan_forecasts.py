@@ -161,7 +161,7 @@ def recalculate_nan_forecasts():
     logger.debug("Prediction mode: %s", PREDICTION_MODE)
     if PREDICTION_MODE not in ["PENTAD", "DECAD"]:
         raise ValueError(
-            "Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
+            f"Prediction mode {PREDICTION_MODE!r} is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
         )
 
     # --------------------------------------------------------------------

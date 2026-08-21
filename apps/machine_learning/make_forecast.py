@@ -457,7 +457,7 @@ def get_predictor_class(MODEL_TO_USE: str):
 
     if MODEL_TO_USE not in available_ML_models:
         raise ValueError(
-            "Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA"
+            f"Model {MODEL_TO_USE!r} is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA"
         )
     else:
         logger.debug("Model to use: %s", MODEL_TO_USE)
@@ -525,7 +525,7 @@ def make_ml_forecast():
     logger.debug("Prediction mode: %s", PREDICTION_MODE)
     if PREDICTION_MODE not in ["PENTAD", "DECAD"]:
         raise ValueError(
-            "Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
+            f"Prediction mode {PREDICTION_MODE!r} is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD"
         )
     else:
         logger.debug("Prediction mode: %s", PREDICTION_MODE)
