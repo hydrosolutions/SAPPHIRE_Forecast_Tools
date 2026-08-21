@@ -45,7 +45,7 @@ Two independent bugs.
 
 ### Bug 1 — standalone target never resolved a prediction mode (and ignored `ML_MODE`)
 
-The bare case (was `apps/run_locally.sh:1932`, now `:2193`) called `run_machine_learning` directly:
+The bare case (was `apps/run_locally.sh:1932`, now `:2216`) called `run_machine_learning` directly:
 
 ```bash
 machine_learning)
@@ -56,16 +56,16 @@ machine_learning)
     fi ;;
 ```
 
-`run_machine_learning` (`:700`) loops `ML_MODELS × ML_SCRIPTS` and calls `run_in_venv`, which
-forwards `SAPPHIRE_PREDICTION_MODE=${SAPPHIRE_PREDICTION_MODE:-}` (`:610`) — i.e. **empty** when the
+`run_machine_learning` (`:717`) loops `ML_MODELS × ML_SCRIPTS` and calls `run_in_venv`, which
+forwards `SAPPHIRE_PREDICTION_MODE=${SAPPHIRE_PREDICTION_MODE:-}` (`:627`) — i.e. **empty** when the
 caller did not export it. Unlike every other ML path, the bare target did **not** wrap the call in
 the mode-resolution loop:
-- `short-term`/`all` orchestration: `run_short_term_pipeline`, `:1336-1344` (`BOTH → PENTAD,DECAD`;
+- `short-term`/`all` orchestration: `run_short_term_pipeline`, `:1358-1367` (`BOTH → PENTAD,DECAD`;
   else the requested single mode, or default PENTAD + WARN when unset)
 - `daily` orchestration: same per-mode structure, but `run_daily_pipeline`'s Phase 3 always runs
   both `PENTAD` and `DECAD` explicitly rather than defaulting — an unset
   `SAPPHIRE_PREDICTION_MODE` never reaches ML empty on `daily`
-- `maintenance:machine_learning`: `:2116-2130` (same `BOTH`/single/default-PENTAD pattern as
+- `maintenance:machine_learning`: `:2145-2153` (same `BOTH`/single/default-PENTAD pattern as
   `run_short_term_pipeline`)
 
 Consequently the standalone target also **silently ignored `ML_MODE`** — `should_skip_ml_for_mode`
@@ -143,8 +143,8 @@ out-of-loop adversarial review have run against the branch.
 
 ### Bug 1 fix — `resolve_ml_bare_target_modes`
 
-A new function, `resolve_ml_bare_target_modes` (`apps/run_locally.sh:497-543`), is called from the
-bare `machine_learning)` case (`:2193-2220`) before `run_machine_learning` runs. Unlike a simple
+A new function, `resolve_ml_bare_target_modes` (`apps/run_locally.sh:514-560`), is called from the
+bare `machine_learning)` case (`:2216-2242`) before `run_machine_learning` runs. Unlike a simple
 port of the `daily`/`maintenance` default-PENTAD pattern, it:
 
 - Validates `SAPPHIRE_PREDICTION_MODE` against `{"", PENTAD, DECAD, BOTH}` and `ML_MODE` against

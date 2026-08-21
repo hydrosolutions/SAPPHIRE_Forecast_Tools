@@ -231,17 +231,23 @@ log() {
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     local line="[${ts}] [${level}] ${msg}"
 
-    # Color based on level
+    # Color based on level. printf '%b' expands the ANSI escapes in the
+    # color variables (BLUE/GREEN/YELLOW/RED/NC); '%s' leaves $line itself
+    # literal so backslash sequences inside a logged message (e.g. a path
+    # containing \x27 or \c, as emit_continue_on_error_hint's shell-quoted
+    # hint can) are never reinterpreted -- `echo -e` would otherwise undo
+    # shell_quote's escaping. (INFRA-037 round-6 review)
     case "$level" in
-        INFO)  echo -e "${BLUE}${line}${NC}" ;;
-        OK)    echo -e "${GREEN}${line}${NC}" ;;
-        WARN)  echo -e "${YELLOW}${line}${NC}" ;;
-        ERROR) echo -e "${RED}${line}${NC}" ;;
-        *)     echo "$line" ;;
+        INFO)  printf '%b%s%b\n' "$BLUE" "$line" "$NC" ;;
+        OK)    printf '%b%s%b\n' "$GREEN" "$line" "$NC" ;;
+        WARN)  printf '%b%s%b\n' "$YELLOW" "$line" "$NC" ;;
+        ERROR) printf '%b%s%b\n' "$RED" "$line" "$NC" ;;
+        *)     printf '%s\n' "$line" ;;
     esac
 
-    # Also write to log file (without color codes)
-    echo "$line" >> "$LOG_FILE"
+    # Also write to log file (without color codes), literal for the same
+    # reason as above.
+    printf '%s\n' "$line" >> "$LOG_FILE"
 }
 
 banner() {
@@ -440,6 +446,17 @@ record_validation() {
 emit_continue_on_error_hint() {
     local target="$1"
     local env_file="${ieasyhydroforecast_env_file_path:-}"
+    # Resolve a relative env path to absolute so the printed hint still
+    # works when pasted from a different cwd (same class of defect already
+    # fixed for the script path via SCRIPT_DIR above). validate_env has
+    # already confirmed this file exists, so cd'ing into its directory is
+    # safe; portable (no GNU readlink -f) for macOS. An already-absolute
+    # path is left untouched. Does not change what validate_env itself
+    # accepts. (INFRA-037 round-6 review)
+    case "$env_file" in
+        /*|"") ;;
+        *) env_file="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")" ;;
+    esac
     local prefix=""
     [ -n "$env_file" ] && prefix="ieasyhydroforecast_env_file_path=$(shell_quote "$env_file") "
     [ -n "$INVOCATION_SAPPHIRE_PREDICTION_MODE" ] && \
@@ -905,6 +922,12 @@ run_maintenance_preprocessing_runoff() {
             # FAIL row recorded below references the output that explains it.
         elif [ $lt_rc -eq 4 ]; then
             log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
+            # Pointer only (counts already survive the error-details tail --
+            # see the sub-step's own LONG-HORIZON RUN SUMMARY print, which
+            # lands last in this log, ahead of the tail window). Distinguish
+            # a few failed stations from a total outage by reading them, not
+            # by re-deriving them here. (INFRA-037)
+            log ERROR "  Counts are in the LONG-HORIZON RUN SUMMARY block near the end of ${CURRENT_MODULE_LOG} -- also tailed under the 'preprocessing_runoff (long-horizon sync)' row below."
             record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
             # Downgraded, not fatal to the overall module (rc stays 0):
             # restore the maintenance log for the module-level record below.

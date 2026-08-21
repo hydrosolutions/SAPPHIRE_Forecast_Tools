@@ -97,7 +97,7 @@ expected" INFO line distinguishable in the summary from "ran and passed" — not
 - Fixing `should_skip_ml_for_mode` itself to validate its input — any fix belongs at the call
   site that resolves the mode (mirroring where ML-016's fix landed), not inside the shared
   predicate, which is also used correctly by call sites that already validate before calling it.
-- `run_maintenance_pipeline`'s per-mode loop (`:1485-1498` in this session's working copy) — not
+- `run_maintenance_pipeline`'s per-mode loop (`:1508-1521` in this session's working copy) — not
   shown to reach the same empty-modes-to-run state; only the standalone
   `maintenance:machine_learning` case branch resolves a *single* mode from an unset env var and
   then filters it.

@@ -239,6 +239,7 @@ def run_main(
     *,
     continue_on_error: bool = False,
     extra_env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Source run_locally.sh, override data-only globals, and call main().
 
@@ -252,6 +253,11 @@ def run_main(
     single entry each purely to keep runtime down -- they are plain
     configuration data iterated by run_machine_learning /
     run_maintenance_machine_learning, not logic under test.
+
+    `cwd` defaults to APPS_DIR (matching every existing caller). A test that
+    needs to prove behaviour of a RELATIVE ieasyhydroforecast_env_file_path
+    (both validate_env's own resolution and emit_continue_on_error_hint's
+    cwd-independence fix) passes a different `cwd` explicitly.
     """
     log_file = tree.log_dir / "run.log"
     flag = "--continue-on-error " if continue_on_error else ""
@@ -276,7 +282,7 @@ def run_main(
 
     return subprocess.run(
         ["bash", "-c", script],
-        cwd=str(APPS_DIR),
+        cwd=str(cwd) if cwd is not None else str(APPS_DIR),
         env=env,
         capture_output=True,
         text=True,
@@ -315,6 +321,25 @@ def _extract_hint_command(out: str) -> str:
                 command = command[: -len(_ANSI_RESET_SUFFIX)]
             return command.strip()
     raise AssertionError(f"continue-on-error hint command not found in output:\n{out}")
+
+
+def _extract_env_path_arg(command: str) -> str:
+    """Pull the single-quoted value of ieasyhydroforecast_env_file_path=...
+
+    out of an extracted hint `command` string. The env path is always the
+    first token (see emit_continue_on_error_hint's prefix construction),
+    and none of the paths built in the tests that use this helper contain a
+    real single-quote character, so a plain substring search between the
+    opening and the next closing quote is exact -- no need to reproduce
+    shell_quote's `'\''`-escaping logic here.
+    """
+    prefix = "ieasyhydroforecast_env_file_path='"
+    assert command.startswith(prefix), (
+        f"hint command does not start with the env path assignment: {command!r}"
+    )
+    rest = command[len(prefix) :]
+    end = rest.index("'")
+    return rest[:end]
 
 
 def _run_hint_command_verbatim(command: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -659,6 +684,177 @@ class TestContinueOnErrorHint:
         assert any("module=machine_learning" in ln for ln in calls), (
             "re-running the hint command with a space/metacharacter env "
             f"path did not get past the failing module. Output:\n{rerun_out}"
+        )
+
+    def test_hint_command_survives_backslash_x27_escape_in_env_path(self, synth_tree):
+        """Round-6 review finding 1: shell_quote is correct in isolation, but
+        emit_continue_on_error_hint emits its line via `log WARN`, and
+        log() rendered with `echo -e`, which reinterprets backslash escape
+        sequences IN THE MESSAGE -- undoing shell_quote's protection. If the
+        env path's text contains the literal 4-character sequence `\\x27`,
+        echo -e's hex-escape interpretation turns it into a real apostrophe
+        BEFORE the line is even printed, closing shell_quote's single-quote
+        wrapping early. Everything the attacker placed after that point in
+        the path text then becomes live, unquoted shell text once pasted.
+
+        Reproduced directly: pre-fix, pasting the printed line for this
+        exact path runs `touch <marker>`. This test must FAIL against the
+        pre-fix code (verified before applying the fix) and pass after.
+        """
+        marker_name = "INJECTED_BY_BACKSLASH_X27_ESCAPE"
+        # Directory name literally contains `\x27` followed by a
+        # semicolon/command/comment -- echo -e's hex-escape interpretation
+        # of \x27 turns it into a real single quote, closing shell_quote's
+        # quoting early and exposing the rest as live shell text (the `;`
+        # separates commands, `touch <marker>` runs, `;#` comments out the
+        # remainder of the line).
+        weird_dir = synth_tree.script_dir.parent / ("op" + "\\x27;touch " + marker_name + ";#")
+        weird_dir.mkdir()
+        weird_env_file = weird_dir / "test.env"
+        weird_env_file.write_text(synth_tree.env_file.read_text())
+        marker = synth_tree.script_dir.parent / marker_name
+
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        first = run_main(
+            synth_tree,
+            "daily",
+            extra_env={"ieasyhydroforecast_env_file_path": str(weird_env_file)},
+        )
+        out = first.stdout + first.stderr
+        assert first.returncode != 0
+        assert not marker.exists(), (
+            "the injected touch ran while emitting/logging the hint itself, "
+            "before the command was ever re-executed"
+        )
+
+        command = _extract_hint_command(out)
+        env_path_in_command = _extract_env_path_arg(command)
+        assert env_path_in_command == str(weird_env_file), (
+            "the \\x27 escape sequence in the env path was reinterpreted "
+            f"while rendering the log line, corrupting the printed path: {command!r}"
+        )
+        assert command.endswith("--continue-on-error 'daily'"), (
+            f"hint command was truncated or corrupted: {command!r}"
+        )
+
+        rerun = _run_hint_command_verbatim(command, cwd=synth_tree.script_dir.parent)
+        rerun_out = rerun.stdout + rerun.stderr
+
+        assert not marker.exists(), (
+            "the \\x27 escape sequence in the env path closed shell_quote's "
+            f"quoting early, executing injected content when the printed hint "
+            f"command was run verbatim. Output:\n{rerun_out}"
+        )
+        assert "Env file not found" not in rerun_out, rerun_out
+        calls = synth_tree.calls()
+        assert any("module=machine_learning" in ln for ln in calls), (
+            "re-running the hint command with a \\x27 escape sequence in the "
+            f"env path did not get past the failing module. Output:\n{rerun_out}"
+        )
+
+    def test_hint_command_survives_backslash_c_escape_in_env_path(self, synth_tree):
+        """Round-6 review finding 1 (companion case): `\\c` is echo -e's
+        'stop output here, no trailing newline' escape. If the env path
+        contains it, pre-fix log() truncates the ENTIRE hint line -- not
+        just the path -- dropping the `--continue-on-error '<target>'` tail
+        (and even the newline, so the next log() call's text gets glued
+        onto the same line). The operator would paste a syntactically
+        broken/incomplete command rather than something merely wrong.
+
+        This test must FAIL against the pre-fix code (verified before
+        applying the fix) and pass after.
+        """
+        weird_dir = synth_tree.script_dir.parent / "op\\ctruncation_test"
+        weird_dir.mkdir()
+        weird_env_file = weird_dir / "test.env"
+        weird_env_file.write_text(synth_tree.env_file.read_text())
+
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        first = run_main(
+            synth_tree,
+            "daily",
+            extra_env={"ieasyhydroforecast_env_file_path": str(weird_env_file)},
+        )
+        out = first.stdout + first.stderr
+        assert first.returncode != 0
+
+        command = _extract_hint_command(out)
+        env_path_in_command = _extract_env_path_arg(command)
+        assert env_path_in_command == str(weird_env_file), (
+            f"the \\c escape sequence in the env path corrupted the rendered log line: {command!r}"
+        )
+        assert command.endswith("--continue-on-error 'daily'"), (
+            f"hint command was truncated by a \\c escape sequence: {command!r}"
+        )
+
+        rerun = _run_hint_command_verbatim(command, cwd=synth_tree.script_dir.parent)
+        rerun_out = rerun.stdout + rerun.stderr
+        assert "Env file not found" not in rerun_out, rerun_out
+        calls = synth_tree.calls()
+        assert any("module=machine_learning" in ln for ln in calls), (
+            "re-running the hint command with a \\c escape sequence in the "
+            f"env path did not get past the failing module. Output:\n{rerun_out}"
+        )
+
+    def test_hint_command_resolves_relative_env_path_to_absolute(self, synth_tree, tmp_path):
+        """Round-6 review 'ALSO': validate_env accepts a RELATIVE
+        ieasyhydroforecast_env_file_path (it only checks `-f`, which
+        resolves fine against the run's own cwd) but the hint is printed
+        specifically to be pasted into a shell session later -- possibly
+        from a different cwd, the same class of defect already fixed for
+        the script path via SCRIPT_DIR (round-5 finding 1b).
+        emit_continue_on_error_hint must resolve a relative env path to
+        absolute before interpolating it. This does not change what
+        validate_env itself accepts.
+        """
+        operator_cwd = tmp_path / "operator_cwd"
+        (operator_cwd / "envs").mkdir(parents=True)
+        relative_env_file = operator_cwd / "envs" / "test.env"
+        relative_env_file.write_text(synth_tree.env_file.read_text())
+        relative_env_path = "envs/test.env"
+
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        first = run_main(
+            synth_tree,
+            "daily",
+            extra_env={"ieasyhydroforecast_env_file_path": relative_env_path},
+            cwd=operator_cwd,
+        )
+        out = first.stdout + first.stderr
+        assert first.returncode != 0
+        assert "Env file not found" not in out, (
+            f"validate_env rejected the relative env path from its own cwd: {out}"
+        )
+
+        command = _extract_hint_command(out)
+        env_path_in_command = _extract_env_path_arg(command)
+        assert env_path_in_command.startswith("/"), (
+            "hint command still interpolates the RELATIVE env path verbatim "
+            f"instead of resolving it to absolute: {command!r}"
+        )
+        assert env_path_in_command != relative_env_path
+
+        # Run the printed command from a cwd that is NOT the one the
+        # original run used -- proving the absolute path the hint printed
+        # survives the cwd change, unlike the relative input that produced it.
+        rerun = _run_hint_command_verbatim(command, cwd=synth_tree.script_dir.parent)
+        rerun_out = rerun.stdout + rerun.stderr
+        assert "ieasyhydroforecast_env_file_path is not set" not in rerun_out, rerun_out
+        assert "Env file not found" not in rerun_out, rerun_out
+        calls = synth_tree.calls()
+        assert any("module=machine_learning" in ln for ln in calls), (
+            "re-running the hint command (built from a relative env path) "
+            f"from a different cwd did not get past the failing module. "
+            f"Output:\n{rerun_out}"
         )
 
 
@@ -1083,3 +1279,127 @@ class TestLongHorizonSyncExitCodeHandling:
             "sub-step that actually failed), not the maintenance log -- "
             "got '(no output captured)' or the wrong log's tail instead"
         )
+
+    def test_exit_four_error_points_to_run_summary_and_its_log(self, synth_tree):
+        """Peer review (INFRA-037): exit 4 covers both "a few of many
+        stations failed" (benign) and "every station failed" (total
+        outage), and the original ERROR line here was identical for both,
+        with no counts and no pointer. The real counts already live in the
+        sub-step's own LONG-HORIZON RUN SUMMARY print (see
+        sync_long_horizon_hydrograph.py, which always survives
+        print_error_details' tail -- it prints last, right before the
+        sub-step's own final `sys.exit(4)` logger.error line, and nothing
+        the sub-step emits afterward can push it out of the tail window).
+        This test does not (and cannot, at the shell level -- see the
+        module docstring's NOTE on scope) fabricate that block itself,
+        since the stub here is a bash exit-code substitute, not the real
+        Python script. It only pins that run_locally.sh's own ERROR line
+        now names the block and points at where it landed, instead of
+        silently repeating the same undifferentiated message.
+        """
+        _override_sync_exit_code(synth_tree, 4)
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in out
+        assert "LONG-HORIZON RUN SUMMARY" in out, (
+            "the exit-4 ERROR line should name the LONG-HORIZON RUN SUMMARY "
+            "block so the operator knows where the counts live"
+        )
+        assert "preprocessing_runoff_long_horizon.log" in out, (
+            "the exit-4 ERROR line should point at the sub-step's own log "
+            "file, not just repeat the generic message"
+        )
+        assert "preprocessing_runoff (long-horizon sync)" in out, (
+            "the pointer should name the summary row the sub-step's own log is recorded on"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group D -- run_module_validation's non-ML single-module call sites
+# ---------------------------------------------------------------------------
+#
+# run_module_validation's `run_in_venv ... || rc=$?` fix (see its docstring)
+# exists because every call site in main()'s dispatch invokes it as a bare
+# statement under `set -euo pipefail`. Before the fix, a validate_pipeline.py
+# failure at ANY of these call sites -- not just machine_learning's -- would
+# have tripped `set -e` and killed run_locally.sh outright, before
+# record_validation ever ran, defeating "don't abort pipeline mid-run;
+# failures surface in summary". Call sites found in main()'s single-module
+# case branches (apps/run_locally.sh):
+#   preprocessing_runoff)       run_module_validation "preprocessing_runoff"
+#   preprocessing_gateway)      run_module_validation "preprocessing_gateway"
+#   linear_regression)          run_module_validation "linear_regression"
+#   machine_learning)           run_module_validation "machine_learning" "$mode"  (already covered above)
+#   postprocessing_forecasts)   run_module_validation "postprocessing_forecasts"
+#   long_term_forecasting)      run_module_validation "long_term_forecasting"
+# Two non-ML targets are covered below: preprocessing_runoff and
+# linear_regression.
+
+
+def _fail_validation_for_module(tree: SynthTree, module: str) -> None:
+    """Make validate_pipeline.py (run via run_module_validation's
+    postprocessing_forecasts stub, regardless of which module is being
+    validated) exit 1 only when invoked with `--module <module>`, and
+    succeed for every other invocation (e.g. the module's own script,
+    or validation of a different module).
+    """
+    tree.override(
+        "postprocessing_forecasts",
+        textwrap.dedent(f"""\
+            case "$script" in
+                */validate_pipeline.py)
+                    if [ "$2" = "{module}" ]; then
+                        exit 1
+                    fi
+                    ;;
+            esac
+            """),
+    )
+
+
+class TestRunModuleValidationNonMLCallSites:
+    """Pin the "don't abort mid-run" contract for run_module_validation's
+    non-ML single-module call sites, mirroring the ML coverage in
+    TestMachineLearningBareTargetModes above (its
+    test_validation_uses_the_mode_ml_actually_ran_under and friends).
+    """
+
+    def test_preprocessing_runoff_validation_failure_does_not_abort(self, synth_tree):
+        _fail_validation_for_module(synth_tree, "preprocessing_runoff")
+        result = run_main(synth_tree, "preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        # (a) did not die before recording -- the module's own PASS row and
+        # the full summary (including its validation section) both printed,
+        # which could not happen if set -e had killed the script inside
+        # run_module_validation before record_validation ran.
+        assert "preprocessing_runoff: PASS" in out, (
+            "the module's own run should have succeeded and been recorded "
+            "-- its absence means the script died before reaching here"
+        )
+        assert "PIPELINE SUMMARY" in out
+        assert "API VALIDATION SUMMARY" in out
+        # (b) recorded a validation FAIL row.
+        assert "api_validation (preprocessing_runoff): FAIL" in out
+        # (c) printed the summary -- VALIDATION ERROR DETAILS is only
+        # reached if print_summary ran to completion past record_validation.
+        assert "VALIDATION ERROR DETAILS" in out
+        # (d) exits non-zero.
+        assert result.returncode != 0
+
+    def test_linear_regression_validation_failure_does_not_abort(self, synth_tree):
+        _fail_validation_for_module(synth_tree, "linear_regression")
+        result = run_main(synth_tree, "linear_regression")
+        out = result.stdout + result.stderr
+
+        assert "linear_regression: PASS" in out, (
+            "the module's own run should have succeeded and been recorded "
+            "-- its absence means the script died before reaching here"
+        )
+        assert "PIPELINE SUMMARY" in out
+        assert "API VALIDATION SUMMARY" in out
+        assert "api_validation (linear_regression): FAIL" in out
+        assert "VALIDATION ERROR DETAILS" in out
+        assert result.returncode != 0

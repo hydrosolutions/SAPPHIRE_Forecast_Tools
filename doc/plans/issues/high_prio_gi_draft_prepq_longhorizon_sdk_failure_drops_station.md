@@ -82,8 +82,8 @@ _NormClassification.NORM_ABSENT:` branch's read-merge should also fire for `SDK_
 
 **Verified detail that de-risks this fix**: `write_station_monthly_hydrograph` also calls
 `shh._fetch_sdk_period_actuals(iehhf_sdk, code, "decade", target_year)` (`:386-388`) further down
-the same function, using the same `iehhf_sdk` object. That helper (defined in
-`sync_short_horizon_hydrograph.py:490-560`) wraps its own SDK call in a `try/except Exception`
+the same function, using the same `iehhf_sdk` object. That helper (`_fetch_sdk_period_actuals`,
+defined in `sync_short_horizon_hydrograph.py:490-616`) wraps its own SDK call in a `try/except Exception`
 (`:529-560`) that **degrades to empty `sdk_current`/`sdk_previous` dicts with a logged warning**
 rather than re-raising. So during a systemic outage, falling through past the norm lookup does not
 risk a second uncaught exception from this later SDK call — it independently fails soft.
@@ -96,7 +96,8 @@ has `SDK_FAILED` status **and zero stations have `API_FAILED` status** (`:641-64
 any API failures, a single flaky station's SDK raise already makes the whole run report non-zero.
 Exit 4 is therefore a guarantee that no API read/write failures occurred this run — that invariant
 is exactly what `run_locally.sh`'s maintenance runner relies on to downgrade exit 4 to non-fatal
-(rc stays 0) while still treating exit 5 as fatal (`apps/run_locally.sh:901-911`); this fix must
+(rc stays 0) while still treating exit 5 as fatal (`run_maintenance_preprocessing_runoff`,
+`apps/run_locally.sh:918-934`); this fix must
 preserve that invariant, not just the exit-4-on-SDK_FAILED behavior in isolation. If this fix
 simply reclassifies `SDK_FAILED` to be treated
 identically to `NORM_ABSENT` everywhere (including the exit-code function, which today does *not*

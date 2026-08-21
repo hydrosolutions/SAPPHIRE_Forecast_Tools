@@ -18,7 +18,9 @@ export RUN="$(ls -t apps/logs/run_locally_*.log | head -1)"
 echo "api=$SAPPHIRE_API_URL  run=$RUN"
 ```
 
-`run_locally.sh` never sources your `.env` (`run_locally.sh:1073`), so
+`run_locally.sh` never sources your `.env` — it only ever `grep`s specific
+keys out of it (see `resolve_org`, `apps/run_locally.sh:562-581`, and the
+explicit comment at `:1096`), so
 `SAPPHIRE_API_URL` is not in your shell unless you export it as above — without
 it, Step 9 silently checks `localhost` instead of your deployment.
 
@@ -245,14 +247,14 @@ head -20 "$(ls -t apps/logs/run_locally_*.log | head -1)"
    |---|---|---|
    | `kghm` | yes | **yes** |
    | `tjhm` | yes | **yes** |
-   | `demo` | **no** — skipped by design (`should_skip_module`, `:465-477`) | no |
-   | `uzhm` | **no** — skipped by design (`should_skip_module`, `:465-477`) | no |
-   | unset / misspelled / anything else | **yes** (`resolve_org` falls back to "run all", `:545-564`) | **no** |
+   | `demo` | **no** — skipped by design (`should_skip_module`, `:482-494`) | no |
+   | `uzhm` | **no** — skipped by design (`should_skip_module`, `:482-494`) | no |
+   | unset / misspelled / anything else | **yes** (`resolve_org` falls back to "run all", `:562-581`) | **no** |
 
    - **If it is `demo` or `uzhm`**, ML is skipped on purpose — along with
      `preprocessing_gateway` and `long_term_forecasting`. That alone explains the
      symptom and nothing below applies. The script prints positive confirmation
-     (`:2055-2059`): `Demo org: skipping modules — …` / `Uzhm org: skipping
+     (`:2078-2082`): `Demo org: skipping modules — …` / `Uzhm org: skipping
      modules — …`. Look for that line rather than inferring it.
    - **If it is unset or misspelled, you are in the worst cell of the table.**
      `run_locally.sh` will happily *try* to run ML, but
@@ -272,8 +274,8 @@ head -20 "$(ls -t apps/logs/run_locally_*.log | head -1)"
    either the ML image (Docker) or the ML venv (local) depending on how you run
    the pipeline.
    *`<not set, running all modules>` is fine* — `resolve_org` falls back to empty
-   and runs everything (`run_locally.sh:545-564`; the fallback `ORG=""` is at
-   `:563`). A **misspelled** organisation also runs everything, so a typo will not
+   and runs everything (`run_locally.sh:562-581`; the fallback `ORG=""` is at
+   `:580`). A **misspelled** organisation also runs everything, so a typo will not
    cause a skip here — but fix it anyway: the modules themselves branch on
    `ieasyhydroforecast_organization` (`iEasyHydroForecast/forecast_library.py`
    tests for `kghm`/`tjhm`), and a typo silently takes neither branch.
@@ -283,9 +285,9 @@ head -20 "$(ls -t apps/logs/run_locally_*.log | head -1)"
 
 3. **`Target:`** —
    - `daily` runs **both** PENTAD and DECAD explicitly (`run_daily_pipeline`,
-     `:1529`), so an unset `SAPPHIRE_PREDICTION_MODE` does not stop ML here.
+     `:1552`), so an unset `SAPPHIRE_PREDICTION_MODE` does not stop ML here.
    - `short-term`, `all`, `maintenance` default to **PENTAD** when the mode is
-     unset (`:1343`/`:1475`, with a WARN) — and PENTAD + `ML_MODE=DECAD` skips ML entirely.
+     unset (`:1366`/`:1498`, with a WARN) — and PENTAD + `ML_MODE=DECAD` skips ML entirely.
 
 ---
 
@@ -309,7 +311,7 @@ grep -n "Skipping machine_learning\|Module: machine_learning\|SAPPHIRE_PREDICTIO
 
 **If there is no banner and no skip line at all:** ML was skipped by organisation
 (Step 1.1), or the run aborted earlier (Step 7). On `daily` the org-skip branch is
-a bare `:` (`run_locally.sh:1534`) that logs *nothing*, so silence is the
+a bare `:` (`run_daily_pipeline`, `run_locally.sh:1556`) that logs *nothing*, so silence is the
 expected signature of an org skip there.
 
 > **The summary does not report skips.** A skipped module records no result, so
@@ -562,7 +564,7 @@ HRU, mtime today, last date at or beyond today.
 ## Step 7 — Did preprocessing_gateway die on its first failure?
 
 `run_preprocessing_gateway` runs three scripts and **breaks on the first failure**
-(`run_locally.sh:663-664`):
+(`run_preprocessing_gateway`, `run_locally.sh:681-682`):
 
 ```
 Quantile_Mapping_OP.py  →  extend_era5_reanalysis.py  →  snow_data_operational.py
@@ -601,7 +603,7 @@ the API key.
 
 ## Step 8 — Model artefacts, and which script stopped the run
 
-`run_machine_learning` (`run_locally.sh:708-714`) loops models × scripts and uses
+`run_machine_learning` (`run_locally.sh:717-743`) loops models × scripts and uses
 `break 2` on the first failure. The scripts run in this order:
 
 | Script | Role |

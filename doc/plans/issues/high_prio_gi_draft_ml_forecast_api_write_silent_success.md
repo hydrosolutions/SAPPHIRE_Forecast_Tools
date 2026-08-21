@@ -70,7 +70,7 @@ intersected with the per-model `== True` column.
 > had this backwards.
 
 **Success is louder than failure.** `:810-812` is a bare `print()`, captured by
-`run_in_venv`'s `2>&1 | tee` (`run_locally.sh:456-459`), while the empty-set and
+`run_in_venv`'s `2>&1 | tee` (`run_locally.sh:642-643`), while the empty-set and
 disabled cases are silent. **Caveat for anyone building a check on it:** the
 helper prints success and returns `True` even when `write_forecasts()` returns a
 count of **zero** (`:805-813`), and the count is station-*days*, not stations.
@@ -132,9 +132,9 @@ at import; `:42` calls `basicConfig(level=WARNING)`; `:43` takes
 
 ### Amplifier — and why it constrains the fix
 
-`run_machine_learning` (`run_locally.sh:541-549`) loops `ML_MODELS × ML_SCRIPTS`
-with `break 2` at `:547`; `recalculate_nan_forecasts.py` runs before
-`make_forecast.py` (`:141-145`). A failure for `TFT` prevents the operational
+`run_machine_learning` (`run_locally.sh:717-743`) loops `ML_MODELS × ML_SCRIPTS`
+with `break 2` at `:731`; `recalculate_nan_forecasts.py` runs before
+`make_forecast.py` in the `ML_SCRIPTS` array (`:174-178`). A failure for `TFT` prevents the operational
 writer for **all three** models.
 
 > **This is a hard constraint on the proposed fix, not just context.** If
@@ -167,7 +167,7 @@ the reporting half is done, the exit-code half is not. Extend this shape.
      bash run_locally.sh machine_learning
    ```
    The env file is required — `run_in_venv` forwards it empty when unset
-   (`run_locally.sh:442`) and `sl.load_environment()` (`:512`) fails first.
+   (`run_locally.sh:626`) and `sl.load_environment()` (`:512`) fails first.
 3. Observe: `make_forecast.py` exits 0 and the module records `PASS`, the
    `decad_<MODEL>_forecast.csv` archive updates, and no database rows appear. The
    only trace is one WARNING in `apps/logs/run_locally_*.log`.
