@@ -4,7 +4,7 @@
 evidence and a fix has been built against the corrected diagnosis (see § What was actually
 built). The full `run_tests.sh` gate is confirmed green: 16/16 modules and services pass, zero
 failures, and no skips introduced by this branch (15 skips pre-existed; 1 more arrived from
-trunk during a rebase, gated on bash < 4). Three rounds of out-of-loop adversarial review have
+trunk during a rebase, gated on bash < 4). Multiple rounds of out-of-loop adversarial review have
 run against this branch; see § Acceptance criteria for the current, verified state.
 **Module**: `apps/run_locally.sh` (orchestration) + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 (exit semantics of the maintenance sub-step that actually fails — **not**
@@ -275,25 +275,33 @@ Do not duplicate that analysis here.
 
 ### Known limitation — per-mode `machine_learning` MODULE rows still collide (not fixed here)
 
-Review round 3 fixed the per-mode **VALIDATION** rows: `run_module_validation`
-(`apps/run_locally.sh:1222`) now takes an optional mode suffix, so `daily`'s
-two ML validations produce distinguishable rows — `api_validation
-(machine_learning PENTAD)` and `api_validation (machine_learning DECAD)` —
-each with its own log file, per the comment at `run_locally.sh:1220-1221`.
+Review round 3 fixed the per-mode **VALIDATION** rows for the bare
+`machine_learning` single-module target: `run_module_validation`
+(`apps/run_locally.sh:1222`) now takes an optional mode suffix, and the
+`machine_learning` case branch (`apps/run_locally.sh:2144-2147`) passes each
+attempted mode as that suffix, so `ML_MODE=BOTH machine_learning` produces
+distinguishable rows — `api_validation (machine_learning PENTAD)` and
+`api_validation (machine_learning DECAD)` — each with its own log file.
+`daily`'s own validation is unrelated to this fix: it is a single aggregate
+call, `run_api_validation "daily"` at `run_locally.sh:1520`, not per-mode.
 
 The per-mode **MODULE** rows were not fixed. `run_machine_learning`
-(`apps/run_locally.sh:637`) always truncates `${ERROR_DIR}/machine_learning.log`
-at its own start and always calls `record_result "machine_learning" ...` with
-no mode suffix. So two calls in the same run — one per mode — produce two
-indistinguishable `machine_learning` rows in `PIPELINE SUMMARY` (e.g. a
-PENTAD PASS and a DECAD FAIL both read just `machine_learning`), and the
-second call's log truncates and overwrites the first's.
+(`apps/run_locally.sh:637`, called from Phase 3) always truncates
+`${ERROR_DIR}/machine_learning.log` and always calls
+`record_result "machine_learning" ...` with no mode suffix.
+`run_maintenance_machine_learning` (`apps/run_locally.sh:912`, called from
+Phase 4 — a different function, not `run_machine_learning`) does the same
+for `${ERROR_DIR}/machine_learning_maintenance.log` and
+`record_result "machine_learning (maintenance)" ...`. `run_daily_pipeline`
+(`apps/run_locally.sh:1446`) loops `for mode in PENTAD DECAD` in both
+phases, so two calls to the same function in one run produce
+indistinguishable rows, and the second call's log overwrites the first's.
 
-This is **not new** — `run_daily_pipeline` (`apps/run_locally.sh:1446`)
-already loops `for mode in PENTAD DECAD` and calls `run_machine_learning`
-once per mode, in both Phase 3 and Phase 4, so `daily` has produced
-colliding `machine_learning` module rows for as long as that loop has
-existed, independent of anything this branch changed.
+This does not happen by default. `should_skip_ml_for_mode`
+(`apps/run_locally.sh:416`) skips the mode that doesn't match `ML_MODE`, and
+`ML_MODE` defaults to `DECAD` (`run_locally.sh:180`), so each phase's loop
+calls its ML function only once. The collision requires `ML_MODE=BOTH`,
+which is not the default.
 
 Same family as **INFRA-024** (a module's specific exit code is normalised
 away, so failure causes are unattributable) and **INFRA-030** (skipped
@@ -355,7 +363,7 @@ VALIDATION rows.
    failures and zero unexpected skips. **Confirmed** — the full suite
    (16/16 modules and services) is green on this branch: zero failures, and
    no skips introduced by this branch (15 skips pre-existed; 1 more arrived
-   from trunk during a rebase, gated on bash < 4). Three rounds of
+   from trunk during a rebase, gated on bash < 4). Multiple rounds of
    out-of-loop adversarial review have run (CLAUDE.md § Multi-Model Review &
    Verification).
 

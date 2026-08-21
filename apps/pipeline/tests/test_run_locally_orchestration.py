@@ -277,6 +277,32 @@ def _mode_of(call_line: str) -> str:
     return call_line.rsplit("mode=", 1)[-1]
 
 
+# The `NC` (no-color) ANSI reset code run_locally.sh's log() appends after
+# every line it prints -- see run_locally.sh's NC='\033[0m'. The hint line
+# is colorized (WARN -> YELLOW), so the raw captured text ends in this
+# escape sequence; it must be stripped before the trailing token (the
+# target) is usable as a real shell argument.
+_ANSI_RESET_SUFFIX = "\x1b[0m"
+
+
+def _extract_hint_command(out: str) -> str:
+    """Pull the literal copy-pasteable command out of the emitted hint text.
+
+    The hint line (see emit_continue_on_error_hint) reads:
+        ... run: <ieasyhydroforecast_env_file_path=... >bash apps/run_locally.sh --continue-on-error <target>
+    Returns everything after "run: ", with the trailing ANSI reset code (if
+    any) and surrounding whitespace stripped.
+    """
+    marker = "stopping at the first, run: "
+    for line in out.splitlines():
+        if marker in line:
+            command = line.split(marker, 1)[1]
+            if command.endswith(_ANSI_RESET_SUFFIX):
+                command = command[: -len(_ANSI_RESET_SUFFIX)]
+            return command.strip()
+    raise AssertionError(f"continue-on-error hint command not found in output:\n{out}")
+
+
 def _real_apps_logs_snapshot() -> dict[str, tuple[int, int]]:
     """Map each entry name in apps/logs/ to (size, mtime_ns).
 
@@ -456,6 +482,99 @@ class TestContinueOnErrorHint:
         assert "did not run" not in out
         assert "remaining modules" not in out
         assert "modules anyway" not in out
+
+    def test_hint_command_is_actually_runnable_as_printed(self, synth_tree):
+        """Round-4 review finding 3: 'The test merely matches the string and
+        never executes the suggested command.' validate_env REQUIRES
+        ieasyhydroforecast_env_file_path to be set to an existing file, so a
+        hint that prints a bare `bash apps/run_locally.sh --continue-on-error
+        <target>` is not actually copy-pasteable -- an operator who runs it
+        verbatim gets a validation failure, not a continued run.
+
+        This test extracts the literal command the hint prints, then
+        executes it for real (through the same source-and-override harness
+        every other test in this file uses) WITHOUT pre-seeding
+        ieasyhydroforecast_env_file_path in the subprocess environment --
+        proving the fix works: the command carries its own working env-file
+        assignment and gets past validate_env, then genuinely proceeds past
+        the module that failed on the first run.
+        """
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        first = run_main(synth_tree, "daily")
+        out = first.stdout + first.stderr
+        assert first.returncode != 0
+
+        command = _extract_hint_command(out)
+        assert command.startswith("ieasyhydroforecast_env_file_path="), (
+            f"hint command does not interpolate the env file path: {command!r}"
+        )
+
+        env_assignment, sep, rest = command.partition(" bash ")
+        assert sep, f"expected ' bash ' after the env assignment in: {command!r}"
+        env_key, _, env_value = env_assignment.partition("=")
+        assert env_key == "ieasyhydroforecast_env_file_path"
+        assert env_value == str(synth_tree.env_file), (
+            "hint command's env file path does not match the path this run "
+            f"actually used: {env_value!r} vs {synth_tree.env_file}"
+        )
+
+        script_name, _, main_args = rest.partition(" ")
+        assert script_name == "apps/run_locally.sh"
+        main_args = main_args.strip()
+        assert main_args == "--continue-on-error daily"
+
+        # Re-run the extracted command for real. Source the unmodified
+        # script and override only the synthetic data globals -- exactly
+        # what run_main() does -- but this time do NOT pre-set
+        # ieasyhydroforecast_env_file_path in the subprocess environment.
+        # The command line itself, exactly as the hint printed it, must
+        # supply it.
+        rerun_log_file = synth_tree.log_dir / "hint_rerun.log"
+        script = textwrap.dedent(f"""
+            source "{RUN_LOCALLY_SH}"
+            SCRIPT_DIR="{synth_tree.script_dir}"
+            LOG_DIR="{synth_tree.log_dir}"
+            LOG_FILE="{rerun_log_file}"
+            ML_MODELS=(TFT)
+            ML_SCRIPTS=(recalculate_nan_forecasts.py)
+            ML_MAINTENANCE_SCRIPTS=(recalculate_nan_forecasts.py)
+            {env_key}={env_value} main {main_args}
+            """)
+
+        env = os.environ.copy()
+        for var in _ISOLATE_ENV_VARS:
+            env.pop(var, None)
+        env.pop("ieasyhydroforecast_env_file_path", None)
+
+        rerun = subprocess.run(
+            ["bash", "-c", script],
+            cwd=str(APPS_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        rerun_out = rerun.stdout + rerun.stderr
+
+        # It must NOT die in validate_env for a missing/unset env file --
+        # that was the entire bug: the old hint printed a command with no
+        # env var at all, so validate_env failed before --continue-on-error
+        # ever had a chance to matter.
+        assert "ieasyhydroforecast_env_file_path is not set" not in rerun_out, rerun_out
+        assert "Env file not found" not in rerun_out, rerun_out
+
+        # And it must genuinely proceed past preprocessing_runoff (the
+        # module that failed on the first run) into later Phase-3 modules
+        # -- proving --continue-on-error took effect, not merely that
+        # validation passed.
+        calls = synth_tree.calls()
+        assert any("module=machine_learning" in ln for ln in calls), (
+            "re-running the hint's own printed command did not get past "
+            f"the failing module. Output:\n{rerun_out}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +827,13 @@ class TestLongHorizonSyncExitCodeHandling:
             assert extra_row not in out
 
     def test_daily_continues_past_downgraded_failure_and_runs_ml(self, synth_tree):
+        """This is the central claim of the whole branch: a downgraded
+        exit-4 failure must let Phase 3 (run_daily_pipeline's "ML + linear
+        regression + postprocessing" loop) actually execute, not just its
+        first module. Assert on all three Phase-3 consumers -- a test that
+        only checked machine_learning could pass while linear_regression
+        and postprocessing_forecasts were silently skipped.
+        """
         _override_sync_exit_code(synth_tree, 4)
         result = run_main(synth_tree, "daily")
 
@@ -719,6 +845,14 @@ class TestLongHorizonSyncExitCodeHandling:
         ), "maintenance:preprocessing_gateway step never ran -- Phase 2 did not continue"
         assert any("module=machine_learning" in ln for ln in calls), (
             "machine_learning never ran after the downgraded exit-4 failure"
+        )
+        assert any("module=linear_regression" in ln for ln in calls), (
+            "linear_regression never ran after the downgraded exit-4 failure -- "
+            "Phase 3 did not fully continue"
+        )
+        assert any("module=postprocessing_forecasts" in ln for ln in calls), (
+            "postprocessing_forecasts never ran after the downgraded exit-4 failure -- "
+            "Phase 3 did not fully continue"
         )
 
     def test_maintenance_continues_past_downgraded_failure(self, synth_tree):
@@ -752,6 +886,14 @@ class TestLongHorizonSyncExitCodeHandling:
         assert "preprocessing_runoff (long-horizon sync): FAIL" in out
 
     def test_fatal_code_five_still_aborts_daily_and_ml_never_runs(self, synth_tree):
+        """Mirror image of test_daily_continues_past_downgraded_failure_and_
+        runs_ml: a fatal (exit 5) sub-step failure aborts Phase 2 before
+        Phase 3 is ever reached, so NONE of Phase 3's three consumers --
+        machine_learning, linear_regression, postprocessing_forecasts --
+        may run. A test that only checked machine_learning could pass while
+        a regression let linear_regression or postprocessing_forecasts run
+        anyway.
+        """
         _override_sync_exit_code(synth_tree, 5)
         result = run_main(synth_tree, "daily")
 
@@ -759,6 +901,14 @@ class TestLongHorizonSyncExitCodeHandling:
         calls = synth_tree.calls()
         assert not any("module=machine_learning" in ln for ln in calls), (
             "machine_learning ran despite a fatal (exit 5) maintenance failure"
+        )
+        assert not any("module=linear_regression" in ln for ln in calls), (
+            "linear_regression ran despite a fatal (exit 5) maintenance failure -- "
+            "Phase 3 should never have been reached"
+        )
+        assert not any("module=postprocessing_forecasts" in ln for ln in calls), (
+            "postprocessing_forecasts ran despite a fatal (exit 5) maintenance failure -- "
+            "Phase 3 should never have been reached"
         )
 
     def test_fatal_failure_records_long_horizon_log_not_maintenance_log(self, synth_tree):

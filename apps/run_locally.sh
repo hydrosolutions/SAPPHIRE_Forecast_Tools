@@ -383,10 +383,26 @@ record_validation() {
 # -- only the short-term phase itself stopped). So the wording below must
 # not claim any modules remained unrun, and must scope "stopped" to the
 # phase that aborted, not to the whole run. (INFRA-037)
+#
+# The printed command interpolates ieasyhydroforecast_env_file_path so it is
+# actually copy-pasteable: validate_env REQUIRES that variable to be set to
+# an existing file, or the script exits 1 before ever reaching
+# --continue-on-error's effect (round-4 review finding). The value comes
+# from the current run's own environment, which validate_env has already
+# echoed as "Env file: ..." earlier in this same run's output, so including
+# it here discloses nothing new. SAPPHIRE_PREDICTION_MODE/ML_MODE/
+# LT_FORECAST_TODAY are deliberately left out -- they are not required to
+# get past validate_env, and reconstructing them generally (mode may have
+# been mutated mid-loop by the aborting pipeline function itself) would
+# turn this into a general-purpose command reconstructor rather than a
+# targeted fix for the one thing that actually blocks copy-paste.
 emit_continue_on_error_hint() {
     local target="$1"
+    local env_file="${ieasyhydroforecast_env_file_path:-}"
+    local env_prefix=""
+    [ -n "$env_file" ] && env_prefix="ieasyhydroforecast_env_file_path=${env_file} "
     log WARN "A pipeline phase stopped at its first failing module because --continue-on-error is not set."
-    log WARN "To continue past failures instead of stopping at the first, run: bash apps/run_locally.sh --continue-on-error ${target}"
+    log WARN "To continue past failures instead of stopping at the first, run: ${env_prefix}bash apps/run_locally.sh --continue-on-error ${target}"
     log WARN "Note: even with --continue-on-error, this run will still exit non-zero — it does not make a failing run look successful."
 }
 

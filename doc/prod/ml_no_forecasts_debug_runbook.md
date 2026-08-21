@@ -145,9 +145,10 @@ and you run via Docker, you have no ML image.
 > known-bug notes below before anything else: they used to fully explain this
 > exact symptom with no deeper cause, and a fix for both has landed on this
 > branch — INFRA-037 is **implemented and confirmed** (full apps test suite
-> green, two rounds of out-of-loop review); confirm your checkout has both
-> fixes before assuming they apply to you; see Step 0 for how to check the
-> commit.
+> green — 16/16 modules and services, zero failures, no skips introduced by
+> this branch; multiple rounds of out-of-loop adversarial review); confirm your
+> checkout has both fixes before assuming they apply to you; see Step 0 for
+> how to check the commit.
 >
 > - **INFRA-037 — `run_locally.sh daily` used to abort before ML was reached**
 >   whenever the maintenance sub-step `sync_long_horizon_hydrograph.py` exited
@@ -317,7 +318,7 @@ expected signature of an org skip there.
 
 ### Step 2a — running ML by hand
 
-**On a fixed checkout (implemented, verification pending — ML-016):** the bare
+**On a fixed checkout (implemented and confirmed — ML-016):** the bare
 `machine_learning` target now resolves its own prediction mode via
 `resolve_ml_bare_target_modes` instead of crashing on an empty mode. You no
 longer need to export `SAPPHIRE_PREDICTION_MODE` by hand — leaving it unset
@@ -708,7 +709,7 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 
 | ID | Relevance |
 |---|---|
-| ML-016 | Bare `run_locally.sh machine_learning` used to crash on empty `SAPPHIRE_PREDICTION_MODE` and ignore `ML_MODE` — fixed (implemented, verification pending): now resolves its own mode — Step 2a |
+| ML-016 | Bare `run_locally.sh machine_learning` used to crash on empty `SAPPHIRE_PREDICTION_MODE` and ignore `ML_MODE` — fixed (implemented and confirmed): now resolves its own mode — Step 2a |
 | ML-017 | A single missing ERA5 day cascades to NaN across all short-term ML — Step 6 |
 | ML-021 | `make_forecast.py` exits 0 after writing no forecasts — the defect Steps 3–4 detect |
 | PREPG-010 | Transient transport fault killed the whole gateway run; fixed on trunk 2026-08-20 13:06 CEST, too recent for any deployed image — Step 7 |
@@ -716,4 +717,4 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 | PREPG-015 | Data Gateway API key reachable in logs — the redaction rules above |
 | INFRA-029 | Root logger capped at WARNING; why two Step 4 causes are invisible |
 | INFRA-030 | Skipped modules leave no summary line — Step 2 |
-| INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green, two rounds of out-of-loop review): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |
+| INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green — 16/16 modules and services, zero failures, no skips introduced by this branch; multiple rounds of out-of-loop review): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |
