@@ -12,12 +12,16 @@ the top, under a `## YYYY-MM-DD` heading.
 
 ## 2026-08-21
 
-**INFRA-038** filed — `ieasyhydroforecast_connect_to_iEH` is parsed three incompatible ways across
-13 call sites (case-insensitive in `setup_library`, case-sensitive positive `== "True"` in
-`preprocessing_runoff`/`linear_regression`, case-sensitive negative `== "False"` in
-`forecast_library`), so a value like `TRUE` satisfies neither test and lands in an unhandled middle
-state while the one validation gate waves it through. Latent on both kghm env files checked; a
-third per-user file in the same shared config directory uses `TRUE`.
+**INFRA-038** filed — `connect_to_iEH` and `ssh_to_iEH` are parsed **four incompatible ways across
+17 comparisons at 16 distinct lines** (12 connect, 5 ssh): case-insensitive in `setup_library`,
+case-sensitive positive `== "True"` in `preprocessing_runoff`/`linear_regression`, case-sensitive
+negative `== "False"` in `forecast_library`, and a tri-state parser
+(`check_if_ssh_tunnel_is_required`) returning `None` for anything unrecognised. A value like `TRUE`
+satisfies neither the positive nor the negative test and lands in an unhandled middle state while
+the one validation gate waves it through. Latent on both kghm env files checked; a third per-user
+file in the same shared config directory uses `TRUE`. Census corrected after an out-of-loop review
+caught the first draft counting an ssh comparison as a connect one and missing the tri-state
+parser entirely.
 
 **This change log was extracted** from the trailing paragraph of `module_issues.md`, verbatim and
 byte-for-byte (round-trip verified before the split), and reformatted one entry per paragraph.
