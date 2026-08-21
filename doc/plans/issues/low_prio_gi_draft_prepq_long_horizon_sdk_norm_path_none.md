@@ -12,7 +12,12 @@ a SAPPHIRE defect. See "Open decisions for the owner" 1 and 2, both resolved.
 **Found**: 2026-08-14, reconfirmed 2026-08-15, local kghm review on `maxat_sapphire_2` @
 `8e3fc1bc`.
 **Related**: PREPQ-009 (long-horizon hydrograph norm decouple — Complete). PREPG-009 (same
-question of how a module should report partial sub-task failure).
+question of how a module should report partial sub-task failure). **PREPQ-015** (High, Draft) —
+this issue explains *why* the SDK raises; PREPQ-015 is what stops that raise from discarding a
+station's data. As of PREPQ-015's 2026-08-21 second revision, it does **not** stop the permanent
+false alarm (exit 4 on every run) for stations this issue's cause structurally can never resolve —
+three designs to reclassify that raise were reviewed and refuted, and the persistent FAIL row is now
+an accepted, documented limitation, not a fix. See "Third confirmation" below.
 
 > **Provenance correction (2026-08-16).** The checkout moved from `maxat_sapphire_2` to
 > `fix_lr010_lr011_write_contract` at **2026-08-14 16:00** (git reflog), so every run from the
@@ -58,17 +63,29 @@ ERROR - Long-horizon monthly hydrograph ingestion completed with 4 SDK norm look
 **CORRECTION (2026-08-17).** An earlier revision of this file claimed "the exit-code contract
 behaves correctly". That is **wrong at the process level** and must not be relied on.
 
-What is true: the inner branch selects the right *diagnostic message* (`run_locally.sh:725-726`
-logs "SDK norm lookup failure(s)" for `lt_rc=4`) and sets the module's own `rc=4` (`:727`).
+What was true at the time: the inner branch selected the right *diagnostic message*
+(`run_locally.sh:725-726` logged "SDK norm lookup failure(s)" for `lt_rc=4`) and set the module's
+own `rc=4` (`:727`).
 
-What is false: that 4 reaches the caller. `print_summary` returns 1 on any failure
-(`:1585-1588`), the caller does `print_summary ... || exit_code=1` (`:1974`), and the script
-then does `exit $exit_code`. **`run_locally.sh` exits 1, not 4.** The specific code survives
-only in log text.
+What was false: that 4 reached the caller. `print_summary` returned 1 on any failure
+(`:1585-1588`), the caller did `print_summary ... || exit_code=1` (`:1974`), and the script then
+did `exit $exit_code`. **`run_locally.sh` exited 1, not 4.** The specific code survived only in
+log text.
 
-Consequence: any CI gate, cron alert, or wrapper reasoning on `$?` cannot distinguish
-"SDK norm failure" (4) from "API failure" (5) from "no records" (2). Independently found by an
-out-of-loop review during PREPQ-014 investigation and re-verified here by direct code reading.
+**Superseded by INFRA-037 (verified against the current file, line numbers moved).** The `lt_rc==4`
+branch no longer sets `rc`; it now records a `preprocessing_runoff (long-horizon sync)` FAIL row
+directly and lets the module continue (`run_locally.sh:923-931`, `record_result(...)` at `:931`) —
+`rc` stays whatever it already was. The overwrite mechanism described above still exists and still
+applies to whatever FAIL rows are present: `print_summary` returns 1 on any failure
+(`:1823-1826`), and the caller does `print_summary "$pipeline_elapsed" || exit_code=1` (`:2270`).
+So the conclusion is unchanged in spirit — the specific inner code (4, or now "FAIL row present")
+does not survive as the process's exit status, only as log/summary text — but the mechanism by
+which `lt_rc=4` stops setting `rc` at all is a real behavior change this correction predates.
+
+Consequence: any CI gate, cron alert, or wrapper reasoning on `$?` cannot distinguish "SDK norm
+failure" from "API failure" (5, which still sets `rc=$lt_rc` at `:920`) from "no records" (2).
+Independently found by an out-of-loop review during PREPQ-014 investigation and re-verified here
+by direct code reading.
 
 ## Why (a) is likely a real defect and (b) likely is not
 
@@ -346,27 +363,40 @@ and returns `[]` (`sync_short_horizon_hydrograph.py:632-641`); short-horizon `ma
 `_lookup_monthly_norms` catches bare `Exception` (`:295-304`) and maps *every* failure to
 `SDK_FAILED`: connection and auth failures, station-lookup non-200, malformed JSON, missing keys,
 float-conversion errors, norm-endpoint non-200, and the missing-path `ValueError`. Exit 4 therefore
-has many possible causes, and the equal count of 4 is suggestive only. Because long-horizon logs
-that failure at `logger.debug` (`:356`), the evidence needed to distinguish them was never emitted.
-A counts-only summary at WARNING keyed by a **normalised reason/stage** (not by exception class —
-`ValueError` covers several distinct stages here; see INFRA-024) would settle it without exposing
-station codes.
+has many possible causes, and the equal count of 4 is suggestive only. **At the time this was
+written**, long-horizon logged that failure at `logger.debug` (`:356`), so the evidence needed to
+distinguish them was never emitted. **Superseded — INFRA-037 lifted this to `logger.warning`**
+(verified against the current file: `sync_long_horizon_hydrograph.py:356`, message
+`"write_station_monthly_hydrograph: SDK call failed for site %s, skipping. Error: %s: %s"`); the
+per-station exception type and message are now emitted at default log level instead of being
+suppressed. A counts-only summary at WARNING keyed by
+a **normalised reason/stage** (not by exception class — `ValueError` covers several distinct stages
+here; see INFRA-024) would still improve on today's per-station raw-exception lines without
+exposing station codes.
 
-**`run_locally.sh` does not propagate exit 4 as the process status.** The inner maintenance function
-receives `lt_rc=4` and logs the specific "SDK norm lookup failure(s)" diagnostic (`run_locally.sh:725-727`),
-but `print_summary` returns 1 whenever any module failed (`:1585-1588`) and the caller does
-`print_summary "$pipeline_elapsed" || exit_code=1` (`:1974`), overwriting 4 before `exit $exit_code`.
-So the observed `failed (exit 4)` line describes the **inner** result; the wrapper's final process
-status is **1**. This issue's "Contract not to break" note — that exit codes 2/4/5 "are consumed by
-`run_locally.sh`" — is true only for the inner branching and logging, not for the final exit status.
+**`run_locally.sh` does not propagate exit 4 as the process status — and, per INFRA-037, no longer
+even tries to.** Verified against the current file (line numbers moved since this was written): the
+inner maintenance function logs the "SDK norm lookup failure(s)" diagnostic and records a
+`preprocessing_runoff (long-horizon sync)` FAIL row directly, without ever assigning `rc=4`
+(`run_locally.sh:923-931`); `print_summary` returns 1 whenever any FAIL row is present (`:1823-1826`)
+and the caller does `print_summary "$pipeline_elapsed" || exit_code=1` (`:2270`), so the process
+exits 1. So the observed `failed (exit 4)` line still describes only the **inner** diagnostic; the
+wrapper's final process status is **1**, via a different mechanism (a FAIL row) than the one
+originally described here (an `rc=4` assignment later overwritten). This issue's "Contract not to
+break" note — that exit codes 2/4/5 "are consumed by `run_locally.sh`" — is true only for the inner
+branching and logging, not for the final exit status.
 Anyone changing the exit-code mapping should add a shell-level test of the *final* exit contract;
 the existing test inspects only the function body
 (`apps/preprocessing_runoff/test/test_run_locally_long_horizon_wiring.py`).
 
-**Net operator-visible effect**, and a reportability defect worth filing independently of the
-virtual-station question: the operator sees short-horizon WARNINGs that are harmless to the exit
-code, plus an exit-4 error line whose four causing events were never printed (DEBUG-only), on a run
-whose actual process status is 1. Three separate signals, none of which points at the others.
+**Net operator-visible effect at the time this was written**, and a reportability defect filed
+independently of the virtual-station question: the operator saw short-horizon WARNINGs that were
+harmless to the exit code, plus an exit-4 error line whose four causing events were never printed
+(DEBUG-only), on a run whose actual process status was 1. Three separate signals, none of which
+pointed at the others. **Superseded — INFRA-037 lifted the causing events to `logger.warning`**
+(verified: `sync_long_horizon_hydrograph.py:356`), so they are now printed at default log level;
+the process-status split (exit-4 diagnostic vs. exit-1 actual status) is unaffected and still
+stands.
 
 ### The SDK pin is current — re-pinning is not the fix (checked 2026-08-17)
 
@@ -403,7 +433,18 @@ hydrological + virtual registries but its norm lookup can only address the hydro
 merely the deployment whose data has codes that exercise the seam; an org adding a virtual station
 whose code does *not* also exist in the hydrological registry would reproduce it.
 
-The fix space (for the owner to choose, once the open decisions below are settled) is one of:
+> **SUPERSEDED (2026-08-21), then superseded again (2026-08-21, second pass).** This fix-space
+> enumeration predates PREPQ-015's design entirely. A first PREPQ-015 revision implemented a refined
+> form of option 2 below (grade a raise using the SDK's own `get_virtual_sites()` list); a second
+> revision the same day **dropped that grading after three proposed reclassification designs — the
+> exception itself, local config, and the SDK's virtual-site list — were reviewed and refuted**.
+> **None of options 1-3 below is implemented.** PREPQ-015 ships only a fall-through fix (write the
+> station's records, keep status `SDK_FAILED`) and documents the permanent exit-4 alarm for
+> structurally normless stations as an accepted, unsolved limitation. Kept verbatim for the
+> reasoning trail; see PREPQ-015's "Grading mechanisms considered and rejected" for why each
+> reclassification design was rejected.
+
+The fix space (for the owner to choose, if reclassification is ever revisited) was one of:
 
 1. Classify virtual-only codes out of the norm-requiring work list before the call.
 2. Treat a path-unset result for a known virtual code as not-applicable rather than `SDK_FAILED`,
@@ -411,14 +452,23 @@ The fix space (for the owner to choose, once the open decisions below are settle
 3. Extend the SDK/service to resolve norms for virtual sites — note the upstream cost recorded
    above and the station-identity hazard in open decision 5.
 
-All three are behaviour changes and none was attempted here. Options 1 and 2 differ in where the
-knowledge of "this code is virtual" lives: option 1 needs the work-list builder to keep the
-hydrological/virtual distinction it currently discards at `setup_library.py:1544-1545`, whereas
-option 2 would infer it at the failure site — which open decision 4 argues is currently unsafe,
-since the exception class alone cannot distinguish a virtual-only code from an auth failure or a
-malformed row.
+All three were behaviour changes and none was attempted here at the time, nor by PREPQ-015. Options
+1 and 2 differ in where the knowledge of "this code is virtual" lives: option 1 needs the work-list
+builder to keep the hydrological/virtual distinction it currently discards at
+`setup_library.py:1544-1545`, whereas option 2 would infer it at the failure site — which open
+decision 4 argues is currently unsafe, since the exception class alone cannot distinguish a
+virtual-only code from an auth failure or a malformed row. A grading form of option 2 (against the
+SDK's authoritative virtual-site list, not the exception) was tried and refuted for a different
+reason — see PREPQ-015's "Grading mechanisms considered and rejected", design 3.
 
-### Open decisions for the owner — these block the fix
+### Open decisions for the owner (historical)
+
+Items 1-2 resolved 2026-08-17; items 3-4 were provisionally resolved by PREPQ-015's first
+2026-08-21 revision, then reopened by its second 2026-08-21 revision, which dropped reclassification
+entirely (see the SUPERSEDED box above); item 5 remains open. None of these still "block the fix" in
+the sense the original heading implied — PREPQ-015's fall-through fix is unblocked and
+implementable on its own; only reclassification, if ever revisited, would need items 3-4 answered
+again.
 
 **1. ~~Are virtual stations expected to carry SDK discharge norms at all?~~ — RESOLVED 2026-08-17
 (owner):** **Yes, they should be able to.** Since the SDK cannot do it today, this is accepted as an
@@ -428,12 +478,14 @@ developer — **sent and acknowledged 2026-08-17**, awaiting their answer
 overstatements in what was sent). Note the framing caveat recorded there: calling this an "upstream
 gap" prejudges question 1; "not supported by design" remains a possible and acceptable answer.
 
-Consequence for the fix space above: **option 3 is the desired end state**, and options 1–2 are
-interim measures at best. Do not implement a client-side "classify virtual out" fix as though it
-were the answer — it would suppress a signal the owner wants to keep. If an interim measure is
-needed before upstream lands, prefer option 2 (stop counting toward `SDK_FAILED`) over option 1
-(drop from the work list), because option 2 preserves the observed rows that open decision 3 is
-about.
+Consequence for the fix space above: **option 3 is the desired end state**, and options 1-2 were
+interim measures at best. This paragraph's warning against "classify virtual out" refers
+specifically to **option 1** (pre-filter the code out of the work list before the call ever
+happens) — that would suppress the signal the owner wants to keep (a virtual station gaining a norm
+later). **PREPQ-015 avoids option 1 too**: the norm call is still always attempted for every
+station, including known-virtual ones, so no signal is suppressed — but as of its second 2026-08-21
+revision it performs no reclassification at all (see the SUPERSEDED box above), so this is no
+longer "a grading form of option 2"; it is neither option 1 nor option 2.
 
 **2. ~~Which entrypoint is authoritative for "maintenance"?~~ — RESOLVED 2026-08-17 from the
 crontab documentation.** **The long-horizon script does not run in daily production maintenance at
@@ -476,21 +528,26 @@ non-zero (`bin/yearly_runoff_hydrograph_aggregation.sh:206-213`). So an exit 4 t
 > would therefore never run the yearly long-horizon aggregation. See
 > `doc/plans/issues/high_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
 
-**3. Per horizon, should a virtual site keep its observed rows with `norm=None`?** The two horizons
-already disagree. Long-horizon `NORM_ABSENT` still writes the 12 monthly rows and preserves any
-stored norm (`sync_long_horizon_hydrograph.py:337-417`), and the caller then also writes the derived
-seasonal and quarterly rows (`:552-599`); `SDK_FAILED` skips the station entirely (`:572-579`).
-Short-horizon skips without norms in both cases (`sync_short_horizon_hydrograph.py:619-652`). "Classify virtual codes out" could therefore *delete
-products that are currently produced*. Acceptance criteria should protect those observed rows, not
-merely remove exit 4.
+**3. Per horizon, should a virtual site keep its observed rows with `norm=None`?** — **RESOLVED by
+PREPQ-015's design: yes, but via fall-through, not grading (updated 2026-08-21, second pass).** At
+the time this was written the two horizons disagreed: long-horizon `NORM_ABSENT` wrote the 12
+monthly rows and preserved any stored norm (`sync_long_horizon_hydrograph.py:337-417`, plus derived
+seasonal/quarterly rows, `:552-599`), while `SDK_FAILED` skipped the station entirely (`:572-579` at
+the time — PREPQ-015 removes that skip). PREPQ-015's fall-through contract now writes the same
+observed rows for `SDK_FAILED` as for `NORM_ABSENT`, without reclassifying either status — a station
+keeps its observed rows regardless of which of the two it lands in. Short-horizon's separate
+`skip-without-norm` behaviour (`sync_short_horizon_hydrograph.py:619-652`) is untouched by
+PREPQ-015 and remains a distinct, unresolved question for that horizon.
 
-**4. How should a "known virtual" code be identified?** Today it cannot be, reliably. The virtual
-`Site` builder does not pass `site_type` (defaults to `"default"`) and does not set `is_virtual`,
-which config serialization then defaults to false (`forecast_library.py:7931`, `:6041`,
-`setup_library.py:811`); and `resolve_sdk_station_codes` discards the `Site` objects entirely,
-keeping only codes (`sync_long_horizon_hydrograph.py:683-691`). Any fix must carry registry
-provenance explicitly and define duplicate-code behaviour. It must **not** infer virtual status from
-an exception message or from `data_source`.
+**4. How should a "known virtual" code be identified?** — **No longer answered by PREPQ-015 (its
+first 2026-08-21 revision proposed `get_virtual_sites()`; its second 2026-08-21 revision dropped
+identification/grading entirely — see the SUPERSEDED box above).** At the time this item was
+written it could not be identified reliably: the virtual `Site` builder does not pass `site_type`
+(defaults to `"default"`) and does not set `is_virtual`, which config serialization then defaults to
+false (`forecast_library.py:7931`, `:6041`, `setup_library.py:811`), and `resolve_sdk_station_codes`
+discards the `Site` objects entirely, keeping only codes (`sync_long_horizon_hydrograph.py:683-691`).
+That gap is unchanged today; PREPQ-015 no longer needs to close it, since it performs no
+classification by virtual status at all.
 
 **5. The SDK's `sites[0]` fallback is a station-identity hazard** (`sdk_endpoint_definitions.py:101-108`).
 It accepts the first returned UUID without checking that the row's station code matches the one
@@ -546,14 +603,87 @@ degraded success alongside `norm_absent`, and keep exit 4 for a genuine SDK/tran
 That needs a way to identify virtual sites at that call site, which is the same lookup item 2
 requires — so items 2 and 3 are one piece of work, not two.
 
-**Reportability, worse than recorded.** Item 3 notes that `SDK_FAILED` is logged at DEBUG and so
-is invisible at default level. **INFRA-029** shows the effective level for this very file is
-WARNING: `sync_long_horizon_hydrograph.py:100-104` calls `logging.basicConfig(level=logging.INFO)`
-*after* importing `setup_library` (`:35`), which makes it a no-op, so its **INFO** lines are
-discarded too — `logger.info("Resolved %d SDK-only station(s)", …)` at `:690`, for one. The
-counters quoted above survived only because the summary block is emitted with **`print`**
-(`:772`), bypassing logging entirely. Two of this module's three output channels are dark; the
-one that works does so by accident of not using the logger.
+**Reportability, worse than recorded at the time this was written.** Item 3 noted that `SDK_FAILED`
+was logged at DEBUG and so was invisible at default level. **INFRA-029** showed the effective level
+for this very file is WARNING: `sync_long_horizon_hydrograph.py:100-104` calls
+`logging.basicConfig(level=logging.INFO)` *after* importing `setup_library` (`:35`), which makes it
+a no-op, so **INFO** lines are discarded too — `logger.info("Resolved %d SDK-only station(s)", …)`
+at `:696` (line numbers have moved), for one. The counters quoted above survived only because the
+summary block is emitted with **`print`** (`:781`, moved), bypassing logging entirely — so
+bumping `SDK_FAILED` from DEBUG to INFO alone would **not** have fixed it; only WARNING (or print)
+clears the effective floor. **Superseded for the `SDK_FAILED` event specifically — INFRA-037 logs
+it at `logger.warning`** (verified: `sync_long_horizon_hydrograph.py:356`), which does clear that
+floor, so this one event is no longer dark. The broader INFRA-029 finding is otherwise unaffected:
+this module's INFO lines (e.g. the "Resolved %d SDK-only station(s)" line above) are still
+discarded, and the summary counters still survive only via `print`, not the logger.
+
+## Third confirmation — direct probe of `_lookup_monthly_norms` (2026-08-21, kyg)
+
+A read-only probe called the module's own `_lookup_monthly_norms` directly, once per station in
+the long-horizon work list, against live kyg iEH-HF — a more targeted check than the full-run
+observation in "Second reproduction" above, which only observed the aggregate counters.
+
+- **62 stations attempted: 53 `VALID`, 5 `NORM_ABSENT`, 4 `SDK_FAILED`** — this reproduces the
+  2026-08-18 field report's counts exactly (62/53/5/4/0), on a different date, confirming the
+  cardinality is stable, not a one-off.
+- **All 4 `SDK_FAILED` stations raised the identical exception**:
+  `ValueError: No path provided or the provided path is None` — consistent with the single
+  mechanism this issue's "Root cause" section already traces to `_get_site_uuid_for_site_code`
+  (`ieasyhydro_sdk/sdk_endpoint_definitions.py:90-109`) returning no usable UUID.
+- **3 of the 4 are virtual stations**, present in the deployment's *local* virtual-stations config.
+  This settled, for those 3, the membership question item 2 in "Open decisions for the owner" left
+  open ("mechanism proven, membership NOT established") — for 3 of the 4, membership was established
+  by config, not merely inferred from the count symmetry.
+- **The 4th was not flagged virtual** in that local config, despite raising the identical exception.
+  **Superseded (2026-08-21) by a stronger, direct check**: calling the SDK's own authoritative
+  `get_virtual_sites()` (`ieasyhydro_sdk/sdk.py:208-213`) against the same live kyg iEH-HF returns 6
+  virtual sites, and **all four** of the failing stations — including this one — are in that list.
+  So the local virtual-station config and the station library are **both wrong** about this one
+  station: the config omits it, and the library flags it non-virtual, while the SDK's own registry
+  includes it. That is an owner data-fix for those two local artifacts, out of scope for both this
+  issue and PREPQ-015. Do not name the station in any file.
+
+**What this confirms, precisely — and what it does not.** This issue's hypothesised cause — the
+two-registry seam, where `site_uuid` resolves only via the hydrological registry while the
+long-horizon work list also injects virtual-registry codes — is confirmed for the failing-set
+cardinality (4 of 62), the exception signature (identical across all 4), and SDK-side virtual-list
+*membership*: all 4 are confirmed virtual by the SDK's own `get_virtual_sites()` list, a direct
+authoritative check rather than an inference from matching counts or from local,
+since-shown-unreliable config files. **Not verified**: the 4 stations' *absence* from the
+hydrological registry itself. `get_virtual_sites()` establishes list membership, not registry
+absence — a code could in principle appear in both registries (see "What can make a code
+unresolvable" above: overlap resolves normally). No live query against
+`stations/{organization_uuid}/hydrological` was made for these 4 codes, so the two-registry seam is
+confirmed as the *mechanism*, not confirmed as *this station set's specific cause* beyond what the
+identical exception signature already implies.
+
+**What this changes structurally, not just evidentially.** If a virtual station indeed has no
+per-site UUID in the hydrological registry — plausible, but per the caveat above not independently
+verified for these 4 — its norm lookup would raise on **every future run** until the upstream
+registry or the site's status changes, not intermittently. A plain fall-through fix (write the
+station's rows, keep `SDK_FAILED`, keep exiting 4) is therefore insufficient on its own to clear the
+alarm for a station like this: it stops the data loss but leaves a `long-horizon sync` FAIL row that
+never clears, which is alarm fatigue by construction and would let a genuine future SDK outage hide
+inside an alarm nobody reads anymore. **PREPQ-015's 2026-08-21 revision does not solve this.** Three
+designs to reclassify a raise for a structurally normless station were proposed and each was
+refuted (see PREPQ-015's "Grading mechanisms considered and rejected"); PREPQ-015 ships the
+fall-through fix only and records the permanent FAIL row as an accepted, documented limitation, not
+a resolved one.
+
+**Relationship to PREPQ-015, stated plainly**: this issue (PREPQ-014) explains *why* the SDK norm
+lookup raises for these stations. PREPQ-015 is what stops that raise from discarding a station's
+month/quarter/season rows. As of its 2026-08-21 revision, PREPQ-015 does **not** stop the raise from
+recurring as a permanent FAIL row for structurally normless stations — that outcome was considered
+and explicitly accepted as a known limitation, not fixed, after the reclassification designs that
+would have fixed it were reviewed and refuted.
+
+**Disposition note, not a recommendation.** This confirmation makes the underlying condition more
+precisely understood, not more fixable on its own: nothing about "confirmed cause" makes any of the
+4 stations any less structurally normless, and the owner has already ruled once (2026-08-18) that a
+virtual station lacking a norm is expected, not a fault. PREPQ-015 does not reclassify this
+condition — it only stops the raise from discarding data. Whether this issue's own disposition
+should change (e.g. from "defect to fix" to "expected behaviour, permanent FAIL row accepted") is
+left to the owner; this file's Status is unchanged here.
 
 ## What to inspect
 
@@ -564,35 +694,52 @@ one that works does so by accident of not using the logger.
    unresolvable whenever the hydrological station lookup yields no usable UUID — which is **four**
    distinct conditions, not just registry absence (non-200, empty list, missing/null UUID on the
    matched row, missing/null UUID via the `sites[0]` fallback). See "Root cause".
-2. ~~Whether the 4 affected sites differ structurally~~ — **mechanism proven, membership NOT
-   established**. Virtual-only codes are the leading candidate and the class the module is known to
-   inject, but automatic-only stations and malformed rows remain live candidates, and the failing
-   set was never matched to any of them. Open: confirm against a live `stations/{org}/virtual`
-   listing plus a captured hydrological response.
+2. ~~Whether the 4 affected sites differ structurally~~ — **mechanism proven; virtual-list membership
+   CONFIRMED for all 4** (updated 2026-08-21, see "Third confirmation" above). A direct probe first
+   tied 3 of the 4 `SDK_FAILED` sites to the deployment's *local* virtual-stations config by name; a
+   second, stronger check — calling the SDK's own authoritative `get_virtual_sites()` directly,
+   rather than trusting the local config — confirmed the 4th as virtual too, and showed the local
+   config and the station library are both wrong about it (see "Third confirmation"). No site in
+   this set remains open as "automatic-only or malformed-row" by elimination against those two
+   sources. Whether virtual status is *itself* what causes the raise — via absence from the
+   hydrological registry specifically — was not independently verified for these 4; see the caveat
+   in "Third confirmation" above.
 3. Whether (a) and (b) should share an exit code at all — today only (a) reaches exit 4. They are
-   cleanly separable in code; this is now purely a policy question. Fold in the reportability
-   defect noted above: long-horizon logs its `SDK_FAILED` at DEBUG, so the events causing exit 4
-   are invisible at default log level.
+   cleanly separable in code; this is now purely a policy question. The reportability defect noted
+   above — long-horizon logged its `SDK_FAILED` at DEBUG, so the events causing exit 4 were
+   invisible at default log level — is **superseded**: INFRA-037 lifted it to `logger.warning`
+   (verified: `sync_long_horizon_hydrograph.py:356`), so those events are printed at default log
+   level now. Nothing left to fold in on that front; the remaining half of this item is the policy
+   question alone.
 4. Whether a failed *secondary* sub-task should mark the whole maintenance target FAIL when
    the primary gap-fill succeeded (cross-reference PREPG-009's partial-failure question).
 
 ## Acceptance criteria
 
-- The 4 sites either produce norms, or are explicitly classified as not-applicable and stop
-  contributing to the failure count.
-- Path-unset and data-absent conditions are reported distinctly and, if they warrant different
-  operator responses, carry different exit codes.
-- A run whose primary gap-fill succeeded is distinguishable from one where it did not.
+- **NOT satisfied by PREPQ-015's design (revised 2026-08-21, second pass).** The original
+  criterion — the 4 sites either produce norms, or are explicitly classified as not-applicable and
+  stop contributing to the failure count — is **not** met: PREPQ-015 dropped reclassification after
+  three proposed designs were reviewed and refuted (see its "Grading mechanisms considered and
+  rejected"). The 4 sites keep contributing to `SDK_FAILED`'s exit-4 count on every run,
+  indefinitely — an accepted, documented limitation (PREPQ-015's "Accepted cost"), not a resolution
+  of this criterion. This issue's own acceptance criterion stays open.
+- Path-unset and data-absent conditions are reported distinctly — already true in code
+  (`NORM_ABSENT` vs `SDK_FAILED`/exit 4 vs exit 2). **True again as of PREPQ-015's 2026-08-21 second
+  revision**: with reclassification dropped, PREPQ-015 keeps `SDK_FAILED` and `NORM_ABSENT` fully
+  separate outcomes — it does not collapse one into the other for any station, virtual or not.
+- A run whose primary gap-fill succeeded is distinguishable from one where it did not — unaffected
+  by PREPQ-015, which only changes long-horizon's own status handling.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff` green.
 
 ## Contract not to break
 
 - Exit codes 2 / 4 / 5 are already consumed by `run_locally.sh`
   (`run_maintenance_preprocessing_runoff`); do not renumber without updating that mapping.
-  **Qualified 2026-08-17:** they are consumed for *inner branching and logging* only — the
-  wrapper's final process status is 1 whenever any module failed, because `print_summary`'s
-  return overwrites it (`run_locally.sh:1585-1588,1973`). See the exit-code correction in
-  "Root cause". A change here needs a shell-level test of the final exit contract; the existing
-  test inspects only the function body.
+  **Qualified 2026-08-17, re-verified 2026-08-21 after INFRA-037 shipped:** they are consumed for
+  *inner branching and logging* only — the wrapper's final process status is 1 whenever any FAIL row
+  is present, because `print_summary`'s return overwrites it (`run_locally.sh:1823-1826,2270`; the
+  `lt_rc==4` branch itself no longer assigns `rc` at all — see the exit-code correction in "Root
+  cause"). A change here needs a shell-level test of the final exit contract; the existing test
+  inspects only the function body.
 - The 30-day gap-fill must keep running to completion regardless of hydrograph norm failures —
   it did here, and that ordering is what saved the review.
