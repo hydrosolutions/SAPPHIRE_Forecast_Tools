@@ -238,6 +238,7 @@ def run_main(
     target: str,
     *,
     continue_on_error: bool = False,
+    dry_run: bool = False,
     extra_env: dict[str, str] | None = None,
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -258,9 +259,16 @@ def run_main(
     needs to prove behaviour of a RELATIVE ieasyhydroforecast_env_file_path
     (both validate_env's own resolution and emit_continue_on_error_hint's
     cwd-independence fix) passes a different `cwd` explicitly.
+
+    `dry_run` passes ``--dry-run``, so validate_env still runs (it precedes
+    the dry-run exit) but no module is ever dispatched -- used by
+    TestModeDomainValidationUnderDryRun to prove Block 1/2 fire before
+    dispatch, not merely before something a passing dispatch would also
+    have blocked.
     """
     log_file = tree.log_dir / "run.log"
     flag = "--continue-on-error " if continue_on_error else ""
+    flag += "--dry-run " if dry_run else ""
 
     script = textwrap.dedent(f"""
         source "{RUN_LOCALLY_SH}"
@@ -1403,3 +1411,398 @@ class TestRunModuleValidationNonMLCallSites:
         assert "api_validation (linear_regression): FAIL" in out
         assert "VALIDATION ERROR DETAILS" in out
         assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Group E -- INFRA-039: unvalidated SAPPHIRE_PREDICTION_MODE / ML_MODE
+# ---------------------------------------------------------------------------
+#
+# validate_env used to log SAPPHIRE_PREDICTION_MODE but never check its
+# domain, and never checked ML_MODE at all. Both variables have consumers
+# that accept an out-of-domain value SILENTLY: linear_regression.py
+# disables both horizons and exits 0 on a mode it doesn't recognise, and
+# should_skip_ml_for_mode does a plain string compare against ML_MODE, so
+# an invalid ML_MODE filters every mode with only an INFO line. Two new,
+# deliberately narrow case blocks in validate_env close that for the
+# targets where it is otherwise silent -- see
+# doc/plans/issues/mid_prio_gi_draft_infra_run_locally_unvalidated_modes.md.
+#
+# Both blocks are additive: they use validate_env's existing `errors`
+# counter (never `exit` directly), so a run with two bad variables still
+# reports both, and neither block touches resolve_ml_bare_target_modes,
+# should_skip_ml_for_mode, or any run_* pipeline function.
+
+
+class TestPredictionModeDomainBlock1:
+    """Block 1: SAPPHIRE_PREDICTION_MODE, domain PENTAD|DECAD|BOTH.
+
+    Scoped to the targets that dispatch linear_regression or
+    machine_learning -- the two consumers Failure A in the issue documents
+    as silent on an out-of-domain value. `daily` is deliberately excluded
+    (it overwrites the variable itself before dispatch); see
+    TestModeDomainRegressionGuards for the targets that must NOT be
+    touched by this block.
+    """
+
+    BLOCK_1_TARGETS = [
+        "short-term",
+        "all",
+        "maintenance",
+        "linear_regression",
+        "maintenance:linear_regression",
+        "maintenance:machine_learning",
+    ]
+
+    @pytest.mark.parametrize("target", BLOCK_1_TARGETS)
+    @pytest.mark.parametrize("bad_mode", ["ALL", "PENTAAD"])
+    def test_out_of_domain_mode_rejected_before_any_module_runs(self, synth_tree, target, bad_mode):
+        """`ALL` is a real mode elsewhere (Failure A's dangerous case, not a
+        typo) and `PENTAAD` is a plain typo -- both must be rejected the
+        same way for every target that dispatches LR or ML.
+        """
+        result = run_main(synth_tree, target, extra_env={"SAPPHIRE_PREDICTION_MODE": bad_mode})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert bad_mode in out, out
+        assert not synth_tree.calls(), (
+            f"target {target!r} invoked a module despite an out-of-domain "
+            f"SAPPHIRE_PREDICTION_MODE={bad_mode!r}: {synth_tree.calls()}"
+        )
+
+
+class TestBlock1MaintenanceMlOrgGate:
+    """F1 fix: out-of-loop review found `maintenance:machine_learning` was
+    the one Block 1 target that dispatches ONLY machine_learning, not
+    linear_regression -- so for demo/uzhm (which skip machine_learning
+    entirely, DEMO_SKIP_MODULES/UZHM_SKIP_MODULES) that target already
+    no-ops today, and an ungated Block 1 newly rejected a currently-working
+    invocation. The fix gates only this one Block 1 arm on
+    `! should_skip_module machine_learning`; every other Block 1 target
+    stays ungated because it still dispatches linear_regression, which is
+    not org-skippable.
+    """
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    def test_out_of_domain_mode_on_maintenance_ml_still_succeeds_for_orgs_that_skip_ml(
+        self, synth_tree, org
+    ):
+        """The F1 guard itself: before the fix, this exited 1 for demo and
+        uzhm even though `maintenance:machine_learning` does nothing for
+        those orgs regardless of SAPPHIRE_PREDICTION_MODE.
+        """
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL", "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert not synth_tree.calls(), (
+            f"org={org!r} should skip machine_learning entirely: {synth_tree.calls()}"
+        )
+
+    def test_out_of_domain_mode_on_maintenance_ml_still_rejected_for_a_normal_org(self, synth_tree):
+        """Complement of the guard above: the gate must not have swallowed
+        the whole Block 1 arm for `maintenance:machine_learning` -- an org
+        that does NOT skip machine_learning (the default test org) must
+        still be rejected. Without this test, a fix that gated the entire
+        Block 1 case (not just this one target) on
+        `! should_skip_module machine_learning` would also pass.
+        """
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert not synth_tree.calls()
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "short-term",
+            "all",
+            "maintenance",
+            "linear_regression",
+            "maintenance:linear_regression",
+        ],
+    )
+    def test_out_of_domain_mode_on_lr_bearing_targets_still_rejected_for_ml_skipping_orgs(
+        self, synth_tree, target, org
+    ):
+        """The other half of the complement: all five LR-bearing Block 1
+        targets must stay REJECTED for demo/uzhm too, since they all still
+        dispatch linear_regression regardless of the org's ML-skip list.
+        This is what rules out the wrong fix of gating the whole Block 1
+        case on `! should_skip_module machine_learning` -- that would have
+        made demo/uzhm silently pass here as well. Covers all five targets
+        in Block 1's ungated arm (run_locally.sh's
+        `short-term|all|maintenance|linear_regression|maintenance:linear_regression`
+        case), not just three of them -- otherwise a later change that
+        gated `all` or `maintenance` on the ML org skip would make demo/uzhm
+        silently accept SAPPHIRE_PREDICTION_MODE=ALL there too, and every
+        test would still pass.
+        """
+        result = run_main(
+            synth_tree,
+            target,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL", "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert not synth_tree.calls()
+
+
+class TestMlModeDomainBlock2:
+    """Block 2: ML_MODE, domain PENTAD|DECAD|BOTH.
+
+    Scoped to targets that dispatch machine_learning through the outer
+    mode loops (`daily` included here, unlike Block 1 -- it is vulnerable
+    to Failure B, not Failure A). Excludes linear_regression-only targets
+    and recalculate_skill_metrics, which never dispatch ML.
+    """
+
+    BLOCK_2_TARGETS = [
+        "daily",
+        "short-term",
+        "all",
+        "maintenance",
+        "maintenance:machine_learning",
+    ]
+
+    @pytest.mark.parametrize("target", BLOCK_2_TARGETS)
+    def test_invalid_ml_mode_rejected_before_any_module_runs(self, synth_tree, target):
+        result = run_main(synth_tree, target, extra_env={"ML_MODE": "DEACD"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "ML_MODE" in out, out
+        assert "DEACD" in out, out
+        assert not synth_tree.calls(), (
+            f"target {target!r} invoked a module despite ML_MODE=DEACD: {synth_tree.calls()}"
+        )
+
+
+class TestModeDomainValidationUnderDryRun:
+    """Acceptance criterion 4: both blocks fire under --dry-run, since
+    validate_env runs before the dry-run exit (main():~2139-2143). Tested
+    directly rather than only asserted in prose -- a regression that moved
+    validate_env after the dry-run check would pass every other test in
+    this file (none of them use --dry-run) while silently making --dry-run
+    useless for catching these two defects.
+    """
+
+    def test_block_1_fires_under_dry_run(self, synth_tree):
+        result = run_main(
+            synth_tree,
+            "short-term",
+            dry_run=True,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert "ALL" in out, out
+        assert not synth_tree.calls()
+
+    def test_block_2_fires_under_dry_run(self, synth_tree):
+        result = run_main(synth_tree, "short-term", dry_run=True, extra_env={"ML_MODE": "DEACD"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "ML_MODE" in out, out
+        assert "DEACD" in out, out
+        assert not synth_tree.calls()
+
+    def test_dry_run_still_passes_for_a_valid_mode(self, synth_tree):
+        """Sanity baseline for the two failing-dry-run tests above: a
+        --dry-run with in-domain values reaches the "Dry run complete"
+        message and exits 0, so the failures asserted above are actually
+        caused by the bad values, not by --dry-run itself always failing.
+        """
+        result = run_main(
+            synth_tree,
+            "short-term",
+            dry_run=True,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAD", "ML_MODE": "DECAD"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "Dry run complete" in out
+        assert not synth_tree.calls()
+
+
+class TestModeDomainRegressionGuards:
+    """Acceptance criterion 3 -- the load-bearing half of this change.
+
+    Each test here maps to a live usage or a stated exclusion in the issue
+    and must keep succeeding after Block 1 / Block 2 are added. A first
+    draft of this plan used a single global whitelist for
+    SAPPHIRE_PREDICTION_MODE and would have failed the recalculate_skill_
+    metrics tests below (VALID_MODES there includes ALL/MONTHLY/SEASONAL).
+    """
+
+    @pytest.mark.parametrize("mode", ["ALL", "MONTHLY", "SEASONAL"])
+    def test_recalculate_skill_metrics_keeps_accepting_its_full_domain(self, synth_tree, mode):
+        """recalculate_skill_metrics.py's own VALID_MODES accepts eight
+        modes (PENTAD, DECAD, BOTH, MONTHLY, ALL, DAILY, QUARTERLY,
+        SEASONAL) and already exits 1 on its own; Block 1 deliberately
+        excludes this target so as not to duplicate (and inevitably drift
+        from) that list in bash.
+        """
+        result = run_main(
+            synth_tree,
+            "recalculate_skill_metrics",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": mode},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert any("module=postprocessing_forecasts" in ln for ln in synth_tree.calls())
+
+    def test_unrecognised_mode_on_daily_still_runs(self, synth_tree):
+        """`daily` overwrites SAPPHIRE_PREDICTION_MODE itself in Phases 3-4
+        before any module runs under it, so a stale/invalid value the
+        operator happened to have exported must not newly break `daily`.
+        """
+        result = run_main(synth_tree, "daily", extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAAD"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert any("module=preprocessing_runoff" in ln for ln in synth_tree.calls())
+        assert any("module=machine_learning" in ln for ln in synth_tree.calls())
+
+    def test_unrecognised_mode_on_initialize_still_runs(self, synth_tree):
+        """F2 (documented, not fixed): `initialize` dispatches
+        linear_regression (run_initialize_deployment) but is absent from
+        Block 1. This is harmless, not an oversight to close here --
+        run_initialize_deployment forces SAPPHIRE_PREDICTION_MODE=$mode
+        with PENTAD then DECAD on every linear_regression/skill-metrics
+        call it makes, so an operator's stale/invalid value never reaches
+        those consumers. Same rationale as the `daily` exclusion. Adding
+        `initialize` to Block 1 would newly reject a currently-harmless
+        invocation, so it stays out.
+        """
+        result = run_main(
+            synth_tree, "initialize", extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAAD"}
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert any("module=linear_regression" in ln for ln in synth_tree.calls())
+
+    def test_unrecognised_mode_on_long_term_still_runs(self, synth_tree):
+        """`long-term` doesn't depend on SAPPHIRE_PREDICTION_MODE at all
+        (see validate_env's untouched WARN case), so neither block applies.
+        """
+        result = run_main(
+            synth_tree, "long-term", extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAAD"}
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert any("module=long_term_forecasting" in ln for ln in synth_tree.calls())
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "long-term",
+            "recalculate_skill_metrics",
+            "maintenance:linear_regression",
+            "linear_regression",
+        ],
+    )
+    def test_invalid_ml_mode_does_not_block_targets_that_never_dispatch_ml(
+        self, synth_tree, target
+    ):
+        """None of these four targets are in Block 2's list -- long-term
+        and recalculate_skill_metrics never touch machine_learning at all,
+        and the two linear_regression targets dispatch LR only.
+        """
+        result = run_main(synth_tree, target, extra_env={"ML_MODE": "DEACD"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert synth_tree.calls(), f"target {target!r} invoked no module at all"
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    def test_invalid_ml_mode_on_daily_does_not_block_orgs_that_skip_ml(self, synth_tree, org):
+        """Block 2 is gated on `! should_skip_module machine_learning`
+        specifically so demo/uzhm orgs -- which skip machine_learning
+        entirely (DEMO_SKIP_MODULES / UZHM_SKIP_MODULES) -- are unaffected
+        by an ML_MODE value that is irrelevant to them today. An ungated
+        Block 2 would newly reject a `daily` run that works in production
+        for both orgs.
+        """
+        result = run_main(
+            synth_tree,
+            "daily",
+            extra_env={"ML_MODE": "DEACD", "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
+            f"machine_learning ran for org={org!r}, which should skip it entirely"
+        )
+        assert any("module=preprocessing_runoff" in ln for ln in synth_tree.calls())
+
+    def test_unset_prediction_mode_on_short_term_still_warns_and_defaults(self, synth_tree):
+        """The pre-existing unset-mode WARN/OK case in validate_env (the
+        block above the two new ones) must keep firing for its full
+        current target list -- Block 1's narrower list must not have
+        replaced it.
+        """
+        result = run_main(synth_tree, "short-term")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "SAPPHIRE_PREDICTION_MODE not set (will default to PENTAD)" in out
+        assert synth_tree.calls()
+
+    def test_unset_prediction_mode_on_recalculate_skill_metrics_still_warns(self, synth_tree):
+        """recalculate_skill_metrics is excluded from Block 1 (its consumer
+        validates its own, larger domain) but must still get the existing
+        unset-mode WARN -- the narrowing must not have dropped it from
+        that older, separate case block.
+        """
+        result = run_main(synth_tree, "recalculate_skill_metrics")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "SAPPHIRE_PREDICTION_MODE not set (will default to PENTAD)" in out
+
+    def test_unset_prediction_mode_on_bare_linear_regression_still_runs(self, synth_tree):
+        """Bare `linear_regression` has no outer mode loop, so with
+        SAPPHIRE_PREDICTION_MODE unset it must still run and forward an
+        empty mode to the module. This uses a stub, so it only proves that
+        run_locally.sh does not invent a value and forwards the mode
+        unchanged (empty) -- it does NOT exercise linear_regression.py's
+        own default resolution. The module-side fallback that turns an
+        empty mode into BOTH is `prediction_mode = os.getenv(
+        "SAPPHIRE_PREDICTION_MODE", "") or "BOTH"` at linear_regression.py:634;
+        that line, not this test, is what keeps the default BOTH rather than
+        PENTAD or an invalid value.
+        """
+        result = run_main(synth_tree, "linear_regression")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        calls = [ln for ln in synth_tree.calls() if "module=linear_regression" in ln]
+        assert calls, "linear_regression stub was never invoked"
+        assert [_mode_of(ln) for ln in calls] == [""]

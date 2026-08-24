@@ -1655,6 +1655,83 @@ validate_env() {
             ;;
     esac
 
+    # INFRA-039 Block 1: SAPPHIRE_PREDICTION_MODE domain check.
+    #
+    # Scoped to the targets that dispatch linear_regression or
+    # machine_learning -- the two consumers that accept an out-of-domain
+    # value (e.g. ALL, MONTHLY) silently: linear_regression.py disables
+    # both horizons and exits 0, and should_skip_ml_for_mode filters ML out
+    # with only an INFO line. Deliberately narrower than the WARN case
+    # above (e.g. excludes maintenance:postprocessing_forecasts and
+    # recalculate_skill_metrics, whose downstream Python already validates
+    # and exits 1 -- duplicating that domain here would drift). Excludes
+    # daily, which overwrites SAPPHIRE_PREDICTION_MODE itself before
+    # dispatch, and initialize, which forces PENTAD/DECAD per LR call via
+    # run_initialize_deployment regardless of the operator's value (same
+    # rationale as daily). Empty/unset stays legal here -- that's the WARN
+    # case above for every target in this list except bare linear_regression,
+    # which is NOT in the WARN case's target list: for that target an
+    # empty/unset value is simply forwarded, and linear_regression.py
+    # defaults it to BOTH itself (`os.getenv("SAPPHIRE_PREDICTION_MODE", "")
+    # or "BOTH"`, linear_regression.py:634).
+    #
+    # Split into two arms because maintenance:machine_learning is the only
+    # target here that dispatches ONLY machine_learning, not
+    # linear_regression: for demo/uzhm orgs (which skip machine_learning
+    # entirely, :211) that target already no-ops today, so it must be
+    # gated on should_skip_module machine_learning the same way Block 2 is,
+    # or this check would newly reject a currently-harmless invocation. The
+    # other targets all still dispatch linear_regression -- which is not
+    # org-skippable -- so they stay ungated.
+    case "$target" in
+        short-term|all|maintenance|linear_regression|maintenance:linear_regression)
+            if [ -n "${SAPPHIRE_PREDICTION_MODE:-}" ]; then
+                case "${SAPPHIRE_PREDICTION_MODE}" in
+                    PENTAD|DECAD|BOTH) ;;
+                    *)
+                        log ERROR "SAPPHIRE_PREDICTION_MODE='${SAPPHIRE_PREDICTION_MODE}' is not valid for target '${target}' (expected PENTAD, DECAD, or BOTH)"
+                        errors=$((errors + 1))
+                        ;;
+                esac
+            fi
+            ;;
+        maintenance:machine_learning)
+            if [ -n "${SAPPHIRE_PREDICTION_MODE:-}" ] && ! should_skip_module machine_learning; then
+                case "${SAPPHIRE_PREDICTION_MODE}" in
+                    PENTAD|DECAD|BOTH) ;;
+                    *)
+                        log ERROR "SAPPHIRE_PREDICTION_MODE='${SAPPHIRE_PREDICTION_MODE}' is not valid for target '${target}' (expected PENTAD, DECAD, or BOTH)"
+                        errors=$((errors + 1))
+                        ;;
+                esac
+            fi
+            ;;
+    esac
+
+    # INFRA-039 Block 2: ML_MODE domain check.
+    #
+    # Scoped to targets that dispatch machine_learning through the outer
+    # mode loops (should_skip_ml_for_mode compares ML_MODE against the
+    # current mode as plain strings, so an invalid ML_MODE silently
+    # filters every mode). Gated on should_skip_module machine_learning
+    # since demo/uzhm orgs skip machine_learning entirely -- ML_MODE is
+    # irrelevant there and this check must not reject those runs.
+    # ML_MODE is never empty (defaulted to DECAD above), so there is no
+    # unset case and no accompanying "log OK" (main() already logs it).
+    case "$target" in
+        daily|short-term|all|maintenance|maintenance:machine_learning)
+            if ! should_skip_module machine_learning; then
+                case "${ML_MODE}" in
+                    PENTAD|DECAD|BOTH) ;;
+                    *)
+                        log ERROR "ML_MODE='${ML_MODE}' is not valid for target '${target}' (expected PENTAD, DECAD, or BOTH)"
+                        errors=$((errors + 1))
+                        ;;
+                esac
+            fi
+            ;;
+    esac
+
     # Determine which modules to validate
     local modules_to_check=()
     case "$target" in

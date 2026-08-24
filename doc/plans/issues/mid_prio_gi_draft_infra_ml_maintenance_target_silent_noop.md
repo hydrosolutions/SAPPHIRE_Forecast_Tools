@@ -13,6 +13,13 @@ validates both `SAPPHIRE_PREDICTION_MODE` and `ML_MODE` against an explicit doma
 an inconsistent explicit request). **INFRA-030** (skipped modules leave no summary line — same
 family: a module that ran nothing reports as if it succeeded).
 
+> **Scope note (2026-08-21, INFRA-039).** INFRA-039 adds a domain check for `ML_MODE` in
+> `validate_env`, which removes this issue's *secondary* observation — that `ML_MODE=JUNK`
+> filters out every mode identically. **It does not close this issue.** The headline defect
+> here is built entirely from **valid** values: `SAPPHIRE_PREDICTION_MODE` unset defaults to
+> `PENTAD`, and `ML_MODE`'s default `DECAD` then filters it out. No domain check can catch
+> that. Do not close ML-022 on the strength of "ML_MODE is now validated".
+
 ---
 
 ## Defect
