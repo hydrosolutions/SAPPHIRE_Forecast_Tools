@@ -1471,6 +1471,84 @@ class TestPredictionModeDomainBlock1:
         )
 
 
+class TestBlock1MaintenanceMlOrgGate:
+    """F1 fix: out-of-loop review found `maintenance:machine_learning` was
+    the one Block 1 target that dispatches ONLY machine_learning, not
+    linear_regression -- so for demo/uzhm (which skip machine_learning
+    entirely, DEMO_SKIP_MODULES/UZHM_SKIP_MODULES) that target already
+    no-ops today, and an ungated Block 1 newly rejected a currently-working
+    invocation. The fix gates only this one Block 1 arm on
+    `! should_skip_module machine_learning`; every other Block 1 target
+    stays ungated because it still dispatches linear_regression, which is
+    not org-skippable.
+    """
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    def test_out_of_domain_mode_on_maintenance_ml_still_succeeds_for_orgs_that_skip_ml(
+        self, synth_tree, org
+    ):
+        """The F1 guard itself: before the fix, this exited 1 for demo and
+        uzhm even though `maintenance:machine_learning` does nothing for
+        those orgs regardless of SAPPHIRE_PREDICTION_MODE.
+        """
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL", "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert not synth_tree.calls(), (
+            f"org={org!r} should skip machine_learning entirely: {synth_tree.calls()}"
+        )
+
+    def test_out_of_domain_mode_on_maintenance_ml_still_rejected_for_a_normal_org(self, synth_tree):
+        """Complement of the guard above: the gate must not have swallowed
+        the whole Block 1 arm for `maintenance:machine_learning` -- an org
+        that does NOT skip machine_learning (the default test org) must
+        still be rejected. Without this test, a fix that gated the entire
+        Block 1 case (not just this one target) on
+        `! should_skip_module machine_learning` would also pass.
+        """
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert not synth_tree.calls()
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    @pytest.mark.parametrize(
+        "target", ["short-term", "linear_regression", "maintenance:linear_regression"]
+    )
+    def test_out_of_domain_mode_on_lr_bearing_targets_still_rejected_for_ml_skipping_orgs(
+        self, synth_tree, target, org
+    ):
+        """The other half of the complement: the LR-bearing Block 1 targets
+        must stay REJECTED for demo/uzhm too, since they all still
+        dispatch linear_regression regardless of the org's ML-skip list.
+        This is what rules out the wrong fix of gating the whole Block 1
+        case on `! should_skip_module machine_learning` -- that would have
+        made demo/uzhm silently pass here as well.
+        """
+        result = run_main(
+            synth_tree,
+            target,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "ALL", "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "SAPPHIRE_PREDICTION_MODE" in out, out
+        assert not synth_tree.calls()
+
+
 class TestMlModeDomainBlock2:
     """Block 2: ML_MODE, domain PENTAD|DECAD|BOTH.
 
@@ -1591,6 +1669,26 @@ class TestModeDomainRegressionGuards:
         assert result.returncode == 0, out
         assert any("module=preprocessing_runoff" in ln for ln in synth_tree.calls())
         assert any("module=machine_learning" in ln for ln in synth_tree.calls())
+
+    def test_unrecognised_mode_on_initialize_still_runs(self, synth_tree):
+        """F2 (documented, not fixed): `initialize` dispatches
+        linear_regression (run_initialize_deployment) but is absent from
+        Block 1. This is harmless, not an oversight to close here --
+        run_initialize_deployment forces SAPPHIRE_PREDICTION_MODE=$mode
+        with PENTAD then DECAD on every linear_regression/skill-metrics
+        call it makes, so an operator's stale/invalid value never reaches
+        those consumers. Same rationale as the `daily` exclusion. Adding
+        `initialize` to Block 1 would newly reject a currently-harmless
+        invocation, so it stays out.
+        """
+        result = run_main(
+            synth_tree, "initialize", extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAAD"}
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "is not valid" not in out, out
+        assert any("module=linear_regression" in ln for ln in synth_tree.calls())
 
     def test_unrecognised_mode_on_long_term_still_runs(self, synth_tree):
         """`long-term` doesn't depend on SAPPHIRE_PREDICTION_MODE at all

@@ -1666,10 +1666,33 @@ validate_env() {
     # recalculate_skill_metrics, whose downstream Python already validates
     # and exits 1 -- duplicating that domain here would drift). Excludes
     # daily, which overwrites SAPPHIRE_PREDICTION_MODE itself before
-    # dispatch. Empty/unset stays legal here -- that's the WARN case above.
+    # dispatch, and initialize, which forces PENTAD/DECAD per LR call via
+    # run_initialize_deployment regardless of the operator's value (same
+    # rationale as daily). Empty/unset stays legal here -- that's the WARN
+    # case above.
+    #
+    # Split into two arms because maintenance:machine_learning is the only
+    # target here that dispatches ONLY machine_learning, not
+    # linear_regression: for demo/uzhm orgs (which skip machine_learning
+    # entirely, :211) that target already no-ops today, so it must be
+    # gated on should_skip_module machine_learning the same way Block 2 is,
+    # or this check would newly reject a currently-harmless invocation. The
+    # other targets all still dispatch linear_regression -- which is not
+    # org-skippable -- so they stay ungated.
     case "$target" in
-        short-term|all|maintenance|linear_regression|maintenance:linear_regression|maintenance:machine_learning)
+        short-term|all|maintenance|linear_regression|maintenance:linear_regression)
             if [ -n "${SAPPHIRE_PREDICTION_MODE:-}" ]; then
+                case "${SAPPHIRE_PREDICTION_MODE}" in
+                    PENTAD|DECAD|BOTH) ;;
+                    *)
+                        log ERROR "SAPPHIRE_PREDICTION_MODE='${SAPPHIRE_PREDICTION_MODE}' is not valid for target '${target}' (expected PENTAD, DECAD, or BOTH)"
+                        errors=$((errors + 1))
+                        ;;
+                esac
+            fi
+            ;;
+        maintenance:machine_learning)
+            if [ -n "${SAPPHIRE_PREDICTION_MODE:-}" ] && ! should_skip_module machine_learning; then
                 case "${SAPPHIRE_PREDICTION_MODE}" in
                     PENTAD|DECAD|BOTH) ;;
                     *)
