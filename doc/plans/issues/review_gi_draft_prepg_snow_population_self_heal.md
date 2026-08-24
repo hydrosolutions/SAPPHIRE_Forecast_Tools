@@ -1,6 +1,10 @@
 # PREPG-007: Snow visualization population gaps - self-healing curve and Jan 1 snow norms
 
-**Status**: Review (2026-06-25) — P1+P2 implemented, awaiting review
+**Status**: Review — **review gate COMPLETE 2026-08-21; P3 outstanding.** Do not re-run the
+review; see § Review outcome. Phase state: **P1 merged** (PR #386, 2026-06-26), **P2 superseded**
+(owner decision — snow recalc stays 31 Aug, runoff 1 Jan), **P3 not yet run** — scheduled for the
+next deployment update on kghm + tjhm. *(Was: "P1+P2 implemented, awaiting review" — stale on both
+counts.)*
 **Module**: `apps/preprocessing_gateway` + deployment cron/docs
 **Priority**: **High** (user-facing defect on a deployed forecast dashboard)
 **Labels**: `preprocessing_gateway`, `snow-data`, `operational`, `dashboard`, `maintenance`
@@ -11,6 +15,29 @@
 > station codes, real discharge values, real SWE values, or deployment secrets.
 
 ---
+
+## Review outcome (2026-08-21) — do not re-run this gate
+
+The post-implementation review CLAUDE.md requires had never been run on the merged P1 code. It was
+run 2026-08-21 (out-of-loop, read-only) and produced four results, all landed:
+
+| finding | outcome |
+|---|---|
+| The anti-clobber guard **fails open** — a transient API read failure nulls `norm`, statistics and bands across the full 365-day window, and a test enshrines it | **PREPG-020** filed (High) |
+| `run_docker_container` discards the container exit code, so **every** Luigi task reports success; the scheduled snow-norm task also launches an image lacking its script | **P-007** filed (High) |
+| This issue's own P3 command (`run_periodic_maintenance.sh snow_norms`) reports success having done nothing | **corrected below**, in § P3 |
+| P2's Jan-1 retarget appears reverted | **not a defect** — 31 Aug is the intended schedule; P2 is superseded, not regressed |
+
+**P3 was also rehearsed locally 2026-08-21 and works.** Step 1 healed +1,512 `value` and `current`
+rows per snow type and left `norm`/`previous`/`q50` untouched, confirming the preservation path holds
+when the read succeeds. Step 2 completed but had nothing to fill locally — the 2026 bands were
+already complete — so expect it to do more on a server.
+
+**One result will look like a P3 failure and is not:** the HS `previous` band is blank for Jul–Aug
+because HS values are absent **upstream** for Jul–Sep 2025 (SWE is complete over the same period;
+HS 2024 is complete). That is **PREPG-021**, confirmed present on the servers. The recalc cannot
+derive `previous` from NULL sources.
+
 
 ## Summary
 
