@@ -49,7 +49,98 @@ class TestRunDockerContainer:
     """Test DockerTaskBase.run_docker_container()."""
 
     def test_success_path(self, mock_env, mock_docker_client):
-        """Successful container run returns (id, 0, logs)."""
+        """Successful container run returns (id, 0, logs).
+
+        run_with_timeout is patched to return container.wait()'s actual shape
+        ({"StatusCode": 0}) -- not a bare MagicMock -- so this exercises the
+        real StatusCode-extraction logic in run_docker_container rather than
+        masking it.
+        """
+        from pipeline_docker import PreprocessingRunoff
+
+        client, container = mock_docker_client
+        task = PreprocessingRunoff()
+
+        with (
+            patch("docker.from_env", return_value=client),
+            patch.object(task, "run_with_timeout", return_value={"StatusCode": 0}),
+            patch(
+                "apps.pipeline.src.pipeline_utils.there_is_a_newer_image_on_docker_hub",
+                return_value=False,
+            ),
+        ):
+            cid, exit_status, logs = task.run_docker_container(
+                image_name="sapphire-preprunoff",
+                container_name="test",
+                volumes={},
+                environment=[],
+                attempt_number=1,
+            )
+
+        assert cid == "test_container_123"
+        assert exit_status == 0
+        assert "container output logs" in logs
+
+    def test_nonzero_exit_status_path(self, mock_env, mock_docker_client):
+        """A container that exits non-zero must surface a non-zero exit_status.
+
+        DELIBERATELY-BROKEN-CASE CANARY: if run_docker_container is reverted to
+        hard-code `exit_status = 0` after a successful wait (the P-007 defect),
+        this test fails because exit_status would come back 0 instead of 1.
+        """
+        from pipeline_docker import PreprocessingRunoff
+
+        client, container = mock_docker_client
+        task = PreprocessingRunoff()
+
+        with (
+            patch("docker.from_env", return_value=client),
+            patch.object(task, "run_with_timeout", return_value={"StatusCode": 1}),
+            patch(
+                "apps.pipeline.src.pipeline_utils.there_is_a_newer_image_on_docker_hub",
+                return_value=False,
+            ),
+        ):
+            cid, exit_status, logs = task.run_docker_container(
+                image_name="sapphire-preprunoff",
+                container_name="test",
+                volumes={},
+                environment=[],
+                attempt_number=1,
+            )
+
+        assert cid == "test_container_123"
+        assert exit_status == 1
+        assert "container output logs" in logs
+
+    def test_missing_status_code_defaults_nonzero(self, mock_env, mock_docker_client):
+        """A wait() result lacking 'StatusCode' must default to non-zero, not 0."""
+        from pipeline_docker import PreprocessingRunoff
+
+        client, container = mock_docker_client
+        task = PreprocessingRunoff()
+
+        with (
+            patch("docker.from_env", return_value=client),
+            patch.object(task, "run_with_timeout", return_value={}),
+            patch(
+                "apps.pipeline.src.pipeline_utils.there_is_a_newer_image_on_docker_hub",
+                return_value=False,
+            ),
+        ):
+            cid, exit_status, logs = task.run_docker_container(
+                image_name="sapphire-preprunoff",
+                container_name="test",
+                volumes={},
+                environment=[],
+                attempt_number=1,
+            )
+
+        assert cid == "test_container_123"
+        assert exit_status == 1
+
+    def test_non_dict_wait_result_defaults_nonzero(self, mock_env, mock_docker_client):
+        """A wait() result that is not a dict at all must default to non-zero."""
         from pipeline_docker import PreprocessingRunoff
 
         client, container = mock_docker_client
@@ -72,8 +163,55 @@ class TestRunDockerContainer:
             )
 
         assert cid == "test_container_123"
-        assert exit_status == 0
-        assert "container output logs" in logs
+        assert exit_status == 1
+
+    @pytest.mark.parametrize(
+        "malformed_status_code",
+        [
+            pytest.param(False, id="bool_False"),
+            pytest.param(None, id="None"),
+            pytest.param("0", id="str_zero"),
+            pytest.param(0.0, id="float_zero"),
+        ],
+    )
+    def test_malformed_status_code_defaults_nonzero(
+        self, mock_env, mock_docker_client, malformed_status_code
+    ):
+        """A malformed (non-int, or bool) StatusCode must yield non-zero, never success.
+
+        `False` is the case that matters: `isinstance(False, int)` is True and
+        `False == 0` is True in Python, so a naive isinstance(int) check -- or the
+        bare `exit_status == 0` comparison in execute_with_retries -- would silently
+        read a bool StatusCode as success. type(raw) is int excludes bool.
+        """
+        from pipeline_docker import PreprocessingRunoff
+
+        client, container = mock_docker_client
+        task = PreprocessingRunoff()
+
+        with (
+            patch("docker.from_env", return_value=client),
+            patch.object(
+                task,
+                "run_with_timeout",
+                return_value={"StatusCode": malformed_status_code},
+            ),
+            patch(
+                "apps.pipeline.src.pipeline_utils.there_is_a_newer_image_on_docker_hub",
+                return_value=False,
+            ),
+        ):
+            cid, exit_status, logs = task.run_docker_container(
+                image_name="sapphire-preprunoff",
+                container_name="test",
+                volumes={},
+                environment=[],
+                attempt_number=1,
+            )
+
+        assert cid == "test_container_123"
+        assert exit_status == 1
+        assert exit_status != 0
 
     def test_timeout_path(self, mock_env, mock_docker_client):
         """Custom TimeoutError is now caught by 'except TimeoutError:' (exit 124).
