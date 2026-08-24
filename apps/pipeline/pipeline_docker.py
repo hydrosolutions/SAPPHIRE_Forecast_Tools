@@ -328,8 +328,13 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
 
             # Wait for container with timeout
             try:
-                self.run_with_timeout(container.wait)
-                exit_status = 0
+                wait_result = self.run_with_timeout(container.wait)
+                raw_status = (
+                    wait_result.get("StatusCode", 1) if isinstance(wait_result, dict) else 1
+                )
+                # Exclude bool: isinstance(True, int) is True, and False == 0, so a
+                # bool StatusCode would silently read as success without this check.
+                exit_status = raw_status if type(raw_status) is int else 1
             except TimeoutError:
                 print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
                 container.stop()

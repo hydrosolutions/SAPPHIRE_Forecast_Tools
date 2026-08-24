@@ -1,8 +1,8 @@
 # ML-016: Standalone `run_locally.sh machine_learning` target crashes — empty `SAPPHIRE_PREDICTION_MODE` (and ignores `ML_MODE`)
 
-**Status**: Draft (2026-06-19). Implemented (verified 2026-08-20) — see
+**Status**: Review (2026-06-19). Implemented (verified 2026-08-20) — see
 § Implementation status below. This fix ships on the same branch as
-INFRA-037 (`high_prio_gi_draft_infra_run_locally_aborts_on_expected_preprocessing_failure.md`);
+INFRA-037 (`review_gi_draft_infra_run_locally_aborts_on_expected_preprocessing_failure.md`);
 the full `run_tests.sh` gate is confirmed green for that branch: 16/16
 modules and services pass, zero failures, and no skips introduced by the
 branch (15 skips pre-existed; 1 more arrived from trunk during a rebase,

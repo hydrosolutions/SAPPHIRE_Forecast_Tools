@@ -1,6 +1,6 @@
 # PREPQ-015: Long-horizon hydrograph: an SDK-raise still drops the whole station
 
-**Status**: Draft (2026-08-20)
+**Status**: Review (2026-08-20)
 **Module**: `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 **Priority**: High — affected stations get **zero** month/quarter/season rows, reproducing the
 exact symptom PREPQ-009 fixed (empty last-year runoff, no percent-of-norm in the long-term monthly

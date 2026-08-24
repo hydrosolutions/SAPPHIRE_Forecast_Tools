@@ -101,6 +101,6 @@ Data Gateway (operator/upstream).
 
 - LR fix: `4237963`, `00ba729`.
 - Issues: **ML-017** `doc/plans/issues/high_prio_gi_draft_prepg_ml_era5_interior_gap_cascade.md`;
-  **ML-016** `doc/plans/issues/high_prio_gi_draft_ml_standalone_target_prediction_mode.md`.
+  **ML-016** `doc/plans/issues/review_gi_draft_ml_standalone_target_prediction_mode.md`.
 - Backfill runbook: `doc/prod/historical_backfill_runbook.md`.
 - Validated local recipe (with execution record): `doc/plans/working/tajik_local_historical_backfill_plan.md`.
