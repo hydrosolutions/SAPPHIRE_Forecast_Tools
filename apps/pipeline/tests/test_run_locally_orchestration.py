@@ -1525,17 +1525,30 @@ class TestBlock1MaintenanceMlOrgGate:
 
     @pytest.mark.parametrize("org", ["demo", "uzhm"])
     @pytest.mark.parametrize(
-        "target", ["short-term", "linear_regression", "maintenance:linear_regression"]
+        "target",
+        [
+            "short-term",
+            "all",
+            "maintenance",
+            "linear_regression",
+            "maintenance:linear_regression",
+        ],
     )
     def test_out_of_domain_mode_on_lr_bearing_targets_still_rejected_for_ml_skipping_orgs(
         self, synth_tree, target, org
     ):
-        """The other half of the complement: the LR-bearing Block 1 targets
-        must stay REJECTED for demo/uzhm too, since they all still
+        """The other half of the complement: all five LR-bearing Block 1
+        targets must stay REJECTED for demo/uzhm too, since they all still
         dispatch linear_regression regardless of the org's ML-skip list.
         This is what rules out the wrong fix of gating the whole Block 1
         case on `! should_skip_module machine_learning` -- that would have
-        made demo/uzhm silently pass here as well.
+        made demo/uzhm silently pass here as well. Covers all five targets
+        in Block 1's ungated arm (run_locally.sh's
+        `short-term|all|maintenance|linear_regression|maintenance:linear_regression`
+        case), not just three of them -- otherwise a later change that
+        gated `all` or `maintenance` on the ML org skip would make demo/uzhm
+        silently accept SAPPHIRE_PREDICTION_MODE=ALL there too, and every
+        test would still pass.
         """
         result = run_main(
             synth_tree,
@@ -1776,9 +1789,14 @@ class TestModeDomainRegressionGuards:
     def test_unset_prediction_mode_on_bare_linear_regression_still_runs(self, synth_tree):
         """Bare `linear_regression` has no outer mode loop, so with
         SAPPHIRE_PREDICTION_MODE unset it must still run and forward an
-        empty mode to the module -- confirming run_locally.sh does not
-        invent a value, leaving linear_regression.py free to fall back to
-        its own BOTH default (linear_regression.py:634), not PENTAD.
+        empty mode to the module. This uses a stub, so it only proves that
+        run_locally.sh does not invent a value and forwards the mode
+        unchanged (empty) -- it does NOT exercise linear_regression.py's
+        own default resolution. The module-side fallback that turns an
+        empty mode into BOTH is `prediction_mode = os.getenv(
+        "SAPPHIRE_PREDICTION_MODE", "") or "BOTH"` at linear_regression.py:634;
+        that line, not this test, is what keeps the default BOTH rather than
+        PENTAD or an invalid value.
         """
         result = run_main(synth_tree, "linear_regression")
         out = result.stdout + result.stderr

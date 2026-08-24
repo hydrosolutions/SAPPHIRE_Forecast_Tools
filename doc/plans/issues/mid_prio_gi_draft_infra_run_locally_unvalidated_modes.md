@@ -123,6 +123,19 @@ draft omitted the bare target. `maintenance` is included even though it currentl
 its postprocessing step — failing at entry is cheaper than failing after a full preprocessing run,
 and it keeps the rule "targets that dispatch LR or ML" honest.
 
+**`maintenance:machine_learning` is gated on `should_skip_module machine_learning`; the other five
+targets are not.** It is the only Block 1 target that dispatches ONLY `machine_learning`, never
+`linear_regression`. `demo` and `uzhm` skip `machine_learning` entirely (`:211`), so for those orgs
+`maintenance:machine_learning` already does nothing today regardless of
+`SAPPHIRE_PREDICTION_MODE`; validating it ungated would newly reject a currently-harmless
+invocation. The implementation therefore splits Block 1 into two `case` arms: the five LR-bearing
+targets (`short-term`, `all`, `maintenance`, `linear_regression`, `maintenance:linear_regression`)
+stay ungated, since they all still dispatch `linear_regression`, which is not org-skippable; the
+`maintenance:machine_learning` arm only rejects an out-of-domain mode when
+`! should_skip_module machine_learning`. For `demo`/`uzhm`,
+`SAPPHIRE_PREDICTION_MODE=ALL bash apps/run_locally.sh maintenance:machine_learning` exits 0 and
+invokes nothing — this is intentional, not a gap.
+
 Deliberately **excluded**, each for a stated reason:
 
 - `daily` — overwrites the variable in Phases 3-4. Adding it would newly reject a stale exported
@@ -192,9 +205,13 @@ from two **valid** values that no domain check can catch. ML-022 carries a scope
 ## Acceptance criteria
 
 1. **Block 1 rejections.** For each of `short-term`, `all`, `maintenance`, `linear_regression`,
-   `maintenance:linear_regression`, `maintenance:machine_learning`: both
-   `SAPPHIRE_PREDICTION_MODE=ALL` and `SAPPHIRE_PREDICTION_MODE=PENTAAD` exit non-zero, name the
-   variable and the offending value, and invoke no module.
+   `maintenance:linear_regression`: both `SAPPHIRE_PREDICTION_MODE=ALL` and
+   `SAPPHIRE_PREDICTION_MODE=PENTAAD` exit non-zero, name the variable and the offending value, and
+   invoke no module. `maintenance:machine_learning` gets the same rejection for orgs that do not
+   skip `machine_learning` — but for `demo`/`uzhm` (which skip `machine_learning` entirely, so this
+   one Block 1 arm is gated on `should_skip_module machine_learning`) the same out-of-domain value
+   must exit **0** and invoke nothing, since the target already no-ops for those orgs regardless of
+   the mode. Both halves are tested explicitly.
 2. **Block 2 rejections.** For each of `daily`, `short-term`, `all`, `maintenance`,
    `maintenance:machine_learning`: `ML_MODE=DEACD` exits non-zero, names `ML_MODE` and the value,
    and invokes no module.
