@@ -1,6 +1,6 @@
 # INFRA-039: `validate_env` never validates `SAPPHIRE_PREDICTION_MODE` / `ML_MODE` for the outer-loop targets, so a mode that is valid for one consumer silently produces no forecasts in another
 
-**Status**: Draft (2026-08-21). Plan reviewed out-of-loop (codex, open-ended pass) before commit;
+**Status**: Review (2026-08-21). Plan reviewed out-of-loop (codex, open-ended pass) before commit;
 that pass overturned three claims in the first draft — see § Review corrections.
 **Module**: `apps/run_locally.sh` (`validate_env`)
 **Priority**: Medium — no crash, no error, exit 0. Reachable not only by typo but by an operator

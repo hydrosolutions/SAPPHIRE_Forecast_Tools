@@ -10,7 +10,7 @@ now proceed to the write calls, so more attempted stations per run pass through 
 handler.
 **Labels**: `preprocessing_runoff`, `long-horizon`, `error-handling`, `exit-code`
 **Found**: 2026-08-21, out-of-loop review of the PREPQ-015 implementation diff.
-**Related**: **PREPQ-015** (`issues/high_prio_gi_draft_prepq_longhorizon_sdk_failure_drops_station.md`,
+**Related**: **PREPQ-015** (`issues/review_gi_draft_prepq_longhorizon_sdk_failure_drops_station.md`,
 Implemented) widens exposure to this pre-existing gap but does not introduce it — see
 "Pre-existing, not introduced by PREPQ-015" below.
 

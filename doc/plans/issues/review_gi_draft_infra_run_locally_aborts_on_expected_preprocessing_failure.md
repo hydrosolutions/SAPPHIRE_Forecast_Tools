@@ -1,6 +1,6 @@
 # INFRA-037: An expected `preprocessing_runoff` failure aborts the whole `daily` run
 
-**Status**: Draft (2026-08-20). Implemented — the diagnosis below was corrected after direct
+**Status**: Review (2026-08-20). Implemented — the diagnosis below was corrected after direct
 evidence and a fix has been built against the corrected diagnosis (see § What was actually
 built). The full `run_tests.sh` gate is confirmed green: 16/16 modules and services pass, zero
 failures, and no skips introduced by this branch (15 skips pre-existed; 1 more arrived from
