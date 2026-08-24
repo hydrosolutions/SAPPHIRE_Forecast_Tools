@@ -1669,7 +1669,11 @@ validate_env() {
     # dispatch, and initialize, which forces PENTAD/DECAD per LR call via
     # run_initialize_deployment regardless of the operator's value (same
     # rationale as daily). Empty/unset stays legal here -- that's the WARN
-    # case above.
+    # case above for every target in this list except bare linear_regression,
+    # which is NOT in the WARN case's target list: for that target an
+    # empty/unset value is simply forwarded, and linear_regression.py
+    # defaults it to BOTH itself (`os.getenv("SAPPHIRE_PREDICTION_MODE", "")
+    # or "BOTH"`, linear_regression.py:634).
     #
     # Split into two arms because maintenance:machine_learning is the only
     # target here that dispatches ONLY machine_learning, not

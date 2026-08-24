@@ -262,8 +262,9 @@ def run_main(
 
     `dry_run` passes ``--dry-run``, so validate_env still runs (it precedes
     the dry-run exit) but no module is ever dispatched -- used by
-    TestUnvalidatedModeDomains to prove Block 1/2 fire before dispatch, not
-    merely before something a passing dispatch would also have blocked.
+    TestModeDomainValidationUnderDryRun to prove Block 1/2 fire before
+    dispatch, not merely before something a passing dispatch would also
+    have blocked.
     """
     log_file = tree.log_dir / "run.log"
     flag = "--continue-on-error " if continue_on_error else ""

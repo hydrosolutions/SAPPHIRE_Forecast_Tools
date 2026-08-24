@@ -1,4 +1,4 @@
-# INFRA-039: `run_locally.sh` never validates `SAPPHIRE_PREDICTION_MODE` / `ML_MODE`, so a mode that is valid for one consumer silently produces no forecasts in another
+# INFRA-039: `validate_env` never validates `SAPPHIRE_PREDICTION_MODE` / `ML_MODE` for the outer-loop targets, so a mode that is valid for one consumer silently produces no forecasts in another
 
 **Status**: Draft (2026-08-21). Plan reviewed out-of-loop (codex, open-ended pass) before commit;
 that pass overturned three claims in the first draft — see § Review corrections.
@@ -50,8 +50,10 @@ typo is usually caught (late and expensively, but caught); a valid-elsewhere mod
 `validate_env` (`:1623`) is the universal pre-dispatch choke point: called for every target at
 `:2085`, before the dry-run exit (`:2090-2092`) and before dispatch (`:2102`), with a failing
 `errors` counter returning non-zero at `:1691`. It logs the prediction mode but never checks its
-domain (`:1647`), and `ML_MODE` is checked nowhere (`main():2075` logs it, which reads as
-confirmation).
+domain (`:1647`), and it does not validate `ML_MODE` for any outer-loop target either
+(`main():2152` logs it, which reads as confirmation) — bare `machine_learning` is the one
+exception, already owning its own validation via `resolve_ml_bare_target_modes` (PR #468, see
+§ Related above).
 
 ### Failure A — `SAPPHIRE_PREDICTION_MODE` accepted, then silently dropped
 
@@ -171,7 +173,7 @@ bare `machine_learning` (resolver owns it).
 ### Both blocks
 
 Increment `validate_env`'s existing `errors` counter rather than calling `exit`, so a run with two
-bad variables reports both. Do not add a `log OK` for `ML_MODE`; `main():2075` already logs it.
+bad variables reports both. Do not add a `log OK` for `ML_MODE`; `main():2152` already logs it.
 
 ## Interaction with ML-022
 
