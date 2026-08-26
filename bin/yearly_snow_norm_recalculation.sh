@@ -153,3 +153,5 @@ log_message "Yearly Snow Norm Recalculation completed"
 echo "|"
 echo "| Recalculation complete. Check logs at: $LOG_DIR"
 echo "|"
+
+exit "$CONTAINER_EXIT_CODE"

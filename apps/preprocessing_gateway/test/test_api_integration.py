@@ -2279,9 +2279,21 @@ class TestSnowNormPreservation:
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
+    @pytest.mark.parametrize("sync_mode", ["operational", "maintenance", "initial"])
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_read_failure_does_not_block_write(self, mock_client_class):
-        """read_snow raises → write proceeds with norm=None."""
+    def test_api_read_failure_blocks_write(self, mock_client_class, sync_mode):
+        """PREPG-020: read_snow raises → write is refused, not proceeded
+        with the unpreserved fields nulled.
+
+        Replaces the old ``test_api_read_failure_does_not_block_write``,
+        which pinned the fail-open this issue fixes (a failed
+        preservation read used to fall back to an empty dict and let
+        the write through with norm=None — silently nulling any
+        stored norm/statistics/bands). See
+        doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
+        Parametrized across all three sync modes: the fix applies to
+        ``_read_existing_snow_fields`` itself, which every mode calls.
+        """
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -2294,11 +2306,112 @@ class TestSnowNormPreservation:
             mock_client.read_snow.side_effect = Exception("API read error")
             mock_client_class.return_value = mock_client
 
+            reference_date = pd.Timestamp("2024-01-02")
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "code": ["19999", "19999"],
+                    "SWE": [105.0, 106.0],
+                }
+            )
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                dg_utils.write_snow_to_api(
+                    data,
+                    "SWE",
+                    "test_hru",
+                    mode=sync_mode,
+                    reference_date=reference_date,
+                )
+
+            mock_client.write_snow.assert_not_called()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_api_read_failure_after_one_code_succeeds_blocks_whole_write(self, mock_client_class):
+        """Multi-code: a failure reading the second code discards
+        everything read for the first — no POST for the invocation.
+
+        ``_read_existing_snow_fields`` reads one code at a time in a
+        single try block; if a later code's read raises, the fields
+        already read for an earlier code must not be used to let a
+        partial write through — PREPG-020's fail-closed contract
+        applies to the whole call, not per code.
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+
+            good_df = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [42.0],
+                    "norm": [40.0],
+                }
+            )
+            mock_client.read_snow.side_effect = [good_df, Exception("API read error")]
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                    "code": ["19999", "19998"],
+                    "SWE": [105.0, 106.0],
+                }
+            )
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                dg_utils.write_snow_to_api(data, "SWE", "test_hru", mode="initial")
+
+            mock_client.write_snow.assert_not_called()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_partial_row_preserves_stored_value_and_writes_incoming_band(self, mock_client_class):
+        """Incoming main value missing + incoming band present: the
+        stored main value is preserved AND the incoming band is
+        written — asserts both final values, not just that a write
+        happened.
+
+        This is the happy (successful-read) path, which PREPG-020
+        requires stays byte-identical. It was previously untested in
+        this direction (existing coverage only checked incoming value
+        + no bands preserving stored bands, the reverse combination).
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [50.0],
+                }
+            )
+            mock_client_class.return_value = mock_client
+
+            # Incoming: no main SWE value, but elevation band 1 present.
             data = pd.DataFrame(
                 {
                     "date": pd.to_datetime(["2024-01-01"]),
-                    "code": [12345],
-                    "SWE": [105.0],
+                    "code": ["19999"],
+                    "SWE": [np.nan],
+                    "SWE_1": [12.5],
                 }
             )
 
@@ -2306,9 +2419,14 @@ class TestSnowNormPreservation:
             assert result is True
 
             records = mock_client.write_snow.call_args[0][0]
-            # Norm is None because read failed, but write still happened
-            assert records[0]["norm"] is None
-            assert records[0]["value"] == 105.0
+            assert len(records) == 1
+            record = records[0]
+            # Stored main value preserved (not nulled by the missing
+            # incoming value).
+            assert record["value"] == 50.0
+            assert record["current"] == 50.0
+            # Incoming band written.
+            assert record["value1"] == 12.5
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 

@@ -1017,3 +1017,206 @@ class TestRecalculateSnowStats:
         assert any("19998" in record.message for record in caplog.records), (
             f"No warning mentioning '19998' found in logs: {[r.message for r in caplog.records]}"
         )
+
+
+class TestRecalculateSnowNormsPreservationReadFailures:
+    """PREPG-020: each of the three preservation reads in
+    recalculate_snow_norms.py — target-year, prior-year, and
+    statistics history — must abort the code/type it guards rather
+    than let the write proceed with the fields it would have
+    preserved nulled. See
+    doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
+
+    This is distinct from ``test_station_write_error_does_not_abort_other_stations``
+    above, which is about a *write* failure (isolated per station, run
+    continues) — these tests are about *read* failures (abort, no
+    write for the affected code/type at all).
+    """
+
+    ENV = {
+        "SAPPHIRE_API_ENABLED": "true",
+        "SAPPHIRE_API_URL": "http://localhost:8000",
+    }
+
+    @staticmethod
+    def _make_norms_df(variables, code="19999", n_days=365):
+        frames = []
+        for var in variables:
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "snow_type": [var] * n_days,
+                        "code": [code] * n_days,
+                        "dayofyear": range(1, n_days + 1),
+                        "norm": [50.0] * n_days,
+                    }
+                )
+            )
+        return pd.concat(frames, ignore_index=True)
+
+    @staticmethod
+    def _empty_stats_df():
+        return pd.DataFrame(
+            columns=[
+                "snow_type",
+                "code",
+                "dayofyear",
+                "count",
+                "mean",
+                "std",
+                "min",
+                "max",
+                "q05",
+                "q25",
+                "q50",
+                "q75",
+                "q95",
+            ]
+        )
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_target_year_read_failure_aborts_without_write(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats
+    ):
+        """Target-year read (call site ~:182) raising must propagate
+        and skip the write, not null value/current/bands for the
+        whole year."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        def read_snow_side_effect(**kwargs):
+            start = kwargs.get("start_date", "")
+            if start.startswith("2023"):
+                raise Exception("API read error (target year)")
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+        mock_client_class.return_value = mock_client
+
+        with pytest.raises(dg_utils.SnowPreservationReadError):
+            rsn.recalculate_norms(
+                snow_path="/tmp/snow",
+                variables=["SWE"],
+                hru_codes=["HRU01"],
+                year=2023,
+                env_overrides=self.ENV,
+            )
+
+        mock_client.write_snow.assert_not_called()
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_prior_year_read_failure_aborts_without_write(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats
+    ):
+        """Prior-year read (call site ~:207) raising must propagate
+        and skip the write, not null 'previous' for the whole year."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        def read_snow_side_effect(**kwargs):
+            start = kwargs.get("start_date", "")
+            # Target-year (2023) read succeeds (empty); prior-year
+            # (2022) read raises.
+            if start.startswith("2022"):
+                raise Exception("API read error (prior year)")
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+        mock_client_class.return_value = mock_client
+
+        with pytest.raises(dg_utils.SnowPreservationReadError):
+            rsn.recalculate_norms(
+                snow_path="/tmp/snow",
+                variables=["SWE"],
+                hru_codes=["HRU01"],
+                year=2023,
+                env_overrides=self.ENV,
+            )
+
+        mock_client.write_snow.assert_not_called()
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_stats_read_failure_aborts_without_write(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats
+    ):
+        """Statistics-history read (dg_utils.py call site ~:737)
+        raising must propagate and skip the write, not fall back to
+        writing null count/mean/std/min/max/q* across the whole
+        year."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.side_effect = dg_utils.SnowPreservationReadError(
+            "Could not read existing snow data for statistics (SWE): API read error"
+        )
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.return_value = pd.DataFrame()
+        mock_client_class.return_value = mock_client
+
+        with pytest.raises(dg_utils.SnowPreservationReadError):
+            rsn.recalculate_norms(
+                snow_path="/tmp/snow",
+                variables=["SWE"],
+                hru_codes=["HRU01"],
+                year=2023,
+                env_overrides=self.ENV,
+            )
+
+        mock_client.write_snow.assert_not_called()
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    @patch("setup_library.load_environment")
+    def test_read_failure_propagates_uncaught_through_main(
+        self,
+        mock_load_environment,
+        mock_client_class,
+        mock_calc_norms,
+        mock_calc_stats,
+        monkeypatch,
+    ):
+        """End-to-end: main() does not catch the abort either.
+
+        recalculate_norms() only wraps the impl in try/finally (env
+        restoration), never except — so an uncaught
+        SnowPreservationReadError reaches main() and, from there, the
+        top of the process. That is what gives the script (and the
+        Docker container running it, and — after the shell wrapper
+        fix — bin/yearly_snow_norm_recalculation.sh) a non-zero exit
+        status instead of the old "logged warning, exit 0" behaviour.
+        """
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.side_effect = dg_utils.SnowPreservationReadError(
+            "Could not read existing snow data for statistics (SWE): API read error"
+        )
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.return_value = pd.DataFrame()
+        mock_client_class.return_value = mock_client
+
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_RECALC_YEAR", "2023")
+        monkeypatch.setenv("ieasyhydroforecast_HRU_SNOW_DATA", "HRU01")
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_VARS", "SWE")
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+        with pytest.raises(dg_utils.SnowPreservationReadError):
+            rsn.main()
+
+        mock_client.write_snow.assert_not_called()

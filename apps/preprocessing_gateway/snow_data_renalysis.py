@@ -277,6 +277,15 @@ def get_snow_data_reanalysis(client, hru, variable, start_date, end_date, dg_pat
 
     Variables can be SWE, HS, RoF. If a file already exists, new data
     is appended and duplicates removed (keeping the latest value).
+
+    Raises:
+        dg_utils.SnowPreservationReadError: The API write's
+            preservation read failed. Per PREPG-020, this aborts the
+            run rather than writing with norm/statistics/elevation
+            bands nulled. The CSV write for this HRU/variable has
+            already completed by this point; only the API write is
+            aborted. Recovery is a manual maintenance-mode re-run —
+            there is no durable API replay of the skipped write.
     """
     logger.info(
         "Processing snow reanalysis: HRU %s, %s (%s to %s)", hru, variable, start_date, end_date
@@ -366,6 +375,12 @@ def get_snow_data_reanalysis(client, hru, variable, start_date, end_date, dg_pat
         )
         if written:
             _check_snow_consistency(df_combined, variable, hru)
+    except dg_utils.SnowPreservationReadError:
+        # PREPG-020: a failed preservation read must abort this run,
+        # not be logged and swallowed as if the API write step were
+        # merely non-fatal. Let it propagate — no CSV write is
+        # reported as complete when the API side aborted mid-way.
+        raise
     except Exception as e:
         logger.error("Error writing snow data to API (HRU %s, %s): %s", hru, variable, e)
 
