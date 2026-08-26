@@ -384,6 +384,15 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
         # Run consistency check only if data was actually written
         if written:
             _check_snow_consistency(df_combined, variable, hru)
+    except dg_utils.SnowPreservationReadError:
+        # PREPG-020: a failed preservation read must abort this run,
+        # not be logged and swallowed as a non-fatal API error. This
+        # is currently redundant with SnowPreservationReadError not
+        # deriving from SapphireAPIError (so the except below would
+        # not catch it anyway) — it is here so that guarantee is
+        # encoded in our own code, not left resting on a third-party
+        # exception hierarchy that could change.
+        raise
     except SapphireAPIError as e:
         logger.error("Error writing snow data to API (HRU %s, %s): %s", hru, variable, e)
         # Continue - CSV write succeeded, API failure is not fatal

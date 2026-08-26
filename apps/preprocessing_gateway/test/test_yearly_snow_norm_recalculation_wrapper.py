@@ -15,13 +15,26 @@ what happened inside the container. The fix copies the last line of
 the sibling script, ``bin/yearly_runoff_hydrograph_aggregation.sh``:
 ``exit "$CONTAINER_EXIT_CODE"``.
 
+A second, independent bug (PREPG-020 review finding 4) was in how
+``CONTAINER_EXIT_CODE`` itself gets computed: ``docker run ... | tee
+"$SERVICE_LOG"`` means the immediately-following ``$?`` is *tee's*
+exit status, not ``docker run``'s — so the ``EXIT_CODE`` used as a
+fallback (when ``docker inspect`` also fails) was silently always 0.
+The fix captures ``${PIPESTATUS[0]}`` right after the pipeline
+instead. ``test_wrapper_exits_nonzero_when_container_fails_and_inspect_also_fails``
+below is the test that would have caught this — it is the only test
+here where ``docker inspect`` does not unconditionally succeed.
+
 These tests drive the real wrapper script end to end with a stub
 ``docker`` executable placed first on PATH, so no real Docker daemon
 or image is needed. The stub answers every subcommand the wrapper
 calls (``info``, ``image inspect``, ``ps``, ``run``, ``inspect``,
-``rm``) and, for ``run``/``inspect``, echoes back a caller-controlled
-exit code via the ``FAKE_DOCKER_EXIT_CODE`` environment variable —
-this is what "driving it with a failing stub" means here.
+``rm``). ``run`` exits with ``$FAKE_DOCKER_EXIT_CODE`` (default 0).
+``inspect`` normally echoes that same value and exits 0 (so
+``CONTAINER_EXIT_CODE`` is resolved from ``docker inspect``, as in
+production); setting ``$FAKE_INSPECT_FAILS=1`` makes ``inspect``
+itself fail instead, forcing the wrapper onto its ``$EXIT_CODE``
+fallback path.
 """
 
 import os
@@ -47,9 +60,13 @@ WRAPPER_SCRIPT = REPO_ROOT / "bin" / "yearly_snow_norm_recalculation.sh"
 
 _DOCKER_STUB = """#!/usr/bin/env bash
 # Stub `docker` for testing bin/yearly_snow_norm_recalculation.sh
-# without a real Docker daemon. `run` and `inspect` report the exit
-# code from $FAKE_DOCKER_EXIT_CODE (default 0); everything else the
-# wrapper calls just succeeds.
+# without a real Docker daemon. `run` reports the exit code from
+# $FAKE_DOCKER_EXIT_CODE (default 0). `inspect` normally echoes that
+# same value and succeeds (mirroring production: the wrapper reads
+# the container's real State.ExitCode from `docker inspect`); setting
+# $FAKE_INSPECT_FAILS=1 makes `inspect` itself fail instead, so the
+# wrapper must fall back to the exit code it captured from the
+# pipeline directly. Everything else the wrapper calls just succeeds.
 case "$1" in
   info) exit 0 ;;
   image) exit 0 ;;
@@ -60,6 +77,9 @@ case "$1" in
     exit "${FAKE_DOCKER_EXIT_CODE:-0}"
     ;;
   inspect)
+    if [ "${FAKE_INSPECT_FAILS:-0}" = "1" ]; then
+      exit 1
+    fi
     echo "${FAKE_DOCKER_EXIT_CODE:-0}"
     exit 0
     ;;
@@ -85,7 +105,9 @@ def _make_env_file(tmp_path: pathlib.Path) -> pathlib.Path:
     return env_file
 
 
-def _run_wrapper(tmp_path: pathlib.Path, fake_exit_code: int) -> subprocess.CompletedProcess:
+def _run_wrapper(
+    tmp_path: pathlib.Path, fake_exit_code: int, inspect_fails: bool = False
+) -> subprocess.CompletedProcess:
     env_file = _make_env_file(tmp_path)
 
     bin_dir = tmp_path / "fakebin"
@@ -97,6 +119,8 @@ def _run_wrapper(tmp_path: pathlib.Path, fake_exit_code: int) -> subprocess.Comp
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["FAKE_DOCKER_EXIT_CODE"] = str(fake_exit_code)
+    if inspect_fails:
+        env["FAKE_INSPECT_FAILS"] = "1"
     # Explicitly not set: ieasyhydroforecast_ssh_to_iEH, so
     # establish_ssh_tunnel() short-circuits without touching a real
     # SSH tunnel script.
@@ -132,3 +156,18 @@ class TestYearlySnowNormRecalculationWrapperExitCode:
         not just a generic non-zero status."""
         result = _run_wrapper(tmp_path, fake_exit_code=17)
         assert result.returncode == 17, result.stdout + result.stderr
+
+    def test_wrapper_exits_nonzero_when_container_fails_and_inspect_also_fails(self, tmp_path):
+        """PREPG-020 review finding 4: docker run's exit status is
+        piped through `tee`, so the immediately-following `$?` is
+        tee's status (effectively always 0), not docker run's. If
+        `docker inspect` (the normal source of the real exit code)
+        also fails, the wrapper falls back to that `$?` — which, before
+        the ${PIPESTATUS[0]} fix, silently produced a fallback of 0
+        even though the container genuinely failed. Every other test
+        in this module lets `docker inspect` succeed, which would not
+        catch this: it must specifically fail here to exercise the
+        fallback path at all.
+        """
+        result = _run_wrapper(tmp_path, fake_exit_code=9, inspect_fails=True)
+        assert result.returncode == 9, result.stdout + result.stderr

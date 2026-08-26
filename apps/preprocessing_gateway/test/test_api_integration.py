@@ -573,6 +573,56 @@ class TestSnowReanalysisIntegration:
             mock_write_api.assert_not_called()
             mock_check.assert_not_called()
 
+    @patch("snow_data_renalysis._check_snow_consistency")
+    @patch("dg_utils.write_snow_to_api")
+    @patch("snow_data_renalysis.pd.read_csv")
+    @patch("snow_data_renalysis.dg_utils.transform_snow_data")
+    def test_preservation_read_failure_propagates_uncaught(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-020: when the shared writer raises
+        SnowPreservationReadError, get_snow_data_reanalysis must let
+        it propagate out uncaught — not log-and-swallow it into
+        `return True` the way the old broad ``except Exception``
+        clause did. This is the caller-level counterpart to the
+        explicit ``except dg_utils.SnowPreservationReadError: raise``
+        added ahead of that broad except.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
+        mock_write_api.side_effect = dg_utils.SnowPreservationReadError("boom")
+        mock_check.return_value = True
+
+        mock_client = Mock()
+        mock_client.get_snow_reanalysis.return_value = "/tmp/fake.csv"
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            swe_dir = os.path.join(tmpdir, "SWE")
+            os.makedirs(swe_dir, exist_ok=True)
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                sdr.get_snow_data_reanalysis(
+                    client=mock_client,
+                    hru="12345",
+                    variable="SWE",
+                    start_date="2024-01-01",
+                    end_date="2024-01-31",
+                    dg_path="/tmp/dg",
+                    save_path=tmpdir,
+                )
+
+            # Aborted before the consistency check, which only runs
+            # after a successful write.
+            mock_check.assert_not_called()
+
 
 # =============================================================================
 # Tests for _write_meteo_to_api (writes all data passed)
@@ -883,6 +933,59 @@ class TestSnowDataOperationalIntegration:
                 save_path=tmpdir,
             )
             assert result is False
+
+    @patch("snow_data_operational._check_snow_consistency")
+    @patch("dg_utils.write_snow_to_api")
+    @patch("snow_data_operational.pd.read_csv")
+    @patch("snow_data_operational.dg_utils.transform_snow_data")
+    def test_preservation_read_failure_propagates_uncaught(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-020: get_snow_data_operational must let
+        SnowPreservationReadError escape its ``except SapphireAPIError``
+        clause rather than being logged as a non-fatal API error.
+
+        This does not rest solely on the two exceptions being
+        unrelated in the class hierarchy (which it also verifies,
+        since no ``except dg_utils.SnowPreservationReadError`` clause
+        exists to help it here) — the explicit ``except
+        dg_utils.SnowPreservationReadError: raise`` added ahead of
+        ``except SapphireAPIError`` encodes this as our own policy,
+        not third-party ancestry we merely depend on.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
+        mock_write_api.side_effect = dg_utils.SnowPreservationReadError("boom")
+        mock_check.return_value = True
+
+        mock_client = Mock()
+        mock_client.get_operational.return_value = "/tmp/fake.csv"
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            swe_dir = os.path.join(tmpdir, "SWE")
+            os.makedirs(swe_dir, exist_ok=True)
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                sdo.get_snow_data_operational(
+                    client=mock_client,
+                    hru="12345",
+                    variable="SWE",
+                    date="2024-01-01",
+                    dg_path="/tmp/dg",
+                    save_path=tmpdir,
+                )
+
+            # Aborted before the consistency check, which only runs
+            # after a successful write.
+            mock_check.assert_not_called()
 
 
 class TestExtendEra5ReanalysisIntegration:
