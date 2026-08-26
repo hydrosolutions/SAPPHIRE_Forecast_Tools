@@ -1,6 +1,6 @@
 # P-007: `run_docker_container` discards the container's exit code — every Luigi pipeline task reports success
 
-**Status**: Draft (2026-08-21)
+**Status**: **Complete** (2026-08-24) — fixed in **PR #478**, merged to `maxat_sapphire_2`
 **Module**: `apps/pipeline`
 **Priority**: **High** — a container that crashes, is missing its entrypoint script, is OOM-killed
 or exits non-zero for any reason is reported to Luigi as a **success**. This affects **every**
@@ -12,6 +12,37 @@ cover this. **INFRA-023** — the *shell wrapper* around it also exits 0 regardl
 same-named function in `forecast_dashboard`, a different code path that *does* read `StatusCode`.
 
 ---
+
+> **Completed 2026-08-24 (PR #478).** `container.wait()`'s `StatusCode` is now read, accepting only
+> a genuine `int` via `type(raw) is int` — **not** `isinstance`, because `bool` subclasses `int` and
+> `False == 0`, so `{"StatusCode": False}` would otherwise have read as success inside the fix for
+> reading-as-success. Anything else (`None`, `"0"`, `0.0`, missing key, non-dict) becomes `1`.
+> Timeout still returns `124`, unchanged. 286 tests pass.
+>
+> **TWO THINGS TO EXPECT ON ROLLOUT — neither introduced by the fix, both consequences of it:**
+>
+> 1. **Tasks that were failing silently will start failing visibly.**
+>    `YearlySnowNormRecalculation` is first: it launches the `sapphire-pipeline` image, which does
+>    not contain `recalculate_snow_norms.py`. That is a real pre-existing defect this fix reveals,
+>    **not** a regression — it needs its own one-line correction
+>    (`sapphire-prepgateway` + the preprocessing-gateway working directory, matching
+>    `bin/yearly_snow_norm_recalculation.sh`).
+> 2. **Success markers written by the buggy version are not invalidated.** Luigi may therefore skip
+>    a task on the first run after deploy, because a marker from a run that "succeeded" while
+>    actually failing is still on disk.
+>
+> **Do NOT remove the guard at `pipeline_docker.py:2417-2421`** — commented *"defense-in-depth
+> against the pre-existing exit-code bug"*. It is now redundant for this defect specifically, but it
+> also catches a missing marker for any other reason. It was left in place deliberately.
+>
+> **Still open in the same family:** **INFRA-023** — `run_periodic_maintenance.sh` has no `set -e`,
+> never captures its `docker compose run` status, and ends on two `echo`s, so the *shell wrapper*
+> still exits 0 regardless. Fixing this issue does not make a failing periodic cron visible to an
+> operator; both layers must close. **P-004** covers the timeout branch and remains valid.
+>
+> **Noted, not fixed:** `pipeline_docker.py:428` embeds the full container `logs` in the raised
+> exception. Same disclosure class as PREPG-015/017 — container logs can carry the Data Gateway API
+> key. Pre-existing; deliberately out of scope here.
 
 ## The defect
 
