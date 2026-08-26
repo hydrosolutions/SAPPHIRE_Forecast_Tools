@@ -189,6 +189,8 @@ why the two filename corrections are in scope rather than cosmetic.
 - The two AWS-plan items above (17:00 schedule, missing entry (4b)) are resolved or explicitly
   accepted.
 - Backup retention is decided, or accepted as a documented divergence.
-- **Dependent follow-up:** `doc/prod/kghm_pipeline_handover.md` §3 step 1 and §5 warn operators
-  about the stale `deployment.md` and point at the cron audit. That file lands with PR #480; once
-  both it and this fix are merged, its warning should be reduced to the retention divergence only.
+- [x] **Dependent follow-up — done.** PR #480 merged 2026-08-26, so
+  `doc/prod/kghm_pipeline_handover.md` is on trunk. Its §3 step 1 warning about the stale
+  `deployment.md` is now false and has been rewritten to record the fix while keeping the crontab
+  check (the documents are fixed; installed crontabs are not). Its §5 open-question entry is
+  replaced by the one divergence that genuinely remains — backup retention 30 vs 3.
