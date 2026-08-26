@@ -30,7 +30,7 @@ class SnowPreservationReadError(RuntimeError):
     If that read fails, the fields it would have preserved are not
     known — writing anyway would null them out for every row in the
     window, not just leave them unset (see PREPG-020:
-    ``doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md``).
+    ``doc/plans/issues/archive/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md``).
 
     Deliberately **not** a subclass of ``SapphireAPIError``: a broad
     ``except SapphireAPIError`` (e.g. ``snow_data_operational.py``)
