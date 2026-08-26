@@ -1,10 +1,19 @@
-# PREPG-007: Snow visualization population gaps - self-healing curve and Jan 1 snow norms
+# PREPG-007: Snow visualization population gaps - self-healing curve and annual snow norms
+*(Formerly "…and Jan 1 snow norms". The Jan-1 retarget was superseded — the schedule stays 31 August.)*
 
 **Status**: Review — **review gate COMPLETE 2026-08-21; P3 outstanding.** Do not re-run the
 review; see § Review outcome. Phase state: **P1 merged** (PR #386, 2026-06-26), **P2 superseded**
 (owner decision — snow recalc stays 31 Aug, runoff 1 Jan), **P3 not yet run** — scheduled for the
 next deployment update on kghm + tjhm. *(Was: "P1+P2 implemented, awaiting review" — stale on both
 counts.)*
+> ## ⚠️ Before running P3: make NO crontab change
+>
+> P2's "retarget `snow_norms` to Jan 1" was **superseded** by the owner decision of 2026-08-19 —
+> the task stays on **31 August**, the end of the snow year. Jan-1 references remain throughout the
+> P2 section below as the historical rationale; the P2 steps and any instruction to edit the
+> `snow_norms` cron line are **void**. P3 is a one-time data remediation and changes no schedule.
+> Deployment docs and `bin/` were aligned to 31 August on 2026-08-26 (DOC-007).
+
 **Module**: `apps/preprocessing_gateway` + deployment cron/docs
 **Priority**: **High** (user-facing defect on a deployed forecast dashboard)
 **Labels**: `preprocessing_gateway`, `snow-data`, `operational`, `dashboard`, `maintenance`
@@ -55,9 +64,9 @@ This issue implements the validated design with reviewer corrections:
 - **Change B**: widen only the maintenance-mode snow write filter in `dg_utils.write_snow_to_api()`
   from 30 days to 365 days. Operational mode remains `date >= yesterday`. Add the defensive
   anti-clobber guard needed for the wider write window.
-- **Change A**: retarget the existing annual `snow_norms` periodic-maintenance schedule from Aug 31
-  (`0 2 31 8 *`) to Jan 1. Give `snow_norms` its own Jan-1 cron line, for example `0 2 1 1 *`,
-  at least 30 minutes away from the real Jan-1 runoff hydrograph aggregation job at 03:00.
+- ~~**Change A**: retarget the annual `snow_norms` schedule from Aug 31 to Jan 1.~~
+  **SUPERSEDED 2026-08-19 — not implemented, do not implement.** The schedule stays
+  **31 August** (`0 2 31 8 *`). Original wording kept below in the P2 section for rationale only.
 - **Rollout**: after deploy, take a pre-remediation backup and SQL count snapshot, run one widened
   maintenance sync, then run one current-year snow norm recalc for 2026.
 
@@ -119,14 +128,16 @@ blindly assigns every field. The P1 implementation must therefore include a narr
 - Use placeholder station code `19999` in new or changed tests/fixtures. Do not use real station
   codes or real discharge/SWE values.
 - Do not edit `sapphire/services/**`; the snow fields already exist.
-- Do not add scripts or a second annual snow-norm pass. Retarget the existing `snow_norms` annual
-  cadence.
+- Do not add scripts or a second annual snow-norm pass. ~~Retarget the existing `snow_norms` annual
+  cadence.~~ **(Retarget VOID — Change A superseded; the Aug-31 cadence stays as it is.)**
 - Do not change `apps/preprocessing_gateway/snow_data_operational.py`; it already fetches 365 days.
 - Do not change `apps/preprocessing_gateway/recalculate_snow_norms.py` in PREPG-007. Leap-year
   climatology alignment is PREPG-008.
-- Change A and Change B must ship as one deployable unit. Do not deploy the Jan-1 cron retarget to a
+- ~~Change A and Change B must ship as one deployable unit. Do not deploy the Jan-1 cron retarget to a
   server without the widened maintenance sync: the removed Aug-31 recalc previously backfilled
-  `current` for Jan-Aug, and that responsibility transfers to maintenance after this change.
+  `current` for Jan-Aug, and that responsibility transfers to maintenance after this change.~~
+  **VOID — Change A is superseded and is not deployed. The Aug-31 recalc is NOT removed, so the
+  backfill responsibility it carried does not transfer anywhere.** Change B stands on its own.
 
 ---
 
@@ -229,12 +240,19 @@ Explicitly out of scope / do not touch (legitimately 30-day or unrelated):
 - [ ] From `apps/`, `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` passes with zero
       unexpected skips. The only acceptable skip is the explicit `sapphire-api-client` dependency gate.
 
-### P2 - Change A: retarget annual snow_norms to Jan 1
+### P2 — SUPERSEDED, DO NOT IMPLEMENT ~~(Change A: retarget annual snow_norms to Jan 1)~~
 
-**Goal**
+> **SUPERSEDED by owner decision 2026-08-19** (already recorded in this issue's Status header, and
+> in `snow_visualization_population_design.md` § Change A). `snow_norms` **stays on 31 August** —
+> the end of the snow year, before the new accumulation season; a Jan-1 run would move the norms
+> mid-season. The deployed cron and every operator document were aligned to 31 August by DOC-007 on
+> 2026-08-26. **Do not implement this phase.** Retained for the rationale only; P1 and P3 are
+> unaffected.
 
-Retarget the annual `snow_norms` periodic-maintenance schedule from Aug 31 to Jan 1, replacing the
-Aug-31 run. Keep one annual snow-norm pass only.
+**Goal** *(superseded — see above)*
+
+~~Retarget the annual `snow_norms` periodic-maintenance schedule from Aug 31 to Jan 1, replacing the
+Aug-31 run. Keep one annual snow-norm pass only.~~
 
 **Files**
 
@@ -314,7 +332,8 @@ fill the current 2026 `value`/`current` window and then write the current-year b
 **Files**
 
 No implementation files. The runbook is this phase in this issue; deployment docs touched in P2 may
-refer to the steady-state Jan-1 schedule but must not add new code or scripts for this one-time action.
+refer to the steady-state **31 August** schedule (Change A was superseded) and must not add new code
+or scripts for this one-time action.
 
 **Depends on**
 
@@ -358,12 +377,15 @@ Scope:
   `2025-09-01 ... 2026-08-31`, counting non-null `value`, `current`, `norm`, `previous`, `q50`, and
   `mean`. Use placeholder station code `19999` in example SQL; never paste real station codes or
   values into this issue.
-- Before and after crontab edits, verify `crontab -l | grep -c snow_norms` equals `1`. This catches
-  both duplicate annual passes and a missed `snow_norms` entry.
-- Retarget the live crontab on each already-deployed environment, including Tajik and Kyrgyz where
-  applicable: use `crontab -e` to replace the `snow_norms` Aug-31 entry (`0 2 31 8 *`) with the
-  Jan-1 schedule. Keep it at least 30 minutes away from the 03:00 Jan-1 runoff hydrograph aggregation
-  cron line.
+- **P3 makes no crontab edits.** Verify `crontab -l | grep -c snow_norms` equals `1` and that the
+  entry is the Aug-31 schedule (`0 2 31 8 *`), before and after the remediation run — it must be
+  unchanged. This catches both duplicate annual passes and a missed `snow_norms` entry.
+- ~~Retarget the live crontab on each already-deployed environment...~~ **DO NOT DO THIS —
+  VOID.** This step belonged to P2, which was superseded by the owner decision of 2026-08-19:
+  `snow_norms` **stays on 31 August** (`0 2 31 8 *`). Following it would replace the approved
+  schedule and move the norms mid-season. **Leave the existing Aug-31 `snow_norms` entry exactly as
+  it is** and make no crontab change in P3. (Do still run the `crontab -l | grep -c snow_norms`
+  check above — exactly one entry, on 31 August.)
 - Run exactly these commands once after the P1/P2 changes are deployed to the target environment:
 
   ```bash
@@ -406,9 +428,10 @@ ORDER BY snow_type;
 - [ ] PRE SQL count snapshot exists for `2025-09-01 ... 2026-08-31`, grouped by `snow_type`, with
       non-null counts for `value`, `current`, `norm`, `previous`, `q50`, and `mean`.
 - [ ] On each already-deployed environment, `crontab -l | grep -c snow_norms` equals `1` before and
-      after the cron edit.
-- [ ] On each already-deployed environment, the active crontab is retargeted: `crontab -l` shows the
-      Jan-1 `snow_norms` schedule, with no Aug-31 `snow_norms` entry remaining.
+      after the remediation run, and that entry is unchanged on the Aug-31 schedule (P3 edits no cron).
+- [x] ~~On each already-deployed environment, the active crontab is retargeted to Jan-1~~ **VOID —
+      inverted.** P2 is superseded: the crontab must still show the **Aug-31** `snow_norms` entry
+      (`0 2 31 8 *`) and must NOT be retargeted. P3 makes no crontab change.
 - [ ] The widened maintenance sync completes successfully for `<env>` and writes `value`/`current`
       rows over the 365-day maintenance window. If per-station write errors appear, step 1 is re-run
       before step 2.
@@ -430,7 +453,8 @@ ORDER BY snow_type;
 ## Overall Acceptance Criteria
 
 - [ ] P1 and P2 are implemented as one deployable unit.
-- [ ] Change A is not deployed anywhere without Change B.
+- [x] ~~Change A is not deployed anywhere without Change B.~~ **VOID — Change A is superseded and
+      is not deployed at all.**
 - [ ] Maintenance snow writes now self-heal the last 365 days; operational writes still use
       `date >= yesterday`.
 - [ ] Band-preservation, elevation-band anti-clobber, and value-preservation cooperation all hold:
@@ -438,14 +462,14 @@ ORDER BY snow_type;
       `value`/`current`.
 - [ ] From `apps/`, `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` passes with zero
       unexpected skips. The only acceptable skip is the explicit `sapphire-api-client` dependency gate.
-- [ ] All updated docs/docstrings show Jan 1 for `snow_norms`, and the grep check
+- [x] ~~All updated docs/docstrings show Jan 1 for `snow_norms`~~ — **VOID, and inverted by the
+      owner decision.** With P2 superseded the requirement is the opposite: every one of these
+      files must show **31 August**. DOC-007 aligned all of them on 2026-08-26, and this grep
+      now confirms the correct state rather than flagging it (verified: all 7 files match):
       `rg -n "0 2 31 8 \\*|August 31|Aug 31|8/31" doc/deployment.md doc/prod/update_deployment_checklist.md doc/prod/first_deploy_checklist.md doc/plans/deployment_new_hydromet_aws.md bin/README.md bin/run_periodic_maintenance.sh bin/yearly_snow_norm_recalculation.sh`
-      finds no stale snow-norm schedule references in the P2 deployment-cron/schedule allow-list.
-      Intentional old-state references in the design doc, this issue file, other/archived issues,
-      `bin/daily_gateway_maintenance.sh`, and dated review checklists are expected and out of scope.
-- [ ] On each already-deployed environment, `crontab -l | grep -c snow_norms` equals `1` before and
-      after the edit, and `crontab -l` shows the Jan-1 `snow_norms` schedule with no Aug-31
-      `snow_norms` entry remaining.
+- [ ] On each already-deployed environment, `crontab -l | grep -c snow_norms` equals `1`, and that
+      entry is the **Aug-31** schedule (`0 2 31 8 *`) — unchanged by P3. *(Was: retargeted to Jan-1.
+      Void — P2 superseded.)*
 - [ ] The one-time remediation commands are run after deploy for the current 2026 window, in the
       documented order.
 - [ ] Mandatory PRE/POST SQL count verification shows no count regressions and confirms gap coverage.

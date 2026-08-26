@@ -104,7 +104,7 @@ If you are setting up this server for the first time, complete the SSH tunnel se
 - [ ] Review today's pipeline logs for any issues
   ```bash
   ls -lt ${LOG_DIR}/sapphire_*.log | head -5
-  tail -50 ${LOG_DIR}/sapphire_pentadal_$(date +%Y%m%d).log
+  tail -50 ${LOG_DIR}/sapphire_pentadal_forecast_$(date +%Y%m%d).log
   ```
 
 - [ ] Check Luigi task history for recent failures
@@ -701,7 +701,7 @@ Update the cron schedule for automated forecast runs.
 
 > **Note**: The cron scripts handle Docker image pulling automatically. Once crontabs are configured, the first scheduled run will pull the required images.
 
-> **First-time deploy on this server?** Cron installation is covered end-to-end (with backup of any prior crontab, log-dir creation, and the same canonical block as below) in `doc/prod/first_deploy_checklist.md` §12 "Install operational cron schedule". This §2.5 covers cron *updates* on an existing deployment — diffing the running crontab against the canonical block, removing retired entries, and adding new ones introduced since the last update.
+> **First-time deploy on this server?** Cron installation is covered end-to-end (with backup of any prior crontab, log-dir creation, and the first-install subset of the block below — it omits the two weekly housekeeping rows) in `doc/prod/first_deploy_checklist.md` §12 "Install operational cron schedule". This §2.5 covers cron *updates* on an existing deployment — diffing the running crontab against the canonical block, removing retired entries, and adding new ones introduced since the last update.
 
 The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper pattern (one `bin/run_daily_maintenance.sh` for daily maintenance, `bin/run_periodic_maintenance.sh <task>` for bimonthly/yearly tasks). It supersedes the legacy per-app `daily_*` scripts (`daily_preprunoff_maintenance.sh`, `daily_ml_maintenance.sh`, `daily_linreg_maintenance.sh`, `daily_postprc_maintenance.sh`, `daily_gateway_maintenance.sh`, `daily_update_sapphire_frontend.sh`). Those legacy scripts remain on origin for manual debugging only — do **not** schedule them via cron.
 
@@ -712,13 +712,50 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 
 - [ ] **Review the recommended crontab schedule**
 
-  The authoritative source is [deployment.md - Set up cron job](../deployment.md#set-up-cron-job). The block reproduced below is kept in sync with that source.
+  The block below is the canonical schedule for routine updates — install and diff against **this** copy. [deployment.md - Set up cron job](../deployment.md#set-up-cron-job) documents the same schedule with per-deployment path templates plus the UTC timezone reference table, and `first_deploy_checklist.md` carries the first-install copy. Known unreconciled difference: this block sets database-backup retention to 3 days (`-r 3`); `deployment.md` and the first-deploy checklist use the script default of 30 (`bin/backup_sapphire_db.sh:53`). A server installed from the first-deploy checklist and later updated from this one therefore drops 30 → 3. Tracked in DOC-007; not resolved here. Nothing enforces equality between the three — if you change one, change the others.
 
 - [ ] **Diff the running crontab against the canonical block**
   ```bash
-  crontab -l > /tmp/crontab_current.txt
-  diff /tmp/crontab_current.txt <(sed -n '/# m h  dom mon dow/,/^```$/p' "$(pwd)/doc/prod/update_deployment_checklist.md")
+  # Compares real cron schedule rows only. Comments, blank lines, the block's
+  # two-space indent, and crontab environment directives (SHELL=, PATH=,
+  # MAILTO=, CRON_TZ=) are all excluded from BOTH sides -- environment
+  # directives are legitimate and must not be read as entries to remove.
+  # Placeholders are rendered from the values you exported in the operator
+  # setup block at the top of this file. Run from the repository root.
+  : "${ENV_FILE_PATH:?set it in the operator setup block at the top of this file}"
+  : "${LOG_DIR:?set it in the operator setup block at the top of this file}"
+  : "${LT_ISSUE_DAY:?set it in the operator setup block at the top of this file}"
+
+  crontab -l | grep -E '^[[:space:]]*[0-9*@]' | sed 's/[[:space:]]*$//' | sort \
+    > /tmp/crontab_current.txt
+
+  # Rendering uses awk with literal index/substr and ENVIRON, NOT sed and NOT
+  # bash ${var//pat/rep}: sed would break on a path containing & | or \, and
+  # under bash 5.2 (patsub_replacement, on by default) an & in the value expands
+  # to the matched text and silently corrupts the path.
+  sed -n '/^  # m h  dom mon dow/,/^[[:space:]]*```$/p' doc/prod/update_deployment_checklist.md \
+    | sed 's/^  //' | grep -E '^[0-9*@]' \
+    | ENV_FILE_PATH="$ENV_FILE_PATH" LOG_DIR="$LOG_DIR" LT_ISSUE_DAY="$LT_ISSUE_DAY" \
+      awk 'function lit(s, k, v,   i) {
+             while ((i = index(s, k)) > 0) s = substr(s, 1, i-1) v substr(s, i + length(k))
+             return s
+           }
+           { $0 = lit($0, "${ENV_FILE_PATH}", ENVIRON["ENV_FILE_PATH"])
+             $0 = lit($0, "${LOG_DIR}",       ENVIRON["LOG_DIR"])
+             $0 = lit($0, "${LT_ISSUE_DAY}",  ENVIRON["LT_ISSUE_DAY"])
+             print }' \
+    | sed 's/[[:space:]]*$//' | sort > /tmp/crontab_canonical.txt
+
+  diff /tmp/crontab_current.txt /tmp/crontab_canonical.txt \
+    && echo "crontab matches the canonical block"
   ```
+  If a `${VAR:?...}` guard fires, stop — pasting the rest into an interactive shell will keep
+  going and render an incomplete block. Set the variable and re-run from the top.
+
+  Lines only in `/tmp/crontab_current.txt` are entries to review for removal;
+  lines only in `/tmp/crontab_canonical.txt` are entries to add. Both sides
+  exclude environment directives, so a `SHELL=`/`PATH=` line in your crontab is
+  neither reported nor a problem.
   Identify legacy entries to remove and new entries to add. The most common change since v0.3.0 is replacing four separate `daily_*_maintenance.sh` lines with one `run_daily_maintenance.sh` line.
 
 - [ ] **Edit crontab**
@@ -824,7 +861,7 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds
-  # the long-horizon monthly + April–September seasonal hydrograph view used
+  # the long-horizon monthly + quarterly + April–September seasonal hydrograph view used
   # by the dashboard.
   0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/yearly_runoff_hydrograph_aggregation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_runoff_hydrograph_$(date +\%Y\%m\%d).log 2>&1
   ```
@@ -834,7 +871,7 @@ The canonical schedule below follows the post-S1-2026 consolidated Luigi-wrapper
 
   | Retired entry | What happens if left | Replace with |
   |---|---|---|
-  | `run_periodic_maintenance.sh monthly_norms` | **Fails silently, and the cron log looks successful.** The wrapper's argument guard only rejects an *empty* task type (`bin/run_periodic_maintenance.sh:23-28`), so `monthly_norms` passes through to Luigi, where `PeriodicMaintenance.requires()` raises `ValueError: Unknown task_type` (`apps/pipeline/pipeline_docker.py:2049-2057`). The wrapper has no `set -e`, never captures the exit code of `docker compose run`, and ends with two unconditional `echo`s (`:82-90`) — so it **exits 0** and prints "task submitted". Every 1 January the long-horizon hydrograph view is silently not rebuilt. This is **INFRA-023** (`issues/high_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`). | entry **(9)** `bin/yearly_runoff_hydrograph_aggregation.sh` |
+  | `run_periodic_maintenance.sh monthly_norms` | **Fails silently, and the cron log looks successful.** The wrapper's argument guard only rejects an *empty* task type (`bin/run_periodic_maintenance.sh:23-28`), so `monthly_norms` passes through to Luigi, where `RunPeriodicMaintenanceWorkflow.requires()` raises `ValueError: Unknown task_type` (`apps/pipeline/pipeline_docker.py:2053-2062`). The wrapper has no `set -e`, never captures the exit code of `docker compose run`, and ends with two unconditional `echo`s (`:82-90`) — so it **exits 0** and prints "task submitted". Every 1 January the long-horizon hydrograph view is silently not rebuilt. This is **INFRA-023** (`doc/plans/issues/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`). | entry **(9)** `bin/yearly_runoff_hydrograph_aggregation.sh` |
   | `daily_preprunoff_maintenance.sh`, `daily_ml_maintenance.sh`, `daily_linreg_maintenance.sh`, `daily_postprc_maintenance.sh`, `daily_gateway_maintenance.sh`, `daily_update_sapphire_frontend.sh` | Duplicates work the Luigi DAG already does, out of dependency order | entry **(5)** `bin/run_daily_maintenance.sh` |
 
 - [ ] **Verify crontab was saved correctly**
@@ -1163,7 +1200,7 @@ This is a lightweight test that verifies the pipeline infrastructure:
 - [ ] Monitor progress in Luigi UI at http://localhost:8082
 - [ ] Check logs for successful completion:
   ```bash
-  tail -f ${LOG_DIR}/sapphire_gateway_$(date +%Y%m%d).log
+  tail -f ${LOG_DIR}/sapphire_gateway_preprocessing_$(date +%Y%m%d).log
   ```
 
 #### Full Test - Run Pentadal Forecast (Optional)

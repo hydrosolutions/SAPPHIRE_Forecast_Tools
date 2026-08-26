@@ -7,7 +7,7 @@
 # Task types:
 #   long_term      - Bimonthly long-term postprocessing (1st of odd months)
 #   skill_recalc   - Yearly full skill metrics recalculation (December 31)
-#   snow_norms     - Yearly snow norm recalculation (January 1)
+#   snow_norms     - Yearly snow norm recalculation (31 August)
 #
 # Example:
 #   bash bin/run_periodic_maintenance.sh long_term /path/to/config/.env

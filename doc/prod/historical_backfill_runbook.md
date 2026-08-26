@@ -2195,7 +2195,7 @@ SELECT
   COUNT(*) FILTER (WHERE previous IS NOT NULL) AS previous_rows,
   COUNT(*) FILTER (WHERE current IS NOT NULL) AS current_rows
 FROM hydrographs
-WHERE horizon_type IN ('month', 'season')
+WHERE horizon_type IN ('month', 'quarter', 'season')
 GROUP BY horizon_type
 ORDER BY horizon_type;
 SQL

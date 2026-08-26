@@ -1,5 +1,18 @@
 # Ingest monthly discharge norms from iEH HF SDK into the hydrographs table
 
+> ## ⚠️ SUPERSEDED — do not follow the rollout commands in this document
+>
+> The `monthly_norms` Luigi task described here was **retired**. It is no longer in
+> `RunPeriodicMaintenanceWorkflow`'s task map, and `bin/run_periodic_maintenance.sh` still
+> *accepts* the name while exiting 0 without running anything (INFRA-023) — so every cron
+> line and manual command below is a silent no-op.
+>
+> **The replacement is `bin/yearly_runoff_hydrograph_aggregation.sh`.** See DOC-007
+> (`review_gi_draft_doc_deployment_cron_block_stale_authority.md`) and INFRA-023
+> (`mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`).
+>
+> Retained as the historical design record only.
+
 ## Status — implemented 2026-04-23
 
 Implemented on branch `develop_infra_monthly_norms_from_sdk` (based on

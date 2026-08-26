@@ -99,7 +99,7 @@ source "$(dirname "$0")/utils/common_functions.sh"
 
 # Print the banner
 print_banner
-echo "| Running Yearly Runoff Hydrograph Aggregation (monthly + seasonal triads)"
+echo "| Running Yearly Runoff Hydrograph Aggregation (monthly + quarterly + seasonal triads)"
 
 # Read the configuration from the .env file. common_functions.sh sources the
 # env file and predates strict unset-variable checks, so relax -u only while

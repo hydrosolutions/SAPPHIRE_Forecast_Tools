@@ -27,7 +27,13 @@ PREPQ-008.
 
 ## Observation
 
-Two repository documents schedule the **01 Jan 03:00 UTC** slot differently:
+> **Update 2026-08-26 (DOC-007):** the documentation half of this issue is fixed — no live
+> document prescribes `monthly_norms` any more. **INFRA-023 stays open** for the code defect:
+> `run_periodic_maintenance.sh` still *accepts* the retired name and exits 0 without running
+> anything, so a crontab installed before the doc fix is still silently broken. The inventory
+> below is retained as the historical record of what the documents said.
+
+Two repository documents scheduled the **01 Jan 03:00 UTC** slot differently (historical, fixed by DOC-007):
 
 | Source | Script named for that slot |
 |---|---|

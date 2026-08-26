@@ -107,12 +107,11 @@ a given non-zero exit is the expected one or a real incident.
      (INFRA-023, still open — Draft). Replace the entry with
      `bin/yearly_runoff_hydrograph_aggregation.sh`, matching entry **(9)** in the checklist's
      canonical block.
-     **Note — the two docs disagree, and the one they name as authoritative is the stale one.**
-     Checklist §2.5 points at [`doc/deployment.md`](../deployment.md) as "the authoritative source"
-     and says its own block is kept in sync with it. For this entry that is currently untrue:
-     `doc/deployment.md` still documents the retired `monthly_norms` line. Until that is corrected,
-     use the **checklist §2.5 canonical block** for this entry and do not reinstall a cron line from
-     `doc/deployment.md`. Flagged as a known documentation defect in §5.
+     **Corrected 2026-08-26 (DOC-007).** [`doc/deployment.md`](../deployment.md) used to prescribe
+     the retired entry while both checklists deferred to it as authoritative — so a crontab rebuilt
+     from the "authoritative" doc reinstalled a silent no-op. All four documents that carry a cron
+     block now name the correct wrapper. **This only fixes the documents; your installed crontab is
+     unchanged** — the check above is still worth doing, and is the reason this step exists.
    - **Confirm the long-term cron day still matches this deployment's configured
      `operational_issue_day` values**, per the operator setup block at the top of the checklist. The
      dangerous window is a **6–10 day** mismatch: the tolerance check admits the mode, then the model
@@ -214,9 +213,12 @@ This is the most important section. The items below are the intended outcome of 
   own authoritative list reports it as virtual. Nothing in the changes described here reads those
   local config files, but something else in the pipeline might. Not naming the station here — read it
   from your own `WARNING` lines if you need to investigate.
-- **`doc/deployment.md` is stale** on the retired `monthly_norms` cron entry, while checklist §2.5
-  still names it "the authoritative source" and claims to be kept in sync with it (§3, step 1).
-  Until one of the two is corrected, prefer the checklist's canonical cron block for that entry.
+- **Database-backup retention differs between the checklists, and nothing reconciles them.**
+  `first_deploy_checklist.md` and `doc/deployment.md` keep **30** days; the update checklist passes
+  `-r 3`. A server installed from the first-deploy checklist and later updated from the update
+  checklist silently drops 30 → 3. Check what your `crontab -l` backup line actually says. Tracked
+  as DOC-007; deliberately not normalised, because which value is right is an operational call.
+  (The stale-`deployment.md` defect previously listed here was fixed on 2026-08-26 — see §3 step 1.)
 
 ## 6. Verified before shipping — and what remains unverified on your server
 
