@@ -1,7 +1,6 @@
 # PREPG-020: The snow anti-clobber guard fails open — one failed API read nulls a year of norms
 
-**Status**: **Ready** (2026-08-26) — five review iterations complete; owner decisions on failure
-policy and recovery recorded (§ Failure policy). Implementable as written.
+**Status**: **Complete** (2026-08-26) — fixed in **PR #483**, plan in **#481**, both merged
 **Module**: `apps/preprocessing_gateway` (`dg_utils.py`) — with a service-side half that is
 **colleague-owned**, see § Where the fix goes
 **Priority**: **High** — a *transient* API read failure during a maintenance run silently replaces
@@ -14,6 +13,42 @@ guarantee. **PREPQ-011/012** — the same defect shape on *runoff*, already fixe
 service-side follow-up is the precedent for this one.
 
 ---
+
+> **Completed 2026-08-26 (PR #483).** Preservation reads now fail closed in every mode; the same
+> fix applied to three destructive reads in the yearly recalculation; and
+> `bin/yearly_snow_norm_recalculation.sh` now exits with its container's status.
+>
+> **Regression evidence — this broke nothing that worked.** Baseline 386 → **401 passed**, with
+> **exactly one** pre-existing test changed (the one that existed to assert the fail-open being
+> removed). The other 385 pass untouched.
+>
+> **Mutation matrix** — each production file reverted individually, to prove the tests can fail:
+> `dg_utils.py` → 10 failed; `recalculate_snow_norms.py` → 2; `snow_data_renalysis.py` → 1;
+> `yearly_snow_norm_recalculation.sh` → 3.
+>
+> **KNOWN AND ACCEPTED, owner decision:** the explicit
+> `except SnowPreservationReadError: raise` in `snow_data_operational.py` is **not pinned by a
+> test** — reverting it fails nothing. It is deliberately redundant today (the exception escapes
+> `except SapphireAPIError` on ancestry) and exists as defence-in-depth against the SDK's class
+> hierarchy changing under a pinned `@main`. Pinning it needs a monkeypatched ancestry test; the
+> owner reviewed and declined. **Do not delete the clause as "dead code" — that is the finding, not
+> a discovery.**
+>
+> **Accepted coupling:** the roundtrip test imports colleague-owned
+> `sapphire/services/preprocessing/app` read-only and adds sqlalchemy/pydantic/pydantic-settings to
+> the gateway's **dev** extras. If the service changes its schema or `crud.create_snow`, this
+> gateway test breaks. Accepted because asserting the payload instead of the stored state is what
+> let the original defect through.
+>
+> **OPERATIONAL — expect noise, not breakage.** Runs that previously completed while quietly
+> writing nulls now abort and exit non-zero. Recovery is a **manual maintenance-mode re-run**:
+> there is no durable API replay, and operational's `date >= yesterday` filter means a missed date
+> can fall permanently outside tomorrow's window. **Do not assume it catches up on the next run.**
+>
+> **Carried forward, not fixed:** `bin/yearly_runoff_hydrograph_aggregation.sh:214-220` has the
+> identical `| tee` → `EXIT_CODE=$?` fallback this issue fixed in its snow sibling. It *does* exit
+> with the status (`:241`), so it is less exposed, but its fallback when `docker inspect` fails is
+> still tee's zero. Out of scope here; worth its own fix.
 
 ## The chain, verified end to end on trunk 2026-08-21
 

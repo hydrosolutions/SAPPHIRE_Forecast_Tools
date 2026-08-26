@@ -2393,7 +2393,7 @@ class TestSnowNormPreservation:
         preservation read used to fall back to an empty dict and let
         the write through with norm=None — silently nulling any
         stored norm/statistics/bands). See
-        doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
+        doc/plans/issues/archive/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
         Parametrized across all three sync modes: the fix applies to
         ``_read_existing_snow_fields`` itself, which every mode calls.
         """

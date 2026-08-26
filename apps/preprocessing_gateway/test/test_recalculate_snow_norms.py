@@ -1025,7 +1025,7 @@ class TestRecalculateSnowNormsPreservationReadFailures:
     statistics history — must abort the code/type it guards rather
     than let the write proceed with the fields it would have
     preserved nulled. See
-    doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
+    doc/plans/issues/archive/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
 
     This is distinct from ``test_station_write_error_does_not_abort_other_stations``
     above, which is about a *write* failure (isolated per station, run
