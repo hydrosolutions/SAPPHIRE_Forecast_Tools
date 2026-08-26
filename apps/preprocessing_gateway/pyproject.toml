@@ -37,6 +37,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3",
+    # PREPG-020: one test module imports and exercises the real
+    # sapphire/services/preprocessing schema + CRUD (SnowBulkCreate,
+    # crud.create_snow) against an in-memory SQLite DB, to prove the
+    # anti-clobber fix survives the service's real upsert -- not just
+    # that the outgoing python dict looks right. Version floors match
+    # sapphire/services/preprocessing/requirements.txt. Test-only;
+    # nothing under sapphire/services/** is modified.
+    "sqlalchemy>=2.0.44",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
 ]
 
 [tool.uv]

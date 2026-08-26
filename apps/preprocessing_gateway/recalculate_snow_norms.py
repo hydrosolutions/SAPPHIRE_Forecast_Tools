@@ -7,6 +7,15 @@ norm records back to the API.
 Designed to run once a year (e.g., end of August via cron) after the
 snow reanalysis files have been updated.
 
+Preservation reads (target-year, prior-year, and statistics history)
+guard against nulling a full year of stored values on write. If one
+of those reads fails, this run raises ``dg_utils.SnowPreservationReadError``
+and aborts rather than writing nulls (PREPG-020). There is no durable
+API-side replay of what that run would have written — recovery is a
+manual maintenance-mode re-run of this script once the underlying API
+problem is resolved, not something a later scheduled run will pick up
+on its own.
+
 Usage (standalone)::
 
     uv run recalculate_snow_norms.py
@@ -59,6 +68,16 @@ def recalculate_norms(
 
     Returns:
         True if norms were successfully written, False otherwise.
+
+    Raises:
+        dg_utils.SnowPreservationReadError: A preservation read for a
+            code/type (target-year, prior-year, or statistics history)
+            failed. Per PREPG-020, this aborts the run instead of
+            writing with the affected fields nulled. No record for
+            the failing code/type is written. Recovery is a manual
+            maintenance-mode re-run once the read problem is fixed —
+            there is no durable API replay, and this script does not
+            retry.
     """
     # Apply env overrides (for testing)
     old_env = {}
@@ -191,12 +210,16 @@ def _recalculate_norms_impl(
                         d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
                         existing[d] = row
             except Exception as e:
-                logger.warning(
-                    "Could not read existing snow records for %s/%s: %s",
-                    snow_type,
-                    code,
-                    e,
-                )
+                # Target-year records back value/current/bands for this
+                # code/type. A failed read must not be silently treated
+                # as "nothing stored" — that would write null over a
+                # full year of them. Abort this code/type (PREPG-020).
+                raise dg_utils.SnowPreservationReadError(
+                    f"Could not read existing target-year snow records for "
+                    f"{snow_type}/{code} (year {year}): {e}. Refusing to write "
+                    "records that would null the stored value/current/elevation "
+                    "band fields."
+                ) from e
 
             # Read prior-year records for calendar-date `previous` lookup
             prior_year = year - 1
@@ -216,14 +239,15 @@ def _recalculate_norms_impl(
                         d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
                         prior_existing[d] = row
             except Exception as e:
-                logger.warning(
-                    "Could not read prior-year snow records for %s/%s (year %d): %s. "
-                    "All 'previous' values will be NaN.",
-                    snow_type,
-                    code,
-                    prior_year,
-                    e,
-                )
+                # A failed prior-year read must not be treated as "no
+                # prior data" — that would null the stored 'previous'
+                # field for every day of this code/type. Abort this
+                # code/type instead (PREPG-020).
+                raise dg_utils.SnowPreservationReadError(
+                    f"Could not read prior-year snow records for {snow_type}/{code} "
+                    f"(year {prior_year}): {e}. Refusing to write records that "
+                    "would null the stored 'previous' field."
+                ) from e
 
             # Build API records for each day of the year
             records = []

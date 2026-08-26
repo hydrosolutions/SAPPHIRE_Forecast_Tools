@@ -573,6 +573,56 @@ class TestSnowReanalysisIntegration:
             mock_write_api.assert_not_called()
             mock_check.assert_not_called()
 
+    @patch("snow_data_renalysis._check_snow_consistency")
+    @patch("dg_utils.write_snow_to_api")
+    @patch("snow_data_renalysis.pd.read_csv")
+    @patch("snow_data_renalysis.dg_utils.transform_snow_data")
+    def test_preservation_read_failure_propagates_uncaught(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-020: when the shared writer raises
+        SnowPreservationReadError, get_snow_data_reanalysis must let
+        it propagate out uncaught — not log-and-swallow it into
+        `return True` the way the old broad ``except Exception``
+        clause did. This is the caller-level counterpart to the
+        explicit ``except dg_utils.SnowPreservationReadError: raise``
+        added ahead of that broad except.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
+        mock_write_api.side_effect = dg_utils.SnowPreservationReadError("boom")
+        mock_check.return_value = True
+
+        mock_client = Mock()
+        mock_client.get_snow_reanalysis.return_value = "/tmp/fake.csv"
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            swe_dir = os.path.join(tmpdir, "SWE")
+            os.makedirs(swe_dir, exist_ok=True)
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                sdr.get_snow_data_reanalysis(
+                    client=mock_client,
+                    hru="12345",
+                    variable="SWE",
+                    start_date="2024-01-01",
+                    end_date="2024-01-31",
+                    dg_path="/tmp/dg",
+                    save_path=tmpdir,
+                )
+
+            # Aborted before the consistency check, which only runs
+            # after a successful write.
+            mock_check.assert_not_called()
+
 
 # =============================================================================
 # Tests for _write_meteo_to_api (writes all data passed)
@@ -883,6 +933,59 @@ class TestSnowDataOperationalIntegration:
                 save_path=tmpdir,
             )
             assert result is False
+
+    @patch("snow_data_operational._check_snow_consistency")
+    @patch("dg_utils.write_snow_to_api")
+    @patch("snow_data_operational.pd.read_csv")
+    @patch("snow_data_operational.dg_utils.transform_snow_data")
+    def test_preservation_read_failure_propagates_uncaught(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-020: get_snow_data_operational must let
+        SnowPreservationReadError escape its ``except SapphireAPIError``
+        clause rather than being logged as a non-fatal API error.
+
+        This does not rest solely on the two exceptions being
+        unrelated in the class hierarchy (which it also verifies,
+        since no ``except dg_utils.SnowPreservationReadError`` clause
+        exists to help it here) — the explicit ``except
+        dg_utils.SnowPreservationReadError: raise`` added ahead of
+        ``except SapphireAPIError`` encodes this as our own policy,
+        not third-party ancestry we merely depend on.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
+        mock_write_api.side_effect = dg_utils.SnowPreservationReadError("boom")
+        mock_check.return_value = True
+
+        mock_client = Mock()
+        mock_client.get_operational.return_value = "/tmp/fake.csv"
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            swe_dir = os.path.join(tmpdir, "SWE")
+            os.makedirs(swe_dir, exist_ok=True)
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                sdo.get_snow_data_operational(
+                    client=mock_client,
+                    hru="12345",
+                    variable="SWE",
+                    date="2024-01-01",
+                    dg_path="/tmp/dg",
+                    save_path=tmpdir,
+                )
+
+            # Aborted before the consistency check, which only runs
+            # after a successful write.
+            mock_check.assert_not_called()
 
 
 class TestExtendEra5ReanalysisIntegration:
@@ -2279,9 +2382,21 @@ class TestSnowNormPreservation:
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
+    @pytest.mark.parametrize("sync_mode", ["operational", "maintenance", "initial"])
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_read_failure_does_not_block_write(self, mock_client_class):
-        """read_snow raises → write proceeds with norm=None."""
+    def test_api_read_failure_blocks_write(self, mock_client_class, sync_mode):
+        """PREPG-020: read_snow raises → write is refused, not proceeded
+        with the unpreserved fields nulled.
+
+        Replaces the old ``test_api_read_failure_does_not_block_write``,
+        which pinned the fail-open this issue fixes (a failed
+        preservation read used to fall back to an empty dict and let
+        the write through with norm=None — silently nulling any
+        stored norm/statistics/bands). See
+        doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md.
+        Parametrized across all three sync modes: the fix applies to
+        ``_read_existing_snow_fields`` itself, which every mode calls.
+        """
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -2294,11 +2409,112 @@ class TestSnowNormPreservation:
             mock_client.read_snow.side_effect = Exception("API read error")
             mock_client_class.return_value = mock_client
 
+            reference_date = pd.Timestamp("2024-01-02")
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "code": ["19999", "19999"],
+                    "SWE": [105.0, 106.0],
+                }
+            )
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                dg_utils.write_snow_to_api(
+                    data,
+                    "SWE",
+                    "test_hru",
+                    mode=sync_mode,
+                    reference_date=reference_date,
+                )
+
+            mock_client.write_snow.assert_not_called()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_api_read_failure_after_one_code_succeeds_blocks_whole_write(self, mock_client_class):
+        """Multi-code: a failure reading the second code discards
+        everything read for the first — no POST for the invocation.
+
+        ``_read_existing_snow_fields`` reads one code at a time in a
+        single try block; if a later code's read raises, the fields
+        already read for an earlier code must not be used to let a
+        partial write through — PREPG-020's fail-closed contract
+        applies to the whole call, not per code.
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+
+            good_df = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [42.0],
+                    "norm": [40.0],
+                }
+            )
+            mock_client.read_snow.side_effect = [good_df, Exception("API read error")]
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                    "code": ["19999", "19998"],
+                    "SWE": [105.0, 106.0],
+                }
+            )
+
+            with pytest.raises(dg_utils.SnowPreservationReadError):
+                dg_utils.write_snow_to_api(data, "SWE", "test_hru", mode="initial")
+
+            mock_client.write_snow.assert_not_called()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_partial_row_preserves_stored_value_and_writes_incoming_band(self, mock_client_class):
+        """Incoming main value missing + incoming band present: the
+        stored main value is preserved AND the incoming band is
+        written — asserts both final values, not just that a write
+        happened.
+
+        This is the happy (successful-read) path, which PREPG-020
+        requires stays byte-identical. It was previously untested in
+        this direction (existing coverage only checked incoming value
+        + no bands preserving stored bands, the reverse combination).
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2024-01-01"]),
+                    "code": ["19999"],
+                    "snow_type": ["SWE"],
+                    "value": [50.0],
+                }
+            )
+            mock_client_class.return_value = mock_client
+
+            # Incoming: no main SWE value, but elevation band 1 present.
             data = pd.DataFrame(
                 {
                     "date": pd.to_datetime(["2024-01-01"]),
-                    "code": [12345],
-                    "SWE": [105.0],
+                    "code": ["19999"],
+                    "SWE": [np.nan],
+                    "SWE_1": [12.5],
                 }
             )
 
@@ -2306,9 +2522,14 @@ class TestSnowNormPreservation:
             assert result is True
 
             records = mock_client.write_snow.call_args[0][0]
-            # Norm is None because read failed, but write still happened
-            assert records[0]["norm"] is None
-            assert records[0]["value"] == 105.0
+            assert len(records) == 1
+            record = records[0]
+            # Stored main value preserved (not nulled by the missing
+            # incoming value).
+            assert record["value"] == 50.0
+            assert record["current"] == 50.0
+            # Incoming band written.
+            assert record["value1"] == 12.5
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 

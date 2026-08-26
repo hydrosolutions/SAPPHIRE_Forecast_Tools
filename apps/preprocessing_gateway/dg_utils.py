@@ -20,6 +20,26 @@ except ImportError:
     SapphirePreprocessingClient = None
     SapphireAPIError = Exception
 
+
+class SnowPreservationReadError(RuntimeError):
+    """A preservation read that guards a destructive snow write failed.
+
+    Several snow write paths read existing API rows first so an
+    overwrite-capable write can preserve fields it isn't given new
+    values for (norm, statistics, elevation bands, ``previous``).
+    If that read fails, the fields it would have preserved are not
+    known — writing anyway would null them out for every row in the
+    window, not just leave them unset (see PREPG-020:
+    ``doc/plans/issues/high_prio_gi_draft_prepg_snow_preservation_read_fails_open.md``).
+
+    Deliberately **not** a subclass of ``SapphireAPIError``: a broad
+    ``except SapphireAPIError`` (e.g. ``snow_data_operational.py``)
+    must not catch this and quietly resume as if it were safe to
+    write. Callers that read existing rows before a destructive write
+    should let this propagate rather than logging and continuing.
+    """
+
+
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
 # Further, access to the data gateway through an API key is required to use the
@@ -746,12 +766,17 @@ def calculate_snow_stats_from_api(
                     break
                 skip += batch_size
         except Exception as e:
-            logger.warning(
-                "Could not read snow data for %s: %s",
-                variable,
-                e,
-            )
-            continue
+            # Unlike calculate_snow_norms_from_api()'s equivalent read
+            # (a missed update if it fails), a failed statistics read
+            # here would otherwise be silently backfilled with NaN by
+            # the caller and written over a full year of existing
+            # count/mean/std/min/max/q* — a destructive write. Abort
+            # instead of proceeding with nulled statistics (PREPG-020).
+            raise SnowPreservationReadError(
+                f"Could not read existing snow data for statistics ({variable}): {e}. "
+                "Refusing to compute statistics that would overwrite stored "
+                "count/mean/std/min/max/q* fields with nulls."
+            ) from e
 
         if not pages:
             logger.info("No API data for %s, skipping", variable)
@@ -877,8 +902,14 @@ def _read_existing_snow_fields(
     """Read existing snow metadata from the API to prevent overwrite.
 
     Returns a dict keyed by ``(code, date_str)`` with existing norm and
-    statistical fields.
-    On any failure, returns an empty dict (writes proceed with None).
+    statistical fields. A successful read that finds nothing stored
+    (cold database, or no rows in the window) returns an empty dict —
+    that is a legitimate result, not a failure, and callers must still
+    write. A read that *raises* is a different case entirely: raises
+    ``SnowPreservationReadError`` instead of returning a value, so a
+    caller cannot mistake "failed" for "nothing to preserve" (PREPG-020).
+    Do not catch this and fall back to ``{}`` — the caller's write
+    would then null every field this read was meant to protect.
     """
     existing: dict = {}
     try:
@@ -907,13 +938,11 @@ def _read_existing_snow_fields(
                 if values:
                     existing[(str(row["code"]), d)] = values
     except Exception as e:
-        logger.warning(
-            "Could not read existing snow metadata from API (%s): %s. "
-            "Proceeding without metadata preservation.",
-            snow_type,
-            e,
-        )
-        return {}
+        raise SnowPreservationReadError(
+            f"Could not read existing snow metadata from API ({snow_type}): {e}. "
+            "Refusing to write records that would null stored norm, statistics, "
+            "or elevation bands."
+        ) from e
     return existing
 
 
@@ -960,6 +989,20 @@ def write_snow_to_api(
 
     Returns:
         True if records were written, False otherwise.
+
+    Raises:
+        SnowPreservationReadError: The existing-row read that guards
+            this write against nulling stored norm, statistics, or
+            elevation bands failed. The write is aborted — no record
+            for this call is sent to the API (PREPG-020). Recovery is
+            a manual maintenance-mode re-run once the API read
+            problem is resolved; there is no durable replay of the
+            skipped window. In operational mode this matters
+            especially: the write window is ``date >= yesterday``, so
+            a date that falls out of that window before the re-run
+            (i.e. more than a day has passed) is permanently outside
+            every future operational run's window and will not be
+            picked up automatically.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping snow API write")

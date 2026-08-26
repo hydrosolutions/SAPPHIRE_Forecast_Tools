@@ -132,7 +132,13 @@ docker run \
     uv run --directory /app/apps/preprocessing_gateway python recalculate_snow_norms.py \
     2>&1 | tee "$SERVICE_LOG"
 
-EXIT_CODE=$?
+# `$?` here would be tee's exit status (almost always 0), not docker
+# run's -- PIPESTATUS[0] is docker run's real status and must be
+# captured immediately, before any other command overwrites it. This
+# is only the *fallback* used if `docker inspect` below also fails
+# (e.g. the container vanished); when inspect succeeds, its answer
+# (the container's actual State.ExitCode) takes precedence.
+EXIT_CODE=${PIPESTATUS[0]}
 
 # Capture container exit code if different from tee exit code
 CONTAINER_EXIT_CODE=$(docker inspect $CONTAINER_NAME --format='{{.State.ExitCode}}' 2>/dev/null || echo "$EXIT_CODE")
@@ -155,3 +161,5 @@ log_message "Yearly Snow Norm Recalculation completed"
 echo "|"
 echo "| Recalculation complete. Check logs at: $LOG_DIR"
 echo "|"
+
+exit "$CONTAINER_EXIT_CODE"
