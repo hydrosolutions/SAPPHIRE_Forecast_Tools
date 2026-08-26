@@ -45,9 +45,15 @@ recalc's bands (`dg_utils.py:864`), and recalc preserves the existing `value`
 
 ### Change A — bands present year-round (cron cadence)
 
-Retarget the existing `snow_norms` periodic-maintenance task from **Aug 31** to
+> **Superseded 2026-08-19 (owner decision), recorded here 2026-08-26.** The `snow_norms` task
+> stays on **31 August** — the end of the snow year, before the new accumulation season;
+> moving it to 1 January would shift the norms mid-season. The `monthly_norms` Jan-1 task
+> referenced below was also retired (see DOC-007 / INFRA-023). The proposal in this section
+> is not the plan of record; the rest of the change is unaffected.
+
+~~Retarget the existing `snow_norms` periodic-maintenance task from **Aug 31** to
 **Jan 1**, targeting the current calendar year (co-schedule with the existing
-`monthly_norms` Jan-1 task). The recalc is already current-year-aware and
+`monthly_norms` Jan-1 task).~~ The recalc is already current-year-aware and
 idempotent; climatology is computed from completed prior years, so it is fully
 available on Jan 1. One run per year at the start of the year covers the whole
 Sep→Aug window (year N-1 bands cover Sep–Dec, year N bands cover Jan–Aug).
@@ -67,8 +73,9 @@ when it ages past the 365-day lookback late in the year.)
 
 ## Rollout (steady-state fix + one-time remediation)
 
-The cadence change is steady-state and does **not** retroactively populate the
-current (2026) window. After deploying A + B, run once to heal this season:
+~~The cadence change is steady-state and does **not** retroactively populate the
+current (2026) window.~~ **Change A is superseded — there is no cadence change; the
+`snow_norms` schedule stays 31 August.** After deploying **B**, run once to heal this season:
 
 1. Widened maintenance sync (fills `value`/`current` for the full window):
    `bash bin/daily_gateway_maintenance.sh <env>`

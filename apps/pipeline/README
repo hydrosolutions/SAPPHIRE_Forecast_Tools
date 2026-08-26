@@ -110,8 +110,11 @@ Bimonthly/yearly tasks, triggered by separate cron entries:
 RunPeriodicMaintenanceWorkflow(task_type=...)
   ├─ long_term      → LongTermPostProcessingMaintenance   (bimonthly)
   ├─ skill_recalc   → YearlySkillRecalculation            (Jan 1)
-  ├─ snow_norms     → YearlySnowNormRecalculation          (Aug 25)
-  └─ monthly_norms  → YearlyMonthlyNormsRecalculation      (Jan 1)
+  └─ snow_norms     → YearlySnowNormRecalculation          (Aug 31)
+
+monthly_norms was retired and is NOT in the task map; the wrapper still accepts
+the name and exits 0 without running anything (INFRA-023). The replacement is
+bin/yearly_runoff_hydrograph_aggregation.sh (Jan 1).
 ```
 
 ## Docker Compose

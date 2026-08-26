@@ -945,13 +945,17 @@ Add the following to the crontab file:
 0 22 1 1,3,5,7,9,11 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh long_term /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_longterm_$(date +\%Y\%m\%d).log 2>&1
 # Yearly skill recalculation at 01:00 UTC on December 31
 0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_skillrecalc_$(date +\%Y\%m\%d).log 2>&1
-# Yearly snow norm/stat recalculation at 02:00 UTC on January 1
+# Yearly snow norm/stat recalculation at 02:00 UTC on 31 August
 # Owner decision 2026-08-19: run at the END of the snow year (31 August),
 # before the new accumulation season, rather than 1 January which would move
 # the norms mid-season.
 0 2 31 8 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh snow_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_snownorms_$(date +\%Y\%m\%d).log 2>&1
-# Yearly monthly discharge norm recalculation from iEH HF SDK at 03:00 UTC on January 1
-0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh monthly_norms /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_periodic_monthlynorms_$(date +\%Y\%m\%d).log 2>&1
+# Yearly runoff hydrograph aggregation at 03:00 UTC on January 1
+# Replaces the retired `monthly_norms` Luigi task, which was removed from the
+# task map: run_periodic_maintenance.sh still accepts the retired name and exits
+# 0 without running anything (INFRA-023), so do not reinstate it. Builds the
+# long-horizon monthly, quarterly and April-September seasonal hydrograph view.
+0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/yearly_runoff_hydrograph_aggregation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_yearly_runoff_hydrograph_$(date +\%Y\%m\%d).log 2>&1
 ```
 The snow norm/stat cron row uses the same yearly wrapper documented in [`apps/preprocessing_gateway/README.md`](../apps/preprocessing_gateway/README.md#yearly-snow-norms-and-statistics). Run `bin/backfill_snow_stats_history.sh` once after deploying this change to populate historical snow-stat columns used by the dashboard snow tab; the yearly cron keeps future years current.
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.

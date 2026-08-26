@@ -4,7 +4,7 @@ This checklist covers one-time setup steps required when deploying SAPPHIRE Fore
 
 > **First deploy vs. update:** "Stop services" and "Backup Critical Files" sections do not apply on a first deploy — there are no prior services to stop and no prior state to preserve. They are covered in `doc/prod/update_deployment_checklist.md`.
 >
-> **Cron installation** is covered in section 12 of this doc. The same canonical cron block is reproduced in `doc/prod/update_deployment_checklist.md` §2.5 so routine-update operators can diff against the running crontab without consulting two sources.
+> **Cron installation** is covered in section 12 of this doc. The block there is the first-install subset of the schedule in `doc/prod/update_deployment_checklist.md` §2.5 — it omits that block's two weekly housekeeping rows (Docker image/build-cache prune and the `pre_update_*/` backup-dir prune), which become relevant only once the deployment has been updated at least once. Routine-update operators diff the running crontab against §2.5, not against this doc.
 
 ## Operator setup — set these once per session
 
@@ -643,7 +643,7 @@ The script loops years sequentially, writing a progress file so re-runs resume f
 **Other tracked periodic wrappers** that may make sense on first deploy:
 
 - `bin/yearly_snow_norm_recalculation.sh "${ENV_FILE_PATH}"` — annual snow-norm recalculation. Run once to seed the current year's norms.
-- `bin/yearly_runoff_hydrograph_aggregation.sh "${ENV_FILE_PATH}"` — long-horizon monthly + April–September seasonal hydrograph. Replaces the retired `YearlyMonthlyNormsRecalculation` Luigi task. Run once on first deploy to seed the long-horizon hydrograph view.
+- `bin/yearly_runoff_hydrograph_aggregation.sh "${ENV_FILE_PATH}"` — long-horizon monthly + quarterly + April–September seasonal hydrograph. Replaces the retired `YearlyMonthlyNormsRecalculation` Luigi task. Run once on first deploy to seed the long-horizon hydrograph view.
 - `bin/bimonthly_long_term_postprocessing.sh "${ENV_FILE_PATH}"` — long-term forecast postprocessing.
 
 Recurring schedules for these wrappers belong in the cron installation step, not here.
@@ -750,7 +750,9 @@ Empty results here are expected if no forecast has been run yet; they will popul
 
 The microservices stack, Luigi daemon, and dashboards are now running. The final first-deploy step is to put the forecast pipeline on a production cadence by installing the SAPPHIRE crontab. After this section completes, the operational forecasts and the daily/periodic maintenance jobs will run on their own.
 
-This section is the authoritative install procedure. The same canonical cron block is reproduced in `doc/prod/update_deployment_checklist.md` §2.5 so routine-update operators can diff their running crontab against it on later updates without re-reading the first-deploy doc.
+This section is the authoritative install procedure for a first deploy. The block below is the first-install subset of the schedule in `doc/prod/update_deployment_checklist.md` §2.5 — it omits that block's two weekly housekeeping rows (Docker image/build-cache prune and the `pre_update_*/` backup-dir prune), which become relevant only once the deployment has been updated at least once. `doc/deployment.md` documents the same jobs with per-deployment path templates instead of the `${...}` variables used here, plus the UTC timezone reference table.
+
+> Known unreconciled difference: this block sets database-backup retention to 30 days (`-r 30`), matching `bin/backup_sapphire_db.sh`'s default; §2.5 of the update checklist passes `-r 3`. A server installed from here and later updated from that checklist drops 30 → 3. Tracked in DOC-007.
 
 > **Prerequisites:**
 > - The SAPPHIRE microservices stack is up (section 5). Every cron command reads/writes through the api-gateway at `http://localhost:8000`; without the stack up, each command fails immediately with `Connection refused`. Confirm with `curl -sf http://localhost:8000/health/ready && echo READY`.
@@ -768,7 +770,7 @@ ls -la ~/crontab_backup_*.txt
 
 ### 12.2 Install the canonical cron block
 
-The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The authoritative source is [`doc/deployment.md` §"Set up cron job"](../deployment.md#set-up-cron-job); this section keeps the same block inline for operator convenience.
+The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. [`doc/deployment.md` §"Set up cron job"](../deployment.md#set-up-cron-job) documents the same schedule together with the UTC timezone reference table; consult it when choosing an operational window. Install from the block below.
 
 > **Cron does not expand shell variables.** The `${...}` placeholders below are for readability — when you paste these into `crontab -e`, substitute the literal values of `${ENV_FILE_PATH}` and `${LOG_DIR}` (as set in the operator placeholder block at the top of this doc) into each line.
 
@@ -834,7 +836,7 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
   # (consolidated Luigi wrapper). Full-history safety net.
   0 1 31 12 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_periodic_maintenance.sh skill_recalc ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 
-  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on January 1
+  # (8) Yearly snow norm/stat recalculation at 02:00 UTC on 31 August
   # (consolidated Luigi wrapper). Supersedes legacy
   # bin/yearly_snow_norm_recalculation.sh (kept for manual / debugging
   # use only).
@@ -845,7 +847,7 @@ The block below is the post-S1-2026 consolidated Luigi-wrapper pattern. The auth
 
   # (9) Yearly runoff hydrograph aggregation at 03:00 UTC on January 1.
   # Replaces the retired YearlyMonthlyNormsRecalculation Luigi task. Builds
-  # the long-horizon monthly + April–September seasonal hydrograph view
+  # the long-horizon monthly + quarterly + April–September seasonal hydrograph view
   # used by the dashboard.
   0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/yearly_runoff_hydrograph_aggregation.sh ${ENV_FILE_PATH} >> ${LOG_DIR}/sapphire_yearly_runoff_hydrograph_$(date +\%Y\%m\%d).log 2>&1
   ```

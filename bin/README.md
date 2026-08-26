@@ -227,8 +227,8 @@ See `doc/deployment.md` for the full recommended crontab. Summary:
 | 19:00 | `run_daily_maintenance.sh` | Daily maintenance (all steps) |
 | 22:00 1st odd months | `run_periodic_maintenance.sh long_term` | Long-term postprocessing |
 | 01:00 Dec 31 | `run_periodic_maintenance.sh skill_recalc` | Yearly skill recalculation |
-| 02:00 Jan 1 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
-| 03:00 Jan 1 | `yearly_runoff_hydrograph_aggregation.sh` | Yearly runoff hydrograph aggregation for monthly and seasonal dashboard views |
+| 02:00 Aug 31 | `run_periodic_maintenance.sh snow_norms` | Yearly snow norm recalculation |
+| 03:00 Jan 1 | `yearly_runoff_hydrograph_aggregation.sh` | Yearly runoff hydrograph aggregation for monthly, quarterly and seasonal dashboard views |
 
 Log files use timestamped names (`sapphire_*_YYYYMMDD.log`) with automatic
 cleanup of logs older than 7 days.

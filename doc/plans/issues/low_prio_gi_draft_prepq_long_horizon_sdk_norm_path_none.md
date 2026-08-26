@@ -520,13 +520,14 @@ non-zero (`bin/yearly_runoff_hydrograph_aggregation.sh:206-213`). So an exit 4 t
 — unlike in `run_locally.sh`.
 
 > **New defect found while resolving this — filed separately, do not fix here.**
-> `doc/deployment.md:922` schedules the 01 Jan 03:00 slot as
+> (Historical — corrected 2026-08-26 by DOC-007.) `doc/deployment.md` then scheduled the
+> 01 Jan 03:00 slot as
 > `run_periodic_maintenance.sh monthly_norms`, but Luigi's task map handles only
 > `long_term`/`skill_recalc`/`snow_norms` and **raises `ValueError` for `monthly_norms`**
 > (`apps/pipeline/pipeline_docker.py:2049-2057`). `bin/README.md:231` names a *different* script for
 > the same slot (`yearly_runoff_hydrograph_aggregation.sh`). A deployment following `deployment.md`
 > would therefore never run the yearly long-horizon aggregation. See
-> `doc/plans/issues/high_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
+> `doc/plans/issues/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
 
 **3. Per horizon, should a virtual site keep its observed rows with `norm=None`?** — **RESOLVED by
 PREPQ-015's design: yes, but via fall-through, not grading (updated 2026-08-21, second pass).** At

@@ -2168,7 +2168,7 @@ SQL. The minimum checks per hook are:
   SELECT horizon_type, horizon_value, COUNT(*) AS rows,
          COUNT(*) FILTER (WHERE norm IS NOT NULL) AS norm_ok
   FROM runoff_hydrograph
-  WHERE horizon_type IN ('month', 'season')
+  WHERE horizon_type IN ('month', 'quarter', 'season')
   GROUP BY horizon_type, horizon_value
   ORDER BY horizon_type, horizon_value;
   ```
