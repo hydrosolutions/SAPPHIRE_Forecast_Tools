@@ -1,6 +1,7 @@
 # PREPG-020: The snow anti-clobber guard fails open — one failed API read nulls a year of norms
 
-**Status**: Draft (2026-08-21)
+**Status**: **Ready** (2026-08-26) — five review iterations complete; owner decisions on failure
+policy and recovery recorded (§ Failure policy). Implementable as written.
 **Module**: `apps/preprocessing_gateway` (`dg_utils.py`) — with a service-side half that is
 **colleague-owned**, see § Where the fix goes
 **Priority**: **High** — a *transient* API read failure during a maintenance run silently replaces
@@ -190,7 +191,19 @@ Follow that, and note the precedent's explicit caution — an omit-aware PATCH, 
   line of its sibling `bin/yearly_runoff_hydrograph_aggregation.sh:241`.
   *This matters beyond this issue: that wrapper is the recommended command for PREPG-007's P3.*
 
+**Regression gate — the evidence that nothing working is broken:**
+
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
+- **Baseline measured on trunk 2026-08-26: `386 passed`.** After the fix the count must be
+  **386 + (new tests) − 0**, i.e. no pre-existing test is deleted to make the change pass.
+- **EXACTLY ONE pre-existing test may change:**
+  `test_api_read_failure_does_not_block_write` (`test_api_integration.py:2283`), which asserts the
+  fail-open being removed. **The other 385 must pass untouched.** That is the concrete form of
+  "the happy path is byte-identical" — if any other pre-existing test needs editing, the change has
+  altered behaviour it was not supposed to touch, and that is a finding to report, not to fix by
+  editing the test.
+- The replaced test must assert the **new** contract (read raises → no write), not merely be
+  deleted.
 
 ## The SAME defect exists in `recalculate_snow_norms.py` — in scope, and worse
 
