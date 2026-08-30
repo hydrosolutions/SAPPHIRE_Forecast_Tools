@@ -32,6 +32,7 @@ from config_forecast import ForecastConfig
 from data_interface import BasePredictorDataInterface, DataInterface, DataInterfaceDB
 
 # Import forecast models
+from lt_recovery import apply_success_flag
 from lt_utils import (
     check_valid_forecast_issue_date,
     create_model_instance,
@@ -216,9 +217,15 @@ def run_single_model(
     offset_base: int,
     offset_discharge: int,
     station_codes: list[str] | None = None,
+    recovery_flag: int | None = None,
 ) -> dict[str, Any]:
     """
     Run a single forecast model and return the results.
+
+    Args:
+        recovery_flag: When set, rows carrying a value are persisted with this
+            flag instead of 0. Used by the dated recovery path to mark
+            regenerated rows. Rows with a missing/NaN value keep flag 2.
     """
 
     # Load configurations
@@ -327,11 +334,9 @@ def run_single_model(
         else:
             logger.warning(f"Unknown data dependency type: {input_type}")
 
-
     logger.info(
         f"Head of temporal data after processing dependencies for model {model_name}:\n{temporal_data.head()}"
     )
-
 
     today = check_valid_forecast_issue_date(
         forecast_configs=forecast_configs, model_name=model_name
@@ -361,6 +366,7 @@ def run_single_model(
         forecast = forecast.round(2)
 
         # where Q_model_name is Nan, set flag to 2, else 0 (0 = forecast produced, 2 = no forecast produced, missing data)
+        # A recovery run overrides the "produced" value only (see lt_recovery).
         main_q_col = f"Q_{model_name}"
         if main_q_col not in forecast.columns:
             logger.error(
@@ -369,9 +375,7 @@ def run_single_model(
             forecast["flag"] = 2
             success = False
         else:
-            nan_mask = forecast[main_q_col].isna()
-            forecast.loc[nan_mask, "flag"] = 2  # no forecast produced,
-            forecast.loc[~nan_mask, "flag"] = 0  # forecast produced
+            forecast = apply_success_flag(forecast, main_q_col, recovery_flag)
             success = True
 
         # Add climatological quantile bounds for GBT-family models (monthly mode)
@@ -430,6 +434,7 @@ def run_forecast(
     forecast_all: bool = True,
     models_to_run: list[str] | None = None,
     forecast_mode: str = None,
+    recovery_flag: int | None = None,
 ):
     # Setup Environment
     sl.load_environment()
@@ -505,6 +510,7 @@ def run_forecast(
                 offset_base=offset_base,
                 offset_discharge=offset_discharge,
                 station_codes=station_codes,
+                recovery_flag=recovery_flag,
             )
             execution_is_success[model_name] = sucess
         except Exception as e:
@@ -556,11 +562,54 @@ Examples:
         help='Override the "today" date for the forecast in YYYY-MM-DD format (useful for testing or backtesting)',
     )
 
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help=(
+            "Operator-invoked recovery of ONE missed long-term month. Requires "
+            "--today. Refuses if any member row already exists for that issue "
+            "date, marks regenerated rows with flag=1, and reads the rows back "
+            "from the database before reporting success. Exit codes: 0 success, "
+            "1 ran but nothing proven written, 2 refused (nothing was run)."
+        ),
+    )
+
     args = parser.parse_args()
 
     # Determine recalibrate_all flag and models to run
     recalibrate_all = args.all or args.today is not None
     models_to_run = args.models if args.models else []
+
+    # The recovery path parses its own date, so that a malformed or impossible
+    # one (2026-02-31) exits with the documented refusal code instead of
+    # crashing in strptime below.
+    if args.recover:
+        if args.today is None:
+            parser.error("--recover requires --today YYYY-MM-DD")
+
+        from lt_recovery import (
+            EXIT_REFUSED,
+            RecoveryRefused,
+            parse_issue_date,
+            run_recovery,
+        )
+
+        try:
+            effective_date = parse_issue_date(args.today)
+        except RecoveryRefused as exc:
+            logger.error("Long-term recovery REFUSED (nothing was run): %s", exc)
+            sys.exit(EXIT_REFUSED)
+
+        initialize_today(effective_date)
+
+        sys.exit(
+            run_recovery(
+                issue_date=args.today,
+                forecast_mode=os.getenv("lt_forecast_mode"),
+                run_forecast_fn=run_forecast,
+                station_codes_fn=_read_station_codes,
+            )
+        )
 
     if args.today is None:
         today = datetime.now().date()

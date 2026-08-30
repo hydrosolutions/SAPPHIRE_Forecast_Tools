@@ -2045,12 +2045,29 @@ class RunPeriodicMaintenanceWorkflow(luigi.Task):
     """Parameterized workflow for periodic maintenance tasks.
 
     Args:
-        task_type: One of 'long_term', 'skill_recalc', 'snow_norms'
+        task_type: One of 'long_term', 'skill_recalc', 'snow_norms',
+            'lt_recovery'
+        lt_recovery_mode: Long-term forecast mode to recover (task_type
+            'lt_recovery' only), e.g. 'month_0'.
+        lt_recovery_issue_date: ISO YYYY-MM-DD issue date to recover
+            (task_type 'lt_recovery' only).
     """
 
     task_type = luigi.Parameter()
+    lt_recovery_mode = luigi.Parameter(default="")
+    lt_recovery_issue_date = luigi.Parameter(default="")
 
     def requires(self):
+        if self.task_type == "lt_recovery":
+            mode = str(self.lt_recovery_mode).strip()
+            issue_date = str(self.lt_recovery_issue_date).strip()
+            if not mode or not issue_date:
+                raise ValueError(
+                    "task_type 'lt_recovery' requires both --lt-recovery-mode "
+                    "(e.g. month_0) and --lt-recovery-issue-date (YYYY-MM-DD)."
+                )
+            return RunLongTermForecast(forecast_mode=mode, issue_date=issue_date)
+
         task_map = {
             "long_term": LongTermPostProcessingMaintenance(),
             "skill_recalc": YearlySkillRecalculation(),
@@ -2058,11 +2075,19 @@ class RunPeriodicMaintenanceWorkflow(luigi.Task):
         }
         if self.task_type not in task_map:
             raise ValueError(
-                f"Unknown task_type '{self.task_type}'. Expected one of: {list(task_map.keys())}"
+                f"Unknown task_type '{self.task_type}'. Expected one of: "
+                f"{[*task_map.keys(), 'lt_recovery']}"
             )
         return task_map[self.task_type]
 
     def output(self):
+        if self.task_type == "lt_recovery":
+            # Keyed on mode and date so recovering a second month is not
+            # short-circuited by the first month's marker.
+            return luigi.LocalTarget(
+                f"/app/log_periodic_maintenance_lt_recovery_"
+                f"{self.lt_recovery_mode}_{self.lt_recovery_issue_date}_complete.txt"
+            )
         return luigi.LocalTarget(f"/app/log_periodic_maintenance_{self.task_type}_complete.txt")
 
     def run(self):
@@ -2151,24 +2176,65 @@ class RunLongTermForecast(DockerTaskBase):
     Parameterized per-mode task. The bash entry script determines which
     modes are active via lt_schedule_query.py and passes them as Luigi
     parameters.
+
+    Two paths share this task:
+
+    - **Operational** (``issue_date`` empty, the default): unchanged. Requires
+      preprocessing, runs the image CMD, marker keyed on the mode alone.
+    - **Dated recovery** (``issue_date`` set): regenerates ONE missed month.
+      It overrides the command with ``run_forecast.py --today <date> --recover``
+      so the guard, the run and the database read-back all happen inside the
+      child container behind a single exit code — a check here in the parent
+      would be too late, because ``execute_with_retries`` creates the marker
+      as soon as the child exits 0. It does not require preprocessing (the
+      inputs for a past month are already stored) and keys the marker on mode
+      *and* date so two dates for one mode do not collide.
+
+    Accepted side effect: adding ``issue_date`` changes the Luigi task-ID hash
+    of an *undated* RunLongTermForecast, because task_id is derived from the
+    full significant-parameter set. Nothing observable changes -- same
+    dependencies, same command, same marker path, same resources -- only the
+    task's identity in the scheduler UI and history. A separate task class
+    would avoid the cosmetic change at the cost of duplicating this one.
     """
 
     forecast_mode = luigi.Parameter()  # e.g. "month_0", "quarter"
+    # ISO YYYY-MM-DD; empty means the ordinary operational run.
+    issue_date = luigi.Parameter(default="")
 
     resources = {"lt_memory": 1}  # serialize long-term runs (memory)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.issue_date:
+            # A dated recovery must never be retried: the guard only runs on
+            # the first attempt, so a second attempt would write over rows the
+            # first attempt just created. Ordinary forecast runs keep the
+            # default from the timeout manager.
+            self.max_retries = 1
+
     @property
     def docker_logs_file_path(self):
+        date_suffix = f"_{self.issue_date}" if self.issue_date else ""
         return (
             f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
-            f"/docker_logs/log_lt_forecast_{self.forecast_mode}_"
+            f"/docker_logs/log_lt_forecast_{self.forecast_mode}{date_suffix}_"
             f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
 
     def requires(self):
+        if self.issue_date:
+            # Recovery regenerates a past month from data already in the
+            # database. Triggering runoff/gateway preprocessing here would
+            # pull today's data into an operator-invoked repair.
+            return []
         return [PreprocessingRunoff(), get_gateway_dependency()]
 
     def output(self):
+        if self.issue_date:
+            return luigi.LocalTarget(
+                f"/app/log_lt_forecast_{self.forecast_mode}_{self.issue_date}.txt"
+            )
         return luigi.LocalTarget(f"/app/log_lt_forecast_{self.forecast_mode}.txt")
 
     def run(self):
@@ -2189,16 +2255,32 @@ class RunLongTermForecast(DockerTaskBase):
         environment.extend(get_docker_host_env_overrides())
         environment.append("SAPPHIRE_API_URL=http://api-gateway:8000")
 
+        # Operational runs use the image CMD (command=None keeps
+        # run_docker_container's behaviour byte-for-byte identical).
+        command = None
+        container_name_base = f"lt_forecast_{self.forecast_mode}"
+        if self.issue_date:
+            command = [
+                "uv",
+                "run",
+                "run_forecast.py",
+                "--today",
+                str(self.issue_date),
+                "--recover",
+            ]
+            container_name_base = f"lt_recovery_{self.forecast_mode}_{self.issue_date}"
+
         status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
                 image_name="sapphire-lt-forecasting",
-                container_name=f"lt_forecast_{self.forecast_mode}_{attempt}",
+                container_name=f"{container_name_base}_{attempt}",
                 volumes=volumes,
                 environment=environment,
                 attempt_number=attempt,
                 mem_limit="12g",
                 memswap_limit="16g",
                 network="sapphire_sapphire-network",
+                command=command,
             )
         )
 
