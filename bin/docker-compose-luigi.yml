@@ -115,10 +115,16 @@ services:
     container_name: sapphire-pipeline-daily-maintenance
 
   # Periodic maintenance workflow (bimonthly/yearly tasks)
-  # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc, snow_norms
+  # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc,
+  # snow_norms, lt_recovery
   # (monthly_norms was retired: the task map no longer has it and the run exits 0
   #  without doing anything -- use bin/yearly_runoff_hydrograph_aggregation.sh instead)
   # Usage: MAINTENANCE_TASK_TYPE=long_term docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
+  #
+  # lt_recovery additionally needs MAINTENANCE_LT_MODE (e.g. month_0) and
+  # MAINTENANCE_LT_ISSUE_DATE (YYYY-MM-DD). Both default to the empty string,
+  # which every other task type ignores. Prefer the wrapper:
+  #   bash bin/run_periodic_maintenance.sh lt_recovery <env_file> <mode> <date>
   periodic-maintenance:
     extends: pipeline-base
     environment:
@@ -126,11 +132,15 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+      - MAINTENANCE_LT_MODE=${MAINTENANCE_LT_MODE:-}
+      - MAINTENANCE_LT_ISSUE_DATE=${MAINTENANCE_LT_ISSUE_DATE:-}
     command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon',
              '--scheduler-port', '8082',
              '--module', 'apps.pipeline.pipeline_docker',
              'RunPeriodicMaintenanceWorkflow',
-             '--task-type', '${MAINTENANCE_TASK_TYPE:-long_term}']
+             '--task-type', '${MAINTENANCE_TASK_TYPE:-long_term}',
+             '--lt-recovery-mode', '${MAINTENANCE_LT_MODE:-}',
+             '--lt-recovery-issue-date', '${MAINTENANCE_LT_ISSUE_DATE:-}']
     container_name: sapphire-pipeline-periodic-maintenance
 
   # Long-term forecast workflow
