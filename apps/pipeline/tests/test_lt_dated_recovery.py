@@ -8,12 +8,14 @@ Contracts under test:
 - the undated operational path is byte-for-byte unchanged (REGRESSION);
 - RunPeriodicMaintenanceWorkflow routes task_type 'lt_recovery' to the dated
   task and refuses incomplete arguments;
-- the wrapper script returns the Compose status for lt_recovery only.
+- the wrapper script returns the Compose status for lt_recovery only, and the
+  [retcode] block it writes actually reaches Luigi (proved by running Luigi).
 """
 
 import os
-import re
+import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -198,14 +200,42 @@ class TestPeriodicMaintenanceRouting:
         assert july.output().path != august.output().path
         assert "2026-08-01" in august.output().path
 
-    @pytest.mark.parametrize("task_type", ["long_term", "skill_recalc", "snow_norms"])
-    def test_existing_task_types_unchanged(self, mock_env, task_type):
-        """REGRESSION: existing task types keep their dependency and marker."""
-        from pipeline_docker import RunPeriodicMaintenanceWorkflow
+    @pytest.mark.parametrize(
+        ("task_type", "expected_class"),
+        [
+            ("long_term", "LongTermPostProcessingMaintenance"),
+            ("skill_recalc", "YearlySkillRecalculation"),
+            ("snow_norms", "YearlySnowNormRecalculation"),
+        ],
+    )
+    def test_existing_task_types_unchanged(self, mock_env, task_type, expected_class):
+        """REGRESSION: each existing task type keeps its exact dependency."""
+        import pipeline_docker
 
-        task = RunPeriodicMaintenanceWorkflow(task_type=task_type)
-        assert task.requires() is not None
+        task = pipeline_docker.RunPeriodicMaintenanceWorkflow(task_type=task_type)
+        dep = task.requires()
+        assert isinstance(dep, getattr(pipeline_docker, expected_class))
+        assert not isinstance(dep, pipeline_docker.RunLongTermForecast)
         assert task.output().path == f"/app/log_periodic_maintenance_{task_type}_complete.txt"
+
+    @pytest.mark.parametrize("task_type", ["long_term", "skill_recalc", "snow_norms"])
+    def test_recovery_arguments_are_ignored_by_other_task_types(self, mock_env, task_type):
+        """REGRESSION: the always-present Compose args must not alter routing.
+
+        Compose passes --lt-recovery-mode / --lt-recovery-issue-date on every
+        invocation. Even if an operator's shell leaks real values into them,
+        a non-recovery task_type must behave exactly as before.
+        """
+        import pipeline_docker
+
+        plain = pipeline_docker.RunPeriodicMaintenanceWorkflow(task_type=task_type)
+        polluted = pipeline_docker.RunPeriodicMaintenanceWorkflow(
+            task_type=task_type,
+            lt_recovery_mode="month_0",
+            lt_recovery_issue_date="2026-08-01",
+        )
+        assert type(polluted.requires()) is type(plain.requires())
+        assert polluted.output().path == plain.output().path
 
     def test_unknown_task_type_still_raises(self, mock_env):
         from pipeline_docker import RunPeriodicMaintenanceWorkflow
@@ -266,6 +296,150 @@ class TestLuigiCommandLineContract:
         assert dep.issue_date == "2026-08-01"
 
 
+class TestLuigiRetcodeReachesTheProcessExit:
+    """The wrapper's exit status is only meaningful if Luigi returns non-zero.
+
+    Luigi's task-failure return codes default to 0 (luigi/retcodes.py), so the
+    wrapper appends a [retcode] block to the config it mounts. That block is
+    useless unless Luigi actually reads the file: Luigi resolves the bare
+    'luigi.cfg' entry of its search path against the process CWD, and the
+    Compose service sets working_dir: /app/apps/pipeline while the wrapper
+    mounts its file at /app/luigi.cfg.
+
+    These tests reproduce that layout on disk and RUN Luigi on a task that
+    fails, asserting on the real process exit status. A text-grep over the
+    wrapper cannot catch a config file that is never read.
+    """
+
+    @staticmethod
+    def _layout(tmp_path, wrapper_retcode_block):
+        """Mirror the container: image config at the CWD, mount one level up."""
+        workdir = tmp_path / "app" / "apps" / "pipeline"
+        workdir.mkdir(parents=True)
+
+        # The image's own config, at the CWD Luigi resolves 'luigi.cfg' against.
+        # No [retcode] section, exactly like apps/pipeline/luigi.cfg.
+        (workdir / "luigi.cfg").write_text(
+            "[core]\nautoload_range: false\n\n"
+            "[resources]\nlt_memory = 1\n\n"
+            "[worker]\ncheck_complete_on_run = true\n"
+        )
+
+        # What run_periodic_maintenance.sh mounts at /app/luigi.cfg.
+        (tmp_path / "app" / "luigi.cfg").write_text(
+            "[core]\nscheduler_host = luigi-daemon\n\n"
+            "[worker]\ncheck_complete_on_run = true\n" + wrapper_retcode_block
+        )
+
+        (workdir / "failing_mod.py").write_text(
+            textwrap.dedent("""
+                import luigi
+
+                class DeliberatelyFailingTask(luigi.Task):
+                    def output(self):
+                        return luigi.LocalTarget("/nonexistent/never-created")
+
+                    def run(self):
+                        raise RuntimeError("deliberate failure")
+            """)
+        )
+        return workdir
+
+    @staticmethod
+    def _run_luigi(workdir, extra_env):
+        """Run Luigi on the failing task; assert it really ran, return the code."""
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(workdir)
+        env.pop("LUIGI_CONFIG_PATH", None)
+        env.update(extra_env)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "luigi",
+                "--local-scheduler",
+                "--module",
+                "failing_mod",
+                "DeliberatelyFailingTask",
+            ],
+            cwd=str(workdir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        combined = result.stdout + result.stderr
+        # Guard against a vacuous pass: the exit code only means something if
+        # Luigi actually scheduled the task and saw it fail.
+        assert "DeliberatelyFailingTask" in combined, combined
+        assert "deliberate failure" in combined, combined
+        return result.returncode
+
+    RETCODE_BLOCK = (
+        "\n[retcode]\nunhandled_exception = 4\nmissing_data = 5\n"
+        "task_failed = 1\nalready_running = 6\nscheduling_error = 7\nnot_run = 8\n"
+    )
+
+    def test_mounted_config_alone_is_not_read(self, tmp_path):
+        """Negative control: without LUIGI_CONFIG_PATH a failed task exits 0.
+
+        This is the defect the fix exists for. If this ever starts returning
+        non-zero, Luigi's config resolution changed and the fix can be revisited.
+        """
+        workdir = self._layout(tmp_path, self.RETCODE_BLOCK)
+        assert self._run_luigi(workdir, {}) == 0
+
+    def test_luigi_config_path_makes_a_failed_task_exit_non_zero(self, tmp_path):
+        """The fix: LUIGI_CONFIG_PATH layers the [retcode] block on top."""
+        workdir = self._layout(tmp_path, self.RETCODE_BLOCK)
+        mounted = str(tmp_path / "app" / "luigi.cfg")
+        assert self._run_luigi(workdir, {"LUIGI_CONFIG_PATH": mounted}) == 1
+
+    def test_layering_keeps_the_image_config(self, tmp_path):
+        """add_config_path APPENDS, so the image's own settings still apply.
+
+        The mounted file has no [resources] section. If LUIGI_CONFIG_PATH
+        replaced the search path instead of extending it, the resource
+        declaration would be lost and the run would behave differently.
+        """
+        workdir = self._layout(tmp_path, self.RETCODE_BLOCK)
+        probe = workdir / "probe.py"
+        probe.write_text(
+            textwrap.dedent("""
+                import luigi.configuration
+                cfg = luigi.configuration.get_config()
+                # From the image config at the CWD:
+                print("lt_memory=" + cfg.get("resources", "lt_memory"))
+                # From the mounted config:
+                print("task_failed=" + cfg.get("retcode", "task_failed"))
+            """)
+        )
+        env = dict(os.environ)
+        env["LUIGI_CONFIG_PATH"] = str(tmp_path / "app" / "luigi.cfg")
+        result = subprocess.run(
+            [sys.executable, str(probe)],
+            cwd=str(workdir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "lt_memory=1" in result.stdout
+        assert "task_failed=1" in result.stdout
+
+    def test_wrapper_sets_luigi_config_path_for_recovery_only(self):
+        path = os.path.join(_REPO_ROOT, "bin", "run_periodic_maintenance.sh")
+        with open(path) as handle:
+            text = handle.read()
+        assert "LUIGI_CONFIG_PATH=/app/luigi.cfg" in text
+        index = text.index("LUIGI_CONFIG_PATH=/app/luigi.cfg")
+        preceding = text[:index]
+        assert 'if [ "$TASK_TYPE" = "lt_recovery" ]' in preceding
+        # ... and it is only ever passed through the recovery-scoped array.
+        assert 'RECOVERY_DOCKER_ARGS[@]+"${RECOVERY_DOCKER_ARGS[@]}"' in text
+
+
 class TestOperatorEntryPoint:
     """Structural checks on the wrapper and the Compose service."""
 
@@ -284,16 +458,9 @@ class TestOperatorEntryPoint:
     def test_wrapper_captures_compose_status(self):
         assert "COMPOSE_STATUS=$?" in self._wrapper()
 
-    def test_wrapper_returns_status_for_lt_recovery_only(self):
-        text = self._wrapper()
-        # The only `exit "$COMPOSE_STATUS"` must sit inside the lt_recovery branch.
-        branch = re.search(r'if \[ "\$TASK_TYPE" = "lt_recovery" \];.*?\nfi\n', text, re.DOTALL)
-        assert branch is not None
-        assert 'exit "$COMPOSE_STATUS"' in text
-        assert text.count('exit "$COMPOSE_STATUS"') == 1
-        # ... and that occurrence is inside a lt_recovery guard.
-        before = text[: text.index('exit "$COMPOSE_STATUS"')]
-        assert before.rstrip().endswith("fi") or 'TASK_TYPE" = "lt_recovery"' in before
+    def test_only_one_exit_of_the_compose_status_exists(self):
+        """Belt and braces for the executable tests below."""
+        assert self._wrapper().count('exit "$COMPOSE_STATUS"') == 1
 
     def test_wrapper_validates_recovery_arguments(self):
         text = self._wrapper()
@@ -317,3 +484,128 @@ class TestOperatorEntryPoint:
 
     def test_compose_still_forwards_task_type(self):
         assert "'--task-type', '${MAINTENANCE_TASK_TYPE:-long_term}'" in self._compose()
+
+
+class TestWrapperExitStatus:
+    """Run bin/run_periodic_maintenance.sh for real, with docker stubbed out.
+
+    The wrapper's whole point for lt_recovery is that its exit status reaches
+    the operator, so it is tested by executing it and reading the status --
+    not by grepping for an `exit` line.
+    """
+
+    @staticmethod
+    def _stub_env(tmp_path, compose_exit):
+        """Build a PATH with fake `docker` and `curl`, plus a minimal env file."""
+        stub_dir = tmp_path / "stubs"
+        stub_dir.mkdir()
+        log = tmp_path / "docker_calls.log"
+
+        docker = stub_dir / "docker"
+        docker.write_text(
+            "#!/bin/bash\n"
+            f'printf "%s\\n" "$*" >> "{log}"\n'
+            'if [ "$1" = "compose" ]; then\n'
+            '  for arg in "$@"; do\n'
+            '    if [ "$arg" = "run" ]; then\n'
+            f"      exit {compose_exit}\n"
+            "    fi\n"
+            "  done\n"
+            "fi\n"
+            "exit 0\n"
+        )
+        docker.chmod(0o755)
+
+        curl = stub_dir / "curl"
+        curl.write_text("#!/bin/bash\nexit 0\n")
+        curl.chmod(0o755)
+
+        # read_configuration() derives the deployment from the LAST FOUR
+        # CHARACTERS of the env file path and exits 1 on anything else, so the
+        # filename suffix here is load-bearing.
+        env_file = tmp_path / "data" / "config" / ".env_test_kghm"
+        env_file.parent.mkdir(parents=True)
+        env_file.write_text("ieasyhydroforecast_organization=demo\n")
+
+        env = dict(os.environ)
+        env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
+        env.pop("ieasyhydroforecast_ssh_to_iEH", None)
+        env.pop("ieasyhydroforecast_env_file_path", None)
+        return env, env_file, log
+
+    def _run(self, tmp_path, args, compose_exit=0):
+        env, env_file, log = self._stub_env(tmp_path, compose_exit)
+        script = os.path.join(_REPO_ROOT, "bin", "run_periodic_maintenance.sh")
+        result = subprocess.run(
+            ["bash", script, args[0], str(env_file), *args[1:]],
+            cwd=str(tmp_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        calls = log.read_text() if log.exists() else ""
+        cfg = tmp_path / "temp_luigi.cfg"
+        return result, calls, (cfg.read_text() if cfg.exists() else "")
+
+    def test_recovery_propagates_a_compose_failure(self, tmp_path):
+        result, calls, _ = self._run(
+            tmp_path, ["lt_recovery", "month_0", "2026-08-01"], compose_exit=7
+        )
+        assert result.returncode == 7, result.stdout + result.stderr
+        assert "run" in calls
+
+    def test_recovery_returns_zero_on_success(self, tmp_path):
+        result, _, _ = self._run(tmp_path, ["lt_recovery", "month_0", "2026-08-01"], compose_exit=0)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @pytest.mark.parametrize("task_type", ["long_term", "skill_recalc", "snow_norms"])
+    def test_existing_task_types_still_swallow_the_status(self, tmp_path, task_type):
+        """REGRESSION: cron lines for the other task types must not start failing."""
+        result, _, _ = self._run(tmp_path, [task_type], compose_exit=7)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_recovery_passes_luigi_config_path(self, tmp_path):
+        _, calls, cfg = self._run(tmp_path, ["lt_recovery", "month_0", "2026-08-01"])
+        run_line = [line for line in calls.splitlines() if " run " in f" {line} "]
+        assert run_line, calls
+        assert "LUIGI_CONFIG_PATH=/app/luigi.cfg" in run_line[-1]
+        assert "MAINTENANCE_LT_MODE=month_0" in run_line[-1]
+        assert "MAINTENANCE_LT_ISSUE_DATE=2026-08-01" in run_line[-1]
+        assert "[retcode]" in cfg
+        assert "task_failed = 1" in cfg
+
+    def test_other_task_types_get_no_config_path_and_no_retcode(self, tmp_path):
+        """REGRESSION: neither the env var nor the [retcode] block leaks out."""
+        _, calls, cfg = self._run(tmp_path, ["long_term"])
+        assert "LUIGI_CONFIG_PATH" not in calls
+        assert "[retcode]" not in cfg
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["lt_recovery"],
+            ["lt_recovery", "month_0"],
+            ["lt_recovery", "month_0", "01.08.2026"],
+            ["lt_recovery", "month_0", "2026-8-1"],
+        ],
+    )
+    def test_bad_recovery_arguments_exit_before_docker(self, tmp_path, args):
+        result, calls, _ = self._run(tmp_path, args)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "run" not in calls
+
+    def test_missing_task_type_still_errors(self, tmp_path):
+        """REGRESSION: the pre-existing empty-task_type guard is unchanged."""
+        env, _, log = self._stub_env(tmp_path, 0)
+        script = os.path.join(_REPO_ROOT, "bin", "run_periodic_maintenance.sh")
+        result = subprocess.run(
+            ["bash", script],
+            cwd=str(tmp_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 1
+        assert not log.exists()

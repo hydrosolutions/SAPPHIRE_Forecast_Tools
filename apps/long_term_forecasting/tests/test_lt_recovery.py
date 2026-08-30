@@ -99,14 +99,21 @@ class FakeClient:
         if self.error is not None:
             raise self.error
         model = kwargs.get("model")
+        horizon_type = kwargs.get("horizon_type")
+        horizon_value = kwargs.get("horizon_value")
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
         skip = kwargs.get("skip", 0)
         limit = kwargs.get("limit", 100)
+        # Every filter the real API honours is honoured here, so a query that
+        # loses its horizon scoping shows up as wrong counts rather than
+        # passing silently.
         matching = [
             row
             for row in self.rows
             if row.get("model_type") == model
+            and (horizon_type is None or row.get("horizon_type") == horizon_type)
+            and (horizon_value is None or row.get("horizon_value") == horizon_value)
             and (start_date is None or row.get("date") >= start_date)
             and (end_date is None or row.get("date") <= end_date)
         ]
@@ -114,10 +121,18 @@ class FakeClient:
         return pd.DataFrame(page)
 
 
-def make_row(model_type="LR_Base", code=STATION, date="2026-08-01", flag=0, q=12.5):
+def make_row(
+    model_type="LR_Base",
+    code=STATION,
+    date="2026-08-01",
+    flag=0,
+    q=12.5,
+    horizon_type="month",
+    horizon_value=1,
+):
     return {
-        "horizon_type": "month",
-        "horizon_value": 1,
+        "horizon_type": horizon_type,
+        "horizon_value": horizon_value,
         "code": code,
         "date": date,
         "model_type": model_type,
@@ -200,15 +215,26 @@ class TestIssueDateParsing:
         assert parse_issue_date("2026-08-01") == pd.Timestamp("2026-08-01")
 
     @pytest.mark.parametrize(
-        "value", ["", None, "  ", "01.08.2026", "2026/08/01", "August", "2026-13-01"]
+        "value",
+        [
+            "",
+            None,
+            "  ",
+            "01.08.2026",
+            "2026/08/01",
+            "August",
+            "2026-8-1",  # not zero-padded: the docstring says strict ISO
+            "2026-08-01T00:00:00",
+        ],
     )
     def test_rejects_non_iso(self, value):
-        with pytest.raises(RecoveryRefused):
+        with pytest.raises(RecoveryRefused, match="ISO"):
             parse_issue_date(value)
 
-    def test_unpadded_components_parse_to_the_same_date(self):
-        """strptime accepts 2026-8-1; it denotes the same day, so allow it."""
-        assert parse_issue_date("2026-8-1") == pd.Timestamp("2026-08-01")
+    @pytest.mark.parametrize("value", ["2026-13-01", "2026-02-31", "2026-00-10"])
+    def test_rejects_impossible_calendar_dates(self, value):
+        with pytest.raises(RecoveryRefused, match="calendar date"):
+            parse_issue_date(value)
 
 
 class TestRecoveryWindow:
@@ -330,6 +356,34 @@ class TestCountMemberRows:
         )
         assert self._count(client, flags={RECOVERY_FLAG}, require_value=True) == 1
 
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_require_value_rejects_non_finite_q(self, value):
+        """Infinity is not a forecast: an upstream divide-by-zero can persist it."""
+        client = FakeClient([make_row(model_type="LR_Base", flag=RECOVERY_FLAG, q=value)])
+        assert self._count(client, flags={RECOVERY_FLAG}, require_value=True) == 0
+
+    def test_require_value_accepts_zero(self):
+        """Zero discharge is a real value and must not be mistaken for missing."""
+        client = FakeClient([make_row(model_type="LR_Base", flag=RECOVERY_FLAG, q=0.0)])
+        assert self._count(client, flags={RECOVERY_FLAG}, require_value=True) == 1
+
+    def test_ignores_other_horizon_types(self):
+        client = FakeClient([make_row(horizon_type="quarter")])
+        assert self._count(client) == 0
+
+    def test_ignores_other_horizon_values(self):
+        client = FakeClient([make_row(horizon_value=5)])
+        assert self._count(client) == 0
+
+    def test_query_is_scoped_to_the_mode_horizon(self):
+        """Every query must carry horizon_type and horizon_value."""
+        client = FakeClient([make_row()])
+        self._count(client)
+        assert client.calls, "no query was issued"
+        for call in client.calls:
+            assert call["horizon_type"] == "month"
+            assert call["horizon_value"] == 1
+
     def test_query_error_raises(self):
         client = FakeClient(error=RuntimeError("boom"))
         with pytest.raises(RecoveryQueryError):
@@ -402,6 +456,13 @@ class TestRunRecoveryGuard:
         kwargs, calls, _ = build_run_recovery_kwargs(client=client, on_run=write_recovered_rows)
         assert run_recovery(**kwargs) == EXIT_OK
 
+    def test_row_for_another_horizon_does_not_trip_the_guard(self):
+        """A quarter row on the same date must not block a month recovery."""
+        client = FakeClient([make_row(horizon_type="quarter"), make_row(horizon_value=5)])
+        kwargs, calls, _ = build_run_recovery_kwargs(client=client, on_run=write_recovered_rows)
+        assert run_recovery(**kwargs) == EXIT_OK
+        assert len(calls) == 1
+
     def test_guard_query_error_refuses_without_running(self):
         client = FakeClient(error=RuntimeError("connection reset"))
         kwargs, calls, _ = build_run_recovery_kwargs(client=client)
@@ -463,6 +524,20 @@ class TestRunRecoveryReadBack:
             client.rows.append(make_row(model_type="LR_Base", flag=RECOVERY_FLAG, q=None))
 
         kwargs, _, _ = build_run_recovery_kwargs(on_run=write_valueless)
+        assert run_recovery(**kwargs) == EXIT_FAILED
+
+    def test_recovery_flag_with_infinite_value_does_not_count(self):
+        def write_infinite(client):
+            client.rows.append(make_row(model_type="LR_Base", flag=RECOVERY_FLAG, q=float("inf")))
+
+        kwargs, _, _ = build_run_recovery_kwargs(on_run=write_infinite)
+        assert run_recovery(**kwargs) == EXIT_FAILED
+
+    def test_rows_for_another_horizon_do_not_satisfy_the_read_back(self):
+        def write_wrong_horizon(client):
+            client.rows.append(make_row(model_type="LR_Base", flag=RECOVERY_FLAG, horizon_value=5))
+
+        kwargs, _, _ = build_run_recovery_kwargs(on_run=write_wrong_horizon)
         assert run_recovery(**kwargs) == EXIT_FAILED
 
     def test_read_back_query_error_fails_closed(self):

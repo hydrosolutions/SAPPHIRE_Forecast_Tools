@@ -2189,6 +2189,13 @@ class RunLongTermForecast(DockerTaskBase):
       as soon as the child exits 0. It does not require preprocessing (the
       inputs for a past month are already stored) and keys the marker on mode
       *and* date so two dates for one mode do not collide.
+
+    Accepted side effect: adding ``issue_date`` changes the Luigi task-ID hash
+    of an *undated* RunLongTermForecast, because task_id is derived from the
+    full significant-parameter set. Nothing observable changes -- same
+    dependencies, same command, same marker path, same resources -- only the
+    task's identity in the scheduler UI and history. A separate task class
+    would avoid the cosmetic change at the cost of duplicating this one.
     """
 
     forecast_mode = luigi.Parameter()  # e.g. "month_0", "quarter"

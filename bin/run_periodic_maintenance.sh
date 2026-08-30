@@ -18,11 +18,20 @@
 #                    for that month, marks recovered rows with flag=1, and reads
 #                    the rows back from the database before reporting success.
 #                    Unlike the other task types this one RETURNS the Luigi exit
-#                    status: 0 means rows were written AND read back, non-zero
-#                    means nothing was recovered. The container log distinguishes
-#                    a refusal (child exit 2, database untouched) from a failed
-#                    run (child exit 1).
+#                    status. Exit 0 means rows were written AND read back.
+#                    A non-zero exit means the recovery was NOT CONFIRMED --
+#                    it does NOT mean the database is unchanged: only a refusal
+#                    (child exit 2) guarantees nothing was written, while a
+#                    read-back or forecast failure (child exit 1) can leave
+#                    partial or even complete rows behind. Read the container
+#                    log before re-running.
 #                    Note: it also overwrites the mode's forecast/hindcast CSVs.
+#
+#                    LIMITATION -- check/write race: the guard and the write are
+#                    two separate steps, so a concurrent operational run or a
+#                    manual writer that inserts rows between them will be
+#                    overwritten by the recovery's upsert. There is no lock.
+#                    Run this only when no long-term forecast is in flight.
 #
 # Example:
 #   bash bin/run_periodic_maintenance.sh long_term /path/to/config/.env
@@ -113,10 +122,21 @@ scheduler_port = ${LUIGI_SCHEDULER_PORT}
 check_complete_on_run = true
 EOF
 
-# Luigi's default return codes are ALL zero, so a failed task exits 0 and any
-# status this script returns would be meaningless. Map failures onto non-zero
-# for the recovery path only; the other task types keep Luigi's defaults so
-# their behaviour is unchanged.
+# Luigi's task-failure return codes default to ZERO (luigi/retcodes.py:
+# task_failed, missing_data, already_running, scheduling_error and not_run are
+# all 0; only unhandled_exception defaults to 4). A failed task would therefore
+# exit 0 and any status this script returns would be meaningless. Map the
+# failures onto non-zero for the recovery path only; the other task types keep
+# Luigi's defaults so their behaviour is unchanged.
+#
+# LUIGI_CONFIG_PATH is required, not optional: Luigi resolves the bare
+# 'luigi.cfg' entry in its default search path relative to the process CWD, and
+# the Compose service sets working_dir: /app/apps/pipeline, so the image's own
+# apps/pipeline/luigi.cfg wins and the file mounted at /app/luigi.cfg is never
+# read. LUIGI_CONFIG_PATH goes through add_config_path(), which APPENDS to the
+# search path rather than replacing it, so the image's [core]/[resources]/
+# [worker] settings still apply and [retcode] is layered on top.
+RECOVERY_DOCKER_ARGS=()
 if [ "$TASK_TYPE" = "lt_recovery" ]; then
     cat >> temp_luigi.cfg <<'EOF'
 
@@ -128,6 +148,7 @@ already_running = 6
 scheduling_error = 7
 not_run = 8
 EOF
+    RECOVERY_DOCKER_ARGS=(-e LUIGI_CONFIG_PATH=/app/luigi.cfg)
 fi
 
 # Run the periodic maintenance workflow.
@@ -141,6 +162,7 @@ docker compose -f bin/docker-compose-luigi.yml run \
     -e MAINTENANCE_TASK_TYPE=${TASK_TYPE} \
     -e MAINTENANCE_LT_MODE="${LT_RECOVERY_MODE}" \
     -e MAINTENANCE_LT_ISSUE_DATE="${LT_RECOVERY_ISSUE_DATE}" \
+    ${RECOVERY_DOCKER_ARGS[@]+"${RECOVERY_DOCKER_ARGS[@]}"} \
     --user root \
     --rm \
     periodic-maintenance
@@ -158,11 +180,14 @@ if [ "$TASK_TYPE" = "lt_recovery" ]; then
         echo "|   SUCCESS - rows were written and read back from the database."
     else
         echo "| Long-term recovery for ${LT_RECOVERY_MODE} ${LT_RECOVERY_ISSUE_DATE}:"
-        echo "|   NOT RECOVERED (exit ${COMPOSE_STATUS})."
-        echo "|   The container log says which: 'REFUSED' (child exit 2, nothing"
-        echo "|   was run, database untouched - existing rows, wrong date, empty"
-        echo "|   station list, ...) or 'FAILED' (child exit 1, the run produced"
-        echo "|   no rows that could be read back)."
+        echo "|   NOT CONFIRMED (exit ${COMPOSE_STATUS}). This does NOT mean the"
+        echo "|   database is unchanged. Read the container log:"
+        echo "|     'REFUSED' (child exit 2) - nothing ran, no rows were written."
+        echo "|     'FAILED'  (child exit 1) - the forecast ran; rows may be"
+        echo "|                absent, partial or complete. A read-back error in"
+        echo "|                particular says nothing about what was written."
+        echo "|   Check the month in the database before re-running: the guard"
+        echo "|   will refuse a re-run if any member row now exists."
     fi
     exit "$COMPOSE_STATUS"
 fi

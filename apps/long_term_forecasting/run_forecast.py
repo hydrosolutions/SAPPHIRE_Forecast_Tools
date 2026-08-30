@@ -580,18 +580,27 @@ Examples:
     recalibrate_all = args.all or args.today is not None
     models_to_run = args.models if args.models else []
 
-    if args.today is None:
-        today = datetime.now().date()
-    else:
-        today = datetime.strptime(args.today, "%Y-%m-%d").date()
-
-    initialize_today(today)
-
+    # The recovery path parses its own date, so that a malformed or impossible
+    # one (2026-02-31) exits with the documented refusal code instead of
+    # crashing in strptime below.
     if args.recover:
         if args.today is None:
             parser.error("--recover requires --today YYYY-MM-DD")
 
-        from lt_recovery import run_recovery
+        from lt_recovery import (
+            EXIT_REFUSED,
+            RecoveryRefused,
+            parse_issue_date,
+            run_recovery,
+        )
+
+        try:
+            effective_date = parse_issue_date(args.today)
+        except RecoveryRefused as exc:
+            logger.error("Long-term recovery REFUSED (nothing was run): %s", exc)
+            sys.exit(EXIT_REFUSED)
+
+        initialize_today(effective_date)
 
         sys.exit(
             run_recovery(
@@ -601,5 +610,12 @@ Examples:
                 station_codes_fn=_read_station_codes,
             )
         )
+
+    if args.today is None:
+        today = datetime.now().date()
+    else:
+        today = datetime.strptime(args.today, "%Y-%m-%d").date()
+
+    initialize_today(today)
 
     run_forecast(forecast_all=recalibrate_all, models_to_run=models_to_run)

@@ -18,6 +18,20 @@ Acceptance is defined on DATABASE rows only. ``run_forecast.py --today`` also
 overwrites ``{model}_forecast.csv`` and rewrites the hindcast CSV; that is an
 accepted side effect of the recovery, deliberately not guarded here.
 
+Limitation: the guard is not a lock
+-----------------------------------
+The guard reads and the forecast writes as two separate steps, with the whole
+model run in between. A concurrent operational run, another recovery, or a
+manual writer that inserts rows for the same
+``(horizon_type, horizon_value, effective_date)`` during that window will be
+silently overwritten by this run's upsert, which updates every submitted field.
+Nothing here detects that; ``max_retries = 1`` on the Luigi task closes the
+*retry* bypass (a second attempt would skip the guard and overwrite the first
+attempt's rows) but not this one. So "never overwrites good data" holds only for
+rows that already existed when the guard ran. Run a recovery when no long-term
+forecast is in flight. Closing this properly needs a conditional insert or an
+advisory lock on the service side, which is out of scope for Stage A.
+
 Authoritative clock
 -------------------
 ``now_local()`` is the single clock used for the "not in the future" and
@@ -29,7 +43,9 @@ service sets no timezone, so this is the container's local time.
 """
 
 import calendar
+import math
 import os
+import re
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
@@ -77,6 +93,9 @@ EXECUTION_WINDOW_DAYS = 5
 
 #: Page size for long-forecast reads.
 READ_PAGE_SIZE = 500
+
+#: Zero-padded ISO date, the only form the operator entry points accept.
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -183,12 +202,14 @@ def parse_issue_date(value: Any) -> pd.Timestamp:
     text = "" if value is None else str(value).strip()
     if not text:
         raise RecoveryRefused("No issue date supplied. Expected ISO YYYY-MM-DD.")
+    # strptime alone would accept "2026-8-1". Require the zero-padded form so
+    # what the operator types is what the log, the marker and the guard show.
+    if not _ISO_DATE_RE.fullmatch(text):
+        raise RecoveryRefused(f"Issue date {text!r} is not zero-padded ISO (expected YYYY-MM-DD).")
     try:
         parsed = datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError as exc:
-        raise RecoveryRefused(
-            f"Issue date {text!r} is not a valid ISO date (expected YYYY-MM-DD)."
-        ) from exc
+        raise RecoveryRefused(f"Issue date {text!r} is not a valid calendar date: {exc}.") from exc
     return pd.Timestamp(parsed)
 
 
@@ -353,6 +374,21 @@ def _row_flag(record: dict[str, Any]) -> int | None:
         return None
 
 
+def _is_usable_value(value: Any) -> bool:
+    """Return True only for a finite numeric discharge value.
+
+    NaN is not the only way a value can be unusable: a divide-by-zero upstream
+    can persist +/-inf, which is not a forecast anyone can act on and must not
+    let an empty recovery pass the read-back.
+    """
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def _count_matching_rows(
     frame: pd.DataFrame,
     wanted_codes: set[str],
@@ -375,10 +411,8 @@ def _count_matching_rows(
             continue
         if flags is not None and _row_flag(record) not in flags:
             continue
-        if require_value:
-            value = record.get("q")
-            if value is None or pd.isna(value):
-                continue
+        if require_value and not _is_usable_value(record.get("q")):
+            continue
         matched += 1
     return matched
 
@@ -406,7 +440,8 @@ def count_member_rows(
         station_codes: Configured station codes; rows for other codes are
             ignored so the count stays organisation-scoped.
         flags: If given, only rows whose ``flag`` is in this set are counted.
-        require_value: If True, only rows with a non-null ``q`` are counted.
+        require_value: If True, only rows whose ``q`` is a finite number are
+            counted; null, NaN and +/-inf all fail.
         page_size: Rows requested per API call.
 
     Returns:
