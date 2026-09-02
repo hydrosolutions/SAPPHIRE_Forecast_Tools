@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 import requests
 from src import db, vizualization
+from src.snow_window import snow_display_window
 
 
 @pytest.fixture(autouse=True)
@@ -314,6 +315,107 @@ class TestSnowData:
         assert pd.api.types.is_datetime64_any_dtype(result["date"])
         for column in _SNOW_CONTRACT_COLUMNS[2:]:
             assert result[column].dtype == "float64"
+
+
+class TestGetDataThreadsSnowRefDate:
+    """get_data(..., snow_ref_date=...) must reach get_snow_data unchanged.
+
+    Regression test for the two-reference-date snow bug: db.get_data is the
+    only place the dashboard's data layer should decide the snow reference
+    date, and it must hand that SAME date to get_snow_data rather than
+    letting get_snow_data fall back to date.today() on its own.
+    """
+
+    def _all_stations_df(self):
+        return pd.DataFrame({"code": ["19999"], "station_labels": ["Test River"]})
+
+    def _stub_non_snow_endpoints(self, monkeypatch):
+        empty = pd.DataFrame()
+        monkeypatch.setattr(db, "get_hydrograph_day_all", lambda station: empty)
+        monkeypatch.setattr(db, "get_hydrograph_pentad_all", lambda horizon, station: empty)
+        monkeypatch.setattr(db, "get_rain", lambda station: empty)
+        monkeypatch.setattr(db, "get_temp", lambda station: empty)
+        monkeypatch.setattr(db, "get_ml_forecast", lambda horizon, station: empty)
+        monkeypatch.setattr(db, "get_linreg_predictor", lambda horizon, station: empty)
+        monkeypatch.setattr(db, "get_forecasts_all", lambda horizon, station: empty)
+        monkeypatch.setattr(db, "get_forecast_stats", lambda horizon, station: empty)
+        monkeypatch.setattr(
+            "src.db.processing.add_labels_to_hydrograph", lambda df, stations: df
+        )
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+    def _capture_snow_read_data(self, monkeypatch):
+        """Stub the single HTTP-performing function `_read_data` instead of
+        `get_snow_data`, so the assertion exercises the layer where the
+        two-reference-date bug actually lived: `_get_snow_single` computing
+        its own `date.today()` while accepting-and-ignoring `ref_date`. A
+        regression that re-hardcodes `date.today()` there while still
+        threading `snow_ref_date` through unused would keep a
+        `get_snow_data`-stubbed test green but must fail this one.
+
+        Returns the list `seen_params` that every `("preprocessing",
+        "snow", params)` call appends its `params` dict to (all non-snow
+        fetchers are stubbed directly and never reach `_read_data`).
+        """
+        seen_params = []
+
+        def fake_read_data(service_type, data_type, params=None):
+            if service_type == "preprocessing" and data_type == "snow":
+                seen_params.append(params)
+            return pd.DataFrame()
+
+        monkeypatch.setattr(db, "_read_data", fake_read_data)
+        return seen_params
+
+    def test_get_data_passes_snow_ref_date_to_snow_query_window(self, monkeypatch):
+        self._stub_non_snow_endpoints(monkeypatch)
+        seen_params = self._capture_snow_read_data(monkeypatch)
+
+        # Deliberately NOT today's date: a mutation that ignores snow_ref_date
+        # and falls back to date.today() inside _get_snow_single must produce
+        # a different (today-anchored) window and fail this assertion no
+        # matter which real-world day the suite happens to run on.
+        db.get_data(
+            "pentad",
+            "19999",
+            self._all_stations_df(),
+            snow_display_start_month=9,
+            snow_display_start_day=1,
+            snow_ref_date=date(2024, 9, 2),
+        )
+
+        # One /snow/ request per snow type (HS, RoF, SWE); all must carry
+        # the same window derived from the threaded snow_ref_date.
+        assert len(seen_params) == 3
+        for params in seen_params:
+            assert params["start_date"] == "2024-09-01"
+            assert params["end_date"] == "2025-08-31"
+
+    def test_get_data_defaults_snow_ref_date_to_todays_window(self, monkeypatch):
+        """No caller passing a date must still work: the resulting query
+        window must be exactly what `snow_display_window` returns for
+        `date.today()` — not merely that the argument was `None`, which
+        would stay green even if `snow_ref_date` were silently dropped
+        somewhere in `get_data`'s call chain."""
+        self._stub_non_snow_endpoints(monkeypatch)
+        seen_params = self._capture_snow_read_data(monkeypatch)
+
+        db.get_data(
+            "pentad",
+            "19999",
+            self._all_stations_df(),
+            snow_display_start_month=9,
+            snow_display_start_day=1,
+        )
+
+        expected_begin, expected_end = snow_display_window(9, 1, date.today())
+        assert len(seen_params) == 3
+        for params in seen_params:
+            assert params["start_date"] == expected_begin.strftime("%Y-%m-%d")
+            assert params["end_date"] == expected_end.strftime("%Y-%m-%d")
 
 
 # ── get_long_forecasts ────────────────────────────────────────────────────

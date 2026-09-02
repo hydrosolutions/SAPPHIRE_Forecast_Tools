@@ -544,6 +544,7 @@ class PlotManager:
                         wm.date_picker.value, dm.linreg_predictor,
                         snow_display_start_month=self._cfg.snow_display_start_month,
                         snow_display_start_day=self._cfg.snow_display_start_day,
+                        snow_ref_date=dm.snow_ref_date,
                     )
                 else:
                     self.snow_plots[var].object = pn.pane.Markdown(

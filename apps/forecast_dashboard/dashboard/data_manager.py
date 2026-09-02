@@ -127,6 +127,13 @@ class DataManager(param.Parameterized):
 
         # Background executor (kept alive to prevent GC)
         self._executor: ThreadPoolExecutor | None = None
+
+        # Single reference date for the snow display window, shared by the
+        # fetch (db.get_data) and the plot (viz.plot_daily_snow_data) so
+        # they never compute two different hydrological-year windows.
+        # Captured once per load_station() call; not date.today() at every
+        # call site.
+        self._snow_ref_date: dt.date | None = None
     
     # ------------------------------------------------------------------
     # Properties – read-only access to internal state
@@ -142,6 +149,16 @@ class DataManager(param.Parameterized):
     @property
     def rram_forecast(self):
         return self._rram_forecast
+
+    @property
+    def snow_ref_date(self):
+        """The reference date the snow display window was last fetched with.
+
+        Owned by the data layer (set once per load_station() call) so the
+        plot layer can reuse the exact same date instead of recomputing its
+        own from a different source (e.g. the forecast date picker).
+        """
+        return self._snow_ref_date
 
     def horizon_in_year(self, horizon):
         horizon_in_year = None
@@ -227,13 +244,24 @@ class DataManager(param.Parameterized):
         This is the *only* place `db.get_data` should be called.
         """
         logger.info(f"Loading data for station {station_code}")
+        # Compute into a local first and only publish to self._snow_ref_date
+        # once db.get_data has returned successfully. db.get_data can raise
+        # (src/db.py._read_data calls response.raise_for_status() and
+        # catches nothing) and callers of load_station do not wrap it in
+        # try/except; assigning self._snow_ref_date before the call would
+        # leave it holding the NEW date while self._data still held rows
+        # fetched with the PREVIOUS one on a raise, recreating the
+        # two-reference-date divergence this class exists to eliminate.
+        snow_ref_date = dt.date.today()
         self._data = db.get_data(
             horizon,
             station_code,
             self._all_stations,
             self._snow_display_start_month,
             self._snow_display_start_day,
+            snow_ref_date,
         )
+        self._snow_ref_date = snow_ref_date
         # self.current_station = station_code
         self._rebuild_all_models()
         # self.data_version += 1  # notify watchers

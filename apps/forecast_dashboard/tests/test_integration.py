@@ -366,6 +366,143 @@ def _fetch_predictor_data_from_db(station_code: str) -> dict[str, list]:
     return out
 
 
+def _snow_display_window_from_page(page) -> tuple[dt.date, dt.date] | None:
+    """Read the dashboard's actual snow display window off the rendered page.
+
+    Replaces a config-guessing approach that does not work and cannot be made
+    to work reliably: nothing in the pytest process can see
+    `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD`, because the operator passes
+    `ieasyhydroforecast_env_file_path` on the `panel serve` command line
+    rather than exporting it, so the pytest process has neither the file path
+    nor the variable it names. Guessing wrong there silently produces a
+    plausible-looking but incorrect window (a real run derived `01-01` and
+    got a bogus Jan-Dec window instead of the dashboard's actual Sep-Aug
+    one). `plot_daily_snow_data` (src/vizualization.py) sets
+    `xlim=(display_begin, display_end)` on each snow plot, which becomes the
+    Bokeh model's `x_range` — reading that back from the live page is the
+    dashboard's own answer, not a re-derivation of it.
+
+    A snow plot is identified as a Bokeh model exposing both `x_range` and
+    `renderers`, whose renderers' `data_source.data` keys include BOTH
+    `mean` and `last_year` — no other plot on the Predictors tab has that
+    column pair (the hydrograph's equivalents are the localised `Qmean` /
+    `Last year`).
+
+    Returns:
+        `(begin_date, end_date)` as `datetime.date`, or `None` if no snow
+        plot with a usable numeric `x_range` is found on the page.
+
+    Raises:
+        AssertionError: if more than one snow plot is found and they
+            disagree on the window — a real defect (e.g. HS/RoF/SWE plotted
+            against different windows), not something to silently paper over.
+    """
+    raw = page.evaluate(
+        """
+() => {
+  const out = [];
+  const docs = (window.Bokeh && window.Bokeh.documents) ? window.Bokeh.documents : [];
+  for (const doc of docs) {
+    let models; try { models = Array.from(doc._all_models.values()); } catch(e){ continue; }
+    for (const m of models) {
+      if (!m.x_range || !m.renderers) continue;
+      const cols = new Set();
+      for (const r of (m.renderers || [])) {
+        try { for (const k of Object.keys(r.data_source.data)) cols.add(k); } catch(e){}
+      }
+      if (!(cols.has('mean') && cols.has('last_year'))) continue;
+      let s = null, e = null;
+      try { s = m.x_range.start; e = m.x_range.end; } catch(err){}
+      out.push({id: m.id, start: s, end: e});
+    }
+  }
+  return out;
+}
+"""
+    )
+    windows: list[tuple[str, dt.date, dt.date]] = []
+    for entry in raw:
+        s, e = entry.get("start"), entry.get("end")
+        if not isinstance(s, (int, float)) or not isinstance(e, (int, float)):
+            continue  # no usable numeric x_range on this model
+        # Epoch ms -> date. UTC, not local time: converting in local time can
+        # shift a midnight boundary onto the wrong day depending on the host
+        # timezone, whereas a probe against the live dashboard confirmed
+        # `utcfromtimestamp` reproduces the exact dates `plot_daily_snow_data`
+        # set as `xlim`.
+        begin = dt.datetime.utcfromtimestamp(s / 1000.0).date()
+        end = dt.datetime.utcfromtimestamp(e / 1000.0).date()
+        windows.append((entry["id"], begin, end))
+    if not windows:
+        return None
+    distinct = {(b, e) for _, b, e in windows}
+    if len(distinct) > 1:
+        detail = ", ".join(f"src={i} {b} -> {e}" for i, b, e in windows)
+        raise AssertionError(
+            f"Snow plots on the page disagree on their display window: {detail}. "
+            "HS/RoF/SWE must all share one hydrological-year window keyed on "
+            "today's date — a disagreement is a real defect, not noise."
+        )
+    return windows[0][1], windows[0][2]
+
+
+def _assert_snow_window_invariants(window_begin: dt.date, window_end: dt.date) -> None:
+    """Assert two config-free properties of the snow display window.
+
+    Both are properties of "one hydrological year keyed on today" that hold
+    no matter what `ieasyhydroforecast_SNOW_DISPLAY_START_MMDD` is configured
+    to, so each independently catches a mis-derived window without this test
+    needing to know the configured start day. The second is the one that
+    actually caught the original bug: pre-fix, the guessed window was
+    2025-09-01 -> 2026-08-31 while `date.today()` was 2026-09-02 — a window
+    that does not contain today.
+    """
+    expected_end = (
+        dt.date(window_begin.year + 1, window_begin.month, window_begin.day)
+        - dt.timedelta(days=1)
+    )
+    assert window_end == expected_end, (
+        f"Snow display window {window_begin} -> {window_end} does not span "
+        f"exactly one hydrological year (expected end {expected_end}) — "
+        "plot_daily_snow_data always plots a single year from its xlim, so "
+        "a different span means the window was read or derived wrong."
+    )
+    today = dt.date.today()
+    assert window_begin <= today <= window_end, (
+        f"Snow display window {window_begin} -> {window_end} does not "
+        f"contain today ({today}) — the window is keyed on date.today(), so "
+        "one that excludes today is stale or otherwise mis-derived."
+    )
+
+
+def _fetch_snow_window_rows_from_db(
+    station_code: str, snow_type: str, window_begin: dt.date, window_end: dt.date
+) -> list[dict]:
+    """Fetch snow rows for the dashboard's actual display window.
+
+    Mirrors src/db.py `get_snow_data` / `_get_snow_single`: the dashboard
+    never plots the full two-calendar-year fetch `_fetch_predictor_data_from_db`
+    uses for field-presence checks — it fetches (and plots) only a single
+    hydrological-year window. That window is supplied by the caller, read off
+    the rendered page via `_snow_display_window_from_page` (the plot's own
+    `x_range`) rather than recomputed from config — see that helper's
+    docstring for why config-derivation is unreliable in this process.
+    """
+    resp = requests.get(
+        f"{API_BASE}/preprocessing/snow/",
+        params={
+            "snow_type":  snow_type,
+            "code":       station_code,
+            "start_date": window_begin.strftime("%Y-%m-%d"),
+            "end_date":   window_end.strftime("%Y-%m-%d"),
+            "limit":      10000,
+        },
+        timeout=API_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def _fetch_bulletin_from_api(horizon: str, year: int, horizon_value: int) -> list[dict]:
     """Fetch bulletin records from the backend API for the given horizon/year."""
     print("horizon, year, horizon_value:", horizon, year, horizon_value)
@@ -1979,25 +2116,108 @@ def test_local(snow_stats_available, page: Page):
             f"Temperature [{code}]",
             sources=sources,
         )
-        # Snow card may render any subset of HS/RoF/SWE — verify each that
-        # the DB has data for is also drawn into the canvas. The dashboard
-        # multiplies HS by 100 (metres → centimetres) before plotting, and
-        # trims the series to a configured display window (Sep 1 → Aug 31
-        # for the kyg locale), so the matcher's subsequence path handles
-        # the windowing while the scale handles the unit conversion.
+        # Snow card may render any subset of HS/RoF/SWE. The dashboard never
+        # plots the raw `value` column as a series at all — `plot_daily_snow_data`
+        # (src/vizualization.py) draws the min/max, q05/q95, q25/q75 range areas,
+        # the `mean` (climatology) line, the `previous`-year line, and the
+        # `current`-year line, plus the raw `value` column only for
+        # date >= date_picker (the "Forecast" curve). And it only ever fetches
+        # and plots a single hydrological-year window (Sep 1 → Aug 31 for kyg,
+        # keyed on today's date), not the two-calendar-year window used above
+        # for the field-presence checks. So compare the window-scoped `mean`
+        # and `previous` series — always expected to be present once a season
+        # has any data — and compare `current` only when the window actually
+        # holds a non-null current-year point: early in a fresh hydrological
+        # year (e.g. the first weeks of September) `current` is null in every
+        # row by design, and that must not fail the test. HS is scaled ×100
+        # (metres → centimetres) to match the dashboard; RoF and SWE are
+        # unscaled. Empty/all-null series are printed and skipped, never
+        # asserted or pytest.skip()-ed.
         snow_scales = {"HS": 100.0, "ROF": 1.0, "SWE": 1.0}
-        for stype in ("HS", "ROF", "SWE"):
-            snow_series = _series_from_db_rows(
-                db[f"snow_{stype}"], "value", scale=snow_scales[stype]
+        snow_window = _snow_display_window_from_page(page)
+        if snow_window is None:
+            # `snow_total > 0` was already asserted above from the wide
+            # two-calendar-year fetch, so snow rows genuinely exist for this
+            # station. Distinguish the two ways the window-scoped comparison
+            # below can find nothing: a *readable* window whose series are
+            # all-null is legitimately-empty snow data (the current 2026/27
+            # season has climatology but no `current` yet) and is handled per
+            # series via SKIP below. *No readable window at all* means the
+            # snow card rendered nothing to plot on the Predictors tab — the
+            # blank-card defect this work exists to catch — so that is a
+            # hard FAIL, not a SKIP.
+            pytest.fail(
+                f"Station {code}: snow data exists in the DB (snow_total="
+                f"{snow_total}) but no snow plot with a usable x_range was "
+                "found on the rendered page — the snow card appears to have "
+                "rendered nothing."
             )
-            if not snow_series:
+        window_begin, window_end = snow_window
+        _assert_snow_window_invariants(window_begin, window_end)
+        # Always record which window this run derived, whether or not any
+        # snow assertion below runs — a run log should never leave the
+        # window silently implicit.
+        print(
+            f"#### Snow display window [{code}]: {window_begin} -> "
+            f"{window_end} (from plot x_range)"
+        )
+        # The three SKIP paths below are a deliberate requirement — an empty
+        # current hydrological year (e.g. the first weeks of a fresh season)
+        # must not fail the test. But a wrong or empty window turning the
+        # WHOLE snow comparison into a silent no-op must not pass either: if
+        # at least one snow type had rows in the window yet zero series were
+        # actually compared, that is a sign of a mis-derived window, not of
+        # genuinely absent data.
+        snow_types_with_window_rows = 0
+        snow_series_compared = 0
+        for stype in ("HS", "ROF", "SWE"):
+            scale = snow_scales[stype]
+            window_rows = _fetch_snow_window_rows_from_db(
+                code, stype, window_begin, window_end
+            )
+            if not window_rows:
+                print(
+                    f"#### SKIP Snow {stype} [{code}]: no rows in display window"
+                )
+                continue
+            snow_types_with_window_rows += 1
+            for field, label in (("mean", "mean"), ("previous", "previous")):
+                series = _series_from_db_rows(window_rows, field, scale=scale)
+                if not series:
+                    print(
+                        f"#### SKIP Snow {stype} [{code}] {label}: no non-null "
+                        "values in display window"
+                    )
+                    continue
+                _assert_canvas_matches_db(
+                    page,
+                    series,
+                    f"Snow {stype} {label} [{code}]",
+                    sources=sources,
+                )
+                snow_series_compared += 1
+            current_series = _series_from_db_rows(window_rows, "current", scale=scale)
+            if not current_series:
+                print(
+                    f"#### SKIP Snow {stype} [{code}] current: no non-null "
+                    "values in display window"
+                )
                 continue
             _assert_canvas_matches_db(
                 page,
-                snow_series,
-                f"Snow {stype} [{code}]",
+                current_series,
+                f"Snow {stype} current [{code}]",
                 sources=sources,
             )
+            snow_series_compared += 1
+
+        assert snow_types_with_window_rows == 0 or snow_series_compared > 0, (
+            f"Station {code}: {snow_types_with_window_rows} snow type(s) had "
+            f"rows in the display window {window_begin} -> {window_end}, but "
+            "zero series were actually compared — the window (read from the "
+            "plot's own x_range) may be silently mis-derived rather than the "
+            "season genuinely holding no data."
+        )
 
     forecast_horizons = [
         {
