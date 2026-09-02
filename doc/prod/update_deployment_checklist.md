@@ -370,7 +370,9 @@ The server .env and the local repo .env are on different machines, so you need t
   ```
 
 - [ ] **Add new variables**
-  - [ ] `PUBLIC_BULLETIN_BASE_URL` — new with the bulletin-share feature (PP-039). Optional (defaults to `http://localhost:8000`), but set it to the deployment's public HTTPS gateway host (e.g. `https://<gateway-host>`) so shareable bulletin links resolve for third parties. If unset, generated links point at localhost and are not externally reachable.
+  - [ ] `PUBLIC_BULLETIN_BASE_URL` — new with the bulletin-share feature (PP-039). Optional (defaults to `http://localhost:8000`), but set it to this deployment's public dashboard hostname, with scheme and no trailing slash (e.g. `https://<dashboard-hostname>`), so shareable bulletin links resolve for third parties. If unset, generated links point at localhost and are not externally reachable.
+    - [ ] The variable alone is not enough: the hostname must also proxy the `/public/bulletin/` prefix to the api-gateway on port `8000`. Proxy that prefix **only**, never the gateway root. See [Reverse proxy and HTTPS](../deployment.md#reverse-proxy-and-https) — a host-level nginx/Caddy forwards to `127.0.0.1:8000`, but a proxy running inside a container (Nginx Proxy Manager) must use the Docker bridge address `172.17.0.1:8000` instead, and is configured through its admin UI rather than by editing files.
+    - [ ] Verify after deploy: generate a link from the dashboard's Publish tab and open it from a machine outside the server. A `{"detail":"Bulletin share not found"}` means the base URL points at a host whose database does not hold that token (typically a leftover `localhost:8000`); a connection error or an HTML 404 means the nginx location is missing.
 - [ ] **Update changed variables**
 - [ ] **Verify Docker image tags are set correctly**
 

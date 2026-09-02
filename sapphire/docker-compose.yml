@@ -152,6 +152,10 @@ services:
       BATCH_SIZE: ${BATCH_SIZE}
       CSV_FOLDER: ${CSV_FOLDER}
       CONFIG_FOLDER: ${CONFIG_FOLDER}
+      # Public base for shareable bulletin links. Must be a host that is
+      # reachable by the third parties the links are sent to; the fallback
+      # only produces links that work on the server that minted them.
+      PUBLIC_BULLETIN_BASE_URL: ${PUBLIC_BULLETIN_BASE_URL:-http://localhost:8000}
       PYTHONPATH: /code
     networks:
       - sapphire-network

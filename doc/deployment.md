@@ -772,6 +772,62 @@ Everything else stays bound to `localhost` on the server: API gateway (`8000`), 
 > from the server over SSH, against the gateway on `localhost`, following the
 > [User Management Runbook](operations/user_management.md).
 
+**The one exception: `/public/bulletin/`.** Shareable bulletin links
+(`POST /bulletin/share`, see the Public bulletin share route in `CLAUDE.md`)
+are meant to be opened by third parties who have no account and no API key, so
+this single path needs a public route. Route **only** this exact prefix, on the
+dashboard hostname — never the gateway root, which would expose `/api/*` and
+`register` along with it.
+
+The prefix is safe to expose: the gateway serves it without the `X-API-Key`
+check by design, it is read-only, and a token is 32 bytes of
+`secrets.token_urlsafe` entropy that expires. It leaks only the bulletin
+snapshot whose token the holder already has.
+
+*If the proxy runs on the host* (plain nginx / Caddy), add to the existing
+HTTPS server block:
+
+```nginx
+location /public/bulletin/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+}
+```
+
+*If the proxy runs in a container* — as on the Zurich/KGHM host, which uses
+[Nginx Proxy Manager](https://nginxproxymanager.com/) (`jc21/nginx-proxy-manager`,
+admin UI on port `81`) — configure it through the NPM admin UI, **not** by
+editing files: NPM regenerates `/data/nginx/proxy_host/<id>.conf` from its own
+database and will silently discard hand edits. Open the proxy host for the
+dashboard hostname → **Custom locations** → Add location:
+
+| Field | Value |
+|-------|-------|
+| Location | `/public/bulletin/` |
+| Scheme | `http` |
+| Forward Hostname / IP | `172.17.0.1` (the Docker bridge host address) |
+| Forward Port | `8000` |
+
+> **`127.0.0.1` will not work from a containerised proxy** — inside the NPM
+> container it means the container itself, not the host. Use the same address
+> the existing dashboard entry uses; on this deployment that is `172.17.0.1`.
+> Confirm with `ip -4 addr show docker0` on the host if unsure.
+
+Then set `PUBLIC_BULLETIN_BASE_URL` in the env file to the **same hostname**,
+with scheme and no trailing slash:
+
+```
+PUBLIC_BULLETIN_BASE_URL=https://<dashboard-hostname>
+```
+
+If the two disagree, the service still mints links happily — they just point
+somewhere that cannot resolve them, and the recipient gets
+`{"detail":"Bulletin share not found"}`. Note that the token is stored in the
+minting server's own database, so a link is only ever resolvable through that
+deployment's hostname; a link generated on one deployment will 404 on another.
+
 **TLS certificates.** Use Let's Encrypt for free, auto-renewing certificates. Two common approaches:
 
 - **nginx + certbot** — the traditional path. Install nginx, configure a server block per dashboard hostname, then `certbot --nginx` to obtain and install the certificate. Certbot installs a cron/systemd timer for renewal.
