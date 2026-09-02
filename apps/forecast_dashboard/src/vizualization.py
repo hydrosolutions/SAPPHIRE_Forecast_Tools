@@ -2234,14 +2234,39 @@ def plot_daily_temperature_data(_, wm, daily_rainfall, station, date_picker,
     return figure
 
 
-def _snow_season_label(reference, start_month, start_day):
-    """Return the YYYY/YY+1 label for the hydrological year containing reference."""
+def _season_start_year(reference, start_month, start_day):
+    """Return the calendar year the hydrological year containing reference begins in.
+
+    Args:
+        reference: A date-like object exposing ``.year``, ``.month``, ``.day``.
+        start_month: Month (1-12) the hydrological year starts on.
+        start_day: Day of month the hydrological year starts on.
+
+    Returns:
+        The integer start year of the hydrological year that contains ``reference``.
+    """
     if (reference.month, reference.day) >= (start_month, start_day):
-        start_year = reference.year
-    else:
-        start_year = reference.year - 1
+        return reference.year
+    return reference.year - 1
+
+
+def _season_label_from_start_year(start_year):
+    """Format a hydrological year's start year as a YYYY/YY+1 label.
+
+    Args:
+        start_year: The calendar year the hydrological year begins in.
+
+    Returns:
+        A string such as ``"2025/26"``.
+    """
     end_year_two_digit = (start_year + 1) % 100
     return f"{start_year}/{end_year_two_digit:02d}"
+
+
+def _snow_season_label(reference, start_month, start_day):
+    """Return the YYYY/YY+1 label for the hydrological year containing reference."""
+    start_year = _season_start_year(reference, start_month, start_day)
+    return _season_label_from_start_year(start_year)
 
 
 def _snow_current_season_reference(current_year, date_picker, display_begin, window_ref=None):
@@ -2404,12 +2429,16 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     if is_hydrological_year_display(snow_display_start_month, snow_display_start_day):
         current_ref = _snow_current_season_reference(
             current_year, date_picker, display_begin, window_ref=window_ref)
-        current_season = _snow_season_label(
+        # Derive both labels from the current season's START YEAR, not from
+        # current_ref minus one day: subtracting a day only crosses the
+        # (start_month, start_day) boundary when current_ref IS the start
+        # day, so on every other day of the season "previous" collapsed to
+        # the same YYYY/YY+1 string as "current" (FD-024). The previous
+        # season is one hydrological year earlier, so go one start year back.
+        current_start_year = _season_start_year(
             current_ref, snow_display_start_month, snow_display_start_day)
-        previous_season = _snow_season_label(
-            current_ref - dt.timedelta(days=1),
-            snow_display_start_month,
-            snow_display_start_day)
+        current_season = _season_label_from_start_year(current_start_year)
+        previous_season = _season_label_from_start_year(current_start_year - 1)
         current_year_label = _("Current season {season}").format(season=current_season)
         last_year_label = _("Previous season {season}").format(season=previous_season)
         # Name the plotted season instead of date_picker: the axis/window is

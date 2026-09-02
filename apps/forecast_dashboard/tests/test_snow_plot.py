@@ -242,9 +242,12 @@ def test_snow_plot_labels_use_season_wording_when_start_is_sept_1():
         display_start_day=1,
     )
 
+    # FD-024: previous_season is one hydrological YEAR behind current_season,
+    # not one day. current_ref falls on 2025-12-15 (season 2025/26 for a
+    # 09-01 start), so previous season is 2024/25.
     labels = _labels(plot, hv.Curve)
     assert any("Current season 2025/26" in label for label in labels)
-    assert any("Previous season 2025/26" in label for label in labels)
+    assert any("Previous season 2024/25" in label for label in labels)
 
     no_current_value_plot = _plot_for_display_window(
         _snow_frame(overrides={
@@ -256,12 +259,19 @@ def test_snow_plot_labels_use_season_wording_when_start_is_sept_1():
     )
     no_current_value_labels = _labels(no_current_value_plot, hv.Curve)
     assert any("Current season 2025/26" in label for label in no_current_value_labels)
-    assert any("Previous season 2025/26" in label for label in no_current_value_labels)
+    assert any("Previous season 2024/25" in label for label in no_current_value_labels)
 
 
 def test_snow_plot_season_year_label_transitions_at_start_day():
+    # FD-024: previous_season must be exactly one hydrological year behind
+    # current_season on EVERY reference date, not only on the exact season
+    # start day (the old day-subtraction bug only crossed the boundary on
+    # that one day). Re-expressed from the old boundary-only assertions
+    # (which asserted "Previous season 2024/25" for both 2025-08-31 and
+    # 2025-09-01 — the buggy same-year pairing off the boundary) to check
+    # the invariant across both dates.
     cases = [
-        ("2025-08-31", "Current season 2024/25", "Previous season 2024/25"),
+        ("2025-08-31", "Current season 2024/25", "Previous season 2023/24"),
         ("2025-09-01", "Current season 2025/26", "Previous season 2024/25"),
     ]
 
@@ -276,6 +286,23 @@ def test_snow_plot_season_year_label_transitions_at_start_day():
         labels = _labels(plot, hv.Curve)
         assert any(current_label in label for label in labels)
         assert any(previous_label in label for label in labels)
+
+
+def test_snow_plot_season_label_leap_day_reference_does_not_raise():
+    # FD-024: a naive fix that derives the previous season via
+    # current_ref.replace(year=current_ref.year - 1) raises ValueError for
+    # a Feb-29 reference whose previous calendar year is not a leap year —
+    # 2028 is a leap year, 2027 is not, so this is exactly that case. The
+    # chosen fix derives previous_season from the season's start year (an
+    # int), never from date arithmetic on current_ref, so it must produce
+    # sane labels here and must not raise.
+    reference = date(2028, 2, 29)
+    current_season = vizualization._snow_season_label(reference, 1, 1)
+    start_year = vizualization._season_start_year(reference, 1, 1)
+    previous_season = vizualization._season_label_from_start_year(start_year - 1)
+
+    assert current_season == "2028/29"
+    assert previous_season == "2027/28"
 
 
 # ── snow_ref_date / date_picker two-reference-date bug regression ────────
@@ -525,14 +552,20 @@ def test_snow_plot_season_and_title_follow_plotted_window_not_date_picker():
     Because current_year is entirely NaN, plot_runoff_line's own NaN guard
     returns an unlabeled hv.Curve([]) for the "Current season" line — so the
     visible curve label to assert on here is "Previous season", carried by
-    the (non-NaN) last_year column. It reads the SAME "2026/27" string as
-    the current season would, only because of the pre-existing (and
-    intentionally untouched — see Item 4 note) day-vs-year arithmetic in
-    _snow_season_label: subtracting one day from 2026-09-02 does not cross
-    the 09-01 season boundary. That coincidence is what makes it a valid
-    detector here: it is still computed from current_ref, which is exactly
-    what this item fixes — reverting the fix changes current_ref to
-    date_picker's own (2025/26) season and this label to "2025/26".
+    the (non-NaN) last_year column.
+
+    FD-024 note: previous_season is now correctly one hydrological year
+    behind current_season (2025/26, not 2026/27 — see
+    doc/plans/issues/review_gi_draft_fd_snow_season_label_off_by_day.md),
+    so "Previous
+    season" is still the only observable label here even though its value
+    changed: current_season is 2026/27 (window_ref-derived, unchanged by
+    FD-024) but its curve renders unlabeled. This label remains a valid
+    detector for the window_ref regression this test targets — it is
+    computed from current_ref, so reverting THIS test's regression (the
+    _snow_current_season_reference window_ref fallback) changes current_ref
+    to date_picker's own 2025/26 season and this label to one season
+    earlier again, 2024/25.
     """
     dates = pd.date_range("2026-09-01", periods=5, freq="D")
     n = len(dates)
@@ -567,7 +600,7 @@ def test_snow_plot_season_and_title_follow_plotted_window_not_date_picker():
     )
 
     labels = _labels(plot, hv.Curve)
-    assert "Previous season 2026/27" in labels
+    assert "Previous season 2025/26" in labels
 
     title = plot.opts.get("plot").kwargs["title"]
     assert "2026/27" in title

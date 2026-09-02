@@ -1,5 +1,8 @@
 # Snow plot's "previous season" legend label is off by a day, not a year
 
+**Status**: Review (2026-09-02). Implemented — see § Implementation status below.
+`SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` is green: 653 passed, 6 skipped
+(gated `TEST_LOCAL`/`TEST_PENTAD`/`TEST_DECAD` only), zero unexpected skips.
 **Priority:** mid — no data corruption, no crash, and the underlying plotted values (the
 `last_year` climatology curve) are correct. But the legend text is wrong on every day of the
 season except the one exact start-day, on any deployment that configures a hydrological-year
@@ -131,6 +134,58 @@ exactly one year pair on every `current_ref`, not just on the start day.
   string fix only, matching the "display only" scope of this defect (see Notes).
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` passes, zero unexpected
   skips.
+
+## Implementation status (2026-09-02)
+
+Fixed in `apps/forecast_dashboard/src/vizualization.py`. As foreshadowed in Fix direction, the
+Feb-29 case ruled out `current_ref.replace(year=current_ref.year - 1)` (raises `ValueError`
+when the reference year is a leap year and the previous year is not, e.g. 2028-02-29). Instead
+of date arithmetic, `_snow_season_label` was factored into two small int/string helpers so the
+previous season can be derived from the current season's **start year**, never from a date:
+
+- `_season_start_year(reference, start_month, start_day)` — returns the integer start year of
+  the hydrological year containing `reference` (the `(month, day) >= (start_month, start_day)`
+  comparison, unchanged, extracted out of `_snow_season_label`).
+- `_season_label_from_start_year(start_year)` — formats a start year as `"YYYY/YY+1"` (the
+  formatting half, also extracted unchanged).
+- `_snow_season_label(reference, start_month, start_day)` keeps its exact original signature and
+  return value — now a thin wrapper calling the two helpers above. Its one other call site (the
+  empty-window guard, `vizualization.py`) and any test that calls it directly are unaffected.
+
+In `plot_daily_snow_data`, the `is_hydrological_year_display` branch now computes
+`current_start_year = _season_start_year(current_ref, ...)`, `current_season =
+_season_label_from_start_year(current_start_year)`, and `previous_season =
+_season_label_from_start_year(current_start_year - 1)` — i.e. one **hydrological year** behind
+`current_season` on every `current_ref`, not one **day**. `current_season`'s value, the title,
+the forecast split, the window computation, and the empty-window guard are all unchanged.
+
+Test assertions updated in `apps/forecast_dashboard/tests/test_snow_plot.py` (all update the
+*expected value*, none change what is being tested):
+
+- `test_snow_plot_labels_use_season_wording_when_start_is_sept_1` (both the main and
+  `no_current_value_plot` cases): `"Previous season 2025/26"` → `"Previous season 2024/25"`
+  (one season behind `"Current season 2025/26"`, not the same season).
+- `test_snow_plot_season_year_label_transitions_at_start_day`: re-expressed from asserting
+  "correct on the boundary day, buggy off it" to asserting the one-season-behind invariant on
+  both reference dates it already covered — `"2025-08-31"`'s expected previous label changed
+  from `"Previous season 2024/25"` to `"Previous season 2023/24"`; `"2025-09-01"`'s
+  (`"Previous season 2024/25"`) was already correct and is unchanged.
+- `test_snow_plot_season_and_title_follow_plotted_window_not_date_picker`: expected label
+  changed from `"Previous season 2026/27"` to `"Previous season 2025/26"` (one season behind the
+  unchanged `current_season` of `2026/27`); a comment was added recording that this test still
+  discriminates the `window_ref` regression it targets (reverting that regression would change
+  the label to `"2024/25"`, not `"2026/27"`).
+- Added `test_snow_plot_season_label_leap_day_reference_does_not_raise`: reference
+  `2028-02-29` (2028 is a leap year, 2027 is not) with a Jan-1 start, calling the helpers
+  directly — proves the chosen (start-year-based) fix does not hit the `ValueError` a
+  `.replace(year=...)` fix would.
+
+Mutation-checked: reintroducing the one-day subtraction fails both updated
+`test_snow_plot_labels_use_season_wording_when_start_is_sept_1` and
+`test_snow_plot_season_year_label_transitions_at_start_day`; reintroducing the `date_picker`
+fallback ahead of `window_ref` in `_snow_current_season_reference` fails
+`test_snow_plot_season_and_title_follow_plotted_window_not_date_picker`. Both mutations were
+reverted after confirming the failures.
 
 ## Notes
 
