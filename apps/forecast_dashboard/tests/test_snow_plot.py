@@ -1,9 +1,12 @@
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import holoviews as hv
 import pandas as pd
 import pytest
+from bokeh.models import ColumnDataSource
 from src import vizualization
+from src.snow_window import snow_display_window
 
 hv.extension("bokeh")
 
@@ -273,3 +276,355 @@ def test_snow_plot_season_year_label_transitions_at_start_day():
         labels = _labels(plot, hv.Curve)
         assert any(current_label in label for label in labels)
         assert any(previous_label in label for label in labels)
+
+
+# ── snow_ref_date / date_picker two-reference-date bug regression ────────
+
+
+def _rendered_source_lengths(plot):
+    """Return the length of every column in every ColumnDataSource of the
+    Bokeh figure rendered from `plot`."""
+    bokeh_fig = hv.render(plot)
+    lengths = []
+    for source in bokeh_fig.select(ColumnDataSource):
+        for column in source.data.values():
+            lengths.append(len(column))
+    return lengths
+
+
+def _frame_spanning_window_boundary():
+    """Build an HS frame with rows both inside and outside the Sep1-Aug31
+    2026/27 hydrological-year window (the window ``snow_display_window(9, 1,
+    date(2026, 9, 2))`` computes), each with a distinct ``current_year``
+    value. A window that is too wide (e.g. off by a year, or missing its
+    upper bound) or too narrow is directly detectable by comparing the
+    plotted values against the in-window subset, rather than merely
+    checking "something rendered".
+    """
+    dates = pd.to_datetime([
+        "2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31",  # OUT: before window
+        "2026-09-01", "2026-09-02", "2026-09-03",                 # IN:  window
+        "2027-08-31",                                              # IN:  last day of window
+        "2027-09-01",                                              # OUT: after window
+    ])
+    n = len(dates)
+    values = [100.0 + i for i in range(n)]
+    return pd.DataFrame({
+        "code": ["19999"] * n,
+        "date": dates,
+        "HS": values,
+        "norm": [12.0] * n,
+        "mean": [13.0] * n,
+        "min": [5.0] * n,
+        "max": [30.0] * n,
+        "5%": [7.0] * n,
+        "25%": [10.0] * n,
+        "50%": [14.0] * n,
+        "75%": [20.0] * n,
+        "95%": [26.0] * n,
+        "last_year": [11.0] * n,
+        "current_year": values,
+    })
+
+
+def test_snow_plot_uses_snow_ref_date_window_when_provided():
+    """Regression test: the data-fetch window (keyed on snow_ref_date) and
+    the plot window must be the SAME window, or the plot renders empty even
+    though data was fetched for it.
+
+    date_picker (2026-07-05) falls in the hydrological year 2025/26, but the
+    data (and the real fetch, once fixed) live in 2026/27 — the season that
+    starts on the configured snow_ref_date (2026-09-02). Passing snow_ref_date
+    explicitly must make the plot use the 2026/27 window and actually show
+    the data, instead of the empty 2025/26 window the bug produced.
+
+    Strengthened beyond "something rendered": the frame spans the window
+    boundary on both sides, so the test asserts the plotted "current year"
+    curve carries exactly the in-window dates/values — a widened window (off
+    by a year, or missing its upper bound) would pull in the OUT-tagged rows
+    and fail the equality check even though it would still pass a bare
+    length>0 assertion.
+    """
+    frame = _frame_spanning_window_boundary()
+
+    plot = vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {"HS": frame},
+        "HS",
+        "19999 - Test Basin",
+        pd.Timestamp("2026-09-02"),
+        pd.DataFrame(),
+        snow_display_start_month=9,
+        snow_display_start_day=1,
+        snow_ref_date=date(2026, 9, 2),
+    )
+
+    display_begin, display_end = snow_display_window(9, 1, date(2026, 9, 2))
+    expected = frame[
+        (frame["date"] >= display_begin) & (frame["date"] <= display_end)
+    ].sort_values("date")
+    assert len(expected) == 4  # sanity: the window boundary rows are as designed above
+
+    current_year_curve = next(
+        curve for curve in _elements(plot, hv.Curve)
+        if curve.label.startswith("Current season") or curve.label.startswith("Current year")
+    )
+    plotted_dates = pd.to_datetime(list(current_year_curve.dimension_values("date")))
+    plotted_values = list(current_year_curve.dimension_values("current_year"))
+
+    assert plotted_values == expected["current_year"].tolist()
+    assert list(plotted_dates) == list(expected["date"])
+    assert all(display_begin <= d <= display_end for d in plotted_dates)
+
+
+def test_snow_plot_falls_back_to_date_picker_window_when_ref_date_is_none():
+    """Without snow_ref_date, plot_daily_snow_data must keep its
+    pre-existing behaviour of deriving the display window from date_picker
+    alone (the fix must be purely additive).
+
+    With the same frame and date_picker as the previous test but no
+    snow_ref_date, the window is computed from date_picker's own
+    hydrological year (2025/26), which does not overlap the frame's
+    2026/27-season dates — reproducing the original bug's empty-plot
+    symptom and confirming the fallback branch's window formula is
+    unchanged.
+    """
+    frame = _snow_frame(overrides={
+        "date": pd.date_range("2026-09-01", periods=5, freq="D"),
+    })
+
+    plot = vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {"HS": frame},
+        "HS",
+        "19999 - Test Basin",
+        pd.Timestamp("2026-07-05"),
+        pd.DataFrame(),
+        snow_display_start_month=9,
+        snow_display_start_day=1,
+        snow_ref_date=None,
+    )
+
+    lengths = _rendered_source_lengths(plot)
+    assert lengths  # sources exist
+    assert all(length == 0 for length in lengths)
+
+
+# ── adversarial-review follow-ups: items 2, 3, 4, 5 ───────────────────────
+
+
+def test_snow_plot_accepts_date_datetime_and_timestamp_ref_date():
+    """Item 2: snow_ref_date may arrive as a bare date, a datetime, or a
+    pd.Timestamp — nearly every date in this codebase IS a pd.Timestamp
+    (forecasts_all['date'].max(), db.get_bulletin_metadata, ...), and
+    plot_daily_snow_data is untyped so nothing upstream rejects one. All
+    three must normalise to the SAME display window and none may raise —
+    snow_display_window compares ref_date against a bare datetime.date
+    internally and raises TypeError for an un-normalised Timestamp
+    ("Cannot compare Timestamp with datetime.date") or datetime ("can't
+    compare datetime.datetime to datetime.date").
+    """
+    frame = _frame_spanning_window_boundary()
+    ref_variants = [
+        date(2026, 9, 2),
+        datetime(2026, 9, 2),
+        pd.Timestamp("2026-09-02"),
+    ]
+
+    results = []
+    for ref in ref_variants:
+        plot = vizualization.plot_daily_snow_data(
+            lambda text: text,
+            _widget_manager(),
+            {"HS": frame},
+            "HS",
+            "19999 - Test Basin",
+            pd.Timestamp("2026-09-02"),
+            pd.DataFrame(),
+            snow_display_start_month=9,
+            snow_display_start_day=1,
+            snow_ref_date=ref,
+        )
+        curve = next(
+            curve for curve in _elements(plot, hv.Curve)
+            if curve.label.startswith("Current season") or curve.label.startswith("Current year")
+        )
+        dates = list(pd.to_datetime(list(curve.dimension_values("date"))))
+        values = list(curve.dimension_values("current_year"))
+        results.append((dates, values))
+
+    assert results[0] == results[1] == results[2]
+    # Sanity: the window was actually applied (not empty, not the whole frame).
+    assert len(results[0][0]) == 4
+
+
+def test_snow_plot_forecast_curve_splits_on_snow_ref_date_not_date_picker():
+    """Item 3: whenever date_picker falls before the plotted display window
+    — precisely the condition that produced the original blank-card bug —
+    splitting the "Forecast" curve on date_picker selects the ENTIRE window
+    and draws/legends the whole raw observed series as "Forecast". The
+    split must use snow_ref_date instead (SnowMapper's forward projection
+    is what actually lies beyond it) whenever snow_ref_date is supplied.
+    """
+    dates = pd.date_range("2026-09-01", periods=20, freq="D")
+    n = len(dates)
+    values = [100.0 + i for i in range(n)]
+    frame = pd.DataFrame({
+        "code": ["19999"] * n,
+        "date": dates,
+        "HS": values,
+        "norm": [12.0] * n,
+        "mean": [13.0] * n,
+        "min": [5.0] * n,
+        "max": [130.0] * n,
+        "5%": [7.0] * n,
+        "25%": [10.0] * n,
+        "50%": [14.0] * n,
+        "75%": [20.0] * n,
+        "95%": [26.0] * n,
+        "last_year": [11.0] * n,
+        "current_year": values,
+    })
+
+    plot = vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {"HS": frame},
+        "HS",
+        "19999 - Test Basin",
+        pd.Timestamp("2026-07-05"),  # earlier than display_begin (2026-09-01)
+        pd.DataFrame(),
+        snow_display_start_month=9,
+        snow_display_start_day=1,
+        snow_ref_date=date(2026, 9, 10),
+    )
+
+    forecast_curve = _curve_by_label(plot, "Forecast")
+    plotted_dates = pd.to_datetime(list(forecast_curve.dimension_values("date")))
+    plotted_values = list(forecast_curve.dimension_values("HS"))
+
+    expected_dates = pd.date_range("2026-09-10", "2026-09-20", freq="D")
+    assert list(plotted_dates) == list(expected_dates)
+    assert plotted_values == [100.0 + i for i in range(9, 20)]
+    # Not the whole 20-row window — a date_picker split would include all of it.
+    assert len(plotted_dates) == 11
+
+
+def test_snow_plot_season_and_title_follow_plotted_window_not_date_picker():
+    """Item 4: with an all-null current_year column, the season reference
+    must fall back to the plotted window's reference (snow_ref_date), not
+    date_picker. Reproduces the review's exact scenario: a fresh
+    hydrological year whose current_year column is all-NaN,
+    snow_ref_date=2026-09-02, date_picker=2026-07-05 (which is in season
+    2025/26), start=09-01 — the plotted window is season 2026/27, and the
+    legend/title must say so, not "2025/26", while the axis starts
+    2026-09-01.
+
+    Because current_year is entirely NaN, plot_runoff_line's own NaN guard
+    returns an unlabeled hv.Curve([]) for the "Current season" line — so the
+    visible curve label to assert on here is "Previous season", carried by
+    the (non-NaN) last_year column. It reads the SAME "2026/27" string as
+    the current season would, only because of the pre-existing (and
+    intentionally untouched — see Item 4 note) day-vs-year arithmetic in
+    _snow_season_label: subtracting one day from 2026-09-02 does not cross
+    the 09-01 season boundary. That coincidence is what makes it a valid
+    detector here: it is still computed from current_ref, which is exactly
+    what this item fixes — reverting the fix changes current_ref to
+    date_picker's own (2025/26) season and this label to "2025/26".
+    """
+    dates = pd.date_range("2026-09-01", periods=5, freq="D")
+    n = len(dates)
+    frame = pd.DataFrame({
+        "code": ["19999"] * n,
+        "date": dates,
+        "HS": [15.0] * n,
+        "norm": [12.0] * n,
+        "mean": [13.0] * n,
+        "min": [5.0] * n,
+        "max": [30.0] * n,
+        "5%": [7.0] * n,
+        "25%": [10.0] * n,
+        "50%": [14.0] * n,
+        "75%": [20.0] * n,
+        "95%": [26.0] * n,
+        "last_year": [11.0] * n,
+        "current_year": [None] * n,  # all-null current_year column
+    })
+
+    plot = vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {"HS": frame},
+        "HS",
+        "19999 - Test Basin",
+        pd.Timestamp("2026-07-05"),
+        pd.DataFrame(),
+        snow_display_start_month=9,
+        snow_display_start_day=1,
+        snow_ref_date=date(2026, 9, 2),
+    )
+
+    labels = _labels(plot, hv.Curve)
+    assert "Previous season 2026/27" in labels
+
+    title = plot.opts.get("plot").kwargs["title"]
+    assert "2026/27" in title
+    assert "2025/26" not in title
+
+    xlim = plot.opts.get("plot").kwargs["xlim"]
+    assert xlim[0] == pd.Timestamp("2026-09-01")
+
+
+def test_snow_plot_returns_no_data_message_when_window_has_no_rows():
+    """Item 5: rows exist for the station, but none fall inside the
+    computed display window (distinct from "no data at all" and "no data
+    for this station" — the two pre-existing guards). Without an explicit
+    guard, every glyph builder degrades to hv.Curve([]) and the figure
+    still renders a full title/axes/legend with nothing plotted — the
+    structural reason the original two-reference-date bug went unnoticed.
+    The message must name the plotted season.
+    """
+    # All rows fall in the PREVIOUS hydrological year (2025/26); the window
+    # for snow_ref_date=2026-09-02 is 2026/27 (Sep 2026 - Aug 2027), so none
+    # of these rows land inside it.
+    dates = pd.date_range("2025-10-01", periods=5, freq="D")
+    n = len(dates)
+    frame = pd.DataFrame({
+        "code": ["19999"] * n,
+        "date": dates,
+        "HS": [15.0] * n,
+        "norm": [12.0] * n,
+        "mean": [13.0] * n,
+        "min": [5.0] * n,
+        "max": [30.0] * n,
+        "5%": [7.0] * n,
+        "25%": [10.0] * n,
+        "50%": [14.0] * n,
+        "75%": [20.0] * n,
+        "95%": [26.0] * n,
+        "last_year": [11.0] * n,
+        "current_year": [15.0] * n,
+    })
+
+    plot = vizualization.plot_daily_snow_data(
+        lambda text: text,
+        _widget_manager(),
+        {"HS": frame},
+        "HS",
+        "19999 - Test Basin",
+        pd.Timestamp("2026-09-05"),
+        pd.DataFrame(),
+        snow_display_start_month=9,
+        snow_display_start_day=1,
+        snow_ref_date=date(2026, 9, 2),
+    )
+
+    # The early-return path returns a bare Curve, not the multi-layer
+    # Overlay the normal (non-empty) path composes via `*`.
+    assert isinstance(plot, hv.Curve)
+    assert not isinstance(plot, hv.Overlay)
+
+    title = plot.opts.get("plot").kwargs["title"]
+    assert title == "No HS data for season 2026/27"

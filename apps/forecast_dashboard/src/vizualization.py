@@ -2244,12 +2244,39 @@ def _snow_season_label(reference, start_month, start_day):
     return f"{start_year}/{end_year_two_digit:02d}"
 
 
-def _snow_current_season_reference(current_year, date_picker, display_begin):
-    """Return the reference date for the current snow season label."""
+def _snow_current_season_reference(current_year, date_picker, display_begin, window_ref=None):
+    """Return the reference date for the current snow season label.
+
+    Falls back, in order, to: the last non-null ``current_year`` date
+    (always inside the plotted display window), then ``window_ref`` — the
+    same reference date the display window itself was computed from
+    (``snow_ref_date`` when supplied, else ``date_picker``) — then
+    ``date_picker``, then ``display_begin``.
+
+    ``date_picker`` is no longer preferred as a fallback: whenever it falls
+    outside the plotted window (the exact divergence the snow_ref_date
+    threading exists to fix), using it points the season label at a
+    different hydrological year than the one actually being plotted, while
+    the axis still shows the window's own year — legend and title would
+    then disagree with what is on screen.
+
+    Args:
+        current_year: The window-filtered station data.
+        date_picker: The forecast date. Kept as a lower-priority fallback
+            for backward-compatible callers that don't pass ``window_ref``.
+        display_begin: Start of the plotted display window (pd.Timestamp).
+        window_ref: The reference date (a ``datetime.date``) the plotted
+            window was actually computed from — preferred over date_picker.
+
+    Returns:
+        A ``datetime.date`` naming the hydrological year to label.
+    """
     if "current_year" in current_year.columns:
         non_null_current = current_year[current_year["current_year"].notna()]
         if not non_null_current.empty:
             return non_null_current["date"].max().date()
+    if window_ref is not None:
+        return window_ref
     if pd.notna(date_picker):
         return date_picker.date()
     return display_begin.date()
@@ -2257,9 +2284,24 @@ def _snow_current_season_reference(current_year, date_picker, display_begin):
 
 def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
                          linreg_predictor, snow_display_start_month=1,
-                         snow_display_start_day=1):
+                         snow_display_start_day=1, snow_ref_date=None):
     """
     Plot snow data for a specific variable.
+
+    The display window is computed from ``snow_ref_date`` when provided —
+    this must be the SAME reference date the data was fetched with
+    (``db.get_data``'s ``snow_ref_date``), so the fetched rows and the
+    plotted window actually intersect. When ``snow_ref_date`` is None, the
+    window falls back to the pre-existing behaviour of using ``date_picker``.
+
+    ``snow_ref_date`` also drives the "Forecast" curve split and the
+    current-season reference/title (falling back to ``date_picker`` when
+    None, same as the window): SnowMapper's forward projection lies beyond
+    ``snow_ref_date``, and the season/title must name whichever hydrological
+    year the window actually shows, not the one ``date_picker`` happens to
+    fall in. If the resulting window holds no rows for this station and
+    variable, an explicit "no data for season" plot is returned instead of
+    silently rendering axes and legend with nothing plotted.
     """
     # Get the data for this variable
     daily_snow = snow_data.get(variable)
@@ -2300,18 +2342,55 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     station_data['year'] = station_data['date'].dt.year
     station_data['doy'] = station_data['date'].dt.dayofyear
 
-    # Get data for the configured display window
+    # Get data for the configured display window. Use the caller-supplied
+    # snow reference date (the SAME date the data was fetched with) when
+    # given, so the fetch window and the plot window always agree; fall
+    # back to date_picker for callers that don't pass snow_ref_date. Both
+    # branches must normalise to a bare datetime.date: snow_display_window
+    # compares ref_date against a plain date internally, and nearly every
+    # date in this codebase (forecasts_all['date'].max(), db.get_bulletin_
+    # metadata, ...) is a pd.Timestamp, which raises TypeError against a
+    # bare date rather than coercing.
+    if snow_ref_date is not None:
+        window_ref = snow_ref_date.date() if hasattr(snow_ref_date, 'date') else snow_ref_date
+    else:
+        window_ref = date_picker.date() if hasattr(date_picker, 'date') else date_picker
     display_begin, display_end = snow_display_window(
-        snow_display_start_month, snow_display_start_day,
-        date_picker.date() if hasattr(date_picker, 'date') else date_picker)
+        snow_display_start_month, snow_display_start_day, window_ref)
     current_year = station_data[
         (station_data['date'] >= display_begin) &
         (station_data['date'] <= display_end)
     ].copy()
     current_year = current_year.sort_values('date')
 
-    # Get the forecasts for the selected date
-    forecasts = current_year[current_year['date'] >= date_picker].copy()
+    # Guard against a display window with no rows for this station/variable
+    # (as opposed to no data at all, or no data for this station — the two
+    # guards above). Without this, every glyph builder below degrades to
+    # hv.Curve([]) and the figure still renders a full title, axes and
+    # legend with nothing plotted — the structural reason the original
+    # two-reference-date bug produced a silently blank card instead of a
+    # visible error.
+    if current_year.empty:
+        if is_hydrological_year_display(snow_display_start_month, snow_display_start_day):
+            empty_season = _snow_season_label(
+                display_begin.date(), snow_display_start_month, snow_display_start_day)
+        else:
+            empty_season = str(display_begin.year)
+        return hv.Curve([]).opts(
+            title=_("No {variable} data for season {season}").format(
+                variable=variable, season=empty_season),
+            hooks=[remove_bokeh_logo])
+
+    # Get the forecasts for the selected date. Split on snow_ref_date, not
+    # date_picker, when supplied: SnowMapper's forward projection is what
+    # lies beyond today (snow_ref_date), and whenever date_picker falls
+    # before display_begin — precisely the condition the snow_ref_date
+    # threading exists to handle — splitting on date_picker would select
+    # the entire window and draw/legend the whole raw observed series as
+    # "Forecast". current_year['date'] is datetime64[ns]; compare against a
+    # pd.Timestamp (pandas does not coerce a bare date/datetime here).
+    forecast_split_ref = pd.Timestamp(snow_ref_date) if snow_ref_date is not None else date_picker
+    forecasts = current_year[current_year['date'] >= forecast_split_ref].copy()
 
     # Plot title and labels
     title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
@@ -2324,7 +2403,7 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
     current_year_col = 'current_year' if 'current_year' in current_year.columns else variable
     if is_hydrological_year_display(snow_display_start_month, snow_display_start_day):
         current_ref = _snow_current_season_reference(
-            current_year, date_picker, display_begin)
+            current_year, date_picker, display_begin, window_ref=window_ref)
         current_season = _snow_season_label(
             current_ref, snow_display_start_month, snow_display_start_day)
         previous_season = _snow_season_label(
@@ -2333,6 +2412,13 @@ def plot_daily_snow_data(_, wm, snow_data, variable, station, date_picker,
             snow_display_start_day)
         current_year_label = _("Current season {season}").format(season=current_season)
         last_year_label = _("Previous season {season}").format(season=previous_season)
+        # Name the plotted season instead of date_picker: the axis/window is
+        # keyed on window_ref (snow_ref_date, or date_picker when it is
+        # None), and date_picker can fall in a different hydrological year
+        # than the window being plotted — exactly the divergence this
+        # file's snow_ref_date threading exists to fix (Item 4). Jan-1
+        # (non-hydrological) display mode is untouched below.
+        title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {current_season}"
     else:
         current_year_label = _("Current year")
         last_year_label = _("Last year legend entry")
