@@ -728,6 +728,78 @@ class TestAssembleSnowForecastFallback:
         # unaffected and still wins normally (shortest lead).
         assert value_on("2026-09-04") == 20.0
 
+    def test_valid_blank_duplicate_within_issuance_is_not_a_conflict(self, tmp_path):
+        """PREPG-025 review follow-up: the H1 blank filter and the M1
+        conflicting-duplicate rejection interact. Both were correct in
+        isolation, but in the wrong relative order: if the SAME
+        issuance carries a (date, code) key TWICE -- once with a
+        valid value, once blank -- and the conflict check (which only
+        compares (date, code), not the value) runs first, it
+        misclassifies the pair as a genuine conflict and drops BOTH
+        rows, discarding the valid value along with the blank. An
+        older issuance's stale value would then win completeness by
+        default, or, with no older issuance available, ingestion would
+        fail outright despite a perfectly good value having been
+        downloaded. The blank filter must run first, per issuance, so
+        a valid/blank pair collapses to the single valid row and is
+        never treated as a conflict at all."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        # Older issuance: covers the whole range with a STALE marker
+        # value (5.0) -- this must NOT be what wins for 09-05.
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")
+
+        # Newer issuance: 2026-09-05 appears TWICE -- once valid
+        # (20.0), once blank -- everything else is a single valid row.
+        newer_dates = list(pd.date_range("2026-09-03", periods=window, freq="D"))
+        dup_index = newer_dates.index(pd.Timestamp("2026-09-05"))
+        newer_dates = (
+            newer_dates[: dup_index + 1]
+            + [pd.Timestamp("2026-09-05")]
+            + newer_dates[dup_index + 1 :]
+        )
+        newer_values = [20.0] * len(newer_dates)
+        newer_values[dup_index + 1] = None  # the duplicate's blank entry
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv(directory, "older", older_dates, TEST_CODE, 5.0)
+            if issue_date == "2026-09-03":
+                return _write_forecast_csv_values(
+                    directory, "newer", newer_dates, TEST_CODE, newer_values
+                )
+            raise ValueError("No data found for that date")
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        # Not a completeness failure: the valid row for 09-05 must
+        # have survived the (wrongly-ordered) conflict check.
+        assert result is not None
+
+        def value_on(date_str):
+            row = result[(result["date"] == pd.Timestamp(date_str)) & (result["code"] == TEST_CODE)]
+            assert len(row) == 1, f"expected exactly one row for {date_str}"
+            return row["SWE"].iloc[0]
+
+        # The newer issuance's valid value must win -- not the older,
+        # stale issuance's value (5.0), and not NaN.
+        assert value_on("2026-09-05") == 20.0
+        # Sanity check: an unaffected date from the same newer
+        # issuance still wins normally.
+        assert value_on("2026-09-04") == 20.0
+
     def test_tz_aware_reference_date_normalises_instead_of_crashing(self, tmp_path):
         """PREPG-025 review fix M3: a tz-aware reference_date must not
         raise during the floor comparison -- it is normalised to

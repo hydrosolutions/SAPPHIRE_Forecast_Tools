@@ -295,9 +295,13 @@ def _assemble_snow_forecast_fallback(
     Overlap resolution: for each (target date, code), the value from
     the newest issue date that is not after that target date (shortest
     lead) is kept -- see the sort/drop_duplicates below. Rows with no
-    usable value for `variable` are dropped BEFORE that resolution, so
-    a blank from a newer issuance can never beat a real value from an
-    older one (and, if every issuance is blank for a given date, the
+    usable value for `variable` are dropped per issuance, immediately
+    after that issuance is parsed and before ANYTHING else -- including
+    this function's own per-issuance conflicting-duplicate rejection,
+    which only compares (date, code) and would otherwise misclassify a
+    valid/blank pair for the same key as a conflict and discard both
+    -- so a blank can never beat a real value from an older issuance
+    (and, if every issuance is blank for a given date, the
     completeness check below fails honestly instead of accepting the
     blank). Completeness is validated before this function returns
     anything to the caller: an incomplete window returns None so the
@@ -443,6 +447,24 @@ def _assemble_snow_forecast_fallback(
         df_issue = dg_utils.transform_snow_data(df_raw, variable)
         df_issue["date"] = pd.to_datetime(df_issue["date"])
 
+        # Drop rows with no usable value for the requested variable,
+        # per issuance, BEFORE the conflicting-duplicate check below.
+        # Order matters: that check only looks at (date, code), not
+        # the value, so a (date, code) key appearing twice within this
+        # ONE issuance -- once valid, once blank -- would otherwise be
+        # flagged as a "conflict" and BOTH rows dropped, discarding a
+        # perfectly good value along with the blank instead of just
+        # the blank. Filtering first means a valid/blank pair for the
+        # same key collapses to the single valid row and is never
+        # treated as a conflict at all. This still protects the
+        # cross-issuance contract too: no blank row can reach
+        # `combined` below, so an older, valid issuance's row is what
+        # the newest-wins overlap resolution sees for that key, or --
+        # if every issuance is blank for it -- completeness fails
+        # honestly instead of accepting a blank (PREPG-025 review
+        # fix H1; this ordering fix is a follow-up to it).
+        df_issue = df_issue[df_issue[variable].notna()]
+
         # Reject conflicting duplicates within this single issuance
         # before it joins any other frame. An exact duplicate row (same
         # date, code, and value) is harmless and collapsed here; two
@@ -488,21 +510,6 @@ def _assemble_snow_forecast_fallback(
         return None
 
     combined = pd.concat(fetched_frames, ignore_index=True)
-
-    # Drop rows with no usable value for the requested variable BEFORE
-    # overlap resolution. transform_snow_data preserves NaN, and the
-    # completeness check below only looks at (date, code) presence -- if
-    # a blank row from a newer issuance were left in, it would win the
-    # dedup below (newest wins), pass completeness (the pair exists),
-    # and then win the downstream date/code merge in
-    # get_snow_data_operational, replacing a real historical value with
-    # NaN (write_snow_to_api then silently drops the valueless record,
-    # so the CSV goes blank and the API payload goes quietly partial).
-    # Dropping blanks here means an older, valid issuance's row for the
-    # same (date, code) is what the dedup sees and keeps; if every
-    # issuance is blank for a given (date, code), no row survives for
-    # it at all, and completeness fails honestly instead.
-    combined = combined[combined[variable].notna()]
 
     # Deterministic overlap resolution. Every row's date already falls
     # within its own issuance's forward window, so date >= _issue_date
