@@ -1650,8 +1650,25 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
                                     f"Model mismatch: Excel '{excel_model}' vs API '{rec.get('model_type')}'"
                                 )
                                 api_delta = rec.get("delta")
-                                if not (pd.isna(excel_delta) and api_delta is None):
-                                    assert str(excel_delta).replace(",", ".") == str(api_delta).replace(",", "."), (
+                                excel_delta_missing = pd.isna(excel_delta) or (
+                                    isinstance(excel_delta, str) and excel_delta.strip() in ("", "-")
+                                )
+                                api_delta_missing = api_delta is None or (
+                                    isinstance(api_delta, float) and pd.isna(api_delta)
+                                )
+                                if not (excel_delta_missing and api_delta_missing):
+                                    # Excel stores delta as a plain number (pandas may read a
+                                    # whole value like 1 as an int) while the API returns a
+                                    # float (1.0); compare numerically instead of by string
+                                    # form to avoid spurious mismatches like '1' vs '1.0'.
+                                    excel_delta_f = _get_float(excel_delta)
+                                    delta_ok = (
+                                        not excel_delta_missing
+                                        and not api_delta_missing
+                                        and isinstance(excel_delta_f, float)
+                                        and abs(excel_delta_f - float(api_delta)) <= 0.01
+                                    )
+                                    assert delta_ok, (
                                         f"Delta mismatch: Excel '{excel_delta}' vs API '{api_delta}'"
                                     )
                     print(f"#### [{horizon}] Excel values are EQUAL to API bulletin records")
