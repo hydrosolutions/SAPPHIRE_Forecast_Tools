@@ -34,6 +34,7 @@ import pandas as pd
 
 try:
     from iEasyHydroForecast.long_term_horizon_resolver import (
+        LongTermHorizonResolverError,
         quarter_horizon_value,
         seasonal_config_name,
         seasonal_horizon_value,
@@ -42,6 +43,7 @@ try:
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from iEasyHydroForecast.long_term_horizon_resolver import (
+        LongTermHorizonResolverError,
         quarter_horizon_value,
         seasonal_config_name,
         seasonal_horizon_value,
@@ -171,6 +173,11 @@ class CheckResult:
     data: pd.DataFrame | None = field(default=None, repr=False)
     max_date: str | None = None
     counts: dict = field(default_factory=dict)
+    # Marks a configuration failure ("the requested validation could not be
+    # performed"), as opposed to an ordinary data finding. Critical rows
+    # bypass --module filtering (F1) and force a non-zero exit even under
+    # --phase pre (see validate()).
+    critical: bool = False
 
 
 def _status_tag(status: str) -> str:
@@ -536,51 +543,87 @@ def run_tier1_long_term(
             horizon="month",
         )
     )
-    quarter_hv = quarter_horizon_value()
-    results.append(
-        check_presence(
-            post_client,
-            "read_long_term_forecasts",
-            f"Long-term forecasts (quarter hv{quarter_hv})",
-            module="postprocessing_forecasts",
-            horizon_type="quarter",
-            horizon_value=quarter_hv,
-            start_date=fd,
-            end_date=fd,
+    # The quarter and seasonal horizon resolutions are guarded INDEPENDENTLY:
+    # each is the piece that can fail due to configuration (missing env var,
+    # missing mode config file, invalid JSON, unsupported/unconfigured
+    # seasonal mode, ...), and a failure in one must not suppress the checks
+    # for the other. The check_presence() calls below can independently
+    # raise ValueError from pandas on a malformed API response, which is an
+    # unrelated data problem and must not be mislabelled as a horizon
+    # configuration failure, so they run outside these try blocks.
+    try:
+        quarter_hv = quarter_horizon_value()
+    except (LongTermHorizonResolverError, OSError, ValueError) as exc:
+        # This is not a per-module data finding — it means "the requested
+        # validation could not be performed" — so it is marked
+        # critical=True: it must survive --module filtering and force a
+        # non-zero exit (F1).
+        results.append(
+            CheckResult(
+                name="Long-term horizon configuration (quarter)",
+                status="FAIL",
+                detail=f"{type(exc).__name__}: {exc}",
+                module="long_term_forecasting",
+                critical=True,
+            )
         )
-    )
-    results.append(
-        check_presence(
-            post_client,
-            "read_skill_metrics",
-            "Quarterly skill metrics",
-            module="postprocessing_forecasts",
-            horizon="quarter",
+    else:
+        results.append(
+            check_presence(
+                post_client,
+                "read_long_term_forecasts",
+                f"Long-term forecasts (quarter hv{quarter_hv})",
+                module="postprocessing_forecasts",
+                horizon_type="quarter",
+                horizon_value=quarter_hv,
+                start_date=fd,
+                end_date=fd,
+            )
         )
-    )
+        results.append(
+            check_presence(
+                post_client,
+                "read_skill_metrics",
+                "Quarterly skill metrics",
+                module="postprocessing_forecasts",
+                horizon="quarter",
+            )
+        )
 
-    season_issue_month, season_hv = _resolved_seasonal_presence_horizon_value(forecast_date)
-    results.append(
-        check_presence(
-            post_client,
-            "read_long_term_forecasts",
-            f"Long-term forecasts (season issue {season_issue_month} hv{season_hv})",
-            module="postprocessing_forecasts",
-            horizon_type="season",
-            horizon_value=season_hv,
-            start_date=fd,
-            end_date=fd,
+    try:
+        season_issue_month, season_hv = _resolved_seasonal_presence_horizon_value(forecast_date)
+    except (LongTermHorizonResolverError, OSError, ValueError) as exc:
+        results.append(
+            CheckResult(
+                name="Long-term horizon configuration (seasonal)",
+                status="FAIL",
+                detail=f"{type(exc).__name__}: {exc}",
+                module="long_term_forecasting",
+                critical=True,
+            )
         )
-    )
-    results.append(
-        check_presence(
-            post_client,
-            "read_skill_metrics",
-            "Seasonal skill metrics",
-            module="postprocessing_forecasts",
-            horizon="season",
+    else:
+        results.append(
+            check_presence(
+                post_client,
+                "read_long_term_forecasts",
+                f"Long-term forecasts (season issue {season_issue_month} hv{season_hv})",
+                module="postprocessing_forecasts",
+                horizon_type="season",
+                horizon_value=season_hv,
+                start_date=fd,
+                end_date=fd,
+            )
         )
-    )
+        results.append(
+            check_presence(
+                post_client,
+                "read_skill_metrics",
+                "Seasonal skill metrics",
+                module="postprocessing_forecasts",
+                horizon="season",
+            )
+        )
 
     return results
 
@@ -1335,7 +1378,12 @@ def _apply_non_forecast_day_skip(
         return
 
     for r in results:
-        if r.status == "FAIL" and r.record_count == 0 and r.module in FORECAST_DAY_MODULES:
+        if (
+            not r.critical
+            and r.status == "FAIL"
+            and r.record_count == 0
+            and r.module in FORECAST_DAY_MODULES
+        ):
             r.status = "SKIP"
             r.detail = f"not a {horizon} forecast day"
 
@@ -1432,7 +1480,11 @@ def validate(
         else:
             t1_lt = []
         if module_filter:
-            t1_lt = [r for r in t1_lt if r.module == module_filter]
+            # Critical rows (F1) always survive module filtering — a
+            # configuration failure means the requested validation could
+            # not be performed at all, which is not scoped to one module's
+            # data and must never be silently dropped.
+            t1_lt = [r for r in t1_lt if r.module == module_filter or r.critical]
         # Long-term forecasts only run on specific dates per month;
         # treat empty postprocessing results as SKIP if we have no data.
         _apply_non_forecast_day_skip(
@@ -1491,6 +1543,21 @@ def validate(
 
     # --- Phase mode ---
     if phase == "pre" and baseline_path:
+        # --phase pre otherwise returns 0 unconditionally, even over
+        # ordinary FAIL rows — that pre-existing behaviour is intentionally
+        # left unchanged here (tracked as a separate issue). A *critical*
+        # row (F1: the requested validation could not be performed at all,
+        # e.g. the long-term horizon config could not be resolved) means
+        # this run produced an incomplete snapshot, so the baseline must be
+        # left untouched rather than overwritten with it — a later
+        # --phase post run would otherwise silently compare against a
+        # corrupted baseline.
+        if any(r.critical for r in all_results):
+            print(
+                f"[FAIL] baseline at {baseline_path} left unchanged — "
+                "validation could not be performed (see critical row above)"
+            )
+            return 1
         write_baseline(all_results, forecast_date, target, baseline_path)
         return 0
 
@@ -1508,6 +1575,85 @@ def validate(
                 print(line)
 
     return exit_code
+
+
+def _load_deployment_env() -> bool:
+    """Load the deployment .env file pointed to by ieasyhydroforecast_env_file_path.
+
+    Variables already present in the process environment (e.g. exported by
+    run_locally.sh, or set directly in a container) always win — the file is
+    loaded with ``override=False``. This keeps a single, consistent source
+    of truth for every env var the validator reads downstream.
+
+    Returns:
+        True if the environment is ready and validation should proceed.
+        False if a [FAIL] line was already printed and main() should
+        return 1 without running any checks.
+    """
+    env_file_path = os.environ.get("ieasyhydroforecast_env_file_path", "")
+    if not env_file_path.strip():
+        # No pointer set — the container / already-exported case. Accept
+        # the process environment as-is.
+        return True
+
+    path = Path(env_file_path)
+    if not path.is_file() or not os.access(path, os.R_OK):
+        # A relative pointer resolves against the *caller's* cwd, which can
+        # differ from where this process actually runs (e.g. run_locally.sh
+        # validates from the repo root but launches this script from
+        # apps/postprocessing_forecasts). Report our own cwd so a mismatch
+        # here is diagnosable from the log.
+        print(
+            f"[FAIL] ieasyhydroforecast_env_file_path={env_file_path} "
+            f"does not exist or is not a readable file (cwd={os.getcwd()})"
+        )
+        return False
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        # Under run_locally.sh this script is executed by whichever venv
+        # invoked it (e.g. apps/postprocessing_forecasts/.venv), not
+        # apps/validate_pipeline/.venv, so name the venv actually running
+        # this process rather than assuming it is validate_pipeline's own.
+        print(
+            "[FAIL] python-dotenv is not installed in the interpreter running "
+            f"this check ({sys.prefix}) — install it there, and in "
+            "apps/validate_pipeline (e.g. `uv sync --all-extras` in both)"
+        )
+        return False
+
+    try:
+        # NOTE: `loaded=True` only means the file parsed and contributed at
+        # least one binding — it is not proof the *right* variables (e.g.
+        # SAPPHIRE_API_URL) are among them. A file with unrelated bindings
+        # still reports success and the validator silently falls back to
+        # its defaults for anything it doesn't contain.
+        loaded = load_dotenv(path, override=False)
+    except Exception as exc:
+        # Diagnostics-only boundary at the very start of the process: any
+        # failure here (e.g. UnicodeDecodeError from non-UTF-8 bytes) must
+        # become a [FAIL] line, never a traceback, per this module's
+        # documented exit contract.
+        print(
+            f"[FAIL] failed to load ieasyhydroforecast_env_file_path={env_file_path}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return False
+
+    if not loaded:
+        # The operator explicitly named this file — silently proceeding on
+        # an empty/comment-only file (or one python-dotenv otherwise
+        # declined to load, e.g. PYTHON_DOTENV_DISABLED) risks validating
+        # the wrong deployment while reporting success.
+        print(
+            f"[FAIL] ieasyhydroforecast_env_file_path={env_file_path} loaded no "
+            "variables (file may be empty/comment-only, or dotenv loading is "
+            "disabled) — refusing to proceed with a possibly-wrong deployment config"
+        )
+        return False
+
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1574,6 +1720,9 @@ def main(argv: list[str] | None = None) -> int:
     # --baseline is required when --phase is set
     if args.phase and not args.baseline:
         parser.error("--baseline PATH is required when --phase is set")
+
+    if not _load_deployment_env():
+        return 1
 
     # If --module given without --target, auto-infer from the mapping
     target = args.target
