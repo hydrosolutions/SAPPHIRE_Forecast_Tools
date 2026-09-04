@@ -80,7 +80,7 @@ valid task types — it prints them — but only checks for an empty argument
 TASK_TYPE="${1}"
 if [ -z "$TASK_TYPE" ]; then
     echo "| Error: task_type argument required."
-    echo "| Valid task_types: long_term, skill_recalc, snow_norms"   # <-- the list exists here
+    echo "| Valid task_types: long_term, skill_recalc, snow_norms, lt_recovery"  # <-- list exists here
     exit 1
 fi
 echo "| Running Periodic Maintenance: ${TASK_TYPE}"                   # <-- anything else passes
@@ -89,7 +89,9 @@ echo "| Running Periodic Maintenance: ${TASK_TYPE}"                   # <-- anyt
 So `monthly_norms` passes through, prints *"Running Periodic Maintenance: monthly_norms"*, and dies
 three layers down where nothing reports it.
 
-**Validate `$TASK_TYPE` against that same list and exit non-zero on anything else.** Give *retired*
+**Validate `$TASK_TYPE` against that same list — all four types — and exit non-zero on anything
+else.** `lt_recovery` additionally takes two positional arguments and already validates them
+(`:60-74`); do not disturb that. Give *retired*
 names a specific message naming the replacement, e.g.
 `monthly_norms was retired; use bin/yearly_runoff_hydrograph_aggregation.sh`.
 
@@ -138,15 +140,18 @@ if the owner explicitly reverses the Phase 4 decision.
 
 ## Second defect: the periodic wrapper reports success unconditionally
 
-> **Layer note added 2026-08-21.** This is one of *three* silences, and fixing it alone does not
-> make ordinary task failures visible. **P-007** (`apps/pipeline/pipeline_docker.py:329-347`)
-> discards `container.wait()`'s `StatusCode` and hard-codes `exit_status = 0`, so a mapped task
-> whose container fails is already reported as success **before** this wrapper sees it.
+> **Layer note, corrected 2026-09-04.** The 2026-08-21 version of this note said P-007 masks
+> ordinary task failures before this wrapper sees them. **P-007 is fixed** —
+> `pipeline_docker.py:331-335` now reads `StatusCode` with an explicit `type(raw) is int` guard — so
+> that layer is closed and this note no longer gates anything.
 >
-> The exception is precisely the case this issue is about: an **unknown** task type raises
-> `ValueError` in `requires()` **before any container starts**, so P-007 does not mask it. Fixing
-> the wrapper alone therefore *would* surface a stale `monthly_norms` cron — but would still hide a
-> failing `long_term`, `skill_recalc` or `snow_norms` run. Both must land for that.
+> **The layer that does still gate it is Luigi's own return codes.** `run_periodic_maintenance.sh`
+> writes a `[retcode]` block setting `task_failed = 1` **only when `TASK_TYPE = lt_recovery`**
+> (`:138-152`), and only that branch passes `LUIGI_CONFIG_PATH`. Luigi's defaults are 0 for
+> `task_failed`, `missing_data`, `already_running`, `scheduling_error` and `not_run`. So for
+> `long_term`, `skill_recalc` and `snow_norms` a failed task still makes Luigi exit **0**, and the
+> script's own comment says as much: *"the other task types keep Luigi's defaults so their behaviour
+> is unchanged."*
 
 
 `bin/run_periodic_maintenance.sh` has **no `set -e`**, never captures the status of its
@@ -196,16 +201,10 @@ is **the pattern the fixes below should copy**.
 `run_periodic_maintenance.sh` now *does* capture `COMPOSE_STATUS` (`:169`) and `exit`s it (`:192`),
 but only on the `lt_recovery` branch; the other task types still fall through.
 
-**Method note — how the first table got it wrong, twice.** It was produced by grepping for
-`CONTAINER_EXIT_CODE` and then for a matching `exit|return`. Both steps are unsound:
-
-1. Filtering on the variable name **pre-selects scripts that already do half the job** and silently
-   excludes `run_preprocessing_gateway.sh`, which never captures a status at all — the single most
-   important omission, since it is the one cron actually runs for the gateway.
-2. Matching `return "$CONTAINER_EXIT_CODE"` **false-positives on a function-local return whose
-   callers discard it** (`bimonthly_long_term_postprocessing.sh`).
-
-Re-derive by reading each script's final statement, not by grep.
+**Re-derive this table by reading each script's final statement, not by grep.** Two greps produced
+two wrong tables: filtering on `CONTAINER_EXIT_CODE` silently excludes `run_preprocessing_gateway.sh`,
+which never captures a status at all, and matching `return "$VAR"` false-positives on a
+function-local return whose callers discard it.
 
 ### The fix is one line only for the single-container wrappers
 
@@ -226,9 +225,17 @@ Re-derive by reading each script's final statement, not by grep.
   `yearly_snow_norm_recalculation.sh:135-144` already does. All the unfixed wrappers take `$?` after
   a pipe, which is *tee's* status; the `docker inspect` fallback masks it only while inspect works.
 
-**Not related to P-007.** These wrappers call `docker run` directly and read the status with
-`docker inspect`; they never go through `pipeline_docker.run_docker_container`. An earlier note here
-claimed the two interact — they do not.
+**Two shapes of wrapper, two different fixes — do not apply one recipe to both.**
+
+- **Direct `docker run` wrappers** (the four `daily_*`, `bimonthly_long_term_postprocessing.sh`):
+  they read the status with `docker inspect` and never reach
+  `pipeline_docker.run_docker_container`, so propagating the captured status is the whole fix.
+- **Luigi-backed wrappers** (`run_periodic_maintenance.sh` for its three non-recovery types, and
+  `run_preprocessing_gateway.sh`): propagating the compose status is **necessary but not
+  sufficient** — Luigi returns 0 on task failure unless a `[retcode]` block says otherwise, so the
+  status being propagated would be 0. Both layers must land together or the change is a no-op.
+  `run_periodic_maintenance.sh:138-152` already shows the working pattern, applied to `lt_recovery`
+  only; extend it rather than inventing one.
 
 **Verification these fixes actually work** (none of this issue's other criteria test them): one
 parameterised shell test with a stubbed `docker`, asserting non-zero propagation for each wrapper
@@ -268,22 +275,17 @@ its own issue, since its scope is all periodic tasks rather than this stale comm
 - **`run_periodic_maintenance.sh` exits non-zero on an unknown task type**, pinned by a test that
   runs the wrapper with `monthly_norms` and asserts a non-zero exit **and** that the message names
   the replacement script. *Without the exit-code assertion the test passes on today's code.*
-- **The valid-type list is not duplicated.** The message at `:26` and the new validation must read
-  from one source, or they will drift apart and the error will lie.
+- **The printed list and the validated list agree.** They went out of sync once already — that is
+  why this issue exists — so a test must fail if they diverge. How they are kept in sync is the
+  implementer's call.
 - **All four live types still work** — `long_term`, `skill_recalc`, `snow_norms` and `lt_recovery`
   (the last with its two extra arguments preserved) each still reach
   Luigi. A validation that rejects a working task is worse than the bug.
-- **Stale references are gone** from `doc/deployment.md`, the old AWS plan, the Compose comment and
-  `apps/pipeline/README`. **The two production checklists are already correct — do not "fix" them**
-  (`doc/prod/update_deployment_checklist.md:829`/`:832`/`:837`,
-  `doc/prod/first_deploy_checklist.md:646`/`:850`); `:837` already documents this defect by name.
+- **Do not "fix" the two production checklists — they are already correct**
+  (`update_deployment_checklist.md:829`/`:832`/`:837`, `first_deploy_checklist.md:646`/`:850`).
+  The documentation sweep itself is done (DOC-007); it is not a criterion for this fix.
 - Scoped to the **03:00 1 January runoff slot** and to arguments passed to
   `run_periodic_maintenance.sh`. Do **not** pull unrelated schedule drift (e.g. the snow date) in.
-- A deployment-verification step confirming the yearly long-horizon job ran — and note that "month
-  rows exist for the current year" is **insufficient**: the writer preserves partial writes and
-  continues past station failures (`sync_long_horizon_hydrograph.py:602`), and the deprecated path
-  could create month-only rows. Verify expected **station coverage across `month`, `quarter` and
-  `season`**, plus the wrapper's exit status.
 
 ## Contract not to break
 
@@ -293,7 +295,8 @@ its own issue, since its scope is all periodic tasks rather than this stale comm
   (`apps/preprocessing_runoff/test/test_yearly_monthly_norms_retired.py`), retired in Phase 4 of the
   runoff work. Restoring it breaks both and revives the deprecated norm-only path.
 - Do not remove, rename or repurpose the live task types (`long_term`, `skill_recalc`,
-  `snow_norms`, `lt_recovery` — and do not drop `lt_recovery`'s two extra positional arguments). They are referenced by installed crontabs, which have **not** been inspected — treat
+  `snow_norms`, `lt_recovery` — and do not drop `lt_recovery`'s two extra positional arguments).
+  `lt_recovery` is operator-invoked, not a scheduled cron entry; the other three are scheduled. They are referenced by installed crontabs, which have **not** been inspected — treat
   them as live until they have.
 - `bin/yearly_runoff_hydrograph_aggregation.sh` reads the container's true exit status via
   `docker inspect` (`:206-213`, exits with it at `:232`) rather than the `tee` pipeline code.

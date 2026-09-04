@@ -10,12 +10,11 @@ deterministic on any org where quantile mapping fails.
 **Related**: **PREPG-009** (the snow script's own exit-0-on-total-failure). **INFRA-046** (parallel
 session, uncommitted) is the **sibling one layer out**: a gateway container failure withholds the Luigi
 marker, so `RunMLModel` / `RunAllMLModels` / `RunLongTermForecast` are blocked even when only the
-*ensemble* stage failed and none of them reads ensemble data (`pipeline_docker.py:743`/`:786`/`:2169`,
-marker `:384-400`). Same family — one over-broad failure unit — but a different mechanism in different
+*ensemble* stage failed and none of them reads ensemble data (marker logic at `:384-428`). Same family — one over-broad failure unit — but a different mechanism in different
 files: INFRA-046 is the marker/task graph, this is the in-container `&&` chain. Cross-reference, do not
 merge. **INFRA-023** owns the
-maintenance-wrapper swallowed-exit-code class — the `daily_gateway_maintenance.sh` instance and the
-full four-wrapper surface are recorded there, not here; see the signal table below.
+maintenance-wrapper swallowed-exit-code class — the gateway instances and the
+full wrapper surface are recorded there, not here; see the signal table below.
 
 ---
 

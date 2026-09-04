@@ -27,7 +27,7 @@ start_date >= 2026-08-29   ->  "No reanalysis data available for the given HRU c
 ```
 
 **No start date works.** Until 2026-09-01 is restored, no SAPPHIRE deployment can fetch
-operational snow at all — for any HRU or variable. We cannot work around it client-side.
+operational snow from this endpoint at all — for any HRU or variable.
 
 The day is genuinely absent rather than erroring. Probing `snow-forecast` directly and recording
 HTTP status and body (HRU `00003`, SWE):
@@ -50,16 +50,17 @@ only the client exception, not the HTTP status, so for the ensemble endpoint we 
 skip an interior missing day instead of refusing the range, a single lost run would degrade one
 day of output rather than stop ingestion entirely.
 
-## 2. Ensemble forecasts published without temperature, roughly one day in four
+## 2. Ensemble forecasts published without temperature on some dates
 
 **The ask: is precipitation-without-temperature expected, and can those days be completed?**
 
-Ensemble forecast files are published for some dates with **precipitation but no temperature**,
-and the temperature is **never added later** — a re-fetch on a later day returns the same
-incomplete set, so the gap is permanent rather than a publication delay.
+Ensemble forecast files are published for some dates with **precipitation but no temperature**.
+The August dates were **still incomplete when re-probed on 2026-09-04**, days after publication, so
+this is not simply a publication delay — but we have not watched a single date long enough to say
+temperature is *never* added, and we are not claiming that.
 
-Dates observed: **2026-09-03, 2026-08-30, 2026-08-28, 2026-08-25** — roughly one day in four over
-the sampled period.
+Dates observed: **2026-09-03, 2026-08-30, 2026-08-28, 2026-08-25**. We are not putting a rate on
+it — those are the dates we have checked, not a measured frequency over a defined period.
 
 This is a positive observation, not an inference from a failure. On every request the endpoint
 returned **HTTP 200 with a well-formed body**; the returned file list simply contained only a

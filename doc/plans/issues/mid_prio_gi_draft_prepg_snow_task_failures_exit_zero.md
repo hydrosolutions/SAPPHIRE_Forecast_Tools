@@ -43,83 +43,21 @@ The **upstream cause is not ours** — the SAPPHIRE Data Gateway reports operati
 unavailable from the requested date. That is a data-availability condition to report, not a
 bug to fix here. The defect is that it is reported as success.
 
-> **Recurrence + corrected diagnosis (2026-09-04).** The condition recurred, and measuring it
-> properly changed what it *is*. It is **not** a blanket outage: a live sweep of the last 26 days
-> (`snow-forecast` endpoint, one HRU per org) found **24 of 26 days present**, with exactly two
-> absent — **2026-09-01** and the current day, identically for kghm and tjhm. So there is a
-> **one-day hole at 2026-09-01**, plus today not yet published.
+> **Recurrence, 2026-09-04 — what an implementer needs from it.** The condition recurred and is
+> **still active**: a one-day upstream hole at 2026-09-01 that makes `get_operational` unusable for
+> every deployment, because it is all-or-nothing over its range and a spin-up precondition blocks
+> recent start dates, so no `start_date` works. **Two consequences for this fix.** (1) It is
+> testable against a live failure today — 6/6 tasks error and the process still exits 0, re-verified
+> the same day. (2) The condition is recurring, not a one-off (an earlier instance on 2026-08-09
+> resolved by 08-17), so an exit contract must not assume "upstream has no data yet" is short-lived.
 >
-> **Why one missing day costs the entire fetch.** `get_operational` accepts only a `start_date` and
-> returns all-or-nothing from there through today+forecast, so an interior hole voids the whole
-> response. The window cannot be shrunk past it, because a separate spin-up precondition rejects
-> recent start dates. Measured on kghm/SWE:
+> **Probe trap if you re-measure:** `_call_api` raises a bare `ValueError` on *any* non-200
+> (`client_base.py:59-60`), so recording exception types cannot separate "no data" from a 4xx/5xx —
+> capture status codes. Same shape as PREPQ-014.
 >
-> ```
-> start <= 2026-08-28  ->  blocked by the 2026-09-01 hole
-> start >= 2026-08-29  ->  blocked by spin-up ("No reanalysis data available for the given HRU code and date!")
-> ```
->
-> **No start date works** — no viable window remains between the two constraints.
->
-> **Measurement scope, so the generalization is auditable.** Measured directly: (i) the start-date
-> squeeze above, on **kghm/SWE only**; (ii) `get_operational` failing on 2026-09-04 for **all four
-> HRUs x three variables across both orgs**, every one naming 2026-09-01 as the first missing day;
-> (iii) the 26-day availability sweep, on **one HRU per org**. From (ii) the hole is org- and
-> variable-independent, and the endpoint contract in (i) is not parameterised by HRU or variable —
-> so the conclusion that operational snow is currently unfetchable for every HRU, variable and
-> deployment is a **well-supported inference, not a per-HRU measurement**. Treat it as an upstream
-> escalation; worth telling the operators that one absent run has that blast radius.
->
-> **The 2026-09-01 hole is real, and the evidence is status-code level.** Re-probed capturing HTTP
-> status and body rather than "the client raised" (kghm, snow-forecast, SWE):
->
-> ```
-> 2026-08-29/30/31   HTTP 200  data returned
-> 2026-09-01         HTTP 400  {"message": "No data found for the given HRU code, date and parameter!"}
-> 2026-09-02/03      HTTP 200  data returned
-> 2026-09-04 (today) HTTP 400  same "No data found" body
-> ```
->
-> The 400 carries an explicit semantic message, so this is the **server asserting absence**, not an
-> unexplained failure.
->
-> **Beware the collapsed-exception trap when re-measuring** — it bit both sessions that looked at
-> this. `sapphire_dg_client`'s `_call_api` raises a bare `ValueError` on **any** non-200
-> (`client_base.py:59-60`), so a probe that records only the exception cannot tell "no data
-> published" from a 4xx/5xx. The 26-day availability sweep quoted above was written that way and
-> establishes only *"did not return 200"* for its two absent days; the status/body probe here is what
-> upgrades 09-01 to demonstrated absence. **Identical in shape to the iEasyHydro SDK trap documented
-> in PREPQ-014** — different SDK, same failure to distinguish error from absence.
->
-> **Cross-product corroboration, stated at its true strength.** A parallel session probed the Data
-> Gateway **ensemble links** endpoint and found 2026-09-01 also failing there — evidence that 09-01
-> is a gap in the gateway's own production for that day rather than a snow-product fault. That probe
-> recorded exception type only, so it establishes *non-200*, not absence. Their 2026-08-31 ensemble
-> failure is an **unexplained non-200 and must not be read as absence** — snow on 08-31 returned
-> **HTTP 200 with data** (above), so whatever happened there is ensemble-specific. Escalate 09-01 as
-> the day both products lost; do not claim a two-day outage.
->
-> **Escalation drafted**: [`doc/prod/dg_data_gaps_report_2026-09.md`](../../prod/dg_data_gaps_report_2026-09.md)
-> — covers the 09-01 backfill request, the ensemble temperature gap, and the client bug in one
-> report. Not yet sent.
->
-> **Not a total data absence.** The same days are retrievable through other endpoints: the
-> 2026-09-03 forecast returned all three variables for both orgs with real non-zero values covering
-> 2026-09-03→2026-09-12. `get_snow_reanalysis` additionally supports `end_date`. A fallback able to
-> ride out a one-day hole is therefore *possible* — recorded as a known recovery path if this
-> recurs, **not** proposed as work here.
->
-> **Operational exposure**: tjhm ingested a forecast tail on 2026-09-01 reaching 2026-09-09, so it
-> coasts until then; kghm was already stale at 2026-08-29.
->
-> The defect this issue describes is unchanged and was re-verified the same day: a direct run
-> against kghm logged 6/6 `Error getting snow data` pairs and **exited 0**. The 2026-08-09 instance
-> resolving on its own by 2026-08-17 is evidence about one occurrence, not about the class.
->
-> **Probe trap, if anyone re-measures this.** `get_operational` takes only `start_date`. A start date
-> within roughly five days of today returns the *spin-up* error above, which is easily misread as
-> the outage. Only a production-shaped call (start ~365 days back) reproduces the real
-> `not available for date` message.
+> Full evidence, the cross-product picture and the upstream escalation live in
+> [`doc/prod/dg_data_gaps_report_2026-09.md`](../../prod/dg_data_gaps_report_2026-09.md); they are
+> not restated here.
 
 ## Why "6 tasks complete" is the wrong summary
 
