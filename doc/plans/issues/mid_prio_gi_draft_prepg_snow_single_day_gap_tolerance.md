@@ -1,6 +1,6 @@
 ## Snow ingestion cannot tolerate a single missing upstream day (PREPG-025)
 
-**Status**: Draft (2026-09-04)
+**Status**: Draft (2026-09-04) — **decision settled; blocked on the dg-client re-pin**
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`)
 **Priority**: **Medium** — recurring, and each occurrence stops snow ingestion on every deployment
 until the gateway backfills the day.
@@ -101,10 +101,11 @@ participates in derived values for a year afterwards.
 
 **Decision — log, do not record in the database.** `SnowBase` has no provenance field, and adding
 one would be a schema change in colleague-owned service code for a rare event. Log the target date,
-source issue date and lead. **This is an explicit acceptance, and the owner should confirm it:**
-substituted values will feed norms, statistics and the following year's `previous` band, and
-logging makes that auditable rather than preventing it. If that is not acceptable, the alternative
-is to leave the day absent rather than substitute — a different issue, not a variant of this one.
+source issue date and lead. **ACCEPTED by the owner 2026-09-04: fill and log.** The rationale is explicit — a single-day
+upstream gap must not cause a system outage, and that is worth more than keeping substituted values
+out of the derived numbers. So substituted values *will* feed norms, statistics and the following
+year's `previous` band, and the log is what makes that auditable. Do not re-open this as a defect
+later: it is a deliberate trade. The rejected alternative was leaving the day absent.
 
 ## Acceptance criteria
 
