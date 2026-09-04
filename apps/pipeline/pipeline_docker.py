@@ -2010,7 +2010,13 @@ class YearlySkillRecalculation(DockerTaskBase):
 
 
 class YearlySnowNormRecalculation(DockerTaskBase):
-    """Annual snow norm recalculation from historical reanalysis CSVs."""
+    """Annual snow norm recalculation from historical reanalysis CSVs.
+
+    Runs in the ``sapphire-prepgateway`` image, not ``sapphire-pipeline``:
+    the ``recalculate_snow_norms.py`` script it invokes lives in
+    ``apps/preprocessing_gateway/`` and is only copied into, and only has
+    its dependencies installed in, the gateway image.
+    """
 
     docker_logs_file_path = (
         f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}"
@@ -2028,7 +2034,7 @@ class YearlySnowNormRecalculation(DockerTaskBase):
 
         status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
-                image_name="sapphire-pipeline",
+                image_name="sapphire-prepgateway",
                 container_name="maintenance-snow-norms",
                 volumes=volumes,
                 environment=environment,

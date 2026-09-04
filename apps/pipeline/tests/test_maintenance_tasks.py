@@ -299,6 +299,33 @@ class TestPeriodicMaintenanceTasks:
         path = task.output().path
         assert "maintenance_snow_norms_" in path
 
+    def test_yearly_snow_norm_uses_prepgateway_image(self, mock_env, monkeypatch):
+        """YearlySnowNormRecalculation must run in sapphire-prepgateway.
+
+        recalculate_snow_norms.py lives in apps/preprocessing_gateway/, which
+        is only copied into (and only has its dependencies installed in) the
+        sapphire-prepgateway image, not sapphire-pipeline.
+        """
+        from pipeline_docker import YearlySnowNormRecalculation
+
+        captured = {}
+
+        def fake_run_docker_container(**kwargs):
+            captured.update(kwargs)
+            return "container_id", 0, "logs"
+
+        def fake_execute(func):
+            func(1)
+            return "Success", {}
+
+        task = YearlySnowNormRecalculation()
+        monkeypatch.setattr(task, "run_docker_container", fake_run_docker_container)
+        monkeypatch.setattr(task, "execute_with_retries", fake_execute)
+        task.run()
+
+        assert captured["image_name"] == "sapphire-prepgateway"
+        assert captured["command"] == ["uv", "run", "recalculate_snow_norms.py"]
+
 
 class TestRunPeriodicMaintenanceWorkflow:
     """Test RunPeriodicMaintenanceWorkflow parameterized orchestrator."""
@@ -350,3 +377,25 @@ class TestRunPeriodicMaintenanceWorkflow:
 
         task = RunPeriodicMaintenanceWorkflow(task_type="long_term")
         assert "long_term" in task.output().path
+
+
+class TestNoTaskUsesPipelineImage:
+    """Guard against the sapphire-pipeline image being (re)used by mistake.
+
+    The sapphire-pipeline image only contains apps/pipeline and
+    apps/iEasyHydroForecast (apps/pipeline/Dockerfile), so any maintenance
+    task that requests it can only run scripts from those two directories.
+    Every module-specific task (snow norms, skill recalc, gateway, prep
+    runoff, ...) needs its own module image instead. This is a source-level
+    scan rather than an import-time check because the regression class is a
+    literal string typo/copy-paste, which a scan catches cheaply and
+    deterministically without instantiating every task.
+    """
+
+    def test_no_image_name_is_sapphire_pipeline(self):
+        """No task in pipeline_docker.py may request image_name='sapphire-pipeline'."""
+        module_path = os.path.join(os.path.dirname(__file__), "..", "pipeline_docker.py")
+        with open(module_path) as f:
+            source = f.read()
+
+        assert 'image_name="sapphire-pipeline"' not in source
