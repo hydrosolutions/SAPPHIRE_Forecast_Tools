@@ -158,6 +158,45 @@ Consequence for this issue — **note the asymmetry, it decides the fix**:
   `run_periodic_maintenance.sh`: `long_term`, `skill_recalc`, `snow_norms`. Those report success to
   cron regardless of outcome, and that is not fixed by anything in this issue.
 
+### The same defect covers the whole **daily** cron surface (measured 2026-09-04)
+
+Found while filing PREPG-024. The shape is not confined to `run_periodic_maintenance.sh`: **all four
+`daily_*_maintenance.sh` wrappers capture `CONTAINER_EXIT_CODE`, log a WARNING, and then end on
+`echo`** — so each exits 0 on a failed container. Enumerated by checking every `bin/*.sh` that
+mentions `CONTAINER_EXIT_CODE` for a matching `exit`/`return`:
+
+| Wrapper | Propagates? |
+|---|---|
+| `bin/daily_gateway_maintenance.sh` (`:120-141`) | **no — exits 0** |
+| `bin/daily_linreg_maintenance.sh` | **no — exits 0** |
+| `bin/daily_postprc_maintenance.sh` | **no — exits 0** |
+| `bin/daily_preprunoff_maintenance.sh` | **no — exits 0** |
+| `bin/bimonthly_long_term_postprocessing.sh` | yes |
+| `bin/initialize_site_backfill.sh` | yes |
+| `bin/yearly_runoff_hydrograph_aggregation.sh` | yes |
+| `bin/yearly_skill_metrics_recalculation.sh` | yes (fixed under migration P6) |
+| `bin/yearly_snow_norm_recalculation.sh` | yes (fixed under PREPG-020) |
+
+The yearly/bimonthly half has been fixed one script at a time; **the daily half has not been touched
+at all**. That is the higher-exposure half — it runs every day, on every deployment.
+
+The one-line fix is the same one already applied to the yearly scripts:
+`exit "$CONTAINER_EXIT_CODE"` at the end. Verification that it is safe must confirm the cron entries
+do not treat a non-zero wrapper status as a reason to stop scheduling, and that no wrapper is invoked
+by another script that relies on its current exit 0.
+
+**Interaction with P-007** (now fixed): container exit codes reaching these wrappers are only
+meaningful because `run_docker_container` stopped discarding `StatusCode`. Before that fix these
+wrappers had little to propagate; after it, they are the remaining layer that drops the signal.
+
+**Related**: **PREPG-024** records the `daily_gateway_maintenance.sh` instance in its per-path signal
+table and explicitly scopes the fix out of that issue — this is where the class belongs.
+
+**Note on `| tee`**: separate from propagation, several of these capture `EXIT_CODE=$?` after a
+`| tee`, which yields *tee's* status. A `docker inspect` fallback masks it in practice. PREPG-020
+carries that sub-defect forward for `yearly_runoff_hydrograph_aggregation.sh:214-220`; it is **not**
+the same thing as failing to propagate, and that note is not stale.
+
 An earlier draft of this section claimed a corrected crontab would still hide failures. That was
 wrong and contradicted this issue's own recommended fix.
 
