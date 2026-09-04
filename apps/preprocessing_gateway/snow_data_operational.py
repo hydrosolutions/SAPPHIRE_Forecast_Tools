@@ -278,6 +278,219 @@ def _check_snow_consistency(csv_data: pd.DataFrame, snow_type: str, hru_code: st
     return is_consistent
 
 
+def _assemble_snow_forecast_fallback(
+    client, hru, variable, dg_path, existing_codes=None, reference_date=None
+):
+    """Assemble the recent operational snow window from per-issue-date
+    snow-forecast calls (PREPG-025).
+
+    Triggered only when `client.get_operational` fails with the "not
+    available for date" response: that call is all-or-nothing from its
+    `start_date` to the forecast horizon, so a single missing interior
+    day voids its entire response. Each snow-forecast issuance instead
+    covers a fixed `dg_utils.SNOW_FORECAST_WINDOW_DAYS`-day window
+    forward from its issue date, so consecutive issuances overlap and a
+    single absent issue date is covered by its neighbours.
+
+    Overlap resolution: for each (target date, code), the value from
+    the newest issue date that is not after that target date (shortest
+    lead) is kept -- see the sort/drop_duplicates below. Completeness
+    is validated before this function returns anything to the caller:
+    an incomplete window returns None so the caller writes nothing.
+    The required horizon is sized so yesterday's issuance ALONE can
+    satisfy it -- today's issuance is routinely still absent when this
+    runs, so completeness must not depend on it being present. The
+    returned window is also floored at yesterday: fetched issuances can
+    reach back further than that (down to `today -
+    SNOW_FORECAST_WINDOW_DAYS`), but rows older than yesterday are
+    dropped before being returned so a forecast-derived value can never
+    overwrite already-written history for an older date.
+
+    Args:
+        client: A `SapphireSnowModelClient` (or compatible) instance.
+        hru: HRU code.
+        variable: Snow variable, e.g. "SWE", "HS", "RoF".
+        dg_path: Local directory to download issue-date files into.
+        existing_codes: Set of codes already known for this
+            HRU/variable (e.g. from the existing CSV), used to define
+            the required coverage. Required: if None or empty, there is
+            no trustworthy baseline for which codes must be present --
+            a fresh file would otherwise validate itself against
+            whatever codes happen to come back -- so the fallback
+            refuses outright rather than assembling a window it cannot
+            actually check for completeness.
+        reference_date: Reference date ("today") the required window
+            and issue-date candidates are computed relative to. If
+            None, uses `pd.Timestamp.today()` (the Forecast Date Rule:
+            callers/tests that need determinism pass this explicitly
+            rather than relying on wall-clock time).
+
+    Returns:
+        A DataFrame shaped like `dg_utils.transform_snow_data`'s output
+        (date, code, {variable}[, elevation bands]) covering the
+        required window, or None if the required coverage could not be
+        assembled (including: no existing_codes baseline was given).
+    """
+    if not existing_codes:
+        logger.error(
+            "  PREPG-025 fallback: no existing codes known for HRU %s, "
+            "%s (fresh CSV) -- refusing to assemble a fallback window "
+            "with no trustworthy baseline for which codes are "
+            "required. Nothing written.",
+            hru,
+            variable,
+        )
+        return None
+
+    window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+    if reference_date is not None:
+        today = pd.Timestamp(reference_date).normalize()
+    else:
+        today = pd.Timestamp.today().normalize()
+
+    # Required target window: yesterday (needed for the API's
+    # operational write, which filters to date >= yesterday) through
+    # the forecast horizon YESTERDAY's issuance alone can supply
+    # (yesterday .. yesterday + window - 1 == today + window - 2).
+    # Deliberately NOT today + window - 1: that horizon is reachable
+    # only from today's own issuance, which is routinely absent early
+    # in the day (measured 2026-09-04) -- requiring it would fail
+    # completeness on an ordinary morning. Today's issuance, when it IS
+    # present, still contributes its extra day forward; it just isn't
+    # required.
+    required_start = today - pd.Timedelta(days=1)
+    required_end = today + pd.Timedelta(days=window - 2)
+    required_dates = list(pd.date_range(required_start, required_end, freq="D"))
+
+    # Issue dates to try: far enough back that every required target
+    # date is reachable by at least one issuance's forward window, even
+    # if the single most recent issue date is itself the one missing.
+    issue_dates = [today - pd.Timedelta(days=d) for d in range(window, -1, -1)]
+
+    fetched_frames = []
+    for issue_date in issue_dates:
+        issue_date_str = issue_date.strftime("%Y-%m-%d")
+        try:
+            outpath = dg_utils.fetch_snow_forecast_for_issue_date(
+                client, hru, variable, issue_date_str, dg_path
+            )
+        except Exception as e:
+            if dg_utils.is_snow_forecast_no_data_error(e):
+                logger.info(
+                    "  PREPG-025 fallback: no snow-forecast data for issue "
+                    "date %s (HRU %s, %s) -- expected, relying on "
+                    "neighbouring issue dates.",
+                    issue_date_str,
+                    hru,
+                    variable,
+                )
+            else:
+                logger.warning(
+                    "  PREPG-025 fallback: could not fetch issue date %s (HRU %s, %s): %s",
+                    issue_date_str,
+                    hru,
+                    variable,
+                    dg_utils.redact_api_key(str(e)),
+                )
+            continue
+
+        try:
+            df_raw = pd.read_csv(outpath)
+        except Exception as e:
+            logger.warning(
+                "  PREPG-025 fallback: could not read downloaded file %s "
+                "for issue date %s (HRU %s, %s): %s",
+                outpath,
+                issue_date_str,
+                hru,
+                variable,
+                e,
+            )
+            continue
+
+        df_issue = dg_utils.transform_snow_data(df_raw, variable)
+        df_issue["date"] = pd.to_datetime(df_issue["date"])
+        df_issue["_issue_date"] = issue_date
+        fetched_frames.append(df_issue)
+
+    if not fetched_frames:
+        logger.error(
+            "  PREPG-025 fallback: no snow-forecast issue dates returned "
+            "data for HRU %s, %s; cannot assemble a fallback window.",
+            hru,
+            variable,
+        )
+        return None
+
+    combined = pd.concat(fetched_frames, ignore_index=True)
+
+    # Deterministic overlap resolution. Every row's date already falls
+    # within its own issuance's forward window, so date >= _issue_date
+    # always holds -- "newest issuance not after that target date" is
+    # therefore just "largest _issue_date" within each (date, code)
+    # group. Sorting ascending by issue date and keeping the LAST
+    # duplicate per (date, code) picks exactly that (shortest lead).
+    # This happens before any of these rows join the existing
+    # date/code-only merge downstream.
+    combined = combined.sort_values(by=["date", "code", "_issue_date"])
+    deduped = combined.drop_duplicates(subset=["date", "code"], keep="last")
+
+    # Floor at required_start (yesterday). Candidate issue dates reach
+    # back to `today - window`, so `deduped` can contain rows older
+    # than the required window -- e.g. today-10 .. today-2 -- purely as
+    # a side effect of how far back issuances were tried to guarantee
+    # overlap. Those are forecast-derived values for dates that already
+    # have real (or previously substituted) history in the existing
+    # CSV; downstream, fallback rows are concatenated after the
+    # existing CSV and win drop_duplicates(keep="last"), so an
+    # unfiltered row here would silently overwrite that history with a
+    # stale same-day forecast. No upper cap: forward forecast dates are
+    # legitimate and the primary get_operational path writes them too,
+    # so they cannot overwrite history the same way.
+    deduped = deduped[deduped["date"] >= required_start]
+
+    # Log every substitution: HRU, variable, target date, source issue
+    # date and lead.
+    for _, row in deduped.iterrows():
+        lead_days = (row["date"] - row["_issue_date"]).days
+        logger.info(
+            "  PREPG-025 fallback substitution: HRU %s, %s, code %s, "
+            "target date %s <- issue date %s (lead %d day(s))",
+            hru,
+            variable,
+            row["code"],
+            row["date"].date(),
+            row["_issue_date"].date(),
+            lead_days,
+        )
+
+    # Validate completeness BEFORE this data reaches the write path. A
+    # non-empty but partial window must not count as success.
+    # existing_codes is guaranteed non-empty here (the early guard
+    # above refuses the fallback otherwise), so it -- not whatever
+    # codes happen to be in `deduped` -- is the required set.
+    required_codes = sorted(existing_codes)
+    have_pairs = set(zip(deduped["date"], deduped["code"], strict=False))
+    missing_pairs = [
+        (d, c) for d in required_dates for c in required_codes if (d, c) not in have_pairs
+    ]
+    if missing_pairs:
+        preview = ", ".join(f"({d.date()}, {c})" for d, c in missing_pairs[:10])
+        more = f" (+{len(missing_pairs) - 10} more)" if len(missing_pairs) > 10 else ""
+        logger.error(
+            "  PREPG-025 fallback: incomplete window for HRU %s, %s -- "
+            "%d required (date, code) pairs missing: %s%s. Writing nothing.",
+            hru,
+            variable,
+            len(missing_pairs),
+            preview,
+            more,
+        )
+        return None
+
+    return deduped.drop(columns=["_issue_date"])
+
+
 def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
     """
     Get snow data for a given HRU and variable from the Sapphire Data
@@ -324,24 +537,52 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
             hru_code=hru, date=date, parameter=variable, directory=dg_path
         )
     except Exception as e:
-        logger.error(
-            "Error getting snow data from Data Gateway for HRU %s, %s: %s",
+        if not dg_utils.is_snow_operational_gap_error(e):
+            logger.error(
+                "Error getting snow data from Data Gateway for HRU %s, %s: %s",
+                hru,
+                variable,
+                dg_utils.redact_api_key(str(e)),
+            )
+            return False
+
+        # PREPG-025: get_operational is all-or-nothing from its
+        # start_date to the forecast horizon, so a single missing
+        # interior day voids the entire response. Fall back to
+        # assembling the recent window from per-issue-date
+        # snow-forecast calls, whose overlapping windows cover a
+        # single absent issue date.
+        logger.warning(
+            "Operational snow data gap for HRU %s, %s: %s. Falling back "
+            "to per-issue-date snow-forecast assembly (PREPG-025).",
             hru,
             variable,
             dg_utils.redact_api_key(str(e)),
         )
-        return False
+        existing_codes = set(old_dataframe["code"].astype(str)) if not old_dataframe.empty else None
+        df_transformed = _assemble_snow_forecast_fallback(
+            client, hru, variable, dg_path, existing_codes=existing_codes
+        )
+        if df_transformed is None:
+            logger.error(
+                "Fallback snow-forecast assembly could not cover the "
+                "required window for HRU %s, %s; nothing written.",
+                hru,
+                variable,
+            )
+            return False
+    else:
+        # Read the downloaded data
+        try:
+            df = pd.read_csv(outpath)
+        except Exception as e:
+            logger.error("Error reading downloaded file %s: %s", outpath, e)
+            return False
 
-    # Read the downloaded data
-    try:
-        df = pd.read_csv(outpath)
-    except Exception as e:
-        logger.error("Error reading downloaded file %s: %s", outpath, e)
-        return False
+        # Transform the data
+        df_transformed = dg_utils.transform_snow_data(df, variable)
+        df_transformed["date"] = pd.to_datetime(df_transformed["date"])
 
-    # Transform the data
-    df_transformed = dg_utils.transform_snow_data(df, variable)
-    df_transformed["date"] = pd.to_datetime(df_transformed["date"])
     logger.info(
         "  Data Gateway returned %d rows, dates %s to %s",
         len(df_transformed),
