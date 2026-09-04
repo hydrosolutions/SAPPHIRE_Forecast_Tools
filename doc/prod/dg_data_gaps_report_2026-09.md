@@ -58,8 +58,28 @@ Ensemble forecast files are published for some dates with **precipitation but no
 and the temperature is **never added later** — a re-fetch on a later day returns the same
 incomplete set, so the gap is permanent rather than a publication delay.
 
-Dates observed: **2026-09-03, 2026-08-30, 2026-08-28, 2026-08-25** — roughly one day in four
-over the sampled period.
+Dates observed: **2026-09-03, 2026-08-30, 2026-08-28, 2026-08-25** — roughly one day in four over
+the sampled period.
+
+This is a positive observation, not an inference from a failure. On every request the endpoint
+returned **HTTP 200 with a well-formed body**; the returned file list simply contained only a
+`_tp.csv` entry and no `_2t.csv`. Re-probed capturing HTTP status across **6 ensemble members
+(1, 5, 13, 27, 44, 50) x both configured HRUs x the four dates — 48 requests**:
+
+```
+2026-09-03   both HRUs, 6 members each  ->  ['tp.csv']   HTTP 200
+2026-08-30   both HRUs, 6 members each  ->  ['tp.csv']   HTTP 200
+2026-08-28   both HRUs, 6 members each  ->  ['tp.csv']   HTTP 200
+2026-08-25   both HRUs, 6 members each  ->  ['tp.csv']   HTTP 200
+```
+
+Not one `_2t.csv` on any member, on either HRU, on any of the four dates.
+
+For **2026-09-03 the observation is exhaustive**: that day's gateway run downloaded the full set
+and left **50 `_tp.csv` files and zero `_2t.csv`**, covering all 50 members directly. For the three
+August dates the coverage is a **6-of-50 member sample per HRU** — enough to establish that
+temperature is absent rather than sparse, but not a per-member census. We can extend it to all 50
+members on request; we have not, because it would not change the ask.
 
 For us this is a hard stop, not a degradation: our quantile-mapping step needs both variables and
 exits on the missing one, which is what an operator sees:
@@ -104,9 +124,13 @@ Stated so you can weigh each claim:
 - Items 1 and 3, and the status/body probes: measured directly by SAPPHIRE Forecast Tools on
   2026-09-04 against `data-gateway.ieasyhydro.org`, both the kghm and tjhm HRU sets.
 - Item 2, and the ensemble-endpoint result in item 1: measured by a parallel SAPPHIRE session on
-  2026-09-04. Our own module logs independently show the temperature error on 2026-09-03; our
-  local runs are sporadic rather than daily, so they neither confirm nor contradict the August
-  dates — those rest on the endpoint probe.
+  2026-09-04. Item 2's four dates are **verified by direct HTTP probe** (48 requests, all HTTP 200,
+  bodies listing precipitation only), not inferred from a failure. The exhaustive 2026-09-03
+  on-disk observation was made live during that day's run; it is **not re-checkable now**, because
+  the download directory is cleared at the start of every gateway run. Our own module logs
+  independently show the temperature error on 2026-09-03. Our local runs are sporadic rather than
+  daily, so they neither confirm nor contradict the three August dates; those rest on the probe
+  above, which is reproducible.
 - One correction we made before sending: an earlier reading of this incident described a blanket
   outage from 2026-09-01 onward. That was wrong — 24 of the 26 preceding days are present. Only
   2026-09-01 is missing (plus the current day, which is normal publication timing). A second
