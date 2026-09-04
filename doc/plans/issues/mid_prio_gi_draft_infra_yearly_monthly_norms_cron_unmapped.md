@@ -120,7 +120,19 @@ def test_monthly_norms_dispatcher_key_is_gone():
 with a sibling asserting `YearlyMonthlyNormsRecalculation` is absent. The owner decision is recorded
 in `doc/plans/issues/review_gi_draft_runoff_long_horizon_hydrograph.md`.
 
-**So the fix is to correct the documentation, not the code.** Adding a `monthly_norms` task type
+> **Contract correction (2026-09-04).** The passages above describe **three** task types; trunk now
+> supports **four**. `run_periodic_maintenance.sh:51` already advertises
+> `long_term, skill_recalc, snow_norms, lt_recovery`, and `lt_recovery` takes **two extra
+> positional arguments** (mode, ISO issue date) with its own validation and `exit 1` paths
+> (`:60-74`). It is also the one branch that already propagates its status
+> (`COMPOSE_STATUS` at `:169`, `exit` at `:192`). **An implementer must validate against all four
+> and preserve `lt_recovery`'s argument handling** — a three-type allow-list would reject a working
+> recovery path. Two consequences for this issue: the documentation half is done (DOC-007), so the
+> remaining work is **code** — the wrapper still accepts a retired name because it only checks for
+> an *empty* argument; and the historical three-type descriptions below are kept as the record of
+> what was true at filing, not as the contract to build against.
+
+**So the documentation half is fixed (DOC-007); what remains is the code.** Adding a `monthly_norms` task type
 would reintroduce intentionally retired code and break a locked regression test. Only reverse this
 if the owner explicitly reverses the Phase 4 decision.
 
@@ -258,7 +270,8 @@ its own issue, since its scope is all periodic tasks rather than this stale comm
   the replacement script. *Without the exit-code assertion the test passes on today's code.*
 - **The valid-type list is not duplicated.** The message at `:26` and the new validation must read
   from one source, or they will drift apart and the error will lie.
-- **The three live types still work** — `long_term`, `skill_recalc`, `snow_norms` each still reach
+- **All four live types still work** — `long_term`, `skill_recalc`, `snow_norms` and `lt_recovery`
+  (the last with its two extra arguments preserved) each still reach
   Luigi. A validation that rejects a working task is worse than the bug.
 - **Stale references are gone** from `doc/deployment.md`, the old AWS plan, the Compose comment and
   `apps/pipeline/README`. **The two production checklists are already correct — do not "fix" them**
@@ -280,7 +293,7 @@ its own issue, since its scope is all periodic tasks rather than this stale comm
   (`apps/preprocessing_runoff/test/test_yearly_monthly_norms_retired.py`), retired in Phase 4 of the
   runoff work. Restoring it breaks both and revives the deprecated norm-only path.
 - Do not remove, rename or repurpose the live task types (`long_term`, `skill_recalc`,
-  `snow_norms`). They are referenced by installed crontabs, which have **not** been inspected — treat
+  `snow_norms`, `lt_recovery` — and do not drop `lt_recovery`'s two extra positional arguments). They are referenced by installed crontabs, which have **not** been inspected — treat
   them as live until they have.
 - `bin/yearly_runoff_hydrograph_aggregation.sh` reads the container's true exit status via
   `docker inspect` (`:206-213`, exits with it at `:232`) rather than the `tee` pipeline code.
