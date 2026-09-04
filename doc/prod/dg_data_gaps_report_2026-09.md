@@ -26,8 +26,9 @@ start_date <= 2026-08-28   ->  "Operational data for HRU 00003 is not available 
 start_date >= 2026-08-29   ->  "No reanalysis data available for the given HRU code and date!"   (spin-up)
 ```
 
-**No start date works.** Until 2026-09-01 is restored, no SAPPHIRE deployment can fetch
-operational snow from this endpoint at all — for any HRU or variable.
+**No start date works.** Until 2026-09-01 is restored, this endpoint returns nothing for **both
+deployments we tested (kghm and tjhm) across all their configured HRU/variable combinations**. We
+have not tested other deployments, but nothing in the endpoint's behaviour looks HRU-specific.
 
 The day is genuinely absent rather than erroring. Probing `snow-forecast` directly and recording
 HTTP status and body (HRU `00003`, SWE):
@@ -41,10 +42,11 @@ HTTP status and body (HRU `00003`, SWE):
 Everything on both sides of 09-01 is present and healthy, so this looks like one lost or skipped
 run rather than an outage.
 
-**It is not snow-specific.** A probe of the **ensemble links** endpoint over 15 dates also failed
-on 2026-09-01, which suggests the gap is in that day's production generally. That probe recorded
-only the client exception, not the HTTP status, so for the ensemble endpoint we can state
-"did not return 200" rather than confirmed absence.
+**Possibly not snow-specific.** A probe of the **ensemble links** endpoint over 15 dates also
+failed on 2026-09-01. That probe recorded only the client exception, not the HTTP status, so it
+establishes a **non-200 on the same date** — not confirmed absence, and not a shared cause. We
+mention it because it may point at that day's production generally, which you can check far more
+directly than we can.
 
 **Worth considering on your side** (not a request, an observation): if `snow-operational` could
 skip an interior missing day instead of refusing the range, a single lost run would degrade one
@@ -55,9 +57,9 @@ day of output rather than stop ingestion entirely.
 **The ask: is precipitation-without-temperature expected, and can those days be completed?**
 
 Ensemble forecast files are published for some dates with **precipitation but no temperature**.
-The August dates were **still incomplete when re-probed on 2026-09-04**, days after publication, so
-this is not simply a publication delay — but we have not watched a single date long enough to say
-temperature is *never* added, and we are not claiming that.
+The August dates were **still incomplete when re-probed on 2026-09-04**, up to ten days after
+publication. We are not claiming temperature is never added — only that it had not been added by
+then.
 
 Dates observed: **2026-09-03, 2026-08-30, 2026-08-28, 2026-08-25**. We are not putting a rate on
 it — those are the dates we have checked, not a measured frequency over a defined period.
@@ -78,9 +80,9 @@ Not one `_2t.csv` on any member, on either HRU, on any of the four dates.
 
 For **2026-09-03 the observation is exhaustive**: that day's gateway run downloaded the full set
 and left **50 `_tp.csv` files and zero `_2t.csv`**, covering all 50 members directly. For the three
-August dates the coverage is a **6-of-50 member sample per HRU** — enough to establish that
-temperature is absent rather than sparse, but not a per-member census. We can extend it to all 50
-members on request; we have not, because it would not change the ask.
+August dates the coverage is a **6-of-50 member sample per HRU**: temperature was missing from
+every member we sampled, which does not by itself prove all 50 are missing. We can extend it to all
+50 on request; we have not, because it would not change the ask.
 
 For us this is a hard stop, not a degradation: our quantile-mapping step needs both variables and
 exits on the missing one, which is what an operator sees:

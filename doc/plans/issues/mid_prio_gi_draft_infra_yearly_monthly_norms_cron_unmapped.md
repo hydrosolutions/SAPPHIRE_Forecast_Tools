@@ -122,8 +122,8 @@ def test_monthly_norms_dispatcher_key_is_gone():
 with a sibling asserting `YearlyMonthlyNormsRecalculation` is absent. The owner decision is recorded
 in `doc/plans/issues/review_gi_draft_runoff_long_horizon_hydrograph.md`.
 
-> **Contract correction (2026-09-04).** The passages above describe **three** task types; trunk now
-> supports **four**. `run_periodic_maintenance.sh:51` already advertises
+> **Contract correction (2026-09-04).** Older narrative in this issue was written when there were
+> **three** task types; trunk supports **four** and the snippet above has been updated to match. `run_periodic_maintenance.sh:51` already advertises
 > `long_term, skill_recalc, snow_norms, lt_recovery`, and `lt_recovery` takes **two extra
 > positional arguments** (mode, ISO issue date) with its own validation and `exit 1` paths
 > (`:60-74`). It is also the one branch that already propagates its status
@@ -142,7 +142,7 @@ if the owner explicitly reverses the Phase 4 decision.
 
 > **Layer note, corrected 2026-09-04.** The 2026-08-21 version of this note said P-007 masks
 > ordinary task failures before this wrapper sees them. **P-007 is fixed** —
-> `pipeline_docker.py:331-335` now reads `StatusCode` with an explicit `type(raw) is int` guard — so
+> `pipeline_docker.py:331-337` now reads `StatusCode` with an explicit `type(raw) is int` guard — so
 > that layer is closed and this note no longer gates anything.
 >
 > **The layer that does still gate it is Luigi's own return codes.** `run_periodic_maintenance.sh`
@@ -154,10 +154,13 @@ if the owner explicitly reverses the Phase 4 decision.
 > is unchanged."*
 
 
-`bin/run_periodic_maintenance.sh` has **no `set -e`**, never captures the status of its
-`docker compose run` (`:82-88`), and then executes two `echo` statements (`:89-90`) before ending.
-The script's exit status is therefore the last `echo`'s — **0** — regardless of whether the Luigi
-task failed. The `trap cleanup EXIT` (`:43`) does not restore it.
+`bin/run_periodic_maintenance.sh` has **no `set -e`**. It *does* capture its `docker compose run`
+status into `COMPOSE_STATUS` (`:169`) — an earlier version of this issue said it never captures it,
+which is now wrong — but it **`exit`s that status only on the `lt_recovery` branch** (`:174-192`).
+For `long_term`, `skill_recalc` and `snow_norms` it falls through to two `echo`s, so the script's
+exit status is the last `echo`'s — **0** — regardless of whether the Luigi task failed. And because
+Luigi's `[retcode]` block is written only for `lt_recovery` (`:138-152`), `COMPOSE_STATUS` would be
+**0 anyway** for those three. Both layers, not one. The `trap cleanup EXIT` (`:43`) does not restore it.
 
 This is **not** specific to `monthly_norms`. Every periodic task routed through this wrapper —
 `long_term`, `skill_recalc`, `snow_norms` — reports success to cron whether or not it worked. The
@@ -284,8 +287,10 @@ its own issue, since its scope is all periodic tasks rather than this stale comm
 - **Do not "fix" the two production checklists — they are already correct**
   (`update_deployment_checklist.md:829`/`:832`/`:837`, `first_deploy_checklist.md:646`/`:850`).
   The documentation sweep itself is done (DOC-007); it is not a criterion for this fix.
-- Scoped to the **03:00 1 January runoff slot** and to arguments passed to
-  `run_periodic_maintenance.sh`. Do **not** pull unrelated schedule drift (e.g. the snow date) in.
+- **This issue has two halves and both must land**: (a) task-type validation in
+  `run_periodic_maintenance.sh`, and (b) exit propagation across the six swallowing wrappers,
+  including the Luigi `[retcode]` layer where it applies. Delivering only (a) leaves every wrapper
+  failure invisible. Do **not** pull unrelated schedule drift (e.g. the snow date) in.
 
 ## Contract not to break
 
