@@ -1,13 +1,16 @@
 ## Snow ingestion cannot tolerate a single missing upstream day (PREPG-025)
 
-**Status**: Draft (2026-09-04) — **decision settled; blocked on the dg-client re-pin**
+**Status**: **IMPLEMENTED 2026-09-04** — commits `87211ffe`, `ed560b4d`, `b1234e77`. Not blocked:
+the dg-client bug is worked around by a local wrapper (see "Blocked on the client fix" below, which
+records why waiting was rejected). Deployed order was PREPG-025 -> PREPG-009 -> PREPG-024.
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`)
 **Priority**: **Medium** — recurring, and each occurrence stops snow ingestion on every deployment
 until the gateway backfills the day.
 **Labels**: `preprocessing_gateway`, `snow`, `robustness`
 **Found**: 2026-09-04, while diagnosing the 2026-09-01 gap.
-**Related**: **PREPG-009** (the run reports success while fetching nothing — fix that first, it is
-what makes this visible). Escalation for the underlying gap:
+**Related**: **PREPG-009** (the run reports success while fetching nothing). **Implemented AFTER
+this issue, not before** — the confirmed order is 025 -> 009 -> 024, because only this one restores
+data; see "Sequencing" below. An earlier revision of this line said to fix 009 first and is wrong. Escalation for the underlying gap:
 [`doc/prod/dg_data_gaps_report_2026-09.md`](../../prod/dg_data_gaps_report_2026-09.md).
 
 ---
