@@ -112,6 +112,25 @@ out of the derived numbers. So substituted values *will* feed norms, statistics 
 year's `previous` band, and the log is what makes that auditable. Do not re-open this as a defect
 later: it is a deliberate trade. The rejected alternative was leaving the day absent.
 
+## Sequencing — build this FIRST, and validate before writing
+
+Order confirmed by out-of-loop review 2026-09-04: **PREPG-025 → PREPG-009 → PREPG-024 →
+INFRA-023.** This one goes first because it is the only one of the four that **restores data**; the
+others make failure visible. PREPG-009 first would merely turn the outage red and withhold the
+Luigi marker without bringing snow back, and PREPG-024 restores *execution* after a quantile-mapping
+failure but cannot overcome an active fetch hole.
+
+**The constraint that makes 025-before-009 safe: validate completeness BEFORE the existing
+CSV/API write path.** A complete window writes and logs its substitutions; an incomplete one returns
+`False` and writes **nothing**. That matters because until PREPG-009 lands, `main()` only logs a
+`False` result and still exits 0 — so an incomplete run is under-reported. Bounded and acceptable:
+no wrong data is written, and the under-reporting is exactly today's behaviour, which PREPG-009 then
+fixes. It is **not** acceptable to write a partial window and rely on PREPG-009 to flag it later.
+
+This issue is independently testable: assert that missing required `(date, code)` coverage returns
+`False` and performs no write. That does not need PREPG-009, which supplies the separate
+process-level aggregation and non-zero exit.
+
 ## Acceptance criteria
 
 - With the upstream day present, behaviour is unchanged — the fallback never runs, and the written
