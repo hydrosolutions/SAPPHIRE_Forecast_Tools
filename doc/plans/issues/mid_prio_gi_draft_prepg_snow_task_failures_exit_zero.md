@@ -99,6 +99,10 @@ bug to fix here. The defect is that it is reported as success.
 > **HTTP 200 with data** (above), so whatever happened there is ensemble-specific. Escalate 09-01 as
 > the day both products lost; do not claim a two-day outage.
 >
+> **Escalation drafted**: [`doc/prod/dg_data_gaps_report_2026-09.md`](../../prod/dg_data_gaps_report_2026-09.md)
+> — covers the 09-01 backfill request, the ensemble temperature gap, and the client bug in one
+> report. Not yet sent.
+>
 > **Not a total data absence.** The same days are retrievable through other endpoints: the
 > 2026-09-03 forecast returned all three variables for both orgs with real non-zero values covering
 > 2026-09-03→2026-09-12. `get_snow_reanalysis` additionally supports `end_date`. A fallback able to
