@@ -1255,3 +1255,461 @@ class TestRecalculateSnowNormsPreservationReadFailures:
             rsn.main()
 
         mock_client.write_snow.assert_not_called()
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_widened_prior_range_read_failure_aborts_without_write(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats
+    ):
+        """PREPG-022: with an extended (year+1) display window, a
+        failure on the widened prior-range read (now covering
+        {range_start.year-1}-01-01 .. {range_end.year-1}-12-31, not
+        just a single fixed prior year) must still raise
+        SnowPreservationReadError and write nothing for that
+        code/type."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        def read_snow_side_effect(**kwargs):
+            start = kwargs.get("start_date", "")
+            # Target-range (2026-01-01..2027-08-31) read succeeds
+            # (empty); the widened prior-range read
+            # (2025-01-01..2026-12-31) raises.
+            if start == "2025-01-01":
+                raise Exception("API read error (widened prior range)")
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+        mock_client_class.return_value = mock_client
+
+        with pytest.raises(dg_utils.SnowPreservationReadError):
+            rsn.recalculate_norms(
+                snow_path="/tmp/snow",
+                variables=["SWE"],
+                hru_codes=["HRU01"],
+                year=2026,
+                env_overrides=self.ENV,
+                display_start_month=9,
+                display_start_day=1,
+            )
+
+        mock_client.write_snow.assert_not_called()
+
+
+class TestSnowRecordRange:
+    """Unit tests for ``_snow_record_range`` (PREPG-022).
+
+    Expected day counts are computed independently via
+    ``datetime.date`` subtraction, not re-derived from the
+    implementation under test.
+    """
+
+    def test_default_start_gives_plain_calendar_year(self):
+        """(1, 1) is the byte-identical-to-before calendar-year case."""
+        start, end = rsn._snow_record_range(2026, 1, 1)
+        assert start == pd.Timestamp("2026-01-01")
+        assert end == pd.Timestamp("2026-12-31")
+        assert (end - start).days + 1 == 365
+
+    def test_sep1_start_gives_extended_range_into_next_year(self):
+        """(9, 1) -> N-01-01 .. N+1-08-31 (608 days for a non-leap N)."""
+        start, end = rsn._snow_record_range(2026, 9, 1)
+        assert start == pd.Timestamp("2026-01-01")
+        assert end == pd.Timestamp("2027-08-31")
+        assert (end - start).days + 1 == 608
+
+    def test_oct1_start_gives_extended_range_into_next_year(self):
+        """(10, 1) -> N-01-01 .. N+1-09-30 (638 days for a non-leap N)."""
+        start, end = rsn._snow_record_range(2026, 10, 1)
+        assert start == pd.Timestamp("2026-01-01")
+        assert end == pd.Timestamp("2027-09-30")
+        assert (end - start).days + 1 == 638
+
+    def test_leap_target_year_calendar_case_has_366_days(self):
+        """Leap ``year`` with (1, 1) still yields the calendar-year 366."""
+        start, end = rsn._snow_record_range(2024, 1, 1)
+        assert start == pd.Timestamp("2024-01-01")
+        assert end == pd.Timestamp("2024-12-31")
+        assert (end - start).days + 1 == 366
+
+    def test_leap_target_year_extended_range_counts_its_own_feb29(self):
+        """Leap ``year`` (2024) with (9, 1): the Feb 29 inside ``year``
+        itself is counted once (609 days: 366 in 2024 + 243 in 2025
+        Jan-Aug)."""
+        start, end = rsn._snow_record_range(2024, 9, 1)
+        assert start == pd.Timestamp("2024-01-01")
+        assert end == pd.Timestamp("2025-08-31")
+        assert (end - start).days + 1 == 609
+
+    def test_leap_year_plus_one_extended_range_counts_its_feb29(self):
+        """Non-leap ``year`` (2027) with (9, 1): the Feb 29 inside
+        ``year + 1`` (2028, leap) is counted once (609 days: 365 in
+        2027 + 244 in 2028 Jan-Aug)."""
+        start, end = rsn._snow_record_range(2027, 9, 1)
+        assert start == pd.Timestamp("2027-01-01")
+        assert end == pd.Timestamp("2028-08-31")
+        assert (end - start).days + 1 == 609
+
+
+class TestSnowDisplayWindowEnvParsing:
+    """``main()`` parses ``ieasyhydroforecast_SNOW_DISPLAY_START_MMDD``
+    with the same tolerant "MM-DD" semantics as
+    ``apps/forecast_dashboard/dashboard/config.py`` (PREPG-022):
+    absent, invalid/unparseable, or 02-29 all fall back to (1, 1).
+    """
+
+    def _run_main_and_capture_display_start(self, mock_recalc, monkeypatch, mmdd):
+        monkeypatch.setenv("ieasyhydroforecast_HRU_SNOW_DATA", "HRU01")
+        monkeypatch.setenv("ieasyhydroforecast_SNOW_VARS", "SWE")
+        if mmdd is None:
+            monkeypatch.delenv("ieasyhydroforecast_SNOW_DISPLAY_START_MMDD", raising=False)
+        else:
+            monkeypatch.setenv("ieasyhydroforecast_SNOW_DISPLAY_START_MMDD", mmdd)
+        mock_recalc.return_value = True
+
+        rsn.main()
+
+        _, kwargs = mock_recalc.call_args
+        return kwargs["display_start_month"], kwargs["display_start_day"]
+
+    @patch("recalculate_snow_norms.recalculate_norms")
+    @patch("setup_library.load_environment")
+    def test_absent_env_falls_back_to_jan1(self, mock_load_env, mock_recalc, monkeypatch):
+        assert self._run_main_and_capture_display_start(mock_recalc, monkeypatch, None) == (1, 1)
+
+    @patch("recalculate_snow_norms.recalculate_norms")
+    @patch("setup_library.load_environment")
+    def test_invalid_env_falls_back_to_jan1(self, mock_load_env, mock_recalc, monkeypatch):
+        result = self._run_main_and_capture_display_start(mock_recalc, monkeypatch, "not-a-date")
+        assert result == (1, 1)
+
+    @patch("recalculate_snow_norms.recalculate_norms")
+    @patch("setup_library.load_environment")
+    def test_out_of_range_env_falls_back_to_jan1(self, mock_load_env, mock_recalc, monkeypatch):
+        """month=13 is out of range -> date() raises ValueError -> (1, 1)."""
+        result = self._run_main_and_capture_display_start(mock_recalc, monkeypatch, "13-40")
+        assert result == (1, 1)
+
+    @patch("recalculate_snow_norms.recalculate_norms")
+    @patch("setup_library.load_environment")
+    def test_feb29_env_falls_back_to_jan1(self, mock_load_env, mock_recalc, monkeypatch):
+        result = self._run_main_and_capture_display_start(mock_recalc, monkeypatch, "02-29")
+        assert result == (1, 1)
+
+    @patch("recalculate_snow_norms.recalculate_norms")
+    @patch("setup_library.load_environment")
+    def test_sep1_env_parses_correctly(self, mock_load_env, mock_recalc, monkeypatch):
+        result = self._run_main_and_capture_display_start(mock_recalc, monkeypatch, "09-01")
+        assert result == (9, 1)
+
+
+class TestSnowNormsExtendedDisplayWindow:
+    """PREPG-022: the hydrological-window write range, the widened
+    target-range preservation read, and the per-date ``previous``
+    alignment across the extended range.
+    """
+
+    ENV = {
+        "SAPPHIRE_API_ENABLED": "true",
+        "SAPPHIRE_API_URL": "http://localhost:8000",
+    }
+
+    @staticmethod
+    def _make_norms_df(variables, code="19999", n_days=365):
+        frames = []
+        for var in variables:
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "snow_type": [var] * n_days,
+                        "code": [code] * n_days,
+                        "dayofyear": range(1, n_days + 1),
+                        "norm": [50.0] * n_days,
+                    }
+                )
+            )
+        return pd.concat(frames, ignore_index=True)
+
+    @staticmethod
+    def _empty_stats_df():
+        return pd.DataFrame(
+            columns=[
+                "snow_type",
+                "code",
+                "dayofyear",
+                "count",
+                "mean",
+                "std",
+                "min",
+                "max",
+                "q05",
+                "q25",
+                "q50",
+                "q75",
+                "q95",
+            ]
+        )
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_preservation_read_covers_dates_past_31_december(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
+    ):
+        """The important regression: with a (9, 1) display window and
+        year=2026, the write range extends to 2027-08-31. The
+        target-range preservation read must cover that whole span, not
+        stop at 2026-12-31 -- otherwise every date past 31 December
+        gets its value/current/band fields nulled on write. Stored
+        value/current/value3 for 2027-03-15 must be preserved.
+
+        Mutation check performed: temporarily reverted the read's
+        ``end_str`` back to the old hardcoded ``f"{year}-12-31"``
+        (instead of ``range_end.strftime(...)``) and re-ran this test
+        -- it failed (the mock's ``read_snow_side_effect`` below
+        requires ``end_date == "2027-08-31"`` exactly, so the
+        mutated, narrower ``end_date`` no longer matched and the mock
+        returned an empty DataFrame instead of ``target_row``; the
+        written record for 2027-03-15 came back with value=None,
+        current=None, and no value3 key). Reverted immediately after
+        confirming the failure. (An earlier version of this test only
+        matched on ``start_date`` and did not actually exercise
+        ``end_str`` -- it stayed green under the same mutation. This
+        is the corrected, end-date-gated version.)
+        """
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        target_row = pd.DataFrame(
+            {
+                "id": [1],
+                "snow_type": ["SWE"],
+                "code": ["19999"],
+                "date": pd.to_datetime(["2027-03-15"]),
+                "value": [77.7],
+                "current": [77.7],
+                "value3": [33.3],
+            }
+        )
+
+        def read_snow_side_effect(**kwargs):
+            # Gate on BOTH bounds: a mutation that narrows end_date
+            # back to "{year}-12-31" (missing the 2027-03-15 row
+            # entirely) must not still match here.
+            start = kwargs.get("start_date", "")
+            end = kwargs.get("end_date", "")
+            if start == "2026-01-01" and end == "2027-08-31":
+                return target_row
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        result = rsn.recalculate_norms(
+            snow_path=str(tmp_path / "snow"),
+            variables=["SWE"],
+            hru_codes=["HRU01"],
+            year=2026,
+            env_overrides=self.ENV,
+            display_start_month=9,
+            display_start_day=1,
+        )
+
+        assert result is True
+        mar15 = [r for r in captured if r["date"] == "2027-03-15"]
+        assert len(mar15) == 1
+        assert mar15[0]["value"] == 77.7
+        assert mar15[0]["current"] == 77.7
+        assert mar15[0]["value3"] == 33.3
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_previous_for_year_plus_one_date_resolves_against_year(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
+    ):
+        """For a date in year+1 (2027-03-15, within the extended
+        window for year=2026), `previous` must resolve against
+        `year`'s (2026) same-calendar-date value -- not `year - 1`'s
+        (2025) -- confirming the lookup is keyed off dt.year - 1.
+
+        Mutation check performed: temporarily reverted
+        ``prior_end_str`` back to the old hardcoded
+        ``f"{year - 1}-12-31"`` (instead of
+        ``f"{range_end.year - 1}-12-31"``) and re-ran this test -- it
+        failed (``read_snow_side_effect`` below requires
+        ``end_date == "2026-12-31"`` exactly, so the mutated, narrower
+        ``end_date`` of ``"2025-12-31"`` no longer matched and the
+        mock returned an empty DataFrame instead of
+        ``prior_range_df``; ``previous`` for 2027-03-15 came back
+        ``None`` instead of ``55.5``). Reverted immediately after
+        confirming the failure. (An earlier version of this test only
+        matched on ``start_date`` and did not actually exercise
+        ``prior_end_str`` -- it stayed green under the same mutation.
+        This is the corrected, end-date-gated version.)
+        """
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        # Single prior-range read (2025-01-01..2026-12-31) returns
+        # both years' data at the same calendar date, 2025-03-15 and
+        # 2026-03-15, with distinguishable values.
+        prior_range_df = pd.DataFrame(
+            {
+                "id": [1, 2],
+                "snow_type": ["SWE", "SWE"],
+                "code": ["19999", "19999"],
+                "date": pd.to_datetime(["2025-03-15", "2026-03-15"]),
+                "value": [11.1, 55.5],
+            }
+        )
+
+        def read_snow_side_effect(**kwargs):
+            # Gate on BOTH bounds: a mutation that narrows end_date
+            # back to "{year - 1}-12-31" (missing the 2026-03-15 row
+            # entirely) must not still match here.
+            start = kwargs.get("start_date", "")
+            end = kwargs.get("end_date", "")
+            if start == "2025-01-01" and end == "2026-12-31":
+                return prior_range_df
+            return pd.DataFrame()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.side_effect = read_snow_side_effect
+
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        rsn.recalculate_norms(
+            snow_path=str(tmp_path / "snow"),
+            variables=["SWE"],
+            hru_codes=["HRU01"],
+            year=2026,
+            env_overrides=self.ENV,
+            display_start_month=9,
+            display_start_day=1,
+        )
+
+        mar15_2027 = [r for r in captured if r["date"] == "2027-03-15"]
+        assert len(mar15_2027) == 1
+        assert abs(mar15_2027[0]["previous"] - 55.5) < 1e-6
+
+        # Explicitly assert the prior-range read used the widened
+        # bounds (start pinned to range_start.year - 1, end widened
+        # to range_end.year - 1), not the old fixed year - 1 range.
+        prior_calls = [
+            call
+            for call in mock_client.read_snow.call_args_list
+            if call.kwargs.get("start_date") == "2025-01-01"
+        ]
+        assert len(prior_calls) >= 1
+        assert all(call.kwargs.get("end_date") == "2026-12-31" for call in prior_calls)
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_previous_none_for_feb29_shaped_miss_in_extended_range(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
+    ):
+        """previous is None, not an exception, when dt.year - 1 has no
+        Feb 29 -- including for a date in the extended (year+1)
+        portion of the range. year=2027 (not leap); the (9, 1) window
+        extends into 2028 (leap), so 2028-02-29 is written, but
+        2027-02-29 does not exist."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=366)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.return_value = pd.DataFrame()
+
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        rsn.recalculate_norms(
+            snow_path=str(tmp_path / "snow"),
+            variables=["SWE"],
+            hru_codes=["HRU01"],
+            year=2027,
+            env_overrides=self.ENV,
+            display_start_month=9,
+            display_start_day=1,
+        )
+
+        feb29_records = [r for r in captured if r["date"] == "2028-02-29"]
+        assert len(feb29_records) == 1
+        assert feb29_records[0]["previous"] is None
+
+    @patch("dg_utils.calculate_snow_stats_from_api")
+    @patch("dg_utils.calculate_snow_norms_from_api")
+    @patch.object(dg_utils, "SAPPHIRE_API_AVAILABLE", True)
+    @patch("recalculate_snow_norms.dg_utils.SapphirePreprocessingClient")
+    def test_written_range_ends_at_season_boundary(
+        self, mock_client_class, mock_calc_norms, mock_calc_stats, tmp_path
+    ):
+        """For (9, 1)/year=2026 the write range must stop at
+        2027-08-31 -- no record exists for 2027-09-01 or later
+        (correctness constraint 3: do not pre-write into next
+        season)."""
+        mock_calc_norms.return_value = self._make_norms_df(["SWE"], n_days=365)
+        mock_calc_stats.return_value = self._empty_stats_df()
+
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_snow.return_value = pd.DataFrame()
+
+        captured = []
+
+        def capture_write(records):
+            captured.extend(records)
+            return len(records)
+
+        mock_client.write_snow.side_effect = capture_write
+        mock_client_class.return_value = mock_client
+
+        rsn.recalculate_norms(
+            snow_path=str(tmp_path / "snow"),
+            variables=["SWE"],
+            hru_codes=["HRU01"],
+            year=2026,
+            env_overrides=self.ENV,
+            display_start_month=9,
+            display_start_day=1,
+        )
+
+        dates = sorted(r["date"] for r in captured)
+        assert dates[0] == "2026-01-01"
+        assert dates[-1] == "2027-08-31"
+        assert "2027-09-01" not in dates
+        assert all(not d.startswith("2027-09") for d in dates)
+        assert len(dates) == 608

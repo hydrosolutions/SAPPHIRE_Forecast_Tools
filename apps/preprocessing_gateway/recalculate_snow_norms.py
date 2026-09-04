@@ -47,12 +47,55 @@ import dg_utils
 logger = logging.getLogger(__name__)
 
 
+def _snow_record_range(
+    year: int, start_month: int, start_day: int
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Resolve the date range of snow norm/stat records to write (PREPG-022).
+
+    The range is Jan-1-anchored on ``year`` and extends through the end
+    of the hydrological display season that starts on
+    ``start_month``/``start_day`` of that year, so it is always a
+    strict superset of the plain calendar year.
+
+    Args:
+        year: Target year (the run's anchor year).
+        start_month: Hydrological display-window start month (1-12).
+        start_day: Hydrological display-window start day.
+
+    Returns:
+        ``(start, end)`` as inclusive ``pd.Timestamp`` bounds. When
+        ``(start_month, start_day) == (1, 1)`` this is exactly
+        ``({year}-01-01, {year}-12-31)`` — byte-identical to the
+        previous calendar-year-only behavior. Otherwise ``end`` is one
+        day before ``start_month``/``start_day`` of ``year + 1``.
+
+    Note:
+        ``start_month``/``start_day`` must form a calendar-valid
+        month/day (e.g. not ``(2, 30)``); this function does not
+        validate that itself. ``main()`` enforces validity via
+        ``_date(2001, m, d)`` before calling in. A direct caller that
+        skips that guard and passes an invalid pair -- notably
+        ``(2, 29)`` -- reaches ``pd.Timestamp(year=year + 1, ...)``
+        above and gets an uncaught ``ValueError`` from ``pd.Timestamp``,
+        and only in years where ``year + 1`` is not a leap year, so
+        the same call can succeed one year and raise the next.
+    """
+    start = pd.Timestamp(year=year, month=1, day=1)
+    if (start_month, start_day) == (1, 1):
+        end = pd.Timestamp(year=year, month=12, day=31)
+    else:
+        end = pd.Timestamp(year=year + 1, month=start_month, day=start_day) - pd.Timedelta(days=1)
+    return start, end
+
+
 def recalculate_norms(
     snow_path: str,
     variables: list[str],
     hru_codes: list[str],
     year: int,
     env_overrides: dict | None = None,
+    display_start_month: int = 1,
+    display_start_day: int = 1,
 ) -> bool:
     """Calculate snow norms from API historical data and write back.
 
@@ -65,6 +108,11 @@ def recalculate_norms(
         year: Target year to write norms for (all 365/366 days).
         env_overrides: Optional dict of env var overrides for testing
             (e.g., ``{"SAPPHIRE_API_ENABLED": "true"}``).
+        display_start_month: Hydrological display-window start month
+            (PREPG-022). Defaults to ``1`` — calendar-year behavior,
+            byte-identical to before this argument existed.
+        display_start_day: Hydrological display-window start day.
+            Defaults to ``1``.
 
     Returns:
         True if norms were successfully written, False otherwise.
@@ -87,7 +135,14 @@ def recalculate_norms(
             os.environ[k] = v
 
     try:
-        return _recalculate_norms_impl(snow_path, variables, hru_codes, year)
+        return _recalculate_norms_impl(
+            snow_path,
+            variables,
+            hru_codes,
+            year,
+            display_start_month,
+            display_start_day,
+        )
     finally:
         # Restore env
         if env_overrides:
@@ -103,6 +158,8 @@ def _recalculate_norms_impl(
     variables: list[str],
     hru_codes: list[str],
     year: int,
+    display_start_month: int = 1,
+    display_start_day: int = 1,
 ) -> bool:
     """Internal implementation of norm recalculation."""
     # 1. Check API availability and create client
@@ -155,10 +212,18 @@ def _recalculate_norms_impl(
     else:
         logger.warning("No snow stats computed — proceeding with NaN stat fields")
 
-    # 3. Build date range for the target year
-    is_leap = dg_utils.is_leap_year(year)
-    n_days = 366 if is_leap else 365
-    date_range = pd.date_range(start=f"{year}-01-01", periods=n_days, freq="D")
+    # 3. Build date range for the target year plus the remainder of the
+    # hydrological display season that starts in it (PREPG-022). With
+    # display_start_month/day == (1, 1) (the default) this is exactly
+    # the plain calendar year, unchanged from before.
+    range_start, range_end = _snow_record_range(year, display_start_month, display_start_day)
+    date_range = pd.date_range(range_start, range_end, freq="D")
+    logger.info(
+        "Snow norm/stat record range: %s .. %s (%d days)",
+        range_start.strftime("%Y-%m-%d"),
+        range_end.strftime("%Y-%m-%d"),
+        len(date_range),
+    )
 
     # 4. For each variable+code, build records and write
     any_written = False
@@ -193,9 +258,13 @@ def _recalculate_norms_impl(
                         "q95": float(srow["q95"]) if pd.notna(srow["q95"]) else None,
                     }
 
-            # Read existing target-year records from API to preserve values
-            start_str = f"{year}-01-01"
-            end_str = f"{year}-12-31"
+            # Read existing target-range records from API to preserve
+            # values. Bounds match date_range exactly (PREPG-022) — if
+            # this read is ever narrower than the write range, every
+            # date past its end gets written with value/current/bands
+            # silently nulled.
+            start_str = range_start.strftime("%Y-%m-%d")
+            end_str = range_end.strftime("%Y-%m-%d")
             existing = {}
             try:
                 api_df = client.read_snow(
@@ -221,10 +290,14 @@ def _recalculate_norms_impl(
                     "band fields."
                 ) from e
 
-            # Read prior-year records for calendar-date `previous` lookup
-            prior_year = year - 1
-            prior_start_str = f"{prior_year}-01-01"
-            prior_end_str = f"{prior_year}-12-31"
+            # Read prior-year records for calendar-date `previous` lookup.
+            # The write range can now span two calendar years
+            # (PREPG-022), so a single fixed `year - 1` read is no
+            # longer enough — a date in `range_end.year` needs
+            # `range_end.year - 1`'s data too. Cover the whole prior
+            # span in one read, keyed per-date off `dt.year - 1` below.
+            prior_start_str = f"{range_start.year - 1}-01-01"
+            prior_end_str = f"{range_end.year - 1}-12-31"
             prior_existing: dict[str, object] = {}
             try:
                 prior_df = client.read_snow(
@@ -245,7 +318,7 @@ def _recalculate_norms_impl(
                 # code/type instead (PREPG-020).
                 raise dg_utils.SnowPreservationReadError(
                     f"Could not read prior-year snow records for {snow_type}/{code} "
-                    f"(year {prior_year}): {e}. Refusing to write records that "
+                    f"({prior_start_str} .. {prior_end_str}): {e}. Refusing to write records that "
                     "would null the stored 'previous' field."
                 ) from e
 
@@ -277,10 +350,12 @@ def _recalculate_norms_impl(
                 # Compute `current` from the target-year row's own value
                 current_val = value  # same as the preserved value field
 
-                # Compute `previous` via calendar-date alignment to year-1
-                target_date = _date(year, dt.month, dt.day)
+                # Compute `previous` via calendar-date alignment to the
+                # date's own prior year (dt.year - 1), not a single
+                # fixed `year - 1` (PREPG-022: the write range can span
+                # two calendar years, e.g. a 09-01 display window).
                 try:
-                    prior_date = _date(prior_year, target_date.month, target_date.day)
+                    prior_date = _date(dt.year - 1, dt.month, dt.day)
                     prior_date_str = prior_date.strftime("%Y-%m-%d")
                     prior_row = prior_existing.get(prior_date_str)
                     if prior_row is not None:
@@ -390,6 +465,22 @@ def main():
         logger.error("No HRU codes configured for snow data")
         sys.exit(1)
 
+    # Resolve the hydrological display-window start (PREPG-022): the
+    # written record range extends from 1 January of the target year
+    # through the end of the season that starts on this date. Same
+    # tolerant "MM-DD" parsing and (1, 1) fallback as
+    # apps/forecast_dashboard/dashboard/config.py (absent/invalid/
+    # unparseable MM-DD, or 02-29, all fall back to (1, 1)).
+    snow_display_start = os.getenv("ieasyhydroforecast_SNOW_DISPLAY_START_MMDD", "01-01")
+    try:
+        display_start_month, display_start_day = (
+            int(snow_display_start[:2]),
+            int(snow_display_start[3:]),
+        )
+        _date(2001, display_start_month, display_start_day)  # validate range, reject Feb 29
+    except (ValueError, IndexError):
+        display_start_month, display_start_day = 1, 1
+
     # Use current year by default, unless explicitly overridden for backfills
     from datetime import date as date_type
 
@@ -408,12 +499,15 @@ def main():
     logger.info("Snow path: %s", snow_path)
     logger.info("Variables: %s", variables)
     logger.info("HRU codes: %s", hru_codes)
+    logger.info("Snow display window start: %02d-%02d", display_start_month, display_start_day)
 
     success = recalculate_norms(
         snow_path=snow_path,
         variables=variables,
         hru_codes=hru_codes,
         year=year,
+        display_start_month=display_start_month,
+        display_start_day=display_start_day,
     )
 
     if success:
