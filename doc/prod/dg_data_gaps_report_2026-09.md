@@ -1,6 +1,7 @@
 # Report to the SAPPHIRE Data Gateway team: three data gaps observed 2026-08/09
 
-**Status**: **Draft — not yet sent.**
+**Status**: **Sent 2026-09-04.** Awaiting a reply. PREPG-009 stays open until 2026-09-01 is
+backfilled; items 2 and 3 need no action from us. Retained as the record of what was asked.
 **Reported by**: SAPPHIRE Forecast Tools
 **Concerns**: `data-gateway.ieasyhydro.org` — snow-operational, snow-forecast and ensemble
 endpoints; and the `sapphire-dg-client` Python client
