@@ -80,6 +80,16 @@ the **caller's requested variable** and never checks what the source actually wa
 "rows exist" check. Wait for the corrected client and call its public method; duplicating the HTTP
 call locally to dodge the bug is the larger and worse option.
 
+**Unblocking it is a re-pin, and not a one-liner — do this as its own verified step.** The client is
+pinned to a **branch**, `sapphire-dg-client @ git+...@main`, but both locks currently hold one
+resolved commit, `bd9cc905` — `apps/preprocessing_gateway/uv.lock` **and**
+`apps/machine_learning/uv.lock`. So the fix will not arrive on its own, and picking it up means
+`uv lock --upgrade-package sapphire-dg-client`, which bumps `@main` to whatever else has landed
+since `bd9cc905` — not just the `parameter=` fix. Two consequences: **update both modules together**
+or their pins diverge, and treat the bump as a change with its own verification rather than a
+prerequisite checkbox. This does not need its own issue — nothing calls `get_snow_forecast` today,
+so PREPG-025 is the only consumer and the only thing the re-pin unblocks.
+
 ## The substitution is not the same quantity — say so
 
 A value for 2026-09-01 taken from the 31 August run is a **one-day-ahead forecast**, not the
