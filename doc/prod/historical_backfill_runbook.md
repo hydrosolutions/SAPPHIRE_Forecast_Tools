@@ -803,7 +803,10 @@ to today using the gateway image in `SAPPHIRE_SYNC_MODE=initial`.
 ```text
 ${REPO}/bin/utils/common_functions.sh
 Docker image: mabesa/sapphire-prepgateway:${ieasyhydroforecast_backend_docker_image_tag}
-Image default CMD: uv run Quantile_Mapping_OP.py && uv run extend_era5_reanalysis.py && uv run snow_data_operational.py
+Image default CMD: the meteo branch `Quantile_Mapping_OP.py && extend_era5_reanalysis.py`, then
+`snow_data_operational.py` **unconditionally**, exiting non-zero if either branch failed (PREPG-024).
+Snow is deliberately not chained to the meteo branch — it has no dependency on it — but it still runs
+sequentially after it, because quantile mapping clears the shared download directory snow uses.
 ```
 
 ### Depends on

@@ -674,20 +674,43 @@ run_preprocessing_gateway() {
     banner "Module: preprocessing_gateway"
     local start
     start=$(get_timestamp)
-    local rc=0
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_gateway.log"
     > "$CURRENT_MODULE_LOG"
-    for script in Quantile_Mapping_OP.py extend_era5_reanalysis.py snow_data_operational.py; do
-        run_in_venv preprocessing_gateway "$script" || { rc=$?; break; }
+
+    # PREPG-024: meteo branch (QM -> extend) stays chained -- extend reads
+    # control-member CSVs that only a successful QM writes, so a QM failure
+    # must stop this loop before extend runs. Snow has no dependency on
+    # either meteo script and must run regardless of whether the meteo
+    # branch failed; it is still run sequentially AFTER the meteo branch
+    # finishes, never concurrently, because QM deletes every file in the
+    # shared OUTPUT_PATH_DG that snow downloads into. Keep this in sync
+    # with the Dockerfile CMD, which expresses the same logic.
+    local meteo_rc=0
+    for script in Quantile_Mapping_OP.py extend_era5_reanalysis.py; do
+        run_in_venv preprocessing_gateway "$script" || { meteo_rc=$?; break; }
     done
+
+    run_in_venv preprocessing_gateway snow_data_operational.py
+    local snow_rc=$?
+
+    local rc=0
+    local failed_stages=()
+    if [ $meteo_rc -ne 0 ]; then
+        rc=$meteo_rc
+        failed_stages+=("meteo")
+    fi
+    if [ $snow_rc -ne 0 ]; then
+        [ $rc -eq 0 ] && rc=$snow_rc
+        failed_stages+=("snow")
+    fi
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "preprocessing_gateway completed in $(format_duration $elapsed)"
         record_result "preprocessing_gateway" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
-        log ERROR "preprocessing_gateway failed (exit $rc) after $(format_duration $elapsed)"
+        log ERROR "preprocessing_gateway failed (exit $rc) after $(format_duration $elapsed) -- failed stage(s): ${failed_stages[*]}"
         record_result "preprocessing_gateway" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc

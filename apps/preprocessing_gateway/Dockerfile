@@ -29,7 +29,21 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # Run the application using uv run (activates the virtual environment automatically)
-# Runs three scripts sequentially: quantile mapping, ERA5 extension, and snow data processing
+# Runs three scripts: quantile mapping, ERA5 extension, and snow data processing.
+#
+# PREPG-024: snow has no data dependency on the meteo branch (quantile
+# mapping + ERA5 extension) -- it reads a different Data Gateway endpoint
+# and writes a different API sink -- so it must run regardless of whether
+# the meteo branch failed. It still must NOT run concurrently with the
+# meteo branch: Quantile_Mapping_OP.py deletes every file in the shared
+# OUTPUT_PATH_DG, and snow downloads into that same directory. So the
+# sequence is: run the meteo branch (QM && extend, unchanged -- extend
+# reads control-member CSVs only QM writes) -> capture its status -> run
+# snow sequentially afterwards regardless -> capture its status -> exit
+# non-zero if either branch failed. See
+# doc/plans/issues/mid_prio_gi_draft_prepg_qm_failure_suppresses_snow.md.
+# This CMD and run_locally.sh's run_preprocessing_gateway() must express
+# the same logic -- keep them in sync.
 #
 # Sync modes (controlled via SAPPHIRE_SYNC_MODE env var):
 #   operational (default) - writes yesterday's + today's data
@@ -40,4 +54,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #   docker run preprocessing-gateway                                      # operational (default)
 #   docker run -e SAPPHIRE_SYNC_MODE=maintenance preprocessing-gateway    # maintenance
 #   docker run preprocessing-gateway uv run backfill_new_stations.py      # backfill
-CMD ["sh", "-c", "uv run Quantile_Mapping_OP.py && uv run extend_era5_reanalysis.py && uv run snow_data_operational.py"]
+CMD ["sh", "-c", "uv run Quantile_Mapping_OP.py && uv run extend_era5_reanalysis.py; meteo_rc=$?; uv run snow_data_operational.py; snow_rc=$?; if [ $meteo_rc -ne 0 ] || [ $snow_rc -ne 0 ]; then echo \"preprocessing_gateway: FAILED stage(s) -- meteo_rc=$meteo_rc snow_rc=$snow_rc\" >&2; exit 1; fi; exit 0"]
