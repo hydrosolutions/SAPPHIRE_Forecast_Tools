@@ -1,4 +1,4 @@
-# INFRA-044: `run_locally.sh` has no DEGRADED state — a known upstream data gap is reported as FAIL
+# INFRA-044: a known upstream data gap is reported as a failure
 
 **Status**: Draft (2026-09-03)
 **Module**: `apps/run_locally.sh` + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
@@ -122,26 +122,18 @@ Two further sites in the same file hard-code the 0-5 taxonomy:
 This is inside the one Python file C1 already touches; it is not a scope expansion, it is the rest
 of the same change. Its integration tests need the same update.
 
-**C2 — `run_locally.sh` gains a real DEGRADED result state.**
-- `print_summary` (`:1840-1854`) renders `DEGRADED` via `log WARN "  ${mod}: DEGRADED (${duration})"`
-  and counts it in a new `degraded_count`, separate from both `pass_count` and `fail_count`.
-- Apply the identical three-way branch to the validation loop (`:1864-1878`), which shares the
-  `PASS`/else shape. It records no `DEGRADED` today; leaving it two-way plants a trap where a future
-  degraded validation row renders as `FAIL`.
-- The totals line (`:1883-1887`) becomes `Modules: N passed, N degraded, N failed`, with the
-  degraded term **omitted when the count is 0** so existing output is unchanged on clean runs.
-- Validation totals are computed independently (`:1864-1878`, `:1884-1886`), so add a matching
-  `val_degraded` counter and the same conditional term there. No validation row emits `DEGRADED`
-  today; adding the counter is what stops the next one from being silently rendered as `FAIL`.
-- `print_summary` still returns 1 only for `fail_count > 0 || val_fail > 0` (`:1901-1904`). A
-  degraded-only run exits **0**. This is the point of the issue.
+**C2 / C3 — WITHDRAWN (owner decision, 2026-09-04).** Earlier revisions added a third `DEGRADED`
+result state to `print_summary` and `print_error_details`. After the decision that a missing norm is
+not our failure, exit 4 records **no row at all**, so that state would ship with **no producer in
+the tree** and no test able to exercise it end to end. It is dropped rather than built unused.
 
-**C3 — `print_error_details` must not lose the DEGRADED tail.** It filters on `"FAIL"` twice
-(`:1791-1796` and `:1809-1810`). INFRA-037's whole design for exit 4 is that the counts reach the
-operator *through that tail* — the code comment at `:925-930` says so explicitly. Emit a second,
-non-red block for degraded rows (label `MODULE DEGRADED DETAILS`, same `ERROR_TAIL_LINES` tail,
-`YELLOW` not `RED`), or generalise the helper to take the status to match plus a colour. Losing the
-tail would trade one bad outcome for a worse one: a yellow row with no counts.
+If a consumer appears — **INFRA-030** (`SKIP` for skipped modules) or **LTF-011** (a benign recovery
+refusal, once its causes are split) — add it then. It is about fifteen lines in one function, and
+building it now would mean shipping code that nothing reaches.
+
+**Consequence for this issue**: `run_locally.sh`'s result rendering is **unchanged**. The only shell
+change is C4's branch routing. That is deliberate and makes this issue much smaller than its title
+suggests.
 
 **C4 — the exit-4 branch becomes informational; a new exit-6 branch keeps today's FAIL.**
 In `run_maintenance_preprocessing_runoff` (`run_locally.sh:923-934`):
@@ -196,7 +188,7 @@ issue. Adding the state is the deliverable; classifying other modules into it is
 
 Implementation:
 
-- `apps/run_locally.sh` (C2, C3, C4)
+- `apps/run_locally.sh` (**C4 only** — the branch routing; the result renderer is untouched)
 - `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py` — **C1 and C1a only**: the exit-code
   helper (`:629-641`), `main()`'s exit-code docstring (`:727-739`), and `main()`'s SDK-vs-API
   reporting branch (`:772-785`). Nothing else in the file.
@@ -271,14 +263,6 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
 1b. **CLI reporting for code 6 (C1a).** `main()` under an all-stations-SDK-failed summary logs
    SDK-failure wording and **must not** log "API read/write failure(s)" — the defect the `else`
    branch at `:772-785` would otherwise produce. Assert on the emitted message, not just the code.
-2. **`print_summary` three-way rendering**: a `DEGRADED` row logs `WARN`, is excluded from
-   `fail_count`, appears in the totals line, and `print_summary` returns **0**.
-3. **Mixed run**: one `PASS`, one `DEGRADED`, one `FAIL` → returns 1, totals read
-   `1 passed, 1 degraded, 1 failed`, both detail blocks print.
-4. **Clean run is byte-identical**: with zero degraded rows the totals line has no degraded term,
-   for the module totals **and** the validation totals.
-5. **`print_error_details` covers DEGRADED**: the tail of a degraded row's log is printed, and the
-   `LONG-HORIZON RUN SUMMARY` counts are inside that tail — the whole point of INFRA-037's design.
 6. **Branch routing (per C4, the owner decision)**: `lt_rc=4` logs at INFO, records **no result row
    at all**, and leaves module `rc=0`; `lt_rc=6` records `FAIL` and leaves module `rc=0`; `lt_rc=5`
    still sets `rc=5`; `lt_rc=3` still hits the catch-all; in every fatal case `CURRENT_MODULE_LOG`
@@ -306,56 +290,40 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
       classifications does not satisfy this criterion — a partial doc fix closes the issue while
       leaving the wrong contract documented.
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero unexpected skips.
+- [ ] `run_locally.sh`'s result rendering is byte-identical to trunk — the only shell change is the
+      exit-4/exit-6 branch routing.
 - [ ] `bash -n apps/run_locally.sh` clean; `ruff check` / `ruff format --check` clean on the changed
       Python file.
 
 ## Phases
 
-Each phase updates the tests that its own change would otherwise break, so the suite is green at
-every phase boundary — CLAUDE.md's "work is not review-eligible until the full affected-scope tests
-pass" is a per-phase precondition, not a pre-PR one.
-
 - **P1 — writer exit taxonomy (C1, C1a).** Files: `sync_long_horizon_hydrograph.py`,
   `test_sync_long_horizon_hydrograph.py`. Depends on: none. Agents: 1.
-  Accept: tests 1 and 1b pass; no other exit-code value, status, or writer behaviour changes.
-- **P2 — DEGRADED state in the summary (C2, C3).** Files: `run_locally.sh`,
-  `test_run_locally_orchestration.py`. Depends on: none (independent of P1). Agents: 1.
-  Accept: tests 2-5 pass.
-- **P3 — branch routing (C4).** Files: `run_locally.sh`, `test_run_locally_orchestration.py`,
-  `test_run_locally_long_horizon_wiring.py`. Depends on: P1 (needs code 6 to exist). **Not** on P2 —
-  C4 records no row for exit 4, so it needs no `DEGRADED` state. Agents: 1. Accept: tests 6, 7, 8 pass, and the orchestration test file's
-  module docstring describing the old exit-4 behaviour is rewritten.
-- **P4 — documentation sweep.** Files: documentation only. Depends on: P1, P2, P3. Agents: 1.
-  Accept: the classified hit list is in the agent's report and every current-contract hit is fixed.
+  Accept: tests 1 and 1b pass; exit 4 logs at INFO and exit 6 at ERROR; no other exit-code value,
+  status or writer behaviour changes.
+- **P2 — branch routing + documentation sweep (C4).** Files: `run_locally.sh`,
+  `test_run_locally_orchestration.py`, `test_run_locally_long_horizon_wiring.py`, plus the
+  documentation listed in the sweep section. Depends on: P1. Agents: 1.
+  Accept: tests 6, 7, 8 pass; the orchestration test file's module docstring is rewritten; every
+  current-contract documentation hit is classified and updated.
 
-P2 is the only phase that can run concurrently with P1. Do not parallelise P3 against either.
+*(Earlier revisions had four phases. P2 and P3 built the `DEGRADED` renderer, withdrawn above.)*
 
 ```json
 {
   "phases": {
     "P1": { "depends_on": [], "parallel_agents": 1 },
-    "P2": { "depends_on": [], "parallel_agents": 1 },
-    "P3": { "depends_on": ["P1", "P2"], "parallel_agents": 1 },
-    "P4": { "depends_on": ["P1", "P2", "P3"], "parallel_agents": 1 }
+    "P2": { "depends_on": ["P1"], "parallel_agents": 1 }
   }
 }
 ```
 
-## Open decision for the owner
+## Decisions taken (no open questions remain)
 
-**Is the `DEGRADED` state (C2/C3) still worth building?** After the owner decision of 2026-09-04 it
-ships with **no in-tree producer**: exit 4 records no row, and nothing else emits a degraded result
-today. Keeping it is a bet on near-term consumers — **INFRA-030** (`SKIP` for skipped modules) and
-**LTF-011** (a benign recovery refusal, once its two causes are split). Dropping it reduces this
-issue to C1 + C1a + C4 and collapses the phases to two.
-
-**Recommendation: keep it**, because both consumers are already filed and the three-way renderer is
-cheaper to build once than to retrofit. But it is a judgement call about unused code, not a
-correctness question — say the word and P2 is deleted rather than rewritten.
-
-*(The earlier version of this section asked whether a partial-but-growing failure count should be
-loud. That question is answered by the 2026-09-04 decision: a missing norm is not our failure, so
-4/62 and 40/62 are both silent, and only 62/62 is fatal.)*
+- **2026-09-04 — a missing norm is not our failure.** Exit 4 becomes informational with no result
+  row. See the section above.
+- **2026-09-04 — the `DEGRADED` state is not built.** It would have no producer; see C2/C3.
+- Exit 6 stays, and is now the fatal classification for `sdk_failed == total_attempted`.
 
 ## Corrections applied after out-of-loop review (2026-09-03)
 

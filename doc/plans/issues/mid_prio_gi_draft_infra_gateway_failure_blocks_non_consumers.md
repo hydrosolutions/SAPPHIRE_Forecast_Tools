@@ -2,7 +2,16 @@
 
 **Status**: Draft (2026-09-04)
 **Module**: `apps/pipeline/pipeline_docker.py`
-**Priority**: **Medium** — after PREPG-023's gate lands, deployments that do not need ensemble data
+**Priority**: **Low — parked pending PREPG-023** (owner decision, 2026-09-04: implement the
+ensemble gate first, then re-assess whether this is worth doing at all). Was Medium.
+
+**Why parked**: once ensembles are downloaded only when something declares it needs them, the
+gateway stops failing on this path for every deployment that does not consume ensemble forcing —
+which today is all of them. This issue then only bites where ensembles genuinely *are* required and
+genuinely fail. **Re-assess after PREPG-023 lands**: if no deployment turns the new flag on, close
+this rather than build it.
+
+**Original assessment** — after PREPG-023's gate lands, deployments that do not need ensemble data
 stop failing here at all, so this only bites when ensembles genuinely are required and genuinely
 fail. It is not Low because when it does bite, it silently costs a whole day of machine-learning and
 long-term forecasts.
