@@ -10,8 +10,8 @@ exactly that condition by assembling the recent window from per-issue-date
 issue date. See
 doc/plans/issues/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
 
-Also covers a 2026-09 out-of-loop review round that found three defects
-in the first pass of this fallback:
+Also covers two 2026-09 out-of-loop review rounds. First round (all
+FIXED):
 
 1. HIGH: the assembled window was never floored at `required_start`
    (yesterday), so it could overwrite already-written history with
@@ -24,6 +24,33 @@ in the first pass of this fallback:
    fetched response against itself (whatever codes came back defined
    "complete"), so a code missing from every issuance was never
    flagged.
+
+Second round, an end-to-end review of the committed result, found three
+more HIGH defects plus three MEDIUM (all FIXED):
+
+H1. The completeness check only looked at (date, code) presence, never
+    at whether a usable value existed -- a blank (NaN) row from a
+    newer issuance could beat a valid older one in the overlap dedup,
+    pass completeness, and overwrite a real value with NaN downstream.
+H2. Every fetch/read failure other than "No data found" was treated as
+    skippable (log + continue), so a transport error on a recent
+    issuance could let an older, stale issuance stand in for data that
+    genuinely failed to download rather than being confirmed absent.
+H3. `required_end = today + window - 2` is reachable only from
+    yesterday's issuance -- but if yesterday is the genuinely missing
+    run (and today's is routinely unpublished), the newest available
+    issuance is today-2, whose window ends one day short. One missing
+    day could still stop ingestion in exactly the case this fallback
+    exists to fix.
+M1. Conflicting duplicate (date, code) rows within a single issuance
+    had identical sort keys, so `keep="last"` picked arbitrarily and
+    completeness passed regardless.
+M2. The assembler and `write_snow_to_api` each independently read
+    "today"; a clock rollover between the two calls could drop a row
+    from the API write that the assembler's completeness check had
+    already accepted for the CSV.
+M3. A tz-aware `reference_date` raised during the floor comparison
+    before any controlled `None` return.
 
 Run::
 
@@ -63,10 +90,17 @@ def _snow_forecast_csv_bytes(dates, code, values, source="ERA5"):
     """Build DG-format snow-forecast CSV bytes matching what
     `dg_utils.transform_snow_data` expects: first column renamed
     'date', first 4 rows dropped as metadata, 'Source' column ignored.
+
+    A `None` entry in `values` renders as an empty CSV cell -- a blank
+    upstream value, which `pd.read_csv` (and hence
+    `transform_snow_data`) parses as NaN, exactly like a genuinely
+    blank field in a real Data Gateway response (PREPG-025 review
+    fix H1).
     """
     header_rows = [["h", "h", "h"]] * 4
     data_rows = [
-        [d.strftime("%d/%m/%Y"), str(v), source] for d, v in zip(dates, values, strict=True)
+        [d.strftime("%d/%m/%Y"), "" if v is None else str(v), source]
+        for d, v in zip(dates, values, strict=True)
     ]
     all_rows = header_rows + data_rows
     df = pd.DataFrame(all_rows, columns=["Timestamp", code, "Source"])
@@ -76,10 +110,18 @@ def _snow_forecast_csv_bytes(dates, code, values, source="ERA5"):
 def _write_forecast_csv(directory, name, dates, code, value):
     """Write a snow-forecast CSV for one issue date to `directory` and
     return its path -- used by `fetch_snow_forecast_for_issue_date`
-    side_effect functions below."""
+    side_effect functions below. `value` is the same for every date in
+    `dates`; use `_write_forecast_csv_values` for per-date values
+    (e.g. one blank day among otherwise-valid ones)."""
+    return _write_forecast_csv_values(directory, name, dates, code, [value] * len(dates))
+
+
+def _write_forecast_csv_values(directory, name, dates, code, values):
+    """Like `_write_forecast_csv`, but with one value per date in
+    `dates` (may include `None` for a blank cell)."""
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f"{name}.csv")
-    content = _snow_forecast_csv_bytes(dates, code, [value] * len(dates))
+    content = _snow_forecast_csv_bytes(dates, code, values)
     with open(path, "wb") as f:
         f.write(content)
     return path
@@ -231,8 +273,8 @@ class TestAssembleSnowForecastFallback:
         reference_date = pd.Timestamp("2026-09-04")
         window = dg_utils.SNOW_FORECAST_WINDOW_DAYS  # 10
 
-        # Required window (yesterday .. today + window - 2) for
-        # 2026-09-04 is 2026-09-03 .. 2026-09-12.
+        # Required window (yesterday .. today + window - 3, PREPG-025
+        # review fix H3) for 2026-09-04 is 2026-09-03 .. 2026-09-11.
         #
         # - 2026-09-04 (today):    covers 09-04 .. 09-13, value 5.0.
         # - 2026-09-03 (yesterday): covers 09-03 .. 09-12, value 9.0.
@@ -274,7 +316,7 @@ class TestAssembleSnowForecastFallback:
         # absent, even though the 08-25 issuance's own window reaches
         # into that range. NOT capped at the upper end: 2026-09-13,
         # supplied only by today's issuance and beyond the required
-        # end (09-12), is legitimate and must survive.
+        # end (09-11), is legitimate and must survive.
         expected_dates = set(pd.date_range("2026-09-03", "2026-09-13", freq="D"))
         assert set(result["date"]) == expected_dates
         assert result["date"].min() == pd.Timestamp("2026-09-03")
@@ -309,9 +351,9 @@ class TestAssembleSnowForecastFallback:
         window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
 
         # Only one issuance succeeds, covering 09-04 .. 09-13. The
-        # required window is 09-03 .. 09-12 (yesterday through the
-        # horizon yesterday's own issuance would supply), so 09-03 is
-        # missing.
+        # required window is 09-03 .. 09-11 (yesterday through the
+        # horizon guaranteed even with today AND yesterday both
+        # missing, PREPG-025 review fix H3), so 09-03 is missing.
         dates = pd.date_range("2026-09-04", periods=window, freq="D")
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
@@ -357,8 +399,9 @@ class TestAssembleSnowForecastFallback:
         today's."""
         reference_date = pd.Timestamp("2026-09-04")
         window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
-        # Yesterday's issuance alone: covers 09-03 .. 09-12, which is
-        # exactly the required window for reference_date 09-04.
+        # Yesterday's issuance alone: covers 09-03 .. 09-12, which
+        # covers the required window for reference_date 09-04
+        # (09-03 .. 09-11) with a day to spare.
         dates = pd.date_range("2026-09-03", periods=window, freq="D")
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
@@ -479,6 +522,246 @@ class TestAssembleSnowForecastFallback:
         for endpoint in client.calls:
             assert f"parameter={expected_param}" in endpoint
             assert "param=" not in endpoint
+
+    def test_newest_blank_older_valid_wins(self, tmp_path):
+        """PREPG-025 review fix H1: a blank (NaN) value from the
+        NEWER issuance must not beat a real value from an OLDER one.
+        transform_snow_data preserves NaN and the completeness check
+        only looks at (date, code) presence, so without dropping
+        blanks before overlap resolution, the newest-wins rule would
+        pick the blank and a real historical value could be
+        overwritten with NaN downstream."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")  # 09-02..09-11
+        newer_dates = pd.date_range("2026-09-03", periods=window, freq="D")  # 09-03..09-12
+        newer_values = [None if d == pd.Timestamp("2026-09-05") else 99.0 for d in newer_dates]
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv(directory, "older", older_dates, TEST_CODE, 42.0)
+            if issue_date == "2026-09-03":
+                return _write_forecast_csv_values(
+                    directory, "newer", newer_dates, TEST_CODE, newer_values
+                )
+            raise ValueError("No data found for that date")
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        assert result is not None
+        assert result["SWE"].notna().all(), "no blank value should survive into the result"
+
+        def value_on(date_str):
+            row = result[(result["date"] == pd.Timestamp(date_str)) & (result["code"] == TEST_CODE)]
+            assert len(row) == 1
+            return row["SWE"].iloc[0]
+
+        # The newer issuance is blank at 09-05 -- the older, valid
+        # issuance's value must win instead of a NaN.
+        assert value_on("2026-09-05") == 42.0
+        # Sanity check: where the newer issuance IS valid, it still
+        # wins normally (shortest lead).
+        assert value_on("2026-09-03") == 99.0
+
+    def test_all_issuances_blank_for_a_date_fails_completeness(self, tmp_path):
+        """PREPG-025 review fix H1: if EVERY issuance is blank for a
+        required (date, code), no row survives to satisfy
+        completeness -- the fallback must fail honestly (return None)
+        rather than accept a blank value."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")
+        newer_dates = pd.date_range("2026-09-03", periods=window, freq="D")
+        blank_date = pd.Timestamp("2026-09-08")
+        older_values = [None if d == blank_date else 42.0 for d in older_dates]
+        newer_values = [None if d == blank_date else 99.0 for d in newer_dates]
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv_values(
+                    directory, "older", older_dates, TEST_CODE, older_values
+                )
+            if issue_date == "2026-09-03":
+                return _write_forecast_csv_values(
+                    directory, "newer", newer_dates, TEST_CODE, newer_values
+                )
+            raise ValueError("No data found for that date")
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        assert result is None
+
+    def test_completes_from_two_days_ago_when_today_and_yesterday_both_missing(self, tmp_path):
+        """PREPG-025 review fix H3: even when BOTH today's issuance
+        (routinely unpublished early in the day) AND yesterday's
+        issuance (the genuine gap this fallback exists to tolerate)
+        are missing, the issuance from two days ago alone must still
+        satisfy completeness -- required_end = today + window - 3,
+        not today + window - 2 or - 1."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+        # 2026-09-02 (today - 2) covers 09-02 .. 09-11, which is
+        # exactly the required window (09-03 .. 09-11) with a day to
+        # spare on the near side.
+        dates = pd.date_range("2026-09-02", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            # Today (2026-09-04) and yesterday (2026-09-03) are both
+            # absent -- exactly the compound gap H3 fixes.
+            if issue_date != "2026-09-02":
+                raise ValueError("No data found for that date")
+            return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 6.0)
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        assert result is not None
+        required_dates = set(pd.date_range("2026-09-03", "2026-09-11", freq="D"))
+        assert required_dates <= set(result["date"])
+        assert (result["SWE"] == 6.0).all()
+
+    def test_conflicting_duplicate_rows_within_one_issuance_are_rejected(self, tmp_path):
+        """PREPG-025 review fix M1: two DIFFERENT values for the same
+        (date, code) within a SINGLE issuance are a data-integrity
+        problem, not something the later keep="last" dedup should
+        resolve arbitrarily by whichever way pandas' stable sort
+        happens to break the tie -- both conflicting rows must be
+        dropped, so this key falls back to another issuance instead."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        # An older, clean issuance covering the whole range -- what
+        # the conflicting date should fall back to once the
+        # conflicting rows are dropped from the newer issuance.
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv(directory, "older", older_dates, TEST_CODE, 15.0)
+            if issue_date == "2026-09-03":
+                # Hand-built CSV: 2026-09-05 appears TWICE with
+                # different values -- an internally conflicting
+                # issuance.
+                header_rows = [["h", "h", "h"]] * 4
+                data_rows = [
+                    ["03/09/2026", "20.0", "ERA5"],
+                    ["04/09/2026", "20.0", "ERA5"],
+                    ["05/09/2026", "20.0", "ERA5"],
+                    ["05/09/2026", "999.0", "ERA5"],  # conflicting duplicate
+                    ["06/09/2026", "20.0", "ERA5"],
+                    ["07/09/2026", "20.0", "ERA5"],
+                    ["08/09/2026", "20.0", "ERA5"],
+                    ["09/09/2026", "20.0", "ERA5"],
+                    ["10/09/2026", "20.0", "ERA5"],
+                    ["11/09/2026", "20.0", "ERA5"],
+                    ["12/09/2026", "20.0", "ERA5"],
+                ]
+                df = pd.DataFrame(
+                    header_rows + data_rows, columns=["Timestamp", TEST_CODE, "Source"]
+                )
+                os.makedirs(directory, exist_ok=True)
+                path = os.path.join(directory, "conflicting.csv")
+                df.to_csv(path, index=False)
+                return path
+            raise ValueError("No data found for that date")
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        assert result is not None
+
+        def value_on(date_str):
+            row = result[(result["date"] == pd.Timestamp(date_str)) & (result["code"] == TEST_CODE)]
+            assert len(row) == 1
+            return row["SWE"].iloc[0]
+
+        # Neither of the conflicting issuance's two values for 09-05
+        # (20.0, 999.0) may win by accident -- both were dropped from
+        # that issuance, so the older, clean issuance's value is used.
+        assert value_on("2026-09-05") == 15.0
+        assert 999.0 not in result["SWE"].values
+        # A non-conflicting date from the SAME (newer) issuance is
+        # unaffected and still wins normally (shortest lead).
+        assert value_on("2026-09-04") == 20.0
+
+    def test_tz_aware_reference_date_normalises_instead_of_crashing(self, tmp_path):
+        """PREPG-025 review fix M3: a tz-aware reference_date must not
+        raise during the floor comparison -- it is normalised to
+        naive (tzinfo dropped) before use, matching the endpoint's
+        timezone-less `date=YYYY-MM-DD` contract."""
+        tz_aware_reference_date = pd.Timestamp("2026-09-04").tz_localize("UTC")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+        # Same shape as the "today absent" fixture: yesterday's
+        # issuance alone should be enough.
+        dates = pd.date_range("2026-09-03", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date != "2026-09-03":
+                raise ValueError("No data found for that date")
+            return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 4.0)
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            # Must not raise (TypeError: tz-naive vs tz-aware).
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=tz_aware_reference_date,
+            )
+
+        assert result is not None
+        required_dates = set(pd.date_range("2026-09-03", "2026-09-11", freq="D"))
+        assert required_dates <= set(result["date"])
+        assert (result["SWE"] == 4.0).all()
 
 
 # =============================================================================
@@ -612,6 +895,81 @@ class TestIncompleteWindowWritesNothing:
         assert result is False
         assert not os.path.exists(file_path)
         mock_write_api.assert_not_called()
+
+
+class TestTransportErrorAbortsFallback:
+    """PREPG-025 review fix H2: a fetch/read failure that is NOT a
+    confirmed absent issuance ("No data found") must abort the whole
+    fallback, even when older issuances would, on their own, have
+    covered the full required window. Silently substituting older
+    data for an issuance that merely failed to download would mask a
+    genuine transport failure rather than reporting it."""
+
+    @patch("pandas.Timestamp.today")
+    @patch("dg_utils.write_snow_to_api")
+    def test_transport_error_on_recent_issuance_leaves_csv_untouched_and_no_api_write(
+        self, mock_write_api, mock_today, tmp_path
+    ):
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+        reference_date = pd.Timestamp("2026-09-04")
+        mock_today.return_value = reference_date
+
+        save_path = str(tmp_path / "save")
+        os.makedirs(os.path.join(save_path, "SWE"), exist_ok=True)
+        file_path = os.path.join(save_path, "SWE", f"{TEST_HRU}_SWE.csv")
+
+        # A pre-existing CSV is required for a codes baseline (the
+        # fallback refuses outright with none); it also lets this test
+        # assert the file is left untouched, not merely absent.
+        historical = pd.DataFrame(
+            {"date": pd.to_datetime(["2026-08-01"]), "code": [TEST_CODE], "SWE": [7.0]}
+        )
+        historical.to_csv(file_path, index=False)
+
+        # today - 2 (2026-09-02) succeeds on its own and, by itself,
+        # already covers the ENTIRE required window (09-03 .. 09-11)
+        # -- so the pre-fix behaviour of skipping a failed fetch would
+        # have "succeeded" using this older, potentially stale data,
+        # silently masking a transport failure on the newer, correct
+        # issuance that genuinely exists.
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv(directory, "older", older_dates, TEST_CODE, 11.0)
+            if issue_date == "2026-09-03":
+                # A transport-style failure, NOT "No data found" --
+                # the fix must treat this as fatal, not skippable.
+                raise Exception("Connection reset by peer")
+            raise ValueError("No data found for that date")
+
+        mock_client = Mock()
+        mock_client.get_operational.side_effect = Exception(
+            "Operational data for HRU 19999 is not available for date 2026-09-01"
+        )
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo.get_snow_data_operational(
+                client=mock_client,
+                hru=TEST_HRU,
+                variable="SWE",
+                date="2024-01-01",
+                dg_path=str(tmp_path / "dg"),
+                save_path=save_path,
+            )
+
+        assert result is False
+        mock_write_api.assert_not_called()
+
+        # The pre-existing CSV must be left exactly as it was -- no
+        # partial/stale write from the aborted fallback.
+        written = pd.read_csv(file_path)
+        assert len(written) == 1
+        assert written["SWE"].iloc[0] == 7.0
+        assert pd.to_datetime(written["date"].iloc[0]) == pd.Timestamp("2026-08-01")
 
 
 class TestSnowPreservationReadErrorEscapesFallbackPath:
@@ -765,7 +1123,7 @@ class TestFullStackPositiveFallback:
         required_dates = list(
             pd.date_range(
                 reference_date - pd.Timedelta(days=1),
-                reference_date + pd.Timedelta(days=window - 2),
+                reference_date + pd.Timedelta(days=window - 3),
                 freq="D",
             )
         )
@@ -837,3 +1195,95 @@ class TestFullStackPositiveFallback:
         }
         missing_from_post = [d for d in required_dates if d not in posted_code_dates]
         assert not missing_from_post, f"required dates missing from API POST: {missing_from_post}"
+
+
+class TestSingleReferenceDateSharedWithApiWrite:
+    """PREPG-025 review fix M2: the assembler and write_snow_to_api
+    must share ONE captured reference date on the fallback path, not
+    each independently read wall-clock "today" -- a rollover between
+    two separate reads could drop a row from the API write that the
+    assembler's completeness check had already accepted for the CSV.
+
+    write_snow_to_api runs for REAL here (only the underlying
+    SapphirePreprocessingClient is faked), so its own internal "today"
+    read genuinely does or doesn't fire depending on whether the fix
+    threads reference_date through, the same pattern
+    TestFullStackPositiveFallback uses.
+    """
+
+    @patch("snow_data_operational._check_snow_consistency")
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_reference_date_read_exactly_once_and_shared(
+        self, mock_client_class, mock_check, tmp_path, monkeypatch
+    ):
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+
+        mock_api_client = Mock()
+        mock_api_client.readiness_check.return_value = True
+        mock_api_client.read_snow.return_value = pd.DataFrame()
+        mock_api_client.write_snow.return_value = 0
+        mock_client_class.return_value = mock_api_client
+
+        mock_check.return_value = True
+
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        save_path = str(tmp_path / "save")
+        os.makedirs(os.path.join(save_path, "SWE"), exist_ok=True)
+        file_path = os.path.join(save_path, "SWE", f"{TEST_HRU}_SWE.csv")
+        pd.DataFrame(
+            {"date": pd.to_datetime(["2026-08-01"]), "code": [TEST_CODE], "SWE": [1.0]}
+        ).to_csv(file_path, index=False)
+
+        dates = pd.date_range("2026-09-03", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date != "2026-09-03":
+                raise ValueError("No data found for that date")
+            return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 3.0)
+
+        mock_client = Mock()
+        mock_client.get_operational.side_effect = Exception(
+            "Operational data for HRU 19999 is not available for date 2026-09-01"
+        )
+
+        # A single-element side_effect: exactly one real
+        # pd.Timestamp.today() call is allowed across the ENTIRE
+        # fallback path, including write_snow_to_api's own internal
+        # clock read (which runs for real here, unmocked). If either
+        # the assembler or write_snow_to_api independently reads
+        # "today" a second time -- the defect this fix removes -- that
+        # second call raises StopIteration and fails the test loudly,
+        # rather than silently using a second, possibly different,
+        # value.
+        with (
+            patch("pandas.Timestamp.today", side_effect=[reference_date]) as mock_today,
+            patch(
+                "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+                side_effect=fetch_side_effect,
+            ),
+        ):
+            result = sdo.get_snow_data_operational(
+                client=mock_client,
+                hru=TEST_HRU,
+                variable="SWE",
+                date="2024-01-01",
+                dg_path=str(tmp_path / "dg"),
+                save_path=save_path,
+            )
+
+        assert result is True
+        assert mock_today.call_count == 1
+
+        # And the POST payload actually used that single reference
+        # date's "yesterday" boundary (2026-09-03), not a second,
+        # independently-read value.
+        assert mock_api_client.write_snow.called
+        posted_records = mock_api_client.write_snow.call_args[0][0]
+        assert posted_records
+        posted_dates = {pd.Timestamp(r["date"]) for r in posted_records}
+        assert all(d >= pd.Timestamp("2026-09-03") for d in posted_dates)

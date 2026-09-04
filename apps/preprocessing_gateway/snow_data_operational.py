@@ -294,12 +294,19 @@ def _assemble_snow_forecast_fallback(
 
     Overlap resolution: for each (target date, code), the value from
     the newest issue date that is not after that target date (shortest
-    lead) is kept -- see the sort/drop_duplicates below. Completeness
-    is validated before this function returns anything to the caller:
-    an incomplete window returns None so the caller writes nothing.
-    The required horizon is sized so yesterday's issuance ALONE can
-    satisfy it -- today's issuance is routinely still absent when this
-    runs, so completeness must not depend on it being present. The
+    lead) is kept -- see the sort/drop_duplicates below. Rows with no
+    usable value for `variable` are dropped BEFORE that resolution, so
+    a blank from a newer issuance can never beat a real value from an
+    older one (and, if every issuance is blank for a given date, the
+    completeness check below fails honestly instead of accepting the
+    blank). Completeness is validated before this function returns
+    anything to the caller: an incomplete window returns None so the
+    caller writes nothing. The required horizon is sized so that EVEN
+    IF today's issuance is unpublished (routine early in the day) AND
+    the immediately preceding issuance (yesterday's) is the one
+    genuinely missing (the actual gap this fallback exists to
+    tolerate), the issuance from two days ago alone can still satisfy
+    it: `today + window - 3`, not `today + window - 1` or `- 2`. The
     returned window is also floored at yesterday: fetched issuances can
     reach back further than that (down to `today -
     SNOW_FORECAST_WINDOW_DAYS`), but rows older than yesterday are
@@ -323,13 +330,21 @@ def _assemble_snow_forecast_fallback(
             and issue-date candidates are computed relative to. If
             None, uses `pd.Timestamp.today()` (the Forecast Date Rule:
             callers/tests that need determinism pass this explicitly
-            rather than relying on wall-clock time).
+            rather than relying on wall-clock time). A tz-aware value
+            is normalised to naive (tzinfo dropped, calendar date and
+            time-of-day kept as given) before use -- the snow-forecast
+            endpoint's `date=YYYY-MM-DD` contract has no timezone
+            concept, and comparing a tz-aware Timestamp against the
+            tz-naive dates `transform_snow_data` parses would otherwise
+            raise before any controlled return.
 
     Returns:
         A DataFrame shaped like `dg_utils.transform_snow_data`'s output
         (date, code, {variable}[, elevation bands]) covering the
         required window, or None if the required coverage could not be
-        assembled (including: no existing_codes baseline was given).
+        assembled (including: no existing_codes baseline was given; a
+        fetch or read failure other than a confirmed absent issuance;
+        any required (date, code) pair genuinely without a value).
     """
     if not existing_codes:
         logger.error(
@@ -344,22 +359,30 @@ def _assemble_snow_forecast_fallback(
 
     window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
     if reference_date is not None:
-        today = pd.Timestamp(reference_date).normalize()
+        today = pd.Timestamp(reference_date)
     else:
-        today = pd.Timestamp.today().normalize()
+        today = pd.Timestamp.today()
+    if today.tzinfo is not None:
+        # Normalise to the endpoint's calendar-date contract: drop the
+        # timezone rather than convert, so the caller's own wall-clock
+        # date/time is what gets used, matching what pd.Timestamp.today()
+        # (always naive) would give a non-tz-aware caller. Without this,
+        # the `deduped["date"] >= required_start` floor comparison below
+        # raises (tz-naive vs tz-aware) before any controlled return.
+        today = today.tz_localize(None)
+    today = today.normalize()
 
     # Required target window: yesterday (needed for the API's
     # operational write, which filters to date >= yesterday) through
-    # the forecast horizon YESTERDAY's issuance alone can supply
-    # (yesterday .. yesterday + window - 1 == today + window - 2).
-    # Deliberately NOT today + window - 1: that horizon is reachable
-    # only from today's own issuance, which is routinely absent early
-    # in the day (measured 2026-09-04) -- requiring it would fail
-    # completeness on an ordinary morning. Today's issuance, when it IS
-    # present, still contributes its extra day forward; it just isn't
-    # required.
+    # the forecast horizon guaranteed even when BOTH today's issuance
+    # is unpublished (routine) AND yesterday's issuance is the one
+    # genuinely missing -- the two-days-ago issuance's own window ends
+    # at today + window - 3. Requiring more (today + window - 2, or
+    # - 1) would make completeness depend on an issuance that may not
+    # exist precisely when the gap this fallback exists to tolerate
+    # lands on yesterday.
     required_start = today - pd.Timedelta(days=1)
-    required_end = today + pd.Timedelta(days=window - 2)
+    required_end = today + pd.Timedelta(days=window - 3)
     required_dates = list(pd.date_range(required_start, required_end, freq="D"))
 
     # Issue dates to try: far enough back that every required target
@@ -384,32 +407,74 @@ def _assemble_snow_forecast_fallback(
                     hru,
                     variable,
                 )
-            else:
-                logger.warning(
-                    "  PREPG-025 fallback: could not fetch issue date %s (HRU %s, %s): %s",
-                    issue_date_str,
-                    hru,
-                    variable,
-                    dg_utils.redact_api_key(str(e)),
-                )
-            continue
+                continue
+            # Anything other than a confirmed absent issuance (network,
+            # auth, malformed-response, ...) is NOT the same as "this
+            # issuance doesn't exist" -- treating it as skippable would
+            # let an older, possibly stale, issuance silently stand in
+            # for one that failed only to download, even though the
+            # correct newer data genuinely exists. Abort instead of
+            # guessing.
+            logger.error(
+                "  PREPG-025 fallback: could not fetch issue date %s (HRU "
+                "%s, %s), aborting the fallback rather than silently "
+                "relying on older issuances: %s",
+                issue_date_str,
+                hru,
+                variable,
+                dg_utils.redact_api_key(str(e)),
+            )
+            return None
 
         try:
             df_raw = pd.read_csv(outpath)
         except Exception as e:
-            logger.warning(
+            logger.error(
                 "  PREPG-025 fallback: could not read downloaded file %s "
-                "for issue date %s (HRU %s, %s): %s",
+                "for issue date %s (HRU %s, %s), aborting the fallback: %s",
                 outpath,
                 issue_date_str,
                 hru,
                 variable,
                 e,
             )
-            continue
+            return None
 
         df_issue = dg_utils.transform_snow_data(df_raw, variable)
         df_issue["date"] = pd.to_datetime(df_issue["date"])
+
+        # Reject conflicting duplicates within this single issuance
+        # before it joins any other frame. An exact duplicate row (same
+        # date, code, and value) is harmless and collapsed here; two
+        # DIFFERENT values for the same (date, code) from the SAME
+        # issuance are a data-integrity problem that must not be
+        # resolved arbitrarily by whichever way pandas' stable sort
+        # happens to break the tie later -- drop both rather than guess.
+        df_issue = df_issue.drop_duplicates()
+        conflict_mask = df_issue.duplicated(subset=["date", "code"], keep=False)
+        if conflict_mask.any():
+            conflicting_keys = sorted(
+                set(
+                    zip(
+                        df_issue.loc[conflict_mask, "date"],
+                        df_issue.loc[conflict_mask, "code"],
+                        strict=False,
+                    )
+                )
+            )
+            logger.warning(
+                "  PREPG-025 fallback: issue date %s (HRU %s, %s) has "
+                "conflicting duplicate values for %d (date, code) pair(s); "
+                "dropping them from this issuance instead of resolving "
+                "arbitrarily: %s",
+                issue_date_str,
+                hru,
+                variable,
+                len(conflicting_keys),
+                [(d.date(), c) for d, c in conflicting_keys],
+            )
+            df_issue = df_issue[~conflict_mask]
+
         df_issue["_issue_date"] = issue_date
         fetched_frames.append(df_issue)
 
@@ -423,6 +488,21 @@ def _assemble_snow_forecast_fallback(
         return None
 
     combined = pd.concat(fetched_frames, ignore_index=True)
+
+    # Drop rows with no usable value for the requested variable BEFORE
+    # overlap resolution. transform_snow_data preserves NaN, and the
+    # completeness check below only looks at (date, code) presence -- if
+    # a blank row from a newer issuance were left in, it would win the
+    # dedup below (newest wins), pass completeness (the pair exists),
+    # and then win the downstream date/code merge in
+    # get_snow_data_operational, replacing a real historical value with
+    # NaN (write_snow_to_api then silently drops the valueless record,
+    # so the CSV goes blank and the API payload goes quietly partial).
+    # Dropping blanks here means an older, valid issuance's row for the
+    # same (date, code) is what the dedup sees and keeps; if every
+    # issuance is blank for a given (date, code), no row survives for
+    # it at all, and completeness fails honestly instead.
+    combined = combined[combined[variable].notna()]
 
     # Deterministic overlap resolution. Every row's date already falls
     # within its own issuance's forward window, so date >= _issue_date
@@ -531,6 +611,19 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
         old_dataframe = pd.DataFrame()
         logger.info("  No existing CSV, starting fresh")
 
+    # PREPG-025 review fix (M2): the fallback path below computes its
+    # own "today" inside _assemble_snow_forecast_fallback and, until
+    # this fix, write_snow_to_api independently computed its own
+    # "today" again later (dg_utils.py, near the top of that
+    # function). A clock rollover between the two reads could shift
+    # which dates each considers "yesterday", silently dropping a row
+    # that passed the assembler's completeness check from the API
+    # write while it still reaches the CSV. Captured once, here, and
+    # threaded through both calls below; stays None (write_snow_to_api
+    # reads its own wall-clock "today", unchanged) on the happy path,
+    # which has no assembler call to be inconsistent with.
+    api_reference_date = None
+
     # Fetch from Data Gateway
     try:
         outpath = client.get_operational(
@@ -560,8 +653,14 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
             dg_utils.redact_api_key(str(e)),
         )
         existing_codes = set(old_dataframe["code"].astype(str)) if not old_dataframe.empty else None
+        api_reference_date = pd.Timestamp.today()
         df_transformed = _assemble_snow_forecast_fallback(
-            client, hru, variable, dg_path, existing_codes=existing_codes
+            client,
+            hru,
+            variable,
+            dg_path,
+            existing_codes=existing_codes,
+            reference_date=api_reference_date,
         )
         if df_transformed is None:
             logger.error(
@@ -621,7 +720,9 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
 
     # Write to SAPPHIRE API (if enabled)
     try:
-        written = dg_utils.write_snow_to_api(df_combined, variable, hru)
+        written = dg_utils.write_snow_to_api(
+            df_combined, variable, hru, reference_date=api_reference_date
+        )
         # Run consistency check only if data was actually written
         if written:
             _check_snow_consistency(df_combined, variable, hru)
