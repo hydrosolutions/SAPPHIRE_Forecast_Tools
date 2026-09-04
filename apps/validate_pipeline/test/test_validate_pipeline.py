@@ -4,7 +4,9 @@ Covers early-exit checks, Tier 1 (presence), Tier 2 (correctness),
 Tier 3 (consistency), module attribution, and the CLI entry point.
 """
 
+import builtins
 import json
+import os
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -1674,3 +1676,547 @@ class TestNewChecks:
         quantile_result = next((r for r in t2 if "Quantile" in r.name), None)
         assert quantile_result is not None
         assert quantile_result.status == "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# Deployment .env loading (_load_deployment_env)
+# ---------------------------------------------------------------------------
+
+# The autouse `_long_term_resolver_env` fixture (defined near the top of this
+# file) sets all three long-term resolver env vars for EVERY test — that is
+# exactly why the missing-.env defect was invisible to this suite before this
+# fix. Every test below that needs those vars absent explicitly deletes them
+# with monkeypatch.delenv(..., raising=False) to neutralise the fixture for
+# that test; monkeypatch restores the prior state automatically afterwards,
+# so nothing leaks into other tests.
+
+_RESOLVER_VARS = (
+    "ieasyhydroforecast_ml_long_term_supported_modes",
+    "ieasyforecast_configuration_path",
+    "ieasyhydroforecast_ml_long_term_configuration",
+)
+
+
+class TestLoadDeploymentEnv:
+    """Tests for vp._load_deployment_env()."""
+
+    def test_env_file_loaded_when_pointer_set(self, monkeypatch, tmp_path):
+        """A real .env file at the pointer path is loaded into os.environ."""
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+        env_file = tmp_path / "deploy.env"
+        env_file.write_text(
+            "ieasyhydroforecast_ml_long_term_supported_modes=quarter\n"
+            "ieasyforecast_configuration_path=/some/config/path\n"
+            "ieasyhydroforecast_ml_long_term_configuration=long_term_configs\n"
+        )
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(env_file))
+
+        assert vp._load_deployment_env() is True
+        assert os.environ["ieasyhydroforecast_ml_long_term_supported_modes"] == "quarter"
+        assert os.environ["ieasyforecast_configuration_path"] == "/some/config/path"
+        assert os.environ["ieasyhydroforecast_ml_long_term_configuration"] == "long_term_configs"
+        # monkeypatch un-sets these again on teardown, so no leakage risk.
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def test_nonexistent_pointer_path_fails_main(self, monkeypatch, tmp_path, capsys):
+        """Pointer set to a non-existent path -> main() returns 1, [FAIL] printed."""
+        missing_path = tmp_path / "does_not_exist.env"
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(missing_path))
+
+        rc = vp.main(["--target", "short-term"])
+        captured = capsys.readouterr()
+
+        assert rc == 1
+        assert "[FAIL]" in captured.out
+        assert str(missing_path) in captured.out
+
+    def test_pointer_absent_but_vars_already_exported(self, monkeypatch):
+        """Container case: no pointer, resolver vars already in the environment.
+
+        Must report success and change nothing — this is the working
+        container / already-exported-env case and must not regress.
+        """
+        monkeypatch.delenv("ieasyhydroforecast_env_file_path", raising=False)
+        # The autouse fixture has already exported the three resolver vars;
+        # capture their values to prove _load_deployment_env changes nothing.
+        before = {var: os.environ[var] for var in _RESOLVER_VARS}
+
+        assert vp._load_deployment_env() is True
+
+        for var in _RESOLVER_VARS:
+            assert os.environ[var] == before[var]
+
+    def test_override_false_does_not_clobber_existing_value(self, monkeypatch, tmp_path):
+        """A var already in os.environ is NOT overwritten by the .env file."""
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "already-set-value")
+        env_file = tmp_path / "deploy.env"
+        env_file.write_text("ieasyhydroforecast_ml_long_term_supported_modes=from-file-value\n")
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(env_file))
+
+        assert vp._load_deployment_env() is True
+        assert os.environ["ieasyhydroforecast_ml_long_term_supported_modes"] == "already-set-value"
+
+    def test_missing_dotenv_dependency_fails(self, monkeypatch, tmp_path, capsys):
+        """A lazy ImportError for dotenv -> [FAIL] printed and False returned.
+
+        F6: the message must name the venv actually running this process
+        (sys.prefix), since under run_locally.sh that is NOT
+        apps/validate_pipeline/.venv, and must mention that both that venv
+        and apps/validate_pipeline need the dependency.
+        """
+        env_file = tmp_path / "deploy.env"
+        env_file.write_text("ieasyforecast_configuration_path=/x\n")
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(env_file))
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "dotenv":
+                raise ImportError("no module named dotenv")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        result = vp._load_deployment_env()
+        captured = capsys.readouterr()
+
+        assert result is False
+        assert "[FAIL]" in captured.out
+        assert "python-dotenv is not installed" in captured.out
+        # Names the interpreter actually running this process, not a
+        # hardcoded (and, under run_locally.sh, wrong) venv guess.
+        assert vp.sys.prefix in captured.out
+        assert "apps/validate_pipeline" in captured.out
+
+    def test_comment_only_env_file_fails_main(self, monkeypatch, tmp_path, capsys):
+        """F2: a comment-only .env file loads nothing -> main() exits 1,
+        [FAIL] names the path (load_dotenv's return value is not ignored).
+        """
+        env_file = tmp_path / "comment_only.env"
+        env_file.write_text("# just a comment\n\n# another comment\n")
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(env_file))
+
+        rc = vp.main(["--target", "short-term"])
+        captured = capsys.readouterr()
+
+        assert rc == 1
+        assert "[FAIL]" in captured.out
+        assert str(env_file) in captured.out
+
+    def test_non_utf8_env_file_fails_without_traceback(self, monkeypatch, tmp_path, capsys):
+        """F3: non-UTF-8 bytes in the env file -> [FAIL], no traceback.
+
+        Verified against the installed python-dotenv: this raises
+        UnicodeDecodeError, which must not escape as a traceback per the
+        module's documented exit contract (0/1 only).
+        """
+        env_file = tmp_path / "bad_encoding.env"
+        env_file.write_bytes(b"ieasyforecast_configuration_path=\xff\xfe\x00bad\n")
+        monkeypatch.setenv("ieasyhydroforecast_env_file_path", str(env_file))
+
+        rc = vp.main(["--target", "short-term"])
+        captured = capsys.readouterr()
+
+        assert rc == 1
+        assert "[FAIL]" in captured.out
+        assert "UnicodeDecodeError" in captured.out
+
+    def test_env_file_pointer_absent_by_default(self):
+        """F4: the conftest autouse fixture keeps the pointer out of
+        os.environ unless a test sets it itself."""
+        assert "ieasyhydroforecast_env_file_path" not in os.environ
+
+    def test_ambient_env_vars_absent_by_default(self):
+        """R4: the conftest autouse fixture also clears the other exported
+        variables that previously made the suite's result depend on the
+        developer's shell state (PYTHON_DOTENV_DISABLED breaks
+        test_env_file_loaded_when_pointer_set; SAPPHIRE_API_ENABLED=false
+        breaks the main()-level long-term exit tests)."""
+        for var in (
+            "PYTHON_DOTENV_DISABLED",
+            "SAPPHIRE_API_ENABLED",
+            "SAPPHIRE_API_URL",
+            "SAPPHIRE_PREDICTION_MODE",
+            "FRESHNESS_THRESHOLD_DAYS",
+        ):
+            assert var not in os.environ
+
+
+class TestLongTermResolverFailure:
+    """Change 2: a resolver failure must surface as a FAIL CheckResult.
+
+    Without the fix, run_tier1_long_term propagates an uncaught
+    LongTermHorizonResolverError, violating the module's documented exit
+    contract (0/1 only, no traceback).
+    """
+
+    def test_missing_resolver_env_produces_fail_checkresult(self, monkeypatch, mock_post_client):
+        """With resolver vars absent, run_tier1_long_term returns a FAIL row
+        instead of raising LongTermHorizonResolverError."""
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+        mock_post_client.read_long_term_forecasts.return_value = single_row
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        # Must not raise vp.LongTermHorizonResolverError.
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+        fail_rows = [
+            r for r in results if r.status == "FAIL" and r.module == "long_term_forecasting"
+        ]
+        assert fail_rows, f"expected a FAIL row for the unresolved horizon config, got: {results}"
+        assert fail_rows[-1].detail
+        # F1: this is a configuration failure, not a per-module data
+        # finding — it must be marked critical so it survives --module
+        # filtering and forces a non-zero exit even under --phase pre.
+        assert fail_rows[-1].critical is True
+
+    def test_missing_mode_config_file_produces_fail_checkresult(
+        self, mock_post_client, _long_term_resolver_env
+    ):
+        """F7: FileNotFoundError (missing mode JSON) routes through the
+        same loud FAIL path as LongTermHorizonResolverError, not a
+        traceback.
+
+        Reproduced against apps/iEasyHydroForecast/long_term_horizon_resolver.py:184,
+        which raises FileNotFoundError when a supported mode's config file
+        is absent.
+        """
+        config_dir = _long_term_resolver_env
+        (config_dir / "quarter.json").unlink()
+
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+        mock_post_client.read_long_term_forecasts.return_value = single_row
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        # Must not raise FileNotFoundError.
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+        fail_rows = [
+            r for r in results if r.status == "FAIL" and r.module == "long_term_forecasting"
+        ]
+        assert fail_rows, f"expected a FAIL row for the missing mode config, got: {results}"
+        assert fail_rows[-1].critical is True
+        assert "quarter" in fail_rows[-1].detail.lower()
+
+    def test_no_seasonal_modes_supported_produces_fail_checkresult(
+        self, monkeypatch, mock_post_client
+    ):
+        """F7: the ValueError raised by validate_pipeline's own
+        _resolved_seasonal_presence_horizon_value (":610", "No seasonal
+        long-term modes are supported by this deployment.") routes through
+        the same loud FAIL path, not a traceback.
+        """
+        # Only "quarter" is supported — no seasonal_* mode is, so
+        # _resolved_seasonal_presence_horizon_value must raise ValueError.
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+        mock_post_client.read_long_term_forecasts.return_value = single_row
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        # Must not raise ValueError.
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+        fail_rows = [
+            r for r in results if r.status == "FAIL" and r.module == "long_term_forecasting"
+        ]
+        assert fail_rows, f"expected a FAIL row for the unsupported seasonal modes, got: {results}"
+        assert fail_rows[-1].critical is True
+        assert "seasonal" in fail_rows[-1].detail.lower()
+
+    def test_mode_config_path_is_directory_produces_fail_checkresult(
+        self, mock_post_client, _long_term_resolver_env
+    ):
+        """R2: an OSError subclass other than FileNotFoundError must also
+        route through the loud FAIL path, not a traceback.
+
+        Reproduced against
+        apps/iEasyHydroForecast/long_term_horizon_resolver.py:187
+        (`with config_path.open() as config_file`): when the mode config
+        path is a directory, `.exists()` is True (so the FileNotFoundError
+        branch is not taken) but `.open()` raises IsADirectoryError, which
+        is an OSError subclass but not a FileNotFoundError.
+        """
+        config_dir = _long_term_resolver_env
+        (config_dir / "quarter.json").unlink()
+        (config_dir / "quarter.json").mkdir()
+
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+        mock_post_client.read_long_term_forecasts.return_value = single_row
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        # Must not raise IsADirectoryError.
+        results = vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+        fail_rows = [
+            r for r in results if r.status == "FAIL" and r.module == "long_term_forecasting"
+        ]
+        assert fail_rows, f"expected a FAIL row for the directory mode config path, got: {results}"
+        assert fail_rows[-1].critical is True
+
+    def test_check_presence_valueerror_not_mislabelled_though_still_propagates(
+        self, mock_post_client, _long_term_resolver_env
+    ):
+        """Pins that a ValueError raised by check_presence itself (e.g.
+        pandas' pd.to_datetime on a malformed response with duplicate
+        'date' columns) is NOT caught by the horizon-resolution guard and
+        mislabelled as "Long-term horizon configuration" — that guard
+        wraps only the two resolver calls, not the check_presence() calls.
+
+        This does NOT assert that the traceback itself is correct
+        behaviour. It is a KNOWN PRE-EXISTING VIOLATION of this module's
+        documented exit contract (main() must return 0 or 1, never raise)
+        that this ValueError propagates uncaught at all, and it is tracked
+        as a separate issue rather than fixed here. When that is fixed
+        (e.g. by turning it into a reported FAIL CheckResult instead of
+        letting it escape), THIS TEST MUST BE UPDATED to assert on the
+        resulting CheckResult — it must not be treated as a blocker for
+        that fix.
+        """
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+        # A DataFrame with two columns named "date" makes df["date"] return
+        # a DataFrame instead of a Series, so pd.to_datetime(...) raises
+        # ValueError: "cannot assemble with duplicate keys".
+        malformed = pd.DataFrame(
+            [["19999", "2026-02-23", "2026-02-24"]],
+            columns=["code", "date", "date"],
+        )
+
+        def fake_read_long_term_forecasts(**kwargs):
+            if kwargs.get("horizon_type") == "quarter":
+                return malformed
+            return single_row
+
+        mock_post_client.read_long_term_forecasts.side_effect = fake_read_long_term_forecasts
+        mock_post_client.read_skill_metrics.return_value = single_row
+
+        with pytest.raises(ValueError, match="duplicate keys"):
+            vp.run_tier1_long_term(mock_post_client, date(2026, 2, 23))
+
+
+class TestLongTermResolverGuardsAreIndependent:
+    """S2: the quarter and seasonal horizon resolutions in
+    run_tier1_long_term must be guarded INDEPENDENTLY — a failure
+    resolving one must not suppress the presence checks for the other.
+
+    Pins the regression from the previous round, which hoisted both
+    resolver calls into one shared try/except that returned immediately on
+    the first failure: with a valid quarter config and no supported
+    seasonal mode, that version ran ZERO quarter checks. Reverting the
+    independent try/except blocks in run_tier1_long_term back into one
+    combined block, or reinstating the early `return results` inside the
+    guard, makes these tests fail.
+    """
+
+    @staticmethod
+    def _mocked_clients():
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+
+        mock_pre = MagicMock()
+        mock_pre.readiness_check.return_value = True
+        mock_pre.read_runoff.return_value = pd.DataFrame()
+        mock_pre.read_hydrograph.return_value = pd.DataFrame()
+        mock_pre.read_meteo.return_value = pd.DataFrame()
+        mock_pre.read_snow.return_value = pd.DataFrame()
+
+        mock_post = MagicMock()
+        mock_post.readiness_check.return_value = True
+        mock_post.read_long_term_forecasts.return_value = single_row
+        mock_post.read_skill_metrics.return_value = single_row
+        mock_post.read_short_term_forecasts.return_value = pd.DataFrame()
+        mock_post.read_lr_forecasts.return_value = pd.DataFrame()
+        return mock_pre, mock_post
+
+    def _run(self, argv):
+        mock_pre, mock_post = self._mocked_clients()
+        with (
+            patch.object(vp, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(vp, "SapphirePreprocessingClient", return_value=mock_pre),
+            patch.object(vp, "SapphirePostprocessingClient", return_value=mock_post),
+        ):
+            return vp.main(argv)
+
+    def test_quarter_valid_seasonal_fails_both_quarter_checks_still_run(self, monkeypatch, capsys):
+        """Quarter config resolves; no seasonal mode is supported. Both
+        quarter checks must still appear, plus a seasonal critical FAIL
+        row, and the run must exit non-zero."""
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
+        rc = self._run(["--target", "long-term"])
+        captured = capsys.readouterr()
+
+        assert "Long-term forecasts (quarter hv" in captured.out
+        assert "Quarterly skill metrics" in captured.out
+        assert "Long-term horizon configuration (seasonal)" in captured.out
+        assert rc == 1
+
+    def test_seasonal_valid_quarter_fails_both_seasonal_checks_still_run(
+        self, _long_term_resolver_env, capsys
+    ):
+        """The quarter mode config file is missing; seasonal modes remain
+        supported and resolvable. Both seasonal checks must still appear,
+        plus a quarter critical FAIL row, and the run must exit non-zero."""
+        (_long_term_resolver_env / "quarter.json").unlink()
+
+        rc = self._run(["--target", "long-term"])
+        captured = capsys.readouterr()
+
+        assert "Long-term forecasts (season issue" in captured.out
+        assert "Seasonal skill metrics" in captured.out
+        assert "Long-term horizon configuration (quarter)" in captured.out
+        assert rc == 1
+
+    def test_both_resolutions_fail_two_critical_rows_no_presence_checks(self, monkeypatch, capsys):
+        """Neither resolution can succeed (all resolver env vars absent):
+        two distinct critical FAIL rows are reported and neither pair of
+        presence checks runs."""
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+        rc = self._run(["--target", "long-term"])
+        captured = capsys.readouterr()
+
+        assert "Long-term horizon configuration (quarter)" in captured.out
+        assert "Long-term horizon configuration (seasonal)" in captured.out
+        assert "Long-term forecasts (quarter hv" not in captured.out
+        assert "Long-term forecasts (season issue" not in captured.out
+        assert "Quarterly skill metrics" not in captured.out
+        assert "Seasonal skill metrics" not in captured.out
+        assert rc == 1
+
+
+class TestLongTermConfigFailureExitCode:
+    """F1: a resolver failure must exit non-zero and print a visible
+    failure message for EVERY --target/--module combination — it must
+    never be silently dropped by --module filtering.
+
+    test_module_postprocessing_forecasts is the one that pins the actual
+    regression: before the fix, the new FAIL CheckResult was attributed
+    module="long_term_forecasting", the --module postprocessing_forecasts
+    filter dropped it, and main() exited 0 having performed no long-term
+    validation at all. Reverting the `critical` bypass in validate()'s
+    module-filtering of t1_lt makes this test fail.
+    """
+
+    @staticmethod
+    def _mocked_clients():
+        # read_long_term_forecasts / read_skill_metrics return a non-empty
+        # row so the "Long-term forecasts (month)" and "Monthly skill
+        # metrics" Tier 1 checks PASS — isolating the exit code / message
+        # assertions below to the resolver failure itself, rather than
+        # incidental FAILs from unrelated empty mocks.
+        single_row = pd.DataFrame({"code": ["19999"], "date": ["2026-02-23"]})
+
+        mock_pre = MagicMock()
+        mock_pre.readiness_check.return_value = True
+        mock_pre.read_runoff.return_value = pd.DataFrame()
+        mock_pre.read_hydrograph.return_value = pd.DataFrame()
+        mock_pre.read_meteo.return_value = pd.DataFrame()
+        mock_pre.read_snow.return_value = pd.DataFrame()
+
+        mock_post = MagicMock()
+        mock_post.readiness_check.return_value = True
+        mock_post.read_long_term_forecasts.return_value = single_row
+        mock_post.read_skill_metrics.return_value = single_row
+        mock_post.read_short_term_forecasts.return_value = pd.DataFrame()
+        mock_post.read_lr_forecasts.return_value = pd.DataFrame()
+        return mock_pre, mock_post
+
+    def _run(self, monkeypatch, argv):
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+        mock_pre, mock_post = self._mocked_clients()
+        with (
+            patch.object(vp, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(vp, "SapphirePreprocessingClient", return_value=mock_pre),
+            patch.object(vp, "SapphirePostprocessingClient", return_value=mock_post),
+        ):
+            return vp.main(argv)
+
+    def test_module_long_term_forecasting(self, monkeypatch, capsys):
+        rc = self._run(
+            monkeypatch,
+            ["--target", "long-term", "--module", "long_term_forecasting"],
+        )
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "Long-term horizon configuration" in captured.out
+
+    def test_module_postprocessing_forecasts(self, monkeypatch, capsys):
+        """The regression case: module_filter="postprocessing_forecasts"
+        does not match the FAIL row's module="long_term_forecasting"."""
+        rc = self._run(
+            monkeypatch,
+            ["--target", "long-term", "--module", "postprocessing_forecasts"],
+        )
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "Long-term horizon configuration" in captured.out
+
+    def test_target_long_term_no_module(self, monkeypatch, capsys):
+        rc = self._run(monkeypatch, ["--target", "long-term"])
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "Long-term horizon configuration" in captured.out
+
+    def test_phase_pre_still_fails_on_critical_row(self, monkeypatch, tmp_path):
+        """F1's invariant must hold even under --phase pre, which otherwise
+        returns 0 unconditionally for ordinary FAIL rows (out of scope,
+        left unchanged — see the comment in validate())."""
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+        mock_pre, mock_post = self._mocked_clients()
+
+        with (
+            patch.object(vp, "SapphirePreprocessingClient", return_value=mock_pre),
+            patch.object(vp, "SapphirePostprocessingClient", return_value=mock_post),
+        ):
+            rc = vp.validate(
+                "long-term",
+                date(2026, 2, 23),
+                ["month"],
+                phase="pre",
+                baseline_path=str(tmp_path / "baseline.json"),
+            )
+
+        assert rc == 1
+
+    def test_phase_pre_leaves_existing_baseline_untouched_on_critical_row(
+        self, monkeypatch, tmp_path
+    ):
+        """R1: a critical row (the horizon config could not be resolved)
+        must NOT overwrite an existing baseline file with an incomplete
+        snapshot. Before the fix, write_baseline() ran unconditionally
+        before the critical-row check, so a config failure corrupted a
+        good baseline right before returning non-zero. Asserting only the
+        exit code (as the previous round's test did) does not catch this —
+        the file content must be checked too.
+        """
+        for var in _RESOLVER_VARS:
+            monkeypatch.delenv(var, raising=False)
+        mock_pre, mock_post = self._mocked_clients()
+
+        baseline_path = tmp_path / "baseline.json"
+        sentinel = b'{"sentinel": "do-not-touch", "forecast_date": "2020-01-01"}'
+        baseline_path.write_bytes(sentinel)
+
+        with (
+            patch.object(vp, "SapphirePreprocessingClient", return_value=mock_pre),
+            patch.object(vp, "SapphirePostprocessingClient", return_value=mock_post),
+        ):
+            rc = vp.validate(
+                "long-term",
+                date(2026, 2, 23),
+                ["month"],
+                phase="pre",
+                baseline_path=str(baseline_path),
+            )
+
+        assert rc == 1
+        assert baseline_path.read_bytes() == sentinel
