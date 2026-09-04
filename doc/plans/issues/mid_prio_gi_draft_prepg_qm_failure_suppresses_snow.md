@@ -79,13 +79,32 @@ captures its compose status *and* Luigi is configured to return non-zero. That w
 owned by **INFRA-023** (which now records the full surface); it is **not** in scope here. Say so
 explicitly rather than implying this fix restores operator visibility on its own.
 
-## Scope note
+## Measured on the kghm server, 2026-09-04 — priority settled at Medium
 
-No data loss is proven: on 2026-09-03/04 the `snow-operational` endpoint was unusable for every org
-regardless (PREPG-009 — a one-day upstream hole at 2026-09-01 with no viable start date), so snow
-would have failed even if reached. **Unmeasured, and it decides Medium vs High: the kghm server.**
-If quantile mapping fails there as deterministically as it does locally, snow has been unreachable
-for as long as the ensemble gap has been present. Check that before scheduling.
+Quantile mapping fails there **occasionally, not every run**: 2 days (2026-08-31, 2026-09-04) across
+the retained cron logs, unlike locally where it fails every time. Snow is therefore not permanently
+unreachable on that server, and this stays **Medium**.
+
+**It still cost five days of snow, and it took both defects to do it.** Snow last wrote on
+2026-08-30 (CSV mtimes 09:04; the API's newest non-null `value` is 2026-09-07, which is that run's
+*forecast tail*, not a later run):
+
+| Date | What happened |
+|---|---|
+| ≤ 2026-08-30 | snow ran normally |
+| 2026-08-31 | quantile mapping failed → chain broke → snow never ran (**this issue**) |
+| 2026-09-01…03 | quantile mapping fine, but the upstream 09-01 hole failed the fetch (**PREPG-009**) |
+| 2026-09-04 | quantile mapping failed again |
+
+Neither issue alone explains the stall — useful evidence that they are genuinely separate.
+`Processing snow data` appears **zero** times in every retained gateway cron log, on failing and
+succeeding days alike.
+
+**Measurement trap, recorded because it caught us twice.** The max date is *not* a freshness signal:
+each fetch writes ~8 days of forecast ahead, so a stale file still shows a future date. Worse, a
+plain max against the API returns **2026-12-31**, because the yearly recalculation writes norm rows
+across the whole calendar year with a NULL `value` — the INFRA-026 norm-only-rows trap. Use the file
+mtime, or the newest row whose `value` is non-null.
 
 ## Exit contract — DECIDED (owner, 2026-09-04)
 
