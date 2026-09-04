@@ -7,8 +7,8 @@
 deterministic on any org where quantile mapping fails.
 **Labels**: `preprocessing_gateway`, `snow`, `coupling`, `silent-success`
 **Found**: 2026-09-04, local kghm/tjhm investigation.
-**Related**: **PREPG-009** (the snow script's own exit-0-on-total-failure). **INFRA-046** (parallel
-session, uncommitted) is the **sibling one layer out**: a gateway container failure withholds the Luigi
+**Related**: **PREPG-009** (the snow script's own exit-0-on-total-failure). **INFRA-046** (parked at Low pending
+PREPG-023; may be closed rather than built) is the **sibling one layer out**: a gateway container failure withholds the Luigi
 marker, so `RunMLModel` / `RunAllMLModels` / `RunLongTermForecast` are blocked even when only the
 *ensemble* stage failed and none of them reads ensemble data (marker logic at `:384-428`). Same family — one over-broad failure unit — but a different mechanism in different
 files: INFRA-046 is the marker/task graph, this is the in-container `&&` chain. Cross-reference, do not
