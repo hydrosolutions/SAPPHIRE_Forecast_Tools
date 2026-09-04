@@ -158,44 +158,73 @@ Consequence for this issue — **note the asymmetry, it decides the fix**:
   `run_periodic_maintenance.sh`: `long_term`, `skill_recalc`, `snow_norms`. Those report success to
   cron regardless of outcome, and that is not fixed by anything in this issue.
 
-### The same defect covers the whole **daily** cron surface (measured 2026-09-04)
+### The same defect covers the scheduled cron surface (re-derived 2026-09-04 after review)
 
-Found while filing PREPG-024. The shape is not confined to `run_periodic_maintenance.sh`: **all four
-`daily_*_maintenance.sh` wrappers capture `CONTAINER_EXIT_CODE`, log a WARNING, and then end on
-`echo`** — so each exits 0 on a failed container. Enumerated by checking every `bin/*.sh` that
-mentions `CONTAINER_EXIT_CODE` for a matching `exit`/`return`:
+Found while filing PREPG-024. The shape is not confined to `run_periodic_maintenance.sh`.
 
-| Wrapper | Propagates? |
+> **The first version of this table was wrong in both directions — read the method note below
+> before trusting any re-derivation.**
+
+**Do not propagate — the script's exit status is its last `echo`, so cron sees 0:**
+
+| Script | Note |
 |---|---|
-| `bin/daily_gateway_maintenance.sh` (`:120-141`) | **no — exits 0** |
-| `bin/daily_linreg_maintenance.sh` | **no — exits 0** |
-| `bin/daily_postprc_maintenance.sh` | **no — exits 0** |
-| `bin/daily_preprunoff_maintenance.sh` | **no — exits 0** |
-| `bin/bimonthly_long_term_postprocessing.sh` | yes |
-| `bin/initialize_site_backfill.sh` | yes |
-| `bin/yearly_runoff_hydrograph_aggregation.sh` | yes |
-| `bin/yearly_skill_metrics_recalculation.sh` | yes (fixed under migration P6) |
-| `bin/yearly_snow_norm_recalculation.sh` | yes (fixed under PREPG-020) |
+| `bin/run_preprocessing_gateway.sh` | **The canonical gateway cron entry** (`update_deployment_checklist.md:802-803`, `0 3 * * *`). Ends on two `echo`s after `docker compose run`; never captures its status. |
+| `bin/daily_gateway_maintenance.sh` (`:120-141`) | Legacy/manual path, **not** what cron runs for the gateway. |
+| `bin/daily_linreg_maintenance.sh` | See the two-mode hazard below. |
+| `bin/daily_postprc_maintenance.sh` | |
+| `bin/daily_preprunoff_maintenance.sh` | |
+| `bin/bimonthly_long_term_postprocessing.sh` | `run_container()` does `return $CONTAINER_EXIT_CODE` (`:147`), but **both callers ignore it** (`:152`, `:159`) and the script ends on `echo`. |
 
-The yearly/bimonthly half has been fixed one script at a time; **the daily half has not been touched
-at all**. That is the higher-exposure half — it runs every day, on every deployment.
+**Do propagate:** `yearly_runoff_hydrograph_aggregation.sh`, `yearly_skill_metrics_recalculation.sh`
+(fixed under migration P6), `yearly_snow_norm_recalculation.sh` (fixed under PREPG-020), and
+`initialize_site_backfill.sh` — the last via an `overall_exit` aggregate returned from `main`, which
+is **the pattern the fixes below should copy**.
 
-The one-line fix is the same one already applied to the yearly scripts:
-`exit "$CONTAINER_EXIT_CODE"` at the end. Verification that it is safe must confirm the cron entries
-do not treat a non-zero wrapper status as a reason to stop scheduling, and that no wrapper is invoked
-by another script that relies on its current exit 0.
+`run_periodic_maintenance.sh` now *does* capture `COMPOSE_STATUS` (`:169`) and `exit`s it (`:192`),
+but only on the `lt_recovery` branch; the other task types still fall through.
 
-**Interaction with P-007** (now fixed): container exit codes reaching these wrappers are only
-meaningful because `run_docker_container` stopped discarding `StatusCode`. Before that fix these
-wrappers had little to propagate; after it, they are the remaining layer that drops the signal.
+**Method note — how the first table got it wrong, twice.** It was produced by grepping for
+`CONTAINER_EXIT_CODE` and then for a matching `exit|return`. Both steps are unsound:
 
-**Related**: **PREPG-024** records the `daily_gateway_maintenance.sh` instance in its per-path signal
-table and explicitly scopes the fix out of that issue — this is where the class belongs.
+1. Filtering on the variable name **pre-selects scripts that already do half the job** and silently
+   excludes `run_preprocessing_gateway.sh`, which never captures a status at all — the single most
+   important omission, since it is the one cron actually runs for the gateway.
+2. Matching `return "$CONTAINER_EXIT_CODE"` **false-positives on a function-local return whose
+   callers discard it** (`bimonthly_long_term_postprocessing.sh`).
 
-**Note on `| tee`**: separate from propagation, several of these capture `EXIT_CODE=$?` after a
-`| tee`, which yields *tee's* status. A `docker inspect` fallback masks it in practice. PREPG-020
-carries that sub-defect forward for `yearly_runoff_hydrograph_aggregation.sh:214-220`; it is **not**
-the same thing as failing to propagate, and that note is not stale.
+Re-derive by reading each script's final statement, not by grep.
+
+### The fix is one line only for the single-container wrappers
+
+- **Single-container wrappers** (`daily_gateway_maintenance.sh`, `daily_postprc_maintenance.sh`,
+  `daily_preprunoff_maintenance.sh`): `exit "$CONTAINER_EXIT_CODE"` at the end.
+- **`daily_linreg_maintenance.sh` needs an aggregate, not one line.** It loops
+  `for MODE in PENTAD DECAD` (`:105`) and re-assigns `CONTAINER_EXIT_CODE` **inside** the loop
+  (`:147`), so a trailing `exit "$CONTAINER_EXIT_CODE"` reports only DECAD — **a failed PENTAD
+  followed by a successful DECAD would still exit 0**, i.e. the fix would leave the defect in place
+  for half the runs. Keep one failure flag across both modes, as `initialize_site_backfill.sh` does.
+- **`bimonthly_long_term_postprocessing.sh`**: have both callers check `run_container`'s return and
+  aggregate it.
+- **`run_preprocessing_gateway.sh`** is a different shape — it submits to Luigi via
+  `docker compose run` and its Luigi CLI retains the default `task_failed=0`. Capturing the compose
+  status is necessary but **not sufficient**; Luigi must also be configured to return non-zero on
+  task failure. Treat it as its own work item, not part of the one-line sweep.
+- **Capture `${PIPESTATUS[0]}` immediately after the `| tee`**, as
+  `yearly_snow_norm_recalculation.sh:135-144` already does. All the unfixed wrappers take `$?` after
+  a pipe, which is *tee's* status; the `docker inspect` fallback masks it only while inspect works.
+
+**Not related to P-007.** These wrappers call `docker run` directly and read the status with
+`docker inspect`; they never go through `pipeline_docker.run_docker_container`. An earlier note here
+claimed the two interact — they do not.
+
+**Verification these fixes actually work** (none of this issue's other criteria test them): one
+parameterised shell test with a stubbed `docker`, asserting non-zero propagation for each wrapper
+listed above, **plus the linreg fail-then-succeed case**, plus the inspect-failure fallback. A
+crontab survey is not a substitute.
+
+**Related**: **PREPG-024** records the gateway instance in its per-path signal table and scopes the
+fix out of that issue — this is where the class belongs.
 
 An earlier draft of this section claimed a corrected crontab would still hide failures. That was
 wrong and contradicted this issue's own recommended fix.

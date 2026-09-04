@@ -164,18 +164,23 @@ are 15 lines above it and are not reflected in any exit code, summary, or downst
   aggregate by decision. Do not add a criterion requiring distinct exit codes.
 - Data outputs and the exit behaviour of a fully-successful run are unchanged — **except** the
   completion summary line, which necessarily changes (so "byte-identical" cannot be the bar).
-- A test at `main()` level proving all-tasks-failed exits non-zero.
+- One **parameterised entry-point** test over three cases — all succeed, **partial failure**, all
+  fail — asserting the **actual process status** (`SystemExit` / return code), not `main()`'s return
+  value. Two traps this closes: a regression where 1 of 6 tasks fails but the process exits 0 would
+  satisfy a total-failure-only test, and `if __name__ == "__main__": main()` currently **discards**
+  whatever `main()` returns, so asserting `main() == 1` can pass while the process still exits 0.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
 
 ## Contract not to break
 
-- Do not make a snow outage abort the whole gateway run: `Quantile_Mapping_OP.py` and
-  `extend_era5_reanalysis.py` succeeded in this same invocation and their output is needed
-  downstream. The exit signal must communicate partial failure without discarding good work.
+- **Do not discard completed meteo output.** `Quantile_Mapping_OP.py` and
+  `extend_era5_reanalysis.py` may have succeeded in the same invocation; their written output must
+  stand. But — following the decided single-aggregate contract — the gateway task itself
+  **intentionally fails and withholds its Luigi marker** when snow failed. That is the point of the
+  fix, not a side effect: with a 6/6 snow outage, a run whose meteo half worked now goes red, and
+  dependent tasks that do not consume snow can be blocked by the missing marker. Accept that
+  deliberately, or reopen the contract — do not write a criterion that requires both.
 
-## Incidental hygiene finding — **ACTIONED, do not re-file**
+## Incidental
 
-The Data Gateway `api_key` was logged in cleartext. The caught path now redacts (measured
-2026-09-04: cleartext stops at `log.2026-08-15`; the six errors from that day's failed kghm run
-are `api_key=***`). Related: **PREPG-015** (shipped), **PREPG-017** (residual uncaught path),
-**PREPG-014** (upstream cure).
+DG `api_key` cleartext logging: **ACTIONED, do not re-file.** Related: PREPG-015 (shipped), PREPG-017, PREPG-014.

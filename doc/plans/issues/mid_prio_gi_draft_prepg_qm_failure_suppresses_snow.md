@@ -6,9 +6,7 @@
 **Priority**: **Medium** — snow is removed by a fault it has no dependency on. Structural,
 deterministic on any org where quantile mapping fails.
 **Labels**: `preprocessing_gateway`, `snow`, `coupling`, `silent-success`
-**Found**: 2026-09-04, local kghm/tjhm investigation on `docs_ltf_recovery_local_target` @ `f74bd633`.
-Out-of-loop reviewed the same day (`codex exec`, read-only), which **refuted the first draft's central
-claim** — see "Corrected premise".
+**Found**: 2026-09-04, local kghm/tjhm investigation.
 **Related**: **PREPG-009** (the snow script's own exit-0-on-total-failure). **INFRA-046** (parallel
 session, uncommitted) is the **sibling one layer out**: a gateway container failure withholds the Luigi
 marker, so `RunMLModel` / `RunAllMLModels` / `RunLongTermForecast` are blocked even when only the
@@ -72,30 +70,23 @@ no dependency on**, and it must be run sequentially, not concurrently.
 |---|---|
 | Container / Luigi (`pipeline_docker.py:384-428`) | non-zero → retry, notify, raise, **no marker** |
 | `run_locally.sh` | recorded FAIL → final exit 1 |
-| `bin/daily_gateway_maintenance.sh` (cron) | **logs a WARNING and exits 0** — `:120-141` captures `CONTAINER_EXIT_CODE`, never `exit`s it, and the script ends on `echo` |
+| **`bin/run_preprocessing_gateway.sh`** — the canonical 03:00 cron entry (`update_deployment_checklist.md:802-803`) | **exits 0.** Submits via `docker compose run`, never captures the status, ends on two `echo`s; its Luigi CLI also keeps the default `task_failed=0` |
+| `bin/daily_gateway_maintenance.sh` (`:120-141`) — legacy/manual, **not** the cron path | **exits 0** (logs a WARNING) |
 
-The third row is a **pre-existing separate defect, owned by INFRA-023** — which now records the
-measured full surface: all four `daily_*_maintenance.sh` wrappers exit 0 on a failed container, while
-the yearly/bimonthly ones have been fixed. It is noted here only because it falsifies any claim that
-this failure is already visible to an operator on the scheduled path. **Do not fix it inside
-PREPG-024.**
+**Consequence, and it limits what this issue can deliver:** fixing the `&&` chain makes the failure
+visible to Luigi and to `run_locally.sh`, but **cron still sees 0** on the scheduled path. Snow
+failures therefore remain invisible to an operator until `run_preprocessing_gateway.sh` also
+captures its compose status *and* Luigi is configured to return non-zero. That wrapper class is
+owned by **INFRA-023** (which now records the full surface); it is **not** in scope here. Say so
+explicitly rather than implying this fix restores operator visibility on its own.
 
-## Inference boundary — read before pricing this
+## Scope note
 
-**Proven**: the coupling exists in the production container and the local runner; both kghm exit
-paths reach `sys.exit(1)`; snow did not run on 2026-09-03 or 2026-09-04.
-
-**Not proven, and deliberately not claimed**: that this has yet destroyed recoverable data. On those
-two days the `snow-operational` endpoint was unusable for every org regardless (see PREPG-009 — a
-one-day upstream hole at 2026-09-01 with no viable start date), so snow would have failed even if
-reached. The last kghm snow fetch (2026-08-21) succeeded because `snow_data_operational.py` was
-invoked **standalone**, bypassing the chain — itself a sign the chain is worked around rather than
-relied on. There were no kghm gateway runs between 2026-08-21 and 2026-09-03, so the staleness in
-the kghm snow CSVs is **not** attributable to this defect.
-
-**Unmeasured**: the kghm *server*. If QM fails there as deterministically as locally, snow has been
-unreachable for as long as the ensemble gap has been present. Check that before scheduling; it
-decides Medium vs High. Do not raise the priority without it.
+No data loss is proven: on 2026-09-03/04 the `snow-operational` endpoint was unusable for every org
+regardless (PREPG-009 — a one-day upstream hole at 2026-09-01 with no viable start date), so snow
+would have failed even if reached. **Unmeasured, and it decides Medium vs High: the kghm server.**
+If quantile mapping fails there as deterministically as it does locally, snow has been unreachable
+for as long as the ensemble gap has been present. Check that before scheduling.
 
 ## Exit contract — DECIDED (owner, 2026-09-04)
 
@@ -129,7 +120,10 @@ requires it.
 - The `Dockerfile` CMD and `run_locally.sh` stay behaviourally equivalent to each other — if only one
   changes, the local runner stops predicting production, which is how this went unnoticed.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
-- One orchestration test proving a QM failure still runs snow while the overall status stays non-zero.
+- Orchestration tests covering **both implementations and both failure points** — a `run_locally.sh`
+  test alone can pass with the Docker CMD still defective, and vice versa. Four cases: QM fails and
+  extend fails, each against the container command and the local runner; assert snow still ran and
+  the aggregate status stayed non-zero.
 
 ## Contract not to break
 
