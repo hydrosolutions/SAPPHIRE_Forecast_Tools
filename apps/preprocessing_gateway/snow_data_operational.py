@@ -498,6 +498,34 @@ def _assemble_snow_forecast_fallback(
             df_issue = df_issue[~conflict_mask]
 
         df_issue["_issue_date"] = issue_date
+
+        # Enforce the invariant overlap resolution below depends on:
+        # every returned target date must be on or after its own
+        # issue date. A well-formed snow-forecast response satisfies
+        # this by construction (issue_date .. issue_date + window - 1),
+        # but nothing upstream guarantees it -- a malformed response
+        # containing a date before its own issue date would otherwise
+        # sort in AFTER a correct, earlier-issued row for that same
+        # target date, be picked by "keep last" as if it had a
+        # non-negative lead, pass completeness, and be written. Drop
+        # such rows here rather than silently trusting the response.
+        invalid_mask = df_issue["date"] < df_issue["_issue_date"]
+        if invalid_mask.any():
+            example_target_date = df_issue.loc[invalid_mask, "date"].iloc[0]
+            logger.warning(
+                "  PREPG-025 fallback: issue date %s (HRU %s, %s) "
+                "returned %d row(s) dated before their own issue date "
+                "(e.g. target date %s) -- a malformed response; "
+                "dropping them rather than letting a negative-lead row "
+                "win overlap resolution.",
+                issue_date_str,
+                hru,
+                variable,
+                int(invalid_mask.sum()),
+                example_target_date.date(),
+            )
+            df_issue = df_issue[~invalid_mask]
+
         fetched_frames.append(df_issue)
 
     if not fetched_frames:
@@ -511,14 +539,14 @@ def _assemble_snow_forecast_fallback(
 
     combined = pd.concat(fetched_frames, ignore_index=True)
 
-    # Deterministic overlap resolution. Every row's date already falls
-    # within its own issuance's forward window, so date >= _issue_date
-    # always holds -- "newest issuance not after that target date" is
-    # therefore just "largest _issue_date" within each (date, code)
-    # group. Sorting ascending by issue date and keeping the LAST
-    # duplicate per (date, code) picks exactly that (shortest lead).
-    # This happens before any of these rows join the existing
-    # date/code-only merge downstream.
+    # Deterministic overlap resolution. date >= _issue_date is ENFORCED
+    # above (per issuance, right after tagging), not merely assumed --
+    # so "newest issuance not after that target date" is therefore
+    # just "largest _issue_date" within each (date, code) group.
+    # Sorting ascending by issue date and keeping the LAST duplicate
+    # per (date, code) picks exactly that (shortest lead). This
+    # happens before any of these rows join the existing date/code-only
+    # merge downstream.
     combined = combined.sort_values(by=["date", "code", "_issue_date"])
     deduped = combined.drop_duplicates(subset=["date", "code"], keep="last")
 

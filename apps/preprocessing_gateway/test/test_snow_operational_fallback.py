@@ -172,7 +172,9 @@ class FakeSnowClient:
                 dates = pd.date_range(issue_date, periods=self.window, freq="D")
                 content = _snow_forecast_csv_bytes(dates, self.code, [value] * len(dates))
                 return FakeResponse(content)
-        raise ValueError(f"No data found for endpoint {endpoint}")
+        raise ValueError(
+            f"No data found for the given HRU code, date and parameter! (endpoint {endpoint})"
+        )
 
     @staticmethod
     def _save_file(response, directory, filename):
@@ -215,10 +217,30 @@ class TestGapErrorClassification:
         assert dg_utils.is_snow_operational_gap_error(Exception(message)) is False
 
     def test_no_data_found_recognized(self):
-        assert dg_utils.is_snow_forecast_no_data_error(Exception("No data found for this date"))
+        assert dg_utils.is_snow_forecast_no_data_error(
+            Exception(
+                '{"message": "No data found for the given HRU code, date and parameter!", '
+                '"success": false}'
+            )
+        )
 
     def test_other_errors_not_recognized_as_no_data(self):
         assert not dg_utils.is_snow_forecast_no_data_error(Exception("connection timed out"))
+
+    def test_bare_no_data_found_substring_without_full_phrase_not_recognized(self):
+        """Adversarial-review fix: the marker used to be the bare
+        substring "no data found", which would also match an unrelated
+        server failure whose body merely happens to contain that
+        phrase -- e.g. a 500 reading "No data found because the
+        backing store is unavailable". Only the gateway's actual,
+        fuller distinctive phrase may classify as an expected absent
+        issuance."""
+        assert not dg_utils.is_snow_forecast_no_data_error(
+            Exception(
+                '{"message": "No data found because the backing store is unavailable", '
+                '"success": false}'
+            )
+        )
 
 
 # =============================================================================
@@ -292,7 +314,7 @@ class TestAssembleSnowForecastFallback:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date not in issuances:
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             dates, value = issuances[issue_date]
             return _write_forecast_csv(directory, f"forecast_{issue_date}", dates, TEST_CODE, value)
 
@@ -358,7 +380,7 @@ class TestAssembleSnowForecastFallback:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date != "2026-09-04":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 1.0)
 
         with patch(
@@ -380,7 +402,7 @@ class TestAssembleSnowForecastFallback:
         """Every issue date fails -> no data to assemble at all."""
         with patch(
             "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
-            side_effect=ValueError("No data found for that date"),
+            side_effect=ValueError("No data found for the given HRU code, date and parameter!"),
         ):
             result = sdo._assemble_snow_forecast_fallback(
                 client=Mock(),
@@ -407,7 +429,7 @@ class TestAssembleSnowForecastFallback:
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             # Today's issuance (2026-09-04) is deliberately absent.
             if issue_date != "2026-09-03":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 4.0)
 
         with patch(
@@ -443,7 +465,7 @@ class TestAssembleSnowForecastFallback:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date != "2026-09-03":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 1.0)
 
         with patch(
@@ -545,7 +567,7 @@ class TestAssembleSnowForecastFallback:
                 return _write_forecast_csv_values(
                     directory, "newer", newer_dates, TEST_CODE, newer_values
                 )
-            raise ValueError("No data found for that date")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
 
         with patch(
             "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
@@ -598,7 +620,7 @@ class TestAssembleSnowForecastFallback:
                 return _write_forecast_csv_values(
                     directory, "newer", newer_dates, TEST_CODE, newer_values
                 )
-            raise ValueError("No data found for that date")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
 
         with patch(
             "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
@@ -633,7 +655,7 @@ class TestAssembleSnowForecastFallback:
             # Today (2026-09-04) and yesterday (2026-09-03) are both
             # absent -- exactly the compound gap H3 fixes.
             if issue_date != "2026-09-02":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 6.0)
 
         with patch(
@@ -697,7 +719,7 @@ class TestAssembleSnowForecastFallback:
                 path = os.path.join(directory, "conflicting.csv")
                 df.to_csv(path, index=False)
                 return path
-            raise ValueError("No data found for that date")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
 
         with patch(
             "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
@@ -769,7 +791,7 @@ class TestAssembleSnowForecastFallback:
                 return _write_forecast_csv_values(
                     directory, "newer", newer_dates, TEST_CODE, newer_values
                 )
-            raise ValueError("No data found for that date")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
 
         with patch(
             "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
@@ -800,6 +822,72 @@ class TestAssembleSnowForecastFallback:
         # issuance still wins normally.
         assert value_on("2026-09-04") == 20.0
 
+    def test_row_dated_before_its_own_issue_date_is_dropped(self, tmp_path):
+        """Adversarial-review fix: the overlap-resolution invariant
+        (every returned target date is on or after its own issue
+        date) is now enforced, not merely assumed. A malformed row
+        dated before its own issue date would otherwise sort in AFTER
+        a correct, earlier-issued row for the same target date and be
+        picked by "keep last" as if it had a non-negative lead -- a
+        negative-lead row must never beat a correct earlier
+        issuance's value."""
+        reference_date = pd.Timestamp("2026-09-04")
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+
+        # Correct, earlier issuance: 2026-09-03, legitimately covering
+        # 2026-09-03 itself (lead 0) among the rest of its normal
+        # window.
+        correct_dates = pd.date_range("2026-09-03", periods=window, freq="D")
+
+        # Malformed issuance: 2026-09-04 (today), normally covering
+        # 09-04 .. 09-13, but its payload ALSO contains a row for
+        # 2026-09-03 -- a date BEFORE its own issue date. A real
+        # snow-forecast response would never do this; this simulates
+        # a malformed one.
+        malformed_dates = [pd.Timestamp("2026-09-03")] + list(
+            pd.date_range("2026-09-04", periods=window, freq="D")
+        )
+        malformed_values = [999.0] + [99.0] * window
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-03":
+                return _write_forecast_csv(directory, "correct", correct_dates, TEST_CODE, 8.0)
+            if issue_date == "2026-09-04":
+                return _write_forecast_csv_values(
+                    directory, "malformed", malformed_dates, TEST_CODE, malformed_values
+                )
+            raise ValueError("No data found for the given HRU code, date and parameter!")
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo._assemble_snow_forecast_fallback(
+                client=Mock(),
+                hru=TEST_HRU,
+                variable="SWE",
+                dg_path=str(tmp_path),
+                existing_codes={TEST_CODE},
+                reference_date=reference_date,
+            )
+
+        assert result is not None
+
+        def value_on(date_str):
+            row = result[(result["date"] == pd.Timestamp(date_str)) & (result["code"] == TEST_CODE)]
+            assert len(row) == 1, f"expected exactly one row for {date_str}"
+            return row["SWE"].iloc[0]
+
+        # The correct, earlier issuance's value must win for
+        # 2026-09-03 -- not the malformed issuance's negative-lead row
+        # (999.0).
+        assert value_on("2026-09-03") == 8.0
+        assert 999.0 not in result["SWE"].values
+        # Sanity check: the malformed issuance's own well-formed rows
+        # are unaffected and still win normally where they
+        # legitimately apply (e.g. 2026-09-04, lead 0).
+        assert value_on("2026-09-04") == 99.0
+
     def test_tz_aware_reference_date_normalises_instead_of_crashing(self, tmp_path):
         """PREPG-025 review fix M3: a tz-aware reference_date must not
         raise during the floor comparison -- it is normalised to
@@ -813,7 +901,7 @@ class TestAssembleSnowForecastFallback:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date != "2026-09-03":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 4.0)
 
         with patch(
@@ -1013,7 +1101,7 @@ class TestTransportErrorAbortsFallback:
                 # A transport-style failure, NOT "No data found" --
                 # the fix must treat this as fatal, not skippable.
                 raise Exception("Connection reset by peer")
-            raise ValueError("No data found for that date")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
 
         mock_client = Mock()
         mock_client.get_operational.side_effect = Exception(
@@ -1038,6 +1126,79 @@ class TestTransportErrorAbortsFallback:
 
         # The pre-existing CSV must be left exactly as it was -- no
         # partial/stale write from the aborted fallback.
+        written = pd.read_csv(file_path)
+        assert len(written) == 1
+        assert written["SWE"].iloc[0] == 7.0
+        assert pd.to_datetime(written["date"].iloc[0]) == pd.Timestamp("2026-08-01")
+
+    @patch("pandas.Timestamp.today")
+    @patch("dg_utils.write_snow_to_api")
+    def test_bare_no_data_found_substring_aborts_fallback_not_skipped(
+        self, mock_write_api, mock_today, tmp_path
+    ):
+        """Adversarial-review fix: a server failure body containing
+        the bare substring "no data found" but NOT the Data Gateway's
+        full distinctive phrase ("No data found for the given HRU
+        code, date and parameter!") must be classified as a genuine
+        failure (H2: abort), not an expected absent issuance to skip.
+        The client raises the same ValueError for every non-200 and
+        exposes no HTTP status, so an unrelated server failure (e.g. a
+        500 whose body happens to contain that phrase) must not be
+        mistaken for a confirmed absence -- doing so would let older
+        data silently satisfy completeness and be written as
+        success."""
+        window = dg_utils.SNOW_FORECAST_WINDOW_DAYS
+        reference_date = pd.Timestamp("2026-09-04")
+        mock_today.return_value = reference_date
+
+        save_path = str(tmp_path / "save")
+        os.makedirs(os.path.join(save_path, "SWE"), exist_ok=True)
+        file_path = os.path.join(save_path, "SWE", f"{TEST_HRU}_SWE.csv")
+
+        historical = pd.DataFrame(
+            {"date": pd.to_datetime(["2026-08-01"]), "code": [TEST_CODE], "SWE": [7.0]}
+        )
+        historical.to_csv(file_path, index=False)
+
+        # today - 2 (2026-09-02) succeeds on its own and, by itself,
+        # already covers the ENTIRE required window -- exactly the
+        # setup where misclassifying the near-miss phrase below as an
+        # expected absence would let this older, potentially stale
+        # data silently satisfy completeness.
+        older_dates = pd.date_range("2026-09-02", periods=window, freq="D")
+
+        def fetch_side_effect(client, hru, variable, issue_date, directory):
+            if issue_date == "2026-09-02":
+                return _write_forecast_csv(directory, "older", older_dates, TEST_CODE, 11.0)
+            if issue_date == "2026-09-03":
+                # Contains "no data found" but NOT the gateway's full
+                # phrase -- an unrelated server failure that merely
+                # uses similar wording, not a confirmed absent
+                # issuance.
+                raise Exception("No data found because the backing store is unavailable")
+            raise ValueError("No data found for the given HRU code, date and parameter!")
+
+        mock_client = Mock()
+        mock_client.get_operational.side_effect = Exception(
+            "Operational data for HRU 19999 is not available for date 2026-09-01"
+        )
+
+        with patch(
+            "snow_data_operational.dg_utils.fetch_snow_forecast_for_issue_date",
+            side_effect=fetch_side_effect,
+        ):
+            result = sdo.get_snow_data_operational(
+                client=mock_client,
+                hru=TEST_HRU,
+                variable="SWE",
+                date="2024-01-01",
+                dg_path=str(tmp_path / "dg"),
+                save_path=save_path,
+            )
+
+        assert result is False
+        mock_write_api.assert_not_called()
+
         written = pd.read_csv(file_path)
         assert len(written) == 1
         assert written["SWE"].iloc[0] == 7.0
@@ -1161,7 +1322,7 @@ class TestFullStackPositiveFallback:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date not in issuances:
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             dates, value = issuances[issue_date]
             return _write_forecast_csv(directory, f"forecast_{issue_date}", dates, TEST_CODE, value)
 
@@ -1315,7 +1476,7 @@ class TestSingleReferenceDateSharedWithApiWrite:
 
         def fetch_side_effect(client, hru, variable, issue_date, directory):
             if issue_date != "2026-09-03":
-                raise ValueError("No data found for that date")
+                raise ValueError("No data found for the given HRU code, date and parameter!")
             return _write_forecast_csv(directory, "forecast", dates, TEST_CODE, 3.0)
 
         mock_client = Mock()

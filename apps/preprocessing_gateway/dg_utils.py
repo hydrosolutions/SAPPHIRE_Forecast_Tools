@@ -527,7 +527,18 @@ _SNOW_OPERATIONAL_GAP_MARKER = "not available for date"
 # date" response from snow-forecast. This is not a failure of the
 # fallback -- it is exactly the case the overlapping issue-date windows
 # are meant to cover.
-_SNOW_FORECAST_NO_DATA_MARKER = "no data found"
+#
+# Matched on the FULL distinctive phrase the gateway actually returns
+# ('{"message": "No data found for the given HRU code, date and
+# parameter!", "success": false}'), not the bare substring "no data
+# found": the client raises the same ValueError for every non-200
+# response and does not expose the HTTP status, so a bare-substring
+# match would also catch an unrelated server failure whose body merely
+# happens to contain that phrase (e.g. a 500 reading "No data found
+# because the backing store is unavailable") and wrongly treat it as an
+# expected absent issuance -- letting older data silently satisfy
+# completeness instead of the run failing.
+_SNOW_FORECAST_NO_DATA_MARKER = "no data found for the given hru code"
 
 
 def is_snow_operational_gap_error(exc: Exception) -> bool:
