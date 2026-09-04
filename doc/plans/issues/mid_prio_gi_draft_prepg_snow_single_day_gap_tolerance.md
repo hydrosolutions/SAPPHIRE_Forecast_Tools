@@ -71,24 +71,29 @@ this API, not as the proposed source.)
 Explicitly **not** in scope: replacing `get_operational` as the primary source; a general retry or
 caching layer; using `snow-reanalysis`; changing the schedule; back-filling history.
 
-**Blocked on the client fix — genuinely blocked, do not route around it.**
+**NOT blocked on the client fix — use a small local wrapper (revised 2026-09-04).**
 `sapphire_dg_client.get_snow_forecast` sends `param=` where the endpoint requires
 `parameter=<UPPER>`, so it returns **HS for every variable** with HTTP 200 (reported — gateway
-report item 3). This is not cosmetic here: `transform_snow_data(df, variable)` labels values with
-the **caller's requested variable** and never checks what the source actually was
-(`dg_utils.py:432`), so HS would be written as SWE and RoF, silently, while satisfying every
-"rows exist" check. Wait for the corrected client and call its public method; duplicating the HTTP
-call locally to dodge the bug is the larger and worse option.
+report item 3). That is dangerous here, because `transform_snow_data(df, variable)` labels values
+with the **caller's requested variable** and never checks the source (`dg_utils.py:432`), so HS
+would be written as SWE and RoF silently.
 
-**Unblocking it is a re-pin, and not a one-liner — do this as its own verified step.** The client is
-pinned to a **branch**, `sapphire-dg-client @ git+...@main`, but both locks currently hold one
-resolved commit, `bd9cc905` — `apps/preprocessing_gateway/uv.lock` **and**
-`apps/machine_learning/uv.lock`. So the fix will not arrive on its own, and picking it up means
-`uv lock --upgrade-package sapphire-dg-client`, which bumps `@main` to whatever else has landed
-since `bd9cc905` — not just the `parameter=` fix. Two consequences: **update both modules together**
-or their pins diverge, and treat the bump as a change with its own verification rather than a
-prerequisite checkbox. This does not need its own issue — nothing calls `get_snow_forecast` today,
-so PREPG-025 is the only consumer and the only thing the re-pin unblocks.
+The response is **not** to wait. Call the endpoint through the client's existing request path with
+the correct parameter name — about five lines in `dg_utils`, doing what the broken method should do.
+This was verified working on 2026-09-04 against both orgs: all three variables returned distinct,
+correct files (different checksums and sizes), whereas the broken `param=` form returned an
+identical HS payload for all three.
+
+Why not wait for upstream: the entire purpose of this issue is to stop an outage depending on
+somebody else's schedule. The client fix is on a private repo with no committed timeline (as of
+2026-09-04 `main` is still `bd9cc905`, unchanged), while a production deployment is currently five
+days without snow. Blocking the robustness fix on the external fix reproduces the very dependency
+it exists to remove.
+
+**Keep it reversible.** Mark the wrapper with the upstream issue, and pin the behaviour with the
+variable-identity test below — that test is what matters, and it passes either way. When the client
+ships the fix, delete the wrapper and call the public method; the test proves the swap is safe. The
+re-pin mechanics below still apply at that point, and are no longer urgent.
 
 ## The substitution is not the same quantity — say so
 
