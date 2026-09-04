@@ -59,34 +59,63 @@ this API, not as the proposed source.)
    keeps today's behaviour.
 2. On that error, fetch the recent window as per-issue-date `snow-forecast` calls, skipping issue
    dates that return the "No data found" 400. The 10-day overlap fills the hole.
-3. Log every substituted date, per HRU and variable.
+3. **Pick a winner deterministically — this is the part that can corrupt data.** Issue dates
+   overlap: both the 08-30 and 08-31 forecasts contain 09-01. For each target date take the
+   **newest issuance that is not after it** (shortest lead), and de-duplicate *before* handing rows
+   to the existing merge. Do not rely on the existing `(date, code)` sort with `keep="last"`
+   (`snow_data_operational.py:352-356`) — it has no issue-date to sort on, because
+   `transform_snow_data` drops `Source`, so a stale two-day-ahead value can beat a fresh
+   one-day-ahead value. Keep the issue date only while assembling; it is not written.
+4. Log every substituted date with its HRU, variable, source issue date and lead.
 
 Explicitly **not** in scope: replacing `get_operational` as the primary source; a general retry or
 caching layer; using `snow-reanalysis`; changing the schedule; back-filling history.
 
-**Blocked on a client bug**: `sapphire_dg_client.get_snow_forecast` sends `param=` where that
-endpoint requires `parameter=<UPPER>`, so it returns **HS for every variable** with HTTP 200
-(reported — see the gateway report, item 3). Until that ships, call the endpoint directly with the
-correct parameter name rather than through the broken method; do not work around it by accepting
-whatever the method returns.
+**Blocked on the client fix — genuinely blocked, do not route around it.**
+`sapphire_dg_client.get_snow_forecast` sends `param=` where the endpoint requires
+`parameter=<UPPER>`, so it returns **HS for every variable** with HTTP 200 (reported — gateway
+report item 3). This is not cosmetic here: `transform_snow_data(df, variable)` labels values with
+the **caller's requested variable** and never checks what the source actually was
+(`dg_utils.py:432`), so HS would be written as SWE and RoF, silently, while satisfying every
+"rows exist" check. Wait for the corrected client and call its public method; duplicating the HTTP
+call locally to dodge the bug is the larger and worse option.
 
 ## The substitution is not the same quantity — say so
 
 A value for 2026-09-01 taken from the 31 August run is a **one-day-ahead forecast**, not the
-operational value. At one day's lead for snow the difference is small, but it is a different
-number. Do not write it silently as if it were operational: either record the substitution or, at
-minimum, log it clearly enough that someone reading the DB can find out. This is the one design
-question in the issue and it needs an owner decision before implementation.
+operational value. At one day's lead for snow the difference is small, but it is a different number,
+and **it does not stay confined to that row**: norm/statistics calculations consume every non-null
+stored `value` (`dg_utils.py:656`), and the yearly recalculation derives next year's `previous`
+band from this year's `value` (`recalculate_snow_norms.py:353`). A substitution therefore
+participates in derived values for a year afterwards.
+
+**Decision — log, do not record in the database.** `SnowBase` has no provenance field, and adding
+one would be a schema change in colleague-owned service code for a rare event. Log the target date,
+source issue date and lead. **This is an explicit acceptance, and the owner should confirm it:**
+substituted values will feed norms, statistics and the following year's `previous` band, and
+logging makes that auditable rather than preventing it. If that is not acceptable, the alternative
+is to leave the day absent rather than substitute — a different issue, not a variant of this one.
 
 ## Acceptance criteria
 
 - With the upstream day present, behaviour is unchanged — the fallback never runs, and the written
   rows are identical to today's.
-- With one issue date absent, the run completes and writes rows covering that date.
-- Each substituted date is logged with its HRU and variable.
+- With one issue date absent, the run completes; the assembled window reaches the **CSV**, and the
+  **API receives the complete current operational window**. Note the API write filters to
+  `date >= yesterday` (`dg_utils.py:1053`), so a target date older than yesterday reaches the CSV
+  only — this issue does **not** promise historical database backfill.
+- **Completeness is defined and enforced**: name the required (target date x code) coverage of the
+  window, and fail the task when any required key is missing. A non-empty but partial window must
+  **not** count as success — otherwise PREPG-009 is weakened, and note that
+  `get_snow_data_operational` already returns `True` even when the API write fails
+  (`snow_data_operational.py:381`), which PREPG-009 deliberately does not change.
+- **Overlap resolution is pinned**: with both an N-1 and an N-2 day issuance available for a target
+  date, the N-1 value is the one written.
+- **Variable identity is pinned**: one fallback test with distinct HS/SWE/RoF values asserting the
+  request carried `parameter=<UPPER>` and that the written values are the requested variable's.
+- A `SnowPreservationReadError` still escapes on the fallback path (PREPG-020) — the existing test
+  covers primary-fetch success only (`test_api_integration.py:941`).
 - A non-`not available for date` failure still fails; the fallback does not swallow it.
-- The fallback cannot mask a *total* outage — if the recent window cannot be assembled, the run
-  still fails (this is PREPG-009's contract, and must not be weakened here).
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
 
 ## Contract not to break
@@ -94,7 +123,8 @@ question in the issue and it needs an owner decision before implementation.
 - **Do not weaken PREPG-009.** That issue makes a fetch failure fail the run; this one must reduce
   how often that happens, never hide it when it does.
 - **Do not change the happy path.** When `get_operational` succeeds, nothing new should execute.
-- The forecast endpoint returns a **different shape** — wide, four metadata rows (`Sensor`,
-  `Category`, `Unit`, `Interpolation`), dates as `DD.MM.YYYY` descending — so it needs its own
-  transform. Do not feed it to `transform_snow_data`, which expects the operational shape.
+- **Reuse `transform_snow_data`; do not write a second one.** It already handles this shape —
+  it renames column 0 to `date`, drops the four metadata rows (`df.iloc[4:]`), parses `dayfirst`
+  and ignores `Source` (`dg_utils.py:432-444`). Descending dates are harmless: the caller sorts
+  afterwards.
 - `write_snow_to_api`'s existing preservation behaviour (PREPG-020, fail-closed) must be untouched.
