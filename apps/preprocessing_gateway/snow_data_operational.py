@@ -815,6 +815,11 @@ def main():
 
     total = len(SNOW_HRUS) * len(SNOW_VARS)
     count = 0
+    # PREPG-009: track failed tasks (HRU/variable) alongside the loop's
+    # existing per-task error log, so the completion line can report
+    # succeeded/failed counts instead of merely tasks attempted, and the
+    # process can exit non-zero when any task failed.
+    failed_tasks = []
     # Iterate through the HRUs and get the snow data
     for hru in SNOW_HRUS:
         for snow_var in SNOW_VARS:
@@ -830,10 +835,28 @@ def main():
             )
             if not success:
                 logger.error("Failed to get snow data for HRU %s, %s", hru, snow_var)
+                failed_tasks.append(f"{hru}/{snow_var}")
 
-    logger.info("Snow data processing complete (%d tasks)", total)
+    succeeded = total - len(failed_tasks)
+    logger.info("Snow data processing complete: %d/%d succeeded", succeeded, total)
+    if failed_tasks:
+        logger.error(
+            "Snow data processing had %d failed task(s): %s",
+            len(failed_tasks),
+            ", ".join(failed_tasks),
+        )
+        # PREPG-009: a single non-zero aggregate for any failed task
+        # (decided 2026-09-04; no graded codes -- see the issue file).
+        # main()'s return value alone is not enough to fail the process
+        # since __main__ used to discard it; the __main__ block below
+        # now propagates this via sys.exit().
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    # Run the main function
-    main()
+    # Run the main function and propagate its status as the real
+    # process exit code (PREPG-009). `main()`'s return value used to be
+    # discarded here, so a fully-failed run could still exit 0.
+    sys.exit(main())
