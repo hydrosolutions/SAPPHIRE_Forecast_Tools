@@ -586,6 +586,8 @@ SAPPHIRE_OPDEV_ENV=True python Quantile_Mapping_OP.py
 
 You can specifiy the HRU for which you need the control member forecast and the HRU's for which you need the ensemble forecast in the config file (ieasyhydroforecast_HRU_CONTROL_MEMBER and ieasyhydroforecast_HRU_ENSEMBLE).
 
+Note that naming HRUs in `ieasyhydroforecast_HRU_ENSEMBLE` is not by itself enough to make ensemble forecasts be downloaded: the ensemble stage is gated on whether anything consumes it (`ieasyhydroforecast_run_CM_models` or `ieasyhydroforecast_ensemble_forcing_required`, both off by default). See the ensemble consumption gate in [`doc/configuration.md`](configuration.md#ensemble-consumption-gate).
+
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
 
 You can set the HRU for which you need snow data (ieasyhydroforecast_HRU_SNOW_DATA) and which are the variables you are interested in (ieasyhydroforecast_SNOW_VARS).

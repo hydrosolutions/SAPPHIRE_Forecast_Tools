@@ -142,11 +142,13 @@ class TestMergeEnsembleForecast:
     ensemble_csv_factory is a shared fixture, defined in conftest.py.
     """
 
-    def test_empty_files_list_exits(self):
-        """sys.exit(1) on empty files_downloaded."""
-        with pytest.raises(SystemExit) as exc_info:
-            merge_ensemble_forecast([])
-        assert exc_info.value.code == 1
+    def test_empty_files_list_returns_none_and_both_missing(self):
+        """PREPG-023 C2: empty files_downloaded no longer sys.exit(1)s
+        the module -- it returns (None, {"P", "T"}) so the per-HRU loop
+        in main() can record this HRU as failed and move on."""
+        result, missing = merge_ensemble_forecast([])
+        assert result is None
+        assert missing == {"P", "T"}
 
     def test_merge_roundtrip_with_known_values(self, ensemble_csv_factory):
         """P CSV (values [5.0, 6.0]) + T CSV (values [280.0, 281.0])
@@ -154,7 +156,8 @@ class TestMergeEnsembleForecast:
         dates = ["01/01/2024", "02/01/2024"]
         p_file = ensemble_csv_factory("12345", 1, "tp", dates, [5.0, 6.0])
         t_file = ensemble_csv_factory("12345", 1, "2t", dates, [280.0, 281.0])
-        result = merge_ensemble_forecast([p_file, t_file])
+        result, missing = merge_ensemble_forecast([p_file, t_file])
+        assert missing == set()
         assert "P" in result.columns
         assert "T" in result.columns
         assert len(result) == 2
@@ -169,36 +172,42 @@ class TestMergeEnsembleForecast:
         """HRU12345 → code == '12345' in output."""
         p_file = ensemble_csv_factory("12345", 1, "tp", ["01/01/2024"], [5.0])
         t_file = ensemble_csv_factory("12345", 1, "2t", ["01/01/2024"], [280.0])
-        result = merge_ensemble_forecast([p_file, t_file])
+        result, missing = merge_ensemble_forecast([p_file, t_file])
+        assert missing == set()
         assert result["code"].iloc[0] == "12345"
 
     def test_filename_parsing_ensemble_member(self, ensemble_csv_factory):
         """EM003 → ensemble_member == 3 in output."""
         p_file = ensemble_csv_factory("12345", 3, "tp", ["01/01/2024"], [5.0])
         t_file = ensemble_csv_factory("12345", 3, "2t", ["01/01/2024"], [280.0])
-        result = merge_ensemble_forecast([p_file, t_file])
+        result, missing = merge_ensemble_forecast([p_file, t_file])
+        assert missing == set()
         assert result["ensemble_member"].iloc[0] == 3
 
-    def test_no_precipitation_files_exits(self, ensemble_csv_factory):
-        """Only _2t.csv files → sys.exit(1)."""
+    def test_no_precipitation_files_returns_none_and_p_missing(self, ensemble_csv_factory):
+        """PREPG-023 C2: only _2t.csv files -> (None, {"P"}), not
+        sys.exit(1). The P branch is the sibling of the T branch and
+        must not be left calling sys.exit."""
         t_file = ensemble_csv_factory("12345", 1, "2t", ["01/01/2024"], [280.0])
-        with pytest.raises(SystemExit) as exc_info:
-            merge_ensemble_forecast([t_file])
-        assert exc_info.value.code == 1
+        result, missing = merge_ensemble_forecast([t_file])
+        assert result is None
+        assert missing == {"P"}
 
-    def test_no_temperature_files_exits(self, ensemble_csv_factory):
-        """Only _tp.csv files → sys.exit(1)."""
+    def test_no_temperature_files_returns_none_and_t_missing(self, ensemble_csv_factory):
+        """PREPG-023 C2: only _tp.csv files -> (None, {"T"}), not
+        sys.exit(1)."""
         p_file = ensemble_csv_factory("12345", 1, "tp", ["01/01/2024"], [5.0])
-        with pytest.raises(SystemExit) as exc_info:
-            merge_ensemble_forecast([p_file])
-        assert exc_info.value.code == 1
+        result, missing = merge_ensemble_forecast([p_file])
+        assert result is None
+        assert missing == {"T"}
 
     def test_merge_produces_both_p_and_t_columns(self, ensemble_csv_factory):
         """Output has both 'P' and 'T' columns."""
         dates = ["01/01/2024"]
         p_file = ensemble_csv_factory("12345", 1, "tp", dates, [5.0])
         t_file = ensemble_csv_factory("12345", 1, "2t", dates, [280.0])
-        result = merge_ensemble_forecast([p_file, t_file])
+        result, missing = merge_ensemble_forecast([p_file, t_file])
+        assert missing == set()
         assert "P" in result.columns
         assert "T" in result.columns
 
@@ -209,7 +218,8 @@ class TestMergeEnsembleForecast:
         t_dates = ["01/01/2024", "02/01/2024"]
         p_file = ensemble_csv_factory("12345", 1, "tp", p_dates, [5.0, 6.0, 7.0])
         t_file = ensemble_csv_factory("12345", 1, "2t", t_dates, [280.0, 281.0])
-        result = merge_ensemble_forecast([p_file, t_file])
+        result, missing = merge_ensemble_forecast([p_file, t_file])
+        assert missing == set()
         assert len(result) == 3
         result_sorted = result.sort_values("date").reset_index(drop=True)
         assert pd.isna(result_sorted["T"].iloc[2])
@@ -223,7 +233,8 @@ class TestMergeEnsembleForecast:
         t1 = ensemble_csv_factory("12345", 1, "2t", dates, [280.0])
         p2 = ensemble_csv_factory("12345", 2, "tp", dates, [8.0])
         t2 = ensemble_csv_factory("12345", 2, "2t", dates, [281.0])
-        result = merge_ensemble_forecast([p1, t1, p2, t2])
+        result, missing = merge_ensemble_forecast([p1, t1, p2, t2])
+        assert missing == set()
         assert len(result) == 2
         em1 = result[result["ensemble_member"] == 1]
         em2 = result[result["ensemble_member"] == 2]
@@ -248,7 +259,8 @@ class TestMergeEnsembleForecast:
         df = pd.DataFrame(rows, columns=["Unnamed: 0", "band_1000"])
         df.to_csv(rh_path, index=False)
 
-        result = merge_ensemble_forecast([p_file, t_file, str(rh_path)])
+        result, missing = merge_ensemble_forecast([p_file, t_file, str(rh_path)])
+        assert missing == set()
         assert "P" in result.columns
         assert "T" in result.columns
         assert len(result) == 1
