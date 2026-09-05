@@ -1,9 +1,9 @@
-## The four canonical forecast cron wrappers exit 0 on failure (INFRA-047)
+## The canonical forecast cron wrappers exit 0 on failure (INFRA-047)
 
 **Status**: Draft (2026-09-05)
 **Module**: `bin/`
-**Priority**: **Medium** — these are the *main* daily forecast schedules. Every one of them reports
-success to cron whether or not the forecast ran.
+**Priority**: **Medium** — these are the main scheduled forecast runs (three daily, plus long-term
+on its configured issue days). Every one reports success to cron whether or not the forecast ran.
 **Labels**: `infra`, `cron`, `luigi`, `deployment`, `silent-success`
 **Found**: 2026-09-05, by the two out-of-loop reviews of **INFRA-023**. Split out deliberately, on
 owner decision, rather than widening that issue — one of these wrappers needs a different fix shape
@@ -22,7 +22,7 @@ so cron records success no matter what happened:
 |---|---|---|
 | `bin/run_pentadal_forecasts.sh` | 04:00 daily | `echo` at `:74` (compose at `:66-71`) |
 | `bin/run_decadal_forecasts.sh` | 05:00 daily | `echo` at `:74` (compose at `:66-71`) |
-| `bin/run_long_term_forecasts.sh` | 06:00 daily | `echo` at `:125` (compose at `:118-122`) |
+| `bin/run_long_term_forecasts.sh` | 06:00 on each deployment's **configured issue day(s)** — not daily | `echo` at `:125` (compose at `:118-122`) |
 | `bin/run_daily_maintenance.sh` | 19:00 daily | `echo` at `:83` (compose at `:71-75`) |
 | `bin/run_preprocessing_runoff.sh` | not a standalone cron row | `echo` at `:52` (compose at `:45-49`) |
 
@@ -55,7 +55,10 @@ carries the same precondition; one survey can serve both.
 
 ## Expected effect, and it is the point
 
-Four daily schedules on every deployment currently report success unconditionally. Afterwards they
+Three daily schedules — pentadal (04:00), decadal (05:00) and daily maintenance (19:00) — plus
+long-term on its configured issue days, currently report success unconditionally **wherever those
+rows are actually installed** (`run_preprocessing_runoff.sh` has no cron row of its own, and
+installed crontabs have not been inspected). Afterwards they
 report reality, so **expect newly-red cron where it was previously green** — that is the fix
 working, not a regression. Note bare cron does not itself alert: these rows redirect output to log
 files, so an operator sees the change only through an exit-aware monitor or by reading the log.
@@ -67,8 +70,17 @@ contradicting the exit status.
 - Each of the five named scripts exits non-zero when its Luigi task fails, and 0 when it succeeds.
 - `run_daily_maintenance.sh` **still runs the frontend updater** when the Luigi step fails, and
   exits non-zero afterwards. A test must prove the updater ran.
+- **The aggregate includes the frontend updater's own status.** It is invoked at
+  `run_daily_maintenance.sh:82` and can genuinely exit 1 during validation
+  (`daily_update_sapphire_frontend.sh:55`), so "Luigi succeeded" alone is not sufficient for exit 0:
+  a failed updater must also make the wrapper non-zero. Always run it; never let its failure skip
+  the exit. This was ambiguous in the first draft — "sticky aggregate" implied both steps while the
+  criterion above mentioned only Luigi.
 - For each Luigi-backed wrapper, the `[retcode]` block, `LUIGI_CONFIG_PATH`, compose-status capture
-  and final propagation land **atomically** — any subset is a no-op or worse.
+  and final propagation land **atomically**. All four are required to cover *ordinary* Luigi task
+  failures; propagating the compose status alone is not useless — it still surfaces compose-level
+  failures and Luigi's `unhandled_exception=4` — but it misses the five zero-default categories,
+  which is the case this issue exists for.
 - A test proving the Luigi layer must run Luigi for real; a Docker stub proves shell propagation
   only, because stubbing Docker removes Luigi from the path. Follow
   `apps/pipeline/tests/test_lt_dated_recovery.py:299-429`.

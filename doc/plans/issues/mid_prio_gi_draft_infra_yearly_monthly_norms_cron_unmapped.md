@@ -37,7 +37,7 @@ Two repository documents scheduled the **01 Jan 03:00 UTC** slot differently (hi
 
 | Source | Script named for that slot |
 |---|---|
-| `doc/deployment.md:1014` | `bin/run_periodic_maintenance.sh monthly_norms` |
+| `doc/deployment.md` *(pre-DOC-007; deliberately no line number — that line now carries the corrected command)* | `bin/run_periodic_maintenance.sh monthly_norms` |
 | `bin/README.md:231` | `bin/yearly_runoff_hydrograph_aggregation.sh` |
 
 Only the second actually invokes the long-horizon writer
@@ -177,7 +177,7 @@ Consequence for this issue — **note the asymmetry, it decides the fix**:
 - If the crontab is corrected to the `bin/README.md` form (the direct
   `yearly_runoff_hydrograph_aggregation.sh` wrapper, which is the intended path per the Phase 4
   decision), **the wrapper defect does not apply** — that wrapper inspects the container's status
-  and exits non-zero (`docker inspect` at `:220`, `exit` at `:241`). Correcting the docs therefore fixes both problems at once for
+  and exits non-zero (`docker inspect` at `:220`, `exit` at `:241`; but see the tee caveat above). Correcting the docs therefore fixes both problems at once for
   this job.
 - The wrapper defect still stands for the three *scheduled* periodic types routed through
   `run_periodic_maintenance.sh`: `long_term`, `skill_recalc`, `snow_norms`. Those report success to
@@ -203,13 +203,25 @@ sees success on failure:
 | `bin/daily_preprunoff_maintenance.sh` | legacy/manual | direct `docker run` |
 | `bin/bimonthly_long_term_postprocessing.sh` | bimonthly | direct, **two calls** |
 
-**Already propagate, leave alone:** `yearly_runoff_hydrograph_aggregation.sh` (`exit` at `:241`),
+**`yearly_runoff_hydrograph_aggregation.sh` — the Jan-1 replacement — is NOT reliably safe, and
+this issue previously said it was.** It does `exit "$CONTAINER_EXIT_CODE"` at `:241`, but that value
+comes from `EXIT_CODE=$?` captured after a `| tee` pipeline (`:214-216`) — i.e. *tee's* status — with
+`docker inspect ... || echo "$EXIT_CODE"` as the fallback (`:220`). If Docker fails before leaving an
+inspectable container, tee returns 0, inspect fails, the fallback yields 0, and the wrapper exits 0.
+That is the same fallback defect this issue fixes in the four `daily_*` wrappers, and PREPG-020
+already carried it forward for this exact script. **Consequence for the first half of this issue:**
+telling operators to switch the Jan-1 slot to this wrapper does not by itself guarantee a visible
+failure. Fix it here with the same `${PIPESTATUS[0]}` treatment and pin the inspect-failure case,
+following `yearly_snow_norm_recalculation.sh:135-144`.
+
+**Already propagate, leave alone:**
 `yearly_skill_metrics_recalculation.sh` (`:128`, fixed under migration P6),
 `yearly_snow_norm_recalculation.sh` (`:165`, fixed under PREPG-020), and
 `initialize_site_backfill.sh`, whose `main` does `exit "$overall_exit"` (`:608`) — **that sticky
 aggregate is the pattern to copy** for the two multi-call wrappers above.
 
-**OUT OF SCOPE — a named follow-up, not an oversight.** These canonical cron wrappers have the same
+**OUT OF SCOPE — tracked as INFRA-047
+([`mid_prio_gi_draft_infra_canonical_cron_wrappers_exit_zero.md`](mid_prio_gi_draft_infra_canonical_cron_wrappers_exit_zero.md)), not an oversight.** These canonical cron wrappers have the same
 defect and will still report success after this issue lands:
 `run_pentadal_forecasts.sh` (04:00), `run_decadal_forecasts.sh` (05:00),
 `run_long_term_forecasts.sh` (06:00), `run_daily_maintenance.sh` (19:00), and
@@ -259,21 +271,26 @@ existing pattern that runs Luigi for real:
 
 ### Land this in TWO PRs, with a survey between them (owner decision 2026-09-05)
 
-1. **PR1 — task-type validation.** Validate `$TASK_TYPE` against all four advertised types and give
-   a retired name a message naming its replacement. **Changes no exit status**, so it is safe to
-   land without knowing the caller contract.
-2. **Then inspect the installed crontabs** on each deployment for the seven in-scope wrapper names,
-   looking specifically for anything *after* the wrapper: a right-hand `&&`, a retry supervisor, or
-   any other consumer of the exit code. Repository cron rows have nothing after `bash <wrapper>`
-   and no systemd unit chains them, but **installed crontabs have not been inspected** — a consumer
-   could stop downstream work, or retry a mutating job, once these start returning non-zero.
+1. **Survey the installed crontabs FIRST — before PR1, not between the PRs.** An earlier revision
+   of this plan said PR1 "changes no exit status" and could land ahead of the survey. **That was
+   wrong**: PR1's entire purpose is to make a retired task name stop exiting 0. An installed line
+   such as `... monthly_norms && downstream` would stop running `downstream`, and a retry supervisor
+   could start retrying it. The survey must therefore include the retired invocation and its
+   arguments, not only the seven wrapper names.
+2. **PR1 — task-type validation.** Validate `$TASK_TYPE` against all four advertised types and give
+   a retired name a message naming its replacement.
+   What the survey must look for, per in-scope wrapper name and for `monthly_norms`: anything
+   *after* the invocation — a right-hand `&&`, a retry supervisor, or any other consumer of the exit
+   code. Repository cron rows have nothing after `bash <wrapper>` and no systemd unit chains them,
+   but **installed crontabs have never been inspected**.
 3. **PR2 — exit-status propagation**, informed by that survey. Within each Luigi-backed wrapper the
    `[retcode]` block, `LUIGI_CONFIG_PATH`, compose-status capture and final propagation must land
    **atomically**; the direct-wrapper changes are independent of each other.
 
-One known caller already changes behaviour: `dev_local_backfill.sh --run-pipeline` invokes
-`run_preprocessing_gateway.sh` under `if !`, so it will abort by default (or continue only with
-`--continue-on-error`). Development behaviour, not a production cron chain — noted so it is not
+One known caller already changes behaviour: `dev_local_backfill.sh --run-pipeline` runs **both**
+`run_preprocessing_gateway.sh` and `run_daily_maintenance.sh` from one `steps` array under the same
+failure guard (`:532-536`), so a newly non-zero result from either aborts phases 4-6 unless
+`--continue-on-error` is passed. Development behaviour, not a production cron chain — noted so it is not
 mistaken for a regression.
 
 ## What to inspect
